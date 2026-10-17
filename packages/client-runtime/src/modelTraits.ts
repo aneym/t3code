@@ -121,6 +121,11 @@ export function buildTraitsTriggerDisplay(input: {
       fastModeFallbackLabel = speedLabel ?? "Normal";
       continue;
     }
+    // A mode, not a setting: name it only while it is on, like Claude Code's own model pill.
+    if (descriptor.id === "ultracode" && descriptor.type === "boolean") {
+      if (descriptor.currentValue === true) labels.push(descriptor.label);
+      continue;
+    }
     if (
       input.provider === "codex" &&
       descriptor.id === "serviceTier" &&

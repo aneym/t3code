@@ -48,4 +48,23 @@ describe("compileClaudeModelSelection", () => {
       compileClaudeModelSelection(selection("claude-pool-model-not-in-catalog", [])).effort,
     ).toBeUndefined();
   });
+  it("compiles Ultracode independently of the chosen effort", () => {
+    expect(
+      compileClaudeModelSelection(
+        selection("claude-opus-5-5", [
+          { id: "effort", value: "max" },
+          { id: "ultracode", value: true },
+        ]),
+      ),
+    ).toMatchObject({ effort: "max", settings: { fastMode: false, ultracode: true } });
+    expect(
+      compileClaudeModelSelection(selection("claude-opus-5-5", [{ id: "effort", value: "max" }]))
+        .settings,
+    ).toEqual({ fastMode: false });
+    expect(
+      compileClaudeModelSelection(
+        selection("claude-sonnet-4-6", [{ id: "ultracode", value: true }]),
+      ).settings,
+    ).not.toHaveProperty("ultracode");
+  });
 });
