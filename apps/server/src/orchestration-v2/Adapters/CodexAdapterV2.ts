@@ -486,6 +486,19 @@ function codexMcpToolOutput(
 
 // A hung MCP resource read must not hold run ingestion open.
 const MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
+// Session setup and turn/start answer promptly; silence this long means a wedged app-server.
+const CODEX_APP_SERVER_REQUEST_DEADLINE = "2 minutes";
+// A stopped app-server ignores SIGTERM, so release escalates to SIGKILL.
+const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds";
+
+class CodexAppServerUnresponsiveError extends Schema.TaggedError<CodexAppServerUnresponsiveError>()(
+  "CodexAppServerUnresponsiveError",
+  { method: Schema.String },
+) {
+  override get message() {
+    return `Codex app-server did not answer ${this.method} within ${CODEX_APP_SERVER_REQUEST_DEADLINE}.`;
+  }
+}
 
 function codexMcpAppResourceUri(item: CodexDynamicToolItem): string | undefined {
   if (item.type !== "mcpToolCall") return undefined;
@@ -1379,6 +1392,7 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
+    forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
     shell: spawnCommand.shell,
   });
 });
@@ -1717,7 +1731,34 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           model: input.modelSelection.model,
           now,
         });
-        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<
+          ProviderAdapter.ProviderAdapterV2Event,
+          ProviderAdapter.ProviderAdapterEventStreamError
+        >();
+        // Failing the event stream makes the session manager release this app-server.
+        const retireAppServer = (cause: unknown) =>
+          Queue.fail(
+            events,
+            new ProviderAdapter.ProviderAdapterEventStreamError({
+              driver: CODEX_PROVIDER,
+              providerSessionId: input.providerSessionId,
+              cause,
+            }),
+          );
+        yield* client.termination.pipe(Effect.catch(retireAppServer), Effect.forkIn(scope));
+        // The outcome of an unanswered request is unknown, so it fails rather than retries.
+        const withAppServerDeadline =
+          (method: string) =>
+          <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            effect.pipe(
+              Effect.timeoutOrElse({
+                duration: CODEX_APP_SERVER_REQUEST_DEADLINE,
+                orElse: () => {
+                  const error = new CodexAppServerUnresponsiveError({ method });
+                  return retireAppServer(error).pipe(Effect.andThen(Effect.fail(error)));
+                },
+              }),
+            );
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
@@ -6318,7 +6359,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               else next.delete(threadId);
               return next;
             });
-            const started = yield* client.request("turn/start", turnStartParams);
+            const started = yield* client
+              .request("turn/start", turnStartParams)
+              .pipe(withAppServerDeadline("turn/start"));
             yield* registerRootTurn({
               turnInput,
               nativeTurnId: started.turn.id,
@@ -6533,7 +6576,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           driver: CODEX_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          events: Stream.fromEffectRepeat(Queue.take(events)),
+          events: Stream.fromQueue(events),
           canReuseContextUsage: canReuseCodexContextUsage,
           // Idle release can beat delayed subagent resumes: Codex reports them completed between turns with no resume-expected signal.
           hasPendingBackgroundWork: Effect.gen(function* () {
@@ -6602,6 +6645,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   thread: response.thread,
                 }),
               ),
+              withAppServerDeadline("thread/start"),
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterEnsureThreadError({
@@ -6649,6 +6693,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                   ),
                 ),
+                withAppServerDeadline("thread/resume"),
                 Effect.flatMap(decodeCodexResumeMetadata),
               );
               return {
