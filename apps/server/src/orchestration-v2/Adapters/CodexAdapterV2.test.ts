@@ -950,6 +950,43 @@ describe("CodexAdapterV2 session initialize", () => {
     ),
   );
 
+  // regression: #24300 a wedged shared app-server stayed ready for the next thread
+  it.effect("retires the shared app-server after a request deadline", () =>
+    Effect.gen(function* () {
+      const written = yield* Deferred.make<void>();
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: "thread-start-retired",
+          entries: [...replayPreamble("thread-start-retired").slice(0, 4), requestWritten],
+        }),
+        awaitRequestWritten(written),
+      );
+      const events = yield* session.runtime.events.pipe(
+        Stream.runDrain,
+        Effect.exit,
+        Effect.timeoutOption(UNANSWERED_REQUEST_BUDGET),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const ensured = yield* session
+        .ensureThread("thread-start-retired")
+        .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(written);
+      yield* TestClock.adjust(UNANSWERED_REQUEST_BUDGET);
+      yield* Fiber.join(ensured);
+
+      const settled = yield* Fiber.join(events);
+      assert.isTrue(
+        Option.isSome(settled) && Exit.isFailure(settled.value),
+        "session events did not fail after thread/start passed its deadline",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   // regression: #24300 a stopped shared app-server left turn/start pending forever
   it.effect("fails turn/start that the shared app-server never answers", () =>
     Effect.gen(function* () {
