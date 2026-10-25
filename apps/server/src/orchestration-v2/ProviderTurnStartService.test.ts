@@ -28,6 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -1149,9 +1150,10 @@ effectIt.effect("fails rather than starts a fresh thread when a resume outcome i
       resumeFailure: { _tag: "CodexAppServerUnresponsiveError", method: "thread/resume" },
     });
 
-    yield* harness.startWithRetry;
+    const result = yield* Effect.result(harness.startWithRetry);
 
     expect(harness.fallbackEnsureThread).not.toHaveBeenCalled();
+    expect(Result.isSuccess(result)).toBe(true);
     expect(harness.startRootRun).not.toHaveBeenCalled();
     expect(harness.projection().runs.at(-1)?.status).toBe("failed");
   }),
