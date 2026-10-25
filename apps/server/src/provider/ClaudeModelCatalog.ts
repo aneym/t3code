@@ -27,13 +27,11 @@ import { BUNDLED_MODEL_MANIFEST, resolveProviderCatalog } from "./ModelManifest.
 const CLAUDE = ProviderDriverKind.make("claudeAgent");
 const EMPTY_CAPABILITIES: ModelCapabilities = { optionDescriptors: [] };
 const ULTRACODE = "ultracode";
+// Before this, Claude Code switches to xhigh whenever Ultracode is on.
+const ULTRACODE_ANY_EFFORT_MIN_VERSION = "2.1.284";
 
-/**
- * Claude Code 2.1.284 made Ultracode a session toggle that works at any effort
- * level. Every installed release reads the remote manifest, and releases before
- * this one only understand Ultracode as an effort choice mapped to xhigh, so the
- * manifest keeps that shape and the choice is lifted into its own option here.
- */
+// Older T3 releases read the same remote manifest and only understand Ultracode as an
+// effort choice, so the manifest keeps that shape and the choice is lifted out here.
 function withUltracodeToggle<T extends ModelCapabilities | null>(capabilities: T): T {
   const descriptors = capabilities?.optionDescriptors;
   if (!descriptors || descriptors.some((descriptor) => descriptor.id === ULTRACODE)) {
@@ -195,9 +193,23 @@ export function resolveClaudeModelsForVersion(
   catalog: ClaudeModelCatalog,
   version: string | null | undefined,
 ): ReadonlyArray<ClaudeCatalogModel["model"]> {
+  const ultracodeAtAnyEffort =
+    !!version && compareSemverVersions(version, ULTRACODE_ANY_EFFORT_MIN_VERSION) >= 0;
   return catalog.models
     .filter((entry) => isVersionSupported(entry.compatibility, version))
-    .map((entry) => entry.model);
+    .map(({ model }) =>
+      ultracodeAtAnyEffort || !model.capabilities?.optionDescriptors
+        ? model
+        : {
+            ...model,
+            capabilities: {
+              ...model.capabilities,
+              optionDescriptors: model.capabilities.optionDescriptors.filter(
+                (descriptor) => descriptor.id !== ULTRACODE,
+              ),
+            },
+          },
+    );
 }
 
 export function resolveClaudeUpdateRequiredModels(

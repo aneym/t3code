@@ -248,6 +248,12 @@ describe("Claude model catalog", () => {
           profiles: {
             synthetic: { capabilities: { optionDescriptors: [effort, contextWindow] } },
           },
+          models: [
+            {
+              ...base.providers!.claudeAgent!.models[0]!,
+              adapter: { claudeCode: { minVersion: "2.1.280" } },
+            },
+          ],
         },
       },
     });
@@ -265,5 +271,12 @@ describe("Claude model catalog", () => {
       ],
     });
     assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "ultracode"), "extreme");
+
+    const optionIdsFor = (version: string) =>
+      resolveClaudeModelsForVersion(catalog, version)[0]?.capabilities?.optionDescriptors?.map(
+        (descriptor) => descriptor.id,
+      );
+    assert.deepStrictEqual(optionIdsFor("2.1.283"), ["effort", "contextWindow"]);
+    assert.deepStrictEqual(optionIdsFor("2.1.284"), ["effort", "ultracode", "contextWindow"]);
   });
 });
