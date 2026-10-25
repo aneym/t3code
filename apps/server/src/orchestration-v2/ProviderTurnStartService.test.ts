@@ -1126,6 +1126,20 @@ effectIt.effect("leaves the run starting when a session-open failure will be ret
   }),
 );
 
+effectIt.effect("fails rather than retries a provider thread request with an unknown outcome", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      ensureThreadFailure: { _tag: "CodexAppServerUnresponsiveError", method: "thread/start" },
+    });
+
+    yield* harness.startWithRetry;
+
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+  }),
+);
+
 effectIt.effect("does not terminalize a provider-session open interruption", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({ text: "Continue", interruptOpen: true });
