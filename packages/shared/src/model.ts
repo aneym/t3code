@@ -337,7 +337,11 @@ export function buildExplicitProviderOptionSelectionsFromDescriptors(
   if (!selections || selections.length === 0) {
     return undefined;
   }
-  const explicitIds = new Set(selections.map((selection) => selection.id));
+  const explicitIds = new Set(
+    (withLegacyUltracodeEffort(descriptors ?? [], selections) ?? []).map(
+      (selection) => selection.id,
+    ),
+  );
   const normalized = buildProviderOptionSelectionsFromDescriptors(descriptors)?.filter(
     (selection) => explicitIds.has(selection.id),
   );

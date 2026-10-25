@@ -71,6 +71,19 @@ describe("descriptor helpers", () => {
       ["effort", "xhigh"],
       ["ultracode", true],
     ]);
+    const saved = [{ id: "effort", value: "ultracode" }];
+    expect(
+      buildExplicitProviderOptionSelectionsFromDescriptors(
+        getProviderOptionDescriptors({
+          caps: { optionDescriptors: [effort, ultracode] },
+          selections: saved,
+        }),
+        saved,
+      ),
+    ).toEqual([
+      { id: "effort", value: "xhigh" },
+      { id: "ultracode", value: true },
+    ]);
     const legacyEffort = {
       ...effort,
       options: [...effort.options, { id: "ultracode", label: "Ultracode" }],

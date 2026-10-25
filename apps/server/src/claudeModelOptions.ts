@@ -44,11 +44,15 @@ export function compileClaudeModelSelection(
     caps: capabilities,
     selections: selection.options,
   }).find((descriptor) => descriptor.id === "ultracode");
-  const ultracode = ultracodeDescriptor?.type === "boolean" && ultracodeDescriptor.currentValue;
+  // Explicit when supported, so an Off toggle overrides Ultracode set in the user's settings.json.
+  const ultracode =
+    ultracodeDescriptor?.type === "boolean"
+      ? (ultracodeDescriptor.currentValue ?? false)
+      : undefined;
   const settings = {
     ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
     ...(typeof fastMode === "boolean" ? { fastMode } : {}),
-    ...(ultracode ? { ultracode: true } : {}),
+    ...(typeof ultracode === "boolean" ? { ultracode } : {}),
   };
   const apiModelId = resolveClaudeCatalogApiModelId(catalog, selection);
   const promptEffort = resolvePromptInjectedEffort(capabilities, rawEffort) ?? undefined;

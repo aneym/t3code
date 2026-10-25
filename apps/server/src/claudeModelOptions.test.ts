@@ -60,7 +60,7 @@ describe("compileClaudeModelSelection", () => {
     expect(
       compileClaudeModelSelection(selection("claude-opus-5-5", [{ id: "effort", value: "max" }]))
         .settings,
-    ).toEqual({ fastMode: false });
+    ).toEqual({ fastMode: false, ultracode: false });
     expect(
       compileClaudeModelSelection(
         selection("claude-sonnet-4-6", [{ id: "ultracode", value: true }]),
@@ -80,14 +80,6 @@ describe("compileClaudeModelSelection", () => {
           { id: "ultracode", value: false },
         ]),
       ),
-    ).toMatchObject({ effort: "xhigh", settings: { fastMode: false } });
-    expect(
-      compileClaudeModelSelection(
-        selection("claude-opus-5-5", [
-          { id: "effort", value: "ultracode" },
-          { id: "ultracode", value: false },
-        ]),
-      ).settings,
-    ).not.toHaveProperty("ultracode");
+    ).toMatchObject({ effort: "xhigh", settings: { fastMode: false, ultracode: false } });
   });
 });
