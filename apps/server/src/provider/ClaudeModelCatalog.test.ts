@@ -276,7 +276,9 @@ describe("Claude model catalog", () => {
       resolveClaudeModelsForVersion(catalog, version)[0]?.capabilities?.optionDescriptors?.map(
         (descriptor) => descriptor.id,
       );
-    assert.deepStrictEqual(optionIdsFor("2.1.283"), ["effort", "contextWindow"]);
+    assert.deepStrictEqual(resolveClaudeModelsForVersion(catalog, "2.1.283")[0]?.capabilities, {
+      optionDescriptors: [effort, contextWindow],
+    });
     assert.deepStrictEqual(optionIdsFor("2.1.284"), ["effort", "ultracode", "contextWindow"]);
   });
 });

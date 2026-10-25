@@ -27,7 +27,8 @@ import { BUNDLED_MODEL_MANIFEST, resolveProviderCatalog } from "./ModelManifest.
 const CLAUDE = ProviderDriverKind.make("claudeAgent");
 const EMPTY_CAPABILITIES: ModelCapabilities = { optionDescriptors: [] };
 const ULTRACODE = "ultracode";
-// Before this, Claude Code switches to xhigh whenever Ultracode is on.
+// Before this, Claude Code switches to xhigh whenever Ultracode is on, so older versions
+// keep the manifest's Ultracode effort choice instead of the toggle.
 const ULTRACODE_ANY_EFFORT_MIN_VERSION = "2.1.284";
 
 // Older T3 releases read the same remote manifest and only understand Ultracode as an
@@ -63,6 +64,7 @@ function withUltracodeToggle<T extends ModelCapabilities | null>(capabilities: T
 
 export interface ClaudeCatalogModel {
   readonly model: ServerProviderModel;
+  readonly manifestCapabilities?: ServerProviderModel["capabilities"];
   readonly runtime: ClaudeCodeProfile;
   readonly compatibility: ClaudeCodeCompatibility;
 }
@@ -82,8 +84,10 @@ function tryResolveClaudeModelCatalog(
     const adapter = decodeClaudeModelAdapter(entry.adapter ?? {});
     if (Option.isNone(profile) || Option.isNone(adapter)) return null;
     const model = ModelCatalog.catalogServerModel(resolved, entry);
+    const capabilities = withUltracodeToggle(model.capabilities);
     models.push({
-      model: { ...model, capabilities: withUltracodeToggle(model.capabilities) },
+      model: { ...model, capabilities },
+      ...(capabilities === model.capabilities ? {} : { manifestCapabilities: model.capabilities }),
       runtime: profile.value.claudeCode ?? {},
       compatibility: adapter.value.claudeCode ?? {},
     });
@@ -197,18 +201,10 @@ export function resolveClaudeModelsForVersion(
     !!version && compareSemverVersions(version, ULTRACODE_ANY_EFFORT_MIN_VERSION) >= 0;
   return catalog.models
     .filter((entry) => isVersionSupported(entry.compatibility, version))
-    .map(({ model }) =>
-      ultracodeAtAnyEffort || !model.capabilities?.optionDescriptors
+    .map(({ model, manifestCapabilities }) =>
+      ultracodeAtAnyEffort || manifestCapabilities === undefined
         ? model
-        : {
-            ...model,
-            capabilities: {
-              ...model.capabilities,
-              optionDescriptors: model.capabilities.optionDescriptors.filter(
-                (descriptor) => descriptor.id !== ULTRACODE,
-              ),
-            },
-          },
+        : { ...model, capabilities: manifestCapabilities },
     );
 }
 
