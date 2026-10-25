@@ -50,6 +50,34 @@ describe("descriptor helpers", () => {
     ).toEqual([{ id: "fastMode", value: true }]);
   });
 
+  it("reads a saved Ultracode effort as xhigh with the Ultracode toggle on", () => {
+    const effort = {
+      id: "effort",
+      label: "Reasoning",
+      type: "select" as const,
+      options: [
+        { id: "high", label: "High", isDefault: true },
+        { id: "xhigh", label: "Extra High" },
+      ],
+    };
+    const ultracode = { id: "ultracode", label: "Ultracode", type: "boolean" as const };
+    const current = (caps: ModelCapabilities) =>
+      getProviderOptionDescriptors({
+        caps,
+        selections: [{ id: "effort", value: "ultracode" }],
+      }).map((descriptor) => [descriptor.id, descriptor.currentValue]);
+
+    expect(current({ optionDescriptors: [effort, ultracode] })).toEqual([
+      ["effort", "xhigh"],
+      ["ultracode", true],
+    ]);
+    const legacyEffort = {
+      ...effort,
+      options: [...effort.options, { id: "ultracode", label: "Ultracode" }],
+    };
+    expect(current({ optionDescriptors: [legacyEffort] })).toEqual([["effort", "ultracode"]]);
+  });
+
   it("compares complete model selections independent of option ordering", () => {
     const left = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
       { id: "reasoningEffort", value: "high" },

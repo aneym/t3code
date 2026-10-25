@@ -40,8 +40,11 @@ export function compileClaudeModelSelection(
   const thinking = supportsBoolean("thinking")
     ? getModelSelectionBooleanOptionValue(selection, "thinking")
     : undefined;
-  const ultracode =
-    supportsBoolean("ultracode") && getModelSelectionBooleanOptionValue(selection, "ultracode");
+  const ultracodeDescriptor = getProviderOptionDescriptors({
+    caps: capabilities,
+    selections: selection.options,
+  }).find((descriptor) => descriptor.id === "ultracode");
+  const ultracode = ultracodeDescriptor?.type === "boolean" && ultracodeDescriptor.currentValue;
   const settings = {
     ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
     ...(typeof fastMode === "boolean" ? { fastMode } : {}),
