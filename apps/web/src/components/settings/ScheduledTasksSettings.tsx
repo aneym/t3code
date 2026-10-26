@@ -730,7 +730,7 @@ function ScheduledTaskRow({
       status={
         <div className="flex flex-wrap items-center gap-2">
           <span>
-            {scheduleLabel(task.schedule)} ·{" "}
+            {task.enabled ? "Enabled" : "Paused"} · {scheduleLabel(task.schedule)} ·{" "}
             {!task.enabled ? (
               "Paused"
             ) : isWebhook ? (
@@ -746,7 +746,24 @@ function ScheduledTaskRow({
           {task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
           ) : null}
+          {task.lastRunAt ? (
+            <span>
+              Last run <ScheduledRelativeLabel value={task.lastRunAt} />
+            </span>
+          ) : null}
+          {task.runCount > 0 ? <span>{task.runCount} runs</span> : null}
           {task.lastRunError ? <span className="text-destructive">{task.lastRunError}</span> : null}
+          {task.threadId ? (
+            <Link
+              to="/$environmentId/$threadId"
+              params={{ environmentId, threadId: task.threadId }}
+              className="underline underline-offset-2"
+            >
+              Bound thread
+            </Link>
+          ) : (
+            <span>New thread per run</span>
+          )}
         </div>
       }
       control={
