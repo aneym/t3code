@@ -6,9 +6,9 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import {
-  CLI_RELEASES_PAGE_URL,
   cliReleaseChannelOf,
   cliReleaseIndexPageUrl,
+  cliReleasePageUrl,
   newestCliReleaseVersion,
 } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -61,9 +61,10 @@ async function fetchReleases(url: string, accept: string, signal: AbortSignal) {
 
 export async function findEnvironmentUpdate(currentVersion: string, signal: AbortSignal) {
   const channel = cliReleaseChannelOf(currentVersion);
+  const releasesPageUrl = cliReleasePageUrl(currentVersion);
   // Public release pages avoid the anonymous API quota shared by devices on the same network.
   const response = await fetchReleases(
-    channel === "stable" ? `${CLI_RELEASES_PAGE_URL}/latest` : `${CLI_RELEASES_PAGE_URL}.atom`,
+    channel === "stable" ? `${releasesPageUrl}/latest` : `${releasesPageUrl}.atom`,
     channel === "stable" ? "application/json" : "application/atom+xml",
     signal,
   );
@@ -81,7 +82,7 @@ export async function findEnvironmentUpdate(currentVersion: string, signal: Abor
   // The feed only includes ten releases, so later nightlies can displace a published preview.
   for (let page = 1; version === undefined; page++) {
     const response = await fetchReleases(
-      cliReleaseIndexPageUrl(page),
+      cliReleaseIndexPageUrl(page, currentVersion),
       "application/vnd.github+json",
       signal,
     );

@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { EnvironmentId } from "@t3tools/contracts";
+import { isCliForkVersion } from "@t3tools/shared/cliRelease";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -296,6 +297,8 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
       (config) => {
         if (
           config !== null &&
+          isCliForkVersion(config.environment.serverVersion) ===
+            isCliForkVersion(server.targetVersion) &&
           resolveVersionMismatch(config.environment.serverVersion, server.targetVersion) === null
         ) {
           settle(null);
