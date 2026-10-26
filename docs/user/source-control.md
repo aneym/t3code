@@ -153,8 +153,9 @@ the same with the `t3_worktree_move_to_local` tool.
 The project folder needs no uncommitted changes of its own, and no other thread can be working
 in it. The move also stops when another thread shares the worktree, when a file would land on one
 already in the project folder, when a submodule has uncommitted work, or when files are hidden from
-git with assume-unchanged or skip-worktree. If a step fails, both folders go back to how they were;
-anything you edited in the project folder during the move is left alone.
+git with assume-unchanged or skip-worktree. If a step fails, both folders go back to how they were.
+The rollback never deletes anything: files it has to take out of the project folder go to a
+recovery folder named in the error, and files you edited there during the move are left alone.
 
 The move never deletes the worktree folder. It stays on a detached HEAD with its own copy of the
 changes; delete it yourself once you no longer need it.

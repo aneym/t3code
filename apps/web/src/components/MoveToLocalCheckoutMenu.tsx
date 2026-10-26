@@ -39,6 +39,10 @@ export interface MoveToLocalCheckoutTarget {
 }
 
 function errorMessage(error: unknown): string {
+  // A server from before this feature rejects the request by its method name.
+  if (String(error).includes("Unknown request tag")) {
+    return "This T3 Code server can't move threads yet. Update it, then try again.";
+  }
   return error instanceof Error && error.message.length > 0
     ? error.message
     : "The thread could not be moved.";

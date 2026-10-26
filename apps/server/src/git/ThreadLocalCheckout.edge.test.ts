@@ -960,7 +960,7 @@ describe("index flags and destination folders", () => {
 });
 
 describe("rollback keeps what it did not write", () => {
-  it.effect("leaves a user's edit to a copied untracked file", () =>
+  it.effect("keeps a user's edit to a copied untracked file in the recovery folder", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const f = yield* makeFixture();
@@ -975,7 +975,9 @@ describe("rollback keeps what it did not write", () => {
         }).move(),
       );
       expectCode(exit, "operation_failed");
-      expect(yield* fs.readFileString(`${f.local}/notes.txt`)).toBe("user's unique edit\n");
+      const recovery = /are in '([^']+)'/.exec(JSON.stringify(exit))?.[1];
+      expect(recovery).toBeDefined();
+      expect(yield* fs.readFileString(`${recovery}/notes.txt`)).toBe("user's unique edit\n");
       expect(yield* fs.readFileString(`${f.worktree}/notes.txt`)).toBe("source notes\n");
     }).pipe(Effect.provide(gitLayer)),
   );
@@ -995,7 +997,7 @@ describe("rollback keeps what it did not write", () => {
       expect((yield* fs.stat(`${f.local}/shared.txt`)).mode & 0o777).toBe(0o755);
     }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect("removes a partially copied file after a write failure", () =>
+  it.effect("moves a partially copied file aside after a write failure", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const f = yield* makeFixture();
@@ -1018,15 +1020,14 @@ describe("rollback keeps what it did not write", () => {
             ),
           )) as typeof fs.open,
       };
-      expectCode(
-        yield* Effect.exit(
-          makeHarness({ fixture: f })
-            .move()
-            .pipe(Effect.provideService(FileSystem.FileSystem, failingFs)),
-        ),
-        "operation_failed",
+      const exit = yield* Effect.exit(
+        makeHarness({ fixture: f })
+          .move()
+          .pipe(Effect.provideService(FileSystem.FileSystem, failingFs)),
       );
+      expectCode(exit, "operation_failed");
       expect(yield* fs.exists(`${f.local}/large.bin`)).toBe(false);
+      expect(JSON.stringify(exit)).toContain("t3-move-to-local");
       expect((yield* fs.stat(`${f.worktree}/large.bin`)).size).toBe(BigInt(size));
     }).pipe(Effect.provide(gitLayer)),
   );
@@ -1180,6 +1181,69 @@ describe("the kept worktree", () => {
       const result = yield* makeHarness({ fixture: f }).move();
       expect(result.carriedChanges).toBe(true);
       expect(yield* fs.readFileString(`${f.local}/${name}`)).toBe("new file\n");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+});
+
+describe("project roots and late arrivals", () => {
+  it.effect("copies to the repository root for a project rooted in a subfolder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      const projectRoot = `${f.local}/packages/app`;
+      yield* fs.makeDirectory(projectRoot, { recursive: true });
+      yield* fs.writeFileString(`${f.worktree}/notes.txt`, "source notes\n");
+      const result = yield* makeHarness({ fixture: { ...f, local: projectRoot } }).move();
+      expect(result.localCheckoutPath).toBe(projectRoot);
+      expect(yield* fs.readFileString(`${f.local}/notes.txt`)).toBe("source notes\n");
+      expect(yield* fs.exists(`${projectRoot}/notes.txt`)).toBe(false);
+    }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect("refuses a local thread that starts after the first busy check", () =>
+    Effect.gen(function* () {
+      const f = yield* makeFixture();
+      const others: OtherThread[] = [];
+      const h = makeHarness({ fixture: f, others });
+      const driver = yield* instrument((input, execute) => {
+        if (input.operation === "ThreadLocalCheckout.detachWorktree") {
+          others.push({
+            id: "started-during-move",
+            title: "Running local thread",
+            worktreePath: null,
+            running: true,
+          });
+        }
+        return execute(input);
+      });
+      const exit = yield* Effect.exit(
+        h.move().pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver)),
+      );
+      expectCode(exit, "operation_failed");
+      expect(JSON.stringify(exit)).toContain("Running local thread");
+      yield* expectUntouched(f);
+    }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect("keeps an edit that lands on a tracked file while the rollback restores it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      yield* fs.writeFileString(`${f.worktree}/shared.txt`, "carried edit\n");
+      const racingFs = {
+        ...fs,
+        link: ((from: string, to: string) =>
+          (to === `${f.local}/shared.txt`
+            ? fs.writeFileString(to, "unique late edit\n")
+            : Effect.void
+          ).pipe(Effect.andThen(fs.link(from, to)))) as typeof fs.link,
+      };
+      const exit = yield* Effect.exit(
+        makeHarness({ fixture: f, dispatchFails: true })
+          .move()
+          .pipe(Effect.provideService(FileSystem.FileSystem, racingFs)),
+      );
+      expectCode(exit, "operation_failed");
+      expect(yield* fs.readFileString(`${f.local}/shared.txt`)).toBe("unique late edit\n");
+      expect(JSON.stringify(exit)).toContain("left as they are: shared.txt");
     }).pipe(Effect.provide(gitLayer)),
   );
 });
