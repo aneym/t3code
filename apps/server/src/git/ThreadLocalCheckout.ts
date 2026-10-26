@@ -2,6 +2,7 @@ import {
   CommandId,
   type GitCommandError,
   ThreadMoveToLocalCheckoutError,
+  type ProjectId,
   type ThreadId,
   type ThreadMoveToLocalCheckoutResult,
 } from "@t3tools/contracts";
@@ -154,10 +155,25 @@ export const moveThreadToLocalCheckout = Effect.fn("ThreadLocalCheckout.move")(f
 
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
-  // Key by the real path so a symlinked project root shares the guard with its target.
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  // Key by the checkout's real repository root: projects in two subfolders of one repository, or
+  // a symlinked project root, share one checkout and so one guard.
+  const repositoryRoot = yield* git
+    .execute({
+      operation: "ThreadLocalCheckout.lockRoot",
+      cwd: project.workspaceRoot,
+      args: ["rev-parse", "--show-toplevel"],
+      allowNonZeroExit: true,
+    })
+    .pipe(
+      Effect.map((result) =>
+        result.exitCode === 0 ? result.stdout.replace(/\r?\n$/, "") : project.workspaceRoot,
+      ),
+      Effect.orElseSucceed(() => project.workspaceRoot),
+    );
   const checkoutKey = yield* fileSystem
-    .realPath(project.workspaceRoot)
-    .pipe(Effect.orElseSucceed(() => path.resolve(project.workspaceRoot)));
+    .realPath(repositoryRoot)
+    .pipe(Effect.orElseSucceed(() => path.resolve(repositoryRoot)));
   // Uninterruptible: a client disconnect between git steps would leave both checkouts half
   // switched. Every step is bounded git work.
   return yield* Effect.uninterruptible(
@@ -194,6 +210,7 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
   projectPath: string,
 ) {
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+  const projects = yield* ProjectService.ProjectService;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const vcsStatus = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -257,18 +274,15 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     return yield* fail("not_in_worktree", "The thread's workspace is already the local checkout.");
   }
 
-  const projectThreads = yield* threadManagement
-    .listProjectThreads({ projectId: thread.projectId, includeSubagents: true })
-    .pipe(operationFailed("Unable to list the project's threads"));
-  const archivedThreads = yield* threadManagement.getShellSnapshot({ location: "archive" }).pipe(
-    Effect.map((snapshot) =>
-      [...snapshot.threads, ...snapshot.archivedThreads].filter(
-        (candidate) => candidate.projectId === thread.projectId,
-      ),
-    ),
-    operationFailed("Unable to list the project's archived threads"),
+  // Every active thread in the environment: a thread from another project can still work in
+  // this repository or in this worktree.
+  const activeThreads = Effect.suspend(() =>
+    threadManagement.getShellSnapshot({ location: "active" }),
+  ).pipe(
+    Effect.map((snapshot) => snapshot.threads.filter((candidate) => candidate.archivedAt === null)),
+    operationFailed("Unable to list the environment's threads"),
   );
-  const self = projectThreads.find((candidate) => candidate.id === input.threadId);
+  const self = (yield* activeThreads).find((candidate) => candidate.id === input.threadId);
   if (!input.allowActiveRun && self?.activeRunId) {
     return yield* fail(
       "thread_running",
@@ -276,33 +290,38 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     );
   }
 
-  // Stored paths may be relative, carry a trailing slash, or go through a symlink.
-  const others = [...projectThreads, ...archivedThreads].filter(
-    (candidate, index, all) =>
-      candidate.id !== input.threadId &&
-      all.findIndex((other) => other.id === candidate.id) === index,
-  );
-  const workspaceOf = Effect.fn("ThreadLocalCheckout.workspaceOf")(function* (
-    candidate: (typeof others)[number],
-  ) {
-    return candidate.worktreePath === null ? localReal : yield* realPath(candidate.worktreePath);
+  // Where a thread works, as a real path. Stored paths may be relative, carry a trailing slash,
+  // or go through a symlink; a thread without a worktree works in its own project's folder.
+  const projectFolders = new Map<string, string | null>();
+  const workspaceOf = Effect.fn("ThreadLocalCheckout.workspaceOf")(function* (candidate: {
+    readonly projectId: string;
+    readonly worktreePath: string | null;
+  }) {
+    if (candidate.worktreePath !== null) return yield* realPath(candidate.worktreePath);
+    if (!projectFolders.has(candidate.projectId)) {
+      const found = yield* projects
+        .getById(candidate.projectId as ProjectId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      projectFolders.set(
+        candidate.projectId,
+        Option.isSome(found) ? yield* realPath(found.value.workspaceRoot) : null,
+      );
+    }
+    return projectFolders.get(candidate.projectId) ?? null;
   });
-  const sharers: Array<(typeof others)[number]> = [];
-  for (const candidate of others) {
-    if ((yield* workspaceOf(candidate)) === worktreeReal) sharers.push(candidate);
-  }
+  const within = (folder: string, candidate: string | null) =>
+    candidate !== null && (candidate === folder || candidate.startsWith(`${folder}${path.sep}`));
+  const titles = (threads: ReadonlyArray<{ readonly title: string }>) =>
+    threads.map((candidate) => `"${candidate.title}"`).join(", ");
+
   // Checked again right before the checkout switches branch, since a thread can start meanwhile.
   const refuseIfLocalBusy = Effect.fn("ThreadLocalCheckout.refuseIfLocalBusy")(function* () {
-    const current = yield* threadManagement
-      .listProjectThreads({ projectId: thread.projectId, includeSubagents: true })
-      .pipe(operationFailed("Unable to list the project's threads"));
-    const runningLocal: Array<(typeof current)[number]> = [];
-    for (const candidate of current) {
+    const runningLocal: Array<{ readonly title: string }> = [];
+    for (const candidate of yield* activeThreads) {
       if (
         candidate.id !== input.threadId &&
-        candidate.archivedAt === null &&
         candidate.activeRunId !== null &&
-        isInsideLocalRepository(yield* workspaceOf(candidate))
+        within(localRootReal, yield* workspaceOf(candidate))
       ) {
         runningLocal.push(candidate);
       }
@@ -310,7 +329,7 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     if (runningLocal.length > 0) {
       return yield* fail(
         "local_checkout_busy",
-        `${runningLocal.map((candidate) => `"${candidate.title}"`).join(", ")} ${
+        `${titles(runningLocal)} ${
           runningLocal.length === 1 ? "is" : "are"
         } working in the local checkout. Switching its branch would change files under ${
           runningLocal.length === 1 ? "it" : "them"
@@ -318,17 +337,29 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
       );
     }
   });
-  const activeSharers = sharers.filter((candidate) => candidate.archivedAt === null);
-  if (activeSharers.length > 0) {
-    return yield* fail(
-      "worktree_shared",
-      `${activeSharers.map((candidate) => `"${candidate.title}"`).join(", ")} also ${
-        activeSharers.length === 1 ? "uses" : "use"
-      } this worktree. Moving the branch out would leave ${
-        activeSharers.length === 1 ? "it" : "them"
-      } without one.`,
-    );
-  }
+  // Any other active thread working anywhere in the worktree would lose its branch.
+  const refuseIfWorktreeShared = Effect.fn("ThreadLocalCheckout.refuseIfWorktreeShared")(function* (
+    worktreeFolder: string,
+  ) {
+    const sharers: Array<{ readonly title: string }> = [];
+    for (const candidate of yield* activeThreads) {
+      if (
+        candidate.id !== input.threadId &&
+        candidate.worktreePath !== null &&
+        within(worktreeFolder, yield* workspaceOf(candidate))
+      ) {
+        sharers.push(candidate);
+      }
+    }
+    if (sharers.length > 0) {
+      return yield* fail(
+        "worktree_shared",
+        `${titles(sharers)} also ${sharers.length === 1 ? "uses" : "use"} this worktree. Moving the branch out would leave ${
+          sharers.length === 1 ? "it" : "them"
+        } without one.`,
+      );
+    }
+  });
 
   if (!(yield* gitWorkflow.isRepository(projectPath).pipe(Effect.orElseSucceed(() => false)))) {
     return yield* fail("not_a_repository", `'${projectPath}' is not a git repository.`);
@@ -344,11 +375,6 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     operationFailed("Unable to find the local checkout's repository root"),
   );
   const localRootReal = yield* realPath(localPath);
-  // A thread anywhere in this repository's checkout works on the files the switch would change.
-  const isInsideLocalRepository = (workspace: string) =>
-    workspace === localReal ||
-    workspace === localRootReal ||
-    workspace.startsWith(`${localRootReal}${path.sep}`);
   yield* refuseIfLocalBusy();
 
   const previousLocalBranch = yield* currentBranch(localPath).pipe(
@@ -445,6 +471,7 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
       commonDirectory(localPath),
       commonDirectory(sourceRoot),
     ]).pipe(operationFailed("Unable to read the repositories"));
+    yield* refuseIfWorktreeShared(yield* realPath(sourceRoot));
     if (localCommon !== sourceCommon) {
       return yield* fail(
         "different_repository",
@@ -547,6 +574,7 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     }
     untrackedPaths = worktreeChanges.filter(isUntracked).map((entry) => entry.path);
   } else if (thread.branch !== null) {
+    yield* refuseIfWorktreeShared(worktreeReal);
     branch = thread.branch;
   } else {
     return yield* fail(
@@ -635,7 +663,7 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
               : ` The checkout's tracked files before the rollback are saved as commit ${recoveryCommit}; \`git stash apply ${recoveryCommit}\` brings them back.`) +
             (recoveryDirectory === null
               ? ""
-              : ` Files the rollback took out of the checkout are in '${recoveryDirectory}${path.sep}files'.`);
+              : ` Anything the rollback took out of the checkout is under '${recoveryDirectory}'.`);
           return yield* fail(
             "operation_failed",
             failures.length === 0

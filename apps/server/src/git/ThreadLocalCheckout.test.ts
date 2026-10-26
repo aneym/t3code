@@ -151,9 +151,12 @@ const makeHarness = (options: HarnessOptions) => {
       getThreadRecords: () =>
         Effect.succeed({ thread: { ...thread } } as unknown as OrchestrationV2ThreadProjection),
       listProjectThreads: () => Effect.succeed(shells().filter((item) => item.archivedAt === null)),
-      getShellSnapshot: () =>
+      getShellSnapshot: (snapshotOptions) =>
         Effect.succeed({
-          threads: [],
+          threads:
+            snapshotOptions?.location === "archive"
+              ? []
+              : shells().filter((item) => item.archivedAt === null),
           archivedThreads: shells().filter((item) => item.archivedAt !== null),
         } as never),
       dispatch: dispatch as never,
