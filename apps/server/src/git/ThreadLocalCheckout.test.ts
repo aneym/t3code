@@ -617,3 +617,24 @@ describe("parsePorcelainStatus", () => {
     ]);
   });
 });
+
+describe("parseDirtySubmodules", () => {
+  it("reports submodules with new commits, modified content or untracked files", () => {
+    const hash = "0".repeat(40);
+    const entry = (sub: string, path: string) =>
+      `1 .M ${sub} 160000 160000 160000 ${hash} ${hash} ${path}`;
+    expect(
+      ThreadLocalCheckout.parseDirtySubmodules(
+        [
+          entry("S.M.", "libs/edited"),
+          entry("SC..", "libs/new commits"),
+          entry("S..U", "libs/untracked"),
+          entry("S...", "libs/clean"),
+          `1 .M N... 100644 100644 100644 ${hash} ${hash} src/file.ts`,
+          "? notes.md",
+          "",
+        ].join("\0"),
+      ),
+    ).toEqual(["libs/edited", "libs/new commits", "libs/untracked"]);
+  });
+});

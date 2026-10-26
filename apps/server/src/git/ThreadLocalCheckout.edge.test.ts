@@ -283,8 +283,9 @@ describe("data safety", () => {
       const detachedHead = yield* f.git(f.worktree, ["rev-parse", "HEAD"]);
       yield* f.git(f.local, ["switch", "feature"]);
       const h = makeHarness({ fixture: f });
-      const exit = yield* Effect.exit(h.move());
-      expectCode(exit, "worktree_detached");
+      expectCode(yield* Effect.exit(h.move()), "worktree_detached");
+      expect(yield* f.git(f.worktree, ["rev-parse", "HEAD"])).toBe(detachedHead);
+      expect(h.dispatch).not.toHaveBeenCalled();
     }).pipe(Effect.provide(gitLayer)),
   );
   it.effect("preserves local ignored files that the target branch tracks", () =>
@@ -294,9 +295,9 @@ describe("data safety", () => {
       const dir = yield* f.git(f.local, ["rev-parse", "--absolute-git-dir"]);
       yield* fs.writeFileString(`${dir}/info/exclude`, "feature.txt\n");
       yield* fs.writeFileString(`${f.local}/feature.txt`, "user secret, not in git\n");
-      const exit = yield* Effect.exit(makeHarness({ fixture: f }).move());
-      const content = yield* fs.readFileString(`${f.local}/feature.txt`);
-      expect(content).toBe("user secret, not in git\n");
+      expectCode(yield* Effect.exit(makeHarness({ fixture: f }).move()), "operation_failed");
+      expect(yield* fs.readFileString(`${f.local}/feature.txt`)).toBe("user secret, not in git\n");
+      expect(yield* currentBranch(f, f.worktree)).toBe("feature");
     }).pipe(Effect.provide(gitLayer)),
   );
   it.effect("rollback preserves a pre-existing dangling local symlink", () =>
@@ -305,10 +306,9 @@ describe("data safety", () => {
       const f = yield* makeFixture();
       yield* fs.writeFileString(`${f.worktree}/notes.txt`, "moving notes\n");
       yield* fs.symlink("missing-target", `${f.local}/notes.txt`);
-      const before = yield* isSymlink(`${f.local}/notes.txt`);
-      const exit = yield* Effect.exit(makeHarness({ fixture: f }).move());
-      const after = yield* isSymlink(`${f.local}/notes.txt`);
-      expect(after).toBe(true);
+      expect(yield* isSymlink(`${f.local}/notes.txt`)).toBe(true);
+      expectCode(yield* Effect.exit(makeHarness({ fixture: f }).move()), "untracked_collision");
+      expect(yield* isSymlink(`${f.local}/notes.txt`)).toBe(true);
     }).pipe(Effect.provide(gitLayer)),
   );
   it.effect("failing detach post-checkout hook restores the worktree branch", () =>
@@ -374,9 +374,9 @@ describe("data safety", () => {
       yield* Deferred.await(reached);
       const secondExit = yield* Effect.exit(second.move({ removeWorktree: false }));
       yield* Deferred.succeed(gate, undefined);
-      const firstExit = yield* Effect.exit(Fiber.join(fiber));
-      const localBranch = yield* currentBranch(f, f.local);
+      expect((yield* Fiber.join(fiber)).branch).toBe("feature");
       expectCode(secondExit, "move_in_progress");
+      expect(yield* currentBranch(f, f.local)).toBe("feature");
     }).pipe(Effect.provide(gitLayer)),
   );
   it.effect("refuses dirty submodule content before moving", () =>
@@ -726,9 +726,12 @@ describe("boundaries", () => {
       yield* fs.makeDirectory(`${f.local}/empty/nested`, { recursive: true });
       yield* fs.makeDirectory(`${f.worktree}/empty/nested`, { recursive: true });
       yield* fs.writeFileString(`${f.worktree}/empty/nested/notes`, "moving notes\n");
-      const exit = yield* Effect.exit(makeHarness({ fixture: f, dispatchFails: true }).move());
-      const exists = yield* fs.exists(`${f.local}/empty/nested`);
-      expect(exists).toBe(true);
+      expectCode(
+        yield* Effect.exit(makeHarness({ fixture: f, dispatchFails: true }).move()),
+        "operation_failed",
+      );
+      expect(yield* fs.exists(`${f.local}/empty/nested`)).toBe(true);
+      expect(yield* fs.exists(`${f.local}/empty/nested/notes`)).toBe(false);
     }).pipe(Effect.provide(gitLayer)),
   );
   it.effect("refuses a mid-merge checkout even when the worktree is detached", () =>
@@ -835,7 +838,7 @@ describe("MCP continuation interruption", () => {
       // The workspace event can terminate the provider tool request while the inner move is masked.
       fiber.interruptUnsafe();
       yield* Deferred.succeed(gate, undefined);
-      const exit = yield* Fiber.await(fiber);
+      yield* Fiber.await(fiber);
       expect(h.thread.worktreePath).toBe(null);
       expect(h.sendToThread).toHaveBeenCalledOnce();
     }).pipe(Effect.provide(gitLayer)),
