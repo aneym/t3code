@@ -584,13 +584,19 @@ export function filterSidebarV2VisibleThreads<
   T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
     environmentId: string;
     projectId: string;
-    automationTaskId?: string | null;
+    id?: string;
+    automationTaskId?: string | null | undefined;
   },
->(threads: readonly T[], scopedProjectKeys: ReadonlySet<string> | null): T[] {
+>(
+  threads: readonly T[],
+  scopedProjectKeys: ReadonlySet<string> | null,
+  automationThreadKeys?: ReadonlySet<string>,
+): T[] {
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
-      thread.automationTaskId === undefined &&
+      thread.automationTaskId == null &&
+      !automationThreadKeys?.has(`${thread.environmentId}:${thread.id}`) &&
       !isSidebarSubagentThread(thread) &&
       (scopedProjectKeys === null ||
         scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),

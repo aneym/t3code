@@ -61,13 +61,29 @@ import {
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
 describe("filterSidebarV2VisibleThreads", () => {
-  it("hides automation threads regardless of their sidebar state", () => {
-    const automation = makeThreadFixture({
-      automationTaskId: ScheduledTaskId.make("scheduled-task:test"),
-    });
-    const visible = filterSidebarV2VisibleThreads([automation], null);
-    expect(visible).toEqual([]);
-  });
+  it.each(["pinned", "active", "working", "snoozed", "settled"] as const)(
+    "hides bound and automation-created threads from %s while retaining manual threads",
+    (section) => {
+      const fields = {
+        pinnedAt: section === "pinned" ? "2026-10-26T00:00:00.000Z" : null,
+        settledOverride: section === "settled" ? ("settled" as const) : null,
+        snoozedUntil: section === "snoozed" ? "2027-01-01T00:00:00.000Z" : null,
+        latestUserMessageAt: section === "working" ? "2026-10-26T00:00:00.000Z" : null,
+      };
+      const manual = makeThreadFixture({ ...fields, automationTaskId: null });
+      const created = makeThreadFixture({
+        ...fields,
+        id: ThreadId.make("created"),
+        automationTaskId: ScheduledTaskId.make("scheduled-task:test"),
+      });
+      const bound = makeThreadFixture({ ...fields, id: ThreadId.make("bound") });
+      const otherEnvironment = { ...bound, environmentId: EnvironmentId.make("other") };
+      const bindings = new Set([`${bound.environmentId}:${bound.id}`]);
+      expect(
+        filterSidebarV2VisibleThreads([manual, created, bound, otherEnvironment], null, bindings),
+      ).toEqual([manual, otherEnvironment]);
+    },
+  );
 });
 
 describe("deleteSelectedThreadEntries", () => {
