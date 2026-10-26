@@ -1698,3 +1698,27 @@ describe("recovery guidance", () => {
     }).pipe(Effect.provide(gitLayer)),
   );
 });
+
+describe("worktree sharing across projects", () => {
+  it.effect("refuses when another project's folder is the worktree itself", () =>
+    Effect.gen(function* () {
+      const f = yield* makeFixture();
+      const h = makeHarness({
+        fixture: f,
+        projectRoots: { "worktree-project": f.worktree },
+        others: [
+          {
+            id: "worktree-project-thread",
+            title: "Thread in the worktree project",
+            projectId: "worktree-project",
+            worktreePath: null,
+          },
+        ],
+      });
+      const exit = yield* Effect.exit(h.move());
+      expectCode(exit, "worktree_shared");
+      expect(failureMessage(exit)).toContain("Thread in the worktree project");
+      yield* expectUntouched(f);
+    }).pipe(Effect.provide(gitLayer)),
+  );
+});

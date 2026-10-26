@@ -343,9 +343,9 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
   ) {
     const sharers: Array<{ readonly title: string }> = [];
     for (const candidate of yield* activeThreads) {
+      // Includes a project whose own folder is this worktree: its local threads work here too.
       if (
         candidate.id !== input.threadId &&
-        candidate.worktreePath !== null &&
         within(worktreeFolder, yield* workspaceOf(candidate))
       ) {
         sharers.push(candidate);
