@@ -99,7 +99,9 @@ export function MoveToLocalCheckoutMenu(props: {
             ? `The worktree folder could not be deleted: ${moved.worktree.detail}`
             : moved.worktree.reason === "shared_with_archived_thread"
               ? "The worktree folder was kept because an archived thread still uses it."
-              : null;
+              : moved.worktree.reason === "requested" && moved.carriedChanges
+                ? "The worktree folder still has its own copy of the changes."
+                : null;
       toastManager.add(
         stackedThreadToast({
           type: moved.worktree.status === "remove_failed" ? "warning" : "success",
@@ -165,7 +167,8 @@ export function MoveToLocalCheckoutMenu(props: {
             <span>
               Delete the worktree folder
               <span className="block text-muted-foreground text-xs">
-                {worktreePath}. Ignored files in it, like node_modules and .env, go with it.
+                {worktreePath}. Ignored files in it, like node_modules and .env, are deleted with
+                it. Kept, it stays on a detached HEAD with its own copy of the changes.
               </span>
             </span>
           </label>

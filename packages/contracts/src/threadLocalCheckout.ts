@@ -46,6 +46,8 @@ export class ThreadMoveToLocalCheckoutError extends Schema.TaggedError<ThreadMov
       "worktree_detached",
       "worktree_shared",
       "worktree_conflicted",
+      "worktree_operation_in_progress",
+      "submodule_changes",
       "local_checkout_dirty",
       "local_checkout_busy",
       "local_operation_in_progress",

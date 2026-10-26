@@ -83,7 +83,12 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       <MoveToLocalCheckoutMenu
         target={moveToLocalTarget}
         trigger={
-          <ComposerControl size="xs" className="min-w-0 shrink" data-composer-context-control />
+          <ComposerControl
+            size="xs"
+            className="min-w-0 shrink"
+            data-composer-shortcut="composer.workspace"
+            data-composer-context-control
+          />
         }
       >
         <FolderGitIcon className="size-3" />

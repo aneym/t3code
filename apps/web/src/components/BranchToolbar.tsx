@@ -302,6 +302,7 @@ const RunContextSelector = memo(function RunContextSelector({
                 "cursor-pointer hover:bg-accent hover:text-foreground",
               )}
               onContextMenu={handleContextMenu}
+              data-composer-shortcut="composer.workspace"
               data-composer-context-control
             />
           }

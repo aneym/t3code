@@ -371,3 +371,44 @@ it.effect("denies manual cleanup before the handler without settings permission"
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
 );
+
+describe("move to local checkout authorization", () => {
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (
+        tag,
+      ): tag is Exclude<
+        keyof typeof RPC_REQUIRED_SCOPES,
+        typeof WS_METHODS.gitMoveThreadToLocalCheckout
+      > => tag !== WS_METHODS.gitMoveThreadToLocalCheckout,
+    ),
+  );
+
+  // It switches the shared checkout's branch and re-points a thread, so it needs both grants.
+  it.effect.each([
+    { granted: AuthSourceControlWriteScope, missing: AuthOrchestrationOperateScope },
+    { granted: AuthOrchestrationOperateScope, missing: AuthSourceControlWriteScope },
+  ])("rejects a credential without $missing before the move runs", ({ granted, missing }) =>
+    Effect.gen(function* () {
+      let handled = false;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.gitMoveThreadToLocalCheckout, () =>
+              Effect.sync(() => {
+                handled = true;
+              }).pipe(Effect.andThen(Effect.never)),
+            ),
+            RpcAuthorization.layer([granted]),
+          ),
+        ),
+      );
+      expect(
+        yield* client[WS_METHODS.gitMoveThreadToLocalCheckout]({
+          threadId: ThreadId.make("thread"),
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: missing });
+      expect(handled).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+});

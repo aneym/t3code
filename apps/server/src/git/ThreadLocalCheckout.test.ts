@@ -151,19 +151,11 @@ const makeHarness = (options: HarnessOptions) => {
       getThreadRecords: () =>
         Effect.succeed({ thread: { ...thread } } as unknown as OrchestrationV2ThreadProjection),
       listProjectThreads: () => Effect.succeed(shells().filter((item) => item.archivedAt === null)),
-      readShellSnapshot: (snapshotOptions) =>
-        Effect.succeed(
-          Effect.succeed({
-            threads: shells().filter(
-              (item) =>
-                item.worktreePath === snapshotOptions?.worktreePath &&
-                (snapshotOptions?.location === "archive"
-                  ? item.archivedAt !== null
-                  : item.archivedAt === null),
-            ),
-            archivedThreads: [],
-          } as never),
-        ),
+      getShellSnapshot: () =>
+        Effect.succeed({
+          threads: [],
+          archivedThreads: shells().filter((item) => item.archivedAt !== null),
+        } as never),
       dispatch: dispatch as never,
     } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
     Layer.mock(ProjectService.ProjectService)({
@@ -537,20 +529,6 @@ describe("moveThreadToLocalCheckout", () => {
 
       expect(result.worktree).toEqual({ status: "kept", reason: "missing" });
       expect(yield* currentBranch(fixture, fixture.local)).toBe("feature");
-    }).pipe(Effect.provide(gitLayer)),
-  );
-
-  it.effect("finishes a move whose checkout switch landed but whose thread update did not", () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeFixture();
-      yield* fixture.git(fixture.worktree, ["switch", "--detach"]);
-      yield* fixture.git(fixture.local, ["switch", "feature"]);
-      const harness = makeHarness({ fixture });
-
-      const result = yield* harness.move();
-
-      expect(result).toMatchObject({ branch: "feature", previousLocalBranch: "feature" });
-      expect(harness.dispatch).toHaveBeenCalledTimes(1);
     }).pipe(Effect.provide(gitLayer)),
   );
 

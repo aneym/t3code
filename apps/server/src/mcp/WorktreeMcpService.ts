@@ -453,63 +453,70 @@ const make = Effect.gen(function* () {
       );
     }
     const ids = yield* handoffIds(scope);
-    const moved = yield* ThreadLocalCheckout.moveThreadToLocalCheckout({
-      threadId: scope.thread.threadId,
-      removeWorktree: input.removeWorktree,
-      allowActiveRun: true,
-    }).pipe(
-      Effect.provide(moveServices),
-      Effect.mapError((error) =>
-        failure(
-          error.code === "not_in_worktree"
-            ? "not_in_worktree"
-            : error.code === "thread_not_found" || error.code === "project_not_found"
-              ? error.code
-              : error.code === "move_in_progress"
-                ? "handoff_in_progress"
-                : error.code === "operation_failed"
-                  ? "operation_failed"
-                  : "move_refused",
-          error.message,
-        ),
-      ),
-    );
+    // Moving re-points the thread, which detaches this session and interrupts the caller; finish
+    // queueing the continuation regardless, as the handoff does.
+    const { moved, continuation } = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const moved = yield* ThreadLocalCheckout.moveThreadToLocalCheckout({
+          threadId: scope.thread.threadId,
+          removeWorktree: input.removeWorktree,
+          allowActiveRun: true,
+        }).pipe(
+          Effect.provide(moveServices),
+          Effect.mapError((error) =>
+            failure(
+              error.code === "not_in_worktree"
+                ? "not_in_worktree"
+                : error.code === "thread_not_found" || error.code === "project_not_found"
+                  ? error.code
+                  : error.code === "move_in_progress"
+                    ? "handoff_in_progress"
+                    : error.code === "operation_failed"
+                      ? "operation_failed"
+                      : "move_refused",
+              error.message,
+            ),
+          ),
+        );
 
-    // The move detached this session; queue the continuation so the next turn starts in the checkout.
-    const continuation: WorktreeMcpContinuationStatus =
-      input.continuationPrompt === undefined
-        ? { status: "skipped" }
-        : yield* threadManagement
-            .sendToThread({
-              projectId: projection.thread.projectId,
-              commandId: ids.continuationCommandId,
-              threadId: scope.thread.threadId,
-              messageId: ids.continuationMessageId,
-              text: input.continuationPrompt,
-              attachments: [],
-              mode: "queue",
-              createdBy: "agent",
-              creationSource: "mcp",
-            })
-            .pipe(
-              Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
-                status: "scheduled",
-                delivery: sendResult.delivery,
-              })),
-              Effect.catchCause((cause) =>
-                Effect.succeed<WorktreeMcpContinuationStatus>({
-                  status: "failed",
-                  detail: errorMessage(Cause.squash(cause)),
-                }),
-              ),
-            );
+        // The move detached this session; queue the continuation so the next turn starts in the checkout.
+        const continuation: WorktreeMcpContinuationStatus =
+          input.continuationPrompt === undefined
+            ? { status: "skipped" }
+            : yield* threadManagement
+                .sendToThread({
+                  projectId: projection.thread.projectId,
+                  commandId: ids.continuationCommandId,
+                  threadId: scope.thread.threadId,
+                  messageId: ids.continuationMessageId,
+                  text: input.continuationPrompt,
+                  attachments: [],
+                  mode: "queue",
+                  createdBy: "agent",
+                  creationSource: "mcp",
+                })
+                .pipe(
+                  Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
+                    status: "scheduled",
+                    delivery: sendResult.delivery,
+                  })),
+                  Effect.catchCause((cause) =>
+                    Effect.succeed<WorktreeMcpContinuationStatus>({
+                      status: "failed",
+                      detail: errorMessage(Cause.squash(cause)),
+                    }),
+                  ),
+                );
+        return { moved, continuation };
+      }),
+    );
 
     const worktreeNote =
       moved.worktree.status === "removed"
         ? "The worktree folder was deleted, including its ignored files."
         : moved.worktree.status === "remove_failed"
           ? `The worktree folder could not be deleted: ${moved.worktree.detail}`
-          : "The worktree folder was kept on a detached HEAD.";
+          : "The worktree folder was kept on a detached HEAD, still holding its own copy of the changes.";
     const result: WorktreeMcpMoveToLocalResult = {
       ...moved,
       continuation,
