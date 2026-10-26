@@ -345,17 +345,17 @@ describe("moveThreadToLocalCheckout", () => {
     }).pipe(Effect.provide(gitLayer)),
   );
 
-  it.effect("rolls back when the branch would overwrite an untracked file in the checkout", () =>
+  it.effect("refuses when the branch would overwrite an untracked file in the checkout", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const fixture = yield* makeFixture();
-      // `feature` tracks feature.txt; an untracked copy in the checkout blocks `git switch`.
+      // `feature` tracks feature.txt; an untracked copy in the checkout would block `git switch`.
       yield* fs.writeFileString(`${fixture.local}/feature.txt`, "local untracked\n");
       yield* fs.writeFileString(`${fixture.worktree}/shared.txt`, "wt edit\n");
       yield* fs.writeFileString(`${fixture.worktree}/new.txt`, "wt untracked\n");
       const harness = makeHarness({ fixture });
 
-      expectCode(yield* Effect.exit(harness.move()), "operation_failed");
+      expectCode(yield* Effect.exit(harness.move()), "untracked_collision");
       yield* expectUntouched(fixture);
       expect(yield* fs.readFileString(`${fixture.worktree}/shared.txt`)).toBe("wt edit\n");
       expect(yield* fs.readFileString(`${fixture.worktree}/new.txt`)).toBe("wt untracked\n");

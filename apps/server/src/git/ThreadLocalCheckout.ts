@@ -564,6 +564,35 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
       `The local checkout is already on '${branch}', which the worktree also claims. Check \`git worktree list\`.`,
     );
   }
+  // Files the branch has that the checkout's HEAD doesn't would land on any untracked or ignored
+  // file already at that path; `git switch` refuses, but only with a bare error.
+  const arrivingWithBranch = yield* run("branchAdds", localPath, [
+    "diff",
+    "--name-only",
+    "--no-renames",
+    "--diff-filter=A",
+    "-z",
+    previousLocalHead,
+    branch,
+  ]).pipe(
+    Effect.map((result) => result.stdout.split("\0").filter((entry) => entry.length > 0)),
+    operationFailed(`Unable to compare the checkout with '${branch}'`),
+  );
+  const occupiedByLocal: StatusEntry[] = [];
+  for (const relative of arrivingWithBranch) {
+    if (
+      (yield* occupied(path.join(localPath, relative))) ||
+      (yield* blockedAncestor(relative)) !== null
+    ) {
+      occupiedByLocal.push({ code: "??", path: relative });
+    }
+  }
+  if (occupiedByLocal.length > 0) {
+    return yield* fail(
+      "untracked_collision",
+      `The local checkout has untracked or ignored files where '${branch}' has files of its own (${describePaths(occupiedByLocal)}). Move or delete them first.`,
+    );
+  }
 
   // Undo steps are registered before the command they undo, and check the real state first:
   // a failing hook can exit nonzero after git already moved HEAD.

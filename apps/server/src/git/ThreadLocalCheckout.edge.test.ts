@@ -295,7 +295,7 @@ describe("data safety", () => {
       const dir = yield* f.git(f.local, ["rev-parse", "--absolute-git-dir"]);
       yield* fs.writeFileString(`${dir}/info/exclude`, "feature.txt\n");
       yield* fs.writeFileString(`${f.local}/feature.txt`, "user secret, not in git\n");
-      expectCode(yield* Effect.exit(makeHarness({ fixture: f }).move()), "operation_failed");
+      expectCode(yield* Effect.exit(makeHarness({ fixture: f }).move()), "untracked_collision");
       expect(yield* fs.readFileString(`${f.local}/feature.txt`)).toBe("user secret, not in git\n");
       expect(yield* currentBranch(f, f.worktree)).toBe("feature");
     }).pipe(Effect.provide(gitLayer)),
