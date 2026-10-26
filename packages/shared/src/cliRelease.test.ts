@@ -33,11 +33,8 @@ describe("cliRelease", () => {
     expect(cliArchiveTarCommand("win32", {})).toBe("C:\\Windows\\System32\\tar.exe");
   });
 
-  it.each([
-    "0.1.3-nightly.20261026.3726.aneym.1",
-    "0.1.3-nightly.20261026.3726.aneym.build",
-    "0.1.3-preview.20261026.3726.aneym.1",
-  ])("keeps fork release %s on the nightly channel and repository", (version) => {
+  it("keeps a fork-stamped nightly on the nightly channel and repository", () => {
+    const version = "0.1.3-nightly.20261026.3726.aneym.1";
     expect(cliReleaseChannelOf(version)).toBe("nightly");
     expect(cliReleaseRepositoryOf(version)).toBe("aneym/t3code");
     expect(cliReleaseIndexPageUrl(1, version)).toBe(
@@ -48,6 +45,12 @@ describe("cliRelease", () => {
     );
     expect(cliReleaseChannelOf("0.1.3-nightly.20261026.3726")).toBe("nightly");
     expect(cliReleaseRepositoryOf("0.1.3-nightly.20261026.3726")).toBe("pingdotgg/t3code");
+  });
+
+  it("keeps upstream versions containing the fork marker on upstream releases", () => {
+    const version = "1.2.3-rc.aneym.1";
+    expect(cliReleaseChannelOf(version)).toBe("stable");
+    expect(cliReleaseRepositoryOf(version)).toBe("pingdotgg/t3code");
   });
 
   it("picks the newest non-draft release on the requested channel", () => {

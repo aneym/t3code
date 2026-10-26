@@ -1,6 +1,6 @@
 const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
 const CLI_FORK_RELEASE_REPOSITORY = "aneym/t3code";
-const CLI_FORK_VERSION_MARKER = ".aneym.";
+const CLI_FORK_VERSION_RE = /^\d+\.\d+\.\d+-nightly\.\d{8}\.\d+\.aneym\.[0-9A-Za-z-]+$/;
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 
@@ -73,7 +73,7 @@ export function cliReleaseChannelOf(version: string): CliReleaseChannel {
 }
 
 export function isCliForkVersion(version: string): boolean {
-  return version.includes(CLI_FORK_VERSION_MARKER);
+  return CLI_FORK_VERSION_RE.test(version);
 }
 
 export function cliReleaseRepositoryOf(version: string): string {
