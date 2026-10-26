@@ -33,15 +33,18 @@ describe("cliRelease", () => {
     expect(cliArchiveTarCommand("win32", {})).toBe("C:\\Windows\\System32\\tar.exe");
   });
 
-  it("keeps fork releases on the nightly channel and repository", () => {
-    const version = "0.1.3-nightly.20261026.3726.aneym.1";
+  it.each([
+    "0.1.3-nightly.20261026.3726.aneym.1",
+    "0.1.3-nightly.20261026.3726.aneym.build",
+    "0.1.3-preview.20261026.3726.aneym.1",
+  ])("keeps fork release %s on the nightly channel and repository", (version) => {
     expect(cliReleaseChannelOf(version)).toBe("nightly");
     expect(cliReleaseRepositoryOf(version)).toBe("aneym/t3code");
     expect(cliReleaseIndexPageUrl(1, version)).toBe(
       "https://api.github.com/repos/aneym/t3code/releases?per_page=100&page=1",
     );
     expect(cliReleaseDownloadBaseUrl(version)).toBe(
-      "https://github.com/aneym/t3code/releases/download/v0.1.3-nightly.20261026.3726.aneym.1",
+      `https://github.com/aneym/t3code/releases/download/v${version}`,
     );
     expect(cliReleaseChannelOf("0.1.3-nightly.20261026.3726")).toBe("nightly");
     expect(cliReleaseRepositoryOf("0.1.3-nightly.20261026.3726")).toBe("pingdotgg/t3code");
