@@ -318,6 +318,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           refreshStatus,
         } satisfies Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>),
+        // Handoff uses GitWorkflowService; only moving to the local checkout runs git directly.
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         NodeServices.layer,
       ),
     ),

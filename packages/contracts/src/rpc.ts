@@ -152,6 +152,11 @@ import {
   ReviewDiffPreviewResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
+import {
+  ThreadMoveToLocalCheckoutError,
+  ThreadMoveToLocalCheckoutInput,
+  ThreadMoveToLocalCheckoutResult,
+} from "./threadLocalCheckout.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
   ProviderUploadFeedbackError,
@@ -440,6 +445,7 @@ export const WS_METHODS = {
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
+  gitMoveThreadToLocalCheckout: "git.moveThreadToLocalCheckout",
 
   reviewGetDiffPreview: "review.getDiffPreview",
   reviewGetDiffFileContents: "review.getDiffFileContents",
@@ -1408,6 +1414,12 @@ const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullReque
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });
 
+const WsGitMoveThreadToLocalCheckoutRpc = Rpc.make(WS_METHODS.gitMoveThreadToLocalCheckout, {
+  payload: ThreadMoveToLocalCheckoutInput,
+  success: ThreadMoveToLocalCheckoutResult,
+  error: Schema.Union([ThreadMoveToLocalCheckoutError, EnvironmentAuthorizationError]),
+});
+
 const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
   payload: VcsListRefsInput,
   success: VcsListRefsResult,
@@ -2054,6 +2066,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
+  WsGitMoveThreadToLocalCheckoutRpc,
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,

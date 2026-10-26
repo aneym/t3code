@@ -38,6 +38,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.vcsPull]: AuthSourceControlWriteScope,
   [WS_METHODS.gitRunStackedAction]: AuthSourceControlWriteScope,
   [WS_METHODS.gitPreparePullRequestThread]: AuthSourceControlWriteScope,
+  [WS_METHODS.gitMoveThreadToLocalCheckout]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsCreateWorktree]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsRemoveWorktree]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
@@ -67,6 +68,9 @@ export function clientRpcRequiredScopes(
     if (payload.mode === "worktree" && payload.threadId !== undefined)
       return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
   }
+  // Switches the shared checkout's branch and re-points a thread, so it needs both scopes.
+  if (method === WS_METHODS.gitMoveThreadToLocalCheckout)
+    return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
   if (method === WS_METHODS.gitRunStackedAction && input !== undefined) {
     const payload = decodeStackedAction(input);
     if (

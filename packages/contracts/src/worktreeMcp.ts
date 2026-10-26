@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ThreadMoveToLocalCheckoutResult } from "./threadLocalCheckout.ts";
 
 /** Uses the managed worktree folder; handoff detaches the provider, ending this turn and resuming there next run. */
 export const WorktreeMcpHandoffInput = Schema.Struct({
@@ -74,6 +75,28 @@ export const WorktreeMcpHandoffResult = Schema.Struct({
 });
 export type WorktreeMcpHandoffResult = typeof WorktreeMcpHandoffResult.Type;
 
+/** Moves the branch and uncommitted changes into the project checkout, ending this turn like a handoff. */
+export const WorktreeMcpMoveToLocalInput = Schema.Struct({
+  removeWorktree: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Default true. False keeps the worktree folder on a detached HEAD.",
+    }),
+  ),
+  continuationPrompt: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
+      description: "Work to resume in the local checkout next turn. Omitted: thread waits.",
+    }),
+  ),
+});
+export type WorktreeMcpMoveToLocalInput = typeof WorktreeMcpMoveToLocalInput.Type;
+
+export const WorktreeMcpMoveToLocalResult = Schema.Struct({
+  ...ThreadMoveToLocalCheckoutResult.fields,
+  continuation: WorktreeMcpContinuationStatus,
+  note: Schema.String,
+});
+export type WorktreeMcpMoveToLocalResult = typeof WorktreeMcpMoveToLocalResult.Type;
+
 export const WorktreeMcpStatusResult = Schema.Struct({
   attached: Schema.Boolean,
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
@@ -93,6 +116,8 @@ export class WorktreeMcpFailure extends Schema.TaggedError<WorktreeMcpFailure>()
       "thread_not_found",
       "project_not_found",
       "already_in_worktree",
+      "not_in_worktree",
+      "move_refused",
       "handoff_in_progress",
       "invalid_request",
       "operation_failed",

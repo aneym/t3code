@@ -333,6 +333,11 @@ export function createVcsEnvironmentAtoms<R, E>(
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
     }),
+    // Keyed by thread, not cwd; the server serializes moves, and callers refresh the checkout's status.
+    moveThreadToLocalCheckout: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:move-thread-to-local-checkout",
+      tag: WS_METHODS.gitMoveThreadToLocalCheckout,
+    }),
     createRef: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:create-ref",
       tag: WS_METHODS.vcsCreateRef,

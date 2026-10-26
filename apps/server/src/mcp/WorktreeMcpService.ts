@@ -6,6 +6,8 @@ import {
   type WorktreeMcpContinuationStatus,
   type WorktreeMcpHandoffInput,
   type WorktreeMcpHandoffResult,
+  type WorktreeMcpMoveToLocalInput,
+  type WorktreeMcpMoveToLocalResult,
   type WorktreeMcpSetupScriptStatus,
   type WorktreeMcpStatusResult,
 } from "@t3tools/contracts";
@@ -13,14 +15,18 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as ThreadLocalCheckout from "../git/ThreadLocalCheckout.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
 
@@ -34,6 +40,10 @@ export class WorktreeMcpService extends Context.Service<
     readonly status: (
       scope: McpInvocationScope,
     ) => Effect.Effect<WorktreeMcpStatusResult, WorktreeMcpFailure>;
+    readonly moveToLocal: (
+      scope: McpInvocationScope,
+      input: WorktreeMcpMoveToLocalInput,
+    ) => Effect.Effect<WorktreeMcpMoveToLocalResult, WorktreeMcpFailure>;
   }
 >()("t3/mcp/WorktreeMcpService") {}
 
@@ -62,6 +72,10 @@ const make = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+  const moveServices =
+    yield* Effect.context<
+      Effect.Services<ReturnType<typeof ThreadLocalCheckout.moveThreadToLocalCheckout>>
+    >();
 
   // Serialize handoffs per thread to avoid creating two worktrees and orphaning one.
   const handoffThreadsInFlight = new Set<string>();
@@ -426,7 +440,91 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return WorktreeMcpService.of({ handoff, status });
+  const moveToLocal: WorktreeMcpService["Service"]["moveToLocal"] = Effect.fn(
+    "WorktreeMcpService.moveToLocal",
+  )(function* (callerScope, input) {
+    yield* requireCapability(callerScope);
+    const scope = yield* requireThreadScope(callerScope);
+    const projection = yield* loadThread(scope);
+    if (handoffThreadsInFlight.has(scope.thread.threadId)) {
+      return yield* failure(
+        "handoff_in_progress",
+        `A worktree handoff is already in progress for thread '${scope.thread.threadId}'.`,
+      );
+    }
+    const ids = yield* handoffIds(scope);
+    const moved = yield* ThreadLocalCheckout.moveThreadToLocalCheckout({
+      threadId: scope.thread.threadId,
+      removeWorktree: input.removeWorktree,
+      allowActiveRun: true,
+    }).pipe(
+      Effect.provide(moveServices),
+      Effect.mapError((error) =>
+        failure(
+          error.code === "not_in_worktree"
+            ? "not_in_worktree"
+            : error.code === "thread_not_found" || error.code === "project_not_found"
+              ? error.code
+              : error.code === "move_in_progress"
+                ? "handoff_in_progress"
+                : error.code === "operation_failed"
+                  ? "operation_failed"
+                  : "move_refused",
+          error.message,
+        ),
+      ),
+    );
+
+    // The move detached this session; queue the continuation so the next turn starts in the checkout.
+    const continuation: WorktreeMcpContinuationStatus =
+      input.continuationPrompt === undefined
+        ? { status: "skipped" }
+        : yield* threadManagement
+            .sendToThread({
+              projectId: projection.thread.projectId,
+              commandId: ids.continuationCommandId,
+              threadId: scope.thread.threadId,
+              messageId: ids.continuationMessageId,
+              text: input.continuationPrompt,
+              attachments: [],
+              mode: "queue",
+              createdBy: "agent",
+              creationSource: "mcp",
+            })
+            .pipe(
+              Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
+                status: "scheduled",
+                delivery: sendResult.delivery,
+              })),
+              Effect.catchCause((cause) =>
+                Effect.succeed<WorktreeMcpContinuationStatus>({
+                  status: "failed",
+                  detail: errorMessage(Cause.squash(cause)),
+                }),
+              ),
+            );
+
+    const worktreeNote =
+      moved.worktree.status === "removed"
+        ? "The worktree folder was deleted, including its ignored files."
+        : moved.worktree.status === "remove_failed"
+          ? `The worktree folder could not be deleted: ${moved.worktree.detail}`
+          : "The worktree folder was kept on a detached HEAD.";
+    const result: WorktreeMcpMoveToLocalResult = {
+      ...moved,
+      continuation,
+      note: `Moved to the local checkout on '${moved.branch}'${
+        moved.carriedChanges ? " with the uncommitted changes" : ""
+      }. ${worktreeNote} Changing the workspace detaches this provider session, so the current turn ends shortly after this call; ${
+        continuation.status === "scheduled"
+          ? "the queued continuation prompt then starts the next turn in the local checkout."
+          : "the conversation continues in the local checkout when the thread receives its next message."
+      }`,
+    };
+    return result;
+  });
+
+  return WorktreeMcpService.of({ handoff, status, moveToLocal });
 });
 
 export const layer: Layer.Layer<
@@ -439,4 +537,7 @@ export const layer: Layer.Layer<
   | GitWorkflowService.GitWorkflowService
   | ProjectSetupScriptRunner.ProjectSetupScriptRunner
   | VcsStatusBroadcaster.VcsStatusBroadcaster
+  | GitVcsDriver.GitVcsDriver
+  | FileSystem.FileSystem
+  | Path.Path
 > = Layer.effect(WorktreeMcpService, make);
