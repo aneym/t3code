@@ -302,7 +302,7 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
         candidate.id !== input.threadId &&
         candidate.archivedAt === null &&
         candidate.activeRunId !== null &&
-        (yield* workspaceOf(candidate)) === localReal
+        isInsideLocalRepository(yield* workspaceOf(candidate))
       ) {
         runningLocal.push(candidate);
       }
@@ -318,7 +318,6 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
       );
     }
   });
-  yield* refuseIfLocalBusy();
   const activeSharers = sharers.filter((candidate) => candidate.archivedAt === null);
   if (activeSharers.length > 0) {
     return yield* fail(
@@ -345,6 +344,12 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     operationFailed("Unable to find the local checkout's repository root"),
   );
   const localRootReal = yield* realPath(localPath);
+  // A thread anywhere in this repository's checkout works on the files the switch would change.
+  const isInsideLocalRepository = (workspace: string) =>
+    workspace === localReal ||
+    workspace === localRootReal ||
+    workspace.startsWith(`${localRootReal}${path.sep}`);
+  yield* refuseIfLocalBusy();
 
   const previousLocalBranch = yield* currentBranch(localPath).pipe(
     operationFailed("Unable to read the local checkout's branch"),
@@ -425,6 +430,27 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     sourceRoot = yield* gitRoot(worktreePath).pipe(
       operationFailed("Unable to find the worktree's repository root"),
     );
+    // A branch only moves between checkouts of one repository; another repository's branch of the
+    // same name is a different branch.
+    const commonDirectory = Effect.fn("ThreadLocalCheckout.commonDirectory")(function* (
+      root: string,
+    ) {
+      const common = (yield* run("commonDir", root, [
+        "rev-parse",
+        "--git-common-dir",
+      ])).stdout.replace(/\r?\n$/, "");
+      return yield* realPath(path.resolve(root, common));
+    });
+    const [localCommon, sourceCommon] = yield* Effect.all([
+      commonDirectory(localPath),
+      commonDirectory(sourceRoot),
+    ]).pipe(operationFailed("Unable to read the repositories"));
+    if (localCommon !== sourceCommon) {
+      return yield* fail(
+        "different_repository",
+        `The worktree at '${worktreePath}' belongs to a different repository than the project folder.`,
+      );
+    }
     const worktreeBranch = yield* currentBranch(sourceRoot).pipe(
       operationFailed("Unable to read the worktree's branch"),
     );
@@ -609,7 +635,7 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
               : ` The checkout's tracked files before the rollback are saved as commit ${recoveryCommit}; \`git stash apply ${recoveryCommit}\` brings them back.`) +
             (recoveryDirectory === null
               ? ""
-              : ` Files the rollback took out of the checkout are in '${recoveryDirectory}'.`);
+              : ` Files the rollback took out of the checkout are in '${recoveryDirectory}${path.sep}files'.`);
           return yield* fail(
             "operation_failed",
             failures.length === 0
@@ -774,20 +800,35 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     return recoveryDirectory;
   });
   const moveAside = Effect.fn("ThreadLocalCheckout.moveAside")(function* (relative: string) {
-    const destination = path.join(yield* recoveryRoot(), relative);
+    const destination = path.join(yield* recoveryRoot(), "files", relative);
     yield* fileSystem.makeDirectory(path.dirname(destination), { recursive: true });
     yield* fileSystem.rename(path.join(localPath, relative), destination);
+  });
+  // Effect has no rmdir, and a recursive remove after an emptiness check could take a file created
+  // in between. Renaming the folder aside is atomic and keeps whatever is in it; if the rename
+  // fails, an empty folder simply stays.
+  const clearEmptyFolder = Effect.fn("ThreadLocalCheckout.clearEmptyFolder")(function* (
+    folder: string,
+  ) {
+    const entries = yield* fileSystem.readDirectory(folder).pipe(Effect.orElseSucceed(() => ["?"]));
+    if (entries.length > 0) return false;
+    const destination = path.join(
+      yield* recoveryRoot(),
+      "folders",
+      path.relative(localPath, folder),
+    );
+    yield* fileSystem.makeDirectory(path.dirname(destination), { recursive: true });
+    return yield* fileSystem.rename(folder, destination).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
   });
   const dropEmptyParents = Effect.fn("ThreadLocalCheckout.dropEmptyParents")(function* (
     relative: string,
   ) {
     let parent = path.dirname(path.join(localPath, relative));
     while (parent !== localPath && parent.startsWith(`${localPath}${path.sep}`)) {
-      const entries = yield* fileSystem
-        .readDirectory(parent)
-        .pipe(Effect.orElseSucceed(() => ["?"]));
-      if (entries.length > 0) break;
-      yield* fileSystem.remove(parent);
+      if (!(yield* clearEmptyFolder(parent))) break;
       parent = path.dirname(parent);
     }
   });
@@ -849,7 +890,7 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     // path meanwhile, and then the newer file stays.
     for (const batch of chunked(existing)) {
       yield* run("resetIndex", localPath, literal(["reset", "-q", "HEAD", "--", ...batch]));
-      const scratch = path.join(yield* recoveryRoot(), ".head");
+      const scratch = path.join(yield* recoveryRoot(), "head-versions");
       yield* fileSystem.makeDirectory(scratch, { recursive: true });
       yield* run(
         "writeHeadVersions",
@@ -858,6 +899,10 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
       );
       for (const relative of batch) {
         if (yield* occupied(path.join(localPath, relative))) yield* moveAside(relative);
+        // Undoing the snapshot may have removed the folder a deleted file lived in.
+        yield* fileSystem
+          .makeDirectory(path.dirname(path.join(localPath, relative)), { recursive: true })
+          .pipe(Effect.ignore);
         const linked = yield* fileSystem
           .link(path.join(scratch, relative), path.join(localPath, relative))
           .pipe(
@@ -882,10 +927,7 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
         if (yield* occupied(path.join(localPath, relative))) yield* moveAside(relative);
       }
       for (const directory of createdDirectories.toReversed()) {
-        const entries = yield* fileSystem
-          .readDirectory(directory)
-          .pipe(Effect.orElseSucceed(() => ["?"]));
-        if (entries.length === 0) yield* fileSystem.remove(directory);
+        yield* clearEmptyFolder(directory);
       }
     }),
   );
@@ -951,8 +993,8 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
                   const output = yield* fileSystem.open(target, { flag: "wx", mode });
                   const landed = yield* realPath(target);
                   if (!landed.startsWith(`${localRootReal}${path.sep}`)) {
-                    // Still empty and only ours: take it back before refusing.
-                    yield* fileSystem.remove(landed, { force: true });
+                    // Unlink the path itself: if it became a symlink, its target is not ours.
+                    yield* fileSystem.remove(target, { force: true });
                     return yield* fail(
                       "operation_failed",
                       `'${relative}' would land outside the checkout`,

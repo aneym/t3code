@@ -1247,3 +1247,204 @@ describe("project roots and late arrivals", () => {
     }).pipe(Effect.provide(gitLayer)),
   );
 });
+
+const failureMessage = (exit: Exit.Exit<unknown, unknown>) =>
+  Exit.isFailure(exit) && exit.cause.reasons[0]?._tag === "Fail"
+    ? String((exit.cause.reasons[0].error as { message?: unknown }).message)
+    : "";
+const recoveryFolder = (exit: Exit.Exit<unknown, unknown>) =>
+  /are in '([^']+)'/.exec(failureMessage(exit))?.[1];
+
+describe("rollback restores", () => {
+  it.effect("a deleted tracked file whose folder the move removed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      yield* fs.makeDirectory(`${f.worktree}/nested`);
+      yield* fs.writeFileString(`${f.worktree}/nested/leaf.txt`, "leaf\n");
+      yield* f.git(f.worktree, ["add", "nested/leaf.txt"]);
+      yield* f.git(f.worktree, ["commit", "-m", "nested leaf"]);
+      yield* f.git(f.worktree, ["rm", "-q", "nested/leaf.txt"]);
+      expectCode(
+        yield* Effect.exit(makeHarness({ fixture: f, dispatchFails: true }).move()),
+        "operation_failed",
+      );
+      yield* expectUntouched(f);
+      expect(yield* f.git(f.local, ["status", "--porcelain=v1"])).toBe("");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect("a repository file named like the scratch folder, kept with a late edit", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      yield* fs.makeDirectory(`${f.worktree}/head-versions`);
+      yield* fs.writeFileString(`${f.worktree}/head-versions/only.txt`, "source snapshot\n");
+      yield* fs.writeFileString(`${f.worktree}/shared.txt`, "carried shared edit\n");
+      yield* f.git(f.worktree, ["add", "head-versions/only.txt"]);
+      const racingFs = {
+        ...fs,
+        rename: ((from: string, to: string) =>
+          (from === `${f.local}/head-versions/only.txt`
+            ? fs.writeFileString(from, "unique edit during rollback\n")
+            : Effect.void
+          ).pipe(Effect.andThen(fs.rename(from, to)))) as typeof fs.rename,
+      };
+      const exit = yield* Effect.exit(
+        makeHarness({ fixture: f, dispatchFails: true })
+          .move()
+          .pipe(Effect.provideService(FileSystem.FileSystem, racingFs)),
+      );
+      expectCode(exit, "operation_failed");
+      expect(yield* fs.readFileString(`${recoveryFolder(exit)}/head-versions/only.txt`)).toBe(
+        "unique edit during rollback\n",
+      );
+      expect(yield* f.git(f.local, ["status", "--porcelain=v1"])).toBe("");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect("an index-only added file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      yield* fs.writeFileString(`${f.worktree}/added.txt`, "index-only new file\n");
+      yield* f.git(f.worktree, ["add", "added.txt"]);
+      yield* fs.remove(`${f.worktree}/added.txt`);
+      yield* fs.writeFileString(`${f.worktree}/shared.txt`, "carried shared edit\n");
+      const exit = yield* Effect.exit(makeHarness({ fixture: f, dispatchFails: true }).move());
+      expectCode(exit, "operation_failed");
+      expect(failureMessage(exit)).not.toContain("also failed");
+      expect(yield* f.git(f.local, ["status", "--porcelain=v1"])).toBe("");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect("executable bits and symlinks", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const driver = yield* instrument((input, execute) =>
+        execute({ ...input, args: ["-c", "core.filemode=true", ...input.args] }),
+      );
+      const f = yield* makeFixture().pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+      yield* fs.writeFileString(`${f.worktree}/run.sh`, "#!/bin/sh\nexit 0\n");
+      yield* fs.chmod(`${f.worktree}/run.sh`, 0o755);
+      yield* fs.symlink("shared.txt", `${f.worktree}/shortcut`);
+      yield* f.git(f.worktree, ["add", "."]);
+      yield* f.git(f.worktree, ["commit", "-m", "executable and symlink baseline"]);
+      yield* fs.writeFileString(`${f.worktree}/run.sh`, "#!/bin/sh\nexit 1\n");
+      yield* fs.remove(`${f.worktree}/shortcut`);
+      yield* fs.symlink("feature.txt", `${f.worktree}/shortcut`);
+      const exit = yield* Effect.exit(
+        makeHarness({ fixture: f, dispatchFails: true })
+          .move()
+          .pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver)),
+      );
+      expectCode(exit, "operation_failed");
+      yield* expectUntouched(f);
+      expect(yield* f.git(f.local, ["status", "--porcelain=v1"])).toBe("");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect("203 carried files with tabs, newlines and wildcards in their names", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      const names = [
+        ...Array.from({ length: 200 }, (_, i) => `batch-${String(i).padStart(3, "0")}.txt`),
+        "tabs\tinside.txt",
+        "two\nlines.txt",
+        "literal*.txt",
+      ];
+      for (const name of names) yield* fs.writeFileString(`${f.worktree}/${name}`, `base\n`);
+      yield* f.git(f.worktree, ["add", "."]);
+      yield* f.git(f.worktree, ["commit", "-m", "batch baseline"]);
+      for (const name of names) yield* fs.writeFileString(`${f.worktree}/${name}`, `carried\n`);
+      expectCode(
+        yield* Effect.exit(makeHarness({ fixture: f, dispatchFails: true }).move()),
+        "operation_failed",
+      );
+      yield* expectUntouched(f);
+      expect(yield* f.git(f.local, ["status", "--porcelain=v1"])).toBe("");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+});
+
+describe("repository identity", () => {
+  it.effect("refuses a worktree from a different repository with the same branch name", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      const other = `${f.root}/unrelated`;
+      yield* fs.makeDirectory(other);
+      yield* f.git(other, ["init", "-b", "feature"]);
+      yield* f.git(other, ["config", "user.name", "Other"]);
+      yield* f.git(other, ["config", "user.email", "other@example.test"]);
+      yield* fs.writeFileString(`${other}/unrelated.txt`, "another repository\n");
+      yield* f.git(other, ["add", "."]);
+      yield* f.git(other, ["commit", "-m", "unrelated"]);
+      yield* f.git(f.worktree, ["switch", "--detach"]);
+      const exit = yield* Effect.exit(
+        makeHarness({ fixture: f, threadWorktreePath: other }).move(),
+      );
+      expectCode(exit, "different_repository");
+      expect(yield* currentBranch(f, f.local)).toBe("main");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect.each(["root", "subfolder"])(
+    "moves repository-relative paths when the thread's worktree path is its %s",
+    (sourceKind) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const f = yield* makeFixture();
+        yield* fs.makeDirectory(`${f.local}/nested`);
+        yield* fs.makeDirectory(`${f.worktree}/nested`);
+        yield* fs.writeFileString(`${f.worktree}/nested/new.txt`, "nested untracked\n");
+        yield* fs.writeFileString(`${f.worktree}/outside.txt`, "root untracked\n");
+        const result = yield* makeHarness({
+          fixture: { ...f, local: `${f.local}/nested` },
+          threadWorktreePath: sourceKind === "root" ? f.worktree : `${f.worktree}/nested`,
+        }).move();
+        expect(result.localCheckoutPath).toBe(`${f.local}/nested`);
+        expect(yield* fs.readFileString(`${f.local}/nested/new.txt`)).toBe("nested untracked\n");
+        expect(yield* fs.readFileString(`${f.local}/outside.txt`)).toBe("root untracked\n");
+        expect(yield* fs.exists(`${f.local}/nested/nested`)).toBe(false);
+      }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect("treats a running thread at the repository root as busy for a subfolder project", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      yield* fs.makeDirectory(`${f.local}/nested`);
+      const exit = yield* Effect.exit(
+        makeHarness({
+          fixture: { ...f, local: `${f.local}/nested` },
+          others: [
+            { id: "root", title: "Busy at repo root", worktreePath: f.local, running: true },
+          ],
+        }).move(),
+      );
+      expectCode(exit, "local_checkout_busy");
+      yield* expectUntouched(f);
+    }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect("never removes an outside file when the copy target becomes a symlink", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      const victim = `${f.root}/outside-victim.txt`;
+      const target = `${f.local}/new.txt`;
+      yield* fs.writeFileString(victim, "external unique data\n");
+      yield* fs.writeFileString(`${f.worktree}/new.txt`, "source file\n");
+      const racingFs = {
+        ...fs,
+        realPath: ((name: string) =>
+          (name === target
+            ? fs.remove(target).pipe(Effect.andThen(fs.symlink(victim, target)))
+            : Effect.void
+          ).pipe(Effect.andThen(fs.realPath(name)))) as typeof fs.realPath,
+      };
+      const exit = yield* Effect.exit(
+        makeHarness({ fixture: f })
+          .move()
+          .pipe(Effect.provideService(FileSystem.FileSystem, racingFs)),
+      );
+      expectCode(exit, "operation_failed");
+      expect(yield* fs.readFileString(victim)).toBe("external unique data\n");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+});
