@@ -134,7 +134,9 @@ export const moveThreadToLocalCheckout = Effect.fn("ThreadLocalCheckout.move")(f
 
   const path = yield* Path.Path;
   const checkoutKey = path.resolve(project.workspaceRoot);
-  return yield* Effect.uninterruptibleMask((restore) =>
+  // Uninterruptible: a client disconnect between git steps would strand the branch, the
+  // stash, or both checkouts half switched. Every step is bounded git work.
+  return yield* Effect.uninterruptible(
     Effect.gen(function* () {
       if (!(yield* acquire(input.threadId, checkoutKey))) {
         return yield* fail(
@@ -142,7 +144,7 @@ export const moveThreadToLocalCheckout = Effect.fn("ThreadLocalCheckout.move")(f
           "Another move into this project's local checkout is already running. Try again when it finishes.",
         );
       }
-      return yield* restore(performMove(input, project.workspaceRoot)).pipe(
+      return yield* performMove(input, project.workspaceRoot).pipe(
         Effect.ensuring(release(input.threadId, checkoutKey)),
       );
     }),
