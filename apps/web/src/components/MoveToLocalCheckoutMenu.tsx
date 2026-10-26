@@ -28,7 +28,6 @@ import {
   AlertDialogTitle,
 } from "./ui/alert-dialog";
 import { Button } from "./ui/button";
-import { Checkbox } from "./ui/checkbox";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
@@ -65,7 +64,6 @@ export function MoveToLocalCheckoutMenu(props: {
     reportFailure: false,
   });
   const [confirming, setConfirming] = useState(false);
-  const [removeWorktree, setRemoveWorktree] = useState(true);
   const [pending, setPending] = useState(false);
 
   if (!canWriteSourceControl || !canOperate) {
@@ -80,7 +78,7 @@ export function MoveToLocalCheckoutMenu(props: {
     setPending(true);
     const result = await moveThread({
       environmentId,
-      input: { threadId, removeWorktree },
+      input: { threadId },
     });
     setPending(false);
     if (result._tag === "Success") {
@@ -88,33 +86,19 @@ export function MoveToLocalCheckoutMenu(props: {
       const moved = result.value;
       // Refreshing re-reads both checkouts' branch lists, which still show the old worktree.
       const refreshed = [moved.localCheckoutPath];
-      if (moved.worktree.status !== "removed") refreshed.push(moved.previousWorktreePath);
+      if (moved.previousWorktreeKept) refreshed.push(moved.previousWorktreePath);
       for (const cwd of refreshed) {
         void refreshVcsStatus({ environmentId, input: { cwd } });
       }
-      const worktreeNote =
-        moved.worktree.status === "removed"
-          ? "The worktree folder was deleted."
-          : moved.worktree.status === "remove_failed"
-            ? `The worktree folder could not be deleted: ${moved.worktree.detail}`
-            : moved.worktree.reason === "shared_with_archived_thread"
-              ? "The worktree folder was kept because an archived thread still uses it."
-              : moved.worktree.reason === "changed_during_move"
-                ? "Something wrote to the worktree during the move, so its folder was kept. Compare it with the local checkout."
-                : moved.worktree.reason === "requested" && moved.carriedChanges
-                  ? "The worktree folder still has its own copy of the changes."
-                  : null;
       toastManager.add(
         stackedThreadToast({
-          type:
-            moved.worktree.status === "remove_failed" ||
-            (moved.worktree.status === "kept" && moved.worktree.reason === "changed_during_move")
-              ? "warning"
-              : "success",
+          type: "success",
           title: `Moved to the local checkout on ${moved.branch}`,
           description: [
             moved.carriedChanges ? "Uncommitted changes came along." : null,
-            worktreeNote,
+            moved.previousWorktreeKept
+              ? "The old worktree folder is kept with its own copy of the changes."
+              : null,
           ]
             .filter((line) => line !== null)
             .join(" "),
@@ -139,13 +123,7 @@ export function MoveToLocalCheckoutMenu(props: {
           {props.children}
         </MenuTrigger>
         <MenuPopup align="start" {...composerMenuProps}>
-          <MenuItem
-            disabled={running}
-            onClick={() => {
-              setRemoveWorktree(true);
-              setConfirming(true);
-            }}
-          >
+          <MenuItem disabled={running} onClick={() => setConfirming(true)}>
             <FolderInputIcon />
             {running
               ? "Move to local checkout (wait for the turn to end)"
@@ -161,23 +139,11 @@ export function MoveToLocalCheckoutMenu(props: {
               {localPath ?? "The project folder"} switches to{" "}
               {branch === null ? "this thread's branch" : <code>{branch}</code>}, and the worktree's
               uncommitted changes come with it. The local checkout needs no uncommitted changes of
-              its own. The agent continues there from its next message.
+              its own. The agent continues there from its next message. The worktree folder at{" "}
+              <code>{worktreePath}</code> stays, on a detached HEAD with its own copy of the
+              changes. It isn't deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <label className="flex items-start gap-2 px-6 text-sm">
-            <Checkbox
-              checked={removeWorktree}
-              onCheckedChange={(checked) => setRemoveWorktree(checked === true)}
-              disabled={pending}
-            />
-            <span>
-              Delete the worktree folder
-              <span className="block text-muted-foreground text-xs">
-                {worktreePath}. Ignored files in it, like node_modules and .env, are deleted with
-                it. Kept, it stays on a detached HEAD with its own copy of the changes.
-              </span>
-            </span>
-          </label>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" size="sm" disabled={pending} />}>
               Cancel

@@ -224,7 +224,7 @@ const expectUntouched = Effect.fn("expectUntouched")(function* (fixture: Fixture
 });
 
 describe("moveThreadToLocalCheckout", () => {
-  it.effect("moves a clean worktree branch into the local checkout and deletes the worktree", () =>
+  it.effect("moves a clean worktree branch into the local checkout and keeps the worktree", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const fixture = yield* makeFixture();
@@ -238,14 +238,11 @@ describe("moveThreadToLocalCheckout", () => {
         previousWorktreePath: fixture.worktree,
         previousLocalBranch: "main",
         carriedChanges: false,
-        worktree: { status: "removed" },
+        previousWorktreeKept: true,
       });
       expect(yield* currentBranch(fixture, fixture.local)).toBe("feature");
       expect(yield* fs.readFileString(`${fixture.local}/feature.txt`)).toBe("feature\n");
-      expect(yield* fs.exists(fixture.worktree)).toBe(false);
-      expect(yield* fixture.git(fixture.local, ["worktree", "list", "--porcelain"])).not.toContain(
-        fixture.worktree,
-      );
+      expect(yield* currentBranch(fixture, fixture.worktree)).toBe("HEAD");
       expect(harness.dispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "thread.metadata.update",
@@ -281,7 +278,14 @@ describe("moveThreadToLocalCheckout", () => {
       expect(yield* fs.readFileString(`${fixture.local}/feature.txt`)).toBe("unstaged edit\n");
       expect(yield* fs.readFileString(`${fixture.local}/notes/deep/todo.md`)).toBe("untracked\n");
       expect(yield* stashCount(fixture)).toBe(0);
-      expect(result.worktree).toEqual({ status: "removed" });
+      expect(result.previousWorktreeKept).toBe(true);
+      // The kept worktree still holds its own copy of every change.
+      expect(yield* fs.readFileString(`${fixture.worktree}/notes/deep/todo.md`)).toBe(
+        "untracked\n",
+      );
+      expect(yield* fixture.git(fixture.worktree, ["diff", "--cached", "--name-only"])).toBe(
+        "shared.txt",
+      );
     }).pipe(Effect.provide(gitLayer)),
   );
 
@@ -468,7 +472,7 @@ describe("moveThreadToLocalCheckout", () => {
     }).pipe(Effect.provide(gitLayer)),
   );
 
-  it.effect("keeps the worktree folder when an archived thread still points at it", () =>
+  it.effect("moves even when an archived thread still points at the worktree", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const fixture = yield* makeFixture();
@@ -481,40 +485,28 @@ describe("moveThreadToLocalCheckout", () => {
 
       const result = yield* harness.move();
 
-      expect(result.worktree).toEqual({ status: "kept", reason: "shared_with_archived_thread" });
+      expect(result.previousWorktreeKept).toBe(true);
       expect(yield* fs.exists(fixture.worktree)).toBe(true);
       expect(yield* currentBranch(fixture, fixture.worktree)).toBe("HEAD");
       expect(yield* currentBranch(fixture, fixture.local)).toBe("feature");
     }).pipe(Effect.provide(gitLayer)),
   );
 
-  it.effect("keeps the worktree folder detached when asked", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const fixture = yield* makeFixture();
-      const harness = makeHarness({ fixture });
-
-      const result = yield* harness.move({ removeWorktree: false });
-
-      expect(result.worktree).toEqual({ status: "kept", reason: "requested" });
-      expect(yield* fs.exists(fixture.worktree)).toBe(true);
-      expect(yield* currentBranch(fixture, fixture.worktree)).toBe("HEAD");
-    }).pipe(Effect.provide(gitLayer)),
-  );
-
-  it.effect("deletes ignored files with the worktree folder", () =>
+  it.effect("leaves ignored files in the kept worktree", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const fixture = yield* makeFixture();
       yield* fs.makeDirectory(`${fixture.worktree}/ignored`, { recursive: true });
-      yield* fs.writeFileString(`${fixture.worktree}/ignored/cache.bin`, "cache\n");
+      yield* fs.writeFileString(`${fixture.worktree}/ignored/secret.env`, "only copy\n");
       const harness = makeHarness({ fixture });
 
       const result = yield* harness.move();
 
-      expect(result).toMatchObject({ carriedChanges: false, worktree: { status: "removed" } });
-      expect(yield* fs.exists(fixture.worktree)).toBe(false);
-      expect(yield* fs.exists(`${fixture.local}/ignored/cache.bin`)).toBe(false);
+      expect(result).toMatchObject({ carriedChanges: false, previousWorktreeKept: true });
+      expect(yield* fs.readFileString(`${fixture.worktree}/ignored/secret.env`)).toBe(
+        "only copy\n",
+      );
+      expect(yield* fs.exists(`${fixture.local}/ignored/secret.env`)).toBe(false);
     }).pipe(Effect.provide(gitLayer)),
   );
 
@@ -527,7 +519,7 @@ describe("moveThreadToLocalCheckout", () => {
 
       const result = yield* harness.move();
 
-      expect(result.worktree).toEqual({ status: "kept", reason: "missing" });
+      expect(result.previousWorktreeKept).toBe(false);
       expect(yield* currentBranch(fixture, fixture.local)).toBe("feature");
     }).pipe(Effect.provide(gitLayer)),
   );

@@ -44,7 +44,7 @@ const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
 
 const WorktreeMoveToLocalTool = Tool.make("t3_worktree_move_to_local", {
   description:
-    "Move THIS thread out of its worktree into the project's local checkout: its branch and uncommitted changes (not ignored files) go with it. Refuses when the checkout has tracked changes, another thread is working there or shares the worktree, or untracked files collide. Switches the checkout's branch. Deletes the worktree folder unless `removeWorktree` is false. Call last in your turn. The move ends the live session. `continuationPrompt` resumes work there next turn.",
+    "Move THIS thread out of its worktree into the project's local checkout: its branch and uncommitted changes (not ignored files) go with it. Refuses when the checkout has tracked changes, another thread is working there or shares the worktree, or untracked files collide. Switches the checkout's branch. Keeps the old worktree folder, detached, with its copy of the changes. Call last in your turn. The move ends the live session. `continuationPrompt` resumes work there next turn.",
   parameters: WorktreeMcpMoveToLocalInput,
   success: WorktreeMcpMoveToLocalResult,
   failure: WorktreeToolFailure,

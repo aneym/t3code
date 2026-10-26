@@ -459,7 +459,6 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const moved = yield* ThreadLocalCheckout.moveThreadToLocalCheckout({
           threadId: scope.thread.threadId,
-          removeWorktree: input.removeWorktree,
           allowActiveRun: true,
         }).pipe(
           Effect.provide(moveServices),
@@ -511,14 +510,9 @@ const make = Effect.gen(function* () {
       }),
     );
 
-    const worktreeNote =
-      moved.worktree.status === "removed"
-        ? "The worktree folder was deleted, including its ignored files."
-        : moved.worktree.status === "remove_failed"
-          ? `The worktree folder could not be deleted: ${moved.worktree.detail}`
-          : moved.worktree.status === "kept" && moved.worktree.reason === "changed_during_move"
-            ? "Something wrote to the worktree after its changes were captured, so the folder was kept on a detached HEAD. Compare it with the local checkout before deleting it."
-            : "The worktree folder was kept on a detached HEAD, still holding its own copy of the changes.";
+    const worktreeNote = moved.previousWorktreeKept
+      ? `The old worktree stays at '${moved.previousWorktreePath}' on a detached HEAD with its own copy of the changes; it is not deleted.`
+      : "";
     const result: WorktreeMcpMoveToLocalResult = {
       ...moved,
       continuation,

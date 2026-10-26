@@ -5,26 +5,8 @@ import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 /** Moves a worktree thread's branch and uncommitted changes into the project's local checkout. */
 export const ThreadMoveToLocalCheckoutInput = Schema.Struct({
   threadId: ThreadId,
-  /** Default true. False leaves the worktree folder on a detached HEAD. */
-  removeWorktree: Schema.optional(Schema.Boolean),
 });
 export type ThreadMoveToLocalCheckoutInput = typeof ThreadMoveToLocalCheckoutInput.Type;
-
-export const ThreadMoveToLocalCheckoutWorktreeStatus = Schema.Union([
-  Schema.Struct({ status: Schema.Literal("removed") }),
-  Schema.Struct({
-    status: Schema.Literal("kept"),
-    reason: Schema.Literals([
-      "requested",
-      "shared_with_archived_thread",
-      "missing",
-      "changed_during_move",
-    ]),
-  }),
-  Schema.Struct({ status: Schema.Literal("remove_failed"), detail: Schema.String }),
-]);
-export type ThreadMoveToLocalCheckoutWorktreeStatus =
-  typeof ThreadMoveToLocalCheckoutWorktreeStatus.Type;
 
 export const ThreadMoveToLocalCheckoutResult = Schema.Struct({
   branch: TrimmedNonEmptyString,
@@ -33,7 +15,11 @@ export const ThreadMoveToLocalCheckoutResult = Schema.Struct({
   /** The local checkout's branch before the move, or null when it was on a detached HEAD. */
   previousLocalBranch: Schema.NullOr(TrimmedNonEmptyString),
   carriedChanges: Schema.Boolean,
-  worktree: ThreadMoveToLocalCheckoutWorktreeStatus,
+  /**
+   * The worktree folder is never deleted: it stays on a detached HEAD with its own copy of the
+   * changes, for storage cleanup to remove. False when the folder was already gone.
+   */
+  previousWorktreeKept: Schema.Boolean,
 });
 export type ThreadMoveToLocalCheckoutResult = typeof ThreadMoveToLocalCheckoutResult.Type;
 

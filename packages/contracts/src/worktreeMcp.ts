@@ -77,11 +77,6 @@ export type WorktreeMcpHandoffResult = typeof WorktreeMcpHandoffResult.Type;
 
 /** Moves the branch and uncommitted changes into the project checkout, ending this turn like a handoff. */
 export const WorktreeMcpMoveToLocalInput = Schema.Struct({
-  removeWorktree: Schema.optional(
-    Schema.Boolean.annotate({
-      description: "Default true. False keeps the worktree folder on a detached HEAD.",
-    }),
-  ),
   continuationPrompt: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
       description: "Work to resume in the local checkout next turn. Omitted: thread waits.",

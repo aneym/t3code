@@ -4,7 +4,6 @@ import {
   ThreadMoveToLocalCheckoutError,
   type ThreadId,
   type ThreadMoveToLocalCheckoutResult,
-  type ThreadMoveToLocalCheckoutWorktreeStatus,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -25,7 +24,6 @@ type ErrorCode = ThreadMoveToLocalCheckoutError["code"];
 
 export interface MoveThreadToLocalCheckoutInput {
   readonly threadId: ThreadId;
-  readonly removeWorktree?: boolean | undefined;
   /** The thread's own agent may move it mid-turn; the workspace change ends that turn. */
   readonly allowActiveRun?: boolean;
 }
@@ -376,49 +374,6 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     return null;
   });
 
-  // What the move captured from the worktree. If it differs when the move finishes, something
-  // wrote there meanwhile, so the folder is kept instead of deleted.
-  const fingerprintWorktree = Effect.fn("ThreadLocalCheckout.fingerprintWorktree")(function* () {
-    const entries = yield* statusOf("fingerprintStatus", worktreePath!);
-    const created = (yield* run("fingerprintSnapshot", worktreePath!, [
-      "stash",
-      "create",
-    ])).stdout.trim();
-    const trees =
-      created.length === 0
-        ? ""
-        : (yield* run("fingerprintTrees", worktreePath!, [
-            "rev-parse",
-            `${created}^{tree}`,
-            `${created}^2^{tree}`,
-          ])).stdout.trim();
-    const untracked: string[] = [];
-    const regular: string[] = [];
-    for (const entry of entries.filter(isUntracked)) {
-      const link = yield* fileSystem
-        .readLink(path.join(worktreePath!, entry.path))
-        .pipe(Effect.option);
-      if (Option.isSome(link)) untracked.push(`${entry.path} -> ${link.value}`);
-      else regular.push(entry.path);
-    }
-    const hashes =
-      regular.length === 0
-        ? ""
-        : (yield* runWithStdin(
-            "fingerprintFiles",
-            worktreePath!,
-            ["hash-object", "--no-filters", "--stdin-paths"],
-            `${regular.join("\n")}\n`,
-          )).stdout;
-    return [
-      entries.map((entry) => `${entry.code} ${entry.path}`).join("\0"),
-      trees,
-      untracked.join("\0"),
-      regular.join("\0"),
-      hashes,
-    ].join("\n--\n");
-  });
-
   if (
     yield* operationInProgress(localPath).pipe(
       operationFailed("Unable to inspect the local checkout"),
@@ -445,7 +400,6 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
   let branch: string;
   let trackedSnapshot: string | null = null;
   let untrackedPaths: ReadonlyArray<string> = [];
-  let capturedFingerprint = "";
   if (worktreeOnDisk) {
     const worktreeBranch = yield* currentBranch(worktreePath).pipe(
       operationFailed("Unable to read the worktree's branch"),
@@ -547,9 +501,6 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
       trackedSnapshot = created.stdout.trim() || null;
     }
     untrackedPaths = worktreeChanges.filter(isUntracked).map((entry) => entry.path);
-    capturedFingerprint = yield* fingerprintWorktree().pipe(
-      operationFailed("Unable to read the worktree's changes"),
-    );
   } else if (thread.branch !== null) {
     branch = thread.branch;
   } else {
@@ -643,7 +594,12 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     rollbacks.push(
       Effect.gen(function* () {
         if ((yield* currentBranch(worktreePath)) !== branch) {
-          yield* run("reattachWorktree", worktreePath, ["switch", "--quiet", branch]);
+          yield* run("reattachWorktree", worktreePath, [
+            "switch",
+            "--quiet",
+            "--no-overwrite-ignore",
+            branch,
+          ]);
         }
       }),
     );
@@ -666,8 +622,8 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
         "restoreLocal",
         localPath,
         previousLocalBranch === null
-          ? ["switch", "--quiet", "--detach", previousLocalHead]
-          : ["switch", "--quiet", previousLocalBranch],
+          ? ["switch", "--quiet", "--no-overwrite-ignore", "--detach", previousLocalHead]
+          : ["switch", "--quiet", "--no-overwrite-ignore", previousLocalBranch],
       );
     }),
   );
@@ -690,28 +646,36 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
       .stdout;
     const field = listed.split("\0")[0] ?? "";
     // "<mode> <type> <oid>\t<path>"
-    return field.length === 0 ? null : (field.split("\t")[0]!.split(" ")[2] ?? null);
+    if (field.length === 0) return null;
+    const [mode, , oid] = field.split("\t")[0]!.split(" ");
+    return `${mode} ${oid}`;
   });
   const indexEntry = Effect.fn("ThreadLocalCheckout.indexEntry")(function* (relative: string) {
     const listed = (yield* run("indexEntry", localPath, ["ls-files", "-s", "-z", "--", relative]))
       .stdout;
     const field = listed.split("\0")[0] ?? "";
     // "<mode> <oid> <stage>\t<path>"
-    return field.length === 0 ? null : (field.split("\t")[0]!.split(" ")[1] ?? null);
+    if (field.length === 0) return null;
+    const [mode, oid] = field.split("\t")[0]!.split(" ");
+    return `${mode} ${oid}`;
   });
   const workingEntry = Effect.fn("ThreadLocalCheckout.workingEntry")(function* (relative: string) {
     const target = path.join(localPath, relative);
     const link = yield* fileSystem.readLink(target).pipe(Effect.option);
+    // Same "<mode> <oid>" shape as the index and trees, so a mode-only edit also counts.
     if (Option.isSome(link)) {
-      return (yield* runWithStdin(
+      const oid = (yield* runWithStdin(
         "hashLink",
         localPath,
         ["hash-object", "--stdin"],
         link.value,
       )).stdout.trim();
+      return `120000 ${oid}`;
     }
-    if (!(yield* fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false)))) return null;
-    return (yield* run("hashFile", localPath, ["hash-object", "--", relative])).stdout.trim();
+    const info = yield* fileSystem.stat(target).pipe(Effect.option);
+    if (Option.isNone(info) || info.value.type !== "File") return null;
+    const oid = (yield* run("hashFile", localPath, ["hash-object", "--", relative])).stdout.trim();
+    return `${(info.value.mode & 0o111) === 0 ? "100644" : "100755"} ${oid}`;
   });
   // Reverts only paths whose index and working copy still hold exactly what the snapshot wrote,
   // so an edit made in the checkout during the move survives the rollback.
@@ -774,14 +738,23 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     }
   });
 
-  // Paths this move created in the checkout; rollback removes exactly these and nothing else.
-  const createdFiles: string[] = [];
+  // Paths this move created in the checkout, with what it wrote. Rollback removes a file only while
+  // it still holds exactly that, so an edit made to it in the meantime survives.
+  const createdFiles: Array<{ readonly relative: string; written: string | null }> = [];
   const createdDirectories: string[] = [];
   rollbacks.push(
     Effect.gen(function* () {
       if (trackedSnapshot !== null) yield* undoSnapshot(trackedSnapshot);
       for (const file of createdFiles.toReversed()) {
-        yield* fileSystem.remove(file, { force: true });
+        const now = yield* workingEntry(file.relative).pipe(
+          Effect.orElseSucceed(() => "unreadable"),
+        );
+        if (file.written !== null && now !== file.written) {
+          if (now !== null) keptLocalEdits.push(file.relative);
+          continue;
+        }
+        // `written` is null only when the copy failed partway, leaving a partial file of ours.
+        yield* fileSystem.remove(path.join(localPath, file.relative), { force: true });
       }
       for (const directory of createdDirectories.toReversed()) {
         const entries = yield* fileSystem
@@ -836,26 +809,34 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
               );
             }
             const link = yield* fileSystem.readLink(source).pipe(Effect.option);
+            const created = { relative, written: null as string | null };
             if (Option.isSome(link)) {
               // symlink() refuses an existing path, so nothing that appeared meanwhile is replaced.
               yield* fileSystem.symlink(link.value, target);
-              createdFiles.push(target);
+              createdFiles.push(created);
             } else {
               // Write through an exclusively created file: anything that appears at the path
-              // meanwhile makes this fail instead of being overwritten.
-              const mode = (yield* fileSystem.stat(source)).mode & 0o7777;
+              // meanwhile makes this fail instead of being overwritten. The mode is set at
+              // creation only; a later chmod by path could follow a swapped-in symlink.
+              const mode = (yield* fileSystem.stat(source)).mode & 0o777;
               yield* Effect.scoped(
                 Effect.gen(function* () {
                   const output = yield* fileSystem.open(target, { flag: "wx", mode });
-                  createdFiles.push(target);
+                  createdFiles.push(created);
+                  const landed = yield* realPath(target);
+                  if (!landed.startsWith(`${localReal}${path.sep}`)) {
+                    return yield* fail(
+                      "operation_failed",
+                      `'${relative}' would land outside the checkout`,
+                    );
+                  }
                   yield* fileSystem
                     .stream(source)
                     .pipe(Stream.runForEach((chunk) => output.writeAll(chunk)));
                 }),
               );
-              // The process umask can strip bits from the mode passed at creation.
-              yield* fileSystem.chmod(target, mode);
             }
+            created.written = yield* workingEntry(relative);
           }),
         { discard: true },
       ),
@@ -875,30 +856,6 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     }),
   );
 
-  let worktree: ThreadMoveToLocalCheckoutWorktreeStatus;
-  if (!worktreeOnDisk) {
-    worktree = { status: "kept", reason: "missing" };
-  } else if (input.removeWorktree === false) {
-    worktree = { status: "kept", reason: "requested" };
-  } else if (sharers.length > 0) {
-    worktree = { status: "kept", reason: "shared_with_archived_thread" };
-  } else if (
-    (yield* fingerprintWorktree().pipe(Effect.orElseSucceed(() => "unreadable"))) !==
-    capturedFingerprint
-  ) {
-    // Something wrote to the worktree after the snapshot; deleting it would lose that work.
-    worktree = { status: "kept", reason: "changed_during_move" };
-  } else {
-    // Forced: the worktree still holds the changes it just copied into the checkout.
-    const removal = yield* Effect.exit(
-      gitWorkflow.removeWorktree({ cwd: localPath, path: worktreePath, force: true }),
-    );
-    worktree =
-      removal._tag === "Success"
-        ? { status: "removed" }
-        : { status: "remove_failed", detail: errorMessage(Cause.squash(removal.cause)) };
-  }
-
   for (const cwd of [localPath, worktreePath]) {
     yield* gitWorkflow.invalidateStatus(cwd);
   }
@@ -912,7 +869,7 @@ const performMove = Effect.fn("ThreadLocalCheckout.performMove")(function* (
     previousWorktreePath: worktreePath,
     previousLocalBranch,
     carriedChanges: trackedSnapshot !== null || untrackedPaths.length > 0,
-    worktree,
+    previousWorktreeKept: worktreeOnDisk,
   };
   return result;
 });

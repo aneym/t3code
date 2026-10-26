@@ -142,6 +142,23 @@ For a local Git repository without a remote, **Publish Repository** creates a ho
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
 make your first commit before pushing.
 
+## Move a worktree thread to the project folder
+
+A thread that works in a worktree can move into the project folder itself. Open the
+**Worktree** control under the composer and choose **Move to local checkout**. The project
+folder switches to the thread's branch and the worktree's uncommitted changes come with it,
+staged changes still staged. The agent continues there from its next message. Agents can do
+the same with the `t3_worktree_move_to_local` tool.
+
+The project folder needs no uncommitted changes of its own, and no other thread can be working
+in it. The move also stops when another thread shares the worktree, when a file would land on one
+already in the project folder, when a submodule has uncommitted work, or when files are hidden from
+git with assume-unchanged or skip-worktree. If a step fails, both folders go back to how they were;
+anything you edited in the project folder during the move is left alone.
+
+The move never deletes the worktree folder. It stays on a detached HEAD with its own copy of the
+changes; delete it yourself once you no longer need it.
+
 ## Create a pull request
 
 Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit
@@ -183,7 +200,7 @@ Press **Escape** before releasing to cancel. Failed closes stay in the list so y
 GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
 supports approving waiting fork workflows and opening a revert pull request for a merged change.
 
-Pull request sharing is off by default. In Settings → Environments → Pull request sharing (Pull
+Pull request sharing is off by default. In Settings → Connections → Pull request sharing (Pull
 request routing under Environments on mobile), choose **Read PRs** or **Read and act** for each
 environment you trust to share its source control access.
 Enable both the original environment and the environment answering its requests on this client.
