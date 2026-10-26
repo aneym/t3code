@@ -1639,6 +1639,9 @@ export function threadShellFromProjection(
     modelSelection: projection.thread.modelSelection,
     runtimeMode: projection.thread.runtimeMode,
     interactionMode: projection.thread.interactionMode,
+    ...(projection.thread.automationTaskId === undefined
+      ? {}
+      : { automationTaskId: projection.thread.automationTaskId }),
     branch: projection.thread.branch,
     worktreePath: projection.thread.worktreePath,
     pullRequests: threadPullRequestsOf(projection.thread),

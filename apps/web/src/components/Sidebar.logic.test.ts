@@ -29,13 +29,21 @@ import {
   sortScopedProjectsForSidebar,
   sortSidebarV2ProjectGroups,
   shouldNavigateAfterThreadPark,
+  filterSidebarV2VisibleThreads,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ScheduledTaskId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -51,6 +59,16 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("filterSidebarV2VisibleThreads", () => {
+  it("hides automation threads regardless of their sidebar state", () => {
+    const automation = makeThreadFixture({
+      automationTaskId: ScheduledTaskId.make("scheduled-task:test"),
+    });
+    const visible = filterSidebarV2VisibleThreads([automation], null);
+    expect(visible).toEqual([]);
+  });
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;

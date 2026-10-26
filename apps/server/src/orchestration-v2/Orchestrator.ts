@@ -2533,6 +2533,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       modelSelection: command.modelSelection,
       runtimeMode: command.runtimeMode,
       interactionMode: command.interactionMode,
+      ...(command.automationTaskId === undefined
+        ? {}
+        : { automationTaskId: command.automationTaskId }),
       branch: command.branch,
       worktreePath: command.worktreePath,
       activeProviderThreadId: null,
