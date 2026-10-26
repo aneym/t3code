@@ -516,7 +516,9 @@ const make = Effect.gen(function* () {
         ? "The worktree folder was deleted, including its ignored files."
         : moved.worktree.status === "remove_failed"
           ? `The worktree folder could not be deleted: ${moved.worktree.detail}`
-          : "The worktree folder was kept on a detached HEAD, still holding its own copy of the changes.";
+          : moved.worktree.status === "kept" && moved.worktree.reason === "changed_during_move"
+            ? "Something wrote to the worktree after its changes were captured, so the folder was kept on a detached HEAD. Compare it with the local checkout before deleting it."
+            : "The worktree folder was kept on a detached HEAD, still holding its own copy of the changes.";
     const result: WorktreeMcpMoveToLocalResult = {
       ...moved,
       continuation,

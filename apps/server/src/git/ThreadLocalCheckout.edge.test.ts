@@ -844,3 +844,128 @@ describe("MCP continuation interruption", () => {
     }).pipe(Effect.provide(gitLayer)),
   );
 });
+
+describe("writers racing the move", () => {
+  it.effect("keeps the worktree when something writes to it during the move", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      yield* fs.writeFileString(`${f.worktree}/shared.txt`, "snapshot version\n");
+      const h = makeHarness({
+        fixture: f,
+        selfRunning: true,
+        // An agent's background process writing after the snapshot was taken.
+        dispatchGate: Effect.gen(function* () {
+          yield* fs.writeFileString(`${f.worktree}/shared.txt`, "newer background edit\n");
+          yield* fs.writeFileString(`${f.worktree}/late.txt`, "new background file\n");
+        }).pipe(Effect.orDie),
+      });
+      const result = yield* h.move({ allowActiveRun: true });
+      expect(result.worktree).toEqual({ status: "kept", reason: "changed_during_move" });
+      expect(yield* fs.readFileString(`${f.local}/shared.txt`)).toBe("snapshot version\n");
+      expect(yield* fs.readFileString(`${f.worktree}/shared.txt`)).toBe("newer background edit\n");
+      expect(yield* fs.readFileString(`${f.worktree}/late.txt`)).toBe("new background file\n");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect("rollback leaves an edit made in the checkout during the move", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      yield* fs.writeFileString(`${f.worktree}/shared.txt`, "moving edit\n");
+      const driver = yield* instrument((input, execute) =>
+        input.operation === "ThreadLocalCheckout.applySnapshot"
+          ? fs
+              .writeFileString(`${f.local}/shared.txt`, "user typed this during move\n")
+              .pipe(Effect.orDie, Effect.andThen(execute(input)))
+          : execute(input),
+      );
+      const exit = yield* Effect.exit(
+        makeHarness({ fixture: f })
+          .move()
+          .pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver)),
+      );
+      expectCode(exit, "operation_failed");
+      expect(yield* fs.readFileString(`${f.local}/shared.txt`)).toBe(
+        "user typed this during move\n",
+      );
+      expect(yield* fs.readFileString(`${f.worktree}/shared.txt`)).toBe("moving edit\n");
+      expect(yield* currentBranch(f, f.worktree)).toBe("feature");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect("never overwrites a file that appears in the checkout while copying", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      yield* fs.writeFileString(`${f.worktree}/new.txt`, "incoming new file\n");
+      const racingFs = {
+        ...fs,
+        open: ((target: string, options?: Parameters<typeof fs.open>[1]) =>
+          (target === `${f.local}/new.txt`
+            ? fs.writeFileString(target, "user created this during copy\n")
+            : Effect.void
+          ).pipe(Effect.andThen(fs.open(target, options)))) as typeof fs.open,
+      };
+      const exit = yield* Effect.exit(
+        makeHarness({ fixture: f })
+          .move()
+          .pipe(Effect.provideService(FileSystem.FileSystem, racingFs)),
+      );
+      expectCode(exit, "operation_failed");
+      expect(yield* fs.readFileString(`${f.local}/new.txt`)).toBe(
+        "user created this during copy\n",
+      );
+      expect(yield* fs.readFileString(`${f.worktree}/new.txt`)).toBe("incoming new file\n");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+});
+
+describe("index flags and destination folders", () => {
+  it.effect.each(["--assume-unchanged", "--skip-worktree"])("refuses edits hidden by %s", (flag) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      yield* f.git(f.worktree, ["update-index", flag, "shared.txt"]);
+      yield* fs.writeFileString(`${f.worktree}/shared.txt`, "hidden user work\n");
+      expectCode(yield* Effect.exit(makeHarness({ fixture: f }).move()), "hidden_changes");
+      yield* expectUntouched(f);
+      expect(yield* fs.readFileString(`${f.worktree}/shared.txt`)).toBe("hidden user work\n");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect("refuses a destination folder that is a symlink out of the checkout", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      const external = `${f.root}/external`;
+      yield* fs.makeDirectory(external);
+      yield* fs.symlink(external, `${f.local}/notes`);
+      yield* fs.makeDirectory(`${f.worktree}/notes`);
+      yield* fs.writeFileString(`${f.worktree}/notes/new.txt`, "source note\n");
+      expectCode(yield* Effect.exit(makeHarness({ fixture: f }).move()), "untracked_collision");
+      yield* expectUntouched(f);
+      expect(yield* fs.exists(`${external}/new.txt`)).toBe(false);
+    }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect("keeps an untracked file's permission bits", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      yield* fs.writeFileString(`${f.worktree}/script`, "#!/bin/sh\nexit 0\n");
+      yield* fs.chmod(`${f.worktree}/script`, 0o751);
+      yield* makeHarness({ fixture: f }).move();
+      expect((yield* fs.stat(`${f.local}/script`)).mode & 0o777).toBe(0o751);
+    }).pipe(Effect.provide(gitLayer)),
+  );
+  it.effect("refuses a nested repository without touching its contents", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const f = yield* makeFixture();
+      const nested = `${f.worktree}/nested`;
+      yield* fs.makeDirectory(nested);
+      yield* f.git(nested, ["init", "-b", "main"]);
+      yield* fs.writeFileString(`${nested}/only-copy`, "nested user work\n");
+      expectCode(yield* Effect.exit(makeHarness({ fixture: f }).move()), "operation_failed");
+      yield* expectUntouched(f);
+      expect(yield* fs.readFileString(`${nested}/only-copy`)).toBe("nested user work\n");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+});

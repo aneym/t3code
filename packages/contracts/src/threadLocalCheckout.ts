@@ -14,7 +14,12 @@ export const ThreadMoveToLocalCheckoutWorktreeStatus = Schema.Union([
   Schema.Struct({ status: Schema.Literal("removed") }),
   Schema.Struct({
     status: Schema.Literal("kept"),
-    reason: Schema.Literals(["requested", "shared_with_archived_thread", "missing"]),
+    reason: Schema.Literals([
+      "requested",
+      "shared_with_archived_thread",
+      "missing",
+      "changed_during_move",
+    ]),
   }),
   Schema.Struct({ status: Schema.Literal("remove_failed"), detail: Schema.String }),
 ]);
@@ -48,6 +53,7 @@ export class ThreadMoveToLocalCheckoutError extends Schema.TaggedError<ThreadMov
       "worktree_conflicted",
       "worktree_operation_in_progress",
       "submodule_changes",
+      "hidden_changes",
       "local_checkout_dirty",
       "local_checkout_busy",
       "local_operation_in_progress",

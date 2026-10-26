@@ -99,12 +99,18 @@ export function MoveToLocalCheckoutMenu(props: {
             ? `The worktree folder could not be deleted: ${moved.worktree.detail}`
             : moved.worktree.reason === "shared_with_archived_thread"
               ? "The worktree folder was kept because an archived thread still uses it."
-              : moved.worktree.reason === "requested" && moved.carriedChanges
-                ? "The worktree folder still has its own copy of the changes."
-                : null;
+              : moved.worktree.reason === "changed_during_move"
+                ? "Something wrote to the worktree during the move, so its folder was kept. Compare it with the local checkout."
+                : moved.worktree.reason === "requested" && moved.carriedChanges
+                  ? "The worktree folder still has its own copy of the changes."
+                  : null;
       toastManager.add(
         stackedThreadToast({
-          type: moved.worktree.status === "remove_failed" ? "warning" : "success",
+          type:
+            moved.worktree.status === "remove_failed" ||
+            (moved.worktree.status === "kept" && moved.worktree.reason === "changed_during_move")
+              ? "warning"
+              : "success",
           title: `Moved to the local checkout on ${moved.branch}`,
           description: [
             moved.carriedChanges ? "Uncommitted changes came along." : null,
