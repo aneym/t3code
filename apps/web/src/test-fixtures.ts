@@ -18,7 +18,6 @@ import type { ChatMessage, Thread } from "./types";
 const DEFAULT_TIMESTAMP = "2026-01-01T00:00:00.000Z";
 
 export type ThreadFixtureOverrides = Partial<Thread> & {
-  readonly automationTaskId?: string | null;
   readonly messages?: ReadonlyArray<ChatMessage>;
   readonly proposedPlans?: ReadonlyArray<unknown>;
 };
