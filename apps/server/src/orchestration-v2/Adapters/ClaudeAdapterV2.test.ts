@@ -12499,6 +12499,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         transcriptDir,
       },
     });
+  const backgroundWorkflowTaskStarted = claudeSdkFrame({
+    ...workflowTaskStarted,
+    is_backgrounded: true,
+  });
   const workflowSnapshot = (input: {
     readonly uuid: string;
     readonly state: "queued" | "start" | "done";
@@ -12613,6 +12617,73 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
     yield* input.harness.until(() => workflowMemberEvents(input.harness.events, 2).length === 1);
   });
+
+  it.effect("matches live background subagents without moving them into the task roster", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWorkflowHarness;
+        const now = yield* DateTime.now;
+        const agentTaskId = "task-background-agent";
+        const bashTaskId = "task-background-bash";
+        const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+        if (awaitBackgroundTasks === undefined) {
+          throw new Error("Claude adapter runtime must expose awaitBackgroundTasks.");
+        }
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-background-wait-subagents"),
+            text: "Run the background work.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(workflowToolUse);
+        yield* harness.offerAndWait(backgroundWorkflowTaskStarted);
+        yield* harness.offerAndWait(workflowLaunchAck(harness.transcriptDir));
+        yield* harness.offerAndWait(
+          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001010", state: "start" }),
+        );
+        yield* harness.until(() => workflowMemberEvents(harness.events, 2).length === 1);
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId: agentTaskId,
+            toolUseId: "toolu-background-agent",
+            uuid: "00000000-0000-4000-8000-000000001011",
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [{ task_id: bashTaskId, task_type: "local_bash", description: "Build" }],
+            uuid: "00000000-0000-4000-8000-000000001012",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+
+        const marked = yield* awaitBackgroundTasks({
+          providerThread: harness.providerThread,
+          taskIds: [WORKFLOW_TASK_ID, agentTaskId, bashTaskId, "unknown-task"],
+          awaited: true,
+        });
+        assert.deepStrictEqual(marked.matched, [WORKFLOW_TASK_ID, agentTaskId, bashTaskId]);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        const released = yield* awaitBackgroundTasks({
+          providerThread: harness.providerThread,
+          taskIds: [WORKFLOW_TASK_ID, agentTaskId, bashTaskId],
+          awaited: false,
+        });
+        assert.deepStrictEqual(released.matched, [WORKFLOW_TASK_ID, agentTaskId, bashTaskId]);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
 
   it.effect.each(["Agent", "Workflow"] as const)(
     "keeps a workflow running after its %s launch reply without an async flag",

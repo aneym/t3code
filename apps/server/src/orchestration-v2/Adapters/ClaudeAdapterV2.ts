@@ -10685,16 +10685,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* Ref.get(pendingBackgroundTasksByNativeThread),
                 nativeThreadId,
               );
-              const matched = [...new Set(taskIds)].filter((taskId) => roster.has(taskId));
-              if (matched.length === 0) return { matched };
+              const backgroundedSubagents = yield* Ref.get(backgroundedSubagentTaskIds);
+              const liveQuery = yield* Ref.get(queryContext);
+              const subagents = yield* Ref.get(sessionSubagentsByTaskId);
+              const matched = [...new Set(taskIds)].filter((taskId) => {
+                if (roster.has(taskId)) return true;
+                const subagent = subagents.get(taskId);
+                return (
+                  subagent !== undefined &&
+                  backgroundedSubagents.has(taskId) &&
+                  subagent.task.threadId === providerThread.appThreadId &&
+                  subagent.task.status === "running" &&
+                  liveQuery?.nativeThreadId === nativeThreadId &&
+                  !liveQuery.subagentsFromEarlierProcesses.has(subagent)
+                );
+              });
+              const matchedRosterTasks = matched.filter((taskId) => roster.has(taskId));
+              if (matchedRosterTasks.length === 0) return { matched };
               if (awaited) {
                 yield* addTaskIdsToNativeThreadSet(
                   awaitedBackgroundTasksByNativeThread,
                   nativeThreadId,
-                  matched,
+                  matchedRosterTasks,
                 );
               } else {
-                for (const taskId of matched) {
+                for (const taskId of matchedRosterTasks) {
                   yield* clearTaskIdFromNativeThreadSet(
                     awaitedBackgroundTasksByNativeThread,
                     nativeThreadId,
