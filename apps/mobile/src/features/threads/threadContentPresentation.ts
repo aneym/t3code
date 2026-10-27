@@ -41,7 +41,10 @@ export function projectThreadContentPresentation(input: {
   }
   return {
     kind: "unavailable",
-    title: "Messages not cached",
-    detail: "Reconnect this environment to load the conversation.",
+    title: "Not downloaded yet",
+    detail:
+      input.connectionState === "error" || input.connectionState === "unsupported"
+        ? "Reconnect this environment to load the conversation."
+        : "It will load when you’re back online.",
   };
 }

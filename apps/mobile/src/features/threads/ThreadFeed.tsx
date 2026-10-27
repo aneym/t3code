@@ -2635,6 +2635,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     worktreeSetup: props.worktreeSetup,
     setupWorkingStartedAt: props.setupWorkingStartedAt,
     dispatchingMessageId: props.dispatchingMessageId,
+    connected: props.connectionState === "connected",
     unsettledTurnId,
     copiedRowId,
     expandedWorkGroups,

@@ -508,6 +508,20 @@ export function useThreadComposerState() {
       hasAttachmentsOrContext: boolean,
     ) => Promise<boolean | "responded">,
   ) => {
+    if (sendingMessageRef.current) return null;
+    sendingMessageRef.current = true;
+    return sendMessageImpl(followUpOverride, beforeDispatch).finally(() => {
+      sendingMessageRef.current = false;
+    });
+  };
+
+  const sendMessageImpl = async (
+    followUpOverride?: ActiveTurnComposerAction,
+    beforeDispatch?: (
+      text: string,
+      hasAttachmentsOrContext: boolean,
+    ) => Promise<boolean | "responded">,
+  ) => {
     if (
       selectedThreadShell &&
       selectedEnvironmentRuntime?.connectionState === "connected" &&

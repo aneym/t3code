@@ -138,6 +138,11 @@ export function decodeQueuedThreadMessage(value: unknown): QueuedThreadMessage {
   return message;
 }
 
+// Ordinals are enqueue timestamps, so messages saved before ordinals existed sort by creation time.
+function queuedMessageOrder(message: QueuedThreadMessage): number {
+  return message.enqueueOrdinal ?? Date.parse(message.createdAt);
+}
+
 export function groupQueuedThreadMessages(
   messages: ReadonlyArray<QueuedThreadMessage>,
 ): Record<string, ReadonlyArray<QueuedThreadMessage>> {
@@ -152,9 +157,19 @@ export function groupQueuedThreadMessages(
     (grouped[threadKey] ??= []).push(message);
   }
   for (const queue of Object.values(grouped)) {
-    queue.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    queue.sort(
+      (left, right) =>
+        queuedMessageOrder(left) - queuedMessageOrder(right) ||
+        left.createdAt.localeCompare(right.createdAt),
+    );
   }
-  return grouped;
+  return Object.fromEntries(
+    Object.entries(grouped).sort(
+      ([, left], [, right]) =>
+        (left[0] === undefined ? Number.NaN : queuedMessageOrder(left[0])) -
+        (right[0] === undefined ? Number.NaN : queuedMessageOrder(right[0])),
+    ),
+  );
 }
 
 export function flattenQueuedThreadMessages(

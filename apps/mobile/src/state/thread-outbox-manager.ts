@@ -81,7 +81,26 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       const recovered = result.messages.filter(
         (message) => !currentIds.has(message.messageId) && !revisions.has(message.messageId),
       );
-      if (recovered.length > 0) setMessages([...recovered, ...current]);
+      nextEnqueueOrdinal = Math.max(
+        nextEnqueueOrdinal,
+        ...result.messages.map(
+          (message) => message.enqueueOrdinal ?? Date.parse(message.createdAt),
+        ),
+      );
+      if (recovered.length > 0) {
+        const latest = currentMessages();
+        const latestIds = new Set(latest.map((message) => message.messageId));
+        setMessages([
+          ...recovered.filter(
+            (message) => !latestIds.has(message.messageId) && !revisions.has(message.messageId),
+          ),
+          ...latest,
+        ]);
+      }
+      if (result.errors.length === 0) {
+        options.registry.set(loadedAtom, true);
+        ordinalReady = result.errors.length === 0 && result.messages.length > 0;
+      }
       if (result.errors.length > 0) {
         throw new AggregateError(result.errors, "Some queued messages could not be read.");
       }
