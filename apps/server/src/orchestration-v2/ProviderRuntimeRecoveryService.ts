@@ -47,7 +47,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { restartContinuationRun } from "./RestartContinuation.ts";
+import { restartContinuationRun, unacceptedRestartRun } from "./RestartContinuation.ts";
 import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
 import {
   endOrphanedNativeSubagent,
@@ -558,10 +558,10 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         handoff === undefined && continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun({
+          ? (restartContinuationRun({
               ...projection,
               providerSessions: sessionsLiveAtStart(projection, stoppedThisPass),
-            })
+            }) ?? unacceptedRestartRun(projection))
           : undefined;
       const effects: Array<EffectOutboxModel.PendingOrchestrationEffectV2> = continuationRun
         ? [

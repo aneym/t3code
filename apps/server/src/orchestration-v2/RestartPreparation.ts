@@ -1,5 +1,5 @@
 import * as ServerSettings from "../serverSettings.ts";
-import { restartContinuationRun } from "./RestartContinuation.ts";
+import { restartContinuationRun, unacceptedRestartRun } from "./RestartContinuation.ts";
 import * as Cause from "effect/Cause";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -171,7 +171,7 @@ export const prepareForShutdown = Effect.gen(function* () {
           .continueThreadsAfterServerUpdate
       )
         return;
-      const run = restartContinuationRun(projection);
+      const run = restartContinuationRun(projection) ?? unacceptedRestartRun(projection);
       if (!run) return;
       const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
       yield* eventSink.writeWithEffects({

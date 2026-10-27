@@ -176,6 +176,25 @@ export function restartContinuationRun(
   return run;
 }
 
+export function unacceptedRestartRun(
+  projection: Pick<
+    ProjectionRuntimeRecoveryState,
+    "thread" | "runs" | "providerTurns" | "runtimeRequests" | "turnItems"
+  >,
+): OrchestrationV2Run | undefined {
+  const run = projection.runs.findLast(
+    (candidate) => candidate.status === "starting" || candidate.status === "running",
+  );
+  if (
+    run !== undefined &&
+    projection.thread.providerInstanceId === run.providerInstanceId &&
+    !projection.providerTurns.some((turn) => turn.runAttemptId === run.activeAttemptId) &&
+    !restartContinuationBlocked(projection, run, false)
+  )
+    return run;
+  return undefined;
+}
+
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
   function* (input: {
     readonly threadId: ThreadId;
