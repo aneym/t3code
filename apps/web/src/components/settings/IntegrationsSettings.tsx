@@ -1136,6 +1136,29 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   );
 }
 
+function BrowserRemoteDeviceTabsSetting({ disabled }: { readonly disabled: boolean }) {
+  const enabled = useClientSettings((settings) => settings.browserAllowRemoteDeviceTabs);
+  return (
+    <SettingsRow
+      {...searchableSetting("browser-auto-show-floating-preview")}
+      description="Let agents open browser tabs on this device."
+      control={
+        <Switch
+          disabled={disabled}
+          checked={enabled}
+          onCheckedChange={(checked) =>
+            void persistClientSettingsUpdate((settings) => ({
+              ...settings,
+              browserAllowRemoteDeviceTabs: Boolean(checked),
+            }))
+          }
+          aria-label="Let agents open browser tabs on this device"
+        />
+      }
+    />
+  );
+}
+
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
@@ -1610,6 +1633,7 @@ export function IntegrationsSettingsPanel() {
       <BrowserRecordingInputSettings disabled={previewDefaultsDisabled} />
       <BrowserLinkTargetSetting disabled={previewDefaultsDisabled} />
       <BrowserAutoShowFloatingPreviewSetting disabled={previewDefaultsDisabled} />
+      <BrowserRemoteDeviceTabsSetting disabled={previewDefaultsDisabled} />
     </>
   );
 
