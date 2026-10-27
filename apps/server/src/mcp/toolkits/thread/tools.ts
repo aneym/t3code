@@ -74,18 +74,22 @@ const commandTool = {
 };
 const queueEntry = Schema.Struct({
   queuedRunId: RunId,
+  held: Schema.Boolean,
+  holdReason: Schema.optional(Schema.Literals(["restart", "stop", "blocked"])),
   text: Schema.String,
   truncated: Schema.Boolean,
 });
 const QueueListTool = Tool.make("t3_queue_list", {
   ...commandTool,
-  description: "List queued messages in send order. For full history, use `t3_thread_read`.",
+  description:
+    "List queued messages in send order, with held status and classified hold reasons. An absent reason on a held message is an unclassified backlog. Use `t3_queue_resume` to resume intentionally. For full history, use `t3_thread_read`.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     cursor: Schema.optional(NonNegativeInt),
     limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
   }),
   success: Schema.Struct({
+    held: Schema.Boolean,
     items: Schema.Array(queueEntry),
     nextCursor: Schema.NullOr(NonNegativeInt),
   }),
@@ -113,6 +117,12 @@ const QueueCancelTool = Tool.make("t3_queue_cancel", {
   ...commandTool,
   description: "Cancel one queued run.",
   parameters: Schema.Struct(queueTarget),
+}).annotate(Tool.Destructive, true);
+const QueueResumeTool = Tool.make("t3_queue_resume", {
+  ...commandTool,
+  description:
+    "Explicitly release this thread's held queue and deliver messages in order. Omit `threadId` for this thread. Usage-limit and execution protections still apply.",
+  parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
 }).annotate(Tool.Destructive, true);
 const QueueReorderTool = Tool.make("t3_queue_reorder", {
   ...commandTool,
@@ -294,6 +304,7 @@ export const ThreadToolkit = Toolkit.make(
   QueueReadTool,
   QueueEditTool,
   QueueCancelTool,
+  QueueResumeTool,
   QueueReorderTool,
   QueuePromoteTool,
 );

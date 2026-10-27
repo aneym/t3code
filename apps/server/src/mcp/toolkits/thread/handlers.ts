@@ -35,6 +35,8 @@ function queueEntry(
   const characters = Array.from(message.text);
   return {
     queuedRunId: run.id,
+    held: run.queueHeld === true,
+    ...(run.queueHoldReason === undefined ? {} : { holdReason: run.queueHoldReason }),
     text: characters.slice(0, limit).join(""),
     truncated: characters.length > limit,
   };
@@ -241,6 +243,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const cursor = input.cursor ?? 0;
       const end = cursor + (input.limit ?? 20);
       return {
+        held: runs.some((run) => run.queueHeld === true),
         items: runs.slice(cursor, end).flatMap((run) => {
           const entry = queueEntry(projection, run.id, 1000);
           return entry === undefined ? [] : [entry];
@@ -276,6 +279,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       type: "queued-run.cancel",
       runId: input.queuedRunId,
     })),
+  ),
+  t3_queue_resume: writesThread((input) =>
+    dispatch(input.threadId, (common) => ({ ...common, type: "queue.resume" })),
   ),
   t3_queue_reorder: writesThread((input) =>
     dispatch(input.threadId, (common) => ({

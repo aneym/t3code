@@ -1,10 +1,6 @@
 # Messages and context
 
-Give the agent a task in the composer. Add files, quote a previous response, or
-include a skill when the task needs more context.
-
-Messages can contain up to 120,000 characters. Longer drafts stay in the composer
-so you can shorten them or split them into several messages.
+Messages accept 120,000 characters; longer drafts stay unsent.
 
 Pasting 32 KiB or more of text adds that fragment as a text-file attachment so
 the agent can inspect it without filling the model context. A smaller paste also
@@ -76,6 +72,12 @@ Mobile has the same choice under **Settings → Follow-ups**. While a turn is
 running the send button shows which action it will take. Long-press it to use the
 other action for a single message, or hold `Cmd` while sending from a hardware
 keyboard. The button only offers Steer when the running agent supports it.
+
+Stop holds the queue across restarts. Resume or a client send returns to work;
+unclassified older holds need Resume or cancellation. Restart releases only
+restart holds. CLI/MCP sends default to Queue; opt-in auto/steer/restart and
+interrupts preserve holds. `thread resume` / `t3_queue_resume`
+resume; `thread unqueue` cancels.
 
 ## Queue messages offline on mobile
 
