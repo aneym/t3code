@@ -492,10 +492,15 @@ const messageArgument = Argument.String("message").pipe(
 const threadArgument = Argument.String("thread").pipe(Argument.withDescription("Thread id."));
 
 const decodeThreadIdValue = Schema.decodeUnknownEffect(ThreadId);
+const decodeRunIdValue = Schema.decodeUnknownEffect(RunId);
 const decodeTitle = Schema.decodeUnknownEffect(TrimmedNonEmptyString);
 const decodeThreadId = (value: string) =>
   decodeThreadIdValue(value.trim()).pipe(
     Effect.mapError(() => new ThreadUsageError({ detail: `'${value}' is not a thread id.` })),
+  );
+const decodeRunId = (value: string) =>
+  decodeRunIdValue(value.trim()).pipe(
+    Effect.mapError(() => new ThreadUsageError({ detail: `'${value}' is not a run id.` })),
   );
 
 const threadListCommand = Command.make("list", {
@@ -617,11 +622,15 @@ const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
   thread: threadArgument,
   message: messageArgument,
+  mode: Flag.Literals("mode", ["auto", "queue", "steer", "restart"]).pipe(
+    Flag.withDescription("How to deliver the message to the thread."),
+    Flag.withDefault("queue"),
+  ),
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
   Command.withDescription(
-    "Send a message to a thread. A busy thread gets it as its next turn; nothing is interrupted.",
+    "Send a message: queue uses the next turn without interrupting; steer updates the running turn mid-turn; restart interrupts and restarts; auto starts an idle thread, steers a running turn, or queues.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -632,7 +641,7 @@ const threadSendCommand = Command.make("send", {
         Effect.fn("cli.thread.send")(function* (tools) {
           const sent = yield* tools.call(
             "t3_thread_send",
-            { threadId, message, mode: "queue" },
+            { threadId, message, mode: flags.mode },
             OrchestratorMcpThreadSendResult,
           );
           if (flags.wait) {
@@ -692,6 +701,65 @@ const threadOrganizeCommand = (
       }).pipe(reportThreadErrors),
     ),
   );
+const threadPromoteCommand = Command.make("promote", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  queuedRunId: Argument.String("queuedRunId").pipe(
+    Argument.withDescription("Run id of the queued message to promote."),
+  ),
+  targetRunId: Argument.String("targetRunId").pipe(
+    Argument.withDescription("Run id of the running turn to steer."),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Send one queued message now as steering to the given running turn."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      const queuedRunId = yield* decodeRunId(flags.queuedRunId);
+      const targetRunId = yield* decodeRunId(flags.targetRunId);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.promote")(function* (tools) {
+          const promoted = yield* tools.call(
+            "t3_queue_promote_to_steer",
+            { threadId, queuedRunId, targetRunId },
+            OrchestrationV2DispatchCommandResult,
+          );
+          yield* flags.json ? printJson(promoted) : Console.log("Promoted.");
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
+const threadUnqueueCommand = Command.make("unqueue", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  queuedRunId: Argument.String("queuedRunId").pipe(
+    Argument.withDescription("Run id of the queued message to cancel."),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Cancel one queued message before its turn starts."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      const queuedRunId = yield* decodeRunId(flags.queuedRunId);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.unqueue")(function* (tools) {
+          const cancelled = yield* tools.call(
+            "t3_queue_cancel",
+            { threadId, queuedRunId },
+            OrchestrationV2DispatchCommandResult,
+          );
+          yield* flags.json ? printJson(cancelled) : Console.log("Unqueued.");
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
 
 const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
@@ -753,6 +821,8 @@ export const threadCommand = Command.make("thread").pipe(
     threadListCommand,
     threadStartCommand,
     threadSendCommand,
+    threadPromoteCommand,
+    threadUnqueueCommand,
     threadShowCommand,
     ...(
       ["archive", "unarchive", "settle", "unsettle", "pin", "unpin", "snooze", "unsnooze"] as const
