@@ -154,6 +154,7 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import { queuedRunBatch, queuedRunBatchEvents, releasesHoldAtTurnEnd } from "./QueuedRunBatch.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
   endOrphanedNativeSubagent,
@@ -1463,7 +1464,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       if (options?.endedRunId !== undefined) {
         const before = yield* readCommandProjection(threadId);
-        const held = before.runs.filter((run) => canReleaseQueueHold(run, "restart"));
+        const batching = (yield* serverSettings.getSettings.pipe(Effect.orDie)).batchQueuedMessages;
+        const held = before.runs.filter((run) =>
+          batching ? releasesHoldAtTurnEnd(run) : canReleaseQueueHold(run, "restart"),
+        );
         if (held.length > 0) {
           const now = yield* DateTime.now;
           yield* writeSystemEvents(
@@ -1944,6 +1948,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
       };
+      const batchEvents =
+        options?.queuedRunId === undefined &&
+        settings.batchQueuedMessages &&
+        userTurnItem.type === "user_message"
+          ? queuedRunBatchEvents({
+              members: queuedRunBatch(projection, storedQueuedRun),
+              projection,
+              target: startingRun,
+              rootNodeId,
+              firstItem: userTurnItem,
+              itemId: (messageId) => idAllocator.derive.userTurnItem({ messageId }),
+              occurredAt: now,
+            })
+          : [];
       const handoffTurnItem: OrchestrationV2TurnItem | null =
         activeHandoff === null
           ? null
@@ -2137,6 +2155,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             },
           })),
           ...executionIdentityEvents,
+          ...batchEvents,
           {
             type: "provider-thread.updated",
             threadId,

@@ -215,6 +215,11 @@ Press **Resume** in an empty composer on web and desktop, or **Resume queue** on
 continue. Sending a new message also resumes the queue, unless it steers a turn that is already
 running. You can edit, reorder, or remove held messages without starting them.
 
+With **Settings → General → Send queued messages together** on (the default), every queued
+message starts as one turn when the agent finishes, in queue order and labeled with its sender,
+so the agent can take them in at once. A turn ending also releases held messages, except after
+Stop. Turn the setting off to start queued messages one turn at a time.
+
 The pencil on a queued row opens that message in the composer for editing. The original message
 stays in the queue until you save, and its row is highlighted while you edit. The message's
 attachments appear above the text with a remove control, and new images can be added the usual way.
