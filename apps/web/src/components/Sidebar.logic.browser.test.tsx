@@ -23,7 +23,7 @@ vi.mock("@effect/atom-react", async (original) => ({
 }));
 
 import { render } from "../../test/render";
-import { useAutomationThreadKeys } from "../hooks/useAutomationThreadKeys";
+import { useAutomationThreadKeys } from "../hooks/useAutomations";
 import { useSnoozeWakeClock } from "./Sidebar.logic";
 
 function AutomationKeys() {

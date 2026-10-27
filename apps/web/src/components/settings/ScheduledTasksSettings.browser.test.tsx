@@ -143,7 +143,7 @@ describe("ScheduledTasksSettings", () => {
     await using screen = await render(<ScheduledTasksSettings />);
     await expect.element(screen.getByText("Enabled", { exact: false })).toBeInTheDocument();
     await expect.element(screen.getByText("Paused", { exact: false }).first()).toBeInTheDocument();
-    await expect.element(screen.getByText("failed", { exact: true })).toBeInTheDocument();
+    await expect.element(screen.getByText("Failed", { exact: true })).toBeInTheDocument();
     await expect.element(screen.getByText("Registry unavailable")).toBeInTheDocument();
     await expect
       .element(screen.getByText("Last run", { exact: false }).first())

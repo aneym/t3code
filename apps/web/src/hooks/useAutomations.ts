@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentId, ScheduledTask } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useConnectedEnvironmentIds } from "../state/environments";
@@ -9,6 +10,33 @@ const scheduledTasksAtom = environmentAtomList("sidebar-scheduled-tasks", (envir
   serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
 );
 
+export interface EnvironmentAutomation {
+  readonly environmentId: EnvironmentId;
+  readonly task: ScheduledTask;
+}
+
+function useLoadedScheduledTasks(): ReadonlyArray<{
+  readonly environmentId: EnvironmentId;
+  readonly tasks: ReadonlyArray<ScheduledTask>;
+}> {
+  const connectedIds = useConnectedEnvironmentIds();
+  const queries = useAtomValue(scheduledTasksAtom(environmentIdsKey(connectedIds)));
+  const loaded: Array<{ environmentId: EnvironmentId; tasks: ReadonlyArray<ScheduledTask> }> = [];
+  for (const [index, query] of queries.entries()) {
+    const value = Option.getOrNull(AsyncResult.value(query));
+    const environmentId = connectedIds[index];
+    if (environmentId === undefined || value === null) continue;
+    loaded.push({ environmentId, tasks: value.tasks });
+  }
+  return loaded;
+}
+
+export function useAutomations(): ReadonlyArray<EnvironmentAutomation> {
+  return useLoadedScheduledTasks().flatMap(({ environmentId, tasks }) =>
+    tasks.map((task) => ({ environmentId, task })),
+  );
+}
+
 const retainedAutomationThreadKeys = new Map<string, ReadonlySet<string>>();
 
 function sameKeys(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
@@ -18,14 +46,9 @@ function sameKeys(left: ReadonlySet<string>, right: ReadonlySet<string>): boolea
 }
 
 export function useAutomationThreadKeys(): ReadonlySet<string> {
-  const connectedIds = useConnectedEnvironmentIds();
-  const queries = useAtomValue(scheduledTasksAtom(environmentIdsKey(connectedIds)));
-  for (const [index, query] of queries.entries()) {
-    const value = Option.getOrNull(AsyncResult.value(query));
-    const environmentId = connectedIds[index];
-    if (environmentId === undefined || value === null) continue;
+  for (const { environmentId, tasks } of useLoadedScheduledTasks()) {
     const next = new Set(
-      value.tasks
+      tasks
         .filter((task) => task.threadId !== null)
         .map((task) => `${environmentId}:${task.threadId}`),
     );
