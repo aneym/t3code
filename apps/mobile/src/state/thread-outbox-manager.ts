@@ -88,45 +88,15 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       );
       nextEnqueueOrdinal = Math.max(
         nextEnqueueOrdinal,
-        ...result.messages.map((message) => message.enqueueOrdinal ?? 0),
-      );
-      const legacy = recovered
-        .filter((message) => message.enqueueOrdinal === undefined)
-        .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
-      const firstOrdinal = Math.min(
-        ...result.messages.flatMap((message) =>
-          message.enqueueOrdinal === undefined ? [] : [message.enqueueOrdinal],
-        ),
-        ...currentMessages().flatMap((message) =>
-          message.enqueueOrdinal === undefined ? [] : [message.enqueueOrdinal],
+        ...result.messages.map(
+          (message) => message.enqueueOrdinal ?? Date.parse(message.createdAt),
         ),
       );
-      const legacyStart = Number.isFinite(firstOrdinal) ? firstOrdinal - legacy.length : 0;
-      const backfilled = new Map(
-        legacy.map((message, index) => [
-          message.messageId,
-          { ...message, enqueueOrdinal: legacyStart + index },
-        ]),
-      );
-      nextEnqueueOrdinal = Math.max(
-        nextEnqueueOrdinal,
-        ...[...backfilled.values()].map((message) => message.enqueueOrdinal ?? 0),
-      );
-      await Promise.all(
-        [...backfilled.values()].map(async (message) => {
-          try {
-            await options.storage.write(message);
-          } catch (cause) {
-            warn("[thread-outbox] failed to backfill message ordinal", cause);
-          }
-        }),
-      );
-      const loaded = recovered.map((message) => backfilled.get(message.messageId) ?? message);
-      if (loaded.length > 0) {
+      if (recovered.length > 0) {
         const latest = currentMessages();
         const latestIds = new Set(latest.map((message) => message.messageId));
         setMessages([
-          ...loaded.filter(
+          ...recovered.filter(
             (message) => !latestIds.has(message.messageId) && !revisions.has(message.messageId),
           ),
           ...latest,

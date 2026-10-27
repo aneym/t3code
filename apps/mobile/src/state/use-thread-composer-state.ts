@@ -511,11 +511,9 @@ export function useThreadComposerState() {
   ) => {
     if (sendingMessageRef.current) return null;
     sendingMessageRef.current = true;
-    try {
-      return await sendMessageImpl(followUpOverride, beforeDispatch);
-    } finally {
+    return sendMessageImpl(followUpOverride, beforeDispatch).finally(() => {
       sendingMessageRef.current = false;
-    }
+    });
   };
 
   const sendMessageImpl = async (

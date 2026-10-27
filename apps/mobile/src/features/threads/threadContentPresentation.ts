@@ -42,6 +42,9 @@ export function projectThreadContentPresentation(input: {
   return {
     kind: "unavailable",
     title: "Not downloaded yet",
-    detail: "It will load when you’re back online.",
+    detail:
+      input.connectionState === "error" || input.connectionState === "unsupported"
+        ? "Reconnect this environment to load the conversation."
+        : "It will load when you’re back online.",
   };
 }

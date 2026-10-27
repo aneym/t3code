@@ -262,9 +262,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
     snapshot: OrchestrationV2ThreadDetailSnapshot,
-    force = false,
   ) {
-    if (!force && isActiveThread(snapshot.projection)) return;
     if (resumeCache !== undefined && resumeCache.owner !== owner) return;
     if (committed.state.status === "deleted") return;
     if (
@@ -319,7 +317,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                 current.history,
                 committed.acceptsBoundedSnapshots === true,
               ),
-              true,
             )
           : queuedSnapshot !== undefined && queuedSnapshot !== savedSnapshot
             ? persist(queuedSnapshot)
@@ -355,23 +352,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   );
   const setDisconnected = Effect.gen(function* () {
     yield* Ref.set(awaitingCompletion, false);
-    const current = yield* SubscriptionRef.get(state);
-    yield* SubscriptionRef.update(state, (value) => ({
-      ...value,
-      status: value.status === "deleted" ? value.status : statusWithoutLiveData(value.data),
+    yield* SubscriptionRef.update(state, (current) => ({
+      ...current,
+      status: current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
     }));
-    if (Option.isSome(current.data) && shouldPersistThread(current.history)) {
-      const sequence = yield* SubscriptionRef.get(lastSequence);
-      yield* persist(
-        snapshotToPersist(
-          sequence,
-          current.data.value,
-          current.history,
-          yield* Ref.get(acceptsBoundedSocketSnapshots),
-        ),
-        true,
-      );
-    }
+    yield* persistCurrent;
   });
   const setStreamError = (message: string) =>
     Ref.set(awaitingCompletion, false).pipe(
@@ -418,7 +403,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // Active projections can update many times per second and retain large tool
     // payloads. Persist once the run settles so cache encoding stays off the
     // streaming path. Progressive meta rides along when the window is incomplete.
-    if (shouldPersistThread(next.history)) {
+    if (shouldPersistThread(next.history) && !isActiveThread(thread)) {
       const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
       yield* queuePersist(
         snapshotToPersist(
@@ -572,7 +557,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       yield* setDeleted();
       return;
     }
-    if (result._tag === "applied" && shouldPersistThread(result.history)) {
+    if (
+      result._tag === "applied" &&
+      shouldPersistThread(result.history) &&
+      !isActiveThread(result.projection)
+    ) {
       const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
       yield* queuePersist(
         snapshotToPersist(
@@ -807,8 +796,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             }
           }
           if (latestItems.size === 0) return;
+          const handed =
+            queuedSnapshot === undefined ||
+            (savedSnapshot !== undefined &&
+              savedSnapshot.snapshotSequence > queuedSnapshot.snapshotSequence)
+              ? savedSnapshot
+              : queuedSnapshot;
           const saved =
-            queuedSnapshot ??
+            handed ??
             Option.getOrUndefined(
               yield* cache
                 .loadThread(environmentId, threadId)

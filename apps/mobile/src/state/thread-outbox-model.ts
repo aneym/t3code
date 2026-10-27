@@ -139,6 +139,11 @@ export function decodeQueuedThreadMessage(value: unknown): QueuedThreadMessage {
   return message;
 }
 
+// Ordinals are enqueue timestamps, so messages saved before ordinals existed sort by creation time.
+function queuedMessageOrder(message: QueuedThreadMessage): number {
+  return message.enqueueOrdinal ?? Date.parse(message.createdAt);
+}
+
 export function groupQueuedThreadMessages(
   messages: ReadonlyArray<QueuedThreadMessage>,
 ): Record<string, ReadonlyArray<QueuedThreadMessage>> {
@@ -153,23 +158,17 @@ export function groupQueuedThreadMessages(
     (grouped[threadKey] ??= []).push(message);
   }
   for (const queue of Object.values(grouped)) {
-    queue.sort((left, right) => {
-      if (left.enqueueOrdinal !== undefined && right.enqueueOrdinal !== undefined) {
-        return (
-          left.enqueueOrdinal - right.enqueueOrdinal ||
-          left.createdAt.localeCompare(right.createdAt)
-        );
-      }
-      if (left.enqueueOrdinal !== undefined) return -1;
-      if (right.enqueueOrdinal !== undefined) return 1;
-      return Date.parse(left.createdAt) - Date.parse(right.createdAt);
-    });
+    queue.sort(
+      (left, right) =>
+        queuedMessageOrder(left) - queuedMessageOrder(right) ||
+        left.createdAt.localeCompare(right.createdAt),
+    );
   }
   return Object.fromEntries(
     Object.entries(grouped).sort(
       ([, left], [, right]) =>
-        (left[0]?.enqueueOrdinal ?? Date.parse(left[0]?.createdAt ?? "")) -
-        (right[0]?.enqueueOrdinal ?? Date.parse(right[0]?.createdAt ?? "")),
+        (left[0] === undefined ? Number.NaN : queuedMessageOrder(left[0])) -
+        (right[0] === undefined ? Number.NaN : queuedMessageOrder(right[0])),
     ),
   );
 }

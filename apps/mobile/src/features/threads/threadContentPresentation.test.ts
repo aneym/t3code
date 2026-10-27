@@ -25,7 +25,7 @@ describe("thread content presentation", () => {
     ).toEqual({
       kind: "unavailable",
       title: "Not downloaded yet",
-      detail: "It will load when you’re back online.",
+      detail: "Reconnect this environment to load the conversation.",
     });
   });
 });

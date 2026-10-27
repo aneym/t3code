@@ -1,7 +1,9 @@
 import { persistEnvironmentThreadSnapshots } from "@t3tools/client-runtime/state/threads";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { AppState } from "react-native";
 
@@ -69,7 +71,11 @@ function waitForThread(target: PrefetchTarget, signal: AbortSignal): Promise<boo
         finish();
       } else if (
         value._tag === "Some" &&
-        (value.value.status === "live" || value.value.status === "deleted")
+        (value.value.status === "deleted" ||
+          (value.value.status === "live" &&
+            Option.isSome(value.value.data) &&
+            DateTime.toEpochMillis(value.value.data.value.thread.updatedAt) >=
+              Date.parse(target.updatedAt)))
       ) {
         finish(true);
       }
