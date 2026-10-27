@@ -604,6 +604,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         : importPendingTranscripts
     ).pipe(forkParked);
 
+    yield* forkParked(orchestrator.resumeQueuedRuns);
     yield* forkParked(
       Effect.gen(function* () {
         yield* Effect.logDebug("startup phase: recording startup heartbeat");

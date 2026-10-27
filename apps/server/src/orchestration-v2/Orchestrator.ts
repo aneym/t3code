@@ -148,7 +148,7 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
-import { queuedRunBatch, queuedRunBatchEvents } from "./QueuedRunBatch.ts";
+import { queuedRunBatch, queuedRunBatchEvents, withoutQueueHoldReason } from "./QueuedRunBatch.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
   endOrphanedNativeSubagent,
@@ -1493,7 +1493,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               runId: run.id,
               providerInstanceId: run.providerInstanceId,
               occurredAt: now,
-              payload: { ...run, queueHeld: false },
+              payload: { ...withoutQueueHoldReason(run), queueHeld: false },
             })),
           );
         }
@@ -1573,7 +1573,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               runId: run.id,
               providerInstanceId: run.providerInstanceId,
               occurredAt: now,
-              payload: { ...run, queueHeld: true },
+              payload: { ...withoutQueueHoldReason(run), queueHeld: true },
             })),
         );
         return;
@@ -9757,7 +9757,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         runId: run.id,
         providerInstanceId: run.providerInstanceId,
         occurredAt: input.now,
-        payload: { ...run, queueHeld: true },
+        payload: { ...withoutQueueHoldReason(run), queueHeld: true },
       });
     }
     const pullRequests = thread.pullRequests ?? [];

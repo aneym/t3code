@@ -201,3 +201,26 @@ export function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): s
     ),
   ].join("\n\n");
 }
+
+export function withoutQueueHoldReason(run: OrchestrationV2Run): OrchestrationV2Run {
+  const { queueHoldReason: _reason, ...rest } = run;
+  return rest;
+}
+
+export function recoveryQueueHold(
+  run: OrchestrationV2Run,
+  trigger: "startup" | "shutdown",
+  releaseRestartHolds: boolean,
+): OrchestrationV2Run | undefined {
+  if (!releaseRestartHolds) {
+    return run.queueHeld === true ? undefined : { ...run, queueHeld: true };
+  }
+  if (trigger === "shutdown") {
+    return run.queueHeld === true
+      ? undefined
+      : { ...run, queueHeld: true, queueHoldReason: "restart" };
+  }
+  return run.queueHeld === true && run.queueHoldReason === "restart"
+    ? { ...withoutQueueHoldReason(run), queueHeld: false }
+    : undefined;
+}
