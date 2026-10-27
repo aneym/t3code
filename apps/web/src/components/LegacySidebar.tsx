@@ -5,7 +5,6 @@ import { resolveThreadCurrentPullRequestLink } from "@t3tools/client-runtime/thr
 import { Spinner } from "~/components/ui/spinner";
 import {
   ArchiveIcon,
-  CalendarClockIcon,
   ArrowUpDownIcon,
   ChevronRightIcon,
   FolderPlusIcon,
@@ -79,7 +78,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
-import { Link, useNavigate, useRouter } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
   MIN_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -2889,20 +2888,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         <SidebarGroup className="z-[1]">
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton
-                render={
-                  <Link
-                    to="/settings/scheduled-tasks"
-                    search={{ machine: undefined, project: undefined, checkout: undefined }}
-                  />
-                }
-              >
-                <CalendarClockIcon />
-                <span>Automations</span>
-              </SidebarMenuButton>
-              <SidebarAutomationJobs onNavigate={() => {}} />
-            </SidebarMenuItem>
-            <SidebarMenuItem>
               <CommandDialogTrigger
                 render={<SidebarMenuButton data-testid="command-palette-trigger" />}
               >
@@ -3047,6 +3032,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         {projectsLength === 0 && (
           <div className="px-2 pt-4 text-center text-secondary-label text-xs">No projects yet</div>
         )}
+        <SidebarAutomationJobs onNavigate={() => {}} />
       </SidebarGroup>
     </SidebarContent>
   );
