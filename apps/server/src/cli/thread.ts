@@ -1,155 +1,36 @@
 import {
-  OrchestratorMcpFailure,
+  type ThreadTools,
+  withThreadTools,
+  printJson,
+  reportThreadErrors,
+  ThreadUsageError,
+  ThreadProjectNotFoundError,
+} from "./ThreadTools.ts";
+import { readTimeline, readFullText, finishRun } from "./ThreadRunOutput.ts";
+import {
   OrchestratorMcpThreadListResult,
-  OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
-  OrchestratorMcpThreadWaitResult,
   OrchestrationV2DispatchCommandResult,
   ProjectId,
   RunId,
   ThreadId,
   TrimmedNonEmptyString,
   type OrchestratorMcpThreadListItem,
-  type OrchestratorMcpThreadStatus,
-  type OrchestratorMcpThreadTimelineItem,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as References from "effect/References";
-import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
-import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+import { Argument, Command, Flag } from "effect/cli";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as ServerConfig from "../config.ts";
-import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
-import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
-import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { projectLocationFlags } from "./config.ts";
 
-/**
- * Short enough that a run which stops to ask the user something is noticed
- * soon, since `t3_thread_wait` only returns on a terminal run.
- */
-const WAIT_SLICE_MS = 15_000;
-const READ_PAGE_LIMIT = 100;
 const TITLE_MAX_CHARS = 80;
-
-export class ThreadServerNotRunningError extends Schema.TaggedError<ThreadServerNotRunningError>()(
-  "ThreadServerNotRunningError",
-  { baseDir: Schema.String },
-) {
-  override readonly [Runtime.errorReported] = false;
-  override get message(): string {
-    return `No running T3 Code server uses ${this.baseDir}. Start T3 Code, then retry.`;
-  }
-}
-
-export class ThreadServerUnreachableError extends Schema.TaggedError<ThreadServerUnreachableError>()(
-  "ThreadServerUnreachableError",
-  { origin: Schema.String, cause: Schema.Defect() },
-) {
-  override readonly [Runtime.errorReported] = false;
-  override get message(): string {
-    const reason = this.cause instanceof Error ? ` ${this.cause.message}` : "";
-    return `Could not reach the T3 Code server at ${this.origin}.${reason}`;
-  }
-}
-
-export class ThreadToolFailedError extends Schema.TaggedError<ThreadToolFailedError>()(
-  "ThreadToolFailedError",
-  { tool: Schema.String, detail: Schema.String },
-) {
-  override readonly [Runtime.errorReported] = false;
-  override get message(): string {
-    return this.detail;
-  }
-}
-
-export class ThreadUsageError extends Schema.TaggedError<ThreadUsageError>()("ThreadUsageError", {
-  detail: Schema.String,
-}) {
-  override readonly [Runtime.errorReported] = false;
-  override get message(): string {
-    return this.detail;
-  }
-}
-
-export class ThreadProjectNotFoundError extends Schema.TaggedError<ThreadProjectNotFoundError>()(
-  "ThreadProjectNotFoundError",
-  { identifier: Schema.String },
-) {
-  override readonly [Runtime.errorReported] = false;
-  override get message(): string {
-    return `No T3 Code project matches '${this.identifier}'. Pass a project id or a path inside a project.`;
-  }
-}
-
-/** Exit code 2 lets a script tell "needs a human" apart from a failed run. */
-export class ThreadNeedsInputError extends Schema.TaggedError<ThreadNeedsInputError>()(
-  "ThreadNeedsInputError",
-  { threadId: ThreadId },
-) {
-  override readonly [Runtime.errorReported] = false;
-  override readonly [Runtime.errorExitCode] = 2;
-
-  override get message(): string {
-    return `Thread ${this.threadId} is waiting for an answer. Open it in T3 Code to respond.`;
-  }
-}
-
-export class ThreadRunEndedError extends Schema.TaggedError<ThreadRunEndedError>()(
-  "ThreadRunEndedError",
-  { threadId: ThreadId, status: Schema.String, error: Schema.optional(Schema.String) },
-) {
-  override readonly [Runtime.errorReported] = false;
-  override get message(): string {
-    const reason = this.error === undefined ? "." : `: ${this.error}`;
-    return `Thread ${this.threadId} stopped with status ${this.status}${reason}`;
-  }
-}
-
-const ThreadCliError = Schema.Union([
-  ThreadServerNotRunningError,
-  ThreadServerUnreachableError,
-  ThreadToolFailedError,
-  ThreadUsageError,
-  ThreadProjectNotFoundError,
-  ThreadNeedsInputError,
-  ThreadRunEndedError,
-]);
-const isThreadCliError = Schema.is(ThreadCliError);
-
-/**
- * These errors are expected outcomes for a script, so they print as one line
- * on stderr instead of the runtime's logged stack trace.
- */
-const reportThreadErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(
-    Effect.tapError((error) =>
-      isThreadCliError(error) ? Console.error(error.message) : Effect.void,
-    ),
-  );
-
-const decodeFailureText = Schema.decodeUnknownOption(Schema.fromJsonString(OrchestratorMcpFailure));
-const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-const printJson = (value: unknown) => Console.log(encodeJson(value));
-
-const ToolResult = Schema.Struct({
-  isError: Schema.optional(Schema.Boolean),
-  structuredContent: Schema.optional(Schema.Unknown),
-  content: Schema.optional(
-    Schema.Array(Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) })),
-  ),
-});
-
-const decodeToolResult = Schema.decodeUnknownEffect(ToolResult);
 
 const ProjectListResult = Schema.Struct({
   projects: Schema.Array(
@@ -162,86 +43,6 @@ const ThreadLaunchResult = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   runId: Schema.NullOr(RunId),
-});
-
-const toolFailureDetail = (result: typeof ToolResult.Type) => {
-  const text = result.content?.find((part) => part.text !== undefined)?.text ?? "";
-  return Option.match(decodeFailureText(text), {
-    onNone: () => text || "The tool call failed.",
-    onSome: (failure) => failure.message,
-  });
-};
-
-const makeThreadTools = (session: McpToolSession, origin: string) => {
-  const unexpected = (tool: string) =>
-    new ThreadToolFailedError({
-      tool,
-      detail: `The server sent an unexpected ${tool} result. Update the t3 CLI to match the server.`,
-    });
-  return {
-    call: Effect.fn("cli.thread.callTool")(function* <S extends Schema.Decoder<unknown>>(
-      tool: string,
-      args: Readonly<Record<string, unknown>>,
-      schema: S,
-    ): Effect.fn.Return<S["Type"], ThreadServerUnreachableError | ThreadToolFailedError> {
-      const raw = yield* session
-        .call(tool, args)
-        .pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
-      const result = yield* decodeToolResult(raw).pipe(Effect.mapError(() => unexpected(tool)));
-      if (result.isError === true) {
-        return yield* new ThreadToolFailedError({ tool, detail: toolFailureDetail(result) });
-      }
-      return yield* Schema.decodeUnknownEffect(schema)(result.structuredContent).pipe(
-        Effect.mapError(() => unexpected(tool)),
-      );
-    }),
-  };
-};
-export type ThreadTools = ReturnType<typeof makeThreadTools>;
-
-/**
- * Signs in as a short-lived MCP client of the running server, the same way an
- * outside agent does, and revokes that session when the command ends.
- */
-const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
-  flags: { readonly baseDir: Option.Option<string> },
-  run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
-) {
-  const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel);
-  return yield* Effect.gen(function* () {
-    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-    if (Option.isNone(runtimeState)) {
-      return yield* new ThreadServerNotRunningError({ baseDir: config.baseDir });
-    }
-    const origin = runtimeState.value.origin;
-    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const issued = yield* Effect.acquireRelease(
-      environmentAuth.issueMcpClientSession({
-        label: "t3 thread cli",
-        // The CLI runs as the machine's owner. New threads still start at
-        // the project's default mode, never at this ceiling by default.
-        access: "full-access",
-        client: { deviceType: "bot" },
-      }),
-      (session) =>
-        environmentAuth.revokeSession(session.sessionId).pipe(Effect.ignore({ log: true })),
-    );
-    const session = yield* mcpToolSession({
-      endpoint: new URL("/mcp", origin).href,
-      authorization: `Bearer ${issued.token}`,
-      clientName: "t3-thread-cli",
-    }).pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
-    return yield* run(makeThreadTools(session, origin));
-  }).pipe(
-    Effect.scoped,
-    Effect.provide(
-      EnvironmentAuth.layerRuntime.pipe(
-        Layer.provide(ServerConfig.layer(config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
-      ),
-    ),
-  );
 });
 
 const readMessageArgument = Effect.fn("cli.thread.readMessage")(function* (argument: string) {
@@ -304,151 +105,6 @@ const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
     return yield* new ThreadProjectNotFoundError({ identifier });
   }
   return containing.project;
-});
-
-/** Every item on a timeline view, oldest first. */
-const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
-  tools: ThreadTools,
-  threadId: ThreadId,
-  view: "messages" | "activity",
-) {
-  const items: Array<OrchestratorMcpThreadTimelineItem> = [];
-  let afterPosition: number | undefined;
-  let page: OrchestratorMcpThreadReadResult;
-  do {
-    page = yield* tools.call(
-      "t3_thread_read",
-      {
-        threadId,
-        view,
-        limit: READ_PAGE_LIMIT,
-        runLimit: 1,
-        ...(afterPosition === undefined ? {} : { afterPosition }),
-      },
-      OrchestratorMcpThreadReadResult,
-    );
-    items.push(...page.items);
-    afterPosition = page.nextPosition ?? undefined;
-  } while (page.hasMore && afterPosition !== undefined);
-  return { thread: page.thread, items };
-});
-
-/** Item text past the read's per-item cap. */
-const readFullText = Effect.fn("cli.thread.readFullText")(function* (
-  tools: ThreadTools,
-  threadId: ThreadId,
-  item: OrchestratorMcpThreadTimelineItem,
-) {
-  let text = item.text ?? "";
-  let nextTextOffset = item.textTruncated ? (item.nextTextOffset ?? null) : null;
-  while (nextTextOffset !== null) {
-    const page = yield* tools.call(
-      "t3_thread_read",
-      { threadId, itemId: item.itemId, textOffset: nextTextOffset, runLimit: 1 },
-      OrchestratorMcpThreadReadResult,
-    );
-    const chunk = page.items.find((candidate) => candidate.itemId === item.itemId);
-    if (chunk === undefined) break;
-    text += chunk.text ?? "";
-    nextTextOffset = chunk.textTruncated ? (chunk.nextTextOffset ?? null) : null;
-  }
-  return text;
-});
-
-/** The run's last assistant message, or its last error when it did not complete. */
-const runResultText = Effect.fn("cli.thread.runResultText")(function* (
-  tools: ThreadTools,
-  threadId: ThreadId,
-  runId: RunId,
-  type: "assistant_message" | "error",
-) {
-  const { items } = yield* readTimeline(
-    tools,
-    threadId,
-    type === "assistant_message" ? "messages" : "activity",
-  );
-  const item = items.findLast((candidate) => candidate.runId === runId && candidate.type === type);
-  return item === undefined ? null : yield* readFullText(tools, threadId, item);
-});
-
-type WaitOutcome =
-  | {
-      readonly type: "ended";
-      readonly runId: RunId | null;
-      readonly status: OrchestratorMcpThreadStatus;
-    }
-  | { readonly type: "needs_input" };
-
-/**
- * Waits for this exact run, following a restart to its continuation, so a
- * message another client sends meanwhile cannot stand in for its result.
- */
-export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
-  tools: ThreadTools,
-  threadId: ThreadId,
-  runId: RunId,
-) {
-  const waitSlice = (timeoutMs: number) =>
-    tools.call("t3_thread_wait", { threadId, runId, timeoutMs }, OrchestratorMcpThreadWaitResult);
-  const ended = (waited: OrchestratorMcpThreadWaitResult) =>
-    ({ type: "ended", runId: waited.runId, status: waited.status }) satisfies WaitOutcome;
-  while (true) {
-    const waited = yield* waitSlice(WAIT_SLICE_MS);
-    if (!waited.timedOut) return ended(waited);
-    // A pending request on this run, or on an earlier run this one is queued
-    // behind, blocks it until someone answers.
-    const { thread } = yield* tools.call(
-      "t3_thread_read",
-      { threadId, limit: 1, runLimit: 1 },
-      OrchestratorMcpThreadReadResult,
-    );
-    if (thread.pendingRequestCount > 0) {
-      // The count is thread-wide: if this run ended since the slice, the
-      // request belongs to a later run.
-      const recheck = yield* waitSlice(1);
-      return recheck.timedOut ? ({ type: "needs_input" } satisfies WaitOutcome) : ended(recheck);
-    }
-  }
-});
-
-/**
- * With --json the result always reaches stdout, so a script keeps the thread
- * id even when the run fails.
- */
-const finishRun = Effect.fn("cli.thread.finishRun")(function* (
-  tools: ThreadTools,
-  input: {
-    readonly threadId: ThreadId;
-    readonly runId: RunId;
-    readonly json: boolean;
-  },
-) {
-  const outcome = yield* waitForRun(tools, input.threadId, input.runId);
-  const runId = outcome.type === "ended" ? (outcome.runId ?? input.runId) : input.runId;
-  const status = outcome.type === "ended" ? outcome.status : "waiting";
-  const reply =
-    status === "completed"
-      ? yield* runResultText(tools, input.threadId, runId, "assistant_message")
-      : null;
-  const error =
-    status === "completed" || status === "waiting"
-      ? null
-      : yield* runResultText(tools, input.threadId, runId, "error");
-  if (input.json) {
-    yield* printJson({ threadId: input.threadId, runId, status, reply, error });
-  } else if (reply !== null) {
-    yield* Console.log(reply);
-  }
-  if (outcome.type === "needs_input") {
-    return yield* new ThreadNeedsInputError({ threadId: input.threadId });
-  }
-  if (status !== "completed") {
-    return yield* new ThreadRunEndedError({
-      threadId: input.threadId,
-      status,
-      ...(error === null ? {} : { error }),
-    });
-  }
 });
 
 const titleFromMessage = (message: string) => {
@@ -715,6 +371,30 @@ const threadUnqueueCommand = Command.make("unqueue", {
   ),
 );
 
+const threadResumeCommand = Command.make("resume", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Resume a held queue in send order."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.resume")(function* (tools) {
+          const resumed = yield* tools.call(
+            "t3_queue_resume",
+            { threadId },
+            OrchestrationV2DispatchCommandResult,
+          );
+          yield* flags.json ? printJson(resumed) : Console.log("Resumed.");
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
   thread: threadArgument,
@@ -777,6 +457,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadSendCommand,
     threadPromoteCommand,
     threadUnqueueCommand,
+    threadResumeCommand,
     threadShowCommand,
   ]),
 );
