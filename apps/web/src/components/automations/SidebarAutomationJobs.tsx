@@ -130,7 +130,7 @@ function AutomationJobRow({
         aria-hidden
         className="size-4 shrink-0 opacity-40 transition-opacity group-hover/automation-row:opacity-100 group-focus-visible/automation-row:opacity-100"
       />
-      <span className="min-w-0 flex-1 truncate font-normal text-secondary-label/70 group-hover/automation-row:text-foreground group-focus-visible/automation-row:text-foreground redesign:text-secondary-label">
+      <span className="min-w-0 flex-1 truncate font-normal text-secondary-label group-hover/automation-row:text-foreground group-focus-visible/automation-row:text-foreground">
         {task.title}
         {machine ? <span> · {machine}</span> : null}
       </span>
