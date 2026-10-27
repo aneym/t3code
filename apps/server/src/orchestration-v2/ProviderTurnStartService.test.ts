@@ -28,6 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -264,6 +265,7 @@ function makeLocalCommandHarness(input: {
   readonly openFailure?: unknown;
   readonly ensureThreadFailure?: unknown;
   readonly historyReadFailureAfterFallback?: unknown;
+  readonly resumeFailure?: unknown;
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
@@ -448,7 +450,7 @@ function makeLocalCommandHarness(input: {
     checkpoints: [],
     updatedAt: now,
   };
-  if ("historyReadFailureAfterFallback" in input) {
+  if ("historyReadFailureAfterFallback" in input || "resumeFailure" in input) {
     const nativeThreadRef = {
       driver: providerThread.driver,
       nativeId: "native-resume-thread",
@@ -562,15 +564,15 @@ function makeLocalCommandHarness(input: {
         new ProviderAdapter.ProviderAdapterEventStreamError({
           driver: providerThread.driver,
           providerSessionId,
-          cause: "native thread is gone",
+          cause: input.resumeFailure ?? "native thread is gone",
         }),
       ),
-    ensureThread: () => Effect.succeed(providerThread),
+    ensureThread: vi.fn(() => Effect.succeed(providerThread)),
   };
   const open = vi.fn(() =>
     input.interruptOpen === true
       ? Effect.interrupt
-      : "historyReadFailureAfterFallback" in input
+      : "historyReadFailureAfterFallback" in input || "resumeFailure" in input
         ? Effect.succeed(resumeFallbackSession as never)
         : "ensureThreadFailure" in input
           ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
@@ -751,6 +753,7 @@ function makeLocalCommandHarness(input: {
     writeIfRunCurrent,
     startRootRun,
     interruptTurn,
+    fallbackEnsureThread: resumeFallbackSession.ensureThread,
     tryHandlePromptCommand,
     events,
     oldInstanceId,
@@ -1123,6 +1126,36 @@ effectIt.effect("leaves the run starting when a session-open failure will be ret
     expect(error._tag).toBe("ProviderTurnStartError");
     expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
     expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+  }),
+);
+
+effectIt.effect("fails rather than retries a provider thread request with an unknown outcome", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      ensureThreadFailure: { _tag: "CodexAppServerUnresponsiveError", method: "thread/start" },
+    });
+
+    yield* harness.startWithRetry;
+
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+  }),
+);
+
+effectIt.effect("fails rather than starts a fresh thread when a resume outcome is unknown", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      resumeFailure: { _tag: "CodexAppServerUnresponsiveError", method: "thread/resume" },
+    });
+
+    const result = yield* Effect.result(harness.startWithRetry);
+
+    expect(harness.fallbackEnsureThread).not.toHaveBeenCalled();
+    expect(Result.isSuccess(result)).toBe(true);
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
   }),
 );
 

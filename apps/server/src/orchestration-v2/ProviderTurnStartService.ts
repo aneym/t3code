@@ -84,6 +84,13 @@ const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
+// The provider may have acted on a request it never answered, so a retry could duplicate it.
+const OUTCOME_UNKNOWN_TAGS = ["CodexAppServerUnresponsiveError"] as const;
+
+const outcomeUnknown = (error: unknown): boolean =>
+  OUTCOME_UNKNOWN_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
+  (Predicate.hasProperty(error, "cause") && outcomeUnknown(error.cause));
+
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
     readonly threadId: ThreadId;
@@ -685,7 +692,9 @@ export const layer: Layer.Layer<
       ) {
         const loaded = yield* Effect.result(load);
         if (loaded._tag === "Success") return loaded.success;
-        if (input.willRetry === true) return yield* loaded.failure;
+        if (input.willRetry === true && !outcomeUnknown(loaded.failure)) {
+          return yield* loaded.failure;
+        }
         yield* settleStartFailure({
           signal: "provider-thread-load-failure",
           title: "Provider turn failed to start",
@@ -773,6 +782,9 @@ export const layer: Layer.Layer<
         );
         if (resumed._tag === "Success") {
           return resumed.success;
+        }
+        if (outcomeUnknown(resumed.failure)) {
+          return yield* loadFromProvider(Effect.fail(resumed.failure));
         }
 
         yield* Effect.logWarning("Provider resume failed; attempting a fresh native session", {
