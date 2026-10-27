@@ -1648,12 +1648,3 @@ export function DevicesSettingsPanel() {
   );
 }
 
-export const BrowserSettingsPanel = IntegrationsSettingsPanel;
-
-export function DevicesSettingsPanel() {
-  return (
-    <SettingsPageContainer>
-      <DeviceIntegrationSettings />
-    </SettingsPageContainer>
-  );
-}
