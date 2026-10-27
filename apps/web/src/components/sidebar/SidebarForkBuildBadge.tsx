@@ -1,8 +1,12 @@
 import { GitForkIcon } from "lucide-react";
 import { useState } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { RelativeTime } from "~/components/RelativeTime";
 import { APP_VERSION } from "~/branding";
+import { listForkReleases, type ForkReleaseResult } from "./forkReleaseSwitcher.logic";
+import { ForkReleaseSwitcher } from "./ForkReleaseSwitcher";
 import { checkUpstreamNightly, FORK_VERSION, loadForkBuildManifest } from "~/forkBuild";
 import type { ForkBuildManifest, ForkVersion, UpstreamNightlyStatus } from "~/forkBuild.logic";
 import { usePrimaryEnvironment } from "~/state/environments";
@@ -26,9 +30,12 @@ function ForkBuildBadge({
   forkVersion: ForkVersion;
   onBackdrop: boolean;
 }) {
+  const primaryEnvironment = usePrimaryEnvironment();
   const [open, setOpen] = useState(false);
   const [manifest, setManifest] = useState<Loadable<ForkBuildManifest | null>>(LOADING);
   const [upstream, setUpstream] = useState<Loadable<UpstreamNightlyStatus | null>>(LOADING);
+  const [releases, setReleases] = useState<ForkReleaseResult | null>(null);
+  const fetchReleases = useAtomCommand(listForkReleases, { reportFailure: false });
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
@@ -37,6 +44,12 @@ function ForkBuildBadge({
     void checkUpstreamNightly(forkVersion.upstreamBuild).then((value) =>
       setUpstream({ status: "done", value }),
     );
+    if (primaryEnvironment !== null) {
+      void fetchReleases({
+        environmentId: primaryEnvironment.environmentId,
+        input: undefined,
+      }).then(setReleases);
+    }
   };
 
   const upstreamIsNewer =
@@ -68,7 +81,13 @@ function ForkBuildBadge({
       />
       {open ? (
         <PreviewCardPopup align="start" side="bottom" className="w-72 max-w-[calc(100vw-2rem)]">
-          <ForkBuildDetails forkVersion={forkVersion} manifest={manifest} upstream={upstream} />
+          <ForkBuildDetails
+            environmentId={primaryEnvironment?.environmentId ?? null}
+            forkVersion={forkVersion}
+            manifest={manifest}
+            upstream={upstream}
+            releases={releases}
+          />
         </PreviewCardPopup>
       ) : null}
     </PreviewCard>
@@ -76,13 +95,17 @@ function ForkBuildBadge({
 }
 
 function ForkBuildDetails({
+  environmentId,
   forkVersion,
   manifest,
   upstream,
+  releases,
 }: {
+  environmentId: EnvironmentId | null;
   forkVersion: ForkVersion;
   manifest: Loadable<ForkBuildManifest | null>;
   upstream: Loadable<UpstreamNightlyStatus | null>;
+  releases: ForkReleaseResult | null;
 }) {
   const serverVersion = usePrimaryEnvironment()?.serverConfig?.environment.serverVersion ?? null;
   const builtAt = manifest.status === "done" ? (manifest.value?.builtAt ?? null) : null;
@@ -123,6 +146,9 @@ function ForkBuildDetails({
           <span className="truncate">Server {serverVersion}</span>
         </div>
       ) : null}
+      {environmentId === null ? null : (
+        <ForkReleaseSwitcher environmentId={environmentId} releases={releases} />
+      )}
     </div>
   );
 }
