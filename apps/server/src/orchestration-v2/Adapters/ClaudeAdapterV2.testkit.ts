@@ -28,7 +28,6 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
-import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import {
   isWindowsClaudeLauncherShimPath,
   resolveClaudeSdkExecutablePath,
@@ -1040,7 +1039,6 @@ function layerClaudeProviderAdapterRegistryReplay(
         IdAllocator.layer,
         NodeServices.layer,
         layerServerConfig,
-        ServerEnvironment.layerIdentity,
       ),
     ),
   );
