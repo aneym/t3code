@@ -351,7 +351,6 @@ function listCapabilityModels(input: {
   return { listed, omitted: visible.length - listed.length };
 }
 
-/** Option ids and allowed values are all a delegating agent needs; labels are UI copy. */
 function capabilityModelOption(descriptor: ProviderOptionDescriptor): OrchestratorMcpModelOption {
   const defaultValue = getProviderOptionCurrentValue(descriptor);
   return {
@@ -809,7 +808,7 @@ function threadTitle(input: {
   return detail.length > 80 ? `${detail.slice(0, 77)}...` : detail;
 }
 
-function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
+export function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
   return input.role === undefined || input.role === "general"
     ? input.task
     : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
@@ -2818,7 +2817,7 @@ const make = Effect.gen(function* () {
       yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
 
-      const mode = input.mode ?? "auto";
+      const mode = input.mode ?? "queue";
       const key = yield* requestKey(input.clientRequestId);
       const messageId = stableOperationMessageId({
         scope,
