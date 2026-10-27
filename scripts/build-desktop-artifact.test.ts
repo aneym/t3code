@@ -475,10 +475,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it.effect("packages fork and upstream nightlies with nightly branding and release metadata", () =>
     Effect.gen(function* () {
-      for (const version of [
-        "0.1.3-nightly.20261026.3726.aneym.1",
-        "0.1.3-nightly.20261026.3726.aneym.build",
-        "0.1.3-nightly.20261026.3726",
+      for (const [version, productName] of [
+        ["0.1.3-nightly.20261026.3726.aneym.1", "T3 Dev"],
+        ["0.1.3-nightly.20261026.3726.aneym.build", "T3 Dev"],
+        ["0.1.3-nightly.20261026.3726", "T3 Code (Nightly)"],
       ]) {
         const config = yield* createBuildConfig(
           "mac",
@@ -489,7 +489,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           undefined,
           undefined,
         );
-        assert.equal(config.productName, "T3 Code (Nightly)");
+        assert.equal(config.productName, productName);
         assert.deepStrictEqual(config.publish, [
           {
             provider: "github",
