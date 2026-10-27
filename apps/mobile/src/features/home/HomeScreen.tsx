@@ -496,29 +496,28 @@ export function HomeScreen(props: HomeScreenProps) {
 
   const renderV2Item = ({ item }: { readonly item: ThreadListV2ListItem }) => {
     if (item.type === "v2-pending") {
-      const pendingScopeKey = scopedProjectKey(
-        item.pendingTask.environmentId,
-        item.pendingTask.projectId,
-      );
+      const task = item.pendingTask;
+      const dest = task.destinationId === undefined ? task.environmentId : task.destinationId;
+      const key = scopedProjectKey(task.environmentId, task.projectId);
       return (
         <ThreadListV2PendingRow
           pane={primaryColumn ? "sidebar" : "screen"}
-          pendingTask={item.pendingTask}
+          pendingTask={task}
           selected={
-            activeNewTask?.pendingKey === item.pendingTask.key ||
-            (item.pendingTask.kind === "pending" &&
-              scopedThreadKey(item.pendingTask.environmentId, item.pendingTask.message.threadId) ===
-                selectedThreadKey)
+            activeNewTask?.pendingKey === task.key ||
+            (task.kind === "pending" &&
+              scopedThreadKey(task.environmentId, task.message.threadId) === selectedThreadKey)
           }
-          project={projectByKey.get(pendingScopeKey) ?? null}
-          projectTitle={v2ProjectTitleByProjectKey.get(pendingScopeKey)}
+          project={projectByKey.get(key) ?? null}
+          projectTitle={v2ProjectTitleByProjectKey.get(key)}
           environmentLabel={
-            Object.keys(props.savedConnectionsById).length > 1
-              ? (props.savedConnectionsById[item.pendingTask.environmentId]?.environmentLabel ??
-                null)
-              : null
+            !dest
+              ? "Auto balance"
+              : Object.keys(props.savedConnectionsById).length > 1
+                ? (props.savedConnectionsById[dest]?.environmentLabel ?? null)
+                : null
           }
-          environmentMachine={machineByEnvironmentId.get(item.pendingTask.environmentId)}
+          environmentMachine={dest ? machineByEnvironmentId.get(dest) : undefined}
           showPendingDivider={item.showPendingDivider}
           showTrailingDivider={item.showTrailingDivider}
           onSelectPendingTask={props.onSelectPendingTask}

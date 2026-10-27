@@ -81,6 +81,8 @@ const isWorkspaceSelections = Schema.is(WorkspaceSelections);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
 
 export interface Preferences {
+  readonly loadBalancingEnabled?: boolean;
+  readonly loadBalancingWeights?: Readonly<Record<string, number>>;
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
   readonly pullRequestHideTestFiles?: boolean;
@@ -163,6 +165,17 @@ export class MobilePreferencesStore extends Context.Service<
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: { -readonly [Key in keyof Preferences]: Preferences[Key] } = {};
 
+  if (typeof parsed.loadBalancingEnabled === "boolean") {
+    preferences.loadBalancingEnabled = parsed.loadBalancingEnabled;
+  }
+  if (parsed.loadBalancingWeights && typeof parsed.loadBalancingWeights === "object") {
+    preferences.loadBalancingWeights = Object.fromEntries(
+      Object.entries(parsed.loadBalancingWeights).map(([id, weight]) => [
+        id,
+        typeof weight === "number" && Number.isFinite(weight) && weight >= 0 ? weight : 0,
+      ]),
+    );
+  }
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
     preferences.hiddenNavigationTabs = parsed.hiddenNavigationTabs.filter(
       (tab): tab is string => typeof tab === "string",
