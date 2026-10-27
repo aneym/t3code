@@ -96,6 +96,9 @@ export interface Preferences {
   readonly codeFontSize?: number | null;
   readonly codeWordBreak?: boolean;
   readonly mathRenderingEnabled?: boolean;
+  readonly sidebarThreadShowMachine?: boolean;
+  readonly sidebarThreadShowAgent?: boolean;
+  readonly sidebarThreadShowStatusText?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
   readonly dismissedDatabaseStorageNotices?: readonly string[];
@@ -157,40 +160,7 @@ export class MobilePreferencesStore extends Context.Service<
 >()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
 
 function sanitizePreferences(parsed: Preferences): Preferences {
-  const preferences: {
-    navigationTabOrder?: readonly string[];
-    hiddenNavigationTabs?: readonly string[];
-    pullRequestHideTestFiles?: boolean;
-    pullRequestMergeMethod?: PullRequestMergeMethod;
-    liveActivitiesEnabled?: boolean;
-    themeId?: MobileThemeId;
-    lightThemeId?: MobileThemeId;
-    darkThemeId?: MobileThemeId;
-    themeMode?: MobileThemeMode;
-    baseFontSize?: number;
-    terminalFontSize?: number | null;
-    markdownFontSize?: number;
-    codeFontSize?: number | null;
-    codeWordBreak?: boolean;
-    mathRenderingEnabled?: boolean;
-    connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
-    collapsedProjectGroups?: readonly string[];
-    dismissedDatabaseStorageNotices?: readonly string[];
-    composerEnterBehavior?: ComposerEnterBehavior;
-    followUpBehavior?: FollowUpBehavior;
-    microphones?: ReadonlyArray<MicrophoneEntry>;
-    projectGroupingEnabled?: boolean;
-    projectGroupingMode?: SidebarProjectGroupingMode;
-    planModeEnabled?: boolean;
-    workingShelfEnabled?: boolean;
-    modelFavorites?: Preferences["modelFavorites"];
-    threadListSettledShelfExpanded?: boolean;
-    threadListSnoozedShelfExpanded?: boolean;
-    threadListWorkingShelfExpanded?: boolean;
-    threadListFilters?: ThreadListFilters;
-    pullRequestListFilters?: PullRequestListPreferences;
-    workspaceSelections?: WorkspaceSelections;
-  } = {};
+  const preferences: { -readonly [K in keyof Preferences]: Preferences[K] } = {};
 
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
     preferences.hiddenNavigationTabs = parsed.hiddenNavigationTabs.filter(
@@ -257,6 +227,13 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.codeWordBreak === "boolean") preferences.codeWordBreak = parsed.codeWordBreak;
   if (typeof parsed.mathRenderingEnabled === "boolean")
     preferences.mathRenderingEnabled = parsed.mathRenderingEnabled;
+  for (const key of [
+    "sidebarThreadShowMachine",
+    "sidebarThreadShowAgent",
+    "sidebarThreadShowStatusText",
+  ] as const) {
+    if (typeof parsed[key] === "boolean") preferences[key] = parsed[key];
+  }
   if (Array.isArray(parsed.connectOnboardingOptOutAccounts)) {
     preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(
       (account): account is string => typeof account === "string",

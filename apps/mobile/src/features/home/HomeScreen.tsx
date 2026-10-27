@@ -1,3 +1,4 @@
+import { useThreadRowVisibility } from "../../state/thread-row-visibility";
 import { useActiveNewTask } from "../../state/active-new-task";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
@@ -135,9 +136,6 @@ interface HomeScreenProps {
 }
 
 const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 72;
-// Rows away from the viewport skip their swipe actions (see
-// swipe-row-activation), so render further ahead: a fast fling then reaches
-// rows that are already built instead of rows still being rebuilt.
 const THREAD_LIST_V2_DRAW_DISTANCE = 1_000;
 
 function deriveEmptyState(props: {
@@ -215,7 +213,6 @@ function HomeScrollView(props: ComponentProps<typeof ScrollView>) {
   const primaryColumn = use(NativePrimaryColumnContext);
   if (Platform.OS !== "ios") return <ScrollView {...props} />;
 
-  // Register the scroll view explicitly; layout and header siblings hide it from UIKit.
   return (
     <ScrollViewMarker
       style={{ flex: 1 }}
@@ -226,7 +223,6 @@ function HomeScrollView(props: ComponentProps<typeof ScrollView>) {
     >
       <ScrollView
         {...props}
-        // UIKit's scroll-edge material needs the scroll view's own surface color.
         className={cn(props.className, primaryColumn ? "bg-drawer" : "bg-screen")}
       />
     </ScrollViewMarker>
@@ -234,7 +230,6 @@ function HomeScrollView(props: ComponentProps<typeof ScrollView>) {
 }
 
 function renderHomeScrollView(props: ScrollViewProps) {
-  // FlatList clones this with cells and ref; keep the marker inside their actual ScrollView.
   return <HomeScrollView {...props} />;
 }
 
@@ -261,7 +256,6 @@ export function HomeScreen(props: HomeScreenProps) {
   const contentSideInsets = usesNativeWorkspaceColumns
     ? (columnMetrics ?? screenMetrics)?.safeArea
     : undefined;
-  // Wide Android lists need reading-width gutters to clear edges and camera cutouts.
   const { width: windowWidth } = useWindowDimensions();
   const androidListGutter =
     Platform.OS === "android"
@@ -331,7 +325,6 @@ export function HomeScreen(props: HomeScreenProps) {
       rows.slice(Math.max(0, state.start - 2), state.end + 3).map((row) => row.key),
     );
   };
-  // Status-bar, accessibility and programmatic scrolls bypass the gate; activate visible rows after settling.
   const activationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(activationTimerRef.current), []);
   const handleListScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -423,7 +416,6 @@ export function HomeScreen(props: HomeScreenProps) {
     toggleSnoozedShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
-  // Keep time in state; the compiler would cache a render-time new Date().
   const [now, setNow] = useState(() => new Date().toISOString());
   const nowMinute = now.slice(0, 16);
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
@@ -433,6 +425,7 @@ export function HomeScreen(props: HomeScreenProps) {
     return () => clearInterval(id);
   });
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
+  const rowVisibility = useThreadRowVisibility();
   const {
     providersByEnvironmentId,
     machineByEnvironmentId,
@@ -486,11 +479,7 @@ export function HomeScreen(props: HomeScreenProps) {
     return () => clearTimeout(id);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- snoozeWakeTick re-arms clamped timers even when the wake date exceeds 32-bit setTimeout and stays unchanged.
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
-  // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
-  // props object, which is new on every render of Home's parent.
   const { onSelectThread } = props;
-  // A row listed for a message match opens the thread at that message, by
-  // tap or by shortcut.
   const selectThread = (thread: EnvironmentThreadShell) => {
     const key = threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id });
     const messageId = contentOnlyThreadKeys.has(key)
@@ -576,6 +565,7 @@ export function HomeScreen(props: HomeScreenProps) {
     const thread = item.item.thread;
     return (
       <ThreadListV2Row
+        rowVisibility={rowVisibility}
         pane={primaryColumn ? "sidebar" : "screen"}
         selected={scopedThreadKey(thread.environmentId, thread.id) === selectedThreadKey}
         fullSwipeWidth={fullSwipeWidth}
@@ -600,7 +590,6 @@ export function HomeScreen(props: HomeScreenProps) {
         }
         environmentMachine={machineByEnvironmentId.get(thread.environmentId)}
         searchMatch={
-          // Only rows listed for their messages show one and open at it.
           contentOnlyThreadKeys.has(
             threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id }),
           )
@@ -645,8 +634,8 @@ export function HomeScreen(props: HomeScreenProps) {
   };
   const v2KeyExtractor = (item: ThreadListV2ListItem) => item.key;
 
-  // extraData changes invalidate every visible row; put the minute clock on items to limit updates.
   const v2ExtraData = {
+    rowVisibility,
     activeNewTask,
     projectByKey,
     projectTitleByProjectKey: v2ProjectTitleByProjectKey,
@@ -825,8 +814,6 @@ export function HomeScreen(props: HomeScreenProps) {
               ListEmptyComponent={v2ListEmpty}
               style={{ flex: 1 }}
               automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
-              // UIKit owns the bar's inset, so a minimizing bar and a resized column move
-              // the list in the same frame as the bar.
               contentInsetAdjustmentBehavior="automatic"
               contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
               initialScrollOffset={
