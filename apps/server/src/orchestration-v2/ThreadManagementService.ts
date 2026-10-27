@@ -770,18 +770,56 @@ const make = Effect.gen(function* () {
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = Effect.fn(
     "ThreadManagementService.sendToThread",
   )(function* (input) {
-    const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
+    let target = yield* getProjectThreadRecords(input, [
+      "runs",
+      "providerTurns",
+      "providerThreads",
+    ]);
     if (target.thread.archivedAt !== null) {
       return yield* new ThreadManagementThreadArchivedError({
         threadId: input.threadId,
       });
+    }
+    let recoveredUnacceptedRun = false;
+    if (input.mode !== "queue") {
+      const active = latestActiveRun(target);
+      const providerThread = target.providerThreads.find(
+        (thread) => thread.id === active?.providerThreadId,
+      );
+      const sessionLost =
+        active !== undefined &&
+        (providerThread?.providerSessionId == null ||
+          !(yield* sessions.isLive(providerThread.providerSessionId)));
+      if (
+        active !== undefined &&
+        (active.status === "running" ||
+          (active.status === "starting" && (input.mode === "restart" || input.mode === "steer"))) &&
+        (sessionLost ||
+          !target.providerTurns.some(
+            (turn) => turn.runAttemptId === active.activeAttemptId && turn.status === "running",
+          ))
+      ) {
+        yield* dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make(`${input.commandId}:interrupt-unaccepted-run`),
+          threadId: input.threadId,
+          runId: active.id,
+          reason: "Replaced a run whose provider turn never started.",
+        });
+        recoveredUnacceptedRun = true;
+        target = yield* getProjectThreadRecords(input, [
+          "runs",
+          "providerTurns",
+          "providerThreads",
+        ]);
+      }
     }
     const steerableRun = latestSteerableRun(target);
     let dispatchMode: Extract<
       OrchestrationV2Command,
       { readonly type: "message.dispatch" }
     >["dispatchMode"];
-    if (input.mode === "steer" || input.mode === "restart") {
+    if ((input.mode === "steer" || input.mode === "restart") && !recoveredUnacceptedRun) {
       if (steerableRun === undefined) {
         return yield* new ThreadManagementNoSteerableRunError({
           threadId: input.threadId,
