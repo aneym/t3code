@@ -829,8 +829,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const snoozedMenuActions = useMemo<MenuAction[]>(
     () => [
       SNOOZED_MENU_ACTIONS[0]!,
-      ...(props.settlementSupported && canSettleThread
-        ? [{ id: "settle", title: "Settle", image: "checkmark" }]
+      ...(props.settlementSupported &&
+      (thread.settledOverride === "settled" ? canUnsettleThread : canSettleThread)
+        ? [thread.settledOverride === "settled" ? SLIM_MENU_ACTIONS[0]! : CARD_MENU_ACTIONS[0]!]
         : []),
       ...arrangementMenuItems.filter((action) => action.id === "pin" || action.id === "unpin"),
       ...titleMenuItems,
@@ -842,7 +843,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       autoSettleMenuItems,
       titleMenuItems,
       props.settlementSupported,
+      thread.settledOverride,
       canSettleThread,
+      canUnsettleThread,
       arrangementMenuItems,
     ],
   );
