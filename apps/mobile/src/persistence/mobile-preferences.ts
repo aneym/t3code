@@ -107,6 +107,7 @@ export interface Preferences {
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly planModeEnabled?: boolean;
   readonly workingShelfEnabled?: boolean;
+  readonly showChatChangedFiles?: boolean;
   readonly modelFavorites?: ReadonlyArray<{
     readonly provider: ProviderInstanceId;
     readonly model: string;
@@ -157,40 +158,7 @@ export class MobilePreferencesStore extends Context.Service<
 >()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
 
 function sanitizePreferences(parsed: Preferences): Preferences {
-  const preferences: {
-    navigationTabOrder?: readonly string[];
-    hiddenNavigationTabs?: readonly string[];
-    pullRequestHideTestFiles?: boolean;
-    pullRequestMergeMethod?: PullRequestMergeMethod;
-    liveActivitiesEnabled?: boolean;
-    themeId?: MobileThemeId;
-    lightThemeId?: MobileThemeId;
-    darkThemeId?: MobileThemeId;
-    themeMode?: MobileThemeMode;
-    baseFontSize?: number;
-    terminalFontSize?: number | null;
-    markdownFontSize?: number;
-    codeFontSize?: number | null;
-    codeWordBreak?: boolean;
-    mathRenderingEnabled?: boolean;
-    connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
-    collapsedProjectGroups?: readonly string[];
-    dismissedDatabaseStorageNotices?: readonly string[];
-    composerEnterBehavior?: ComposerEnterBehavior;
-    followUpBehavior?: FollowUpBehavior;
-    microphones?: ReadonlyArray<MicrophoneEntry>;
-    projectGroupingEnabled?: boolean;
-    projectGroupingMode?: SidebarProjectGroupingMode;
-    planModeEnabled?: boolean;
-    workingShelfEnabled?: boolean;
-    modelFavorites?: Preferences["modelFavorites"];
-    threadListSettledShelfExpanded?: boolean;
-    threadListSnoozedShelfExpanded?: boolean;
-    threadListWorkingShelfExpanded?: boolean;
-    threadListFilters?: ThreadListFilters;
-    pullRequestListFilters?: PullRequestListPreferences;
-    workspaceSelections?: WorkspaceSelections;
-  } = {};
+  const preferences: { -readonly [Key in keyof Preferences]: Preferences[Key] } = {};
 
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
     preferences.hiddenNavigationTabs = parsed.hiddenNavigationTabs.filter(
@@ -253,6 +221,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.codeFontSize === "number" || parsed.codeFontSize === null) {
     preferences.codeFontSize = parsed.codeFontSize;
+  }
+  if (typeof parsed.showChatChangedFiles === "boolean") {
+    preferences.showChatChangedFiles = parsed.showChatChangedFiles;
   }
   if (typeof parsed.codeWordBreak === "boolean") preferences.codeWordBreak = parsed.codeWordBreak;
   if (typeof parsed.mathRenderingEnabled === "boolean")

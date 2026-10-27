@@ -9,7 +9,7 @@ import { useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS, DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -46,6 +46,7 @@ export function SettingsThreadsRouteScreen() {
           contentContainerClassName="gap-6 px-5 pt-4"
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
+          <ChatDisplaySettingsSection />
           <AutoSettleSettingsRows />
           <BetaSettingsSection />
           <LegacySettingsSection />
@@ -288,5 +289,25 @@ function LegacySettingsSection() {
         control; otherwise every task runs in Build mode.
       </Text>
     </View>
+  );
+}
+
+function ChatDisplaySettingsSection() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const showChatChangedFiles = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.showChatChangedFiles ?? DEFAULT_CLIENT_SETTINGS.showChatChangedFiles)
+    : DEFAULT_CLIENT_SETTINGS.showChatChangedFiles;
+
+  return (
+    <SettingsSection title="Chat display">
+      <SettingsSwitchRow
+        icon="doc.text"
+        label="Changed files in chat"
+        subtitle="Show the changed-files card under assistant messages. Diffs stay available in the diff panel."
+        value={showChatChangedFiles}
+        onValueChange={(value) => savePreferences({ showChatChangedFiles: value })}
+      />
+    </SettingsSection>
   );
 }
