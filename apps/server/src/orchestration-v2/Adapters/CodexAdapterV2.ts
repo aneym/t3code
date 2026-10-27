@@ -1525,8 +1525,7 @@ export type CodexAdapterV2DriverEnv =
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | Path.Path
-  | ServerConfig
-  | ServerEnvironment.ServerEnvironmentIdentity;
+  | ServerConfig;
 
 export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapterV2")(function* (
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
@@ -1652,7 +1651,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           environment: withT3ThreadEnvironment(
             resolvedRuntime?.environment ?? adapterOptions.environment,
             input.threadId,
-            environmentId,
+            adapterOptions.environmentId,
           ),
         });
         const additionalContextByThread = yield* Ref.make(

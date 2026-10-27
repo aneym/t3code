@@ -11015,8 +11015,7 @@ export type ClaudeAdapterV2DriverEnv =
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | Path.Path
-  | ServerConfig.ServerConfig
-  | ServerEnvironment.ServerEnvironmentIdentity;
+  | ServerConfig.ServerConfig;
 
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
@@ -11029,8 +11028,12 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;
-    const environmentIdentity = yield* ServerEnvironment.ServerEnvironmentIdentity;
-    const environmentId = yield* environmentIdentity.getEnvironmentId;
+    const environmentIdentity = yield* Effect.serviceOption(
+      ServerEnvironment.ServerEnvironmentIdentity,
+    );
+    const environmentId = Option.isSome(environmentIdentity)
+      ? yield* environmentIdentity.value.getEnvironmentId
+      : undefined;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const baseEnvironment = yield* mergeProviderInstanceEnvironment(environment, hostEnvironment);
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
