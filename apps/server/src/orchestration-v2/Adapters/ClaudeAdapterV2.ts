@@ -4557,6 +4557,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         >();
         // Buffered idle outcomes must not settle a resumed child again.
         const appliedSubagentOutcomes = new WeakSet<SDKMessage>();
+        const rosterSettledSubagentTaskIdsByNativeThread = yield* Ref.make(
+          new Map<string, Set<string>>(),
+        );
+        const rosterObservedTaskIdsByNativeThread = yield* Ref.make(new Map<string, Set<string>>());
         // Subagent frames can precede the task_started that registers their owner.
         const pendingSubagentFramesByToolUseId = yield* Ref.make(
           new Map<string, ReadonlyArray<SDKMessage>>(),
@@ -4577,6 +4581,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           >;
         }>({ userTurns: new Map(), reports: new Map() });
         const backgroundedSubagentTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
+        const backgroundedSubagentNativeThreadByTaskId = new Map<string, string>();
+        const subagentContextByTaskId = new Map<string, ActiveClaudeTurnContext>();
         // Nested subagent completions notify their owner and never wake the root.
         const nestedSubagentTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
         const isNestedSubagentTask = (taskId: string) =>
@@ -4911,6 +4917,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return updated;
           });
 
+        const hasRosterSettledSubagentOnNativeThread = (nativeThreadId: string, taskId: string) =>
+          Ref.get(rosterSettledSubagentTaskIdsByNativeThread).pipe(
+            Effect.map((all) => taskIdSetForNativeThread(all, nativeThreadId).has(taskId)),
+          );
+
         const isWakeEligibleOpaqueBackgroundTaskOnNativeThread = (
           nativeThreadId: string,
           taskId: string,
@@ -5203,6 +5214,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             opaqueBackgroundTaskReplayTombstonesByNativeThread,
             nativeThreadId,
           );
+          yield* clearNativeThreadTaskIdSet(
+            rosterSettledSubagentTaskIdsByNativeThread,
+            nativeThreadId,
+          );
+          yield* clearNativeThreadTaskIdSet(rosterObservedTaskIdsByNativeThread, nativeThreadId);
           if (preservedOpaqueTombstones.length > 0) {
             yield* addTaskIdsToNativeThreadSet(
               opaqueBackgroundTaskReplayTombstonesByNativeThread,
@@ -6060,6 +6076,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (existingSubagent === undefined) {
             input.context.subagentNodesByTaskId.set(input.taskId, nodeId);
           }
+          subagentContextByTaskId.set(input.taskId, input.context);
           const turnItemOrdinal =
             existingSubagent?.turnItemOrdinal ??
             (yield* resolveItemOrdinal(input.context, `${nativeItemId}:subagent`));
@@ -7729,10 +7746,67 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return typeof taskId === "string" ? [taskId] : [];
               }),
             );
+            const previouslyObservedTaskIds = taskIdSetForNativeThread(
+              yield* Ref.get(rosterObservedTaskIdsByNativeThread),
+              input.nativeThreadId,
+            );
             const monitorTasks = yield* endClaudeMonitorTasks(
               (taskId, task) =>
                 task.nativeThreadId === input.nativeThreadId && !listedTaskIds.has(taskId),
             );
+            const settledContext =
+              input.activeContext ?? settledTurnByNativeThread.get(input.nativeThreadId);
+            const backgroundedTaskIds = yield* Ref.get(backgroundedSubagentTaskIds);
+            const rosterSettledTaskIds = yield* Ref.get(rosterSettledSubagentTaskIdsByNativeThread);
+            for (const taskId of backgroundedTaskIds) {
+              const taskNativeThreadId = backgroundedSubagentNativeThreadByTaskId.get(taskId);
+              const wasObserved = previouslyObservedTaskIds.has(taskId);
+              const wasSettled =
+                rosterSettledTaskIds.get(input.nativeThreadId)?.has(taskId) === true;
+              if (
+                taskNativeThreadId !== input.nativeThreadId ||
+                listedTaskIds.has(taskId) ||
+                !wasObserved ||
+                wasSettled
+              ) {
+                continue;
+              }
+              const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
+              const context = subagentContextByTaskId.get(taskId) ?? settledContext;
+              if (subagent?.task.status !== "running" || context === undefined) {
+                continue;
+              }
+              const terminalNotification = {
+                type: "system",
+                subtype: "task_notification",
+                task_id: taskId,
+                status: "stopped",
+                output_file: "",
+                summary: "Background task disappeared from Claude's authoritative roster.",
+                uuid: message.uuid ?? "00000000-0000-4000-8000-000000000000",
+                session_id: message.session_id ?? "unknown",
+              } as Extract<SDKMessage, { readonly subtype: "task_notification" }>;
+              yield* updateClaudeSubagentNode({
+                context,
+                taskId,
+                workflowFrame: terminalNotification,
+                nativeOutcome: terminalNotification,
+                result: terminalNotification.summary,
+                status: "cancelled",
+                onlyIfRunningInRun: subagent.task.runId,
+              });
+              yield* addTaskIdsToNativeThreadSet(
+                rosterSettledSubagentTaskIdsByNativeThread,
+                input.nativeThreadId,
+                [taskId],
+              );
+              yield* Ref.update(backgroundedSubagentTaskIds, (current) => {
+                if (!current.has(taskId)) return current;
+                const updated = new Set(current);
+                updated.delete(taskId);
+                return updated;
+              });
+            }
             for (const entry of roster) {
               const task = parseClaudeBackgroundTaskEntry(entry, monitorTasks);
               if (task !== null) {
@@ -7740,6 +7814,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }
             }
             yield* replacePendingBackgroundTasks(input.nativeThreadId, nextTasks);
+            yield* addTaskIdsToNativeThreadSet(
+              rosterObservedTaskIdsByNativeThread,
+              input.nativeThreadId,
+              [...listedTaskIds],
+            );
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_started") {
             if (!isClaudeNonSubagentTask(message) || message.is_backgrounded === false) {
@@ -8556,6 +8635,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* Ref.update(backgroundedSubagentTaskIds, (current) =>
                   new Set(current).add(message.task_id),
                 );
+                backgroundedSubagentNativeThreadByTaskId.set(
+                  message.task_id,
+                  liveQuery.nativeThreadId,
+                );
               }
               yield* recoverResumedClaudeSubagent({
                 context,
@@ -8636,6 +8719,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "system" && message.subtype === "task_notification") {
+            const wasRosterSettledTask = yield* hasRosterSettledSubagentOnNativeThread(
+              liveQuery.nativeThreadId,
+              message.task_id,
+            );
             if (
               !appliedSubagentOutcomes.has(message) &&
               (yield* Ref.get(sessionSubagentsByTaskId)).has(message.task_id)
@@ -8676,6 +8763,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               updated.delete(message.task_id);
               return updated;
             });
+            backgroundedSubagentNativeThreadByTaskId.delete(message.task_id);
             yield* applyBackgroundTaskRosterMessage({
               nativeThreadId: liveQuery.nativeThreadId,
               message,
@@ -8683,6 +8771,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             if (
               !wasBackgroundTask &&
+              !wasRosterSettledTask &&
               !context.ignoredTaskIds.has(message.task_id) &&
               !appliedSubagentOutcomes.has(message)
             ) {

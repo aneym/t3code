@@ -12778,6 +12778,104 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("terminalizes a backgrounded native subagent when its full roster drops it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWorkflowHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-workflow-roster-drop"),
+            text: "Run the workflow in the background.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({ ...workflowTaskStarted, is_backgrounded: true }),
+        );
+        yield* harness.offerAndWait(workflowLaunchAck(harness.transcriptDir));
+        yield* harness.offerAndWait(
+          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001280", state: "start" }),
+        );
+        yield* harness.until(() => workflowCoordinatorEvents(harness.events).length > 0);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000001281", result: "Launched." }),
+        );
+        yield* harness.awaitTerminal(1);
+        assert.equal(workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status, "running");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        const roster = (tasks: ReadonlyArray<unknown>, uuid: string) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks,
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const rosterEntry = {
+          task_id: WORKFLOW_TASK_ID,
+          task_type: "local_workflow",
+          description: "Run the alpha workflow",
+        };
+        yield* harness.offerAndWait(roster([], "00000000-0000-4000-8000-000000001282"));
+        assert.equal(workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status, "running");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        yield* harness.offerAndWait(roster([rosterEntry], "00000000-0000-4000-8000-000000001283"));
+        assert.equal(workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status, "running");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-workflow-roster-drop-follow-up"),
+            text: "Continue while the workflow runs.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000001284", result: "Continued." }),
+        );
+        yield* harness.awaitTerminal(2);
+        yield* harness.offerAndWait(roster([], "00000000-0000-4000-8000-000000001285"));
+        yield* harness.until(
+          () => workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status !== "running",
+        );
+        assert.equal(
+          workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status,
+          "cancelled",
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: WORKFLOW_TASK_ID,
+            status: "completed",
+            summary: "Late completion after roster disappearance.",
+            uuid: "00000000-0000-4000-8000-000000001286",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        assert.equal(
+          workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status,
+          "cancelled",
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("marks a workflow coordinator's script prompt and leaves a subagent brief plain", () =>
     Effect.scoped(
       Effect.gen(function* () {
