@@ -14,12 +14,18 @@ type Loadable<T> = { readonly status: "loading" } | { readonly status: "done"; r
 
 const LOADING = { status: "loading" } as const;
 
-export function SidebarForkBuildBadge() {
+export function SidebarForkBuildBadge({ onBackdrop }: { onBackdrop: boolean }) {
   if (FORK_VERSION === null) return null;
-  return <ForkBuildBadge forkVersion={FORK_VERSION} />;
+  return <ForkBuildBadge forkVersion={FORK_VERSION} onBackdrop={onBackdrop} />;
 }
 
-function ForkBuildBadge({ forkVersion }: { forkVersion: ForkVersion }) {
+function ForkBuildBadge({
+  forkVersion,
+  onBackdrop,
+}: {
+  forkVersion: ForkVersion;
+  onBackdrop: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [manifest, setManifest] = useState<Loadable<ForkBuildManifest | null>>(LOADING);
   const [upstream, setUpstream] = useState<Loadable<UpstreamNightlyStatus | null>>(LOADING);
@@ -43,9 +49,10 @@ function ForkBuildBadge({ forkVersion }: { forkVersion: ForkVersion }) {
         closeDelay={120}
         render={
           <Button
-            aria-label={`Fork build ${forkVersion.upstreamBuild}.${forkVersion.forkRevision}${upstreamIsNewer ? ", upstream nightly is newer" : ""}`}
+            aria-label={`Fork build ${forkVersion.upstreamBuild}.${forkVersion.forkRevision}${upstreamIsNewer ? ", a newer upstream nightly is out" : ""}`}
+            className={onBackdrop ? "relative top-auto translate-y-0" : undefined}
             size="icon-micro"
-            variant="ghost-muted"
+            variant={onBackdrop ? "media-navigation" : "ghost-muted"}
           >
             <span className="relative inline-flex">
               <GitForkIcon aria-hidden />
@@ -126,7 +133,8 @@ function describeUpstream(upstream: Loadable<UpstreamNightlyStatus | null>): str
   const { newestBuild, buildsAhead, buildsAheadIsLowerBound } = upstream.value;
   if (buildsAhead === 0) return "Up to date with upstream nightly";
   const count = `${buildsAhead}${buildsAheadIsLowerBound ? "+" : ""}`;
-  return `Upstream nightly ${newestBuild} is newer (${count} ${buildsAhead === 1 && !buildsAheadIsLowerBound ? "build" : "builds"} ahead)`;
+  const noun = buildsAhead === 1 && !buildsAheadIsLowerBound ? "release" : "releases";
+  return `Upstream nightly ${newestBuild} is out (${count} newer ${noun})`;
 }
 
 function upstreamTone(upstream: Loadable<UpstreamNightlyStatus | null>): string {
