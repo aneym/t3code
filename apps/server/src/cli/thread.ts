@@ -494,6 +494,7 @@ const threadArgument = Argument.String("thread").pipe(Argument.withDescription("
 const decodeThreadIdValue = Schema.decodeUnknownEffect(ThreadId);
 const decodeRunIdValue = Schema.decodeUnknownEffect(RunId);
 const decodeTitle = Schema.decodeUnknownEffect(TrimmedNonEmptyString);
+const decodeIsoDateTime = Schema.decodeEffect(IsoDateTime);
 const decodeThreadId = (value: string) =>
   decodeThreadIdValue(value.trim()).pipe(
     Effect.mapError(() => new ThreadUsageError({ detail: `'${value}' is not a thread id.` })),
@@ -687,9 +688,7 @@ const threadOrganizeCommand = (
                 action,
                 ...(Option.isSome(flags.snoozedUntil)
                   ? {
-                      snoozedUntil: yield* Schema.decodeEffect(IsoDateTime)(
-                        flags.snoozedUntil.value,
-                      ),
+                      snoozedUntil: yield* decodeIsoDateTime(flags.snoozedUntil.value),
                     }
                   : {}),
               },
