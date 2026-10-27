@@ -82,6 +82,7 @@ export function SidebarAgents({ onNavigate }: { readonly onNavigate: () => void 
                 <AgentRow
                   key={agent.handle}
                   {...rowProps(agent)}
+                  muted
                   toggle={{
                     label: `Pin ${agent.name}`,
                     icon: PinIcon,
@@ -100,6 +101,7 @@ export function SidebarAgents({ onNavigate }: { readonly onNavigate: () => void 
 function AgentRow(props: {
   readonly agent: RailsAgent;
   readonly active: boolean;
+  readonly muted?: boolean;
   readonly onNavigate: () => void;
   readonly toggle: {
     readonly label: string;
@@ -113,13 +115,20 @@ function AgentRow(props: {
     "flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-sm outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset",
     props.active
       ? "bg-sidebar-row-active text-sidebar-foreground"
-      : "text-sidebar-foreground hover:bg-sidebar-row-hover",
+      : cn(
+          "group-hover/agent-row:bg-sidebar-row-hover",
+          props.muted ? "text-sidebar-muted-foreground" : "text-sidebar-foreground",
+        ),
   );
   const content = (
     <>
       <AgentFace handle={agent.handle} name={agent.name} />
       <span className="min-w-0 flex-1 truncate">{agent.name}</span>
-      {agent.thread === null ? null : <AgentStatus thread={agent.thread} />}
+      {agent.thread === null ? null : (
+        <span className="flex shrink-0 group-focus-within/agent-row:invisible group-hover/agent-row:invisible">
+          <AgentStatus thread={agent.thread} />
+        </span>
+      )}
     </>
   );
   const ToggleIcon = props.toggle.icon;
@@ -154,7 +163,7 @@ function AgentRow(props: {
               type="button"
               aria-label={props.toggle.label}
               onClick={props.toggle.onClick}
-              className="absolute right-1 inline-flex size-6 items-center justify-center rounded-md bg-sidebar-row-hover text-sidebar-muted-foreground opacity-0 hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/agent-row:opacity-100"
+              className="absolute right-1 inline-flex size-6 items-center justify-center rounded-md text-sidebar-muted-foreground opacity-0 hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/agent-row:opacity-100"
             >
               <ToggleIcon aria-hidden className="size-3.5" />
             </button>
@@ -172,7 +181,7 @@ function AgentFace(props: { readonly handle: string; readonly name: string }) {
     const identity = deriveProjectIdentity(props.name);
     return (
       <ProjectMonogram
-        text={identity.monogram}
+        text={Array.from(identity.monogram)[0] ?? ""}
         color={identity.color}
         className="size-5 [&>svg]:rounded-full"
       />
@@ -195,21 +204,21 @@ function AgentStatus({ thread }: { readonly thread: EnvironmentThreadShell }) {
   const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, undefined);
   if (status === "working") {
     return (
-      <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-info-foreground">
+      <span className="inline-flex shrink-0 items-center gap-1 text-xs text-sidebar-muted-foreground">
         <CircleDashedIcon aria-hidden className="size-3.5" />
         Working
       </span>
     );
   }
   if (status === "approval" || status === "input" || status === "request") {
-    return <span className="shrink-0 text-xs text-sidebar-foreground">Needs you</span>;
+    return <span className="shrink-0 text-xs font-medium text-sidebar-foreground">Needs you</span>;
   }
   if (status === "waiting") {
-    return <span className="shrink-0 text-xs text-secondary-label">Waiting</span>;
+    return <span className="shrink-0 text-xs text-sidebar-muted-foreground">Waiting</span>;
   }
   if (hasUnseenCompletion({ ...thread, lastVisitedAt })) {
     return (
-      <span className="inline-flex shrink-0 items-center gap-1 text-xs text-success-foreground">
+      <span className="inline-flex shrink-0 items-center gap-1 text-xs text-sidebar-muted-foreground">
         <CircleCheckIcon aria-hidden className="size-3.5" />
         Done
       </span>
