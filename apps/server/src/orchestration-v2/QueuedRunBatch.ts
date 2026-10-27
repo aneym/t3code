@@ -47,6 +47,7 @@ function batchableMessage(
     message.workflowScript === true ||
     message.scheduledTaskId !== undefined ||
     message.idleCompaction !== undefined ||
+    message.text.trimStart().startsWith("/") ||
     isNativeMaintenanceCommand(message) ||
     parseGoalCommand(message) !== null
   ) {

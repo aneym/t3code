@@ -1245,7 +1245,7 @@ export function ChatSettingsPanel() {
           {...searchableSetting("batch-queued-messages")}
           serverScoped
           settingKeys={["batchQueuedMessages"]}
-          description="When a turn ends, start every queued message on the thread together as one turn instead of one turn each."
+          description="When a turn ends, start up to 20 compatible queued messages on the thread together as one turn instead of one turn each."
           resetAction={
             settings.batchQueuedMessages !== DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages ? (
               <SettingResetButton
