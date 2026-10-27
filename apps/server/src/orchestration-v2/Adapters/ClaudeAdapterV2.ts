@@ -7733,6 +7733,42 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (taskId, task) =>
                 task.nativeThreadId === input.nativeThreadId && !listedTaskIds.has(taskId),
             );
+            const settledContext =
+              input.activeContext ?? settledTurnByNativeThread.get(input.nativeThreadId);
+            if (settledContext !== undefined) {
+              for (const taskId of yield* Ref.get(backgroundedSubagentTaskIds)) {
+                if (listedTaskIds.has(taskId)) continue;
+                const subagent = settledContext.subagentsByTaskId.get(taskId);
+                if (subagent?.task.status !== "running") {
+                  continue;
+                }
+                const terminalNotification = {
+                  type: "system",
+                  subtype: "task_notification",
+                  task_id: taskId,
+                  status: "stopped",
+                  output_file: "",
+                  summary: "Background task disappeared from Claude's authoritative roster.",
+                  uuid: message.uuid ?? "00000000-0000-4000-8000-000000000000",
+                  session_id: message.session_id ?? "unknown",
+                } as Extract<SDKMessage, { readonly subtype: "task_notification" }>;
+                yield* updateClaudeSubagentNode({
+                  context: settledContext,
+                  taskId,
+                  workflowFrame: terminalNotification,
+                  nativeOutcome: terminalNotification,
+                  result: terminalNotification.summary,
+                  status: "cancelled",
+                  onlyIfRunningInRun: subagent.task.runId,
+                });
+                yield* Ref.update(backgroundedSubagentTaskIds, (current) => {
+                  if (!current.has(taskId)) return current;
+                  const updated = new Set(current);
+                  updated.delete(taskId);
+                  return updated;
+                });
+              }
+            }
             for (const entry of roster) {
               const task = parseClaudeBackgroundTaskEntry(entry, monitorTasks);
               if (task !== null) {

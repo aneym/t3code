@@ -149,8 +149,6 @@ import { deriveLayout } from "./lib/layout";
 import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { HORIZONTAL_FORM_SHEET_OPTIONS, formSheetDetents } from "./native/sheet-surface";
-import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
-import { useComposerAttachmentUploadWorker } from "./state/composer-attachment-uploads";
 import {
   selectWorkspaceDetail,
   workspaceDetailRouter,
@@ -485,13 +483,6 @@ function workspaceLocationFromState(state: NavigationState) {
   };
 }
 
-// Isolate subscriptions so streaming updates cannot re-render RootStackLayout and every screen.
-function ThreadOutboxDrainWorker() {
-  useThreadOutboxDrain();
-  useComposerAttachmentUploadWorker();
-  return null;
-}
-
 function RootStackLayout(props: {
   readonly children: React.ReactNode;
   readonly state: NavigationState;
@@ -509,16 +500,11 @@ function RootStackLayout(props: {
   );
   const draftRoute = props.state.routes.findLast((route) => route.name === "Thread");
   const draftParams = (
-    draftRoute?.params as
-      | { draft?: { draftId?: string | string[]; pendingTaskId?: string | string[] } }
-      | undefined
+    draftRoute?.params as { draft?: { draftId?: string | string[] } } | undefined
   )?.draft;
   const routeDraftId = Array.isArray(draftParams?.draftId)
     ? draftParams.draftId[0]
     : draftParams?.draftId;
-  const routePendingTaskId = Array.isArray(draftParams?.pendingTaskId)
-    ? draftParams.pendingTaskId[0]
-    : draftParams?.pendingTaskId;
   useAgentNotificationNavigation(workspaceLocation.pathname);
   useConnectOnboardingNavigation();
   useAppShortcuts(props.state);
@@ -540,13 +526,8 @@ function RootStackLayout(props: {
   }, [navigation, pendingShare, props.state]);
 
   return (
-    <NewTaskFlowProvider
-      active={isDraftThreadRoute(draftRoute)}
-      routeDraftId={routeDraftId}
-      routePendingTaskId={routePendingTaskId}
-    >
+    <NewTaskFlowProvider active={isDraftThreadRoute(draftRoute)} routeDraftId={routeDraftId}>
       <HardwareKeyboardCommandProvider pathname={pathname}>
-        <ThreadOutboxDrainWorker />
         <ShowcaseCaptureCoordinator pathname={pathname} />
         <SettingsEnvironmentFilterProvider open={settingsOpen}>
           <WorkspaceConnectionStatusProvider>
