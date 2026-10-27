@@ -1482,14 +1482,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         const before = yield* readCommandProjection(threadId);
         const ended = before.runs.find((run) => run.id === options.endedRunId);
-        const stopped =
-          ended?.status === "completed" &&
-          (yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
-            turnItemTypes: ["run_interrupt_request"],
-            turnItemRunIds: [ended.id],
-          })).turnItems.length > 0;
+        const endedOwnsQueue =
+          ended !== undefined &&
+          ended.status === "completed" &&
+          latestExecutedRun(before.runs)?.id === ended.id;
+        const stoppedEnded =
+          ended === undefined || !endedOwnsQueue
+            ? false
+            : (yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+                  turnItemTypes: ["run_interrupt_request"],
+                  turnItemRunIds: [ended.id],
+                })).turnItems.length > 0;
         const held =
-          ended?.status === "completed" && !stopped
+          endedOwnsQueue && !stoppedEnded
             ? before.runs.filter((run) => run.status === "queued" && run.queueHeld === true)
             : [];
         if (held.length > 0) {
