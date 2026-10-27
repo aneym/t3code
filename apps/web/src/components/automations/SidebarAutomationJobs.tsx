@@ -116,6 +116,7 @@ export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () 
 function AutomationJobRow({
   environmentId,
   task,
+  count,
   machine,
   runThread,
   onNavigate,
