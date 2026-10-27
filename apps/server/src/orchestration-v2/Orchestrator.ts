@@ -148,6 +148,7 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import { queuedRunBatch, queuedRunBatchEvents } from "./QueuedRunBatch.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
   endOrphanedNativeSubagent,
@@ -1475,6 +1476,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly queuedRunId?: RunId;
       },
     ) {
+      if (options?.endedRunId !== undefined) {
+        const before = yield* readCommandProjection(threadId);
+        const ended = before.runs.find((run) => run.id === options.endedRunId);
+        const held =
+          ended?.status === "completed" &&
+          (yield* serverSettings.getSettings.pipe(Effect.orDie)).batchQueuedMessages
+            ? before.runs.filter((run) => run.status === "queued" && run.queueHeld === true)
+            : [];
+        if (held.length > 0) {
+          const now = yield* DateTime.now;
+          yield* writeSystemEvents(
+            held.map((run) => ({
+              type: "run.updated" as const,
+              threadId,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: { ...run, queueHeld: false },
+            })),
+          );
+        }
+      }
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
       const projection = yield* readCommandProjection(threadId);
       if (
@@ -1941,6 +1964,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
       };
+      const batchEvents =
+        options?.queuedRunId === undefined &&
+        settings.batchQueuedMessages &&
+        userTurnItem.type === "user_message"
+          ? queuedRunBatchEvents({
+              members: queuedRunBatch(projection, storedQueuedRun),
+              projection,
+              target: startingRun,
+              rootNodeId,
+              firstItem: userTurnItem,
+              itemId: (messageId) => idAllocator.derive.userTurnItem({ messageId }),
+              occurredAt: now,
+            })
+          : [];
       const handoffTurnItem: OrchestrationV2TurnItem | null =
         activeHandoff === null
           ? null
@@ -2134,6 +2171,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             },
           })),
           ...executionIdentityEvents,
+          ...batchEvents,
           {
             type: "provider-thread.updated",
             threadId,
