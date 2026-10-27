@@ -682,6 +682,7 @@ const make = Effect.gen(function* () {
           desktopChannel.awaitAttached(
             { threadId: snapshot.threadId, tabId: snapshot.tabId },
             DESKTOP_ATTACH_TIMEOUT,
+            snapshot.device,
           ),
         )
       : Promise.resolve(false);
@@ -1062,6 +1063,11 @@ const make = Effect.gen(function* () {
     return true;
   };
   const uploadFiles = async (tab: ServerTab, input: PreviewAutomationUploadInput) => {
+    if (tab.desktop)
+      throw new ServerBrowserPage.ServerBrowserOperationError(
+        "PreviewAutomationExecutionError",
+        "Not available on a device tab; open it on the agent's machine",
+      );
     const relative = input.paths.find((path) => !NodePath.isAbsolute(path));
     if (relative !== undefined)
       throw new ServerBrowserPage.ServerBrowserOperationError(
@@ -1093,9 +1099,13 @@ const make = Effect.gen(function* () {
 
   const openDownload: ServerBrowser["Service"]["openDownload"] = (input) =>
     Effect.sync(() => {
-      const download = tabs
-        .get(tabKey(input.threadId, input.tabId))
-        ?.downloads.find((candidate) => candidate.id === input.downloadId);
+      const tab = tabs.get(tabKey(input.threadId, input.tabId));
+      if (tab?.desktop)
+        throw new ServerBrowserPage.ServerBrowserOperationError(
+          "PreviewAutomationExecutionError",
+          "Not available on a device tab; open it on the agent's machine",
+        );
+      const download = tab?.downloads.find((candidate) => candidate.id === input.downloadId);
       return download === undefined
         ? Option.none()
         : Option.some({ path: download.path, fileName: download.fileName });
@@ -1358,6 +1368,7 @@ const make = Effect.gen(function* () {
         title: null,
         loading: false,
         ...profileStatus(),
+        devices: desktopChannel.devices ? await runPromise(desktopChannel.devices) : [],
       };
     }
     const url = tab.page.url();
@@ -1399,6 +1410,8 @@ const make = Effect.gen(function* () {
         url,
         completedAt,
       })),
+      ...(desktopChannel.devices ? { devices: await runPromise(desktopChannel.devices) } : {}),
+      ...(tab.desktop ? { device: undefined } : {}),
     };
     if (status.url === null || tab.dialog) return status;
     return { ...status, title: (await tab.page.title().catch(() => "")) || null };
@@ -1723,6 +1736,27 @@ const make = Effect.gen(function* () {
             "The agent session is missing. Reconnect the provider.",
           );
         const open = input as PreviewAutomationOpenInput;
+        let resolvedDevice: string | undefined;
+        if (open.device !== undefined && desktopChannel.devices) {
+          const devices = await runPromise(desktopChannel.devices);
+          const wanted =
+            open.device === "user"
+              ? devices
+                  .filter((device) => device.focused)
+                  .toSorted((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]?.name
+              : (devices.find((device) => device.name.toLowerCase() === open.device!.toLowerCase())
+                  ?.name ??
+                devices.find((device) =>
+                  device.name.toLowerCase().includes(open.device!.toLowerCase()),
+                )?.name);
+          if (!wanted) {
+            throw new ServerBrowserPage.ServerBrowserOperationError(
+              "PreviewAutomationNoAvailableHostError",
+              `No connected device matches "${open.device}". Connected devices: ${devices.map((device) => device.name).join(", ") || "none"}.`,
+            );
+          }
+          resolvedDevice = wanted;
+        }
         const url = open.url === undefined ? undefined : normalizePreviewUrl(open.url);
         const reuse = open.reuseExistingTab ?? true;
         if (
@@ -1782,6 +1816,7 @@ const make = Effect.gen(function* () {
                 ...(url ? { url } : {}),
                 ...(profileId === undefined ? {} : { profileId }),
                 runtime: "server",
+                ...(resolvedDevice === undefined ? {} : { device: resolvedDevice }),
                 reveal: false,
                 automationOwner: request.agentSessionId,
               }),

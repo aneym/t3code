@@ -57,6 +57,7 @@ export function HostedBrowserWebview(props: {
   readonly profileId: string | undefined;
   readonly zoomFactor: number;
   readonly serverDriven?: boolean;
+  readonly remoteDevice?: string;
   readonly serverRendering?: {
     readonly colorScheme: DesktopPreviewColorScheme;
     readonly zoomFactor: number;
@@ -72,6 +73,7 @@ export function HostedBrowserWebview(props: {
     zoomFactor,
     profileId,
     serverDriven = false,
+    remoteDevice,
     serverRendering,
   } = props;
   const clientSettingsHydrated = useClientSettingsHydrated();
@@ -101,6 +103,18 @@ export function HostedBrowserWebview(props: {
   );
   const recordingActive = useActiveBrowserRecordingTabIds().has(runtimeTabId);
   usePreviewBridge({ threadRef, tabId, runtimeTabId, serverDriven });
+
+  // oxlint-disable-next-line t3code/react-effect-budget -- Remote desktop tabs claim their CDP event key for the relay lifetime.
+  useEffect(() => {
+    const bridge = window.desktopBridge?.desktopBrowser;
+    if (!bridge || remoteDevice === undefined) return;
+    void bridge.sendCommand(JSON.stringify({ type: "claim", threadId: threadRef.threadId, tabId }));
+    return () => {
+      void bridge.sendCommand(
+        JSON.stringify({ type: "releaseClaim", threadId: threadRef.threadId, tabId }),
+      );
+    };
+  }, [remoteDevice, tabId, threadRef.threadId]);
 
   const serverColorScheme = serverRendering?.colorScheme;
   const serverZoomFactor = serverRendering?.zoomFactor;

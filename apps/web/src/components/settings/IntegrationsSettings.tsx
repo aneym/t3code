@@ -118,7 +118,6 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
-import { AdvancedSettings } from "./AdvancedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
 import type { ImportOutcome } from "./browserImportWizard.logic";
@@ -762,7 +761,7 @@ function BrowserSearchEngineSetting() {
   );
 }
 
-export function PullRequestLinksOpenInAppSetting() {
+function PullRequestLinksOpenInAppSetting() {
   const openInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   const updateSettings = useUpdatePrimarySettings();
 
@@ -1131,6 +1130,29 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
             updateSettings({ browserAutoShowFloatingPreview: Boolean(checked) })
           }
           aria-label="Auto-show floating preview"
+        />
+      }
+    />
+  );
+}
+
+function BrowserRemoteDeviceTabsSetting({ disabled }: { readonly disabled: boolean }) {
+  const enabled = useClientSettings((settings) => settings.browserAllowRemoteDeviceTabs);
+  return (
+    <SettingsRow
+      {...searchableSetting("browser-auto-show-floating-preview")}
+      description="Let agents open browser tabs on this device."
+      control={
+        <Switch
+          disabled={disabled}
+          checked={enabled}
+          onCheckedChange={(checked) =>
+            void persistClientSettingsUpdate((settings) => ({
+              ...settings,
+              browserAllowRemoteDeviceTabs: Boolean(checked),
+            }))
+          }
+          aria-label="Let agents open browser tabs on this device"
         />
       }
     />
@@ -1599,50 +1621,37 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   );
 }
 
-export function BrowserSettingsPanel() {
-  const desktopOnly = !isElectron;
-  const desktopOnlyMessage = desktopOnly ? "Only available in the desktop app." : undefined;
+export function IntegrationsSettingsPanel() {
+  const previewDefaultsDisabled = !isElectron;
+  const previewDefaults = (
+    <>
+      <BrowserProfilesSetting disabled={previewDefaultsDisabled} />
+      <BrowserViewportSetting disabled={previewDefaultsDisabled} />
+      <BrowserZoomSetting disabled={previewDefaultsDisabled} />
+      <BrowserAppearanceSetting disabled={previewDefaultsDisabled} />
+      <BrowserRecordingFrameRateSetting disabled={previewDefaultsDisabled} />
+      <BrowserRecordingInputSettings disabled={previewDefaultsDisabled} />
+      <BrowserLinkTargetSetting disabled={previewDefaultsDisabled} />
+      <BrowserAutoShowFloatingPreviewSetting disabled={previewDefaultsDisabled} />
+      <BrowserRemoteDeviceTabsSetting disabled={previewDefaultsDisabled} />
+    </>
+  );
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="browser-agent-access" title="Agent access">
+      <SettingsSection id="browser" title="Browser">
         <AgentBrowserAccessSetting />
-      </SettingsSection>
-      <SettingsSection id="browser" title="Browsing">
-        <SettingsUnavailableGroup message={desktopOnlyMessage}>
-          <BrowserProfilesSetting disabled={desktopOnly} />
-          <BrowserLinkTargetSetting disabled={desktopOnly} />
-          <BrowserAutoShowFloatingPreviewSetting disabled={desktopOnly} />
-        </SettingsUnavailableGroup>
+        {previewDefaultsDisabled ? (
+          <SettingsUnavailableGroup message="Only available in the desktop app.">
+            {previewDefaults}
+          </SettingsUnavailableGroup>
+        ) : (
+          previewDefaults
+        )}
         {/* Not desktop-only: web clients search from server-run browser tabs too. */}
         <BrowserSearchEngineSetting />
-        <AdvancedSettings
-          targetIds={[
-            searchableSetting("browser-default-viewport").id,
-            searchableSetting("browser-default-zoom").id,
-            searchableSetting("browser-default-appearance").id,
-          ]}
-        >
-          <SettingsUnavailableGroup message={desktopOnlyMessage}>
-            <BrowserViewportSetting disabled={desktopOnly} />
-            <BrowserZoomSetting disabled={desktopOnly} />
-            <BrowserAppearanceSetting disabled={desktopOnly} />
-          </SettingsUnavailableGroup>
-        </AdvancedSettings>
+        <PullRequestLinksOpenInAppSetting />
       </SettingsSection>
-      <SettingsSection id="browser-recordings" title="Recordings">
-        <SettingsUnavailableGroup message={desktopOnlyMessage}>
-          <BrowserRecordingFrameRateSetting disabled={desktopOnly} />
-          <BrowserRecordingInputSettings disabled={desktopOnly} />
-        </SettingsUnavailableGroup>
-      </SettingsSection>
-    </SettingsPageContainer>
-  );
-}
-
-export function DevicesSettingsPanel() {
-  return (
-    <SettingsPageContainer>
       <DeviceIntegrationSettings />
     </SettingsPageContainer>
   );
