@@ -232,6 +232,9 @@ function makeDatabase() {
         values.set(id, payload);
         schemaVersions.set(id, schemaVersion);
       }),
+    listThreadCacheIndex: () => Effect.succeed([]),
+    enforceThreadCacheBudget: () => Effect.succeed({ evicted: 0, bytes: 0 }),
+    setThreadCacheProtection: () => Effect.succeed(undefined),
     removeCache: (environmentId, kind, cacheKey) =>
       Effect.sync(() => {
         const id = cacheId(environmentId, kind, cacheKey);

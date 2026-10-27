@@ -108,6 +108,7 @@ function queuedMessage(input: {
     text: input.messageId,
     attachments: [],
     createdAt: input.createdAt,
+    enqueueOrdinal: 0,
   };
 }
 
