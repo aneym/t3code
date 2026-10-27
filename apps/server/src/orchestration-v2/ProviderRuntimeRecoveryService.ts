@@ -24,6 +24,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
+import { recoveryQueueHold, withoutQueueHoldReason } from "./QueuedRunBatch.ts";
 import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
@@ -196,6 +197,7 @@ export const make = Effect.gen(function* () {
       projection: ProjectionStore.ProjectionRuntimeRecoveryState,
       trigger: "startup" | "shutdown",
       continueAfterRestart: boolean,
+      releaseRestartHolds: boolean,
       stoppedThisPass: ReadonlyMap<string, RecoverySession> = new Map(),
     ) {
       const now = yield* DateTime.now;
@@ -319,7 +321,8 @@ export const make = Effect.gen(function* () {
           runs.push(run);
           continue;
         }
-        if (run.queueHeld === true) continue;
+        const recovered = recoveryQueueHold(run, trigger, releaseRestartHolds);
+        if (recovered === undefined) continue;
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
@@ -327,7 +330,7 @@ export const make = Effect.gen(function* () {
           runId: run.id,
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
-          payload: { ...run, queueHeld: true },
+          payload: recovered,
         });
       }
       for (const request of requests) {
@@ -717,7 +720,13 @@ export const make = Effect.gen(function* () {
         continueAfterRestart !== null &&
         resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
           .continueThreadsAfterServerUpdate;
-      const result = yield* reconcileProjection(projection, trigger, enabled, stoppedThisPass);
+      const result = yield* reconcileProjection(
+        projection,
+        trigger,
+        enabled,
+        continueAfterRestart?.batchQueuedMessages === true,
+        stoppedThisPass,
+      );
       for (const session of projection.providerSessions) {
         if (session.status !== "stopped" && session.status !== "error") {
           stoppedThisPass.set(session.id, session);
