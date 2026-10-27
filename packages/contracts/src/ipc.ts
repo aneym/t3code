@@ -1007,6 +1007,7 @@ export interface DesktopBridge {
   getRelayTelemetryEnabled?: () => boolean;
   getPathForFile?: (file: File) => string;
   getClientPlatform?: () => string;
+  getDeviceName?: () => string;
   setNotificationBadge?: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear?: (listener: () => void) => () => void;
   onTrackpadScrollEnd?: (listener: () => void) => () => void;

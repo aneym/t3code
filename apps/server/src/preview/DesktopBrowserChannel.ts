@@ -44,7 +44,11 @@ export class DesktopBrowserChannel extends Context.Service<
   {
     readonly available: boolean;
     /** Subscribe before checking so concurrent attaches cannot be missed. */
-    readonly awaitAttached: (key: DesktopTabKey, timeout: Duration.Input) => Effect.Effect<boolean>;
+    readonly awaitAttached: (
+      key: DesktopTabKey,
+      timeout: Duration.Input,
+      deviceName?: string,
+    ) => Effect.Effect<boolean>;
     readonly detached: Stream.Stream<DesktopTabKey>;
     readonly attached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
@@ -275,21 +279,35 @@ const make = Effect.gen(function* () {
     get available() {
       return (inputFd !== undefined && controlFd !== undefined) || remoteSources.size > 0;
     },
-    awaitAttached: Effect.fn("DesktopBrowserChannel.awaitAttached")(function (key, timeout) {
-      return Effect.scoped(
-        Effect.gen(function* () {
-          const subscription = yield* PubSub.subscribe(changes);
-          if (attachedTabs.has(keyOf(key))) return true;
-          return yield* Stream.fromSubscription(subscription).pipe(
-            Stream.filter((change) => change.attached && keyOf(change.key) === keyOf(key)),
-            Stream.runHead,
-            Effect.map(Option.isSome),
-            Effect.timeoutOption(timeout),
-            Effect.map((result) => Option.getOrElse(result, () => false)),
-          );
-        }),
-      );
-    }),
+    awaitAttached: Effect.fn("DesktopBrowserChannel.awaitAttached")(
+      function (key, timeout, deviceName) {
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const subscription = yield* PubSub.subscribe(changes);
+            const id = keyOf(key);
+            if (
+              deviceName === undefined
+                ? attachedTabs.has(id)
+                : remoteSources.get(deviceName)?.attached.has(id) === true
+            )
+              return true;
+            return yield* Stream.fromSubscription(subscription).pipe(
+              Stream.filter(
+                (change) =>
+                  change.attached &&
+                  keyOf(change.key) === id &&
+                  (deviceName === undefined ||
+                    remoteSources.get(deviceName)?.attached.has(id) === true),
+              ),
+              Stream.runHead,
+              Effect.map(Option.isSome),
+              Effect.timeoutOption(timeout),
+              Effect.map((result) => Option.getOrElse(result, () => false)),
+            );
+          }),
+        );
+      },
+    ),
     detached: Stream.fromPubSub(changes).pipe(
       Stream.filter((change) => !change.attached),
       Stream.map((change) => change.key),

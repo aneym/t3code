@@ -117,6 +117,7 @@ export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
 export const PREVIEW_OPEN_LINK_CHANNEL = "desktop:preview-open-link";
 export const DESKTOP_BROWSER_EVENT_CHANNEL = "desktop:browser-event";
 export const DESKTOP_BROWSER_COMMAND_CHANNEL = "desktop:browser-command";
+export const GET_DEVICE_NAME_CHANNEL = "desktop:get-device-name";
 
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 
