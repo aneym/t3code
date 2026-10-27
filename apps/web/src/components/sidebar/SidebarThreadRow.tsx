@@ -1509,9 +1509,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     kind={props.environmentMachine}
                     className="size-3 shrink-0 "
                   />
-                  <span className="min-w-0 flex-1 truncate ">
-                    {props.scratchMachineLabel}
-                  </span>
+                  <span className="min-w-0 flex-1 truncate ">{props.scratchMachineLabel}</span>
                 </>
               ) : (
                 <span className="flex-1" />
