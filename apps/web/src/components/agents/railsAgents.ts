@@ -1,7 +1,7 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopeProjectRef, scopedProjectKey } from "@t3tools/client-runtime/environment";
-import type { ScopedProjectRef } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 
 import { useProjects, useQuietThreadShells } from "../../state/entities";
 import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
@@ -14,6 +14,7 @@ export interface RailsAgent {
   readonly handle: string;
   readonly name: string;
   readonly projectRef: ScopedProjectRef;
+  readonly environmentIds: ReadonlyArray<EnvironmentId>;
   readonly thread: EnvironmentThreadShell | null;
 }
 
@@ -29,15 +30,15 @@ export function railsAgentThreadKey(thread: EnvironmentThreadShell): string {
   return `${thread.environmentId}:${thread.id}`;
 }
 
-function threadActivityAt(thread: EnvironmentThreadShell): string {
-  return thread.latestRun?.requestedAt ?? thread.updatedAt ?? thread.createdAt;
+function isHomeThreadCandidate(thread: EnvironmentThreadShell): boolean {
+  return thread.lineage.parentThreadId === null;
 }
 
-function isPreferredThread(candidate: EnvironmentThreadShell, current: EnvironmentThreadShell) {
+function isPreferredHomeThread(candidate: EnvironmentThreadShell, current: EnvironmentThreadShell) {
   if ((candidate.pinnedAt === null) !== (current.pinnedAt === null)) {
     return candidate.pinnedAt !== null;
   }
-  return threadActivityAt(candidate) > threadActivityAt(current);
+  return candidate.createdAt < current.createdAt;
 }
 
 function resolveRailsAgents(
@@ -51,16 +52,25 @@ function resolveRailsAgents(
     if (handle === null) continue;
     const projectRef = scopeProjectRef(project.environmentId, project.id);
     handleByProjectKey.set(scopedProjectKey(projectRef), handle);
-    if (!agents.has(handle)) {
-      agents.set(handle, { handle, name: project.title, projectRef, thread: null });
+    const agent = agents.get(handle);
+    if (agent === undefined) {
+      agents.set(handle, {
+        handle,
+        name: project.title,
+        projectRef,
+        environmentIds: [project.environmentId],
+        thread: null,
+      });
+    } else if (!agent.environmentIds.includes(project.environmentId)) {
+      agent.environmentIds = [...agent.environmentIds, project.environmentId];
     }
   }
   const agentThreads = filterSidebarV2VisibleThreads(threads, new Set(handleByProjectKey.keys()));
   for (const thread of agentThreads) {
     const handle = handleByProjectKey.get(`${thread.environmentId}:${thread.projectId}`);
     const agent = handle === undefined ? undefined : agents.get(handle);
-    if (agent === undefined) continue;
-    if (agent.thread === null || isPreferredThread(thread, agent.thread)) {
+    if (agent === undefined || !isHomeThreadCandidate(thread)) continue;
+    if (agent.thread === null || isPreferredHomeThread(thread, agent.thread)) {
       agent.thread = thread;
       agent.projectRef = scopeProjectRef(thread.environmentId, thread.projectId);
     }
