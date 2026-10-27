@@ -15,6 +15,7 @@ import {
   composerContextImportsAtom,
   getComposerDraftSnapshot,
   updateComposerDraftRouting,
+  updateComposerDraftSettings,
   type ComposerDraft,
 } from "../../state/use-composer-drafts";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -42,6 +43,7 @@ export function useAutoEnvironmentRouting(input: {
   const preferences = input.preferences._tag === "Success" ? input.preferences.value : null;
   const weights = preferences?.loadBalancingWeights ?? {};
   const candidates = input.connectedEnvironments.flatMap((environment) => {
+    if (!environment.isEnabled || environment.connectionState !== "connected") return [];
     const project = resolveEnvironmentProjectMatch(
       input.projects.filter((project) => project.environmentId === environment.environmentId),
       input.selectedProject,
@@ -115,7 +117,8 @@ export function useAutoEnvironmentRouting(input: {
     )
       return;
     const project = candidates.find((project) => project.environmentId === environmentId);
-    if (!project) return;
+    if (!project || !input.selectedModel) return;
+    updateComposerDraftSettings(input.draftKey, { modelSelection: input.selectedModel });
     updateComposerDraftRouting(input.draftKey, {
       mode: "auto",
       project: { environmentId, projectId: project.id },
@@ -131,6 +134,7 @@ export function useAutoEnvironmentRouting(input: {
       !input.draftKey ||
       input.locked ||
       !canAutoBalance ||
+      !input.selectedModel ||
       appAtomRegistry.get(composerContextImportsAtom)[input.draftKey]
     )
       return false;
@@ -141,6 +145,7 @@ export function useAutoEnvironmentRouting(input: {
       );
       return false;
     }
+    updateComposerDraftSettings(input.draftKey, { modelSelection: input.selectedModel });
     updateComposerDraftRouting(input.draftKey, { mode: "auto" });
     resources.refresh(candidates.map((project) => project.environmentId));
     return true;

@@ -476,6 +476,20 @@ export function NewTaskFlowProvider(
     selectedProject,
     t3ProjectFile,
   );
+  const branchState = usePaginatedBranches({
+    environmentId: selectedProject?.environmentId ?? null,
+    cwd: selectedProject?.workspaceRoot || null,
+  });
+  const branchesLoading = branchState.isPending && branchState.data === null;
+  const allBranchRefs = branchState.refs;
+  const availableBranches = pipe(
+    allBranchRefs,
+    Arr.filter((branch) => !branch.isRemote),
+  );
+  const preferredBranch =
+    allBranchRefs.find((branch) => branch.isDefault) ??
+    availableBranches.find((branch) => branch.current) ??
+    null;
   const canChooseWorkspace = !isScratchDraft;
   const selectedProjectOlderSettledCount = useOlderSettledCount(selectedProject);
   const selectedProjectHasThreads =
@@ -509,7 +523,11 @@ export function NewTaskFlowProvider(
     isGitRepo,
   });
   const workspaceMode = workspaceSelection.mode;
-  const selectedBranchName = workspaceSelection.branch;
+  const selectedBranchName =
+    workspaceSelection.branch ??
+    (workspaceMode === "worktree" && defaultWorkspaceModeSettled
+      ? (preferredBranch?.name ?? null)
+      : null);
   const selectedWorktreePath = workspaceSelection.worktreePath;
 
   const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
@@ -666,17 +684,6 @@ export function NewTaskFlowProvider(
     }
     replaceComposerDraftAttachments(selectedProjectDraftKey, []);
   };
-  const branchState = usePaginatedBranches({
-    environmentId: selectedProject?.environmentId ?? null,
-    cwd: selectedProject?.workspaceRoot || null,
-  });
-  const branchesLoading = branchState.isPending && branchState.data === null;
-  const allBranchRefs = branchState.refs;
-  const availableBranches = pipe(
-    allBranchRefs,
-    Arr.filter((branch) => !branch.isRemote),
-  );
-
   const carryDraftContentTo = (project: EnvironmentProject) => {
     const target = { environmentId: project.environmentId, projectId: project.id };
     if (activeDraftKey !== null && isNewTaskDraftKey(activeDraftKey)) {
@@ -874,38 +881,6 @@ export function NewTaskFlowProvider(
     refreshBranches();
   };
 
-  useEffect(() => {
-    if (
-      !selectedProjectDraftKey ||
-      !defaultWorkspaceModeSettled ||
-      workspaceMode !== "worktree" ||
-      selectedBranchName !== null
-    ) {
-      return;
-    }
-
-    const live = getComposerDraftSnapshot(selectedProjectDraftKey).workspaceSelection;
-    if (live && (live.mode !== "worktree" || live.branch !== null)) {
-      return;
-    }
-
-    const preferredBranch =
-      allBranchRefs.find((branch) => branch.isDefault) ??
-      availableBranches.find((branch) => branch.current) ??
-      null;
-    if (preferredBranch) {
-      selectBranch(preferredBranch);
-    }
-  }, [
-    allBranchRefs,
-    availableBranches,
-    defaultWorkspaceModeSettled,
-    selectBranch,
-    selectedBranchName,
-    selectedProjectDraftKey,
-    workspaceMode,
-  ]);
-
   const setRuntimeMode = (value: RuntimeMode) => {
     if (selectedProjectDraftKey) {
       updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
@@ -986,7 +961,7 @@ export function NewTaskFlowProvider(
     }
     const workspaceSelection = resolveNewTaskWorkspaceSelection({
       selection: canChooseWorkspace ? draft.workspaceSelection : undefined,
-      fallback: { mode: workspaceMode, branch: null, worktreePath: null },
+      fallback: { mode: workspaceMode, branch: selectedBranchName, worktreePath: null },
       isGitRepo,
     });
     const mode = workspaceSelection.mode;
@@ -1028,7 +1003,7 @@ export function NewTaskFlowProvider(
 
         branch: resolveProjectThreadCreationBranch({
           workspaceMode: mode,
-          selectedBranch: workspaceSelection?.branch ?? null,
+          selectedBranch: workspaceSelection.branch ?? selectedBranchName,
           currentCheckoutBranch: options?.currentCheckoutBranch ?? null,
         }),
         worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
