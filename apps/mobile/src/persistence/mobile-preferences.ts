@@ -96,6 +96,9 @@ export interface Preferences {
   readonly codeFontSize?: number | null;
   readonly codeWordBreak?: boolean;
   readonly mathRenderingEnabled?: boolean;
+  readonly sidebarThreadShowMachine?: boolean;
+  readonly sidebarThreadShowAgent?: boolean;
+  readonly sidebarThreadShowStatusText?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
   readonly dismissedDatabaseStorageNotices?: readonly string[];
@@ -228,6 +231,13 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.codeWordBreak === "boolean") preferences.codeWordBreak = parsed.codeWordBreak;
   if (typeof parsed.mathRenderingEnabled === "boolean")
     preferences.mathRenderingEnabled = parsed.mathRenderingEnabled;
+  for (const key of [
+    "sidebarThreadShowMachine",
+    "sidebarThreadShowAgent",
+    "sidebarThreadShowStatusText",
+  ] as const) {
+    if (typeof parsed[key] === "boolean") preferences[key] = parsed[key];
+  }
   if (Array.isArray(parsed.connectOnboardingOptOutAccounts)) {
     preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(
       (account): account is string => typeof account === "string",

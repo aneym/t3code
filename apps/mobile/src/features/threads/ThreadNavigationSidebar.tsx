@@ -1,3 +1,4 @@
+import { useThreadRowVisibility } from "../../state/thread-row-visibility";
 import { useActiveNewTask } from "../../state/active-new-task";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
@@ -58,14 +59,13 @@ import { useFabScroll } from "../home/FabScrollContext";
 import { SidebarFilterButton } from "./sidebar-filter-button";
 import { createSidebarHeaderItems } from "./sidebar-native-header-items";
 import { SidebarNavigationShell } from "./sidebar-navigation-shell";
+import { ThreadListV2PendingRow, ThreadListV2Row } from "./thread-list-v2-items";
 import {
-  ThreadListV2PendingRow,
-  ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
-} from "./thread-list-v2-items";
+} from "./thread-list-v2-sections";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
 import {
@@ -236,8 +236,6 @@ function ThreadNavigationSidebarPane(
       ? {}
       : { projectIds: selectedProjectScope.projectRefs.map((ref) => ref.projectId) },
   );
-  // This map reaches LegendList's extraData, which re-renders every row whenever it changes
-  // identity; the hook keeps it stable.
   const threadSearchMatchByKey = useThreadListSearchMatches(threads, threadSearch);
   const selectedProjectKey = selectedProjectScope?.key ?? null;
   const projectByKey = useMemo(() => {
@@ -269,7 +267,6 @@ function ThreadNavigationSidebarPane(
     toggleSnoozedShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
-  // Keep time in state; the compiler would cache a render-time new Date().
   const [now, setNow] = useState(() => new Date().toISOString());
   const nowMinute = now.slice(0, 16);
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
@@ -280,6 +277,7 @@ function ThreadNavigationSidebarPane(
     return () => clearInterval(id);
   }, []);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
+  const rowVisibility = useThreadRowVisibility();
   const {
     providersByEnvironmentId,
     machineByEnvironmentId,
@@ -445,10 +443,7 @@ function ThreadNavigationSidebarPane(
       openSwipeableRef.current = null;
     }
   };
-  // Destructure callback props; capturing all props would invalidate these row-closing handlers on unrelated changes.
   const { onSelectThread, onOpenThreadPullRequests } = props;
-  // A row listed for a message match opens the thread at that message, by
-  // tap or by shortcut.
   const handleSelectThread = (thread: EnvironmentThreadShell) => {
     const key = threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id });
     const messageId = contentOnlyThreadKeys.has(key)
@@ -475,8 +470,8 @@ function ThreadNavigationSidebarPane(
     onScroll: onFabScroll,
     onScrollBeginDrag: handleScrollBeginDrag,
   });
-  // Recycle equality needs project/search data for titles and favicons; keep the minute clock on items to limit updates.
   const listExtraData = {
+    rowVisibility,
     activeNewTask,
     selectedThreadKey: props.selectedThreadKey ?? "",
     projectByKey,
@@ -556,6 +551,7 @@ function ThreadNavigationSidebarPane(
         const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
         return (
           <ThreadListV2Row
+            rowVisibility={rowVisibility}
             onNewThreadOnBranch={props.onNewThreadOnBranch}
             thread={thread}
             variant={item.item.variant}
@@ -576,7 +572,6 @@ function ThreadNavigationSidebarPane(
             }
             environmentMachine={machineByEnvironmentId.get(thread.environmentId)}
             searchMatch={
-              // Only rows listed for their messages show one and open at it.
               contentOnlyThreadKeys.has(
                 threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id }),
               )
@@ -789,7 +784,6 @@ function ThreadNavigationSidebarPane(
       className={
         Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 border-r border-border bg-drawer"
       }
-      // Android fills its pane, which animates its width while a hinge resizes the split.
       style={Platform.OS === "android" ? undefined : { width: props.width }}
     >
       <View

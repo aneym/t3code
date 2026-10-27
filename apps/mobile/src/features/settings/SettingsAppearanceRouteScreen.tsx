@@ -7,6 +7,8 @@ import { TerminalAppearanceSection } from "./appearance/sections/TerminalAppeara
 import { TextAppearanceSection } from "./appearance/sections/TextAppearanceSection";
 import { ThemeAppearanceSection } from "./appearance/sections/ThemeAppearanceSection";
 
+import { ThreadRowsAppearanceSection } from "./appearance/sections/ThreadRowsAppearanceSection";
+
 export function SettingsAppearanceRouteScreen() {
   const insets = useSafeAreaInsets();
 
@@ -23,6 +25,7 @@ export function SettingsAppearanceRouteScreen() {
       >
         <ThemeAppearanceSection />
         <TextAppearanceSection />
+        <ThreadRowsAppearanceSection />
         <TerminalAppearanceSection />
         <CodeAppearanceSection />
       </ScrollView>

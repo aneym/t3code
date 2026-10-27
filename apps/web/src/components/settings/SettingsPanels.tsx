@@ -440,6 +440,16 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarThreadShowMachine !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowMachine
+      ? ["Machine in thread rows"]
+      : []),
+    ...(settings.sidebarThreadShowAgent !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowAgent
+      ? ["Agent in thread rows"]
+      : []),
+    ...(settings.sidebarThreadShowStatusText !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowStatusText
+      ? ["Status text and working time"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -612,6 +622,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarThreadShowMachine: DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowMachine,
+      sidebarThreadShowAgent: DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowAgent,
+      sidebarThreadShowStatusText: DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowStatusText,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
