@@ -31,7 +31,6 @@ import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
 import { rendersServerTabNatively } from "./previewRuntime";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
-import { startRemoteBrowserRelays } from "./remoteBrowserRelay";
 
 /** Every session this window renders as a hosted webview, in a fixed (non-display) order. */
 function hostedBrowserSessions(
@@ -120,7 +119,6 @@ export function startElectronBrowserHost(): () => void {
       useBrowserPointerStore.getState().apply(event);
     }),
     preview.onOpenLink(openLinkInPreview),
-    startRemoteBrowserRelays(window.desktopBridge?.getDeviceName?.() ?? "unknown"),
   ];
   return () => {
     for (const dispose of disposers) dispose();
@@ -150,7 +148,6 @@ export function ElectronBrowserHost() {
             profileId={snapshot.profileId}
             zoomFactor={zoomFactor}
             serverDriven={snapshot.runtime === "server"}
-            {...(snapshot.device === undefined ? {} : { remoteDevice: snapshot.device })}
             {...(snapshot.runtime === "server"
               ? {
                   serverRendering: {

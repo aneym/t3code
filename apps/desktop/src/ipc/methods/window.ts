@@ -37,7 +37,6 @@ import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as Electron from "electron";
-import * as NodeOS from "node:os";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
@@ -88,12 +87,6 @@ export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
     const electronApp = yield* ElectronApp.ElectronApp;
     return yield* electronApp.systemLocale;
   }),
-});
-
-export const getDeviceName = DesktopIpc.makeSyncIpcMethod({
-  channel: IpcChannels.GET_DEVICE_NAME_CHANNEL,
-  result: Schema.String,
-  handler: () => Effect.sync(() => NodeOS.hostname().replace(/\.local$/, "")),
 });
 
 export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({

@@ -5,7 +5,6 @@ import { isElectron } from "~/env";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
-import { getClientSettings } from "~/hooks/useSettings";
 import {
   readEnvironmentSupportsServerBrowser,
   useEnvironmentSupportsServerBrowser,
@@ -45,17 +44,13 @@ export function usePreviewAvailable(environmentId: EnvironmentId | null): boolea
 export function rendersServerTabNatively(
   environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
-  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "device"> | null | undefined,
+  snapshot: Pick<PreviewSessionSnapshot, "runtime"> | null | undefined,
 ): boolean {
-  const localDevice =
-    typeof window !== "undefined" ? window.desktopBridge?.getDeviceName?.() : undefined;
   return (
     isElectron &&
     snapshot?.runtime === "server" &&
-    ((primaryEnvironmentId !== null && environmentId === primaryEnvironmentId) ||
-      (snapshot.device !== undefined &&
-        snapshot.device === localDevice &&
-        getClientSettings().browserAllowRemoteDeviceTabs))
+    primaryEnvironmentId !== null &&
+    environmentId === primaryEnvironmentId
   );
 }
 
