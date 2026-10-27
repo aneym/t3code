@@ -1,0 +1,5 @@
+t3 schedule CLI built and sandbox-proved, not yet installed.
+Fork main: 95bbab21d (fast-forward from 29c37b3cb4). Topic for the nightly build: aneym/schedule-cli 2902ed9bd on candidate-7 341e2dde32.
+Installed: ax42 server 0.1.3-nightly.20261026.3740.aneym.6; Studio server aneym.6 (its CLI on PATH says aneym.7, an unsigned ad hoc build that was rolled back). Neither has t3 schedule yet.
+Proof: ax42 ~/.agent-rails/lanes/automations-cull/evidence/t3-schedule-cli/01-sandbox-proof.txt
+Remainder: t3-nightly installs it (aneym.9 at the earliest), then run the live list on both hosts and delete scheduled-task:e494a3d3-591d-42ff-9f13-132e99bb7f31 on ax42.
