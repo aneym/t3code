@@ -4,6 +4,8 @@ import {
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitResult,
+  OrchestrationV2DispatchCommandResult,
+  IsoDateTime,
   ProjectId,
   RunId,
   ThreadId,
@@ -491,6 +493,7 @@ const threadArgument = Argument.String("thread").pipe(Argument.withDescription("
 
 const decodeThreadIdValue = Schema.decodeUnknownEffect(ThreadId);
 const decodeTitle = Schema.decodeUnknownEffect(TrimmedNonEmptyString);
+const decodeIsoDateTime = Schema.decodeEffect(IsoDateTime);
 const decodeThreadId = (value: string) =>
   decodeThreadIdValue(value.trim()).pipe(
     Effect.mapError(() => new ThreadUsageError({ detail: `'${value}' is not a thread id.` })),
@@ -645,6 +648,50 @@ const threadSendCommand = Command.make("send", {
   ),
 );
 
+const ThreadOrganizeResult = Schema.Union([
+  OrchestrationV2DispatchCommandResult,
+  Schema.Struct({ settlesWhenTurnEnds: Schema.Literal(true) }),
+]);
+
+const threadOrganizeCommand = (
+  action: "archive" | "unarchive" | "settle" | "unsettle" | "pin" | "unpin" | "snooze" | "unsnooze",
+) =>
+  Command.make(action, {
+    ...projectLocationFlags,
+    thread: threadArgument,
+    snoozedUntil: Flag.String("snoozed-until").pipe(
+      Flag.withDescription("ISO timestamp until which the thread stays snoozed."),
+      Flag.optional,
+    ),
+    json: jsonFlag,
+  }).pipe(
+    Command.withDescription(`${action[0]!.toUpperCase()}${action.slice(1)} a thread.`),
+    Command.withHandler((flags) =>
+      Effect.gen(function* () {
+        const threadId = yield* decodeThreadId(flags.thread);
+        yield* withThreadTools(
+          flags,
+          Effect.fn(`cli.thread.${action}`)(function* (tools) {
+            const result = yield* tools.call(
+              "t3_thread_organize",
+              {
+                threadId,
+                action,
+                ...(Option.isSome(flags.snoozedUntil)
+                  ? {
+                      snoozedUntil: yield* decodeIsoDateTime(flags.snoozedUntil.value),
+                    }
+                  : {}),
+              },
+              ThreadOrganizeResult,
+            );
+            yield* flags.json ? printJson(result) : Console.log("Done.");
+          }),
+        );
+      }).pipe(reportThreadErrors),
+    ),
+  );
+
 const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
   thread: threadArgument,
@@ -706,5 +753,8 @@ export const threadCommand = Command.make("thread").pipe(
     threadStartCommand,
     threadSendCommand,
     threadShowCommand,
+    ...(
+      ["archive", "unarchive", "settle", "unsettle", "pin", "unpin", "snooze", "unsnooze"] as const
+    ).map(threadOrganizeCommand),
   ]),
 );

@@ -9,7 +9,12 @@ import {
   createThreadEnvironmentAtoms,
   createThreadFamilyAtoms,
 } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  sessionGrantsScope,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect } from "react";
@@ -18,6 +23,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "./atom-registry";
 import { environmentShell } from "./shell";
+import { environmentSession } from "./session";
 
 export const threadFamilies = createThreadFamilyAtoms(
   connectionAtomRuntime,
@@ -27,10 +33,31 @@ export const olderSettledThreads = createOlderSettledThreadAtoms(
   connectionAtomRuntime,
   environmentShell.stateAtom,
 );
-export const threadEnvironment = createThreadEnvironmentAtoms(
+const threadCommands = createThreadEnvironmentAtoms(
   connectionAtomRuntime,
   threadFamilies.snapshotAtom,
 );
+const permissionAtom = Atom.family((environmentId: EnvironmentId | null) =>
+  Atom.make((get) => {
+    if (environmentId === null) return false;
+    const result = get(environmentSession.sessionStateAtom(environmentId));
+    const session = Option.getOrNull(AsyncResult.value(result));
+    return (
+      result._tag !== "Failure" &&
+      session !== null &&
+      sessionGrantsScope(session, AuthOrchestrationOperateScope)
+    );
+  }),
+);
+export const threadEnvironment = {
+  ...threadCommands,
+  settle: { ...threadCommands.settle, permissionAtom },
+  unsettle: { ...threadCommands.unsettle, permissionAtom },
+  pin: { ...threadCommands.pin, permissionAtom },
+  unpin: { ...threadCommands.unpin, permissionAtom },
+  snooze: { ...threadCommands.snooze, permissionAtom },
+  unsnooze: { ...threadCommands.unsnooze, permissionAtom },
+};
 export const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,

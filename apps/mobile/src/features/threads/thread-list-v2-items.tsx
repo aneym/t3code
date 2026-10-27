@@ -4,6 +4,7 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { ThreadRowMenu } from "./ThreadRowMenu";
 import { STATUS_LABEL_BY_STATUS, DONE_STATUS_LABEL } from "./thread-row-status";
 import type { useThreadRowVisibility } from "../../state/thread-row-visibility";
+import { useAtomValue } from "@effect/atom-react";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -71,9 +72,7 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 
 const TITLE_FAVICON_SIZE = 15;
-// Centers the favicon on the first line of the text-base title.
 const TITLE_FAVICON_OFFSET = 4;
-// Lines below the title start where the title text does.
 const TITLE_TEXT_INSET = TITLE_FAVICON_SIZE + 8;
 
 function ThreadListV2Duration(props: { readonly startedAt: string | null }) {
@@ -445,7 +444,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       input: { threadId: thread.id, visitedAt: props.wokeAt },
     });
   }, [props.wokeAt, thread.environmentId, thread.id, visitThread]);
-  // VoiceOver cannot focus buttons inside the accessible row.
   const rowAccessibilityActions = useMemo(
     () => [
       ...(prBadgeLabel ? [{ name: "openPullRequests", label: prBadgeLabel }] : []),
@@ -457,13 +455,26 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const canSettleThread = useAtomValue(
+    threadEnvironment.settle.permissionAtom(thread.environmentId),
+  );
+  const canUnsettleThread = useAtomValue(
+    threadEnvironment.unsettle.permissionAtom(thread.environmentId),
+  );
+  const canPinThread = useAtomValue(threadEnvironment.pin.permissionAtom(thread.environmentId));
+  const canUnpinThread = useAtomValue(threadEnvironment.unpin.permissionAtom(thread.environmentId));
+  const canSnoozeThread = useAtomValue(
+    threadEnvironment.snooze.permissionAtom(thread.environmentId),
+  );
+  const canUnsnoozeThread = useAtomValue(
+    threadEnvironment.unsnooze.permissionAtom(thread.environmentId),
+  );
   const handleRegenerateTitle = useCallback(
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],
   );
   const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
-  // Recycling changes identity without remounting; clear local UI directly because equality may skip the render closure.
   const rowIdentity = `${thread.environmentId}:${thread.id}`;
   const [boundIdentity, setBoundIdentity] = useState(rowIdentity);
   if (boundIdentity !== rowIdentity) {
@@ -487,7 +498,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
 
   const canUnsettle = variant === "slim";
-  // Keep time in state; cached render-time reads freeze the gate and trigger 50ms expiry loops.
   const [snoozeGateClock, setSnoozeGateClock] = useState(() => ({ thread, now: Date.now() }));
   // oxlint-disable-next-line react/purity -- Reseeds the snooze gate clock only in the render-phase adjustment that runs when the thread changes.
   if (snoozeGateClock.thread !== thread) setSnoozeGateClock({ thread, now: Date.now() });
@@ -496,8 +506,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ? resolveThreadListV2SnoozeGateExpiryMs(thread, { now: snoozeGateNow })
     : null;
   useEffect(() => {
-    // A gate still closed past its expiry is held by runtime status, not time,
-    // so no clock tick can open it.
     if (snoozeGateExpiryMs === null || snoozeGateExpiryMs <= snoozeGateClock.now) return;
     const delayMs = Math.min(snoozeGateExpiryMs - Date.now() + 50, 2_147_483_647);
     const id = setTimeout(() => setSnoozeGateClock({ thread, now: Date.now() }), delayMs);
@@ -512,9 +520,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   });
   const snoozePresets = useMemo(
     // oxlint-disable-next-line react/purity -- The memo recomputes on the snoozePresetMinute tick, so preset times refresh every minute.
-    () => (swipeActions.secondary === "snooze" ? resolveSnoozePresets(new Date()) : ([] as const)),
+    () => resolveSnoozePresets(new Date()),
     // oxlint-disable-next-line react/memo-dependencies -- The minute tick refreshes relative snooze times while the row remains mounted.
-    [props.snoozePresetMinute, swipeActions.secondary],
+    [props.snoozePresetMinute],
   );
   const snoozePresetActions = useMemo<MenuAction[]>(
     () => [
@@ -628,6 +636,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const slimMenuActions = useMemo<MenuAction[]>(
     () => [
       SLIM_MENU_ACTIONS[0]!,
+      ...(props.snoozeSupported && canSnoozeThread && canSnooze(thread, { now: snoozeGateNow })
+        ? [{ id: "snooze", title: "Snooze", image: "clock", subactions: snoozePresetActions }]
+        : []),
       ...arrangementMenuItems.filter(
         (action) => action.id !== "move-up" && action.id !== "move-down",
       ),
@@ -636,17 +647,39 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       LEGACY_MENU_ACTIONS[0]!,
       SLIM_MENU_ACTIONS[1]!,
     ],
-    [arrangementMenuItems, autoSettleMenuItems, titleMenuItems],
+    [
+      arrangementMenuItems,
+      autoSettleMenuItems,
+      titleMenuItems,
+      props.snoozeSupported,
+      canSnoozeThread,
+      thread,
+      snoozeGateNow,
+      snoozePresetActions,
+    ],
   );
   const snoozedMenuActions = useMemo<MenuAction[]>(
     () => [
       SNOOZED_MENU_ACTIONS[0]!,
+      ...(props.settlementSupported &&
+      (thread.settledOverride === "settled" ? canUnsettleThread : canSettleThread)
+        ? [thread.settledOverride === "settled" ? SLIM_MENU_ACTIONS[0]! : CARD_MENU_ACTIONS[0]!]
+        : []),
+      ...arrangementMenuItems.filter((action) => action.id === "pin" || action.id === "unpin"),
       ...titleMenuItems,
       ...autoSettleMenuItems,
       LEGACY_MENU_ACTIONS[0]!,
       SNOOZED_MENU_ACTIONS[1]!,
     ],
-    [autoSettleMenuItems, titleMenuItems],
+    [
+      autoSettleMenuItems,
+      titleMenuItems,
+      props.settlementSupported,
+      thread.settledOverride,
+      canSettleThread,
+      canUnsettleThread,
+      arrangementMenuItems,
+    ],
   );
   const legacyMenuActions = useMemo<MenuAction[]>(
     () => [
@@ -947,13 +980,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         )}
         {pr ? (
           <Pressable
-            // Padding cancelled by negative margin grows the touch target into
-            // the row padding without moving the badge.
             className="-m-2.5 flex-row items-center gap-1 p-2.5"
             accessibilityRole="button"
             accessibilityLabel={prBadgeLabel ?? undefined}
             onPress={handleOpenPullRequests}
-            // Handle long-press so opening the iOS row menu cannot also open the PR on release.
             onLongPress={() => undefined}
             style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
           >
@@ -1227,7 +1257,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                     : swipeActions.secondary === "snooze"
                       ? snoozableCardMenuActions
                       : cardMenuActions),
-            ]}
+            ].filter((action) => {
+              if (action.id === "settle") return props.settlementSupported && canSettleThread;
+              if (action.id === "unsettle") return props.settlementSupported && canUnsettleThread;
+              if (action.id === "pin") return props.pinningSupported && canPinThread;
+              if (action.id === "unpin") return props.pinningSupported && canUnpinThread;
+              if (action.id === "snooze") return props.snoozeSupported && canSnoozeThread;
+              if (action.id === "unsnooze") return props.snoozeSupported && canUnsnoozeThread;
+              return true;
+            })}
             onPressAction={handleMenuAction}
             shouldOpenOnLongPress
           >
