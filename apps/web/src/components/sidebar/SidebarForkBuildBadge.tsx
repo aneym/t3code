@@ -1,8 +1,12 @@
 import { GitForkIcon } from "lucide-react";
 import { useState } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { RelativeTime } from "~/components/RelativeTime";
 import { APP_VERSION } from "~/branding";
+import { listForkReleases, type ForkReleaseResult } from "./forkReleaseSwitcher.logic";
+import { ForkReleaseSwitcher } from "./ForkReleaseSwitcher";
 import { checkUpstreamNightly, FORK_VERSION, loadForkBuildManifest } from "~/forkBuild";
 import type { ForkBuildManifest, ForkVersion, UpstreamNightlyStatus } from "~/forkBuild.logic";
 import { usePrimaryEnvironment } from "~/state/environments";
@@ -14,23 +18,44 @@ type Loadable<T> = { readonly status: "loading" } | { readonly status: "done"; r
 
 const LOADING = { status: "loading" } as const;
 
-export function SidebarForkBuildBadge() {
+export function SidebarForkBuildBadge({ onBackdrop }: { onBackdrop: boolean }) {
   if (FORK_VERSION === null) return null;
-  return <ForkBuildBadge forkVersion={FORK_VERSION} />;
+  return <ForkBuildBadge forkVersion={FORK_VERSION} onBackdrop={onBackdrop} />;
 }
 
-function ForkBuildBadge({ forkVersion }: { forkVersion: ForkVersion }) {
+function ForkBuildBadge({
+  forkVersion,
+  onBackdrop,
+}: {
+  forkVersion: ForkVersion;
+  onBackdrop: boolean;
+}) {
+  const primaryEnvironment = usePrimaryEnvironment();
   const [open, setOpen] = useState(false);
   const [manifest, setManifest] = useState<Loadable<ForkBuildManifest | null>>(LOADING);
   const [upstream, setUpstream] = useState<Loadable<UpstreamNightlyStatus | null>>(LOADING);
+  const [releases, setReleases] = useState<ForkReleaseResult | null>(null);
+  const [selectOpen, setSelectOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const fetchReleases = useAtomCommand(listForkReleases, { reportFailure: false });
+
+  const refreshReleases = () => {
+    if (primaryEnvironment === null) return;
+    void fetchReleases({
+      environmentId: primaryEnvironment.environmentId,
+      input: undefined,
+    }).then(setReleases);
+  };
 
   const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && (selectOpen || switching)) return;
     setOpen(nextOpen);
     if (!nextOpen) return;
     void loadForkBuildManifest().then((value) => setManifest({ status: "done", value }));
     void checkUpstreamNightly(forkVersion.upstreamBuild).then((value) =>
       setUpstream({ status: "done", value }),
     );
+    refreshReleases();
   };
 
   const upstreamIsNewer =
@@ -43,9 +68,10 @@ function ForkBuildBadge({ forkVersion }: { forkVersion: ForkVersion }) {
         closeDelay={120}
         render={
           <Button
-            aria-label={`Fork build ${forkVersion.upstreamBuild}.${forkVersion.forkRevision}${upstreamIsNewer ? ", upstream nightly is newer" : ""}`}
+            aria-label={`Fork build ${forkVersion.upstreamBuild}.${forkVersion.forkRevision}${upstreamIsNewer ? ", a newer upstream nightly is out" : ""}`}
+            className={onBackdrop ? "relative top-auto translate-y-0" : undefined}
             size="icon-micro"
-            variant="ghost-muted"
+            variant={onBackdrop ? "media-navigation" : "ghost-muted"}
           >
             <span className="relative inline-flex">
               <GitForkIcon aria-hidden />
@@ -61,7 +87,16 @@ function ForkBuildBadge({ forkVersion }: { forkVersion: ForkVersion }) {
       />
       {open ? (
         <PreviewCardPopup align="start" side="bottom" className="w-72 max-w-[calc(100vw-2rem)]">
-          <ForkBuildDetails forkVersion={forkVersion} manifest={manifest} upstream={upstream} />
+          <ForkBuildDetails
+            environmentId={primaryEnvironment?.environmentId ?? null}
+            forkVersion={forkVersion}
+            manifest={manifest}
+            upstream={upstream}
+            releases={releases}
+            onSelectOpenChange={setSelectOpen}
+            onSwitchingChange={setSwitching}
+            onSwitchComplete={refreshReleases}
+          />
         </PreviewCardPopup>
       ) : null}
     </PreviewCard>
@@ -69,13 +104,23 @@ function ForkBuildBadge({ forkVersion }: { forkVersion: ForkVersion }) {
 }
 
 function ForkBuildDetails({
+  environmentId,
   forkVersion,
   manifest,
   upstream,
+  releases,
+  onSelectOpenChange,
+  onSwitchingChange,
+  onSwitchComplete,
 }: {
+  environmentId: EnvironmentId | null;
   forkVersion: ForkVersion;
   manifest: Loadable<ForkBuildManifest | null>;
   upstream: Loadable<UpstreamNightlyStatus | null>;
+  releases: ForkReleaseResult | null;
+  onSelectOpenChange: (open: boolean) => void;
+  onSwitchingChange: (switching: boolean) => void;
+  onSwitchComplete: () => void;
 }) {
   const serverVersion = usePrimaryEnvironment()?.serverConfig?.environment.serverVersion ?? null;
   const builtAt = manifest.status === "done" ? (manifest.value?.builtAt ?? null) : null;
@@ -116,6 +161,15 @@ function ForkBuildDetails({
           <span className="truncate">Server {serverVersion}</span>
         </div>
       ) : null}
+      {environmentId === null ? null : (
+        <ForkReleaseSwitcher
+          environmentId={environmentId}
+          releases={releases}
+          onSelectOpenChange={onSelectOpenChange}
+          onSwitchingChange={onSwitchingChange}
+          onSwitchComplete={onSwitchComplete}
+        />
+      )}
     </div>
   );
 }
@@ -126,7 +180,8 @@ function describeUpstream(upstream: Loadable<UpstreamNightlyStatus | null>): str
   const { newestBuild, buildsAhead, buildsAheadIsLowerBound } = upstream.value;
   if (buildsAhead === 0) return "Up to date with upstream nightly";
   const count = `${buildsAhead}${buildsAheadIsLowerBound ? "+" : ""}`;
-  return `Upstream nightly ${newestBuild} is newer (${count} ${buildsAhead === 1 && !buildsAheadIsLowerBound ? "build" : "builds"} ahead)`;
+  const noun = buildsAhead === 1 && !buildsAheadIsLowerBound ? "release" : "releases";
+  return `Upstream nightly ${newestBuild} is out (${count} newer ${noun})`;
 }
 
 function upstreamTone(upstream: Loadable<UpstreamNightlyStatus | null>): string {

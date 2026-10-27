@@ -47,6 +47,7 @@ import {
   request,
   requestGuarded,
   runStream,
+  runStreamGuarded,
   subscribe,
   subscribeDynamicWithSession,
   type EnvironmentRpcInput,
@@ -887,7 +888,7 @@ export function createServerEnvironmentAtoms<R, E>(
                   const streamExit = yield* environmentRegistry
                     .runStream(
                       target.environmentId,
-                      runStream(WS_METHODS.serverUpdateServerWithProgress, target.input),
+                      runStreamGuarded(WS_METHODS.serverUpdateServerWithProgress, target.input),
                     )
                     .pipe(
                       Stream.runForEach((event) =>
@@ -918,7 +919,10 @@ export function createServerEnvironmentAtoms<R, E>(
               : yield* Effect.gen(function* () {
                   const selfUpdateMethod = currentConfig?.environment.capabilities.serverSelfUpdate;
                   const exit = yield* environmentRegistry
-                    .run(target.environmentId, request(WS_METHODS.serverUpdateServer, target.input))
+                    .run(
+                      target.environmentId,
+                      requestGuarded(WS_METHODS.serverUpdateServer, target.input),
+                    )
                     .pipe(Effect.exit);
                   if (Exit.isSuccess(exit)) {
                     return exit.value;
