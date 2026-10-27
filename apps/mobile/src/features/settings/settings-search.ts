@@ -46,6 +46,10 @@ const SETTINGS_SEARCH_TERMS = {
   SettingsArchive: ["archive", "archived", "restore", "unarchive"],
   SettingsProviderAccounts: ["codex", "claude", "cursor", "opencode", "sign in", "login", "auth"],
   SettingsEnvironmentNewThreads: [
+    "load balancing",
+    "auto balance",
+    "machines",
+    "load",
     "default workspace",
     "worktree",
     "submodules",

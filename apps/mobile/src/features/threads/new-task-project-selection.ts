@@ -46,6 +46,7 @@ function getOnlySelectableProject(
 export function resolveEnvironmentProjectMatch(
   projectsOnTarget: ReadonlyArray<EnvironmentProject>,
   selectedProject: EnvironmentProject | null,
+  allowFallback = true,
 ): EnvironmentProject | null {
   const repositoryKey = selectedProject?.repositoryIdentity
     ? repositoryGroupingKeyOf(selectedProject.repositoryIdentity)
@@ -80,7 +81,7 @@ export function resolveEnvironmentProjectMatch(
           (project) => !isKnownMismatch(project) && project.title === selectedProject.title,
         )
       : undefined) ??
-    projectsOnTarget[0] ??
+    (allowFallback ? projectsOnTarget[0] : null) ??
     null
   );
 }

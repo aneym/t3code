@@ -212,6 +212,30 @@ export function NewTaskEnvironmentPickerRouteScreen() {
           showsVerticalScrollIndicator={false}
         >
           <PickerSurface>
+            {flow.canAutoBalance ? (
+              <SelectionRow
+                leading={
+                  <EnvironmentMachineSymbol
+                    kind="server"
+                    size={20}
+                    tintColorClassName="accent-icon-muted"
+                  />
+                }
+                title={flow.autoBalanceLabel}
+                subtitle={
+                  flow.environmentSelection === "auto"
+                    ? "Auto selected"
+                    : "Choose a machine using free CPU and memory"
+                }
+                selected={flow.environmentSelection === "auto"}
+                isFirst
+                disabled={flow.submitting || flow.switchingToEnvironmentId !== null}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  if (flow.selectAutoEnvironment()) navigation.goBack();
+                }}
+              />
+            ) : null}
             {flow.environments.map((environment, index) => (
               <EnvironmentPickerRow
                 key={String(environment.environmentId)}
@@ -224,7 +248,10 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                     if (switched) navigation.goBack();
                   });
                 }}
-                selected={flow.selectedEnvironmentId === environment.environmentId}
+                selected={
+                  flow.environmentSelection !== "auto" &&
+                  flow.selectedEnvironmentId === environment.environmentId
+                }
                 title={environment.environmentLabel}
               />
             ))}
