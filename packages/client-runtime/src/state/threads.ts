@@ -36,6 +36,7 @@ import { request, subscribeDynamic } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
+import { isActiveThread, snapshotToPersist, shouldPersistThread } from "./threadCachePolicy.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
@@ -54,6 +55,14 @@ import {
   type EnvironmentThreadState,
   type EnvironmentThreadStatus,
 } from "./threadState.ts";
+
+const environmentThreadBackgroundPersistors = new Set<Effect.Effect<void>>();
+
+export const persistEnvironmentThreadSnapshots: Effect.Effect<void> = Effect.suspend(() =>
+  Effect.forEach(Array.from(environmentThreadBackgroundPersistors), (persist) => persist, {
+    concurrency: "unbounded",
+  }).pipe(Effect.asVoid),
+);
 
 function statusWithoutLiveData(
   data: Option.Option<OrchestrationV2ThreadProjection>,
@@ -88,40 +97,6 @@ function historyMetaFromCachedSnapshot(
     expanded: false,
     latestLocalTurnOrdinal: snapshot.latestLocalTurnOrdinal ?? null,
   };
-}
-
-function snapshotToPersist(
-  snapshotSequence: number,
-  projection: OrchestrationV2ThreadProjection,
-  history: ThreadHistoryMeta,
-  acceptsBoundedSnapshots: boolean,
-): OrchestrationV2ThreadDetailSnapshot {
-  // A complete bounded snapshot still proves paging support. Retain that evidence
-  // so a thread that grows while closed can resume with a bounded fallback.
-  if (acceptsBoundedSnapshots || history.hasMoreHistory || history.historyCursor !== null) {
-    return {
-      snapshotSequence,
-      projection,
-      historyCursor: history.historyCursor,
-      hasMoreHistory: history.hasMoreHistory,
-      latestLocalTurnOrdinal: history.latestLocalTurnOrdinal,
-    };
-  }
-  return { snapshotSequence, projection };
-}
-
-function shouldPersistThread(
-  thread: OrchestrationV2ThreadProjection,
-  history: ThreadHistoryMeta,
-): boolean {
-  // After the user loads older pages the in-memory timeline can grow large.
-  // Keep those expanded projections out of the monolithic cache.
-  if (history.expanded) {
-    return false;
-  }
-  return !thread.runs.some(
-    (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
-  );
 }
 
 // Only still-active local copies take the server's item: events applied meanwhile win,
@@ -287,7 +262,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
     snapshot: OrchestrationV2ThreadDetailSnapshot,
+    force = false,
   ) {
+    if (!force && isActiveThread(snapshot.projection)) return;
     if (resumeCache !== undefined && resumeCache.owner !== owner) return;
     if (committed.state.status === "deleted") return;
     if (
@@ -329,28 +306,31 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     );
   });
 
+  const persistCurrent = Effect.suspend(() => {
+    const { state: current, sequence: snapshotSequence } = committed;
+    return Option.match(current.data, {
+      onNone: () => Effect.void,
+      onSome: (projection) =>
+        shouldPersistThread(projection, current.history)
+          ? persist(
+              snapshotToPersist(
+                snapshotSequence,
+                projection,
+                current.history,
+                committed.acceptsBoundedSnapshots === true,
+              ),
+              true,
+            )
+          : queuedSnapshot !== undefined && queuedSnapshot !== savedSnapshot
+            ? persist(queuedSnapshot)
+            : Effect.void,
+    });
+  });
+  environmentThreadBackgroundPersistors.add(persistCurrent);
   yield* Effect.addFinalizer(() =>
-    Effect.suspend(() => {
-      const { state: current, sequence: snapshotSequence } = committed;
-      return Option.match(current.data, {
-        onNone: () => Effect.void,
-        onSome: (projection) =>
-          shouldPersistThread(projection, current.history)
-            ? persist(
-                snapshotToPersist(
-                  snapshotSequence,
-                  projection,
-                  current.history,
-                  committed.acceptsBoundedSnapshots === true,
-                ),
-              )
-            : // The consumer may still be waiting out its delay; an expanded thread queues
-              // only cache repairs, which must survive leaving the thread.
-              queuedSnapshot !== undefined && queuedSnapshot !== savedSnapshot
-              ? persist(queuedSnapshot)
-              : Effect.void,
-      });
-    }),
+    Effect.sync(() => environmentThreadBackgroundPersistors.delete(persistCurrent)).pipe(
+      Effect.andThen(persistCurrent),
+    ),
   );
 
   yield* runCachePersistence(persistence, persist).pipe(Effect.forkScoped);
@@ -375,10 +355,23 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   );
   const setDisconnected = Effect.gen(function* () {
     yield* Ref.set(awaitingCompletion, false);
-    yield* SubscriptionRef.update(state, (current) => ({
-      ...current,
-      status: current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
+    const current = yield* SubscriptionRef.get(state);
+    yield* SubscriptionRef.update(state, (value) => ({
+      ...value,
+      status: value.status === "deleted" ? value.status : statusWithoutLiveData(value.data),
     }));
+    if (Option.isSome(current.data) && shouldPersistThread(current.data.value, current.history)) {
+      const sequence = yield* SubscriptionRef.get(lastSequence);
+      yield* persist(
+        snapshotToPersist(
+          sequence,
+          current.data.value,
+          current.history,
+          yield* Ref.get(acceptsBoundedSocketSnapshots),
+        ),
+        true,
+      );
+    }
   });
   const setStreamError = (message: string) =>
     Ref.set(awaitingCompletion, false).pipe(

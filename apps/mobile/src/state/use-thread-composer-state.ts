@@ -75,8 +75,8 @@ import {
   clearComposerDraftContent,
   composerContextImportsAtom,
   getComposerDraftSnapshot,
-  mergeComposerDraftContent,
   removeComposerDraftAttachment,
+  replaceComposerDraftAttachments,
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
   updateComposerDraftSettings,
@@ -111,6 +111,7 @@ import {
 } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
+import type { QueuedThreadMessage } from "./thread-outbox-model";
 import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
@@ -214,6 +215,7 @@ export function useThreadComposerState() {
   });
   const [isSavingQueuedEdit, setIsSavingQueuedEdit] = useState(false);
   const savingQueuedEditRef = useRef(false);
+  const sendingMessageRef = useRef(false);
   const pastedTextFileNamesRef = useRef<{ threadKey: string | null; names: Set<string> }>({
     threadKey: null,
     names: new Set(),
@@ -508,6 +510,22 @@ export function useThreadComposerState() {
       hasAttachmentsOrContext: boolean,
     ) => Promise<boolean | "responded">,
   ) => {
+    if (sendingMessageRef.current) return null;
+    sendingMessageRef.current = true;
+    try {
+      return await sendMessageImpl(followUpOverride, beforeDispatch);
+    } finally {
+      sendingMessageRef.current = false;
+    }
+  };
+
+  const sendMessageImpl = async (
+    followUpOverride?: ActiveTurnComposerAction,
+    beforeDispatch?: (
+      text: string,
+      hasAttachmentsOrContext: boolean,
+    ) => Promise<boolean | "responded">,
+  ) => {
     if (
       selectedThreadShell &&
       selectedEnvironmentRuntime?.connectionState === "connected" &&
@@ -668,7 +686,7 @@ export function useThreadComposerState() {
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
     clearThreadComposerError(threadKey);
-    const enqueuePromise = enqueueThreadOutboxMessage({
+    const queuedMessage: QueuedThreadMessage = {
       environmentId: selectedThreadShell.environmentId,
       threadId: selectedThreadShell.id,
       messageId,
@@ -684,24 +702,36 @@ export function useThreadComposerState() {
       ),
       ...(followUpDispatchMode === null ? {} : { dispatchMode: followUpDispatchMode }),
       createdAt: metadata.createdAt,
-    });
-    clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
-    enqueuePromise.then(
-      () => scheduleUnusedComposerAttachmentCleanup(attachments),
-      (error: unknown) => {
-        // Restore with uncapped append; capped merge could drop attachments added during the failed write.
-        void mergeComposerDraftContent(threadKey, {
-          text,
-          context: draft.context,
-          attachments: [],
-        });
-        appendComposerDraftAttachments(threadKey, attachments, { allowOverflow: true });
-        setThreadComposerError(
-          threadKey,
-          error instanceof Error ? error.message : "Failed to save the queued message.",
+    };
+    const enqueuePromise = enqueueThreadOutboxMessage(queuedMessage);
+    try {
+      await enqueuePromise;
+      const currentDraft = getComposerDraftSnapshot(threadKey);
+      const sentAttachmentIds = new Set(attachments.map((attachment) => attachment.id));
+      const textUnchanged = currentDraft.text === draft.text;
+      const attachmentsUnchanged =
+        currentDraft.attachments.length === attachments.length &&
+        currentDraft.attachments.every((attachment) => sentAttachmentIds.has(attachment.id));
+      if (textUnchanged && attachmentsUnchanged) {
+        clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
+      } else {
+        if (textUnchanged) setComposerDraftText(threadKey, "");
+        const retainedAttachments = currentDraft.attachments.filter(
+          (attachment) => !sentAttachmentIds.has(attachment.id),
         );
-      },
-    );
+        if (retainedAttachments.length !== currentDraft.attachments.length) {
+          replaceComposerDraftAttachments(threadKey, retainedAttachments);
+        }
+        scheduleUnusedComposerAttachmentCleanup(attachments);
+      }
+    } catch (error) {
+      setThreadComposerError(
+        threadKey,
+        error instanceof Error ? error.message : "Failed to save the queued message.",
+      );
+      return null;
+    }
+    scheduleUnusedComposerAttachmentCleanup(attachments);
     return messageId;
   };
 

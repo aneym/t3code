@@ -173,7 +173,8 @@ import {
   FLOATING_WORKING_CONTROL_COVERAGE,
   FloatingWorkingControl,
 } from "./floating-working-control";
-import { connectionFloatingStatus, type FloatingWorkingStatus } from "./floating-working-status";
+import { connectionChipStatus, type FloatingWorkingStatus } from "./floating-working-status";
+import { setOpenThreadCacheKey } from "../../state/thread-outbox";
 import {
   derivePendingUserInputMaxHeight,
   ESTIMATED_KEYBOARD_HEIGHT,
@@ -404,6 +405,10 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   const [keyboardStateSuspect, setKeyboardStateSuspect] = useState(false);
   const ownedInputFocusedRef = useRef(false);
   useEffect(() => {
+    setOpenThreadCacheKey(`${props.environmentId}:${props.selectedThread.id}`);
+    return () => setOpenThreadCacheKey(null);
+  }, [props.environmentId, props.selectedThread.id]);
+  useEffect(() => {
     if (Platform.OS !== "android") {
       return;
     }
@@ -609,16 +614,25 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
   );
+  const connectionStatus = connectionChipStatus({
+    connectionState: props.connectionStateLabel,
+    connectionError: props.connectionError,
+    onReconnect: props.onReconnectEnvironment,
+    queuedCount: props.queuedMessages.length,
+  });
+  const connectionChipLabel = useDelayedStatus(selectedThreadKey, connectionStatus?.label ?? null, {
+    showDelayMs:
+      props.connectionStateLabel === "offline" ||
+      props.connectionStateLabel === "connecting" ||
+      props.connectionStateLabel === "reconnecting"
+        ? 4_000
+        : 0,
+  });
+  const connectionChip =
+    connectionChipLabel === null
+      ? null
+      : { label: connectionChipLabel, onPress: props.onReconnectEnvironment };
   const floatingStatus = ((): FloatingWorkingStatus | null => {
-    const connectionStatus = connectionFloatingStatus({
-      connectionError: props.connectionError,
-      connectionState: props.connectionStateLabel,
-      environmentLabel: props.environmentLabel,
-      onReconnect: props.onReconnectEnvironment,
-    });
-    if (connectionStatus !== null && !props.draftMode) {
-      return connectionStatus;
-    }
     if (props.activePendingApproval !== null || props.activePendingUserInput !== null) {
       return null;
     }
@@ -650,7 +664,11 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     if (props.isCompacting && contentPresentationKind === "ready") {
       return { kind: "compacting" };
     }
-    if (props.activeWorkStartedAt !== null && contentPresentationKind === "ready") {
+    if (
+      props.activeWorkStartedAt !== null &&
+      contentPresentationKind === "ready" &&
+      (props.connectionStateLabel === "connected" || props.threadSyncStatus !== "cached")
+    ) {
       return { kind: "working", startedAt: props.activeWorkStartedAt };
     }
     if (pendingBackgroundWork !== null && contentPresentationKind === "ready") {
@@ -720,7 +738,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     agentsSegment !== null ||
     devicePreviews.length > 0 ||
     browserTabs.tabs.length > 0 ||
-    props.connectionStateLabel !== "connected" ||
+    connectionChip !== null ||
     props.queuedMessages.length > 0 ||
     props.selectedThreadFeed.some(
       (entry) => "acknowledged" in entry && entry.acknowledged === true,
@@ -1293,6 +1311,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
               worktreeSetup={props.worktreeSetup}
               setupWorkingStartedAt={props.setupWorkingStartedAt}
               queuedMessages={props.queuedMessages}
+              connectionState={props.connectionStateLabel}
               dispatchingMessageId={props.dispatchingMessageId}
               // A native subagent has no composer to edit a pending message in;
               // Cancel on the edit banner would discard it.
@@ -1378,6 +1397,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                 <FloatingWorkingControl
                   colorScheme={isDarkMode ? "dark" : "light"}
                   status={floatingStatus}
+                  connectionChip={connectionChip}
                   lift={floatingControlLift}
                   devicePreview={
                     devicePreviews.length > 0

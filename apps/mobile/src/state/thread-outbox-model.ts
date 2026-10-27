@@ -31,7 +31,7 @@ import { scopedThreadKey } from "../lib/scopedEntities";
 import { resolveProviderInteractionMode } from "./legacy-plan-mode";
 
 // Keep current writes until a compatible native baseline includes the v4 reader.
-const THREAD_OUTBOX_SCHEMA_VERSION = 3;
+const THREAD_OUTBOX_SCHEMA_VERSION = 5;
 const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
 
 const QueuedThreadCreationSchema = Schema.Struct({
@@ -46,7 +46,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
-  schemaVersion: Schema.Literals([1, 2, THREAD_OUTBOX_SCHEMA_VERSION, 4]),
+  schemaVersion: Schema.Literals([1, 2, 3, 4, THREAD_OUTBOX_SCHEMA_VERSION]),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   messageId: MessageId,
@@ -60,6 +60,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   interactionMode: Schema.optional(ProviderInteractionMode),
   creation: Schema.optional(QueuedThreadCreationSchema),
   createdAt: IsoDateTime,
+  enqueueOrdinal: Schema.optional(Schema.Number),
 });
 
 const decodeStoredQueuedThreadMessage = Schema.decodeUnknownSync(QueuedThreadMessageSchema);
@@ -91,6 +92,7 @@ export interface QueuedThreadMessage {
   readonly dispatchMode?: ComposerDispatchMode;
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
+  readonly enqueueOrdinal?: number;
 }
 
 export interface ThreadSettingsSnapshot {
@@ -152,7 +154,17 @@ export function groupQueuedThreadMessages(
     (grouped[threadKey] ??= []).push(message);
   }
   for (const queue of Object.values(grouped)) {
-    queue.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    queue.sort((left, right) => {
+      if (left.enqueueOrdinal !== undefined && right.enqueueOrdinal !== undefined) {
+        return (
+          left.enqueueOrdinal - right.enqueueOrdinal ||
+          left.createdAt.localeCompare(right.createdAt)
+        );
+      }
+      if (left.enqueueOrdinal !== undefined) return -1;
+      if (right.enqueueOrdinal !== undefined) return 1;
+      return Date.parse(left.createdAt) - Date.parse(right.createdAt);
+    });
   }
   return grouped;
 }

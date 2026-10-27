@@ -16,7 +16,14 @@ import {
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
 import { useEffect, useRef, type ReactNode } from "react";
-import { Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from "react-native";
+import {
+  AppState,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+} from "react-native";
 import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/ui/AppText";
@@ -150,7 +157,11 @@ import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { HORIZONTAL_FORM_SHEET_OPTIONS, formSheetDetents } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
+import { useThreadPrefetch } from "./state/thread-prefetch";
 import { useComposerAttachmentUploadWorker } from "./state/composer-attachment-uploads";
+import { persistEnvironmentThreadSnapshots } from "@t3tools/client-runtime/state/threads";
+import { runtime } from "./lib/runtime";
+import * as Effect from "effect/Effect";
 import {
   selectWorkspaceDetail,
   workspaceDetailRouter,
@@ -488,7 +499,19 @@ function workspaceLocationFromState(state: NavigationState) {
 // Isolate subscriptions so streaming updates cannot re-render RootStackLayout and every screen.
 function ThreadOutboxDrainWorker() {
   useThreadOutboxDrain();
+  useThreadPrefetch();
   useComposerAttachmentUploadWorker();
+  // oxlint-disable-next-line t3code/react-effect-budget -- persist active snapshots before suspension
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") {
+        void runtime.runPromise(
+          persistEnvironmentThreadSnapshots.pipe(Effect.catch(() => Effect.void)),
+        );
+      }
+    });
+    return () => subscription.remove();
+  }, []);
   return null;
 }
 

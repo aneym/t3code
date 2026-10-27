@@ -41,6 +41,10 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
   const queuedMessagesByThreadKeyAtom = Atom.make<
     Record<string, ReadonlyArray<QueuedThreadMessage>>
   >({}).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-outbox:queued-messages"));
+  const loadedAtom = Atom.make(false).pipe(
+    Atom.keepAlive,
+    Atom.withLabel("mobile:thread-outbox:loaded"),
+  );
   const warn =
     options.warn ??
     ((message: string, error: unknown) => {
@@ -48,6 +52,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     });
   let loadPromise: Promise<boolean> | null = null;
   let mutationQueue: Promise<void> = Promise.resolve();
+  let nextEnqueueOrdinal = 0;
   const revisions = new Map<MessageId, number>();
   const bumpRevision = (messageId: MessageId): void => {
     revisions.set(messageId, (revisions.get(messageId) ?? 0) + 1);
@@ -81,7 +86,36 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       const recovered = result.messages.filter(
         (message) => !currentIds.has(message.messageId) && !revisions.has(message.messageId),
       );
-      if (recovered.length > 0) setMessages([...recovered, ...current]);
+      nextEnqueueOrdinal = Math.max(
+        nextEnqueueOrdinal,
+        ...recovered.map((message) => message.enqueueOrdinal ?? 0),
+      );
+      const legacy = recovered
+        .filter((message) => message.enqueueOrdinal === undefined)
+        .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+      const legacyStart = Math.max(0, nextEnqueueOrdinal - legacy.length);
+      const backfilled = new Map(
+        legacy.map((message, index) => [
+          message.messageId,
+          { ...message, enqueueOrdinal: legacyStart + index },
+        ]),
+      );
+      nextEnqueueOrdinal = Math.max(
+        nextEnqueueOrdinal,
+        ...[...backfilled.values()].map((message) => message.enqueueOrdinal ?? 0),
+      );
+      await Promise.all(
+        [...backfilled.values()].map(async (message) => {
+          try {
+            await options.storage.write(message);
+          } catch (cause) {
+            warn("[thread-outbox] failed to backfill message ordinal", cause);
+          }
+        }),
+      );
+      const loaded = recovered.map((message) => backfilled.get(message.messageId) ?? message);
+      if (loaded.length > 0) setMessages([...loaded, ...current]);
+      if (result.errors.length === 0) options.registry.set(loadedAtom, true);
       if (result.errors.length > 0) {
         throw new AggregateError(result.errors, "Some queued messages could not be read.");
       }
@@ -104,28 +138,36 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
   };
 
   const enqueue = (message: QueuedThreadMessage): Promise<void> => {
-    bumpRevision(message.messageId);
+    const queuedMessage =
+      message.enqueueOrdinal !== undefined
+        ? message
+        : {
+            ...message,
+            enqueueOrdinal: Math.max(Date.now(), nextEnqueueOrdinal + 1),
+          };
+    nextEnqueueOrdinal = Math.max(nextEnqueueOrdinal, queuedMessage.enqueueOrdinal ?? 0);
+    bumpRevision(queuedMessage.messageId);
     setMessages([
-      ...currentMessages().filter((candidate) => candidate.messageId !== message.messageId),
-      message,
+      ...currentMessages().filter((candidate) => candidate.messageId !== queuedMessage.messageId),
+      queuedMessage,
     ]);
     return serialize(async () => {
       try {
-        await options.storage.write(message);
+        await options.storage.write(queuedMessage);
       } catch (cause) {
         // Rollback by reference: a retry with the same id may already own a newer optimistic entry.
-        setMessages(currentMessages().filter((candidate) => candidate !== message));
+        setMessages(currentMessages().filter((candidate) => candidate !== queuedMessage));
         // Remove compensating persisted copies after rollback unless a same-id entry survives, or restart resurrects rejected messages.
         if (!currentMessages().some((candidate) => candidate.messageId === message.messageId)) {
           try {
-            await options.storage.remove(message);
+            await options.storage.remove(queuedMessage);
           } catch {}
         }
         throw new ThreadOutboxManagerError({
           operation: "enqueue",
-          environmentId: message.environmentId,
-          threadId: message.threadId,
-          messageId: message.messageId,
+          environmentId: queuedMessage.environmentId,
+          threadId: queuedMessage.threadId,
+          messageId: queuedMessage.messageId,
           cause,
         });
       }
@@ -341,6 +383,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
 
   return {
     queuedMessagesByThreadKeyAtom,
+    loadedAtom,
     serialize,
     load,
     enqueue,

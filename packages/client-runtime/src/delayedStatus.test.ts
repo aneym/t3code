@@ -39,7 +39,7 @@ describe("stepDelayedStatus", () => {
   it("shows the latest value when the show delay passes", () => {
     const pending = step(null, "connecting", 0);
     const changed = step(pending, "syncing", 200);
-    expect(changed).toBe(pending);
+    expect(changed).toMatchObject({ phase: "pending", value: "syncing", showAt: 400 });
     expect(shownDelayedStatus(step(changed, "syncing", 400), "thread-1")).toBe("syncing");
   });
 

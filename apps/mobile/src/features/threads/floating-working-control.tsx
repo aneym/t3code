@@ -68,6 +68,7 @@ export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_OVERLAY_OFFSET + CONTRO
 export function FloatingWorkingControl(props: {
   readonly colorScheme: "light" | "dark";
   readonly status: FloatingWorkingStatus | null;
+  readonly connectionChip: { readonly label: string; readonly onPress: () => void } | null;
   readonly devicePreview: { readonly count: number; readonly onPress: () => void } | null;
   readonly browserPreview: { readonly count: number; readonly onPress: () => void } | null;
   readonly showScrollToEnd: boolean;
@@ -81,6 +82,7 @@ export function FloatingWorkingControl(props: {
   const { width: windowWidth } = useWindowDimensions();
   const [overlayWidth, setOverlayWidth] = useState(windowWidth);
   const [queueWidth, setQueueWidth] = useState(0);
+  const [connectionWidth, setConnectionWidth] = useState(0);
   const [actionWidth, setActionWidth] = useState(0);
   const action =
     props.status?.kind === "background" || props.status?.kind === "lifecycle"
@@ -88,6 +90,7 @@ export function FloatingWorkingControl(props: {
       : null;
   const [agentsWidth, setAgentsWidth] = useState(0);
   const hasQueue = props.queuedCount > 0;
+  const hasConnectionChip = props.connectionChip !== null;
   const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
   const [previewWidth, setPreviewWidth] = useState(0);
   const agents = props.agents;
@@ -99,6 +102,7 @@ export function FloatingWorkingControl(props: {
       32 -
       (action !== null ? actionWidth : 0) -
       (hasQueue ? queueWidth : 0) -
+      (hasConnectionChip ? connectionWidth : 0) -
       (hasAgents ? agentsWidth : 0) -
       (hasPreview ? previewWidth : 0),
   );
@@ -132,7 +136,7 @@ export function FloatingWorkingControl(props: {
     capsuleWidth.set(first ? width : withTiming(width, CONTROL_TIMING));
   };
   const hasStatus = props.status !== null;
-  const hasCapsule = hasStatus || hasQueue || hasAgents || hasPreview;
+  const hasCapsule = hasStatus || hasConnectionChip || hasQueue || hasAgents || hasPreview;
   useEffect(() => {
     if (!hasStatus) {
       measuredWidthRef.current = null;
@@ -156,11 +160,14 @@ export function FloatingWorkingControl(props: {
     hasQueue ||
     (props.devicePreview !== null && props.browserPreview !== null);
   const statusInteractive =
-    props.status?.kind === "connection" ||
-    props.status?.kind === "child-input" ||
-    props.status?.kind === "background";
+    props.status?.kind === "child-input" || props.status?.kind === "background";
   const capsuleInteractive =
-    statusInteractive || action !== null || hasQueue || hasAgents || hasPreview;
+    statusInteractive ||
+    hasConnectionChip ||
+    action !== null ||
+    hasQueue ||
+    hasAgents ||
+    hasPreview;
   const statusContent =
     props.status !== null ? (
       <View
@@ -188,6 +195,20 @@ export function FloatingWorkingControl(props: {
 
   const capsuleContent = (
     <View className="flex-row items-center">
+      {props.connectionChip !== null ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={props.connectionChip.label}
+          onPress={props.connectionChip.onPress}
+          onLayout={(event) => setConnectionWidth(settleWidth(event.nativeEvent.layout.width))}
+          className="h-11 flex-row items-center px-3 active:opacity-70"
+        >
+          <View className="mr-2 h-2 w-2 rounded-full bg-red-500" />
+          <Text className="font-t3-medium text-xs text-foreground" numberOfLines={1}>
+            {props.connectionChip.label}
+          </Text>
+        </Pressable>
+      ) : null}
       {statusContent}
       {action !== null ? (
         <View
@@ -398,30 +419,6 @@ function FloatingStatusLabel(props: {
       >
         <SymbolView name="text.bubble" size={13} tintColorClassName="foreground" />
         <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
-          {props.status.label}
-        </Text>
-      </StatusLabelRow>
-    );
-  }
-  if (props.status.kind === "connection") {
-    return (
-      <StatusLabelRow
-        key="connection"
-        accessibilityLabel={props.status.label}
-        accessibilityRole="button"
-        className="gap-2"
-        onLayout={props.onLayout}
-        onPress={props.status.onPress}
-      >
-        {props.status.tone === "reconnecting" ? (
-          <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
-        ) : (
-          <View className="h-2 w-2 rounded-full bg-red-500" />
-        )}
-        <Text
-          className="max-w-[260px] shrink font-t3-medium text-xs text-foreground"
-          numberOfLines={1}
-        >
           {props.status.label}
         </Text>
       </StatusLabelRow>
