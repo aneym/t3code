@@ -24,7 +24,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
-import { recoveryQueueHold, withoutQueueHoldReason } from "./QueuedRunBatch.ts";
+import { recoveryQueueHold } from "./QueuedRunBatch.ts";
 import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
