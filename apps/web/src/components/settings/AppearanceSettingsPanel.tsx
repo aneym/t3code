@@ -432,7 +432,7 @@ export function AppearanceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("sidebar-thread-status-text")}
-          description="Show status labels and working time beside the status icon."
+          description="Show status labels and working time beside the status icon. Hidden details remain in the row hover card."
           resetAction={
             settings.sidebarThreadShowStatusText !==
             DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowStatusText ? (
