@@ -30,15 +30,15 @@ export function railsAgentThreadKey(thread: EnvironmentThreadShell): string {
   return `${thread.environmentId}:${thread.id}`;
 }
 
-function threadActivityAt(thread: EnvironmentThreadShell): string {
-  return thread.latestRun?.requestedAt ?? thread.updatedAt ?? thread.createdAt;
+function isHomeThreadCandidate(thread: EnvironmentThreadShell): boolean {
+  return thread.lineage.parentThreadId === null;
 }
 
-function isPreferredThread(candidate: EnvironmentThreadShell, current: EnvironmentThreadShell) {
+function isPreferredHomeThread(candidate: EnvironmentThreadShell, current: EnvironmentThreadShell) {
   if ((candidate.pinnedAt === null) !== (current.pinnedAt === null)) {
     return candidate.pinnedAt !== null;
   }
-  return threadActivityAt(candidate) > threadActivityAt(current);
+  return candidate.createdAt < current.createdAt;
 }
 
 function resolveRailsAgents(
@@ -69,8 +69,8 @@ function resolveRailsAgents(
   for (const thread of agentThreads) {
     const handle = handleByProjectKey.get(`${thread.environmentId}:${thread.projectId}`);
     const agent = handle === undefined ? undefined : agents.get(handle);
-    if (agent === undefined) continue;
-    if (agent.thread === null || isPreferredThread(thread, agent.thread)) {
+    if (agent === undefined || !isHomeThreadCandidate(thread)) continue;
+    if (agent.thread === null || isPreferredHomeThread(thread, agent.thread)) {
       agent.thread = thread;
       agent.projectRef = scopeProjectRef(thread.environmentId, thread.projectId);
     }
