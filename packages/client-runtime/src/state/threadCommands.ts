@@ -5,7 +5,6 @@ import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import {
   WS_METHODS,
-  ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
@@ -230,44 +229,38 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
-    settle: createEnvironmentRpcCommand(runtime, {
+    settle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:settle",
-      tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
       execute: (input: SettleThreadInput) => settleThread(input),
       scheduler,
       concurrency,
     }),
-    unsettle: createEnvironmentRpcCommand(runtime, {
+    unsettle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unsettle",
-      tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
       execute: (input: UnsettleThreadInput) => unsettleThread(input),
       scheduler,
       concurrency,
     }),
-    snooze: createEnvironmentRpcCommand(runtime, {
+    snooze: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:snooze",
-      tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
       execute: (input: SnoozeThreadInput) => snoozeThread(input),
       scheduler,
       concurrency,
     }),
-    unsnooze: createEnvironmentRpcCommand(runtime, {
+    unsnooze: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unsnooze",
-      tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
       execute: (input: UnsnoozeThreadInput) => unsnoozeThread(input),
       scheduler,
       concurrency,
     }),
-    pin: createEnvironmentRpcCommand(runtime, {
+    pin: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:pin",
-      tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
       execute: (input: PinThreadInput) => pinThread(input),
       scheduler,
       concurrency,
     }),
-    unpin: createEnvironmentRpcCommand(runtime, {
+    unpin: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unpin",
-      tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
       execute: (input: UnpinThreadInput) => unpinThread(input),
       scheduler,
       concurrency,

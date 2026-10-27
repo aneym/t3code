@@ -48,27 +48,21 @@ export function createOptimisticThreadLifecycle(
     }),
   );
 
-  function wrap<Input extends { readonly threadId: ThreadId }, E, Extra>(
+  function wrap<Input extends { readonly threadId: ThreadId }, E>(
     command: AtomCommand<
       { readonly environmentId: EnvironmentId; readonly input: Input },
       { readonly sequence: number },
       E
-    > &
-      Extra,
+    >,
     apply: (
       thread: OrchestrationV2ThreadShell,
       input: Input,
       now: DateTime.Utc,
       accepted: boolean,
     ) => OrchestrationV2ThreadShell,
-  ): Omit<Extra, "run"> &
-    AtomCommand<
-      { readonly environmentId: EnvironmentId; readonly input: Input },
-      { readonly sequence: number },
-      E
-    > {
+  ): typeof command {
     return {
-      ...command,
+      label: command.label,
       run: async (registry, target) => {
         const now = DateTime.nowUnsafe();
         const pending = pendingAtom(target.environmentId);
