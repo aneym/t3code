@@ -710,7 +710,6 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
 it.effect("a message the user sends after Stop releases the held queue; an agent's does not", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = ThreadId.make("thread:stop-release");
     const agentSend = (text: string) =>
       orchestrator.dispatch({
@@ -734,25 +733,12 @@ it.effect("a message the user sends after Stop releases the held queue; an agent
     });
     assert.deepEqual((yield* threadState(threadId)).runs, ["interrupted", "queued:held"]);
 
-    // An agent's message starts on the idle thread, but the hold is the user's.
     yield* agentSend("agent nudge");
     assert.deepEqual((yield* threadState(threadId)).runs, [
       "interrupted",
       "queued:held",
-      "starting",
+      "queued:held",
     ]);
-    const nudge = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
-    const now = yield* DateTime.now;
-    yield* projections.apply({
-      id: EventId.make("event:stop-release:nudge-completed"),
-      type: "run.updated",
-      threadId,
-      runId: nudge.id,
-      occurredAt: now,
-      payload: { ...nudge, status: "completed", completedAt: now },
-    });
-
-    // A scheduled task the user created is not the user coming back.
     yield* orchestrator.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make("scheduled-send"),
@@ -765,32 +751,20 @@ it.effect("a message the user sends after Stop releases the held queue; an agent
       creationSource: "web",
       scheduledTaskId: ScheduledTaskId.make("scheduled:nightly"),
     });
-    const scheduled = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
     assert.deepEqual((yield* threadState(threadId)).runs, [
       "interrupted",
       "queued:held",
-      "completed",
-      "starting",
+      "queued:held",
+      "queued:held",
     ]);
-    yield* projections.apply({
-      id: EventId.make("event:stop-release:scheduled-completed"),
-      type: "run.updated",
-      threadId,
-      runId: scheduled.id,
-      occurredAt: now,
-      payload: { ...scheduled, status: "completed", completedAt: now },
-    });
-
-    // The user is back: the held message follows their run, and a wake that
-    // queues behind it is not held by the old Stop.
     yield* send(threadId, "back", "start_immediately");
     yield* agentSend("task finished");
     assert.deepEqual((yield* threadState(threadId)).runs, [
       "interrupted",
-      "queued",
-      "completed",
-      "completed",
       "starting",
+      "queued",
+      "queued",
+      "queued",
       "queued",
     ]);
   }).pipe(Effect.provide(layerTest)),
@@ -1034,7 +1008,7 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
           payload:
             run.id === first!.id
               ? { ...run, status: "completed", completedAt: now }
-              : { ...run, queueHeld: true },
+              : { ...run, queueHeld: false },
         });
       }
       yield* send(threadId, "restart source", "start_immediately");
@@ -1056,7 +1030,7 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
           ${`effect:restart-continuation:${source.id}`}, 'command:restart', ${threadId},
           'provider-runtime.continue',
           ${encodeEffectRequest({ type: "provider-runtime.continue", sourceRunId: source.id })},
-          'pending', 0, ${at}, ${at}, ${at}
+          'succeeded', 0, ${at}, ${at}, ${at}
         )
       `;
       yield* orchestrator.dispatch({

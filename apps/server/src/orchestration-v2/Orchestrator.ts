@@ -1489,9 +1489,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
-      for (const run of projection.runs) {
-        if (yield* awaitsRestartContinuation(run)) return;
-      }
+      if ((yield* effectOutbox.listUnsettledRestartContinuationIds(threadId)).length > 0) return;
 
       const storedQueuedRun =
         options?.queuedRunId === undefined
@@ -2193,31 +2191,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const resumeQueuedRuns = Effect.gen(function* () {
     const threadIds = yield* projectionStore.getRecoveryThreadIds("queued-runs");
-    let resumed = 0;
-    for (const threadId of threadIds) {
-      const resumedThread = yield* Effect.gen(function* () {
-        const projection = yield* readCommandProjection(threadId);
-        for (const run of projection.runs) {
-          if (yield* awaitsRestartContinuation(run)) {
-            yield* effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`);
-          }
-        }
-        if (!(yield* projectionStore.canStartQueuedRun(threadId))) return false;
-        yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
-        return true;
-      }).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Failed to resume queued V2 run after recovery", {
-            threadId,
-            cause,
-          }).pipe(Effect.as(false)),
+    const resumed = yield* Effect.forEach(
+      threadIds,
+      (threadId) =>
+        Effect.gen(function* () {
+          const continuations = yield* effectOutbox.listUnsettledRestartContinuationIds(threadId);
+          yield* Effect.forEach(continuations, effectOutbox.awaitSettled, { discard: true });
+          if (!(yield* projectionStore.canStartQueuedRun(threadId))) return false;
+          yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
+          return true;
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to resume queued V2 run after recovery", {
+              threadId,
+              cause,
+            }).pipe(Effect.as(false)),
+          ),
         ),
-      );
-      if (resumedThread) {
-        resumed += 1;
-      }
-    }
-    return resumed;
+      { concurrency: "unbounded" },
+    );
+    return resumed.filter(Boolean).length;
   }).pipe(
     Effect.mapError(
       (cause) =>
@@ -5466,10 +5459,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
+    const continuesRun =
+      dispatchMode.type === "start_immediately" &&
+      (command.manualContinuationOfRunId !== undefined ||
+        command.restartContinuationOfRunId !== undefined ||
+        command.usageLimitContinuationOfRunId !== undefined);
     const queueBehindRun =
       activeRun ??
       worktreeMissingRun ??
-      projection.runs.find((run) => run.status === "queued" && run.queueHeld === true);
+      (continuesRun
+        ? undefined
+        : projection.runs.find((run) => run.status === "queued" && run.queueHeld === true));
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
@@ -5488,7 +5488,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (command.creationSource === "web" || command.creationSource === "mobile") &&
       command.scheduledTaskId === undefined;
     const heldRunsToRelease =
-      sentByUserFromClient && startsOrQueuesRun && !worktreeSetupUnresolved
+      sentByUserFromClient && startsOrQueuesRun && !continuesRun && !worktreeSetupUnresolved
         ? projection.runs.filter((run) => canReleaseQueueHold(run, "client"))
         : [];
     const releasedAt = yield* DateTime.now;

@@ -23,7 +23,11 @@ export function canReleaseQueueHold(run: OrchestrationV2Run, release: Release): 
 }
 
 export function stoppedQueueHold(run: OrchestrationV2Run): Hold | undefined {
-  if (run.queueHeld === true && run.queueHoldReason !== "restart") return undefined;
+  if (
+    run.queueHeld === true &&
+    (run.queueHoldReason === undefined || run.queueHoldReason === "stop")
+  )
+    return undefined;
   return { queueHeld: true, queueHoldReason: "stop" };
 }
 
