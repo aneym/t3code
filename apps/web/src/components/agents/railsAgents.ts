@@ -1,7 +1,7 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopeProjectRef, scopedProjectKey } from "@t3tools/client-runtime/environment";
-import type { ScopedProjectRef } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 
 import { useProjects, useQuietThreadShells } from "../../state/entities";
 import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
@@ -14,6 +14,7 @@ export interface RailsAgent {
   readonly handle: string;
   readonly name: string;
   readonly projectRef: ScopedProjectRef;
+  readonly environmentIds: ReadonlyArray<EnvironmentId>;
   readonly thread: EnvironmentThreadShell | null;
 }
 
@@ -51,8 +52,17 @@ function resolveRailsAgents(
     if (handle === null) continue;
     const projectRef = scopeProjectRef(project.environmentId, project.id);
     handleByProjectKey.set(scopedProjectKey(projectRef), handle);
-    if (!agents.has(handle)) {
-      agents.set(handle, { handle, name: project.title, projectRef, thread: null });
+    const agent = agents.get(handle);
+    if (agent === undefined) {
+      agents.set(handle, {
+        handle,
+        name: project.title,
+        projectRef,
+        environmentIds: [project.environmentId],
+        thread: null,
+      });
+    } else if (!agent.environmentIds.includes(project.environmentId)) {
+      agent.environmentIds = [...agent.environmentIds, project.environmentId];
     }
   }
   const agentThreads = filterSidebarV2VisibleThreads(threads, new Set(handleByProjectKey.keys()));
