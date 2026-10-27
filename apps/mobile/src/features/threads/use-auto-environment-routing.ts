@@ -1,4 +1,5 @@
 import { useEffect, useEffectEvent } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ModelSelection, ServerProvider } from "@t3tools/contracts";
 import {
@@ -40,6 +41,8 @@ export function useAutoEnvironmentRouting(input: {
   readonly locked: boolean;
   readonly onResolved: (project: EnvironmentProject) => void;
 }) {
+  const contextImports = useAtomValue(composerContextImportsAtom);
+  const importing = input.draftKey !== null && contextImports[input.draftKey] === true;
   const preferences = input.preferences._tag === "Success" ? input.preferences.value : null;
   const weights = preferences?.loadBalancingWeights ?? {};
   const candidates = input.connectedEnvironments.flatMap((environment) => {
@@ -127,8 +130,8 @@ export function useAutoEnvironmentRouting(input: {
   });
   // oxlint-disable-next-line t3code/react-effect-budget -- Commits an asynchronously received host snapshot to the persisted draft routing state.
   useEffect(() => {
-    if (!resources.pending) resolveTarget(resources.environmentId);
-  }, [resources.pending, resources.environmentId]);
+    if (!resources.pending && !importing) resolveTarget(resources.environmentId);
+  }, [resources.pending, resources.environmentId, importing]);
   const selectAutoEnvironment = () => {
     if (
       !input.draftKey ||

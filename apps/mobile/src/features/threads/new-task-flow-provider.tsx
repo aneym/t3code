@@ -516,7 +516,7 @@ export function NewTaskFlowProvider(
   const workspaceSelection = resolveNewTaskWorkspaceSelection({
     selection: canChooseWorkspace ? selectedProjectDraft.workspaceSelection : undefined,
     fallback: {
-      mode: selectedProjectDraft.environmentSelection === "auto" ? "local" : defaultWorkspaceMode,
+      mode: defaultWorkspaceMode,
       branch: null,
       worktreePath: null,
     },

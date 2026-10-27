@@ -11,6 +11,7 @@ export interface PendingQueuedTask {
   readonly kind: "pending";
   readonly key: string;
   readonly environmentId: EnvironmentId;
+  readonly destinationEnvironmentId?: EnvironmentId | null;
   readonly projectId: ProjectId;
   readonly projectTitle: string | undefined;
   readonly projectCwd: string | undefined;
@@ -25,6 +26,7 @@ export interface PendingDraftTask {
   readonly kind: "draft";
   readonly key: string;
   readonly environmentId: EnvironmentId;
+  readonly destinationEnvironmentId?: EnvironmentId | null;
   readonly projectId: ProjectId;
   readonly projectTitle: undefined;
   readonly projectCwd: undefined;
@@ -60,6 +62,7 @@ export function buildPendingNewTasks(input: {
       kind: "pending",
       key: `pending-task:${message.messageId}`,
       environmentId: message.environmentId,
+      destinationEnvironmentId: message.environmentId,
       projectId: message.creation.projectId,
       projectTitle: message.creation.projectTitle,
       projectCwd: message.creation.projectCwd,
@@ -78,6 +81,10 @@ export function buildPendingNewTasks(input: {
       kind: "draft",
       key: `draft-task:${draftKey}`,
       environmentId: draft.project.environmentId,
+      destinationEnvironmentId:
+        draft.environmentSelection === "auto" && !draft.loadBalancedEnvironmentId
+          ? null
+          : draft.project.environmentId,
       projectId: draft.project.projectId,
       projectTitle: undefined,
       projectCwd: undefined,
