@@ -761,7 +761,7 @@ function BrowserSearchEngineSetting() {
   );
 }
 
-function PullRequestLinksOpenInAppSetting() {
+export function PullRequestLinksOpenInAppSetting() {
   const openInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   const updateSettings = useUpdatePrimarySettings();
 
@@ -1652,6 +1652,16 @@ export function IntegrationsSettingsPanel() {
         <BrowserSearchEngineSetting />
         <PullRequestLinksOpenInAppSetting />
       </SettingsSection>
+      <DeviceIntegrationSettings />
+    </SettingsPageContainer>
+  );
+}
+
+export const BrowserSettingsPanel = IntegrationsSettingsPanel;
+
+export function DevicesSettingsPanel() {
+  return (
+    <SettingsPageContainer>
       <DeviceIntegrationSettings />
     </SettingsPageContainer>
   );
