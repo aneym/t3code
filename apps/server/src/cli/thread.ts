@@ -687,6 +687,34 @@ const threadPromoteCommand = Command.make("promote", {
   ),
 );
 
+const threadUnqueueCommand = Command.make("unqueue", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  queuedRunId: Argument.String("queuedRunId").pipe(
+    Argument.withDescription("Run id of the queued message to cancel."),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Cancel one queued message before its turn starts."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      const queuedRunId = yield* decodeRunId(flags.queuedRunId);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.unqueue")(function* (tools) {
+          const cancelled = yield* tools.call(
+            "t3_queue_cancel",
+            { threadId, queuedRunId },
+            OrchestrationV2DispatchCommandResult,
+          );
+          yield* flags.json ? printJson(cancelled) : Console.log("Unqueued.");
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
   thread: threadArgument,
@@ -748,6 +776,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadStartCommand,
     threadSendCommand,
     threadPromoteCommand,
+    threadUnqueueCommand,
     threadShowCommand,
   ]),
 );
