@@ -87,7 +87,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
-  "/settings/scheduled-tasks": "Scheduled tasks",
+  "/settings/scheduled-tasks": "Automations",
   "/settings/source-control": "Source control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
@@ -157,6 +157,15 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
   .join(" ");
 
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "automations",
+    title: "Automations",
+    to: "/settings/scheduled-tasks",
+    scope: "environment-defaults",
+    searchTerms: [
+      "scheduled tasks health schedule enabled paused failed last next run count thread",
+    ],
+  },
   {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",
