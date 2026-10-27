@@ -678,7 +678,7 @@ const threadOrganizeCommand = (
                 action,
                 ...(Option.isSome(flags.snoozedUntil)
                   ? {
-                      snoozedUntil: yield* Schema.decodeUnknownEffect(IsoDateTime)(
+                      snoozedUntil: yield* Schema.decodeEffect(IsoDateTime)(
                         flags.snoozedUntil.value,
                       ),
                     }
