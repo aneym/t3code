@@ -64,12 +64,7 @@ import {
   useEnvironmentHttpBaseUrl,
   type EnvironmentPresentation,
 } from "../../state/environments";
-import { useProjects, useQuietThreadShells } from "../../state/entities";
-import { AutomationStatusLabel } from "../automations/AutomationStatusLabel";
-import {
-  resolveAutomationRunThread,
-  resolveAutomationStatus,
-} from "../automations/automationStatus";
+import { useProjects } from "../../state/entities";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
@@ -344,6 +339,13 @@ function deliveryOutcomeVariant(outcome: string) {
     return "warning";
   }
   if (outcome === "dispatch_failed" || outcome === "rejected_signature") return "error";
+  return "outline";
+}
+
+function statusVariant(status: ScheduledTask["lastRunStatus"]) {
+  if (status === "failed") return "error";
+  if (status === "succeeded") return "success";
+  if (status === "running") return "info";
   return "outline";
 }
 
@@ -694,11 +696,6 @@ function ScheduledTaskRow({
   const project = projects.find(
     (entry) => entry.environmentId === environmentId && entry.id === task.projectId,
   );
-  const threads = useQuietThreadShells();
-  const status = resolveAutomationStatus(
-    task,
-    resolveAutomationRunThread(environmentId, task, threads),
-  );
   const [busy, setBusy] = useState(false);
   const [deliveriesOpen, setDeliveriesOpen] = useState(false);
   const isWebhook = task.schedule.type === "webhook";
@@ -749,7 +746,7 @@ function ScheduledTaskRow({
               "Not scheduled"
             )}
           </span>
-          <AutomationStatusLabel status={status} />
+          <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
           <span>
             Last run{" "}
             {task.lastRunAt ? (
@@ -764,9 +761,7 @@ function ScheduledTaskRow({
           <span>
             {project?.title ?? task.projectId} · {environment?.label ?? environmentId}
           </span>
-          {status.kind === "failed" && status.error ? (
-            <span className="text-destructive">{status.error}</span>
-          ) : null}
+          {task.lastRunError ? <span className="text-destructive">{task.lastRunError}</span> : null}
           {task.threadId ? (
             <Link
               to="/$environmentId/$threadId"
