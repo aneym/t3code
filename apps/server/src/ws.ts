@@ -3015,6 +3015,8 @@ export const layerWsRpc = (
             .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.gitMoveThreadToLocalCheckout]: (input) =>
           ThreadLocalCheckout.moveThreadToLocalCheckout(input),
+        [WS_METHODS.gitPreviewMoveThreadToLocalCheckout]: (input) =>
+          ThreadLocalCheckout.previewMoveThreadToLocalCheckout(input),
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),

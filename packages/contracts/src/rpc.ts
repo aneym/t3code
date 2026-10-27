@@ -155,6 +155,7 @@ import { KeybindingsConfigError } from "./keybindings.ts";
 import {
   ThreadMoveToLocalCheckoutError,
   ThreadMoveToLocalCheckoutInput,
+  ThreadMoveToLocalCheckoutPreview,
   ThreadMoveToLocalCheckoutResult,
 } from "./threadLocalCheckout.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
@@ -446,6 +447,7 @@ export const WS_METHODS = {
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
   gitMoveThreadToLocalCheckout: "git.moveThreadToLocalCheckout",
+  gitPreviewMoveThreadToLocalCheckout: "git.previewMoveThreadToLocalCheckout",
 
   reviewGetDiffPreview: "review.getDiffPreview",
   reviewGetDiffFileContents: "review.getDiffFileContents",
@@ -1420,6 +1422,15 @@ const WsGitMoveThreadToLocalCheckoutRpc = Rpc.make(WS_METHODS.gitMoveThreadToLoc
   error: Schema.Union([ThreadMoveToLocalCheckoutError, EnvironmentAuthorizationError]),
 });
 
+const WsGitPreviewMoveThreadToLocalCheckoutRpc = Rpc.make(
+  WS_METHODS.gitPreviewMoveThreadToLocalCheckout,
+  {
+    payload: ThreadMoveToLocalCheckoutInput,
+    success: ThreadMoveToLocalCheckoutPreview,
+    error: Schema.Union([ThreadMoveToLocalCheckoutError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
   payload: VcsListRefsInput,
   success: VcsListRefsResult,
@@ -2067,6 +2078,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
   WsGitMoveThreadToLocalCheckoutRpc,
+  WsGitPreviewMoveThreadToLocalCheckoutRpc,
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,

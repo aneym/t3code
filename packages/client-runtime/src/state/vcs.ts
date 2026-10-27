@@ -17,6 +17,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
@@ -337,6 +338,13 @@ export function createVcsEnvironmentAtoms<R, E>(
     moveThreadToLocalCheckout: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:move-thread-to-local-checkout",
       tag: WS_METHODS.gitMoveThreadToLocalCheckout,
+    }),
+    // Read fresh every time the confirmation opens: the checkouts change between opens.
+    moveToLocalCheckoutPreview: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:move-to-local-checkout-preview",
+      tag: WS_METHODS.gitPreviewMoveThreadToLocalCheckout,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
     }),
     createRef: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:create-ref",

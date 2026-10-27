@@ -201,7 +201,10 @@ const makeHarness = (options: HarnessOptions) => {
       Effect.provide(layer),
     );
 
-  return { thread, dispatch, move };
+  const preview = () =>
+    ThreadLocalCheckout.previewMoveThreadToLocalCheckout({ threadId }).pipe(Effect.provide(layer));
+
+  return { thread, dispatch, move, preview };
 };
 
 const expectCode = (exit: Exit.Exit<unknown, unknown>, code: string) => {
@@ -632,4 +635,190 @@ describe("parseDirtySubmodules", () => {
       ),
     ).toEqual(["libs/edited", "libs/new commits", "libs/untracked"]);
   });
+});
+
+const journalFile = (fixture: Fixture) =>
+  `${fixture.local}/.git/t3-move-to-local/pending/${encodeURIComponent(threadId)}.json`;
+
+/** Leaves the repositories as a move leaves them when the server dies after copying files. */
+const simulateCrashAfterCopy = Effect.fn("simulateCrashAfterCopy")(function* (fixture: Fixture) {
+  const fs = yield* FileSystem.FileSystem;
+  const snapshot = yield* fixture.git(fixture.worktree, ["stash", "create"]);
+  const worktreeHead = yield* fixture.git(fixture.worktree, ["rev-parse", "HEAD"]);
+  const localHead = yield* fixture.git(fixture.local, ["rev-parse", "HEAD"]);
+  yield* fs.makeDirectory(`${fixture.local}/.git/t3-move-to-local/pending`, { recursive: true });
+  yield* fs.writeFileString(
+    journalFile(fixture),
+    JSON.stringify({
+      version: 1,
+      worktreePath: fixture.worktree,
+      sourceRoot: fixture.worktree,
+      branch: "feature",
+      previousLocalBranch: "main",
+      previousLocalHead: localHead,
+      worktreeHead,
+      snapshot: snapshot.length > 0 ? snapshot : null,
+      untracked: ["new.txt"],
+    }),
+  );
+  yield* fixture.git(fixture.worktree, ["switch", "--detach", "--quiet"]);
+  yield* fixture.git(fixture.local, ["switch", "--quiet", "feature"]);
+  if (snapshot.length > 0) {
+    yield* fixture.git(fixture.local, ["stash", "apply", "--index", snapshot]);
+  }
+  yield* fs.writeFileString(
+    `${fixture.local}/new.txt`,
+    yield* fs.readFileString(`${fixture.worktree}/new.txt`),
+  );
+});
+
+describe("previewMoveThreadToLocalCheckout", () => {
+  it.effect("reports what would move and changes nothing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const fixture = yield* makeFixture();
+      yield* fs.writeFileString(`${fixture.worktree}/shared.txt`, "staged\n");
+      yield* fixture.git(fixture.worktree, ["add", "shared.txt"]);
+      yield* fs.writeFileString(`${fixture.worktree}/shared.txt`, "staged then edited\n");
+      yield* fs.writeFileString(`${fixture.worktree}/feature.txt`, "unstaged\n");
+      yield* fs.writeFileString(`${fixture.worktree}/new.txt`, "untracked\n");
+      const harness = makeHarness({ fixture });
+
+      const preview = yield* harness.preview();
+
+      expect(preview).toMatchObject({
+        branch: "feature",
+        localCheckoutPath: fixture.local,
+        worktreePath: fixture.worktree,
+        currentLocalBranch: "main",
+        commitsAhead: 1,
+        commitsBehind: 0,
+        changes: { staged: 1, unstaged: 2, untracked: 1 },
+        filesOmitted: 0,
+        worktreeOnDisk: true,
+        interruptedMove: false,
+        blocker: null,
+      });
+      expect(preview.files).toEqual(
+        expect.arrayContaining([
+          { path: "shared.txt", change: "staged_and_unstaged" },
+          { path: "feature.txt", change: "unstaged" },
+          { path: "new.txt", change: "untracked" },
+        ]),
+      );
+      yield* expectUntouched(fixture);
+      expect(yield* fs.readFileString(`${fixture.worktree}/shared.txt`)).toBe(
+        "staged then edited\n",
+      );
+      expect(yield* fs.exists(`${fixture.local}/new.txt`)).toBe(false);
+      expect(yield* fs.exists(journalFile(fixture))).toBe(false);
+      expect(harness.dispatch).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.effect("explains a refusal instead of failing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const fixture = yield* makeFixture();
+      yield* fs.writeFileString(`${fixture.local}/shared.txt`, "local edit\n");
+      const preview = yield* makeHarness({ fixture }).preview();
+      expect(preview.blocker).toMatchObject({ code: "local_checkout_dirty" });
+      expect(preview.blocker?.message).toContain("shared.txt");
+      yield* expectUntouched(fixture);
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.effect("reports a thread already in the local checkout as blocked", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture();
+      const harness = makeHarness({ fixture, threadWorktreePath: null });
+      const preview = yield* harness.preview();
+      expect(preview.blocker).toMatchObject({ code: "not_in_worktree" });
+    }).pipe(Effect.provide(gitLayer)),
+  );
+});
+
+describe("interrupted moves", () => {
+  it.effect("undoes a move the server died in the middle of, then moves", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const fixture = yield* makeFixture();
+      yield* fs.writeFileString(`${fixture.worktree}/shared.txt`, "carried\n");
+      yield* fs.writeFileString(`${fixture.worktree}/new.txt`, "new file\n");
+      yield* simulateCrashAfterCopy(fixture);
+      const harness = makeHarness({ fixture });
+
+      expect((yield* harness.preview()).interruptedMove).toBe(true);
+      const result = yield* harness.move();
+
+      expect(result).toMatchObject({ branch: "feature", carriedChanges: true });
+      expect(yield* currentBranch(fixture, fixture.local)).toBe("feature");
+      expect(yield* fs.readFileString(`${fixture.local}/shared.txt`)).toBe("carried\n");
+      expect(yield* fs.readFileString(`${fixture.local}/new.txt`)).toBe("new file\n");
+      expect(yield* fs.exists(journalFile(fixture))).toBe(false);
+      expect(harness.dispatch).toHaveBeenCalledTimes(1);
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.effect("leaves an edit made after the crash alone while undoing it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const fixture = yield* makeFixture();
+      yield* fs.writeFileString(`${fixture.worktree}/new.txt`, "new file\n");
+      yield* simulateCrashAfterCopy(fixture);
+      yield* fs.writeFileString(`${fixture.local}/new.txt`, "edited after the crash\n");
+
+      const exit = yield* Effect.exit(makeHarness({ fixture }).move());
+
+      // The edit isn't the move's copy, so it stays, and the move then refuses to land on it.
+      expectCode(exit, "untracked_collision");
+      expect(yield* fs.readFileString(`${fixture.local}/new.txt`)).toBe("edited after the crash\n");
+      expect(yield* currentBranch(fixture, fixture.local)).toBe("main");
+      expect(yield* currentBranch(fixture, fixture.worktree)).toBe("feature");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.effect("discards a journal once the thread is no longer in that worktree", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const fixture = yield* makeFixture();
+      yield* fs.makeDirectory(`${fixture.local}/.git/t3-move-to-local/pending`, {
+        recursive: true,
+      });
+      yield* fs.writeFileString(
+        journalFile(fixture),
+        JSON.stringify({
+          version: 1,
+          worktreePath: `${fixture.root}/some-older-worktree`,
+          sourceRoot: `${fixture.root}/some-older-worktree`,
+          branch: "older",
+          previousLocalBranch: "main",
+          previousLocalHead: yield* fixture.git(fixture.local, ["rev-parse", "HEAD"]),
+          worktreeHead: null,
+          snapshot: null,
+          untracked: [],
+        }),
+      );
+
+      const result = yield* makeHarness({ fixture }).move();
+
+      expect(result.branch).toBe("feature");
+      expect(yield* fs.exists(journalFile(fixture))).toBe(false);
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.effect("leaves no journal after a move or a clean rollback", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const fixture = yield* makeFixture();
+      yield* fs.writeFileString(`${fixture.worktree}/shared.txt`, "carried\n");
+      expectCode(
+        yield* Effect.exit(makeHarness({ fixture, dispatchFails: true }).move()),
+        "operation_failed",
+      );
+      expect(yield* fs.exists(journalFile(fixture))).toBe(false);
+      yield* makeHarness({ fixture }).move();
+      expect(yield* fs.exists(journalFile(fixture))).toBe(false);
+    }).pipe(Effect.provide(gitLayer)),
+  );
 });

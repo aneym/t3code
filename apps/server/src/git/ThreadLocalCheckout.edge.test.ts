@@ -30,7 +30,21 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ThreadLocalCheckout from "./ThreadLocalCheckout.ts";
+
+// Windows can't hold `*`, tabs or newlines in file names, has no executable bit, and caps paths at
+// 260 characters by default; those cases exist only on the other platforms.
+const windows = HostProcess.Platform.defaultValue() === "win32";
+// Compares a path the move built (backslashes on Windows) with one a test spelled with slashes.
+const samePathInTest = (left: string, right: string) => {
+  const normalize = (value: string) => {
+    const slashes = value.replaceAll("\\", "/");
+    return windows ? slashes.toLowerCase() : slashes;
+  };
+  return normalize(left) === normalize(right);
+};
 
 const threadId = ThreadId.make("thread-move-to-local");
 const projectId = ProjectId.make("project-move-to-local");
@@ -309,16 +323,18 @@ describe("data safety", () => {
       expect(yield* currentBranch(f, f.worktree)).toBe("feature");
     }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect("rollback preserves a pre-existing dangling local symlink", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const f = yield* makeFixture();
-      yield* fs.writeFileString(`${f.worktree}/notes.txt`, "moving notes\n");
-      yield* fs.symlink("missing-target", `${f.local}/notes.txt`);
-      expect(yield* isSymlink(`${f.local}/notes.txt`)).toBe(true);
-      expectCode(yield* Effect.exit(makeHarness({ fixture: f }).move()), "untracked_collision");
-      expect(yield* isSymlink(`${f.local}/notes.txt`)).toBe(true);
-    }).pipe(Effect.provide(gitLayer)),
+  it.effect.skipIf(!symlinksSupported)(
+    "rollback preserves a pre-existing dangling local symlink",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const f = yield* makeFixture();
+        yield* fs.writeFileString(`${f.worktree}/notes.txt`, "moving notes\n");
+        yield* fs.symlink("missing-target", `${f.local}/notes.txt`);
+        expect(yield* isSymlink(`${f.local}/notes.txt`)).toBe(true);
+        expectCode(yield* Effect.exit(makeHarness({ fixture: f }).move()), "untracked_collision");
+        expect(yield* isSymlink(`${f.local}/notes.txt`)).toBe(true);
+      }).pipe(Effect.provide(gitLayer)),
   );
   it.effect("failing detach post-checkout hook restores the worktree branch", () =>
     Effect.gen(function* () {
@@ -358,7 +374,7 @@ describe("data safety", () => {
       expectCode(exit, "worktree_shared");
     }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect("checkout guard recognizes a symlinked project root", () =>
+  it.effect.skipIf(!symlinksSupported)("checkout guard recognizes a symlinked project root", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const f = yield* makeFixture();
@@ -432,7 +448,7 @@ describe("repository shapes", () => {
         expect(yield* currentBranch(f, f.local)).toBe(branch);
       }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect(
+  it.effect.skipIf(windows || !symlinksSupported)(
     "preserves renames deletions binary executable symlink and file-directory changes",
     () =>
       Effect.gen(function* () {
@@ -476,7 +492,9 @@ describe("repository shapes", () => {
       yield* expectUntouched(f);
     }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect.each(["trailing", "relative", "symlink"])("accepts a %s worktree path", (variant) =>
+  it.effect.each(
+    symlinksSupported ? ["trailing", "relative", "symlink"] : ["trailing", "relative"],
+  )("accepts a %s worktree path", (variant) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const f = yield* makeFixture();
@@ -622,28 +640,30 @@ describe("more repository states", () => {
       expect(yield* fs.readFileString(`${f.local}/excluded/b`)).toBe("excluded\n");
     }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect("same-thread moves remain serialized even through a path alias", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const f = yield* makeFixture();
-      const reached = yield* Deferred.make<void>();
-      const gate = yield* Deferred.make<void>();
-      const first = makeHarness({
-        fixture: f,
-        dispatchGate: Deferred.succeed(reached, undefined).pipe(
-          Effect.andThen(Deferred.await(gate)),
-        ),
-      });
-      const alias = `${f.root}/alias`;
-      yield* fs.symlink(f.local, alias);
-      const second = makeHarness({ fixture: { ...f, local: alias } });
-      const fiber = yield* Effect.forkChild(first.move());
-      yield* Deferred.await(reached);
-      const exit = yield* Effect.exit(second.move());
-      yield* Deferred.succeed(gate, undefined);
-      yield* Fiber.join(fiber);
-      expectCode(exit, "move_in_progress");
-    }).pipe(Effect.provide(gitLayer)),
+  it.effect.skipIf(!symlinksSupported)(
+    "same-thread moves remain serialized even through a path alias",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const f = yield* makeFixture();
+        const reached = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        const first = makeHarness({
+          fixture: f,
+          dispatchGate: Deferred.succeed(reached, undefined).pipe(
+            Effect.andThen(Deferred.await(gate)),
+          ),
+        });
+        const alias = `${f.root}/alias`;
+        yield* fs.symlink(f.local, alias);
+        const second = makeHarness({ fixture: { ...f, local: alias } });
+        const fiber = yield* Effect.forkChild(first.move());
+        yield* Deferred.await(reached);
+        const exit = yield* Effect.exit(second.move());
+        yield* Deferred.succeed(gate, undefined);
+        yield* Fiber.join(fiber);
+        expectCode(exit, "move_in_progress");
+      }).pipe(Effect.provide(gitLayer)),
   );
 });
 
@@ -699,7 +719,7 @@ describe("MCP move", () => {
 });
 
 describe("boundaries", () => {
-  it.effect("long paths and branch names keep their exact values", () =>
+  it.effect.skipIf(windows)("long paths and branch names keep their exact values", () =>
     Effect.gen(function* () {
       const f = yield* makeFixture();
       const fs = yield* FileSystem.FileSystem;
@@ -898,7 +918,7 @@ describe("writers racing the move", () => {
       const racingFs = {
         ...fs,
         open: ((target: string, options?: Parameters<typeof fs.open>[1]) =>
-          (target === `${f.local}/new.txt`
+          (samePathInTest(target, `${f.local}/new.txt`)
             ? fs.writeFileString(target, "user created this during copy\n")
             : Effect.void
           ).pipe(Effect.andThen(fs.open(target, options)))) as typeof fs.open,
@@ -929,21 +949,23 @@ describe("index flags and destination folders", () => {
       expect(yield* fs.readFileString(`${f.worktree}/shared.txt`)).toBe("hidden user work\n");
     }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect("refuses a destination folder that is a symlink out of the checkout", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const f = yield* makeFixture();
-      const external = `${f.root}/external`;
-      yield* fs.makeDirectory(external);
-      yield* fs.symlink(external, `${f.local}/notes`);
-      yield* fs.makeDirectory(`${f.worktree}/notes`);
-      yield* fs.writeFileString(`${f.worktree}/notes/new.txt`, "source note\n");
-      expectCode(yield* Effect.exit(makeHarness({ fixture: f }).move()), "untracked_collision");
-      yield* expectUntouched(f);
-      expect(yield* fs.exists(`${external}/new.txt`)).toBe(false);
-    }).pipe(Effect.provide(gitLayer)),
+  it.effect.skipIf(!symlinksSupported)(
+    "refuses a destination folder that is a symlink out of the checkout",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const f = yield* makeFixture();
+        const external = `${f.root}/external`;
+        yield* fs.makeDirectory(external);
+        yield* fs.symlink(external, `${f.local}/notes`);
+        yield* fs.makeDirectory(`${f.worktree}/notes`);
+        yield* fs.writeFileString(`${f.worktree}/notes/new.txt`, "source note\n");
+        expectCode(yield* Effect.exit(makeHarness({ fixture: f }).move()), "untracked_collision");
+        yield* expectUntouched(f);
+        expect(yield* fs.exists(`${external}/new.txt`)).toBe(false);
+      }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect("keeps an untracked file's permission bits", () =>
+  it.effect.skipIf(windows)("keeps an untracked file's permission bits", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const f = yield* makeFixture();
@@ -990,7 +1012,7 @@ describe("rollback keeps what it did not write", () => {
       expect(yield* fs.readFileString(`${f.worktree}/notes.txt`)).toBe("source notes\n");
     }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect("leaves a user's executable-bit edit to a carried file", () =>
+  it.effect.skipIf(windows)("leaves a user's executable-bit edit to a carried file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const f = yield* makeFixture();
@@ -1017,7 +1039,7 @@ describe("rollback keeps what it did not write", () => {
         open: ((target: string, options?: Parameters<typeof fs.open>[1]) =>
           fs.open(target, options).pipe(
             Effect.map((output) =>
-              target !== `${f.local}/large.bin`
+              !samePathInTest(target, `${f.local}/large.bin`)
                 ? output
                 : {
                     ...output,
@@ -1081,7 +1103,7 @@ describe("rollback keeps what it did not write", () => {
         expect(yield* currentBranch(f, f.local)).toBe("main");
       }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect("treats wildcard filenames literally", () =>
+  it.effect.skipIf(windows)("treats wildcard filenames literally", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const f = yield* makeFixture();
@@ -1118,35 +1140,37 @@ describe("rollback keeps what it did not write", () => {
       expect(yield* fs.readFileString(`${f.local}/shared.txt`)).toBe("user hook edit\n");
     }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect("refuses to copy through a folder swapped for a symlink mid-move", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const f = yield* makeFixture();
-      const outside = `${f.root}/outside`;
-      yield* fs.makeDirectory(outside);
-      yield* fs.makeDirectory(`${f.worktree}/sub`);
-      yield* fs.writeFileString(`${f.worktree}/sub/new.txt`, "copied outside\n");
-      const racingFs = {
-        ...fs,
-        open: ((target: string, options?: Parameters<typeof fs.open>[1]) =>
-          (target === `${f.local}/sub/new.txt`
-            ? fs
-                .remove(`${f.local}/sub`, { recursive: true })
-                .pipe(Effect.andThen(fs.symlink(outside, `${f.local}/sub`)))
-            : Effect.void
-          ).pipe(Effect.andThen(fs.open(target, options)))) as typeof fs.open,
-      };
-      expectCode(
-        yield* Effect.exit(
-          makeHarness({ fixture: f })
-            .move()
-            .pipe(Effect.provideService(FileSystem.FileSystem, racingFs)),
-        ),
-        "operation_failed",
-      );
-      expect(yield* fs.exists(`${outside}/new.txt`)).toBe(false);
-      expect(yield* fs.readFileString(`${f.worktree}/sub/new.txt`)).toBe("copied outside\n");
-    }).pipe(Effect.provide(gitLayer)),
+  it.effect.skipIf(!symlinksSupported)(
+    "refuses to copy through a folder swapped for a symlink mid-move",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const f = yield* makeFixture();
+        const outside = `${f.root}/outside`;
+        yield* fs.makeDirectory(outside);
+        yield* fs.makeDirectory(`${f.worktree}/sub`);
+        yield* fs.writeFileString(`${f.worktree}/sub/new.txt`, "copied outside\n");
+        const racingFs = {
+          ...fs,
+          open: ((target: string, options?: Parameters<typeof fs.open>[1]) =>
+            (samePathInTest(target, `${f.local}/sub/new.txt`)
+              ? fs
+                  .remove(`${f.local}/sub`, { recursive: true })
+                  .pipe(Effect.andThen(fs.symlink(outside, `${f.local}/sub`)))
+              : Effect.void
+            ).pipe(Effect.andThen(fs.open(target, options)))) as typeof fs.open,
+        };
+        expectCode(
+          yield* Effect.exit(
+            makeHarness({ fixture: f })
+              .move()
+              .pipe(Effect.provideService(FileSystem.FileSystem, racingFs)),
+          ),
+          "operation_failed",
+        );
+        expect(yield* fs.exists(`${outside}/new.txt`)).toBe(false);
+        expect(yield* fs.readFileString(`${f.worktree}/sub/new.txt`)).toBe("copied outside\n");
+      }).pipe(Effect.provide(gitLayer)),
   );
 });
 
@@ -1181,7 +1205,7 @@ describe("the kept worktree", () => {
       expect(yield* f.git(f.worktree, ["show", ":shared.txt"])).toBe("index-only content");
     }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect("carries an untracked filename containing a newline", () =>
+  it.effect.skipIf(windows)("carries an untracked filename containing a newline", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const f = yield* makeFixture();
@@ -1240,7 +1264,7 @@ describe("project roots and late arrivals", () => {
       const racingFs = {
         ...fs,
         link: ((from: string, to: string) =>
-          (to === `${f.local}/shared.txt`
+          (samePathInTest(to, `${f.local}/shared.txt`)
             ? fs.writeFileString(to, "unique late edit\n")
             : Effect.void
           ).pipe(Effect.andThen(fs.link(from, to)))) as typeof fs.link,
@@ -1293,7 +1317,7 @@ describe("rollback restores", () => {
       const racingFs = {
         ...fs,
         rename: ((from: string, to: string) =>
-          (from === `${f.local}/head-versions/only.txt`
+          (samePathInTest(from, `${f.local}/head-versions/only.txt`)
             ? fs.writeFileString(from, "unique edit during rollback\n")
             : Effect.void
           ).pipe(Effect.andThen(fs.rename(from, to)))) as typeof fs.rename,
@@ -1324,7 +1348,7 @@ describe("rollback restores", () => {
       expect(yield* f.git(f.local, ["status", "--porcelain=v1"])).toBe("");
     }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect("executable bits and symlinks", () =>
+  it.effect.skipIf(windows || !symlinksSupported)("executable bits and symlinks", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const driver = yield* instrument((input, execute) =>
@@ -1349,27 +1373,29 @@ describe("rollback restores", () => {
       expect(yield* f.git(f.local, ["status", "--porcelain=v1"])).toBe("");
     }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect("203 carried files with tabs, newlines and wildcards in their names", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const f = yield* makeFixture();
-      const names = [
-        ...Array.from({ length: 200 }, (_, i) => `batch-${String(i).padStart(3, "0")}.txt`),
-        "tabs\tinside.txt",
-        "two\nlines.txt",
-        "literal*.txt",
-      ];
-      for (const name of names) yield* fs.writeFileString(`${f.worktree}/${name}`, `base\n`);
-      yield* f.git(f.worktree, ["add", "."]);
-      yield* f.git(f.worktree, ["commit", "-m", "batch baseline"]);
-      for (const name of names) yield* fs.writeFileString(`${f.worktree}/${name}`, `carried\n`);
-      expectCode(
-        yield* Effect.exit(makeHarness({ fixture: f, dispatchFails: true }).move()),
-        "operation_failed",
-      );
-      yield* expectUntouched(f);
-      expect(yield* f.git(f.local, ["status", "--porcelain=v1"])).toBe("");
-    }).pipe(Effect.provide(gitLayer)),
+  it.effect.skipIf(windows)(
+    "203 carried files with tabs, newlines and wildcards in their names",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const f = yield* makeFixture();
+        const names = [
+          ...Array.from({ length: 200 }, (_, i) => `batch-${String(i).padStart(3, "0")}.txt`),
+          "tabs\tinside.txt",
+          "two\nlines.txt",
+          "literal*.txt",
+        ];
+        for (const name of names) yield* fs.writeFileString(`${f.worktree}/${name}`, `base\n`);
+        yield* f.git(f.worktree, ["add", "."]);
+        yield* f.git(f.worktree, ["commit", "-m", "batch baseline"]);
+        for (const name of names) yield* fs.writeFileString(`${f.worktree}/${name}`, `carried\n`);
+        expectCode(
+          yield* Effect.exit(makeHarness({ fixture: f, dispatchFails: true }).move()),
+          "operation_failed",
+        );
+        yield* expectUntouched(f);
+        expect(yield* f.git(f.local, ["status", "--porcelain=v1"])).toBe("");
+      }).pipe(Effect.provide(gitLayer)),
   );
 });
 
@@ -1431,30 +1457,32 @@ describe("repository identity", () => {
       yield* expectUntouched(f);
     }).pipe(Effect.provide(gitLayer)),
   );
-  it.effect("never removes an outside file when the copy target becomes a symlink", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const f = yield* makeFixture();
-      const victim = `${f.root}/outside-victim.txt`;
-      const target = `${f.local}/new.txt`;
-      yield* fs.writeFileString(victim, "external unique data\n");
-      yield* fs.writeFileString(`${f.worktree}/new.txt`, "source file\n");
-      const racingFs = {
-        ...fs,
-        realPath: ((name: string) =>
-          (name === target
-            ? fs.remove(target).pipe(Effect.andThen(fs.symlink(victim, target)))
-            : Effect.void
-          ).pipe(Effect.andThen(fs.realPath(name)))) as typeof fs.realPath,
-      };
-      const exit = yield* Effect.exit(
-        makeHarness({ fixture: f })
-          .move()
-          .pipe(Effect.provideService(FileSystem.FileSystem, racingFs)),
-      );
-      expectCode(exit, "operation_failed");
-      expect(yield* fs.readFileString(victim)).toBe("external unique data\n");
-    }).pipe(Effect.provide(gitLayer)),
+  it.effect.skipIf(!symlinksSupported)(
+    "never removes an outside file when the copy target becomes a symlink",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const f = yield* makeFixture();
+        const victim = `${f.root}/outside-victim.txt`;
+        const target = `${f.local}/new.txt`;
+        yield* fs.writeFileString(victim, "external unique data\n");
+        yield* fs.writeFileString(`${f.worktree}/new.txt`, "source file\n");
+        const racingFs = {
+          ...fs,
+          realPath: ((name: string) =>
+            (samePathInTest(name, target)
+              ? fs.remove(target).pipe(Effect.andThen(fs.symlink(victim, target)))
+              : Effect.void
+            ).pipe(Effect.andThen(fs.realPath(name)))) as typeof fs.realPath,
+        };
+        const exit = yield* Effect.exit(
+          makeHarness({ fixture: f })
+            .move()
+            .pipe(Effect.provideService(FileSystem.FileSystem, racingFs)),
+        );
+        expectCode(exit, "operation_failed");
+        expect(yield* fs.readFileString(victim)).toBe("external unique data\n");
+      }).pipe(Effect.provide(gitLayer)),
   );
 });
 
@@ -1674,7 +1702,7 @@ describe("recovery guidance", () => {
       const racingFs = {
         ...fs,
         rename: ((from: string, to: string) =>
-          (from === `${f.local}/new-dir`
+          (samePathInTest(from, `${f.local}/new-dir`)
             ? fs.writeFileString(`${from}/late-user.txt`, "unique late user data\n")
             : Effect.void
           ).pipe(Effect.andThen(fs.rename(from, to)))) as typeof fs.rename,
