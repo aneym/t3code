@@ -1,4 +1,4 @@
-import { decodeForkBuildManifest, parseForkVersion } from "@t3tools/client-runtime/fork-build";
+import { decodeForkBuildManifest } from "@t3tools/client-runtime/fork-build";
 import * as Option from "effect/Option";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
@@ -11,15 +11,11 @@ export function SettingsForkBuildSection() {
     decodeForkBuildManifest(Constants.expoConfig?.extra?.forkBuild),
   );
   if (manifest === null) return null;
-  const forkVersion = parseForkVersion(manifest.version);
 
   return (
     <>
       <SettingsSection title="Fork build">
-        <ListRowLayout
-          label="Fork revision"
-          description={forkVersion?.forkRevision ?? manifest.version}
-        />
+        <ListRowLayout label="Version" description={manifest.version} />
         <ListRowLayout label="Upstream" description={manifest.upstreamTag} />
         <ListRowLayout label="Built" description={manifest.builtAt} />
         {manifest.topics.length > 0 ? (
