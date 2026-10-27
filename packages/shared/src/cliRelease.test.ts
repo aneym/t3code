@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { cliArchiveTarCommand, newestCliReleaseVersion, parseChecksums } from "./cliRelease.ts";
+import {
+  cliArchiveTarCommand,
+  cliReleaseChannelOf,
+  cliReleaseDownloadBaseUrl,
+  cliReleaseIndexPageUrl,
+  cliReleaseRepositoryOf,
+  newestCliReleaseVersion,
+  parseChecksums,
+} from "./cliRelease.ts";
 
 describe("cliRelease", () => {
   it("parses sha256sum output including binary-mode markers", () => {
@@ -23,6 +31,26 @@ describe("cliRelease", () => {
       "D:\\Win\\System32\\tar.exe",
     );
     expect(cliArchiveTarCommand("win32", {})).toBe("C:\\Windows\\System32\\tar.exe");
+  });
+
+  it("keeps a fork-stamped nightly on the nightly channel and repository", () => {
+    const version = "0.1.3-nightly.20261026.3726.aneym.1";
+    expect(cliReleaseChannelOf(version)).toBe("nightly");
+    expect(cliReleaseRepositoryOf(version)).toBe("aneym/t3code");
+    expect(cliReleaseIndexPageUrl(1, version)).toBe(
+      "https://api.github.com/repos/aneym/t3code/releases?per_page=100&page=1",
+    );
+    expect(cliReleaseDownloadBaseUrl(version)).toBe(
+      `https://github.com/aneym/t3code/releases/download/v${version}`,
+    );
+    expect(cliReleaseChannelOf("0.1.3-nightly.20261026.3726")).toBe("nightly");
+    expect(cliReleaseRepositoryOf("0.1.3-nightly.20261026.3726")).toBe("pingdotgg/t3code");
+  });
+
+  it("keeps upstream versions containing the fork marker on upstream releases", () => {
+    const version = "1.2.3-rc.aneym.1";
+    expect(cliReleaseChannelOf(version)).toBe("stable");
+    expect(cliReleaseRepositoryOf(version)).toBe("pingdotgg/t3code");
   });
 
   it("picks the newest non-draft release on the requested channel", () => {

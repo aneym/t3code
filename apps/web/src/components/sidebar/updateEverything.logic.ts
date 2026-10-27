@@ -1,6 +1,6 @@
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
-import { cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
+import { cliReleaseChannelOf, isCliForkVersion } from "@t3tools/shared/cliRelease";
 
 import {
   resolveServerSelfUpdateCapability,
@@ -104,9 +104,14 @@ export function collectServerUpdateTargets(
     const serverVersion = config.environment.serverVersion;
     if (
       selfUpdate !== "desktop-managed" &&
-      cliReleaseChannelOf(serverVersion) !== cliReleaseChannelOf(targetVersion)
+      (cliReleaseChannelOf(serverVersion) !== cliReleaseChannelOf(targetVersion) ||
+        isCliForkVersion(serverVersion) !== isCliForkVersion(targetVersion))
     ) {
-      skip(`on the ${cliReleaseChannelOf(serverVersion)} channel`);
+      skip(
+        isCliForkVersion(serverVersion) !== isCliForkVersion(targetVersion)
+          ? "on a different release"
+          : `on the ${cliReleaseChannelOf(serverVersion)} channel`,
+      );
       continue;
     }
     targets.push({
