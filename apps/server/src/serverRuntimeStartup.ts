@@ -564,8 +564,6 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
     });
     yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
-    // Runs after activation: the status check fetches every enabled project's
-    // remote, and awaiting it here held command readiness for that long.
     yield* runStartupPhase(
       "projects.auto-pull",
       Effect.gen(function* () {

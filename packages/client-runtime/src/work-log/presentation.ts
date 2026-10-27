@@ -40,7 +40,6 @@ export function toolItemForDisplay(item: OrchestrationV2TurnItem): Orchestration
     }
     case "file_change": {
       const { diffStr, oldStr: _oldStr, newStr: _newStr, ...displayItem } = item;
-      // A failed edit's diffStr holds the provider's error, not a diff.
       return item.status === "failed" && diffStr?.trim()
         ? { ...displayItem, diffStr }
         : displayItem;
@@ -504,6 +503,7 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "thread-update":
     case "queue-edit":
     case "queue-cancel":
+    case "queue-resume":
     case "queue-reorder":
     case "queue-steer":
     case "question-respond":

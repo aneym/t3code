@@ -1,3 +1,4 @@
+import { recoveryQueueHold } from "./QueueHoldPolicy.ts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -22,9 +23,8 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { restartContinuationRun, unacceptedRestartRun } from "./RestartContinuation.ts";
+import { restartContinuationRun } from "./RestartContinuation.ts";
 import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
-import { recoveryQueueHold } from "./QueuedRunBatch.ts";
 import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
@@ -197,7 +197,6 @@ export const make = Effect.gen(function* () {
       projection: ProjectionStore.ProjectionRuntimeRecoveryState,
       trigger: "startup" | "shutdown",
       continueAfterRestart: boolean,
-      releaseRestartHolds: boolean,
       stoppedThisPass: ReadonlyMap<string, RecoverySession> = new Map(),
     ) {
       const now = yield* DateTime.now;
@@ -237,7 +236,6 @@ export const make = Effect.gen(function* () {
       const requests = projection.runtimeRequests.filter(
         (request) => request.status === "pending" && request.responseCapability.type !== "message",
       );
-      // Delegated task rows, items and nodes stay open: the child settles them.
       const delegatedTaskNodeIds = new Set<string>([
         ...(projection.subagents ?? []).filter(isAppOwnedDelegation).map((subagent) => subagent.id),
         ...(projection.turnItems ?? []).flatMap((item) =>
@@ -321,7 +319,7 @@ export const make = Effect.gen(function* () {
           runs.push(run);
           continue;
         }
-        const recovered = recoveryQueueHold(run, trigger, releaseRestartHolds);
+        const recovered = recoveryQueueHold(run, trigger);
         if (recovered === undefined) continue;
         events.push({
           id: yield* allocateEventId(),
@@ -439,7 +437,6 @@ export const make = Effect.gen(function* () {
               candidate.status === "running" ||
               candidate.status === "waiting"),
         )) {
-          // Cut native subagents do not resume; record them for the continuation to restart.
           if (run.status === "waiting") recordCancelledBackgroundItem(item);
           else if (item.type === "subagent" && item.origin === "provider_native")
             recordCancelledBackgroundItem(item);
@@ -455,7 +452,6 @@ export const make = Effect.gen(function* () {
           });
         }
       }
-      // Blocking waits die with their turn; let child results wake the parent continuation as async tasks.
       const cutRunIds = new Set(runs.map((run) => run.id));
       for (const task of projection.subagents ?? []) {
         if (
@@ -616,10 +612,10 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? (restartContinuationRun(
+          ? restartContinuationRun(
               { ...projection, providerSessions: sessionsLiveAtStart(projection, stoppedThisPass) },
               now,
-            ) ?? unacceptedRestartRun(projection, now))
+            )
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -720,13 +716,7 @@ export const make = Effect.gen(function* () {
         continueAfterRestart !== null &&
         resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
           .continueThreadsAfterServerUpdate;
-      const result = yield* reconcileProjection(
-        projection,
-        trigger,
-        enabled,
-        continueAfterRestart?.batchQueuedMessages === true,
-        stoppedThisPass,
-      );
+      const result = yield* reconcileProjection(projection, trigger, enabled, stoppedThisPass);
       for (const session of projection.providerSessions) {
         if (session.status !== "stopped" && session.status !== "error") {
           stoppedThisPass.set(session.id, session);
@@ -763,9 +753,7 @@ export const make = Effect.gen(function* () {
             .continueThreadsAfterServerUpdate
         )
           return;
-        const now = yield* DateTime.now;
-        const run =
-          restartContinuationRun(projection, now) ?? unacceptedRestartRun(projection, now);
+        const run = restartContinuationRun(projection, yield* DateTime.now);
         if (!run) return;
         const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
         yield* eventSink.writeWithEffects({
