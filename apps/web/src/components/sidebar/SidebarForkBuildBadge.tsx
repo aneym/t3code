@@ -4,7 +4,8 @@ import { useState } from "react";
 import { RelativeTime } from "~/components/RelativeTime";
 import { APP_VERSION } from "~/branding";
 import { checkUpstreamNightly, FORK_VERSION, loadForkBuildManifest } from "~/forkBuild";
-import type { ForkBuildManifest, ForkVersion, UpstreamNightlyStatus } from "~/forkBuild.logic";
+import type { ForkBuildManifest, ForkVersion } from "@t3tools/client-runtime/fork-build";
+import type { UpstreamNightlyStatus } from "~/forkBuild.logic";
 import { usePrimaryEnvironment } from "~/state/environments";
 
 import { Button } from "../ui/button";

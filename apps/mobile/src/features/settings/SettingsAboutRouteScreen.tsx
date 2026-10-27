@@ -18,6 +18,7 @@ import {
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { SettingsForkBuildSection } from "./SettingsForkBuildSection";
 
 export function SettingsAboutRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -32,6 +33,7 @@ export function SettingsAboutRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <AppSettingsSection />
+        <SettingsForkBuildSection />
       </ScrollView>
     </SettingsScreen>
   );

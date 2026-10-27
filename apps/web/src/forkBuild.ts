@@ -3,10 +3,13 @@ import * as Option from "effect/Option";
 import { APP_VERSION } from "./branding";
 import {
   decodeForkBuildManifest,
-  decodeUpstreamReleases,
   parseForkVersion,
-  resolveUpstreamNightlyStatus,
   type ForkBuildManifest,
+} from "@t3tools/client-runtime/fork-build";
+
+import {
+  decodeUpstreamReleases,
+  resolveUpstreamNightlyStatus,
   type UpstreamNightlyStatus,
 } from "./forkBuild.logic";
 

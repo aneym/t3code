@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./fork-build": {
+      "types": "./src/forkBuild.ts",
+      "default": "./src/forkBuild.ts"
+    },
     "./workspace-basename-lookup": {
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"
