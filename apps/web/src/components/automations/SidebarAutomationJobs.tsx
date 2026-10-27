@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, ScheduledTask } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { CircleAlertIcon, CircleDashedIcon } from "lucide-react";
+import { CalendarClockIcon, CircleAlertIcon, CircleDashedIcon, SettingsIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 
 import { useAutomations } from "../../hooks/useAutomations";
@@ -15,13 +15,14 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { useQuietThreadShells } from "../../state/entities";
 import { useEnvironmentIdentities } from "../../state/environments";
 import { ScheduledRelativeLabel } from "../settings/ScheduledTasksSettings";
+import { SHELF_MORE_ROW_CLASS_NAME } from "../sidebar/shelfMoreRow";
 import { WorkingDuration } from "../sidebar/WorkingDuration";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 
 const AUTOMATIONS_SHELF_EXPANDED_KEY = "t3code:sidebar:automations-expanded";
 
 const ROW_CLASS =
-  "flex min-w-0 flex-col rounded-md px-2 py-1 outline-hidden ring-ring hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset";
+  "group/automation-row flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/75 outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 function runRequestedAt(thread: EnvironmentThreadShell): string {
   return thread.latestRun?.requestedAt ?? thread.createdAt;
@@ -88,13 +89,14 @@ export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () 
               onNavigate={onNavigate}
             />
           ))}
-          <li>
+          <li className="list-none">
             <Link
               to="/settings/scheduled-tasks"
               search={{ machine: undefined, project: undefined, checkout: undefined }}
-              className="block rounded-md px-2 py-1 text-secondary-label text-xs hover:bg-sidebar-row-hover"
+              className={SHELF_MORE_ROW_CLASS_NAME}
               onClick={onNavigate}
             >
+              <SettingsIcon aria-hidden className="size-4 shrink-0" />
               Manage automations
             </Link>
           </li>
@@ -124,49 +126,40 @@ function AutomationJobRow({
     task.lastRunStatus === "failed" || (!working && runThread?.runtime?.status === "failed");
   const content = (
     <>
-      <span className="flex h-5 min-w-0 items-center gap-1.5 text-sm">
-        <span className="min-w-0 flex-1 truncate">
-          {task.title}
-          {machine ? <span className="text-secondary-label"> · {machine}</span> : null}
-        </span>
-        <span className="shrink-0 text-xs">
-          {working ? (
-            <span className="inline-flex items-center gap-1 font-medium text-info-foreground">
-              <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
-              Working
-              <span aria-hidden>
-                <WorkingDuration startedAt={resolveThreadWorkingStartedAt(runThread)} />
-              </span>
-            </span>
-          ) : failed ? (
-            <span className="inline-flex items-center gap-1 font-medium text-error-foreground">
-              <CircleAlertIcon aria-hidden className="size-4 shrink-0" />
-              Failed
-            </span>
-          ) : (
-            <span className="text-secondary-label">Idle</span>
-          )}
-        </span>
+      <CalendarClockIcon
+        aria-hidden
+        className="size-4 shrink-0 opacity-40 transition-opacity group-hover/automation-row:opacity-100 group-focus-visible/automation-row:opacity-100"
+      />
+      <span className="min-w-0 flex-1 truncate font-normal text-secondary-label/70 group-hover/automation-row:text-foreground group-focus-visible/automation-row:text-foreground redesign:text-secondary-label">
+        {task.title}
+        {machine ? <span> · {machine}</span> : null}
       </span>
-      <span className="truncate text-secondary-label text-xs">
-        Last {task.lastRunAt ? <LastRunLabel value={task.lastRunAt} /> : "never"}
-        {" · "}
-        {!task.enabled ? (
+      <span className="ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end text-xs tabular-nums text-secondary-label">
+        {working ? (
+          <span className="inline-flex items-center gap-1 font-medium text-info-foreground">
+            <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+            Working
+            <span aria-hidden>
+              <WorkingDuration startedAt={resolveThreadWorkingStartedAt(runThread)} />
+            </span>
+          </span>
+        ) : !task.enabled ? (
           "Paused"
-        ) : task.schedule.type === "webhook" ? (
-          "On webhook"
-        ) : task.nextRunAt ? (
-          <>
-            Next <ScheduledRelativeLabel value={task.nextRunAt} />
-          </>
-        ) : (
-          "Not scheduled"
-        )}
+        ) : failed ? (
+          <span className="inline-flex items-center gap-1 font-medium text-error-foreground">
+            <CircleAlertIcon aria-hidden className="size-4 shrink-0" />
+            Failed
+          </span>
+        ) : task.schedule.type !== "webhook" && task.nextRunAt ? (
+          <ScheduledRelativeLabel value={task.nextRunAt} />
+        ) : task.lastRunAt ? (
+          <LastRunLabel value={task.lastRunAt} />
+        ) : null}
       </span>
     </>
   );
   return (
-    <li>
+    <li className="list-none">
       {runThread === null ? (
         <Link
           to="/settings/scheduled-tasks"
