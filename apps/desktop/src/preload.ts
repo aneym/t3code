@@ -440,4 +440,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.removeListener(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, wrappedListener);
     },
   },
+  desktopBrowser: {
+    onEvent: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, line: unknown) => {
+        if (typeof line === "string") listener(line);
+      };
+      ipcRenderer.on(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, handler);
+    },
+    sendCommand: (line) => ipcRenderer.invoke(IpcChannels.DESKTOP_BROWSER_COMMAND_CHANNEL, line),
+  },
 } satisfies DesktopBridge);

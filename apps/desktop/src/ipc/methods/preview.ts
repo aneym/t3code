@@ -28,6 +28,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as NodeURL from "node:url";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
@@ -38,12 +39,24 @@ import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts"
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+import * as DesktopBrowserHost from "../../preview/DesktopBrowserHost.ts";
 
 export const installPreviewEventForwarding = Effect.fn(
   "desktop.ipc.preview.installEventForwarding",
 )(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const manager = yield* PreviewManager.PreviewManager;
+  const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
+  yield* Effect.forkScoped(
+    browserHost.events.pipe(
+      Stream.runForEach((line) =>
+        electronWindow.sendAll(
+          IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL,
+          new TextDecoder().decode(line),
+        ),
+      ),
+    ),
+  );
   yield* manager.subscribeStateChanges((tabId, state) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, tabId, state),
   );
@@ -452,3 +465,13 @@ export const methods = [
   stopRecording,
   saveRecording,
 ] as const;
+
+export const desktopBrowserCommand = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.DESKTOP_BROWSER_COMMAND_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.browser.command")(function* (line) {
+    const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+    yield* host.handleCommandLine(line);
+  }),
+});

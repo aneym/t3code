@@ -1358,6 +1358,7 @@ const make = Effect.gen(function* () {
         title: null,
         loading: false,
         ...profileStatus(),
+        devices: desktopChannel.devices ? await runPromise(desktopChannel.devices) : [],
       };
     }
     const url = tab.page.url();
@@ -1399,6 +1400,8 @@ const make = Effect.gen(function* () {
         url,
         completedAt,
       })),
+      ...(desktopChannel.devices ? { devices: await runPromise(desktopChannel.devices) } : {}),
+      ...(tab.desktop ? { device: undefined } : {}),
     };
     if (status.url === null || tab.dialog) return status;
     return { ...status, title: (await tab.page.title().catch(() => "")) || null };
@@ -1723,6 +1726,25 @@ const make = Effect.gen(function* () {
             "The agent session is missing. Reconnect the provider.",
           );
         const open = input as PreviewAutomationOpenInput;
+        if (open.device !== undefined && desktopChannel.devices) {
+          const devices = await runPromise(desktopChannel.devices);
+          const wanted =
+            open.device === "user"
+              ? devices
+                  .filter((device) => device.focused)
+                  .toSorted((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]?.name
+              : (devices.find((device) => device.name.toLowerCase() === open.device!.toLowerCase())
+                  ?.name ??
+                devices.find((device) =>
+                  device.name.toLowerCase().includes(open.device!.toLowerCase()),
+                )?.name);
+          if (!wanted) {
+            throw new ServerBrowserPage.ServerBrowserOperationError(
+              "PreviewAutomationNoAvailableHostError",
+              `No connected device matches "${open.device}". Connected devices: ${devices.map((device) => device.name).join(", ") || "none"}.`,
+            );
+          }
+        }
         const url = open.url === undefined ? undefined : normalizePreviewUrl(open.url);
         const reuse = open.reuseExistingTab ?? true;
         if (
@@ -1782,6 +1804,7 @@ const make = Effect.gen(function* () {
                 ...(url ? { url } : {}),
                 ...(profileId === undefined ? {} : { profileId }),
                 runtime: "server",
+                ...(open.device === undefined ? {} : { device: open.device }),
                 reveal: false,
                 automationOwner: request.agentSessionId,
               }),

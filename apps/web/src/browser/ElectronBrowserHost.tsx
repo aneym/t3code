@@ -9,6 +9,7 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { type ComponentProps, useState } from "react";
+import { subscribeDocumentActivity } from "~/lib/documentActivity";
 
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
@@ -120,6 +121,18 @@ export function startElectronBrowserHost(): () => void {
     }),
     preview.onOpenLink(openLinkInPreview),
   ];
+  const deviceName =
+    (
+      navigator as Navigator & { userAgentData?: { platform?: string } }
+    ).userAgentData?.platform?.toLowerCase() ?? navigator.platform.toLowerCase();
+  const activity = () => {
+    const connection = appAtomRegistry.get(primaryEnvironmentIdAtom);
+    if (!connection) return;
+    void window.desktopBridge?.desktopBrowser?.sendCommand(
+      JSON.stringify({ deviceName, focused: document.hasFocus() }),
+    );
+  };
+  disposers.push(subscribeDocumentActivity(activity));
   return () => {
     for (const dispose of disposers) dispose();
   };

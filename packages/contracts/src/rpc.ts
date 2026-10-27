@@ -380,6 +380,7 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import { DesktopBrowserRemoteEvents, DesktopBrowserRemoteSource } from "./desktopBrowser.ts";
 
 export const WS_METHODS = {
   projectsList: "projects.list",
@@ -585,6 +586,8 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+  desktopBrowserCommands: "desktopBrowserCommands",
+  desktopBrowserEvents: "desktopBrowserEvents",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1909,6 +1912,18 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
+const WsDesktopBrowserCommandsRpc = Rpc.make(WS_METHODS.desktopBrowserCommands, {
+  payload: DesktopBrowserRemoteSource,
+  success: Schema.String,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsDesktopBrowserEventsRpc = Rpc.make(WS_METHODS.desktopBrowserEvents, {
+  payload: DesktopBrowserRemoteEvents,
+  error: EnvironmentAuthorizationError,
+});
+
 export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthorization>()(
   "t3/contracts/RpcScopeAuthorization",
   { error: EnvironmentAuthorizationError },
@@ -2099,6 +2114,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeAuthAccessRpc,
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
+  WsDesktopBrowserCommandsRpc,
+  WsDesktopBrowserEventsRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2StopWorkflowRpc,
