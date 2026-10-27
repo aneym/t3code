@@ -57,14 +57,13 @@ import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/server";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
+import { ThreadListV2PendingRow, ThreadListV2Row } from "../threads/thread-list-v2-items";
 import {
-  ThreadListV2PendingRow,
-  ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
-} from "../threads/thread-list-v2-items";
+} from "../threads/thread-list-v2-sections";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
