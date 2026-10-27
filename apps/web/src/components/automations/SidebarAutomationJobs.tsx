@@ -8,9 +8,11 @@ import { Link } from "@tanstack/react-router";
 import { CircleAlertIcon, CircleDashedIcon } from "lucide-react";
 
 import { useAutomations } from "../../hooks/useAutomations";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { useQuietThreadShells } from "../../state/entities";
 import { ScheduledRelativeLabel } from "../settings/ScheduledTasksSettings";
 import { WorkingDuration } from "../sidebar/WorkingDuration";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 
 const ROW_CLASS =
   "flex min-w-0 flex-col rounded-md px-2 py-1 outline-hidden ring-ring hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset";
@@ -32,6 +34,11 @@ function resolveRunThread(
     if (latest === null || runRequestedAt(thread) > runRequestedAt(latest)) latest = thread;
   }
   return latest;
+}
+
+function LastRunLabel({ value }: { readonly value: string }) {
+  const nowMinute = useNowMinute();
+  return formatRelativeTimeLabel(value, Date.parse(`${nowMinute}:00.000Z`));
 }
 
 export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () => void }) {
@@ -93,7 +100,7 @@ function AutomationJobRow({
         </span>
       </span>
       <span className="truncate text-secondary-label text-xs">
-        Last {task.lastRunAt ? <ScheduledRelativeLabel value={task.lastRunAt} /> : "never"}
+        Last {task.lastRunAt ? <LastRunLabel value={task.lastRunAt} /> : "never"}
         {" · "}
         {!task.enabled ? (
           "Paused"
