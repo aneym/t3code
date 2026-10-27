@@ -649,7 +649,8 @@ export class Launcher {
       await reject("The requested target is not an exact version.");
       return;
     }
-    if (compareExactServiceVersions(message.targetVersion, child.version) <= 0) {
+    const comparison = compareExactServiceVersions(message.targetVersion, child.version);
+    if (comparison === 0 || (comparison < 0 && message.allowDowngrade !== true)) {
       await reject("Remote updates must select a newer server version.");
       return;
     }
