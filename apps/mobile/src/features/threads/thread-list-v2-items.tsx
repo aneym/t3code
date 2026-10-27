@@ -1,3 +1,5 @@
+import { DONE_STATUS_LABEL, STATUS_LABEL_BY_STATUS } from "./thread-status-labels";
+import { useAtomValue } from "@effect/atom-react";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -33,7 +35,7 @@ import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
-import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -60,7 +62,6 @@ import {
   resolveThreadListV2Status,
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
-  type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
@@ -69,67 +70,8 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 
 const TITLE_FAVICON_SIZE = 15;
-// Centers the favicon on the first line of the text-base title.
 const TITLE_FAVICON_OFFSET = 4;
-// Lines below the title start where the title text does.
 const TITLE_TEXT_INSET = TITLE_FAVICON_SIZE + 8;
-
-interface StatusLabel {
-  readonly label: string;
-  readonly icon: AppSymbolName;
-  readonly className: string;
-  readonly iconTintClassName: string;
-}
-const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
-  approval: {
-    label: "Approval",
-    icon: "exclamationmark.shield",
-    className: "text-warning-foreground",
-    iconTintClassName: "accent-warning-foreground",
-  },
-  input: {
-    label: "Input",
-    icon: "questionmark.bubble",
-    className: "text-adaptive-indigo-600-300",
-    iconTintClassName: "accent-adaptive-indigo-600-300",
-  },
-  request: {
-    label: "Request",
-    icon: "person.crop.circle",
-    className: "text-adaptive-fuchsia-600-300",
-    iconTintClassName: "accent-adaptive-fuchsia-600-300",
-  },
-  working: {
-    label: "Working",
-    icon: "circle.dashed",
-    className: "text-adaptive-sky-600-400",
-    iconTintClassName: "accent-adaptive-sky-600-400",
-  },
-  waiting: {
-    label: "Waiting",
-    icon: "circle.dashed.inset.filled",
-    className: "text-foreground-muted",
-    iconTintClassName: "accent-foreground-muted",
-  },
-  failed: {
-    label: "Failed",
-    icon: "exclamationmark.circle",
-    className: "text-danger-foreground",
-    iconTintClassName: "accent-danger-foreground",
-  },
-  limited: {
-    label: "Limited",
-    icon: "exclamationmark.circle",
-    className: "text-warning-foreground",
-    iconTintClassName: "accent-warning-foreground",
-  },
-};
-const DONE_STATUS_LABEL: StatusLabel = {
-  label: "Done",
-  icon: "checkmark.circle",
-  className: "text-adaptive-emerald-700-300",
-  iconTintClassName: "accent-adaptive-emerald-700-300",
-};
 
 function ThreadListV2Duration(props: { readonly startedAt: string | null }) {
   const startedAtMs = Date.parse(props.startedAt ?? "");
@@ -670,7 +612,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       input: { threadId: thread.id, visitedAt: props.wokeAt },
     });
   }, [props.wokeAt, thread.environmentId, thread.id, visitThread]);
-  // VoiceOver cannot focus buttons inside the accessible row.
   const rowAccessibilityActions = useMemo(
     () => [
       ...(prBadgeLabel ? [{ name: "openPullRequests", label: prBadgeLabel }] : []),
@@ -682,13 +623,26 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const canSettleThread = useAtomValue(
+    threadEnvironment.settle.permissionAtom(thread.environmentId),
+  );
+  const canUnsettleThread = useAtomValue(
+    threadEnvironment.unsettle.permissionAtom(thread.environmentId),
+  );
+  const canPinThread = useAtomValue(threadEnvironment.pin.permissionAtom(thread.environmentId));
+  const canUnpinThread = useAtomValue(threadEnvironment.unpin.permissionAtom(thread.environmentId));
+  const canSnoozeThread = useAtomValue(
+    threadEnvironment.snooze.permissionAtom(thread.environmentId),
+  );
+  const canUnsnoozeThread = useAtomValue(
+    threadEnvironment.unsnooze.permissionAtom(thread.environmentId),
+  );
   const handleRegenerateTitle = useCallback(
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],
   );
   const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
-  // Recycling changes identity without remounting; clear local UI directly because equality may skip the render closure.
   const rowIdentity = `${thread.environmentId}:${thread.id}`;
   const [boundIdentity, setBoundIdentity] = useState(rowIdentity);
   if (boundIdentity !== rowIdentity) {
@@ -712,7 +666,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
 
   const canUnsettle = variant === "slim";
-  // Keep time in state; cached render-time reads freeze the gate and trigger 50ms expiry loops.
   const [snoozeGateClock, setSnoozeGateClock] = useState(() => ({ thread, now: Date.now() }));
   // oxlint-disable-next-line react/purity -- Reseeds the snooze gate clock only in the render-phase adjustment that runs when the thread changes.
   if (snoozeGateClock.thread !== thread) setSnoozeGateClock({ thread, now: Date.now() });
@@ -721,8 +674,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ? resolveThreadListV2SnoozeGateExpiryMs(thread, { now: snoozeGateNow })
     : null;
   useEffect(() => {
-    // A gate still closed past its expiry is held by runtime status, not time,
-    // so no clock tick can open it.
     if (snoozeGateExpiryMs === null || snoozeGateExpiryMs <= snoozeGateClock.now) return;
     const delayMs = Math.min(snoozeGateExpiryMs - Date.now() + 50, 2_147_483_647);
     const id = setTimeout(() => setSnoozeGateClock({ thread, now: Date.now() }), delayMs);
@@ -737,9 +688,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   });
   const snoozePresets = useMemo(
     // oxlint-disable-next-line react/purity -- The memo recomputes on the snoozePresetMinute tick, so preset times refresh every minute.
-    () => (swipeActions.secondary === "snooze" ? resolveSnoozePresets(new Date()) : ([] as const)),
+    () => resolveSnoozePresets(new Date()),
     // oxlint-disable-next-line react/memo-dependencies -- The minute tick refreshes relative snooze times while the row remains mounted.
-    [props.snoozePresetMinute, swipeActions.secondary],
+    [props.snoozePresetMinute],
   );
   const snoozePresetActions = useMemo<MenuAction[]>(
     () => [
@@ -853,6 +804,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const slimMenuActions = useMemo<MenuAction[]>(
     () => [
       SLIM_MENU_ACTIONS[0]!,
+      ...(props.snoozeSupported && canSnoozeThread && canSnooze(thread, { now: snoozeGateNow })
+        ? [{ id: "snooze", title: "Snooze", image: "clock", subactions: snoozePresetActions }]
+        : []),
       ...arrangementMenuItems.filter(
         (action) => action.id !== "move-up" && action.id !== "move-down",
       ),
@@ -861,17 +815,36 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       LEGACY_MENU_ACTIONS[0]!,
       SLIM_MENU_ACTIONS[1]!,
     ],
-    [arrangementMenuItems, autoSettleMenuItems, titleMenuItems],
+    [
+      arrangementMenuItems,
+      autoSettleMenuItems,
+      titleMenuItems,
+      props.snoozeSupported,
+      canSnoozeThread,
+      thread,
+      snoozeGateNow,
+      snoozePresetActions,
+    ],
   );
   const snoozedMenuActions = useMemo<MenuAction[]>(
     () => [
       SNOOZED_MENU_ACTIONS[0]!,
+      ...(props.settlementSupported && canSettleThread
+        ? [{ id: "settle", title: "Settle", image: "checkmark" }]
+        : []),
+      ...arrangementMenuItems.filter((action) => action.id === "pin" || action.id === "unpin"),
       ...titleMenuItems,
       ...autoSettleMenuItems,
       LEGACY_MENU_ACTIONS[0]!,
       SNOOZED_MENU_ACTIONS[1]!,
     ],
-    [autoSettleMenuItems, titleMenuItems],
+    [
+      autoSettleMenuItems,
+      titleMenuItems,
+      props.settlementSupported,
+      canSettleThread,
+      arrangementMenuItems,
+    ],
   );
   const legacyMenuActions = useMemo<MenuAction[]>(
     () => [
@@ -1165,13 +1138,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         )}
         {pr ? (
           <Pressable
-            // Padding cancelled by negative margin grows the touch target into
-            // the row padding without moving the badge.
             className="-m-2.5 flex-row items-center gap-1 p-2.5"
             accessibilityRole="button"
             accessibilityLabel={prBadgeLabel ?? undefined}
             onPress={handleOpenPullRequests}
-            // Handle long-press so opening the iOS row menu cannot also open the PR on release.
             onLongPress={() => undefined}
             style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
           >
@@ -1396,7 +1366,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                     : swipeActions.secondary === "snooze"
                       ? snoozableCardMenuActions
                       : cardMenuActions),
-            ]}
+            ].filter((action) => {
+              if (action.id === "settle") return props.settlementSupported && canSettleThread;
+              if (action.id === "unsettle") return props.settlementSupported && canUnsettleThread;
+              if (action.id === "pin") return props.pinningSupported && canPinThread;
+              if (action.id === "unpin") return props.pinningSupported && canUnpinThread;
+              if (action.id === "snooze") return props.snoozeSupported && canSnoozeThread;
+              if (action.id === "unsnooze") return props.snoozeSupported && canUnsnoozeThread;
+              return true;
+            })}
             onPressAction={handleMenuAction}
             shouldOpenOnLongPress
           >

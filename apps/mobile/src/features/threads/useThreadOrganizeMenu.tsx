@@ -1,15 +1,16 @@
 import type { NativeStackHeaderItemMenu } from "@react-navigation/native-stack";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
-  canSnooze,
+  canSnooze as canSnoozeThread,
   effectiveSnoozed,
   resolveSnoozePresets,
 } from "@t3tools/client-runtime/state/thread-settled";
-import { AuthOrchestrationOperateScope, type ServerConfig } from "@t3tools/contracts";
+import { type ServerConfig } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { useThreadListActions } from "../home/useThreadListActions";
-import { useEnvironmentScope } from "../../state/session";
+import { useAtomValue } from "@effect/atom-react";
+import { threadEnvironment } from "../../state/threads";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import type { AppBarMenu, AppBarMenuItem } from "../../components/ui/AppBar.types";
 
@@ -36,9 +37,21 @@ export function useThreadOrganizeMenu(
   config: ServerConfig | null,
 ) {
   const actions = useThreadListActions();
-  const canOperate = useEnvironmentScope(
-    thread?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
+  const canSettle = useAtomValue(
+    threadEnvironment.settle.permissionAtom(thread?.environmentId ?? null),
+  );
+  const canUnsettle = useAtomValue(
+    threadEnvironment.unsettle.permissionAtom(thread?.environmentId ?? null),
+  );
+  const canPin = useAtomValue(threadEnvironment.pin.permissionAtom(thread?.environmentId ?? null));
+  const canUnpin = useAtomValue(
+    threadEnvironment.unpin.permissionAtom(thread?.environmentId ?? null),
+  );
+  const canSnooze = useAtomValue(
+    threadEnvironment.snooze.permissionAtom(thread?.environmentId ?? null),
+  );
+  const canUnsnooze = useAtomValue(
+    threadEnvironment.unsnooze.permissionAtom(thread?.environmentId ?? null),
   );
   const [customSnoozeTarget, setCustomSnoozeTarget] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
@@ -61,7 +74,7 @@ export function useThreadOrganizeMenu(
       id: "pin",
       title: pinned ? "Unpin" : "Pin",
       icon: pinned ? "pin.slash" : "pin",
-      disabled: !canOperate,
+      disabled: !(pinned ? canUnpin : canPin),
       selected: pinned,
       onPress: () => {
         void (pinned ? actions.unpinThread(target) : actions.pinThread(target));
@@ -74,7 +87,7 @@ export function useThreadOrganizeMenu(
       id: "settle",
       title: settled ? "Un-settle" : "Settle",
       icon: settled ? "arrow.uturn.backward" : "checkmark",
-      disabled: !canOperate,
+      disabled: !(settled ? canUnsettle : canSettle),
       selected: settled,
       onPress: () => {
         void (settled ? actions.unsettleThread(target) : actions.settleThread(target));
@@ -87,12 +100,12 @@ export function useThreadOrganizeMenu(
         id: "unsnooze",
         title: "Wake thread",
         icon: "clock",
-        disabled: !canOperate,
+        disabled: !canUnsnooze,
         onPress: () => {
           void actions.unsnoozeThread(target);
         },
       });
-    } else if (canOperate && canSnooze(thread, { now: now.toISOString() })) {
+    } else if (canSnooze && canSnoozeThread(thread, { now: now.toISOString() })) {
       items.push({
         id: "snooze",
         title: "Snooze",
