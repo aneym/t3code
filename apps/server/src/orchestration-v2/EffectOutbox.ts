@@ -208,6 +208,9 @@ export interface EffectOutboxV2Shape {
   readonly listByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
+  readonly listUnsettledRestartContinuationIds: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<string>, EffectOutboxError>;
   readonly cancelUnsettled: (input: {
     readonly threadId: ThreadId;
     readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
@@ -440,6 +443,23 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               : new EffectOutboxError({ operation: "list", cause }),
           ),
         ),
+      listUnsettledRestartContinuationIds: Effect.fn(
+        "EffectOutbox.listUnsettledRestartContinuationIds",
+      )((threadId) =>
+        sql<{ readonly effect_id: string }>`
+          SELECT effect_id
+          FROM orchestration_v2_effect_outbox
+          WHERE thread_id = ${threadId}
+            AND status IN ('pending', 'running')
+            AND effect_type = 'provider-runtime.continue'
+        `.pipe(
+          NodeSqliteClient.readOnly,
+          Effect.map((rows) => rows.map((row) => row.effect_id)),
+          Effect.mapError(
+            (cause) => new EffectOutboxError({ operation: "list-restart-continuations", cause }),
+          ),
+        ),
+      ),
       cancelUnsettled: Effect.fn("EffectOutbox.cancelUnsettled")(
         function* ({ threadId, effectTypes, reason }) {
           if (effectTypes.length === 0) return [];

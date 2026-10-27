@@ -4876,7 +4876,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         branch: null,
         worktreePath: process.cwd(),
       });
-      const dispatch = (key: string, start: boolean) =>
+      const dispatch = (key: string, start: boolean, manualContinuationOfRunId?: RunId) =>
         orchestrator.dispatch({
           type: "message.dispatch",
           createdBy: "user",
@@ -4887,6 +4887,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           text: key,
           attachments: [],
           modelSelection,
+          ...(manualContinuationOfRunId === undefined ? {} : { manualContinuationOfRunId }),
           dispatchMode: { type: start ? "start_immediately" : "queue_after_active" },
         });
       const runFor = (key: string) =>
@@ -4905,7 +4906,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         runId: (yield* runFor("active")).id,
         holdQueue: true,
       });
-      yield* dispatch("continue", true);
+      yield* dispatch("continue", true, (yield* runFor("active")).id);
       yield* orchestrator.dispatch({
         type: "queue.resume",
         commandId: CommandId.make(`${threadId}:resume`),
@@ -4965,7 +4966,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   );
 
   it.effect.each(["startup", "shutdown"] as const)(
-    "preserves and holds queued messages across %s until explicitly resumed",
+    "preserves stopped queued messages across %s until explicitly resumed",
     (trigger) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -5002,20 +5003,27 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const before = yield* orchestrator.getThreadProjection(threadId);
         const queued = before.runs.filter((run) => run.status === "queued");
         assert.equal(queued.length, 2);
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make(`${threadId}:stop`),
+          threadId,
+          runId: before.runs[0]!.id,
+          holdQueue: true,
+        });
         yield* recovery.reconcile(trigger);
         yield* recovery.reconcile("startup");
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
         assert.isTrue((yield* maintenance.rebuild).valid);
-        assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
+        yield* orchestrator.resumeQueuedRuns;
         const held = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(
           held.runs.map((run) => run.status),
-          ["cancelled", "queued", "queued"],
+          ["interrupted", "queued", "queued"],
         );
         for (const run of queued) {
           assert.deepEqual(
             held.runs.find((row) => row.id === run.id),
-            { ...run, queueHeld: true },
+            { ...run, queueHeld: true, queueHoldReason: "stop" },
           );
           assert.deepEqual(
             held.messages.find((row) => row.id === run.userMessageId),
@@ -5043,7 +5051,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           runId: second.id,
           beforeRunId: first.id,
         });
-        assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
+        yield* orchestrator.resumeQueuedRuns;
+        assert.isTrue(
+          (yield* orchestrator.getThreadProjection(threadId)).runs
+            .filter((run) => run.status === "queued")
+            .every((run) => run.queueHeld === true && run.queueHoldReason === "stop"),
+        );
         const resume = {
           type: "queue.resume" as const,
           commandId: CommandId.make(`${threadId}:resume`),
@@ -5203,7 +5216,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ),
         "removed queued message must not surface as a transcript row",
       );
-      assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
+      yield* orchestrator.resumeQueuedRuns;
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.id === queuedRun.id,
+        )?.status,
+        "cancelled",
+      );
 
       const cancelAgainError = yield* orchestrator
         .dispatch({
