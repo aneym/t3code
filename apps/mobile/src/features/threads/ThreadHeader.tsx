@@ -7,6 +7,9 @@ import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { useThreadOrganizeMenu } from "./useThreadOrganizeMenu";
+import { useThreadSelection } from "../../state/use-thread-selection";
+import { useRemoteEnvironmentRuntime } from "../../state/use-remote-environment-registry";
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
@@ -23,7 +26,13 @@ export function ThreadHeader(
   const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
     useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
-  const native = useThreadHeaderOptions(props);
+  const { selectedThread, selectedThreadDetailRef } = useThreadSelection();
+  const runtime = useRemoteEnvironmentRuntime(selectedThread?.environmentId ?? null);
+  const organize = useThreadOrganizeMenu(
+    props.draft || selectedThreadDetailRef === null ? undefined : (selectedThread ?? undefined),
+    runtime?.serverConfig ?? null,
+  );
+  const native = useThreadHeaderOptions({ ...props, organizeItem: organize.nativeItem });
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
     if (props.onReturnToThread) {
@@ -100,10 +109,12 @@ export function ThreadHeader(
         }
         onBack={layout.usesSplitView ? undefined : goBack}
         actions={androidHeaderActions}
+        menus={organize.menu ? [organize.menu] : undefined}
         hideBottomBorder
         compact={composerKeyboardActive}
       />
       {native.fallback}
+      {organize.sheet}
     </>
   );
 }

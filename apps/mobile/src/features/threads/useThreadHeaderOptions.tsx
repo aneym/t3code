@@ -1,6 +1,7 @@
 import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useMemo } from "react";
+import type { NativeStackHeaderItemMenu } from "@react-navigation/native-stack";
 import { threadHeaderAppearance } from "./thread-header-appearance";
 import { isDuoDevice } from "../../lib/device-type";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
@@ -24,6 +25,7 @@ export function useThreadHeaderOptions(props: {
   readonly gitControls: Parameters<typeof ThreadGitControls>[0];
   readonly onReturnToThread?: () => void;
   readonly draft?: boolean;
+  readonly organizeItem?: NativeStackHeaderItemMenu;
 }) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
@@ -95,8 +97,12 @@ export function useThreadHeaderOptions(props: {
         ? undefined
         : () => compactHomeHeaderItems,
     // The workspace navigator adds compose to the Duo detail column's bar.
-    unstable_headerRightItems: () =>
-      usesDuoHeader || layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems,
+    unstable_headerRightItems: () => [
+      ...(props.organizeItem ? [props.organizeItem] : []),
+      ...(usesDuoHeader || layout.usesSplitView
+        ? threadCenterHeaderItems
+        : compactRightHeaderItems),
+    ],
     unstable_headerToolbarItems: () => [],
     unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
     contentStyle: undefined,
@@ -106,6 +112,7 @@ export function useThreadHeaderOptions(props: {
     options,
     // Factories re-read only on version changes; include displayed items and hidden callback state such as default refs.
     optionsVersion: [
+      props.organizeItem,
       splitLeftHeaderItems,
       threadCenterHeaderItems,
       compactRightHeaderItems,
