@@ -1,5 +1,6 @@
 import {
   OrchestratorMcpFailure,
+  OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
@@ -715,6 +716,38 @@ const threadUnqueueCommand = Command.make("unqueue", {
   ),
 );
 
+const threadInterruptCommand = Command.make("interrupt", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Interrupt a thread's running turn without starting a new turn."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.interrupt")(function* (tools) {
+          const interrupted = yield* tools.call(
+            "t3_thread_interrupt",
+            { threadId },
+            OrchestratorMcpThreadInterruptResult,
+          );
+          if (flags.json) {
+            yield* printJson(interrupted);
+          } else if (interrupted.status === "no_active_run") {
+            yield* Console.log("Nothing is running.");
+          } else if (interrupted.status === "interrupt_requested") {
+            yield* Console.log("Interrupted.");
+          } else {
+            yield* Console.log(`Already stopped (${interrupted.status}).`);
+          }
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
   thread: threadArgument,
@@ -777,6 +810,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadSendCommand,
     threadPromoteCommand,
     threadUnqueueCommand,
+    threadInterruptCommand,
     threadShowCommand,
   ]),
 );
