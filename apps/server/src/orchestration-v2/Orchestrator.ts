@@ -1589,7 +1589,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           turnItemTypes: ["user_message", "notification"],
           turnItemRunIds: newerRunIds,
         })).turnItems.length > 0;
-      const ordinal = startedAhead ? nextRunOrdinal(projection) : queuedRun.ordinal;
+      const batchMembers =
+        options?.queuedRunId === undefined && settings.batchQueuedMessages
+          ? queuedRunBatch(projection, storedQueuedRun)
+          : [];
+      const ordinal =
+        startedAhead || batchMembers.length > 0 ? nextRunOrdinal(projection) : queuedRun.ordinal;
       const rootNodeId = queuedRun.rootNodeId;
       const attemptId = queuedRun.activeAttemptId;
       const providerThreadId = queuedRun.providerThreadId;
@@ -1965,11 +1970,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedAt: now,
       };
       const batchEvents =
-        options?.queuedRunId === undefined &&
-        settings.batchQueuedMessages &&
         userTurnItem.type === "user_message"
           ? queuedRunBatchEvents({
-              members: queuedRunBatch(projection, storedQueuedRun),
+              members: batchMembers,
               projection,
               target: startingRun,
               rootNodeId,
@@ -2171,7 +2174,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             },
           })),
           ...executionIdentityEvents,
-          ...batchEvents,
           {
             type: "provider-thread.updated",
             threadId,
@@ -2188,6 +2190,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             occurredAt: now,
             payload: notificationTurnItem(userTurnItem, queuedMessage, projection.subagents),
           },
+          ...batchEvents,
           {
             type: "run.updated",
             threadId,
