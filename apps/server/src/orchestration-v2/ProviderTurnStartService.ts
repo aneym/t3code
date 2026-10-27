@@ -1125,12 +1125,20 @@ export const layer: Layer.Layer<
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
-      const noteContinuation = isRestartNoteContinuation(
-        run,
-        projection.runs,
-        projection.providerTurns,
-        projection.attempts,
+      const continuationSource = projection.runs.find(
+        (source) => source.id === run.restartContinuationOfRunId,
       );
+      const noteContinuation =
+        (continuationSource !== undefined &&
+          !projection.providerTurns.some(
+            (turn) => turn.runAttemptId === continuationSource.activeAttemptId,
+          )) ||
+        isRestartNoteContinuation(
+          run,
+          projection.runs,
+          projection.providerTurns,
+          projection.attempts,
+        );
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,

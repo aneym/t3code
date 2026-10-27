@@ -22,7 +22,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { restartContinuationRun } from "./RestartContinuation.ts";
+import { restartContinuationRun, unacceptedRestartRun } from "./RestartContinuation.ts";
 import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
 import { recoveryQueueHold } from "./QueuedRunBatch.ts";
 import {
@@ -616,10 +616,10 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(
+          ? (restartContinuationRun(
               { ...projection, providerSessions: sessionsLiveAtStart(projection, stoppedThisPass) },
               now,
-            )
+            ) ?? unacceptedRestartRun(projection, now))
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -763,7 +763,9 @@ export const make = Effect.gen(function* () {
             .continueThreadsAfterServerUpdate
         )
           return;
-        const run = restartContinuationRun(projection, yield* DateTime.now);
+        const now = yield* DateTime.now;
+        const run =
+          restartContinuationRun(projection, now) ?? unacceptedRestartRun(projection, now);
         if (!run) return;
         const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
         yield* eventSink.writeWithEffects({
