@@ -1570,6 +1570,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     instanceId,
     settings,
     environment: yield* mergeProviderInstanceEnvironment(environment, hostEnvironment),
+    environmentId,
     clientFactory,
     crypto,
     fileSystem,
@@ -1591,6 +1592,7 @@ export interface CodexAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: CodexSettings;
   readonly environment: NodeJS.ProcessEnv;
+  readonly environmentId?: string;
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
