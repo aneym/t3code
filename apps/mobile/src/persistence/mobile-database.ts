@@ -4,7 +4,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import type { SQLiteDatabase } from "expo-sqlite";
 
 const DATABASE_NAME = "t3code-client.db";
@@ -289,68 +288,23 @@ const makeAvailable = Effect.gen(function* () {
     catch: databaseError("migrate"),
   });
 
-  // Exclusive transactions get their own connection with no busy handler; overlapping writes fail as locked.
-  const writeLock = yield* Semaphore.make(1);
-  const budgetRequests = yield* Queue.sliding<void>(1);
-  let budgetOutboxLoaded = false;
-  const budgetProtectedThreadKeys = new Set<string>();
-  yield* Effect.gen(function* () {
-    while (true) {
-      yield* Queue.take(budgetRequests);
-      yield* Effect.sleep("30 seconds");
-      while ((yield* Queue.poll(budgetRequests))._tag === "Some") {}
-      yield* Effect.tryPromise({
-        try: () =>
-          budgetOutboxLoaded
-            ? enforceThreadCacheBudget(database, {
-                maxBytes: THREAD_CACHE_MAX_BYTES,
-                protectedThreadKeys: budgetProtectedThreadKeys,
-              })
-            : Promise.resolve({ evicted: 0, bytes: 0 }),
-        catch: databaseError("enforce-thread-cache-budget"),
-      }).pipe(
-        writeLock.withPermits(1),
-        Effect.catch((error) => Effect.logWarning(error)),
-      );
-    }
-  }).pipe(Effect.forkScoped);
-
   return MobileDatabase.of({
-    loadCache: Effect.fn("MobileDatabase.loadCache")(function* (environmentId, kind, cacheKey) {
-      const now = Date.now();
-      const row = yield* Effect.tryPromise({
+    loadCache: Effect.fn("MobileDatabase.loadCache")((environmentId, kind, cacheKey) =>
+      Effect.tryPromise({
         try: () =>
-          database.getFirstAsync<{
-            readonly payload: string;
-            readonly accessedAt: number;
-          }>(
-            `SELECT client_cache.payload, client_cache_meta.accessed_at AS accessedAt
+          database.getFirstAsync<{ readonly payload: string }>(
+            `SELECT payload
                      FROM client_cache
                      WHERE environment_id = ? AND kind = ? AND cache_key = ?
                        AND (kind != 'pull-request' OR updated_at >= ?)`,
             environmentId,
             kind,
             cacheKey,
-            now - 30 * 24 * 60 * 60_000,
+            Date.now() - 30 * 24 * 60 * 60_000,
           ),
         catch: databaseError("load-cache"),
-      });
-      if (kind === "thread" && row && row.accessedAt <= now - 60_000) {
-        yield* Effect.tryPromise({
-          try: () =>
-            database.runAsync(
-              `UPDATE client_cache_meta SET accessed_at = ?
-               WHERE environment_id = ? AND kind = 'thread' AND cache_key = ? AND accessed_at <= ?`,
-              now,
-              environmentId,
-              cacheKey,
-              now - 60_000,
-            ),
-          catch: databaseError("load-cache"),
-        }).pipe(writeLock.withPermits(1));
-      }
-      return Option.fromNullishOr(row?.payload);
-    }),
+      }).pipe(Effect.map((row) => Option.fromNullishOr(row?.payload))),
+    ),
     listCache: Effect.fn("MobileDatabase.listCache")((kind) =>
       Effect.tryPromise({
         try: () =>
@@ -360,33 +314,6 @@ const makeAvailable = Effect.gen(function* () {
           ),
         catch: databaseError("list-cache"),
       }).pipe(Effect.map((rows) => rows.map((row) => row.payload))),
-    ),
-    listThreadCacheIndex: Effect.fn("MobileDatabase.listThreadCacheIndex")((environmentId) =>
-      Effect.tryPromise({
-        try: () =>
-          database.getAllAsync<ThreadCacheIndexRow>(
-            `SELECT cache_key AS threadId, source_updated_at AS sourceUpdatedAt,
-             byte_size AS bytes, accessed_at AS accessedAt
-           FROM client_cache_meta WHERE environment_id = ? AND kind = 'thread'`,
-            environmentId,
-          ),
-        catch: databaseError("list-thread-cache-index"),
-      }),
-    ),
-    enforceThreadCacheBudget: Effect.fn("MobileDatabase.enforceThreadCacheBudget")((input) =>
-      Effect.tryPromise({
-        try: () => enforceThreadCacheBudget(database, input),
-        catch: databaseError("enforce-thread-cache-budget"),
-      }).pipe(writeLock.withPermits(1)),
-    ),
-    setThreadCacheProtection: Effect.fn("MobileDatabase.setThreadCacheProtection")((input) =>
-      Effect.sync(() => {
-        budgetOutboxLoaded = input.loaded;
-        budgetProtectedThreadKeys.clear();
-        for (const key of input.protectedThreadKeys) budgetProtectedThreadKeys.add(key);
-      }).pipe(
-        Effect.andThen(() => (input.loaded ? Queue.offer(budgetRequests, undefined) : Effect.void)),
-      ),
     ),
     saveCache: Effect.fn("MobileDatabase.saveCache")(
       (environmentId, kind, cacheKey, schemaVersion, payload) =>
@@ -415,7 +342,9 @@ const makeAvailable = Effect.gen(function* () {
                 Date.now(),
               );
               if (kind === "pull-request") {
-                const pruned = `cache_key IN (
+                await transaction.runAsync(
+                  `DELETE FROM client_cache WHERE environment_id = ? AND kind = 'pull-request'
+                   AND cache_key IN (
                      SELECT cache_key FROM (
                        SELECT cache_key, updated_at,
                          ROW_NUMBER() OVER (ORDER BY updated_at DESC, cache_key) AS position,
@@ -424,29 +353,17 @@ const makeAvailable = Effect.gen(function* () {
                          ) AS total_bytes
                        FROM client_cache WHERE environment_id = ? AND kind = 'pull-request'
                      ) WHERE position > 256 OR total_bytes > 33554432 OR updated_at < ?
-                   )`;
-                const cutoff = Date.now() - 30 * 24 * 60 * 60_000;
-                // The transaction connection does not enforce foreign keys, so the cascade never runs.
-                for (const table of ["client_cache_meta", "client_cache"]) {
-                  await transaction.runAsync(
-                    `DELETE FROM ${table} WHERE environment_id = ? AND kind = 'pull-request' AND ${pruned}`,
-                    environmentId,
-                    environmentId,
-                    cutoff,
-                  );
-                }
+                   )`,
+                  environmentId,
+                  environmentId,
+                  Date.now() - 30 * 24 * 60 * 60_000,
+                );
               }
             };
             await save(database);
           },
           catch: databaseError("save-cache"),
-        }).pipe(
-          writeLock.withPermits(1),
-          Effect.andThen(() =>
-            kind === "thread" ? Queue.offer(budgetRequests, undefined) : Effect.void,
-          ),
-          Effect.asVoid,
-        ),
+        }).pipe(Effect.asVoid),
     ),
     removeCache: Effect.fn("MobileDatabase.removeCache")((environmentId, kind, cacheKey) =>
       Effect.tryPromise({
@@ -459,7 +376,7 @@ const makeAvailable = Effect.gen(function* () {
             cacheKey,
           ),
         catch: databaseError("remove-cache"),
-      }).pipe(writeLock.withPermits(1), Effect.asVoid),
+      }).pipe(Effect.asVoid),
     ),
     clearCacheKind: Effect.fn("MobileDatabase.clearCacheKind")((environmentId, kind) =>
       Effect.tryPromise({
@@ -470,19 +387,19 @@ const makeAvailable = Effect.gen(function* () {
             kind,
           ),
         catch: databaseError("clear-cache-kind"),
-      }).pipe(writeLock.withPermits(1), Effect.asVoid),
+      }).pipe(Effect.asVoid),
     ),
     clearEnvironmentCache: Effect.fn("MobileDatabase.clearEnvironmentCache")((environmentId) =>
       Effect.tryPromise({
         try: () =>
           database.runAsync("DELETE FROM client_cache WHERE environment_id = ?", environmentId),
         catch: databaseError("clear-environment-cache"),
-      }).pipe(writeLock.withPermits(1), Effect.asVoid),
+      }).pipe(Effect.asVoid),
     ),
     clearAllCaches: Effect.tryPromise({
       try: () => database.runAsync("DELETE FROM client_cache"),
       catch: databaseError("clear-all-caches"),
-    }).pipe(writeLock.withPermits(1), Effect.asVoid),
+    }).pipe(Effect.asVoid),
     inspectCaches: Effect.tryPromise({
       try: () =>
         database.getAllAsync<unknown>(`
@@ -530,7 +447,7 @@ const makeAvailable = Effect.gen(function* () {
             updatedAt,
           ),
         catch: databaseError("save-preferences"),
-      }).pipe(writeLock.withPermits(1), Effect.asVoid),
+      }).pipe(Effect.asVoid),
     ),
   });
 });
