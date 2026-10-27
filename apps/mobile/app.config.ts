@@ -1,3 +1,6 @@
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import type { ExpoConfig } from "expo/config";
 
 import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
@@ -16,6 +19,13 @@ const runtimeVersionPolicy =
 
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
+const forkBundleIdentifier = repoEnv.T3CODE_MOBILE_FORK_BUNDLE_ID?.trim() || undefined;
+const isForkBuild = forkBundleIdentifier !== undefined;
+const withoutIosTeamCapabilities = isIosPersonalTeamBuild || isForkBuild;
+const forkBuildManifestPath = repoEnv.T3CODE_MOBILE_FORK_BUILD_JSON?.trim();
+const forkBuild: unknown = forkBuildManifestPath
+  ? JSON.parse(NodeFS.readFileSync(forkBuildManifestPath, "utf8"))
+  : null;
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
 const androidAdaptiveForeground = "./assets/android-icon-foreground.png";
@@ -28,6 +38,21 @@ if (
   throw new Error(
     "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.t3code when T3CODE_IOS_PERSONAL_TEAM=1.",
   );
+}
+
+if (isForkBuild) {
+  const missing = [
+    "T3CODE_MOBILE_FORK_SCHEME",
+    "T3CODE_MOBILE_FORK_NAME",
+    "T3CODE_IOS_TEAM_ID",
+    "T3CODE_MOBILE_UPDATES_URL",
+    "T3CODE_MOBILE_UPDATES_CERTIFICATE",
+  ].filter((name) => !repoEnv[name]?.trim());
+  if (!IOS_BUNDLE_IDENTIFIER_PATTERN.test(forkBundleIdentifier) || missing.length > 0) {
+    throw new Error(
+      `A fork build needs a reverse-DNS T3CODE_MOBILE_FORK_BUNDLE_ID and ${missing.join(", ") || "nothing else"}.`,
+    );
+  }
 }
 
 const DEVELOPMENT_ASSETS = {
@@ -107,7 +132,16 @@ function resolveAppVariant(value: string | undefined): AppVariant {
   }
 }
 
-const variant = VARIANT_CONFIG[APP_VARIANT];
+const stockVariant = VARIANT_CONFIG[APP_VARIANT];
+const variant = isForkBuild
+  ? {
+      ...stockVariant,
+      appName: repoEnv.T3CODE_MOBILE_FORK_NAME!.trim(),
+      scheme: repoEnv.T3CODE_MOBILE_FORK_SCHEME!.trim(),
+      iosBundleIdentifier: forkBundleIdentifier,
+      androidPackage: forkBundleIdentifier,
+    }
+  : stockVariant;
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : variant.iosBundleIdentifier;
@@ -194,7 +228,7 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   {
     ios: {
       // Personal Teams cannot sign App Groups or extension targets; keep local builds usable.
-      enabled: !isIosPersonalTeamBuild,
+      enabled: !withoutIosTeamCapabilities,
       extensionBundleIdentifier: `${iosBundleIdentifier}.sharing`,
       appGroupId: `group.${iosBundleIdentifier}`,
       activationRule: {
@@ -230,21 +264,32 @@ const config: ExpoConfig = {
   userInterfaceStyle: "automatic",
   updates: {
     enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+    url: isForkBuild
+      ? repoEnv.T3CODE_MOBILE_UPDATES_URL!.trim()
+      : "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
+    ...(isForkBuild
+      ? {
+          codeSigningCertificate: NodePath.relative(
+            process.cwd(),
+            NodePath.resolve(repoEnv.T3CODE_MOBILE_UPDATES_CERTIFICATE!.trim()),
+          ),
+          codeSigningMetadata: { keyid: "main", alg: "rsa-v1_5-sha256" as const },
+        }
+      : {}),
   },
   ios: {
     icon: variant.assets.iosIcon,
     supportsTablet: true,
     requireFullScreen: process.env.T3_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
+    ...(repoEnv.T3CODE_IOS_BUILD_NUMBER ? { buildNumber: repoEnv.T3CODE_IOS_BUILD_NUMBER } : {}),
     // Avoid Personal Team fallback: it cannot sign App Groups, Apple sign-in or push entitlements.
-    appleTeamId: "ARK85ZXQ4Z",
-    associatedDomains: [
-      `applinks:${variant.relyingParty}`,
-      `webcredentials:${variant.relyingParty}`,
-    ],
+    appleTeamId: isForkBuild ? repoEnv.T3CODE_IOS_TEAM_ID!.trim() : "ARK85ZXQ4Z",
+    associatedDomains: isForkBuild
+      ? []
+      : [`applinks:${variant.relyingParty}`, `webcredentials:${variant.relyingParty}`],
     entitlements: {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
     },
@@ -327,7 +372,7 @@ const config: ExpoConfig = {
     ],
     "expo-secure-store",
     "expo-sqlite",
-    ...(isIosPersonalTeamBuild
+    ...(withoutIosTeamCapabilities
       ? [sharingPlugin]
       : ["./plugins/withShareExtensionDisplayName.cjs", sharingPlugin]),
     [
@@ -339,7 +384,7 @@ const config: ExpoConfig = {
       },
     ],
     // Gate Clerk here: withoutIosPersonalTeamCapabilities runs too early to strip its entitlement.
-    ["@clerk/expo", { theme: "./clerk-theme.json", appleSignIn: !isIosPersonalTeamBuild }],
+    ["@clerk/expo", { theme: "./clerk-theme.json", appleSignIn: !withoutIosTeamCapabilities }],
     "expo-web-browser",
     [
       "expo-quick-actions",
@@ -418,7 +463,7 @@ const config: ExpoConfig = {
     // Compile out the unused pedometer to avoid an iOS motion purpose string.
     ["expo-sensors", { motionPermission: false }],
     // Mods run in reverse order; expo-widgets must create and wipe the target before assets are added.
-    ...(!isIosPersonalTeamBuild ? ["./plugins/withWidgetLogoAsset.cjs", widgetsPlugin] : []),
+    ...(!withoutIosTeamCapabilities ? ["./plugins/withWidgetLogoAsset.cjs", widgetsPlugin] : []),
     "./plugins/withAndroidCleartextTraffic.cjs",
     "./plugins/withAndroidGradleHeap.cjs",
     "./plugins/withAndroidInputBackground.cjs",
@@ -426,11 +471,13 @@ const config: ExpoConfig = {
     "./plugins/withAndroidModernAlertDialog.cjs",
     "./plugins/withAndroidPredictiveBackCompat.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
-    ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
+    ...(withoutIosTeamCapabilities ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
   ],
   extra: {
     appVariant: APP_VARIANT,
-    iosPersonalTeamBuild: isIosPersonalTeamBuild,
+    iosPersonalTeamBuild: withoutIosTeamCapabilities,
+    agentAwarenessRelay: !isForkBuild,
+    forkBuild,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
     },
@@ -448,11 +495,9 @@ const config: ExpoConfig = {
       tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
-    eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    },
+    ...(isForkBuild ? {} : { eas: { projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454" } }),
   },
-  owner: "pingdotgg",
+  ...(isForkBuild ? {} : { owner: "pingdotgg" }),
   experiments: {
     // Metro only runs babel-plugin-react-compiler when this is set; see src/reactCompilerCoverage.test.ts.
     reactCompiler: true,

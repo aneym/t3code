@@ -151,12 +151,16 @@ function readRelayConfig(): { readonly url: string } | null {
   return { url: relayUrl };
 }
 
+function relayRegistrationEnabled(): boolean {
+  return Constants.expoConfig?.extra?.agentAwarenessRelay !== false;
+}
+
 function canRegisterRemoteLiveActivities(): boolean {
-  return Platform.OS === "ios";
+  return Platform.OS === "ios" && relayRegistrationEnabled();
 }
 
 function canRegisterPushNotifications(): boolean {
-  return Platform.OS === "ios" || Platform.OS === "android";
+  return (Platform.OS === "ios" || Platform.OS === "android") && relayRegistrationEnabled();
 }
 
 export function shouldRegisterAgentAwarenessDeviceForProvider(
