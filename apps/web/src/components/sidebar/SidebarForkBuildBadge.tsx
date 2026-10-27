@@ -35,21 +35,27 @@ function ForkBuildBadge({
   const [manifest, setManifest] = useState<Loadable<ForkBuildManifest | null>>(LOADING);
   const [upstream, setUpstream] = useState<Loadable<UpstreamNightlyStatus | null>>(LOADING);
   const [releases, setReleases] = useState<ForkReleaseResult | null>(null);
+  const [selectOpen, setSelectOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const fetchReleases = useAtomCommand(listForkReleases, { reportFailure: false });
 
+  const refreshReleases = () => {
+    if (primaryEnvironment === null) return;
+    void fetchReleases({
+      environmentId: primaryEnvironment.environmentId,
+      input: undefined,
+    }).then(setReleases);
+  };
+
   const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && (selectOpen || switching)) return;
     setOpen(nextOpen);
     if (!nextOpen) return;
     void loadForkBuildManifest().then((value) => setManifest({ status: "done", value }));
     void checkUpstreamNightly(forkVersion.upstreamBuild).then((value) =>
       setUpstream({ status: "done", value }),
     );
-    if (primaryEnvironment !== null) {
-      void fetchReleases({
-        environmentId: primaryEnvironment.environmentId,
-        input: undefined,
-      }).then(setReleases);
-    }
+    refreshReleases();
   };
 
   const upstreamIsNewer =
@@ -87,6 +93,9 @@ function ForkBuildBadge({
             manifest={manifest}
             upstream={upstream}
             releases={releases}
+            onSelectOpenChange={setSelectOpen}
+            onSwitchingChange={setSwitching}
+            onSwitchComplete={refreshReleases}
           />
         </PreviewCardPopup>
       ) : null}
@@ -100,12 +109,18 @@ function ForkBuildDetails({
   manifest,
   upstream,
   releases,
+  onSelectOpenChange,
+  onSwitchingChange,
+  onSwitchComplete,
 }: {
   environmentId: EnvironmentId | null;
   forkVersion: ForkVersion;
   manifest: Loadable<ForkBuildManifest | null>;
   upstream: Loadable<UpstreamNightlyStatus | null>;
   releases: ForkReleaseResult | null;
+  onSelectOpenChange: (open: boolean) => void;
+  onSwitchingChange: (switching: boolean) => void;
+  onSwitchComplete: () => void;
 }) {
   const serverVersion = usePrimaryEnvironment()?.serverConfig?.environment.serverVersion ?? null;
   const builtAt = manifest.status === "done" ? (manifest.value?.builtAt ?? null) : null;
@@ -147,7 +162,13 @@ function ForkBuildDetails({
         </div>
       ) : null}
       {environmentId === null ? null : (
-        <ForkReleaseSwitcher environmentId={environmentId} releases={releases} />
+        <ForkReleaseSwitcher
+          environmentId={environmentId}
+          releases={releases}
+          onSelectOpenChange={onSelectOpenChange}
+          onSwitchingChange={onSwitchingChange}
+          onSwitchComplete={onSwitchComplete}
+        />
       )}
     </div>
   );

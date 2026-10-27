@@ -14,6 +14,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import {
   hasMacArmDesktop,
   isUnknownMethodFailure,
+  isVersionOlder,
   releaseDate,
   releaseLabel,
 } from "./forkReleaseSwitcher.logic";
@@ -21,12 +22,18 @@ import {
 export function ForkReleaseSwitcher({
   environmentId,
   releases: queryResult,
+  onSelectOpenChange,
+  onSwitchingChange,
+  onSwitchComplete,
 }: {
   readonly environmentId: EnvironmentId;
   readonly releases: AsyncResult.AsyncResult<
     { readonly releases: ReadonlyArray<ForkRelease> },
     unknown
   > | null;
+  readonly onSelectOpenChange?: (open: boolean) => void;
+  readonly onSwitchingChange?: (switching: boolean) => void;
+  readonly onSwitchComplete?: () => void;
 }) {
   const query = queryResult ?? AsyncResult.success({ releases: [] });
   const environment = useAtomValue(serverEnvironment.configValueAtom(environmentId));
@@ -34,6 +41,14 @@ export function ForkReleaseSwitcher({
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const [selectOpen, setSelectOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const setSelectOpenState = (open: boolean) => {
+    setSelectOpen(open);
+    onSelectOpenChange?.(open);
+  };
+  const setSwitchingState = (value: boolean) => {
+    setSwitching(value);
+    onSwitchingChange?.(value);
+  };
   const updateState = useAtomValue(serverUpdateStateAtom(environmentId));
   const canUpdate = canUpdateServer(
     useAtomValue(environmentSession.sessionStateAtom(environmentId)),
@@ -53,33 +68,58 @@ export function ForkReleaseSwitcher({
 
   const switchServer = async (target: ForkRelease) => {
     if (switching || !canUpdate || isDesktopManaged) return;
-    setSwitching(true);
+    setSwitchingState(true);
     await updateServer(
       {
         environmentId,
         serverLabel: "Server",
         selfUpdate: environment?.environment.capabilities.serverSelfUpdate ?? null,
         targetVersion: target.version,
-        allowDowngrade: currentVersion !== target.version && !target.latest,
+        allowDowngrade: isVersionOlder(target.version, currentVersion),
       },
       { quiet: true },
     );
-    setSwitching(false);
+    setSwitchingState(false);
+    onSwitchComplete?.();
   };
 
   const switchToApp = async () => {
-    if (switching || desktopBridge?.installDesktopVersion === undefined) return;
-    setSwitching(true);
-    await desktopBridge.installDesktopVersion(APP_VERSION);
-    setSwitching(false);
+    if (switching || desktopBridge?.installDesktopVersion === undefined || selected === undefined)
+      return;
+    setSwitchingState(true);
+    await desktopBridge.installDesktopVersion(selected.version);
+    setSwitchingState(false);
+    onSwitchComplete?.();
+  };
+
+  const returnServerToApp = async () => {
+    if (switching || !canUpdate) return;
+    setSwitchingState(true);
+    await updateServer(
+      {
+        environmentId,
+        serverLabel: "Server",
+        selfUpdate: environment?.environment.capabilities.serverSelfUpdate ?? null,
+        targetVersion: APP_VERSION,
+        allowDowngrade: isVersionOlder(APP_VERSION, currentVersion),
+      },
+      { quiet: true },
+    );
+    setSwitchingState(false);
+    onSwitchComplete?.();
   };
 
   if (query.waiting || AsyncResult.isInitial(query)) {
     return <p className="text-muted-foreground">Loading releases…</p>;
   }
-  if (showUnknownMethodFallback) {
+  if (showUnknownMethodFallback && canUpdate) {
     return (
-      <Button size="xs" variant="outline" disabled={switching} onClick={() => void switchToApp()}>
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={switching}
+        onClick={() => void returnServerToApp()}
+      >
         Return server to {APP_VERSION}
       </Button>
     );
@@ -115,7 +155,7 @@ export function ForkReleaseSwitcher({
           value={selected?.version ?? ""}
           onValueChange={(value) => setSelectedVersion(value)}
           open={selectOpen}
-          onOpenChange={setSelectOpen}
+          onOpenChange={setSelectOpenState}
         >
           <SelectTrigger size="sm" aria-label="Server release">
             <SelectValue />
