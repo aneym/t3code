@@ -60,6 +60,7 @@ import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import { useUiStateStore } from "../../uiStateStore";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { useClientSettings } from "../../hooks/useSettings";
 import { vcsEnvironment } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -218,6 +219,8 @@ function SidebarThreadTooltip({
   showInstanceBadge,
   modelInstanceId,
   modelLabel,
+  statusLabel,
+  statusStartedAt,
   branchMismatch,
   terminalStatus,
   terminalProcessCount,
@@ -232,6 +235,8 @@ function SidebarThreadTooltip({
   showInstanceBadge: boolean;
   modelInstanceId: string;
   modelLabel: string;
+  statusLabel: string | null;
+  statusStartedAt: string | null;
   branchMismatch: {
     threadBranch: string;
     currentBranch: string;
@@ -260,6 +265,20 @@ function SidebarThreadTooltip({
           <div className="flex min-w-0 items-center gap-2">
             {project ? <ProjectFavicon project={project} className="size-3 shrink-0" /> : null}
             <div className="min-w-0 truncate text-foreground/75">{projectDisplayName}</div>
+          </div>
+        ) : null}
+        {statusLabel ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <ClockIcon className="size-3 shrink-0 stroke-muted-foreground" />
+            <div className="min-w-0 truncate text-foreground/75">
+              {statusLabel}
+              {statusStartedAt !== null ? (
+                <>
+                  {" "}
+                  <WorkingDuration startedAt={statusStartedAt} />
+                </>
+              ) : null}
+            </div>
           </div>
         ) : null}
         {environmentLabel ? (
@@ -610,6 +629,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     variant,
     variantAction,
   } = props;
+  const rowDisplay = useClientSettings((settings) => ({
+    showMachine: settings.sidebarThreadShowMachine,
+    showAgent: settings.sidebarThreadShowAgent,
+    showStatusText: settings.sidebarThreadShowStatusText,
+  }));
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
@@ -757,7 +781,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     : thread.modelSelection.model;
 
   const isRemote = thread.environmentId !== props.currentEnvironmentId;
-  const showsScratchMachine = !thread.branch && props.scratchMachineLabel !== null;
+  const showsScratchMachine =
+    rowDisplay.showMachine && !thread.branch && props.scratchMachineLabel !== null;
+  const statusStartedAt =
+    status === "working"
+      ? resolveWorkingStartedAt(thread)
+      : status === "waiting"
+        ? (thread.latestRun?.completedAt ?? null)
+        : null;
 
   const detailsTooltip = (
     <SidebarThreadTooltip
@@ -771,6 +802,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       showInstanceBadge={showInstanceBadge}
       modelInstanceId={modelInstanceId}
       modelLabel={modelLabel}
+      statusLabel={!rowDisplay.showStatusText ? (topStatus?.label ?? null) : null}
+      statusStartedAt={rowDisplay.showStatusText ? null : statusStartedAt}
       branchMismatch={branchMismatch}
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
@@ -1156,11 +1189,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             className="inline-flex cursor-pointer items-center gap-1 rounded-sm text-xs font-medium text-warning-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                           >
                             <AlarmClockIcon aria-hidden className="size-3" />
-                            <span role="status">Woke</span>
+                            {rowDisplay.showStatusText ? <span role="status">Woke</span> : null}
                           </button>
                         }
                       />
-                      <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
+                      <TooltipPopup side="top">
+                        {rowDisplay.showStatusText
+                          ? "Dismiss Woke notification"
+                          : "Woke · Dismiss notification"}
+                      </TooltipPopup>
                     </Tooltip>
                   ) : (
                     <span className="text-xs">
@@ -1241,7 +1278,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     !showsScratchMachine &&
     prBadge === null &&
     diff === null &&
-    !isRemote &&
+    (!isRemote || !rowDisplay.showMachine) &&
     runningTerminalIds.length === 0;
 
   return (
@@ -1334,11 +1371,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                                 )}
                               >
                                 <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
-                                <span role="status">{topStatus.label}</span>
+                                {rowDisplay.showStatusText ? (
+                                  <span role="status">{topStatus.label}</span>
+                                ) : null}
                               </button>
                             }
                           />
-                          <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
+                          <TooltipPopup side="top">
+                            {rowDisplay.showStatusText
+                              ? "Dismiss Woke notification"
+                              : "Woke · Dismiss notification"}
+                          </TooltipPopup>
                         </Tooltip>
                       ) : (
                         <span
@@ -1365,14 +1408,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           {/* Not a live region: a collapsed sidebar is inert, so
                             BackgroundThreadAnnouncer and the open thread's
                             timeline speak status changes instead. */}
-                          {topStatus.label}
-                          {status === "working" ? (
+                          {rowDisplay.showStatusText ? topStatus.label : null}
+                          {rowDisplay.showStatusText &&
+                          (status === "working" || status === "waiting") ? (
                             <span aria-hidden>
-                              <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
-                            </span>
-                          ) : status === "waiting" ? (
-                            <span aria-hidden>
-                              <WorkingDuration startedAt={thread.latestRun?.completedAt ?? null} />
+                              <WorkingDuration startedAt={statusStartedAt} />
                             </span>
                           ) : null}
                         </span>
@@ -1447,7 +1487,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   Regenerating title
                 </span>
               ) : null}
-              {metaLineEmpty ? (
+              {metaLineEmpty && rowDisplay.showAgent ? (
                 <span aria-hidden className="hidden shrink-0 redesign:inline-flex">
                   <SidebarProviderStack
                     thread={thread}
@@ -1499,7 +1539,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 aria-hidden
                 className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
               >
-                {isRemote && !showsScratchMachine ? (
+                {isRemote && rowDisplay.showMachine && !showsScratchMachine ? (
                   <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
                     <EnvironmentMachineIcon
                       aria-hidden
@@ -1508,10 +1548,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     />
                   </span>
                 ) : null}
-                <SidebarProviderStack
-                  thread={thread}
-                  providerEntryByInstanceId={props.providerEntryByInstanceId}
-                />
+                {rowDisplay.showAgent ? (
+                  <SidebarProviderStack
+                    thread={thread}
+                    providerEntryByInstanceId={props.providerEntryByInstanceId}
+                  />
+                ) : null}
               </span>
             </div>
           </div>
@@ -1705,6 +1747,8 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
           showInstanceBadge={showInstanceBadge}
           modelInstanceId={modelInstanceId}
           modelLabel={modelLabel}
+          statusLabel={null}
+          statusStartedAt={null}
           branchMismatch={branchMismatch}
           terminalStatus={terminalStatus}
           terminalProcessCount={runningTerminalIds.length}

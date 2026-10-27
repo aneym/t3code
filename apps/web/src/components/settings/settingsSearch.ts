@@ -294,6 +294,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance-interface",
   },
   {
+    id: "sidebar-thread-machine",
+    title: "Show machine in thread rows",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar machine environment host computer remote identity hide"],
+  },
+  {
+    id: "sidebar-thread-agent",
+    title: "Show agent in thread rows",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar agent provider model claude codex icon identity hide"],
+  },
+  {
+    id: "sidebar-thread-status-text",
+    title: "Show status text and working time",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar status working waiting duration elapsed timer label icon hide"],
+  },
+  {
     id: "interface-font",
     title: "Interface font",
     to: "/settings/appearance",
