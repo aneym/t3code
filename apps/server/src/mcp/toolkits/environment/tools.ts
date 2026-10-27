@@ -2,6 +2,7 @@ import {
   BackgroundActivityProfile,
   BackgroundActivityProfileSelection,
   ExecutionEnvironmentDescriptor,
+  HostResourcesSnapshot,
   OrchestratorMcpFailure,
   ServerSettings,
   ServerSettingsPatch,
@@ -9,6 +10,7 @@ import {
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Settings from "../../../serverSettings.ts";
@@ -40,14 +42,16 @@ const shared = {
 const EnvironmentReadTool = Tool.make("t3_environment_read", {
   ...shared,
   description:
-    "Read this server's identity and preferences. Providers and models: `orchestrator_capabilities`.",
+    "Read this server's identity, preferences, and current CPU and memory load. Providers and models: `orchestrator_capabilities`.",
   success: Schema.Struct({
     environmentId: ExecutionEnvironmentDescriptor.fields.environmentId,
     label: Schema.String,
     serverVersion: Schema.String,
     platform: ExecutionEnvironmentDescriptor.fields.platform,
     preferences: Schema.Struct(PreferenceFields),
+    resources: HostResourcesSnapshot,
   }),
+  dependencies: [...shared.dependencies, HostResources.HostResources],
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
