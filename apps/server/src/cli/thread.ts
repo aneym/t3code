@@ -6,6 +6,7 @@ import {
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitResult,
   OrchestrationV2DispatchCommandResult,
+  IsoDateTime,
   ProjectId,
   RunId,
   ThreadId,
@@ -716,6 +717,30 @@ const threadUnqueueCommand = Command.make("unqueue", {
   ),
 );
 
+const threadResumeCommand = Command.make("resume", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Resume a held queue in send order."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.resume")(function* (tools) {
+          const resumed = yield* tools.call(
+            "t3_queue_resume",
+            { threadId },
+            OrchestrationV2DispatchCommandResult,
+          );
+          yield* flags.json ? printJson(resumed) : Console.log("Resumed.");
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 const threadInterruptCommand = Command.make("interrupt", {
   ...projectLocationFlags,
   thread: threadArgument,
@@ -747,6 +772,51 @@ const threadInterruptCommand = Command.make("interrupt", {
     }).pipe(reportThreadErrors),
   ),
 );
+
+const ThreadOrganizeResult = Schema.Union([
+  OrchestrationV2DispatchCommandResult,
+  Schema.Struct({ settlesWhenTurnEnds: Schema.Literal(true) }),
+]);
+const decodeIsoDateTime = Schema.decodeUnknownEffect(IsoDateTime);
+
+const threadOrganizeCommand = (
+  action: "archive" | "unarchive" | "settle" | "unsettle" | "pin" | "unpin" | "snooze" | "unsnooze",
+) =>
+  Command.make(action, {
+    ...projectLocationFlags,
+    thread: threadArgument,
+    snoozedUntil: Flag.String("snoozed-until").pipe(
+      Flag.withDescription("ISO timestamp until which the thread stays snoozed."),
+      Flag.optional,
+    ),
+    json: jsonFlag,
+  }).pipe(
+    Command.withDescription(`${action[0]!.toUpperCase()}${action.slice(1)} a thread.`),
+    Command.withHandler((flags) =>
+      Effect.gen(function* () {
+        const threadId = yield* decodeThreadId(flags.thread);
+        yield* withThreadTools(
+          flags,
+          Effect.fn(`cli.thread.${action}`)(function* (tools) {
+            const result = yield* tools.call(
+              "t3_thread_organize",
+              {
+                threadId,
+                action,
+                ...(Option.isSome(flags.snoozedUntil)
+                  ? {
+                      snoozedUntil: yield* decodeIsoDateTime(flags.snoozedUntil.value),
+                    }
+                  : {}),
+              },
+              ThreadOrganizeResult,
+            );
+            yield* flags.json ? printJson(result) : Console.log("Done.");
+          }),
+        );
+      }).pipe(reportThreadErrors),
+    ),
+  );
 
 const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
@@ -810,7 +880,11 @@ export const threadCommand = Command.make("thread").pipe(
     threadSendCommand,
     threadPromoteCommand,
     threadUnqueueCommand,
+    threadResumeCommand,
     threadInterruptCommand,
+    ...(
+      ["archive", "unarchive", "settle", "unsettle", "pin", "unpin", "snooze", "unsnooze"] as const
+    ).map(threadOrganizeCommand),
     threadShowCommand,
   ]),
 );
