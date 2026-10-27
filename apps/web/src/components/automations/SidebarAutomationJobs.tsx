@@ -58,27 +58,34 @@ export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () 
     Schema.Boolean,
   );
   if (automations.length === 0) return null;
-  const titleCounts = new Map<string, number>();
-  for (const { task } of automations) {
-    titleCounts.set(task.title, (titleCounts.get(task.title) ?? 0) + 1);
+  const grouped = new Map<string, { environmentId: EnvironmentId; task: ScheduledTask; count: number }>();
+  for (const automation of automations) {
+    const key = `${automation.environmentId}:${automation.task.threadId ?? automation.task.id}`;
+    const current = grouped.get(key);
+    if (current) current.count += 1;
+    else grouped.set(key, { ...automation, count: 1 });
   }
+  const rows = [...grouped.values()];
+  const titleCounts = new Map<string, number>();
+  for (const { task } of rows) titleCounts.set(task.title, (titleCounts.get(task.title) ?? 0) + 1);
   return (
     <div className="mx-0.5">
       <CollapsibleSectionHeader
         expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
         data-testid="sidebar-automations-shelf-toggle"
-        accessory={<span className="font-normal tabular-nums">{automations.length}</span>}
+        accessory={<span className="font-normal tabular-nums">{rows.length}</span>}
       >
         Automations
       </CollapsibleSectionHeader>
       {expanded ? (
         <ul aria-label="Automation jobs" className="flex flex-col">
-          {automations.map(({ environmentId, task }) => (
+          {rows.map(({ environmentId, task, count }) => (
             <AutomationJobRow
               key={`${environmentId}:${task.id}`}
               environmentId={environmentId}
               task={task}
+              count={count}
               machine={
                 (titleCounts.get(task.title) ?? 0) > 1
                   ? (environments.find((environment) => environment.environmentId === environmentId)
@@ -115,6 +122,7 @@ function AutomationJobRow({
 }: {
   readonly environmentId: EnvironmentId;
   readonly task: ScheduledTask;
+  readonly count: number;
   readonly machine: string | null;
   readonly runThread: EnvironmentThreadShell | null;
   readonly onNavigate: () => void;
@@ -132,6 +140,7 @@ function AutomationJobRow({
       />
       <span className="min-w-0 flex-1 truncate font-normal text-secondary-label group-hover/automation-row:text-foreground group-focus-visible/automation-row:text-foreground">
         {task.title}
+        {count > 1 ? ` (${count})` : null}
         {machine ? <span> · {machine}</span> : null}
       </span>
       <span className="ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end text-xs tabular-nums text-secondary-label">

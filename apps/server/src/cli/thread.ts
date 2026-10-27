@@ -593,8 +593,8 @@ const threadPromoteCommand = Command.make("promote", {
         flags,
         Effect.fn("cli.thread.promote")(function* (tools) {
           const promoted = yield* tools.call(
-            "t3_queue_promote_to_steer",
-            { threadId, queuedRunId, targetRunId },
+            "t3_queue",
+            { action: "promote_to_steer", threadId, queuedRunId, targetRunId },
             OrchestrationV2DispatchCommandResult,
           );
           yield* flags.json ? printJson(promoted) : Console.log("Promoted.");
@@ -622,8 +622,8 @@ const threadUnqueueCommand = Command.make("unqueue", {
         flags,
         Effect.fn("cli.thread.unqueue")(function* (tools) {
           const cancelled = yield* tools.call(
-            "t3_queue_cancel",
-            { threadId, queuedRunId },
+            "t3_queue",
+            { action: "cancel", threadId, queuedRunId },
             OrchestrationV2DispatchCommandResult,
           );
           yield* flags.json ? printJson(cancelled) : Console.log("Unqueued.");
