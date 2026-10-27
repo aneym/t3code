@@ -58,6 +58,7 @@ import {
   pendingRestartCancelledBackgroundWork,
   restartCancelledBackgroundWorkNote,
 } from "./RestartBackgroundNote.ts";
+import { batchedProviderText, foldedQueuedTurnItems } from "./QueuedRunBatch.ts";
 
 export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStartError>()(
   "ProviderTurnStartError",
@@ -1106,10 +1107,20 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
+      const foldedItems = foldedQueuedTurnItems(projection.turnItems, run);
+      const userText = batchedProviderText(
+        [message, ...foldedItems].map((part) => ({
+          ...part,
+          text: projectComposerContextForProvider({
+            text: part.text,
+            records: part.context?.records ?? [],
+          }),
+        })),
+      );
+      const attachments = [
+        ...message.attachments,
+        ...foldedItems.flatMap((item) => item.attachments),
+      ];
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
@@ -1283,7 +1294,7 @@ export const layer: Layer.Layer<
                 tokenCap,
                 modelContextWindow,
                 userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
-                attachments: message.attachments,
+                attachments,
                 providerThread: budgetProviderThread,
                 nativeContextEstimate:
                   budgetProviderThread.contextUsage?.usedTokens === undefined
@@ -1415,7 +1426,7 @@ export const layer: Layer.Layer<
         message: {
           messageId: message.id,
           text: userText,
-          attachments: message.attachments,
+          attachments,
           createdBy: message.createdBy,
           creationSource: message.creationSource,
           ...(message.scheduledTaskId === undefined

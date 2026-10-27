@@ -507,6 +507,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? ["Continue threads after restarts"]
       : []),
+    ...(settings.batchQueuedMessages !== DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages
+      ? ["Send queued messages together"]
+      : []),
     ...(isBackgroundActivityDirty ? ["Background activity"] : []),
     ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
       ? ["New thread mode"]
@@ -628,6 +631,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
+      batchQueuedMessages: DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -2004,6 +2008,35 @@ export function MaintenanceSettingsPanel() {
                 updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
               }
               aria-label="Continue threads after restarts"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("batch-queued-messages")}
+          serverScoped
+          settingKeys={["batchQueuedMessages"]}
+          description="When a turn ends, start every queued message on the thread together as one turn instead of one turn each."
+          resetAction={
+            settings.batchQueuedMessages !== DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages ? (
+              <SettingResetButton
+                label="send queued messages together"
+                onClick={() =>
+                  updateSettings({
+                    batchQueuedMessages: DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["batchQueuedMessages"]}
+              checked={settings.batchQueuedMessages}
+              onCheckedChange={(checked) =>
+                updateSettings({ batchQueuedMessages: Boolean(checked) })
+              }
+              aria-label="Send queued messages together"
             />
           }
         />
