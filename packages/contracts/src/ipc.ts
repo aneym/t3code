@@ -1124,6 +1124,10 @@ export interface DesktopBridge {
     onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
   };
   preview?: DesktopPreviewBridge;
+  desktopBrowser?: {
+    onEvent: (listener: (line: string) => void) => () => void;
+    sendCommand: (line: string) => Promise<void>;
+  };
 }
 
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
