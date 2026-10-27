@@ -730,8 +730,8 @@ const threadResumeCommand = Command.make("resume", {
         flags,
         Effect.fn("cli.thread.resume")(function* (tools) {
           const resumed = yield* tools.call(
-            "t3_queue_resume",
-            { threadId },
+            "t3_queue",
+            { action: "resume", threadId },
             OrchestrationV2DispatchCommandResult,
           );
           yield* flags.json ? printJson(resumed) : Console.log("Resumed.");
