@@ -468,6 +468,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
       ? ["Diff whitespace changes"]
       : []),
+    ...(settings.showChatChangedFiles !== DEFAULT_UNIFIED_SETTINGS.showChatChangedFiles
+      ? ["Changed files in chat"]
+      : []),
     ...(settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? ["Diff layout"] : []),
     ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
       ? ["Proactive panels"]
@@ -594,6 +597,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
+      showChatChangedFiles: DEFAULT_UNIFIED_SETTINGS.showChatChangedFiles,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
@@ -1243,6 +1247,31 @@ export function GeneralSettingsPanel() {
                 updateSettings({ diffIgnoreWhitespace: Boolean(checked) })
               }
               aria-label="Hide whitespace changes by default"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("show-chat-changed-files")}
+          description="Show the changed-files card under assistant messages. Diffs stay available in the diff panel."
+          resetAction={
+            settings.showChatChangedFiles !== DEFAULT_UNIFIED_SETTINGS.showChatChangedFiles ? (
+              <SettingResetButton
+                label="changed files in chat"
+                onClick={() =>
+                  updateSettings({
+                    showChatChangedFiles: DEFAULT_UNIFIED_SETTINGS.showChatChangedFiles,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.showChatChangedFiles}
+              onCheckedChange={(checked) =>
+                updateSettings({ showChatChangedFiles: Boolean(checked) })
+              }
+              aria-label="Show changed files in chat"
             />
           }
         />
