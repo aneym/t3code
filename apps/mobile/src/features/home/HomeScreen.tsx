@@ -509,7 +509,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const renderV2Item = ({ item }: { readonly item: ThreadListV2ListItem }) => {
     if (item.type === "v2-pending") {
       const task = item.pendingTask;
-      const { destinationEnvironmentId: destination = task.environmentId } = task;
+      const dest = task.destinationId === undefined ? task.environmentId : task.destinationId;
       const key = scopedProjectKey(task.environmentId, task.projectId);
       return (
         <ThreadListV2PendingRow
@@ -523,13 +523,13 @@ export function HomeScreen(props: HomeScreenProps) {
           project={projectByKey.get(key) ?? null}
           projectTitle={v2ProjectTitleByProjectKey.get(key)}
           environmentLabel={
-            !destination
+            !dest
               ? "Auto balance"
               : Object.keys(props.savedConnectionsById).length > 1
-                ? (props.savedConnectionsById[destination]?.environmentLabel ?? null)
+                ? (props.savedConnectionsById[dest]?.environmentLabel ?? null)
                 : null
           }
-          environmentMachine={destination ? machineByEnvironmentId.get(destination) : undefined}
+          environmentMachine={dest ? machineByEnvironmentId.get(dest) : undefined}
           showPendingDivider={item.showPendingDivider}
           showTrailingDivider={item.showTrailingDivider}
           onSelectPendingTask={props.onSelectPendingTask}

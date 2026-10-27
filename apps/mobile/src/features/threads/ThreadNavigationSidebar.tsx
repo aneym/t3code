@@ -518,7 +518,7 @@ function ThreadNavigationSidebarPane(
     switch (item.type) {
       case "v2-pending": {
         const task = item.pendingTask;
-        const { destinationEnvironmentId: destination = task.environmentId } = task;
+        const dest = task.destinationId === undefined ? task.environmentId : task.destinationId;
         const key = scopedProjectKey(task.environmentId, task.projectId);
         return (
           <ThreadListV2PendingRow
@@ -532,13 +532,13 @@ function ThreadNavigationSidebarPane(
             project={projectByKey.get(key) ?? null}
             projectTitle={projectTitleByProjectKey.get(key)}
             environmentLabel={
-              !destination
+              !dest
                 ? "Auto balance"
                 : Object.keys(savedConnectionsById).length > 1
-                  ? (savedConnectionsById[destination]?.environmentLabel ?? null)
+                  ? (savedConnectionsById[dest]?.environmentLabel ?? null)
                   : null
             }
-            environmentMachine={destination ? machineByEnvironmentId.get(destination) : undefined}
+            environmentMachine={dest ? machineByEnvironmentId.get(dest) : undefined}
             pane="sidebar"
             showPendingDivider={item.showPendingDivider}
             onSelectPendingTask={props.onOpenPendingTask}
