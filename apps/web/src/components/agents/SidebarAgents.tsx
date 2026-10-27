@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
+import { useEnvironmentIdentities } from "../../state/environments";
 import { cn } from "~/lib/utils";
 import { deriveProjectIdentity } from "../../projectIdentity";
 import { ProjectMonogram } from "../ProjectMonogram";
@@ -36,6 +37,9 @@ export function SidebarAgents({ onNavigate }: { readonly onNavigate: () => void 
     PinnedAgentHandles,
   );
   const routeTarget = useThreadRouteTarget();
+  const environmentLabelById = new Map(
+    useEnvironmentIdentities().map((environment) => [environment.environmentId, environment.label]),
+  );
   const activeThreadKey =
     routeTarget?.kind === "server"
       ? `${routeTarget.threadRef.environmentId}:${routeTarget.threadRef.threadId}`
@@ -50,11 +54,15 @@ export function SidebarAgents({ onNavigate }: { readonly onNavigate: () => void 
   const rowProps = (agent: RailsAgent) => ({
     agent,
     active: agent.thread !== null && railsAgentThreadKey(agent.thread) === activeThreadKey,
+    machines: [agent.projectRef.environmentId, ...agent.environmentIds]
+      .flatMap((id) => environmentLabelById.get(id) ?? [])
+      .filter((label, index, all) => all.indexOf(label) === index)
+      .join(" · "),
     onNavigate,
   });
 
   return (
-    <div className="mb-2">
+    <div className="mt-2">
       <SidebarSection label="Agents" storageKey="t3code:sidebar-section:agents:expanded">
         <ul aria-label="Agents" className="flex flex-col">
           {pinned.map((agent) => (
@@ -102,6 +110,7 @@ function AgentRow(props: {
   readonly agent: RailsAgent;
   readonly active: boolean;
   readonly muted?: boolean;
+  readonly machines: string;
   readonly onNavigate: () => void;
   readonly toggle: {
     readonly label: string;
@@ -127,6 +136,11 @@ function AgentRow(props: {
       {agent.thread === null ? null : (
         <span className="flex shrink-0 group-focus-within/agent-row:invisible group-hover/agent-row:invisible">
           <AgentStatus thread={agent.thread} />
+        </span>
+      )}
+      {props.machines === "" ? null : (
+        <span className="mr-6 hidden shrink-0 text-xs text-sidebar-muted-foreground group-focus-within/agent-row:inline group-hover/agent-row:inline">
+          {props.machines}
         </span>
       )}
     </>
