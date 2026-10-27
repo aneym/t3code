@@ -73,6 +73,8 @@ const commandTool = {
 };
 const queueEntry = Schema.Struct({
   queuedRunId: RunId,
+  held: Schema.Boolean,
+  holdReason: Schema.optional(Schema.Literals(["restart", "stop", "blocked"])),
   text: Schema.String,
   truncated: Schema.Boolean,
 });
@@ -80,7 +82,7 @@ const QUEUE_READ_ACTIONS = ["list", "read"] as const;
 const QueueTool = Tool.make("t3_queue", {
   ...commandTool,
   description:
-    "Manage a thread's queued messages. Omit `threadId` for this thread. list: send order, paged by `cursor` and `limit`. read: up to 16,000 chars of one. edit: replace its `text`; attachments stay. cancel. reorder: before `beforeRunId`, or to the end with null. promote_to_steer: send it now as steering to active `targetRunId`. Writes fail once the run is no longer queued.",
+    "Manage a thread's queued messages. Omit `threadId` for this thread. list: send order, paged by `cursor` and `limit`, with held status; a held message with no `holdReason` is an unclassified backlog. read: up to 16,000 chars of one. edit: replace its `text`; attachments stay. cancel. reorder: before `beforeRunId`, or to the end with null. promote_to_steer: send it now as steering to active `targetRunId`. resume: release this thread's held queue and deliver in order. Writes fail once the run is no longer queued.",
   parameters: Schema.Struct({
     action: Schema.Literals([
       ...QUEUE_READ_ACTIONS,
@@ -88,6 +90,7 @@ const QueueTool = Tool.make("t3_queue", {
       "cancel",
       "reorder",
       "promote_to_steer",
+      "resume",
     ]),
     threadId: Schema.optional(ThreadId),
     queuedRunId: Schema.optional(RunId),
@@ -98,7 +101,11 @@ const QueueTool = Tool.make("t3_queue", {
     limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
   }),
   success: Schema.Union([
-    Schema.Struct({ items: Schema.Array(queueEntry), nextCursor: Schema.NullOr(NonNegativeInt) }),
+    Schema.Struct({
+      held: Schema.Boolean,
+      items: Schema.Array(queueEntry),
+      nextCursor: Schema.NullOr(NonNegativeInt),
+    }),
     queueEntry,
     OrchestrationV2DispatchCommandResult,
   ]),

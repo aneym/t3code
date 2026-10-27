@@ -488,6 +488,8 @@ it.effect.each(["queued", "preparing"] as const)("recovers $0 work after restart
         }),
         Layer.mock(EffectOutbox.EffectOutboxV2)({
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          cancelUnsettled: () => Effect.succeed([]),
+          signalCancellations: () => Effect.void,
         }),
       ),
     ),
@@ -498,31 +500,22 @@ it.effect.each(["queued", "preparing"] as const)("recovers $0 work after restart
       yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
     assert.equal(summary.terminalizedRuns, status === "preparing" ? 1 : 0);
     const command = committedInput;
+    if (status === "queued") {
+      assert.isNull(command);
+      return;
+    }
     assert.isNotNull(command);
     if (command === null) return;
     const runEvent = command.events.find((event) => event.type === "run.updated");
     const attemptEvent = command.events.find((event) => event.type === "run-attempt.updated");
     const nodeEvent = command.events.find((event) => event.type === "node.updated");
-    assert.equal(
-      runEvent?.type === "run.updated" ? runEvent.payload.status : null,
-      status === "preparing" ? "cancelled" : "queued",
-    );
+    assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.status : null, "cancelled");
     assert.isEmpty(command.effects);
-    if (status === "preparing") {
-      assert.equal(
-        attemptEvent?.type === "run-attempt.updated" ? attemptEvent.payload.status : null,
-        "cancelled",
-      );
-      assert.equal(
-        nodeEvent?.type === "node.updated" ? nodeEvent.payload.status : null,
-        "cancelled",
-      );
-    } else {
-      assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.queuePosition : null, 1);
-      assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.queueHeld : false, true);
-      assert.isUndefined(attemptEvent);
-      assert.isUndefined(nodeEvent);
-    }
+    assert.equal(
+      attemptEvent?.type === "run-attempt.updated" ? attemptEvent.payload.status : null,
+      "cancelled",
+    );
+    assert.equal(nodeEvent?.type === "node.updated" ? nodeEvent.payload.status : null, "cancelled");
   }).pipe(Effect.provide(layer));
 });
 

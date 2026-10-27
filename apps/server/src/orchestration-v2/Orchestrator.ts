@@ -1,3 +1,10 @@
+import {
+  canReleaseQueueHold,
+  clearQueueHold,
+  inheritedQueueHold,
+  stoppedQueueHold,
+  usageLimitHoldsQueue,
+} from "./QueueHoldPolicy.ts";
 import type {
   GuestShareId,
   OrchestrationV2SearchThreadInput,
@@ -739,26 +746,6 @@ function queuedRunModelSelection(
     : run.modelSelection;
 }
 
-function usageLimitHoldsQueue(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
-  providerInstanceId: ModelSelection["instanceId"],
-): boolean {
-  let latestSession: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
-  for (const session of projection.providerSessions) {
-    if (
-      session.providerInstanceId === providerInstanceId &&
-      (latestSession === undefined ||
-        DateTime.isGreaterThan(session.updatedAt, latestSession.updatedAt))
-    ) {
-      latestSession = session;
-    }
-  }
-  return (
-    usageLimitBlockedRun(projection.runs, projection.turnItems, latestSession?.lastError ?? null)
-      ?.providerInstanceId === providerInstanceId
-  );
-}
-
 function latestStableRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | null {
@@ -1474,6 +1461,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly queuedRunId?: RunId;
       },
     ) {
+      if (options?.endedRunId !== undefined) {
+        const before = yield* readCommandProjection(threadId);
+        const held = before.runs.filter((run) => canReleaseQueueHold(run, "restart"));
+        if (held.length > 0) {
+          const now = yield* DateTime.now;
+          yield* writeSystemEvents(
+            held.map((run) => ({
+              type: "run.updated" as const,
+              threadId,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: clearQueueHold(run),
+            })),
+          );
+        }
+      }
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
       const projection = yield* readCommandProjection(threadId);
       if (
@@ -1484,6 +1488,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return;
       }
+
+      if ((yield* effectOutbox.listUnsettledRestartContinuationIds(threadId)).length > 0) return;
 
       const storedQueuedRun =
         options?.queuedRunId === undefined
@@ -1503,19 +1509,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         modelSelection,
         providerInstanceId: modelSelection.instanceId,
       };
-      // A limited provider would fail and consume every waiting message.
       if (usageLimitHoldsQueue(projection, queuedRun.providerInstanceId)) {
         return;
       }
-      // Failed worktree creation would run queued work in the project checkout; wait for the user.
       const failedRun = latestExecutedRun(projection.runs);
       const failureClass =
         failedRun?.id === options?.failedRunId
           ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
           : undefined;
       const worktreeMissing =
-        failedRun?.id === options?.endedRunId &&
         failedRun?.workspacePreparation?.type === "worktree" &&
+        failedRun.status !== "completed" &&
         projection.thread.worktreePath === null;
       const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
       const projectOverride =
@@ -1549,7 +1553,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               runId: run.id,
               providerInstanceId: run.providerInstanceId,
               occurredAt: now,
-              payload: { ...run, queueHeld: true },
+              payload: { ...run, queueHeld: true, queueHoldReason: "blocked" },
             })),
         );
         return;
@@ -2187,25 +2191,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const resumeQueuedRuns = Effect.gen(function* () {
     const threadIds = yield* projectionStore.getRecoveryThreadIds("queued-runs");
-    let resumed = 0;
-    for (const threadId of threadIds) {
-      const resumedThread = yield* Effect.gen(function* () {
-        if (!(yield* projectionStore.canStartQueuedRun(threadId))) return false;
-        yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
-        return true;
-      }).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Failed to resume queued V2 run after recovery", {
-            threadId,
-            cause,
-          }).pipe(Effect.as(false)),
+    const resumed = yield* Effect.forEach(
+      threadIds,
+      (threadId) =>
+        Effect.gen(function* () {
+          const continuations = yield* effectOutbox.listUnsettledRestartContinuationIds(threadId);
+          yield* Effect.forEach(continuations, effectOutbox.awaitSettled, { discard: true });
+          if (!(yield* projectionStore.canStartQueuedRun(threadId))) return false;
+          yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
+          return true;
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to resume queued V2 run after recovery", {
+              threadId,
+              cause,
+            }).pipe(Effect.as(false)),
+          ),
         ),
-      );
-      if (resumedThread) {
-        resumed += 1;
-      }
-    }
-    return resumed;
+      { concurrency: "unbounded" },
+    );
+    return resumed.filter(Boolean).length;
   }).pipe(
     Effect.mapError(
       (cause) =>
@@ -5445,9 +5450,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (candidate) => candidate.id === projection.thread.activeProviderThreadId,
     );
     const activeRun = projection.runs.find(isBlockingRun);
-    // A message queued during worktree setup can arrive after that setup failed
-    // without a worktree. It waits, held, like the messages queued before the
-    // failure, instead of starting in the project checkout.
     const latestRun = latestExecutedRun(projection.runs);
     const worktreeMissingRun =
       activeRun === undefined &&
@@ -5457,16 +5459,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
-    const queueBehindRun = activeRun ?? worktreeMissingRun;
+    const continuesRun =
+      dispatchMode.type === "start_immediately" &&
+      (command.manualContinuationOfRunId !== undefined ||
+        command.restartContinuationOfRunId !== undefined ||
+        command.usageLimitContinuationOfRunId !== undefined);
+    const queueBehindRun =
+      activeRun ??
+      worktreeMissingRun ??
+      (continuesRun
+        ? undefined
+        : projection.runs.find((run) => run.status === "queued" && run.queueHeld === true));
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
       dispatchMode.type === "start_immediately" ||
       dispatchMode.type === "queue_after_active";
     const shouldQueue = queueBehindRun !== undefined && startsOrQueuesRun;
-    // Client messages resume held queues; server continuations and scheduled tasks do not.
-    // Provider failure or usage limits re-hold the queue. Failed worktree setup keeps it held
-    // until a worktree exists, so queued messages cannot start in the project checkout.
     const worktreeSetupUnresolved =
       projection.thread.worktreePath === null &&
       projection.runs.some(
@@ -5479,8 +5488,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (command.creationSource === "web" || command.creationSource === "mobile") &&
       command.scheduledTaskId === undefined;
     const heldRunsToRelease =
-      sentByUserFromClient && startsOrQueuesRun && !worktreeSetupUnresolved
-        ? projection.runs.filter((run) => run.status === "queued" && run.queueHeld === true)
+      sentByUserFromClient && startsOrQueuesRun && !continuesRun && !worktreeSetupUnresolved
+        ? projection.runs.filter((run) => canReleaseQueueHold(run, "client"))
         : [];
     const releasedAt = yield* DateTime.now;
     for (const held of heldRunsToRelease) {
@@ -5493,7 +5502,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         runId: held.id,
         providerInstanceId: held.providerInstanceId,
         occurredAt: releasedAt,
-        payload: { ...held, queueHeld: false },
+        payload: clearQueueHold(held),
       });
     }
     if (shouldQueue) {
@@ -5604,13 +5613,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         rootNodeId,
         activeAttemptId: attemptId,
         status: "queued",
-        ...(worktreeMissingRun !== undefined ||
-        (heldRunsToRelease.length === 0 &&
-          projection.runs.some(
-            (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
-          ))
-          ? { queueHeld: true }
-          : {}),
+        ...inheritedQueueHold(projection.runs, heldRunsToRelease, worktreeMissingRun !== undefined),
         queuePosition:
           goalStopRunId !== undefined
             ? 1
@@ -9101,18 +9104,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       type: "run.updated",
       payload: { ...state.run, status: "preparing", completedAt: null },
     });
-    // Messages held when this preparation failed follow the run again. A hold
-    // from a later run (a stop, say) is not this failure's to release.
     const failureOwnsQueue = latestExecutedRun(projection.runs)?.id === state.run.id;
     for (const run of projection.runs) {
-      if (!failureOwnsQueue || run.status !== "queued" || run.queueHeld !== true) continue;
+      if (!failureOwnsQueue || !canReleaseQueueHold(run, "preparation")) continue;
       yield* emitEvent({
         type: "run.updated",
         threadId: command.threadId,
         runId: run.id,
         providerInstanceId: run.providerInstanceId,
         occurredAt: now,
-        payload: { ...run, queueHeld: false },
+        payload: clearQueueHold(run),
       });
     }
   });
@@ -9671,14 +9672,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         continue;
       }
-      if (run.queueHeld === true) continue;
+      const hold = stoppedQueueHold(run);
+      if (hold === undefined) continue;
       yield* emitEvent({
         type: "run.updated",
         threadId: thread.id,
         runId: run.id,
         providerInstanceId: run.providerInstanceId,
         occurredAt: input.now,
-        payload: { ...run, queueHeld: true },
+        payload: { ...run, ...hold },
       });
     }
     const pullRequests = thread.pullRequests ?? [];
@@ -12029,7 +12031,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             runId: run.id,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...run, queueHeld: false },
+            payload: clearQueueHold(run),
           });
         }
         if (queued.length === 0) {
@@ -12148,6 +12150,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+      if (command.type === "message.dispatch")
+        yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
       if (command.type === "queue.resume" || command.type === "queued-run.start") {
         yield* mapDispatchError(command)(
           startNextQueuedRun(
@@ -12290,6 +12294,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
+    if (command.type === "message.dispatch")
+      yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
     if (command.type === "queue.resume" || command.type === "queued-run.start") {
       yield* mapDispatchError(command)(
         startNextQueuedRun(

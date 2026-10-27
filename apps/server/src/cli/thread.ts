@@ -1,9 +1,11 @@
 import {
   OrchestratorMcpFailure,
+  OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitResult,
+  OrchestrationV2DispatchCommandResult,
   ProjectId,
   RunId,
   ThreadId,
@@ -490,10 +492,15 @@ const messageArgument = Argument.String("message").pipe(
 const threadArgument = Argument.String("thread").pipe(Argument.withDescription("Thread id."));
 
 const decodeThreadIdValue = Schema.decodeUnknownEffect(ThreadId);
+const decodeRunIdValue = Schema.decodeUnknownEffect(RunId);
 const decodeTitle = Schema.decodeUnknownEffect(TrimmedNonEmptyString);
 const decodeThreadId = (value: string) =>
   decodeThreadIdValue(value.trim()).pipe(
     Effect.mapError(() => new ThreadUsageError({ detail: `'${value}' is not a thread id.` })),
+  );
+const decodeRunId = (value: string) =>
+  decodeRunIdValue(value.trim()).pipe(
+    Effect.mapError(() => new ThreadUsageError({ detail: `'${value}' is not a run id.` })),
   );
 
 const threadListCommand = Command.make("list", {
@@ -615,11 +622,15 @@ const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
   thread: threadArgument,
   message: messageArgument,
+  mode: Flag.Literals("mode", ["auto", "queue", "steer", "restart"]).pipe(
+    Flag.withDescription("How to deliver the message to the thread."),
+    Flag.withDefault("queue"),
+  ),
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
   Command.withDescription(
-    "Send a message to a thread. A busy thread gets it as its next turn; nothing is interrupted.",
+    "Send a message: queue uses the next turn without interrupting; steer updates the running turn mid-turn; restart interrupts and restarts; auto starts an idle thread, steers a running turn, or queues.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -630,7 +641,7 @@ const threadSendCommand = Command.make("send", {
         Effect.fn("cli.thread.send")(function* (tools) {
           const sent = yield* tools.call(
             "t3_thread_send",
-            { threadId, message, mode: "queue" },
+            { threadId, message, mode: flags.mode },
             OrchestratorMcpThreadSendResult,
           );
           if (flags.wait) {
@@ -639,6 +650,98 @@ const threadSendCommand = Command.make("send", {
           yield* flags.json
             ? printJson(sent)
             : Console.log(sent.delivery === "queued" ? "Queued." : "Sent.");
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
+const threadPromoteCommand = Command.make("promote", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  queuedRunId: Argument.String("queuedRunId").pipe(
+    Argument.withDescription("Run id of the queued message to promote."),
+  ),
+  targetRunId: Argument.String("targetRunId").pipe(
+    Argument.withDescription("Run id of the running turn to steer."),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Send one queued message now as steering to the given running turn."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      const queuedRunId = yield* decodeRunId(flags.queuedRunId);
+      const targetRunId = yield* decodeRunId(flags.targetRunId);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.promote")(function* (tools) {
+          const promoted = yield* tools.call(
+            "t3_queue",
+            { action: "promote_to_steer", threadId, queuedRunId, targetRunId },
+            OrchestrationV2DispatchCommandResult,
+          );
+          yield* flags.json ? printJson(promoted) : Console.log("Promoted.");
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
+const threadUnqueueCommand = Command.make("unqueue", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  queuedRunId: Argument.String("queuedRunId").pipe(
+    Argument.withDescription("Run id of the queued message to cancel."),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Cancel one queued message before its turn starts."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      const queuedRunId = yield* decodeRunId(flags.queuedRunId);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.unqueue")(function* (tools) {
+          const cancelled = yield* tools.call(
+            "t3_queue",
+            { action: "cancel", threadId, queuedRunId },
+            OrchestrationV2DispatchCommandResult,
+          );
+          yield* flags.json ? printJson(cancelled) : Console.log("Unqueued.");
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
+const threadInterruptCommand = Command.make("interrupt", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Interrupt a thread's running turn without starting a new turn."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.interrupt")(function* (tools) {
+          const interrupted = yield* tools.call(
+            "t3_thread_interrupt",
+            { threadId },
+            OrchestratorMcpThreadInterruptResult,
+          );
+          if (flags.json) {
+            yield* printJson(interrupted);
+          } else if (interrupted.status === "no_active_run") {
+            yield* Console.log("Nothing is running.");
+          } else if (interrupted.status === "interrupt_requested") {
+            yield* Console.log("Interrupted.");
+          } else {
+            yield* Console.log(`Already stopped (${interrupted.status}).`);
+          }
         }),
       );
     }).pipe(reportThreadErrors),
@@ -705,6 +808,9 @@ export const threadCommand = Command.make("thread").pipe(
     threadListCommand,
     threadStartCommand,
     threadSendCommand,
+    threadPromoteCommand,
+    threadUnqueueCommand,
+    threadInterruptCommand,
     threadShowCommand,
   ]),
 );
