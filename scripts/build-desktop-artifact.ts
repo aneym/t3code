@@ -2706,6 +2706,22 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   };
 });
 
+export const resolveDesktopPublishConfig = Effect.fn("resolveDesktopPublishConfig")(function* (
+  updateChannel: "latest" | "nightly",
+) {
+  const updateUrl = Option.getOrUndefined(
+    yield* Config.String("T3CODE_DESKTOP_UPDATE_URL").pipe(Config.option),
+  )?.trim();
+  if (updateUrl) {
+    return {
+      provider: "generic" as const,
+      url: updateUrl,
+      ...(updateChannel === "nightly" ? { channel: "nightly" as const } : {}),
+    };
+  }
+  return yield* resolveGitHubPublishConfig(updateChannel);
+});
+
 export function resolveDesktopUpdateChannel(version: string): "latest" | "nightly" {
   return cliReleaseChannelOf(version) === "nightly" ? "nightly" : "latest";
 }
@@ -2803,7 +2819,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   // Missing publish config infers a GitHub feed from tokens; staging has no repository, so manifest generation would crash.
   buildConfig.publish = null;
   if (!isDesktopPreviewVersion(version)) {
-    const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
+    const publishConfig = yield* resolveDesktopPublishConfig(updateChannel);
     if (publishConfig) {
       buildConfig.publish = [publishConfig];
     } else if (mockUpdates) {
