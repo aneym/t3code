@@ -579,7 +579,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "batch-queued-messages",
     title: "Send queued messages together",
-    to: "/settings/general",
+    to: "/settings/chat",
     scope: "environment-defaults",
     searchTerms: ["queue queued messages batch combine together one turn release drain follow up"],
   },
