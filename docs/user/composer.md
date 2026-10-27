@@ -214,7 +214,7 @@ Press **Resume** in an empty composer on web and desktop, or **Resume queue** on
 continue. Sending a new message also resumes the queue, unless it steers a turn that is already
 running. You can edit or remove held messages without starting them.
 
-With **Settings → Behavior → Send queued messages together** on (the default), every queued
+With **Settings → Chat → Send queued messages together** on (the default), every queued
 message starts as one turn when the agent finishes, in queue order and labeled with its sender,
 so the agent can take them in at once. A completed turn also releases held messages; after Stop
 they stay held until you resume. Turn the setting off to start queued messages one turn at a time.

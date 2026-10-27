@@ -1241,6 +1241,34 @@ export function ChatSettingsPanel() {
             </Select>
           }
         />
+        <SettingsRow
+          {...searchableSetting("batch-queued-messages")}
+          serverScoped
+          settingKeys={["batchQueuedMessages"]}
+          description="When a turn ends, start every queued message on the thread together as one turn instead of one turn each."
+          resetAction={
+            settings.batchQueuedMessages !== DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages ? (
+              <SettingResetButton
+                label="send queued messages together"
+                onClick={() =>
+                  updateSettings({
+                    batchQueuedMessages: DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["batchQueuedMessages"]}
+              checked={settings.batchQueuedMessages}
+              onCheckedChange={(checked) =>
+                updateSettings({ batchQueuedMessages: Boolean(checked) })
+              }
+              aria-label="Send queued messages together"
+            />
+          }
+        />
       </SettingsSection>
     </SettingsPageContainer>
   );
@@ -2008,35 +2036,6 @@ export function MaintenanceSettingsPanel() {
                 updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
               }
               aria-label="Continue threads after restarts"
-            />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("batch-queued-messages")}
-          serverScoped
-          settingKeys={["batchQueuedMessages"]}
-          description="When a turn ends, start every queued message on the thread together as one turn instead of one turn each."
-          resetAction={
-            settings.batchQueuedMessages !== DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages ? (
-              <SettingResetButton
-                label="send queued messages together"
-                onClick={() =>
-                  updateSettings({
-                    batchQueuedMessages: DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <ScopedSwitch
-              settingKeys={["batchQueuedMessages"]}
-              checked={settings.batchQueuedMessages}
-              onCheckedChange={(checked) =>
-                updateSettings({ batchQueuedMessages: Boolean(checked) })
-              }
-              aria-label="Send queued messages together"
             />
           }
         />
