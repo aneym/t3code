@@ -4228,7 +4228,7 @@ export interface ClaudeAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: ClaudeSettings;
   readonly environment: NodeJS.ProcessEnv;
-  readonly environmentId?: string;
+  readonly environmentId?: string | undefined;
   readonly attachmentsDir: string;
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
