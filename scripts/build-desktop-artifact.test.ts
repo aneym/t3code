@@ -479,7 +479,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ["0.1.3-nightly.20261026.3726.aneym.1", "T3 Dev"],
         ["0.1.3-nightly.20261026.3726.aneym.build", "T3 Dev"],
         ["0.1.3-nightly.20261026.3726", "T3 Code (Nightly)"],
-      ]) {
+      ] as const) {
         const config = yield* createBuildConfig(
           "mac",
           "dmg",
