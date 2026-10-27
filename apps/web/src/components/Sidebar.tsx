@@ -133,6 +133,8 @@ import {
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { SidebarAgents } from "./agents/SidebarAgents";
+import { useWithoutAgentThreads } from "./agents/railsAgents";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
@@ -1136,7 +1138,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     scopedProjectKeys,
     serverConfigs,
     optimisticDrop,
-    threads,
+    threads: useWithoutAgentThreads(threads),
     routeRowThreadKey,
   });
 
@@ -2699,6 +2701,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         className="min-h-full"
         fixedHeader={
           <SidebarGroup className="z-[1]">
+            <SidebarAgents onNavigate={() => isMobile && setOpenMobile(false)} />
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
