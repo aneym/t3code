@@ -26,6 +26,7 @@ import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import { Argument, Command, Flag } from "effect/cli";
 
+import { ThreadRestartResult } from "../mcp/toolkits/thread/tools.ts";
 import { projectLocationFlags } from "./config.ts";
 import {
   McpServerNotRunningError,
@@ -527,6 +528,36 @@ const threadSendCommand = Command.make("send", {
   ),
 );
 
+const threadRestartCommand = Command.make("restart", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "Restart a thread's agent session so its next turn reloads MCP servers, tools and settings. History, queue and child threads stay. A running thread restarts after its current turn.",
+  ),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      yield* withOwnerMcpTools(
+        "thread",
+        flags,
+        Effect.fn("cli.thread.restart")(function* (tools) {
+          const restart = yield* tools.call("t3_thread_restart", { threadId }, ThreadRestartResult);
+          if (flags.json) return yield* printJson(restart);
+          yield* Console.log(
+            restart.appliesAt === "next_turn"
+              ? "Restart requested. The next turn starts a fresh session."
+              : restart.appliesAt === "after_current_turn"
+                ? "Restart requested. It applies after the current turn."
+                : `Restart requested. It waits for ${restart.backgroundTasks} background tasks to finish.`,
+          );
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 const ThreadOrganizeResult = Schema.Union([
   OrchestrationV2DispatchCommandResult,
   Schema.Struct({ settlesWhenTurnEnds: Schema.Literal(true) }),
@@ -752,6 +783,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadListCommand,
     threadStartCommand,
     threadSendCommand,
+    threadRestartCommand,
     threadPromoteCommand,
     threadUnqueueCommand,
     threadInterruptCommand,

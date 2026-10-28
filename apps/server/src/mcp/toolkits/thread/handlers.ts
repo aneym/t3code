@@ -22,6 +22,8 @@ import {
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
+import { isActiveRun } from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSessionRestarts from "../../../orchestration-v2/ThreadSessionRestarts.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -326,6 +328,29 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         }
       }),
     ),
+  ),
+  t3_thread_restart: writesThread((input) =>
+    Effect.gen(function* () {
+      const { projection } = yield* readThread(input.threadId, ["runs", "providerThreads"]);
+      const threadId = projection.thread.id;
+      ThreadSessionRestarts.requestThreadSessionRestart(threadId);
+      const backgroundTasks = projection.providerThreads.reduce(
+        (total, providerThread) => total + (providerThread.pendingBackgroundTasks?.length ?? 0),
+        0,
+      );
+      const inventory = ThreadSessionRestarts.readMcpInventory(threadId);
+      return {
+        threadId,
+        appliesAt:
+          backgroundTasks > 0
+            ? ("after_background_tasks" as const)
+            : projection.runs.some(isActiveRun)
+              ? ("after_current_turn" as const)
+              : ("next_turn" as const),
+        backgroundTasks,
+        mcpBefore: inventory === null ? null : inventory.servers,
+      };
+    }),
   ),
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {

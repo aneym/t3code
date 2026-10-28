@@ -30,6 +30,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { executeRestartHandoff } from "./RestartHandoffExecution.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
+import * as ThreadSessionRestarts from "./ThreadSessionRestarts.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -147,6 +148,9 @@ export const layerExecutor: Layer.Layer<
             );
           }
           case "provider-session.detach":
+            if (effect.request.detail === ThreadSessionRestarts.CLIENT_SESSION_RESTART_DETAIL) {
+              ThreadSessionRestarts.expectThreadSessionRestartReport(effect.threadId);
+            }
             return providerSessions
               .detach({
                 providerSessionId: effect.request.providerSessionId,
