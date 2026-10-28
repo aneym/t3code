@@ -138,6 +138,7 @@ import { SidebarAutomationJobs } from "./automations/SidebarAutomationJobs";
 import { SidebarAgents } from "./agents/SidebarAgents";
 import { useSidebarPins } from "./agents/sidebarPins";
 import { useWithoutAgentMainThreads } from "./agents/railsAgents";
+import { useAgentMainThreadMenu } from "./agents/agentMainThreadMenu";
 import { SHELF_MORE_ROW_CLASS_NAME } from "./sidebar/shelfMoreRow";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
@@ -2342,6 +2343,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
 
+  const agentMainThreadMenu = useAgentMainThreadMenu();
   const handleThreadContextMenu = useStableCallback(
     (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
       void (async () => {
@@ -2417,6 +2419,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
+              agentMainThreads: agentMainThreadMenu.options(thread),
             }),
             position,
           ),
@@ -2430,6 +2433,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
           if (preset) attemptSnooze(threadRef, preset);
           return;
+        }
+        if (clicked.value.startsWith("agent-main:")) {
+          return agentMainThreadMenu.assign(clicked.value.slice("agent-main:".length), thread);
         }
         switch (clicked.value) {
           case "filter-by-project":

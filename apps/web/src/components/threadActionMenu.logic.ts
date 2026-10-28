@@ -7,6 +7,8 @@ export type ThreadActionMenuId =
   | "project-settings"
   | "pin"
   | "unpin"
+  | "agent-main"
+  | `agent-main:${string}`
   | "settle"
   | "unsettle"
   | "auto-settle"
@@ -90,6 +92,11 @@ export interface ThreadActionMenuState {
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
   /** Guest links need their own grant, so the caller checks it instead of `canOperate`. */
   readonly canShareWithGuest?: boolean;
+  readonly agentMainThreads?: ReadonlyArray<{
+    readonly handle: string;
+    readonly name: string;
+    readonly isCurrent: boolean;
+  }>;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -127,6 +134,7 @@ export function buildThreadActionMenuItems(
             : { id: "pin" as const, label: "Pin thread", icon: "pin" },
         ]
       : []),
+    ...agentMainThreadMenuItems(state.agentMainThreads ?? []),
     ...(state.supports.settlement
       ? [
           state.isSettled
@@ -241,4 +249,28 @@ export function buildThreadActionMenuItems(
             }
           : item,
       );
+}
+
+function agentMainThreadMenuItems(
+  agents: NonNullable<ThreadActionMenuState["agentMainThreads"]>,
+): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
+  const item = (agent: (typeof agents)[number], label: string) => ({
+    id: `agent-main:${agent.handle}` as const,
+    label,
+    checked: agent.isCurrent,
+    disabled: agent.isCurrent,
+  });
+  if (agents.length === 1) {
+    const [agent] = agents;
+    return agent ? [{ ...item(agent, `Make this ${agent.name}'s main thread`), icon: "pin" }] : [];
+  }
+  if (agents.length === 0) return [];
+  return [
+    {
+      id: "agent-main",
+      label: "Make this an agent's main thread",
+      icon: "pin",
+      children: agents.map((agent) => item(agent, agent.name)),
+    },
+  ];
 }
