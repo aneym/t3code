@@ -11,15 +11,23 @@ import { threadFamilies } from "../../state/threads";
 const AGENT_HOME_FILE = "agent.json";
 const RETRY_AFTER_MS = 30_000;
 
-interface AgentHomeBindingState {
-  readonly threadIdByHome: Readonly<Record<string, string | null>>;
-  readonly settle: (homeKey: string, threadId: string | null) => void;
+export interface AgentHomeIdentity {
+  readonly threadId: string | null;
+  readonly role: string | null;
+  readonly displayName: string | null;
 }
 
+interface AgentHomeBindingState {
+  readonly identityByHome: Readonly<Record<string, AgentHomeIdentity>>;
+  readonly settle: (homeKey: string, identity: AgentHomeIdentity) => void;
+}
+
+const NO_IDENTITY: AgentHomeIdentity = { threadId: null, role: null, displayName: null };
+
 const useAgentHomeBindingStore = create<AgentHomeBindingState>((set) => ({
-  threadIdByHome: {},
-  settle: (homeKey, threadId) =>
-    set((state) => ({ threadIdByHome: { ...state.threadIdByHome, [homeKey]: threadId } })),
+  identityByHome: {},
+  settle: (homeKey, identity) =>
+    set((state) => ({ identityByHome: { ...state.identityByHome, [homeKey]: identity } })),
 }));
 
 const inFlight = new Set<string>();
@@ -28,12 +36,24 @@ function homeKey(project: EnvironmentProject): string {
   return `${project.environmentId}:${project.workspaceRoot}`;
 }
 
-function parseAgentHomeThreadId(contents: string): string | null {
+function parseAgentHomeIdentity(contents: string): AgentHomeIdentity {
   try {
-    const threadId = (JSON.parse(contents) as { t3?: { thread_id?: unknown } }).t3?.thread_id;
-    return typeof threadId === "string" && threadId.length > 0 ? threadId : null;
+    const home = JSON.parse(contents) as {
+      t3?: { thread_id?: unknown };
+      role?: unknown;
+      display_name?: unknown;
+    };
+    const threadId = home.t3?.thread_id;
+    return {
+      threadId: typeof threadId === "string" && threadId.length > 0 ? threadId : null,
+      role: typeof home.role === "string" ? home.role : null,
+      displayName:
+        typeof home.display_name === "string" && home.display_name.length > 0
+          ? home.display_name
+          : null,
+    };
   } catch {
-    return null;
+    return NO_IDENTITY;
   }
 }
 
@@ -57,30 +77,30 @@ async function loadBinding(project: EnvironmentProject): Promise<void> {
     return;
   }
   inFlight.delete(key);
-  const threadId =
-    result.value.exists === false ? null : parseAgentHomeThreadId(result.value.contents);
-  if (threadId !== null) {
-    threadFamilies.mount(appAtomRegistry, project.environmentId, ThreadId.make(threadId));
+  const identity =
+    result.value.exists === false ? NO_IDENTITY : parseAgentHomeIdentity(result.value.contents);
+  if (identity.threadId !== null) {
+    threadFamilies.mount(appAtomRegistry, project.environmentId, ThreadId.make(identity.threadId));
   }
-  useAgentHomeBindingStore.getState().settle(key, threadId);
+  useAgentHomeBindingStore.getState().settle(key, identity);
 }
 
-export function useAgentHomeBoundThreadIds(
+export function useAgentHomeIdentities(
   homes: ReadonlyArray<EnvironmentProject>,
-): ReadonlyMap<string, string> {
-  const threadIdByHome = useAgentHomeBindingStore((state) => state.threadIdByHome);
+): ReadonlyMap<string, AgentHomeIdentity> {
+  const identityByHome = useAgentHomeBindingStore((state) => state.identityByHome);
   // oxlint-disable-next-line t3code/react-effect-budget -- agent.json lives on each host and is read over RPC once per home
   useEffect(() => {
     for (const project of homes) {
-      if (!(homeKey(project) in useAgentHomeBindingStore.getState().threadIdByHome)) {
+      if (!(homeKey(project) in useAgentHomeBindingStore.getState().identityByHome)) {
         void loadBinding(project);
       }
     }
   }, [homes]);
-  const bound = new Map<string, string>();
+  const identities = new Map<string, AgentHomeIdentity>();
   for (const project of homes) {
-    const threadId = threadIdByHome[homeKey(project)];
-    if (threadId != null) bound.set(`${project.environmentId}:${project.id}`, threadId);
+    const identity = identityByHome[homeKey(project)];
+    if (identity !== undefined) identities.set(`${project.environmentId}:${project.id}`, identity);
   }
-  return bound;
+  return identities;
 }

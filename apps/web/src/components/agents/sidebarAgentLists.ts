@@ -11,7 +11,7 @@ import { FocusIcon } from "lucide-react";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { shortcutLabelForCommand, threadJumpCommandForIndex } from "../../keybindings";
 import { useProjects } from "../../state/entities";
-import { type RailsAgent, useRailsAgents } from "./railsAgents";
+import { type RailsAgent, railsAgentHandle, useRailsAgents } from "./railsAgents";
 import { sidebarProjectPinKey, useSidebarPins } from "./sidebarPins";
 
 export const AGENTS_SECTION_STORAGE_KEY = "t3code:sidebar-section:agents:expanded";
@@ -28,7 +28,10 @@ export function useSidebarAgentLists(projectKeys: ReadonlySet<string> | null) {
     .flatMap((handle): RailsAgent[] => {
       const agent = agentByHandle.get(handle);
       if (agent) return [agent];
-      const project = projects.find((entry) => sidebarProjectPinKey(entry) === handle);
+      const project = projects.find(
+        (entry) =>
+          sidebarProjectPinKey(entry) === handle && railsAgentHandle(entry.workspaceRoot) === null,
+      );
       return project
         ? [
             {

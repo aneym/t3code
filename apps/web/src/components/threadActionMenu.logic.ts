@@ -26,7 +26,8 @@ export type ThreadActionMenuId =
   | "copy-thread"
   | "copy-thread-id"
   | "archive"
-  | "delete";
+  | "delete"
+  | "agent-pin";
 
 export type DraftActionMenuId =
   | "copy"
@@ -96,6 +97,7 @@ export interface ThreadActionMenuState {
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
+    "agent-pin",
     "new-thread-on-branch",
     "project-settings",
     "mark-unread",

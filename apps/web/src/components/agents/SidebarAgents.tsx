@@ -1,8 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { CircleCheckIcon, CircleDashedIcon, PinOffIcon, PinIcon } from "lucide-react";
 
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { useThreadActionMenu } from "../../hooks/useThreadActionMenu";
 import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
 import { useEnvironmentIdentities } from "../../state/environments";
 import { cn } from "~/lib/utils";
@@ -120,6 +121,28 @@ function AgentRow(props: {
 }) {
   const { agent } = props;
   const handleNewThread = useNewThreadHandler();
+  const navigate = useNavigate();
+  const { openMenu } = useThreadActionMenu({
+    threadRef:
+      agent.thread === null
+        ? null
+        : { environmentId: agent.thread.environmentId, threadId: agent.thread.id },
+    projectCwd: null,
+    onStartRename: () => {
+      if (agent.thread === null) return;
+      props.onNavigate();
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: agent.thread.environmentId, threadId: agent.thread.id },
+      });
+    },
+    canShareWithGuest: false,
+    agentPin: { label: props.toggle.label, onToggle: props.toggle.onClick },
+  });
+  const showMenu = (position: { x: number; y: number }) => {
+    if (agent.thread === null) props.onContextMenu(position);
+    else openMenu(position);
+  };
   const rowClassName = cn(
     "flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-sm outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset",
     props.active
@@ -150,13 +173,13 @@ function AgentRow(props: {
       className="group/agent-row relative flex items-center"
       onContextMenu={(event) => {
         event.preventDefault();
-        props.onContextMenu({ x: event.clientX, y: event.clientY });
+        showMenu({ x: event.clientX, y: event.clientY });
       }}
       onKeyDown={(event) => {
         if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
         event.preventDefault();
         const rect = event.currentTarget.getBoundingClientRect();
-        props.onContextMenu({ x: rect.left, y: rect.bottom });
+        showMenu({ x: rect.left, y: rect.bottom });
       }}
     >
       {agent.thread === null ? (
