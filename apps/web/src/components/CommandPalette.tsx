@@ -204,6 +204,7 @@ import {
   sourceControlHostIcon,
 } from "./CommandPaletteAddProject";
 import { useCommandPaletteThreadItems } from "./CommandPaletteThreadItems";
+import { useCommandPaletteAgentThreads } from "./agents/commandPaletteAgents";
 import { useCommandPaletteThemeItems } from "./CommandPaletteThemeItems";
 import {
   CommandPaletteVirtualizedResults,
@@ -801,6 +802,7 @@ function OpenCommandPaletteDialog(props: {
     now: searchNow,
     isSearchPending: isThreadSearchPending,
   } = useCommandPaletteThreadItems({ activeThread: activeThread ?? null, threadSearchQuery });
+  const withAgentThreads = useCommandPaletteAgentThreads(allThreadItems);
   // Recent means used recently: written in or opened, whichever is later. The
   // open thread would always lead that list, so it is left out.
   const activeThreadValue = activeThread
@@ -1585,7 +1587,7 @@ function OpenCommandPaletteDialog(props: {
 
   const isLinkedThreadSearch =
     linkedThreadSearch?.linkedThreads !== undefined && deferredQuery === linkedThreadSearch.query;
-  const filteredGroups = filterCommandPaletteGroups({
+  const searchedGroups = filterCommandPaletteGroups({
     activeGroups,
     query: deferredQuery,
     isInSubmenu: currentView !== null,
@@ -1616,6 +1618,7 @@ function OpenCommandPaletteDialog(props: {
     threadMessageItems: isLinkedThreadSearch ? [] : threadMessageItems,
     now: searchNow,
   });
+  const filteredGroups = withAgentThreads(searchedGroups, deferredQuery, currentView !== null);
 
   const handleAddProjectForEnvironment = async (input: {
     readonly environmentId: EnvironmentId;

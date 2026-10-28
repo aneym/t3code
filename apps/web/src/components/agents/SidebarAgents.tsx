@@ -1,14 +1,11 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { Link } from "@tanstack/react-router";
 import { CircleCheckIcon, CircleDashedIcon, PinOffIcon, PinIcon } from "lucide-react";
-import { useState } from "react";
 
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
 import { useEnvironmentIdentities } from "../../state/environments";
 import { cn } from "~/lib/utils";
-import { deriveProjectIdentity } from "../../projectIdentity";
-import { ProjectMonogram } from "../ProjectMonogram";
 import {
   hasUnseenCompletion,
   resolveSidebarThreadStatus,
@@ -17,7 +14,8 @@ import {
 import { SidebarSection } from "../sidebar/SidebarSection";
 import { JumpHintBadge } from "../sidebar/SidebarThreadRow";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { type RailsAgent, railsAgentFaceUrl, railsAgentThreadKey } from "./railsAgents";
+import { AgentFace } from "./AgentFace";
+import { type RailsAgent, railsAgentThreadKey } from "./railsAgents";
 import { AGENTS_SECTION_STORAGE_KEY, sidebarAgentJumpKey } from "./sidebarAgentLists";
 import { useSidebarPins } from "./sidebarPins";
 
@@ -196,30 +194,6 @@ function AgentRow(props: {
       </Tooltip>
       {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
     </li>
-  );
-}
-
-function AgentFace(props: { readonly handle: string; readonly name: string }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) {
-    const identity = deriveProjectIdentity(props.name);
-    return (
-      <ProjectMonogram
-        text={Array.from(identity.monogram)[0] ?? ""}
-        color={identity.color}
-        className="size-5 [&>svg]:rounded-full"
-      />
-    );
-  }
-  return (
-    <img
-      src={railsAgentFaceUrl(props.handle)}
-      alt=""
-      aria-hidden
-      draggable={false}
-      onError={() => setFailed(true)}
-      className="size-5 shrink-0 rounded-full"
-    />
   );
 }
 
