@@ -121,6 +121,9 @@ vi.mock("./useSettings", () => ({
       timestampFormat: "12-hour",
     }),
 }));
+vi.mock("./useRestartThreadSession", () => ({
+  useRestartThreadSession: () => async () => recordEffect("restartThreadSession"),
+}));
 vi.mock("./useThreadActions", () => ({
   useThreadActions: () =>
     Object.fromEntries(

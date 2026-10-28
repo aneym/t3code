@@ -232,7 +232,7 @@ const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidErro
 
 const COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX = 24;
 const COMPOSER_SCROLL_GESTURE_RESET_MS = 120;
-import { toastManager } from "../ui/toast";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import { PlayIcon, ShieldIcon } from "lucide-react";
 import { proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
 import { hasProviderSetup } from "./ProviderStatusBanner";
@@ -262,6 +262,7 @@ import {
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useRestartThreadSession } from "../../hooks/useRestartThreadSession";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { usePanelAnimationSettings } from "../../panelAnimations";
@@ -732,6 +733,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const nonPersistedComposerImageIds = attachmentDraft.nonPersistedImageIds;
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   const openPrLink = useOpenPrLink(routeThreadRef);
+  const restartThreadSession = useRestartThreadSession();
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const previewFile = composerFiles.find((file) => file.id === previewFileId);
   const composerContextActions = {
@@ -1921,6 +1923,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           setComposerHighlightedItemId(null);
           setIsComposerModelPickerOpen(true);
         }
+        return;
+      }
+      if (item.command === "restart") {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) setComposerHighlightedItemId(null);
+        void restartThreadSession(routeThreadRef).catch((error: unknown) =>
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to restart agent session",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          ),
+        );
         return;
       }
       if (!planModeUiEnabled) return;
