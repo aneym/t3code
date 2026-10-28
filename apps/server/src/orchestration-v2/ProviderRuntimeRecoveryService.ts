@@ -558,10 +558,10 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         handoff === undefined && continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(
-              { ...projection, providerSessions: sessionsLiveAtStart(projection, stoppedThisPass) },
-              now,
-            )
+          ? restartContinuationRun({
+              ...projection,
+              providerSessions: sessionsLiveAtStart(projection, stoppedThisPass),
+            })
           : undefined;
       const effects: Array<EffectOutboxModel.PendingOrchestrationEffectV2> = continuationRun
         ? [

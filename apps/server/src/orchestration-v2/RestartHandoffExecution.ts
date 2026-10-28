@@ -1,5 +1,4 @@
 import { type ServerRestartHandoff, type ThreadId } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -32,13 +31,10 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
         source.status === "rolled_back"
       )
         continue;
-      const now = yield* DateTime.now;
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
-        projection.thread.settledOverride === "settled" ||
-        (projection.thread.snoozedUntil != null &&
-          DateTime.isGreaterThan(projection.thread.snoozedUntil, now))
+        projection.thread.settledOverride === "settled"
       )
         continue;
       if (

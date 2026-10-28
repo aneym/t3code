@@ -11,6 +11,7 @@ import {
 export const ServerRestartHandoff = Schema.Struct({
   threadId: ThreadId,
   runIds: Schema.Array(RunId),
+  sourceRunIds: Schema.optional(Schema.Array(RunId)),
   queuedRunIds: Schema.Array(RunId),
   requestIds: Schema.Array(RuntimeRequestId),
   delegatedTaskIds: Schema.Array(NodeId),
