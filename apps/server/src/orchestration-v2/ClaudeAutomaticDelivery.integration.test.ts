@@ -444,9 +444,10 @@ it.effect.each(deliveries)(
           for (const read of reads) {
             assert.equal(read.status, explicitSteer ? "cancelled" : "completed");
             assert.equal(read.toolNonExecutionKind, explicitSteer ? "cancelled" : undefined);
-            assert.deepEqual(read.type === "dynamic_tool" ? read.output : null, {
-              result: explicitSteer ? refusal : "Task completed normally",
-            });
+            assert.equal(
+              read.type === "dynamic_tool" ? read.output : null,
+              explicitSteer ? refusal : "Task completed normally",
+            );
           }
           assert.equal(offers.length, 2);
           assert.equal(
