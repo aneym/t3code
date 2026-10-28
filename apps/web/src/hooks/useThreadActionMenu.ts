@@ -63,8 +63,9 @@ export function useThreadActionMenu(input: {
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
   readonly canShareWithGuest: boolean;
+  readonly agentPin?: { readonly label: string; readonly onToggle: () => void };
 }) {
-  const { threadRef, projectCwd, onStartRename, canShareWithGuest } = input;
+  const { threadRef, projectCwd, onStartRename, canShareWithGuest, agentPin } = input;
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -145,9 +146,16 @@ export function useThreadActionMenu(input: {
         snoozePresets,
         canShareWithGuest,
       });
-      const clicked = await settlePromise(() => api.contextMenu.show(items, position));
+      const menuItems = agentPin
+        ? [{ id: "agent-pin" as const, label: agentPin.label }, ...items]
+        : items;
+      const clicked = await settlePromise(() => api.contextMenu.show(menuItems, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
       const action: ThreadActionMenuId = clicked.value;
+      if (action === "agent-pin") {
+        agentPin?.onToggle();
+        return;
+      }
       if (
         threadActionRequiresOperate(action) &&
         !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
