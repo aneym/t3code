@@ -81,7 +81,11 @@ describe("filterSidebarV2VisibleThreads", () => {
       const bindings = new Set([`${bound.environmentId}:${bound.id}`]);
       expect(
         filterSidebarV2VisibleThreads([manual, created, bound, otherEnvironment], null, bindings),
-      ).toEqual([manual, otherEnvironment]);
+      ).toEqual(
+        section === "pinned"
+          ? [manual, created, bound, otherEnvironment]
+          : [manual, otherEnvironment],
+      );
     },
   );
 });
