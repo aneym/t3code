@@ -14,6 +14,7 @@ const RETRY_AFTER_MS = 30_000;
 export interface AgentHomeIdentity {
   readonly threadId: string | null;
   readonly role: string | null;
+  readonly displayName: string | null;
 }
 
 interface AgentHomeBindingState {
@@ -21,7 +22,7 @@ interface AgentHomeBindingState {
   readonly settle: (homeKey: string, identity: AgentHomeIdentity) => void;
 }
 
-const NO_IDENTITY: AgentHomeIdentity = { threadId: null, role: null };
+const NO_IDENTITY: AgentHomeIdentity = { threadId: null, role: null, displayName: null };
 
 const useAgentHomeBindingStore = create<AgentHomeBindingState>((set) => ({
   identityByHome: {},
@@ -37,11 +38,19 @@ function homeKey(project: EnvironmentProject): string {
 
 function parseAgentHomeIdentity(contents: string): AgentHomeIdentity {
   try {
-    const home = JSON.parse(contents) as { t3?: { thread_id?: unknown }; role?: unknown };
+    const home = JSON.parse(contents) as {
+      t3?: { thread_id?: unknown };
+      role?: unknown;
+      display_name?: unknown;
+    };
     const threadId = home.t3?.thread_id;
     return {
       threadId: typeof threadId === "string" && threadId.length > 0 ? threadId : null,
       role: typeof home.role === "string" ? home.role : null,
+      displayName:
+        typeof home.display_name === "string" && home.display_name.length > 0
+          ? home.display_name
+          : null,
     };
   } catch {
     return NO_IDENTITY;

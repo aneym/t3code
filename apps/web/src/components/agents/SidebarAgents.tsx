@@ -19,6 +19,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   type RailsAgent,
   railsAgentFaceUrl,
+  railsAgentHandle,
   railsAgentThreadKey,
   useRailsAgents,
 } from "./railsAgents";
@@ -44,7 +45,10 @@ export function SidebarAgents({ onNavigate }: { readonly onNavigate: () => void 
   const pinned = pinnedHandles.flatMap((handle) => {
     const agent = agentByHandle.get(handle);
     if (agent) return [agent];
-    const project = projects.find((entry) => sidebarProjectPinKey(entry) === handle);
+    const project = projects.find(
+      (entry) =>
+        railsAgentHandle(entry.workspaceRoot) === null && sidebarProjectPinKey(entry) === handle,
+    );
     return project
       ? [
           {

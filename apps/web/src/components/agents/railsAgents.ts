@@ -61,14 +61,17 @@ function resolveRailsAgents(
     if (agent === undefined) {
       agents.set(handle, {
         handle,
-        name: project.title,
+        name: identity?.displayName ?? project.title,
         projectRef,
         environmentIds: [project.environmentId],
         thread: null,
         threadIsBound: false,
       });
-    } else if (!agent.environmentIds.includes(project.environmentId)) {
-      agent.environmentIds = [...agent.environmentIds, project.environmentId];
+    } else {
+      if (identity?.displayName != null) agent.name = identity.displayName;
+      if (!agent.environmentIds.includes(project.environmentId)) {
+        agent.environmentIds = [...agent.environmentIds, project.environmentId];
+      }
     }
   }
   for (const handle of agents.keys()) {
