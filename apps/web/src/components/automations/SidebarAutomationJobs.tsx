@@ -1,3 +1,4 @@
+import { AutomationThreadRows, automationThreadsWithoutJobs } from "./AutomationThreadRows";
 import {
   type EnvironmentThreadShell,
   resolveThreadWorkingStartedAt,
@@ -57,7 +58,8 @@ export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () 
     false,
     Schema.Boolean,
   );
-  if (automations.length === 0) return null;
+  const standaloneThreads = automationThreadsWithoutJobs(threads, automations);
+  if (automations.length === 0 && standaloneThreads.length === 0) return null;
   const grouped = new Map<
     string,
     { environmentId: EnvironmentId; task: ScheduledTask; count: number }
@@ -77,7 +79,9 @@ export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () 
         expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
         data-testid="sidebar-automations-shelf-toggle"
-        accessory={<span className="font-normal tabular-nums">{rows.length}</span>}
+        accessory={
+          <span className="font-normal tabular-nums">{rows.length + standaloneThreads.length}</span>
+        }
       >
         Automations
       </CollapsibleSectionHeader>
@@ -99,6 +103,7 @@ export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () 
               onNavigate={onNavigate}
             />
           ))}
+          <AutomationThreadRows threads={standaloneThreads} onNavigate={onNavigate} />
           <li className="list-none">
             <Link
               to="/settings/scheduled-tasks"
@@ -132,8 +137,6 @@ function AutomationJobRow({
   readonly onNavigate: () => void;
 }) {
   const working = runThread !== null && threadRuntimeIsActive(runThread.runtime);
-  // The scheduler marks a run succeeded once its prompt is dispatched, so a turn
-  // that fails afterwards only shows on the run thread.
   const failed =
     task.lastRunStatus === "failed" || (!working && runThread?.runtime?.status === "failed");
   const content = (

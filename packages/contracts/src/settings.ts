@@ -246,7 +246,6 @@ export type FontFamilyPreference = typeof FontFamilyPreference.Type;
 
 /** Clients apply each environment theme set once; later local choices persist until the next set. Empty clears it. */
 export const DefaultThemePreference = Schema.String.check(Schema.isMaxLength(64));
-// Excluded from RPC patches so t3 theme set can validate syntax and resolvability.
 export type DefaultThemePreference = typeof DefaultThemePreference.Type;
 
 export const DEFAULT_BROWSER_VIEWPORT: PreviewViewportSetting = FILL_PREVIEW_VIEWPORT;
@@ -320,7 +319,6 @@ export const ClientSettingsSchema = Schema.Struct({
   appearanceContrast: AppearanceContrast.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
   ),
-  // Zero avoids per-frame layout work from width/height transitions.
   panelAnimationDurationMs: PanelAnimationDurationMs.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PANEL_ANIMATION_DURATION_MS)),
   ),
@@ -351,7 +349,6 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_SEARCH_ENGINE)),
   ),
 
-  // Kept when the engine is switched away from "custom" so switching back restores it.
   browserCustomSearchUrl: BrowserCustomSearchUrl.pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
   ),
@@ -1127,6 +1124,7 @@ export const ServerSettings = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
+  retainAutomationPlacement: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   batchQueuedMessages: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -1479,6 +1477,7 @@ export const ServerSettingsPatch = Schema.Struct({
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
+  retainAutomationPlacement: Schema.optionalKey(Schema.Boolean),
   batchQueuedMessages: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(

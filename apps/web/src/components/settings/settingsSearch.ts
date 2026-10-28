@@ -297,14 +297,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance",
   },
   {
-    // Prefixed because the slider control already owns the `appearance-contrast` id.
     id: "setting-appearance-contrast",
     title: "Contrast",
     to: "/settings/appearance",
     searchTerms: ["colors borders interface"],
   },
   {
-    // Prefixed because the slider control already owns the `glass-opacity` id.
     id: "setting-glass-opacity",
     title: "Glass opacity",
     to: "/settings/appearance",
@@ -575,6 +573,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/maintenance",
     searchTerms: ["installed cli versions newer available codex claude cursor grok fx opencode"],
     scope: "environment-defaults",
+  },
+  {
+    id: "retain-automation-placement",
+    title: "Keep automation threads together",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["automation sidebar placement webhook scheduled event"],
   },
   {
     id: "batch-queued-messages",
@@ -1011,7 +1016,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "review-guide-model",
     title: "Review guide model",
     to: "/settings/source-control",
-    // Hidden until review guides are on, so a search lands on the switch that shows it.
     targetId: "review-guides",
     searchTerms: ["pull request pr guided review guide brief maintainer"],
     environmentOnly: true,

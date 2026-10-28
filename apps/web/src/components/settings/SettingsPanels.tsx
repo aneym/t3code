@@ -1,3 +1,4 @@
+import { AutomationPlacementSetting } from "./AutomationPlacementSetting";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
@@ -552,8 +553,6 @@ export function useSettingsRestore(onRestored?: () => void) {
     );
     if (!confirmed) return;
 
-    // Reset only dirty theme keys so storage failures cannot block other settings; re-read after confirmation
-    // for safe rollback.
     let previousTheme = theme;
     try {
       previousTheme = readThemePreference();
@@ -1241,6 +1240,7 @@ export function ChatSettingsPanel() {
             </Select>
           }
         />
+        <AutomationPlacementSetting />
         <SettingsRow
           {...searchableSetting("batch-queued-messages")}
           serverScoped
