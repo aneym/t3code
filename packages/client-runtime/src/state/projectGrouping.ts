@@ -12,6 +12,7 @@ import type { EnvironmentProject } from "./models.ts";
 import { normalizeProjectPathForComparison } from "./projects.ts";
 
 const SCRATCH_PROJECT_SCOPE_KEY = "\0no-project";
+const RAILS_AGENT_HOME_PATTERN = /\/\.agent-rails\/agents\/([a-z0-9][a-z0-9-]*)\/?$/;
 
 export interface ProjectGroupingSettings {
   readonly sidebarProjectGroupingMode: SidebarProjectGroupingMode;
@@ -126,6 +127,11 @@ function deriveRepositoryScopedKey(
     : `${canonicalKey}::${relativeProjectPath}`;
 }
 
+function deriveRailsAgentHomeKey(project: Pick<EnvironmentProject, "workspaceRoot">) {
+  const handle = RAILS_AGENT_HOME_PATTERN.exec(project.workspaceRoot)?.[1];
+  return handle === undefined ? null : `rails-agent:${handle}`;
+}
+
 function deriveLogicalProjectKey(
   project: Pick<
     EnvironmentProject,
@@ -144,6 +150,7 @@ function deriveLogicalProjectKey(
 
   return (
     deriveRepositoryScopedKey(project, groupingMode) ??
+    deriveRailsAgentHomeKey(project) ??
     derivePhysicalProjectKey(project) ??
     scopedProjectKey(scopeProjectRef(project.environmentId, project.id))
   );
