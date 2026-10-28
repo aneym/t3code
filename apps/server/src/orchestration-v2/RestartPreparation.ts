@@ -1,6 +1,5 @@
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
-import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -42,11 +41,13 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
           const requests = projection.runtimeRequests.filter(
             (request) => request.status === "pending",
           );
+          const runIds = projection.runs
+            .filter((run) => ["preparing", "starting", "running", "waiting"].includes(run.status))
+            .map((run) => run.id);
           handoffs.push({
             threadId,
-            runIds: projection.runs
-              .filter((run) => ["preparing", "starting", "running", "waiting"].includes(run.status))
-              .map((run) => run.id),
+            runIds,
+            sourceRunIds: runIds,
             queuedRunIds: projection.runs
               .filter((run) => run.status === "queued")
               .map((run) => run.id),
@@ -81,9 +82,7 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
             paused:
               projection.thread.archivedAt !== null ||
               projection.thread.deletedAt !== null ||
-              projection.thread.settledOverride === "settled" ||
-              (projection.thread.snoozedUntil != null &&
-                DateTime.isGreaterThan(projection.thread.snoozedUntil, yield* DateTime.now)),
+              projection.thread.settledOverride === "settled",
           });
         }
         const commandId = CommandId.make(`command:restart-handoff:${epoch}`);
@@ -172,7 +171,7 @@ export const prepareForShutdown = Effect.gen(function* () {
           .continueThreadsAfterServerUpdate
       )
         return;
-      const run = restartContinuationRun(projection, yield* DateTime.now);
+      const run = restartContinuationRun(projection);
       if (!run) return;
       const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
       yield* eventSink.writeWithEffects({

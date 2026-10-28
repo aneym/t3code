@@ -558,10 +558,10 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         handoff === undefined && continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(
-              { ...projection, providerSessions: sessionsLiveAtStart(projection, stoppedThisPass) },
-              now,
-            )
+          ? restartContinuationRun({
+              ...projection,
+              providerSessions: sessionsLiveAtStart(projection, stoppedThisPass),
+            })
           : undefined;
       const effects: Array<EffectOutboxModel.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -671,7 +671,9 @@ export const make = Effect.gen(function* () {
       if (
         trigger === "startup" &&
         handoff?.type === "provider-runtime.restart-handoff" &&
-        !handoff.handoff.paused
+        projection.thread.archivedAt === null &&
+        projection.thread.deletedAt === null &&
+        projection.thread.settledOverride !== "settled"
       ) {
         const full = yield* projections.getThreadProjection(threadId).pipe(
           Effect.mapError(

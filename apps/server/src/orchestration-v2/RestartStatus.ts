@@ -1,8 +1,15 @@
-import { CommandId, ServerPrepareRestartError, type ServerRestartStatus } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
+import {
+  CommandId,
+  type OrchestrationV2Run,
+  ServerPrepareRestartError,
+  type ServerRestartStatus,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+
+const endedOnItsOwn = (status: OrchestrationV2Run["status"]) =>
+  status === "failed" || status === "interrupted" || status === "rolled_back";
 
 export const restartStatus = Effect.fn("RestartStatus.read")(
   function* (epoch: string) {
@@ -11,52 +18,48 @@ export const restartStatus = Effect.fn("RestartStatus.read")(
     const effects = yield* outbox.listByCommandId(
       CommandId.make(`command:restart-handoff:${epoch}`),
     );
-    const now = yield* DateTime.now;
     const threads: ServerRestartStatus["threads"][number][] = [];
     for (const effect of effects) {
       if (effect.request.type !== "provider-runtime.restart-handoff") continue;
       const projection = yield* projections.getThreadProjection(effect.threadId);
       const handoff = effect.request.handoff;
-      const sources: ServerRestartStatus["threads"][number]["sources"][number][] =
-        handoff.runIds.map((sourceRunId) => {
-          const continuation = projection.runs.find(
-            (run) => run.restartContinuationOfRunId === sourceRunId,
-          );
-          if (continuation !== undefined)
-            return { sourceRunId, state: "continued", continuationRunId: continuation.id };
-          const source = projection.runs.find((run) => run.id === sourceRunId);
-          const requestIds = projection.runtimeRequests
-            .filter(
-              (request) =>
-                request.status === "pending" &&
-                request.restartContinuationRunIds?.includes(sourceRunId),
-            )
-            .map((request) => request.id);
-          const intent =
-            projection.thread.deletedAt !== null
-              ? "deleted"
-              : projection.thread.archivedAt !== null
-                ? "archived"
-                : projection.thread.settledOverride === "settled"
-                  ? "settled"
-                  : projection.thread.snoozedUntil != null &&
-                      DateTime.isGreaterThan(projection.thread.snoozedUntil, now)
-                    ? "snoozed"
-                    : projection.turnItems.some(
-                          (item) =>
-                            item.type === "run_interrupt_request" && item.runId === sourceRunId,
-                        )
-                      ? "explicit_stop"
-                      : undefined;
-          if (intent !== undefined)
-            return { sourceRunId, state: "stopped", intentPreserved: true, reason: intent };
-          const paused = requestIds.length > 0;
-          return {
-            sourceRunId,
-            state: paused ? "paused" : source?.status === "completed" ? "completed" : "pending",
-            ...(paused ? { requestIds, reason: "human_review_required" } : {}),
-          };
-        });
+      const sources: ServerRestartStatus["threads"][number]["sources"][number][] = (
+        handoff.sourceRunIds ?? handoff.runIds
+      ).map((sourceRunId) => {
+        const continuation = projection.runs.find(
+          (run) => run.restartContinuationOfRunId === sourceRunId,
+        );
+        if (continuation !== undefined)
+          return { sourceRunId, state: "continued", continuationRunId: continuation.id };
+        const source = projection.runs.find((run) => run.id === sourceRunId);
+        const requestIds = projection.runtimeRequests
+          .filter(
+            (request) =>
+              request.status === "pending" &&
+              request.restartContinuationRunIds?.includes(sourceRunId),
+          )
+          .map((request) => request.id);
+        const intent =
+          projection.thread.deletedAt !== null
+            ? "deleted"
+            : projection.thread.archivedAt !== null
+              ? "archived"
+              : projection.thread.settledOverride === "settled"
+                ? "settled"
+                : projection.turnItems.some(
+                      (item) => item.type === "run_interrupt_request" && item.runId === sourceRunId,
+                    )
+                  ? "explicit_stop"
+                  : undefined;
+        if (intent !== undefined)
+          return { sourceRunId, state: "stopped", intentPreserved: true, reason: intent };
+        if (requestIds.length > 0)
+          return { sourceRunId, state: "paused", requestIds, reason: "human_review_required" };
+        if (source?.status === "completed") return { sourceRunId, state: "completed" };
+        if (source !== undefined && endedOnItsOwn(source.status))
+          return { sourceRunId, state: "completed", reason: source.status };
+        return { sourceRunId, state: "pending" };
+      });
       const queueIds = new Set([
         ...handoff.queuedRunIds,
         ...projection.runs.filter((run) => run.status === "queued").map((run) => run.id),

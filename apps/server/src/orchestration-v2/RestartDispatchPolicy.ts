@@ -17,7 +17,7 @@ export function restartDispatchAllowed(
       (effect) =>
         effect.threadId === projection.thread.id &&
         effect.request.type === "provider-runtime.restart-handoff" &&
-        !effect.request.handoff.paused &&
+        projection.thread.settledOverride !== "settled" &&
         effect.request.handoff.runIds.includes(id),
     );
   const prepared =

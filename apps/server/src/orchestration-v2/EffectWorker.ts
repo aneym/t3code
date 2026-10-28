@@ -109,7 +109,7 @@ export const layerExecutor: Layer.Layer<
               handoff:
                 request.type === "provider-runtime.restart-handoff"
                   ? request.handoff
-                  : { runIds: request.sourceRunIds, paused: false },
+                  : { runIds: request.sourceRunIds },
               ...(request.type === "provider-runtime.restart-reapproval"
                 ? { humanReply: request.text }
                 : {}),
