@@ -33,6 +33,8 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
+import { toProject } from "./projectPresentation.ts";
+import { projectMetaUpdate } from "./projectMetaUpdate.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
@@ -153,25 +155,6 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
-
-  const toProject = (
-    row: ProjectStore.ProjectRow,
-    enrichment: ProjectEnrichmentService.ProjectEnrichment | null,
-  ): Project => ({
-    id: row.projectId,
-    title: row.title,
-    workspaceRoot: row.workspaceRoot,
-    repositoryIdentity: enrichment?.repositoryIdentity ?? null,
-    faviconPath: row.faviconPath ?? enrichment?.faviconPath ?? null,
-    defaultModelSelection: row.defaultModelSelection,
-    defaultThreadEnvMode: row.defaultThreadEnvMode,
-    autoPull: row.autoPull,
-    projectIcon: row.projectIcon,
-    scripts: row.scripts,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    deletedAt: row.deletedAt,
-  });
 
   const hydrate = Effect.fn("ProjectService.hydrate")(function* (row: ProjectStore.ProjectRow) {
     const enrichment =
@@ -359,23 +342,9 @@ export const make = Effect.gen(function* () {
               projectId: input.projectId,
               workspaceRoot: input.workspaceRoot,
             });
-      yield* commit({
-        type: "project.meta.update",
-        commandId: input.commandId,
-        projectId: input.projectId,
-        ...(input.title === undefined ? {} : { title: input.title }),
-        ...(workspaceRoot === previousRoot ? {} : { workspaceRoot }),
-        ...(input.defaultModelSelection === undefined
-          ? {}
-          : { defaultModelSelection: input.defaultModelSelection }),
-        ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
-        ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
-        ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
-        ...(input.defaultThreadEnvMode === undefined
-          ? {}
-          : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
-        ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
-      });
+      yield* commit(
+        projectMetaUpdate(input, workspaceRoot === previousRoot ? undefined : workspaceRoot),
+      );
       if (workspaceRoot !== previousRoot) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }

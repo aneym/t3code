@@ -1,3 +1,5 @@
+import { useProjectPins } from "../hooks/useProjectPins";
+import { buildProjectContextMenu } from "./sidebar/projectContextMenu";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/client-runtime/thread-pull-requests";
 import { Spinner } from "~/components/ui/spinner";
@@ -53,7 +55,6 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   AuthOrchestrationOperateScope,
   AuthPreviewOperateScope,
-  type ContextMenuItem,
   type EnvironmentId,
   ProjectId,
   type ScopedThreadRef,
@@ -1083,6 +1084,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
 });
 
 interface SidebarProjectItemProps {
+  projectGroups: readonly SidebarProjectSnapshot[];
   project: SidebarProjectSnapshot;
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
@@ -1254,6 +1256,7 @@ function useProjectThreadPanel(input: {
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
   const {
+    projectGroups,
     project,
     isThreadListExpanded,
     activeRouteThreadKey,
@@ -1623,6 +1626,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     }
   };
 
+  const projectPins = useProjectPins(projectGroups);
   const handleProjectButtonContextMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     suppressProjectClickForContextMenuRef.current = true;
@@ -1630,107 +1634,35 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const api = readLocalApi();
       if (!api) return;
 
-      const actionHandlers = new Map<string, () => Promise<void> | void>();
-      const makeLeaf = (
-        action: "rename" | "grouping" | "copy-path" | "delete",
-        member: SidebarProjectGroupMember,
-        options?: {
-          destructive?: boolean;
-          disabled?: boolean;
+      const { items, run } = buildProjectContextMenu({
+        project,
+        canPin: projectPins.canPin(project),
+        togglePin: () => projectPins.togglePin(project.projectKey),
+        canEdit: (member) =>
+          readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),
+        rename: openProjectRenameDialog,
+        group: openProjectGroupingDialog,
+        copyPath: (member) =>
+          copyPathToClipboard(member.workspaceRoot, { path: member.workspaceRoot }),
+        remove: handleRemoveProject,
+        settings: () => {
+          if (isMobile) setOpenMobile(false);
+          void router.navigate({
+            to: "/projects/$projectKey",
+            params: { projectKey: project.projectKey },
+          });
         },
-      ): ContextMenuItem<string> => {
-        const id = `${action}:${member.physicalProjectKey}`;
-        actionHandlers.set(id, () => {
-          switch (action) {
-            case "rename":
-              openProjectRenameDialog(member);
-              return;
-            case "grouping":
-              openProjectGroupingDialog(member);
-              return;
-            case "copy-path":
-              copyPathToClipboard(member.workspaceRoot, { path: member.workspaceRoot });
-              return;
-            case "delete":
-              return handleRemoveProject(member);
-          }
-        });
-
-        return {
-          id,
-          label: formatProjectMemberActionLabel(member, project.groupedProjectCount),
-          ...(options?.destructive ? { destructive: true } : {}),
-          ...(options?.disabled ? { disabled: true } : {}),
-        };
-      };
-
-      const buildTargetedItem = (
-        action: "rename" | "grouping" | "copy-path" | "delete",
-        label: string,
-        options?: {
-          destructive?: boolean;
-          isDisabled?: (member: SidebarProjectGroupMember) => boolean;
-        },
-      ): ContextMenuItem<string> => {
-        if (project.memberProjects.length === 1) {
-          const singleMember = project.memberProjects[0]!;
-          return {
-            ...makeLeaf(action, singleMember, {
-              ...(options?.destructive ? { destructive: true } : {}),
-              ...(options?.isDisabled?.(singleMember) ? { disabled: true } : {}),
-            }),
-            label,
-            ...(action === "delete" ? { icon: "trash" } : {}),
-          };
-        }
-
-        return {
-          id: `${action}:submenu`,
-          label,
-          ...(action === "delete" ? { icon: "trash" } : {}),
-          children: project.memberProjects.map((member) =>
-            makeLeaf(action, member, {
-              ...(options?.destructive ? { destructive: true } : {}),
-              ...(options?.isDisabled?.(member) ? { disabled: true } : {}),
-            }),
-          ),
-        };
-      };
-
-      actionHandlers.set("project-settings", () => {
-        if (isMobile) setOpenMobile(false);
-        void router.navigate({
-          to: "/projects/$projectKey",
-          params: { projectKey: project.projectKey },
-        });
       });
-
-      const clicked = await api.contextMenu.show(
-        [
-          buildTargetedItem("rename", "Rename", {
-            isDisabled: (member) =>
-              !readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),
-          }),
-          buildTargetedItem("grouping", "Group into..."),
-          buildTargetedItem("copy-path", "Copy Path"),
-          { id: "project-settings", label: "Project settings", icon: "settings" },
-          buildTargetedItem("delete", "Remove", {
-            destructive: true,
-            isDisabled: (member) =>
-              !readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),
-          }),
-        ],
-        {
-          x: event.clientX,
-          y: event.clientY,
-        },
-      );
+      const clicked = await api.contextMenu.show(items, {
+        x: event.clientX,
+        y: event.clientY,
+      });
 
       if (!clicked) {
         return;
       }
 
-      await actionHandlers.get(clicked)?.();
+      await run(clicked);
     })();
   };
 
@@ -2968,6 +2900,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                     {(dragHandleProps) => (
                       <SidebarProjectItem
                         project={project}
+                        projectGroups={sortedProjects}
                         isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                         activeRouteThreadKey={
                           activeRouteProjectKey === project.projectKey ? routeThreadKey : null
@@ -3002,6 +2935,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               <SidebarProjectListRow
                 key={project.projectKey}
                 project={project}
+                projectGroups={sortedProjects}
                 isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                 activeRouteThreadKey={
                   activeRouteProjectKey === project.projectKey ? routeThreadKey : null

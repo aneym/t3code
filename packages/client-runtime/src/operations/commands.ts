@@ -15,7 +15,8 @@ import {
   type OrchestrationV2CreationSource,
   type PlanId,
   type ProjectId,
-  type ProjectIconOverride,
+  type ProjectUpdatePayload,
+  type ProjectMutation,
   type ProjectScript,
   type ProviderApprovalDecision,
   type ProviderInteractionMode,
@@ -24,7 +25,6 @@ import {
   type RuntimeMode,
   type RuntimeRequestId,
   type ThreadId,
-  type ThreadEnvMode,
   type UploadChatAttachment,
   type GuestMessageId,
 } from "@t3tools/contracts";
@@ -51,16 +51,8 @@ export interface CreateProjectInput extends CommandMetadata {
   readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
-export interface UpdateProjectInput extends CommandMetadata {
+export interface UpdateProjectInput extends CommandMetadata, ProjectUpdatePayload {
   readonly projectId: ProjectId;
-  readonly title?: string;
-  readonly workspaceRoot?: string;
-  readonly defaultModelSelection?: ModelSelection | null;
-  readonly autoPull?: boolean;
-  readonly projectIcon?: ProjectIconOverride | null;
-  readonly faviconPath?: string | null;
-  readonly defaultThreadEnvMode?: ThreadEnvMode | null;
-  readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
 export interface DeleteProjectInput extends CommandMetadata {
@@ -311,32 +303,7 @@ const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(f
 });
 
 const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
-  mutation:
-    | {
-        readonly type: "project.create";
-        readonly commandId: CommandId;
-        readonly projectId: ProjectId;
-        readonly title: string;
-        readonly workspaceRoot: string;
-        readonly createWorkspaceRootIfMissing?: boolean;
-        readonly defaultModelSelection?: ModelSelection | null;
-        readonly scripts?: ReadonlyArray<ProjectScript>;
-      }
-    | {
-        readonly type: "project.update";
-        readonly commandId: CommandId;
-        readonly projectId: ProjectId;
-        readonly title?: string;
-        readonly workspaceRoot?: string;
-        readonly defaultModelSelection?: ModelSelection | null;
-        readonly scripts?: ReadonlyArray<ProjectScript>;
-      }
-    | {
-        readonly type: "project.delete";
-        readonly commandId: CommandId;
-        readonly projectId: ProjectId;
-        readonly force?: boolean;
-      },
+  mutation: ProjectMutation,
 ) {
   return yield* request(WS_METHODS.projectsMutate, mutation);
 });
@@ -373,6 +340,7 @@ export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(func
       ? {}
       : { defaultModelSelection: input.defaultModelSelection }),
     ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
+    ...(input.pinOrder === undefined ? {} : { pinOrder: input.pinOrder }),
     ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
     ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
     ...(input.defaultThreadEnvMode === undefined

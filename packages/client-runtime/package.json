@@ -291,6 +291,10 @@
       "types": "./src/state/subagentRuntime.ts",
       "default": "./src/state/subagentRuntime.ts"
     },
+    "./state/project-pins": {
+      "types": "./src/state/projectPins.ts",
+      "default": "./src/state/projectPins.ts"
+    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
