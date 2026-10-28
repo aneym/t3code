@@ -1220,11 +1220,23 @@ export const layerQueryRunner: Layer.Layer<
             callMcpTool: (tool, args) =>
               Effect.tryPromise({
                 try: () =>
-                  (queryRuntime as any).mcpCall({
-                    tool,
-                    arguments: args,
-                    result_not_for_model: true,
-                  }),
+                  (
+                    queryRuntime as unknown as {
+                      request: (input: {
+                        subtype: "mcp_call";
+                        tool: string;
+                        arguments: Record<string, unknown>;
+                        result_not_for_model: true;
+                      }) => Promise<{ response: unknown }>;
+                    }
+                  )
+                    .request({
+                      subtype: "mcp_call",
+                      tool,
+                      arguments: args,
+                      result_not_for_model: true,
+                    })
+                    .then((result) => result.response),
                 catch: (cause) => queryRunnerError(cause, "mcpCall"),
               }),
             close: Queue.shutdown(promptQueue).pipe(
