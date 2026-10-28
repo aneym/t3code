@@ -1,3 +1,4 @@
+import { isAutomationOnlyThread } from "./threadPlacement";
 import { AutomationThreadRows, automationThreadsWithoutJobs } from "./AutomationThreadRows";
 import {
   type EnvironmentThreadShell,
@@ -50,9 +51,16 @@ function LastRunLabel({ value }: { readonly value: string }) {
 }
 
 export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () => void }) {
-  const automations = useAutomations();
+  const tasks = useAutomations();
   const environments = useEnvironmentIdentities();
   const threads = useQuietThreadShells();
+  const byKey = new Map(threads.map((thread) => [`${thread.environmentId}:${thread.id}`, thread]));
+  const automations = tasks.filter(({ environmentId, task }) => {
+    if (task.threadId === null) return true;
+    const key = `${environmentId}:${task.threadId}`;
+    const thread = byKey.get(key);
+    return thread === undefined || isAutomationOnlyThread(thread, new Set([key]));
+  });
   const [expanded, setExpanded] = useLocalStorage(
     AUTOMATIONS_SHELF_EXPANDED_KEY,
     false,

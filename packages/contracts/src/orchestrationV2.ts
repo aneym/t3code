@@ -413,6 +413,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   lineage: OrchestrationV2AppThreadLineage,
   automationTaskId: Schema.optional(Schema.NullOr(ScheduledTaskId)),
+  automationPlacementAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   forkedFrom: Schema.NullOr(
     Schema.Union([
       Schema.Struct({ type: Schema.Literal("run"), threadId: ThreadId, runId: RunId }),
@@ -1939,6 +1940,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   lineage: OrchestrationV2AppThreadLineage,
   automationTaskId: Schema.optional(Schema.NullOr(ScheduledTaskId)),
+  automationPlacementAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   forkedFrom: Schema.NullOr(OrchestrationV2AppThread.fields.forkedFrom),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
@@ -2121,6 +2123,7 @@ export type OrchestrationV2StoredEvent = typeof OrchestrationV2StoredEvent.Type;
 
 export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((fields) => ({
   ...fields,
+  automationPlacementAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -2545,6 +2548,7 @@ export type OrchestrationV2LatestVisibleMessageSummaryJson =
 
 export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFields((fields) => ({
   ...fields,
+  automationPlacementAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
