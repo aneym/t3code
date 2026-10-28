@@ -143,6 +143,7 @@ import {
   useSidebarAgentLists,
 } from "./agents/sidebarAgentLists";
 import { useSidebarPins } from "./agents/sidebarPins";
+import { useWithoutAgentMainThreads } from "./agents/railsAgents";
 import { SHELF_MORE_ROW_CLASS_NAME } from "./sidebar/shelfMoreRow";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
@@ -1157,15 +1158,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     scopedProjectKeys,
     serverConfigs,
     optimisticDrop,
-    threads,
+    threads: useWithoutAgentMainThreads(threads, scopedProjectKeys),
     routeRowThreadKey,
   });
   const sidebarAgents = useSidebarAgentLists(scopedProjectKeys);
   const jumpKeys = sidebarJumpKeys(sidebarAgents.jumpable, orderedThreadKeys);
 
-  // Ranked across environments as the palette ranks them, so one
-  // environment's list does not sit above another's better matches; rows
-  // already shown keep their places while slower environments answer.
   const threadByMatchKey =
     threadSearch.matches.length === 0
       ? null
