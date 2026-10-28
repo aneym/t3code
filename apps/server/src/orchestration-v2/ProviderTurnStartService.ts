@@ -58,6 +58,7 @@ import {
   pendingRestartCancelledBackgroundWork,
   restartCancelledBackgroundWorkNote,
 } from "./RestartBackgroundNote.ts";
+import { batchedProviderText, foldedQueuedTurnItems } from "./QueuedRunBatch.ts";
 
 export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStartError>()(
   "ProviderTurnStartError",
@@ -106,6 +107,13 @@ const PROMPT_REFUSAL_TAGS = [
 const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
+
+// The provider may have acted on a request it never answered, so a retry could duplicate it.
+const OUTCOME_UNKNOWN_TAGS = ["CodexAppServerUnresponsiveError"] as const;
+
+const outcomeUnknown = (error: unknown): boolean =>
+  OUTCOME_UNKNOWN_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
+  (Predicate.hasProperty(error, "cause") && outcomeUnknown(error.cause));
 
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
@@ -744,7 +752,9 @@ export const layer: Layer.Layer<
       ) {
         const loaded = yield* Effect.result(load);
         if (loaded._tag === "Success") return loaded.success;
-        if (input.willRetry === true) return yield* loaded.failure;
+        if (input.willRetry === true && !outcomeUnknown(loaded.failure)) {
+          return yield* loaded.failure;
+        }
         yield* settleStartFailure({
           signal: "provider-thread-load-failure",
           title: "Provider turn failed to start",
@@ -832,6 +842,9 @@ export const layer: Layer.Layer<
         );
         if (resumed._tag === "Success") {
           return resumed.success;
+        }
+        if (outcomeUnknown(resumed.failure)) {
+          return yield* loadFromProvider(Effect.fail(resumed.failure));
         }
 
         yield* Effect.logWarning("Provider resume failed; attempting a fresh native session", {
@@ -1094,20 +1107,38 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
+      const foldedItems = foldedQueuedTurnItems(projection.turnItems, run);
+      const userText = batchedProviderText(
+        [message, ...foldedItems].map((part) => ({
+          ...part,
+          text: projectComposerContextForProvider({
+            text: part.text,
+            records: part.context?.records ?? [],
+          }),
+        })),
+      );
+      const attachments = [
+        ...message.attachments,
+        ...foldedItems.flatMap((item) => item.attachments),
+      ];
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
-      const noteContinuation = isRestartNoteContinuation(
-        run,
-        projection.runs,
-        projection.providerTurns,
-        projection.attempts,
+      const continuationSource = projection.runs.find(
+        (source) => source.id === run.restartContinuationOfRunId,
       );
+      const noteContinuation =
+        (continuationSource !== undefined &&
+          !projection.providerTurns.some(
+            (turn) => turn.runAttemptId === continuationSource.activeAttemptId,
+          )) ||
+        isRestartNoteContinuation(
+          run,
+          projection.runs,
+          projection.providerTurns,
+          projection.attempts,
+        );
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,
@@ -1271,7 +1302,7 @@ export const layer: Layer.Layer<
                 tokenCap,
                 modelContextWindow,
                 userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
-                attachments: message.attachments,
+                attachments,
                 providerThread: budgetProviderThread,
                 nativeContextEstimate:
                   budgetProviderThread.contextUsage?.usedTokens === undefined
@@ -1403,7 +1434,7 @@ export const layer: Layer.Layer<
         message: {
           messageId: message.id,
           text: userText,
-          attachments: message.attachments,
+          attachments,
           createdBy: message.createdBy,
           creationSource: message.creationSource,
           ...(message.scheduledTaskId === undefined

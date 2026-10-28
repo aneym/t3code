@@ -178,7 +178,9 @@ import { latestProviderVersionCacheKeys } from "@t3tools/provider-core/server/ma
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
+import * as ProviderRuntimeRecoveryService from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
+import * as ForkReleases from "./cloud/forkReleases.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -1256,6 +1258,8 @@ export const layerWsRpc = (
       const eventLoopMonitor = yield* EventLoopMonitor.EventLoopMonitor;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
 
+      const providerRuntimeRecovery =
+        yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
       const analytics = yield* AnalyticsService.AnalyticsService;
@@ -1338,6 +1342,7 @@ export const layerWsRpc = (
       const providerAuth = yield* ProviderAuthService.ProviderAuthService;
       const providerInstallation = yield* makeProviderInstallation();
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+      const forkReleases = yield* ForkReleases.ForkReleases;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const storageCleanup = yield* StorageCleanup.StorageCleanup;
@@ -2515,6 +2520,15 @@ export const layerWsRpc = (
         [WS_METHODS.providerInstallCancel]: (input) => providerInstallation.cancel(input),
         [WS_METHODS.providerInstallSubscribe]: (input) => providerInstallation.subscribe(input),
         [WS_METHODS.providerInstallRemove]: (input) => providerInstallation.remove(input),
+        [WS_METHODS.serverListForkReleases]: () => forkReleases.list(),
+        [WS_METHODS.serverGetRestartStatus]: (input) =>
+          providerRuntimeRecovery.getRestartStatus(input.epoch),
+        [WS_METHODS.serverAbortRestart]: (input) =>
+          providerRuntimeRecovery.abortRestart(input.epoch),
+        [WS_METHODS.serverImportRestartHandoff]: (input) =>
+          providerRuntimeRecovery.importRestartHandoff(input),
+        [WS_METHODS.serverPrepareRestart]: (input) =>
+          providerRuntimeRecovery.prepareRestart(input.epoch),
         [WS_METHODS.serverUpdateServer]: (input) => serverSelfUpdate.update(input),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
           ServerSelfUpdate.updateProgressStream(serverSelfUpdate, input),
@@ -3380,6 +3394,7 @@ export const layer = Layer.unwrap(
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
+              Layer.provide(ForkReleases.layer),
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),

@@ -135,7 +135,7 @@ const createRun = Effect.fn(function* (
 });
 
 it.effect.each(["startup", "shutdown"] as const)(
-  "%s cancels queued buffered wakes and holds durable messages",
+  "%s cancels buffered wakes and preserves recoverable durable messages",
   (trigger) =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -192,6 +192,11 @@ it.effect.each(["startup", "shutdown"] as const)(
         new Set(yield* projections.getRecoveryThreadIds("runtime")),
         new Set([...bufferedThreads, ...durableThreads]),
       );
+      const durableRuns = yield* Effect.forEach(durableThreads, (threadId) =>
+        projections
+          .getThreadProjection(threadId)
+          .pipe(Effect.map((projection) => projection.runs[0])),
+      );
       const summary = yield* recovery.reconcile(trigger);
       assert.equal(summary.terminalizedRuns, 1);
       for (const threadId of bufferedThreads) {
@@ -201,12 +206,20 @@ it.effect.each(["startup", "shutdown"] as const)(
         assert.isNull(projection.runs[0]?.queuePosition);
         assert.equal(projection.runs[1]?.status, "completed");
       }
-      for (const threadId of durableThreads) {
+      for (const [index, threadId] of durableThreads.entries()) {
         const projection = yield* projections.getThreadProjection(threadId);
-        assert.equal(projection.runs[0]?.status, "queued");
-        assert.isTrue(projection.runs[0]?.queueHeld);
+        const originalRun = durableRuns[index] ?? assert.fail("Missing durable queued run");
+        assert.deepEqual(
+          projection.runs[0],
+          trigger === "shutdown"
+            ? { ...originalRun, queueHeld: true, queueHoldReason: "restart" }
+            : originalRun,
+        );
       }
-      assert.deepEqual(yield* projections.getRecoveryThreadIds("runtime"), []);
+      assert.deepEqual(
+        new Set(yield* projections.getRecoveryThreadIds("runtime")),
+        new Set(durableThreads),
+      );
     }).pipe(Effect.provide(layerRecoveryTest)),
 );
 

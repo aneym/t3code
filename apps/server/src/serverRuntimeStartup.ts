@@ -1,3 +1,4 @@
+import { importRestartManifest } from "./orchestration-v2/RestartManifest.ts";
 import {
   CommandId,
   DEFAULT_MODEL,
@@ -542,7 +543,10 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
           ),
         ),
       ),
-      recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
+      recover: runStartupPhase(
+        "orchestration-v2.recovery",
+        importRestartManifest.pipe(Effect.andThen(providerRuntimeRecovery.recover)),
+      ),
       recoverDelegatedTasks: runStartupPhase(
         "orchestration-v2.delegated-tasks.recover",
         orchestrator.recoverDelegatedTasks,
@@ -564,8 +568,6 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
     });
     yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
-    // Runs after activation: the status check fetches every enabled project's
-    // remote, and awaiting it here held command readiness for that long.
     yield* runStartupPhase(
       "projects.auto-pull",
       Effect.gen(function* () {
@@ -604,6 +606,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         : importPendingTranscripts
     ).pipe(forkParked);
 
+    yield* forkParked(orchestrator.resumeQueuedRuns);
     yield* forkParked(
       Effect.gen(function* () {
         yield* Effect.logDebug("startup phase: recording startup heartbeat");

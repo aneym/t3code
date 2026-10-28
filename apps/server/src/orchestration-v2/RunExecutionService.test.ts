@@ -39,7 +39,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
-import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
+import type { PendingOrchestrationEffectV2 } from "./EffectOutboxModel.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";

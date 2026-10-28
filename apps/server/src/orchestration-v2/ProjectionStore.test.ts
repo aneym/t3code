@@ -22,6 +22,7 @@ import {
   RuntimeRequestId,
   RunAttemptId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
   type ThreadPullRequestLink,
@@ -3405,6 +3406,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           modelSelection,
           runtimeMode: "full-access",
           interactionMode: "default",
+          automationTaskId: ScheduledTaskId.make("scheduled-task:projection-shell"),
           branch: null,
           worktreePath: null,
           activeProviderThreadId: null,
@@ -3438,6 +3440,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         (thread) => thread.id === threadId,
       );
       assert.equal(shell?.status, "running");
+      assert.equal(
+        shell?.automationTaskId,
+        ScheduledTaskId.make("scheduled-task:projection-shell"),
+      );
       assert.equal(shell?.activeRunId, runId);
       assert.equal(
         shell?.latestRunRequestedAt && DateTime.toEpochMillis(shell.latestRunRequestedAt),

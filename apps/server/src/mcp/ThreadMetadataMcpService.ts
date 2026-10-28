@@ -7,6 +7,7 @@ import {
   type ThreadMetadataMcpUpdateInput,
   type ThreadMetadataMcpUpdateResult,
   ThreadId,
+  ScheduledTaskId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -72,6 +73,18 @@ function metadataCommand(input: {
         threadId: input.threadId,
         title: input.update.title!,
       };
+    case "mark_automation":
+    case "unmark_automation":
+      return {
+        type: "thread.metadata.update",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        automationTaskId:
+          input.update.action === "unmark_automation"
+            ? null
+            : (input.update.automationTaskId ??
+              ScheduledTaskId.make(`automation:thread:${input.threadId}`)),
+      };
     case "regenerate_title":
       return {
         type: "thread.metadata.update",
@@ -88,7 +101,7 @@ function resultFromThread(input: {
   readonly sequence: number;
   readonly thread: Pick<
     OrchestrationV2AppThread,
-    "id" | "title" | "titleRegeneration" | "linkedPullRequest" | "updatedAt"
+    "id" | "title" | "automationTaskId" | "titleRegeneration" | "linkedPullRequest" | "updatedAt"
   >;
 }): ThreadMetadataMcpUpdateResult {
   return {
@@ -97,6 +110,7 @@ function resultFromThread(input: {
     commandId: input.commandId,
     sequence: input.sequence,
     title: input.thread.title,
+    automationTaskId: input.thread.automationTaskId ?? null,
     titleRegeneration:
       input.thread.titleRegeneration === undefined || input.thread.titleRegeneration === null
         ? null
@@ -159,7 +173,12 @@ const make = Effect.gen(function* () {
         metadataCommand({
           commandId: updateCommandId,
           threadId,
-          update: input,
+          update:
+            input.action === "mark_automation" &&
+            input.automationTaskId === undefined &&
+            shell.automationTaskId != null
+              ? { ...input, automationTaskId: shell.automationTaskId }
+              : input,
         }),
       )
       .pipe(

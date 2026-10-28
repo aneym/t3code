@@ -271,6 +271,9 @@ it.effect.each([
               runRecoveryOnce: Effect.succeed(false),
             }),
             Layer.mock(EffectOutbox.EffectOutboxV2)({
+              withDispatch: (effect) => effect,
+              restartPrepared: Effect.sync(() => undefined),
+              restartHandoffs: Effect.succeed([]),
               reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
             }),
           ),
@@ -332,6 +335,9 @@ it.effect("lets a cut blocking delegate_task wake its parent like an async task"
           IdAllocator.layer,
           Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
           Layer.mock(EffectOutbox.EffectOutboxV2)({
+            withDispatch: (effect) => effect,
+            restartPrepared: Effect.sync(() => undefined),
+            restartHandoffs: Effect.succeed([]),
             reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
           }),
         ),
@@ -397,6 +403,9 @@ it.effect.each(["running", "waiting"])(
             IdAllocator.layer,
             Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
             Layer.mock(EffectOutbox.EffectOutboxV2)({
+              withDispatch: (effect) => effect,
+              restartPrepared: Effect.sync(() => undefined),
+              restartHandoffs: Effect.succeed([]),
               listByCommandId: () => Effect.succeed([]),
               reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
             }),
@@ -522,7 +531,11 @@ it.effect("prepares no continuation for background work another provider thread 
           }),
           IdAllocator.layer,
           Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
-          Layer.mock(EffectOutbox.EffectOutboxV2)({}),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            withDispatch: (effect) => effect,
+            restartPrepared: Effect.sync(() => undefined),
+            restartHandoffs: Effect.succeed([]),
+          }),
         ),
       ),
     );
@@ -549,7 +562,11 @@ it.effect("prepares no continuation for background work another provider thread 
           }),
           IdAllocator.layer,
           Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
-          Layer.mock(EffectOutbox.EffectOutboxV2)({}),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            withDispatch: (effect) => effect,
+            restartPrepared: Effect.sync(() => undefined),
+            restartHandoffs: Effect.succeed([]),
+          }),
         ),
       ),
     );
@@ -652,6 +669,9 @@ it.effect.each([
                 runRecoveryOnce: Effect.succeed(false),
               }),
               Layer.mock(EffectOutbox.EffectOutboxV2)({
+                withDispatch: (effect) => effect,
+                restartPrepared: Effect.sync(() => undefined),
+                restartHandoffs: Effect.succeed([]),
                 listByCommandId: () => Effect.succeed([]),
                 reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
               }),
@@ -808,6 +828,9 @@ it.effect("does not cancel or resume a run that completes while shutdown intent 
             runRecoveryOnce: Effect.succeed(false),
           }),
           Layer.mock(EffectOutbox.EffectOutboxV2)({
+            withDispatch: (effect) => effect,
+            restartPrepared: Effect.sync(() => undefined),
+            restartHandoffs: Effect.succeed([]),
             reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
           }),
         ),
@@ -1034,7 +1057,11 @@ it.effect("prepares later threads' continuations when one thread fails", () =>
           }),
           IdAllocator.layer,
           Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
-          Layer.mock(EffectOutbox.EffectOutboxV2)({}),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            withDispatch: (effect) => effect,
+            restartPrepared: Effect.sync(() => undefined),
+            restartHandoffs: Effect.succeed([]),
+          }),
         ),
       ),
     );

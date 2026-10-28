@@ -155,6 +155,11 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
   }),
   success: Schema.Union([threadConfiguration, OrchestrationV2DispatchCommandResult]),
 }).annotate(Tool.Destructive, true);
+const ThreadMoveTool = Tool.make("t3_thread_move", {
+  ...commandTool,
+  description: "Move an existing thread to another project.",
+  parameters: Schema.Struct({ threadId: ThreadId, projectId: ProjectId }),
+}).annotate(Tool.Destructive, true);
 
 const ThreadTransferTool = Tool.make("t3_thread_transfer", {
   ...commandTool,
@@ -229,6 +234,7 @@ export const ThreadToolkit = Toolkit.make(
   ScheduledTaskRunTool,
   ThreadSearchTool,
   ThreadConfigureTool,
+  ThreadMoveTool,
   ThreadTransferTool,
   ThreadOrganizeTool,
   PendingRequestTool,

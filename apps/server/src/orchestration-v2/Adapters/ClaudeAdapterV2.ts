@@ -20,7 +20,15 @@ import {
 } from "./claudeWorkflowProgress.ts";
 
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
+import {
+  captureClaudeMcpApp,
+  claudeMcpQuerySession,
+  makeClaudeMcpApps,
+  type ClaudeMcpQuery,
+} from "./ClaudeMcpApps.ts";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
+import { withT3ThreadEnvironment } from "./T3ThreadEnvironment.ts";
 import {
   type CanUseTool,
   forkSession as forkClaudeSession,
@@ -138,6 +146,7 @@ import {
   type CompiledClaudeModelSelection,
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
+import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
@@ -499,7 +508,7 @@ export interface ClaudeAgentSdkQueryOpenInput {
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
 }
 
-export interface ClaudeAgentSdkQuerySession {
+export interface ClaudeAgentSdkQuerySession extends ClaudeMcpQuery<ClaudeAgentSdkQueryRunnerError> {
   readonly messages: Stream.Stream<SDKMessage, ClaudeAgentSdkQueryRunnerError>;
   readonly offer: (
     message: SDKUserMessage,
@@ -518,6 +527,15 @@ export interface ClaudeAgentSdkQuerySession {
   ) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  readonly mcpServerStatus?: Effect.Effect<ReadonlyArray<unknown>, ClaudeAgentSdkQueryRunnerError>;
+  readonly readMcpResource?: (
+    server: string,
+    uri: string,
+  ) => Effect.Effect<unknown, ClaudeAgentSdkQueryRunnerError>;
+  readonly callMcpTool?: (
+    tool: string,
+    args: Record<string, unknown>,
+  ) => Effect.Effect<unknown, ClaudeAgentSdkQueryRunnerError>;
 }
 
 type ClaudeQueryStreamExit = Exit.Exit<void, ClaudeAgentSdkQueryRunnerError>;
@@ -1197,6 +1215,7 @@ export const layerQueryRunner: Layer.Layer<
                 }),
               ),
             ),
+            ...claudeMcpQuerySession(queryRuntime, queryRunnerError),
             close: Queue.shutdown(promptQueue).pipe(
               Effect.andThen(closeClaudeQuery(queryRuntime)),
               Effect.tap(() =>
@@ -1518,7 +1537,7 @@ export function makeClaudeQueryOptions(input: {
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
-    ...(input.environment === undefined ? {} : { env: input.environment }),
+    env: { ...input.environment, CLAUDE_CODE_MCP_APPS_HOST: "1" },
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     systemPrompt: {
       type: "preset" as const,
@@ -4220,6 +4239,7 @@ export interface ClaudeAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: ClaudeSettings;
   readonly environment: NodeJS.ProcessEnv;
+  readonly environmentId?: string | undefined;
   readonly attachmentsDir: string;
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
@@ -4241,7 +4261,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
-  const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
+  const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner, environmentId } =
+    adapterOptions;
   const subagentModelCatalog = scopeClaudeModelCatalog(
     BUNDLED_CLAUDE_MODEL_CATALOG,
     adapterOptions.settings.customModels,
@@ -5294,6 +5315,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly startedAt: DateTime.Utc;
           readonly updatedAt: DateTime.Utc;
           readonly presentation: ClaudeToolPresentation | undefined;
+          readonly mcpAppReference?: import("@t3tools/shared/mcpApp").McpAppReference;
           readonly toolNonExecutionKind?: string;
         }) => {
           const completedAt = input.status === "running" ? null : input.updatedAt;
@@ -5451,7 +5473,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       toolName: input.toolName,
                       ...(viewedImagePath === undefined ? {} : { viewedImagePath }),
                       input: claudeNativeToolInputValue(input.toolInput),
-                      ...(outputValue === undefined ? {} : { output: outputValue }),
+                      ...(outputValue === undefined && input.mcpAppReference === undefined
+                        ? {}
+                        : {
+                            output:
+                              input.mcpAppReference === undefined
+                                ? outputValue
+                                : {
+                                    [MCP_APP_OUTPUT_KEY]: input.mcpAppReference,
+                                    result: outputValue,
+                                  },
+                          }),
                     };
           return { node, turnItem };
         };
@@ -6678,6 +6710,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly message: SDKMessage;
           readonly toolResult: ClaudeToolResultContentBlock;
           readonly output: ClaudeNativeToolOutput;
+          readonly mcpAppReference?: import("@t3tools/shared/mcpApp").McpAppReference;
           readonly completedAt: DateTime.Utc;
         }) {
           const { toolCall } = input;
@@ -6699,6 +6732,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               parentNodeId: toolCall.parentNodeId,
               ordinal: toolCall.ordinal,
               output: input.output,
+              ...(input.mcpAppReference === undefined
+                ? {}
+                : { mcpAppReference: input.mcpAppReference }),
               status:
                 toolNonExecutionKind === "cancelled"
                   ? "cancelled"
@@ -8795,6 +8831,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 toolInput: EMPTY_CLAUDE_NATIVE_TOOL_INPUT,
                 parentToolUseId,
               }));
+            const mcpAppReference =
+              context !== null && !isClaudeToolResultError(toolResult)
+                ? yield* captureClaudeMcpApp({
+                    query: input.query,
+                    threadId: context.input.threadId,
+                    attachmentsDir,
+                    toolName: toolCall.toolName,
+                    output: claudeNativeToolOutputValue(output),
+                    toolResult,
+                  }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem))
+                : undefined;
             yield* settleToolCall({
               context,
               toolCall,
@@ -8802,6 +8849,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message,
               toolResult,
               output,
+              ...(mcpAppReference === undefined ? {} : { mcpAppReference }),
               completedAt: yield* DateTime.now,
             });
             // Subagents write to the session's shared task store, so their
@@ -9736,7 +9784,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             attachmentsDir,
             settings: adapterOptions.settings,
             environment: claudeQueryEnvironment(
-              adapterOptions.environment,
+              withT3ThreadEnvironment(
+                adapterOptions.environment,
+                turnInput.appThread.id,
+                environmentId,
+              ),
               turnInput.appThread,
               turnInput.appThread.lineage.relationshipToParent === "subagent"
                 ? yield* resolveSubagentPromptCacheTtl(turnInput.runtimePolicy.cwd)
@@ -10523,6 +10575,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           },
         );
 
+        const mcpApps = makeClaudeMcpApps(
+          Ref.get(queryContext).pipe(Effect.map((live) => live?.query ?? null)),
+        );
+
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CLAUDE_PROVIDER,
@@ -10531,6 +10587,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           getModelContextWindow: (selection) =>
             resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, selection),
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          mcpApps,
           backgroundTasksEndWithProcess: true,
           hasPendingBackgroundWork: Effect.gen(function* () {
             for (const roster of (yield* Ref.get(pendingBackgroundTasksByNativeThread)).values()) {
@@ -10680,16 +10737,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* Ref.get(pendingBackgroundTasksByNativeThread),
                 nativeThreadId,
               );
-              const matched = [...new Set(taskIds)].filter((taskId) => roster.has(taskId));
-              if (matched.length === 0) return { matched };
+              const backgroundedSubagents = yield* Ref.get(backgroundedSubagentTaskIds);
+              const liveQuery = yield* Ref.get(queryContext);
+              const subagents = yield* Ref.get(sessionSubagentsByTaskId);
+              const matched = [...new Set(taskIds)].filter((taskId) => {
+                if (roster.has(taskId)) return true;
+                const subagent = subagents.get(taskId);
+                return (
+                  subagent !== undefined &&
+                  backgroundedSubagents.has(taskId) &&
+                  subagent.task.threadId === providerThread.appThreadId &&
+                  subagent.task.status === "running" &&
+                  liveQuery?.nativeThreadId === nativeThreadId &&
+                  !liveQuery.subagentsFromEarlierProcesses.has(subagent)
+                );
+              });
+              const matchedRosterTasks = matched.filter((taskId) => roster.has(taskId));
+              if (matchedRosterTasks.length === 0) return { matched };
               if (awaited) {
                 yield* addTaskIdsToNativeThreadSet(
                   awaitedBackgroundTasksByNativeThread,
                   nativeThreadId,
-                  matched,
+                  matchedRosterTasks,
                 );
               } else {
-                for (const taskId of matched) {
+                for (const taskId of matchedRosterTasks) {
                   yield* clearTaskIdFromNativeThreadSet(
                     awaitedBackgroundTasksByNativeThread,
                     nativeThreadId,
@@ -11015,6 +11087,12 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;
+    const environmentIdentity = yield* Effect.serviceOption(
+      ServerEnvironment.ServerEnvironmentIdentity,
+    );
+    const environmentId = Option.isSome(environmentIdentity)
+      ? yield* environmentIdentity.value.getEnvironmentId
+      : undefined;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const baseEnvironment = yield* mergeProviderInstanceEnvironment(environment, hostEnvironment);
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
@@ -11028,6 +11106,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       instanceId,
       settings: { ...config, enabled, binaryPath },
       environment: claudeEnvironment,
+      environmentId,
       attachmentsDir: serverConfig.attachmentsDir,
       fileSystem,
       path,
