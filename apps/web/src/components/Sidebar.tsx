@@ -2858,6 +2858,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               pinned={sidebarAgents.pinned}
               hidden={sidebarAgents.hidden}
               jumpLabelByKey={showJumpHints ? jumpLabelByKey : null}
+              projectScope={{
+                key: projectScopeKey,
+                groups: projectGroups,
+                set: setProjectScopeKey,
+              }}
             />
           </SidebarGroup>
         }

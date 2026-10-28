@@ -16,7 +16,12 @@ import { JumpHintBadge } from "../sidebar/SidebarThreadRow";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AgentFace } from "./AgentFace";
 import { type RailsAgent, railsAgentThreadKey } from "./railsAgents";
-import { AGENTS_SECTION_STORAGE_KEY, sidebarAgentJumpKey } from "./sidebarAgentLists";
+import {
+  AGENTS_SECTION_STORAGE_KEY,
+  type AgentProjectScope,
+  agentFocusAction,
+  sidebarAgentJumpKey,
+} from "./sidebarAgentLists";
 import { useSidebarPins } from "./sidebarPins";
 
 export function SidebarAgents({
@@ -24,11 +29,13 @@ export function SidebarAgents({
   pinned,
   hidden,
   jumpLabelByKey,
+  projectScope,
 }: {
   readonly onNavigate: () => void;
   readonly pinned: ReadonlyArray<RailsAgent>;
   readonly hidden: ReadonlyArray<RailsAgent>;
   readonly jumpLabelByKey: ReadonlyMap<string, string> | null;
+  readonly projectScope: AgentProjectScope;
 }) {
   const { toggle, showMenu } = useSidebarPins();
   const routeTarget = useThreadRouteTarget();
@@ -49,6 +56,7 @@ export function SidebarAgents({
       .filter((label, index, all) => all.indexOf(label) === index)
       .join(" · "),
     onNavigate,
+    focus: agentFocusAction(agent, projectScope),
     onContextMenu: (position: { x: number; y: number }) => {
       void showMenu(agent.handle, agent.name, position);
     },
@@ -107,11 +115,8 @@ function AgentRow(props: {
   readonly machines: string;
   readonly onNavigate: () => void;
   readonly onContextMenu: (position: { x: number; y: number }) => void;
-  readonly toggle: {
-    readonly label: string;
-    readonly icon: typeof PinIcon;
-    readonly onClick: () => void;
-  };
+  readonly focus: AgentRowAction | null;
+  readonly toggle: AgentRowAction;
 }) {
   const { agent } = props;
   const handleNewThread = useNewThreadHandler();
@@ -134,13 +139,12 @@ function AgentRow(props: {
         </span>
       )}
       {props.machines === "" ? null : (
-        <span className="mr-6 hidden shrink-0 text-xs text-sidebar-muted-foreground group-focus-within/agent-row:inline group-hover/agent-row:inline">
+        <span className="mr-12 hidden shrink-0 text-xs text-sidebar-muted-foreground group-focus-within/agent-row:inline group-hover/agent-row:inline">
           {props.machines}
         </span>
       )}
     </>
   );
-  const ToggleIcon = props.toggle.icon;
   return (
     <li
       className="group/agent-row relative flex items-center"
@@ -177,23 +181,44 @@ function AgentRow(props: {
           {content}
         </Link>
       )}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label={props.toggle.label}
-              onClick={props.toggle.onClick}
-              className="absolute right-1 inline-flex size-6 items-center justify-center rounded-md text-sidebar-muted-foreground opacity-0 hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/agent-row:opacity-100"
-            >
-              <ToggleIcon aria-hidden className="size-3.5" />
-            </button>
-          }
-        />
-        <TooltipPopup side="top">{props.toggle.label}</TooltipPopup>
-      </Tooltip>
+      <span className="absolute right-1 flex">
+        {props.focus ? <AgentRowButton action={props.focus} /> : null}
+        <AgentRowButton action={props.toggle} />
+      </span>
       {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
     </li>
+  );
+}
+
+interface AgentRowAction {
+  readonly label: string;
+  readonly icon: typeof PinIcon;
+  readonly active?: boolean;
+  readonly onClick: () => void;
+}
+
+function AgentRowButton({ action }: { readonly action: AgentRowAction }) {
+  const Icon = action.icon;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={action.label}
+            aria-pressed={action.active}
+            onClick={action.onClick}
+            className={cn(
+              "inline-flex size-6 items-center justify-center rounded-md opacity-0 hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/agent-row:opacity-100",
+              action.active ? "text-sidebar-foreground" : "text-sidebar-muted-foreground",
+            )}
+          >
+            <Icon aria-hidden className="size-3.5" />
+          </button>
+        }
+      />
+      <TooltipPopup side="top">{action.label}</TooltipPopup>
+    </Tooltip>
   );
 }
 

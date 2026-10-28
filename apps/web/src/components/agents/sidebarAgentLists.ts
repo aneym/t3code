@@ -5,7 +5,8 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 
-import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import type { ResolvedKeybindingsConfig, ScopedProjectRef } from "@t3tools/contracts";
+import { FocusIcon } from "lucide-react";
 
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { shortcutLabelForCommand, threadJumpCommandForIndex } from "../../keybindings";
@@ -72,4 +73,28 @@ export function sidebarJumpLabels(
     if (label) mapping.set(key, label);
   }
   return mapping;
+}
+
+export interface AgentProjectScope {
+  readonly key: string | null;
+  readonly groups: ReadonlyArray<{
+    readonly projectKey: string;
+    readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
+  }>;
+  readonly set: (key: string | null) => void;
+}
+
+export function agentFocusAction(agent: RailsAgent, scope: AgentProjectScope) {
+  const target = scopedProjectKey(agent.projectRef);
+  const group = scope.groups.find((entry) =>
+    entry.memberProjectRefs.some((ref) => scopedProjectKey(ref) === target),
+  );
+  if (group === undefined) return null;
+  const active = scope.key === group.projectKey;
+  return {
+    label: active ? "Show all projects" : `Focus ${agent.name}`,
+    icon: FocusIcon,
+    active,
+    onClick: () => scope.set(active ? null : group.projectKey),
+  };
 }
