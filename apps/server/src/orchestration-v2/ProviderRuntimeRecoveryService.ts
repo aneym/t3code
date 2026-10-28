@@ -1,3 +1,4 @@
+import { recoveryQueueHold } from "./QueueHoldPolicy.ts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -235,7 +236,6 @@ export const make = Effect.gen(function* () {
       const requests = projection.runtimeRequests.filter(
         (request) => request.status === "pending" && request.responseCapability.type !== "message",
       );
-      // Delegated task rows, items and nodes stay open: the child settles them.
       const delegatedTaskNodeIds = new Set<string>([
         ...(projection.subagents ?? []).filter(isAppOwnedDelegation).map((subagent) => subagent.id),
         ...(projection.turnItems ?? []).flatMap((item) =>
@@ -319,7 +319,8 @@ export const make = Effect.gen(function* () {
           runs.push(run);
           continue;
         }
-        if (run.queueHeld === true) continue;
+        const recovered = recoveryQueueHold(run, trigger);
+        if (recovered === undefined) continue;
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
@@ -327,7 +328,7 @@ export const make = Effect.gen(function* () {
           runId: run.id,
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
-          payload: { ...run, queueHeld: true },
+          payload: recovered,
         });
       }
       for (const request of requests) {
@@ -436,7 +437,6 @@ export const make = Effect.gen(function* () {
               candidate.status === "running" ||
               candidate.status === "waiting"),
         )) {
-          // Cut native subagents do not resume; record them for the continuation to restart.
           if (run.status === "waiting") recordCancelledBackgroundItem(item);
           else if (item.type === "subagent" && item.origin === "provider_native")
             recordCancelledBackgroundItem(item);
@@ -452,7 +452,6 @@ export const make = Effect.gen(function* () {
           });
         }
       }
-      // Blocking waits die with their turn; let child results wake the parent continuation as async tasks.
       const cutRunIds = new Set(runs.map((run) => run.id));
       for (const task of projection.subagents ?? []) {
         if (

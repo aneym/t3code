@@ -29,7 +29,6 @@ import {
   type OrchestratorMcpDeleteScheduledTaskResult,
   type OrchestratorMcpListScheduledTasksResult,
   type OrchestratorMcpRuntimeMode,
-  type OrchestratorMcpScheduledTask,
   type OrchestratorMcpScheduleTaskInput,
   type OrchestratorMcpScheduleTaskResult,
   type OrchestratorMcpTarget,
@@ -105,6 +104,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { scheduledTaskSummary } from "./scheduledTaskSummary.ts";
 import {
   clientRuntimeModeCeiling,
   type McpInvocationScope,
@@ -289,24 +289,6 @@ function scheduledTaskWorkspaceStrategy(
     : { type: "worktree", baseRef: "main", startFromOrigin: true };
 }
 
-function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): OrchestratorMcpScheduledTask {
-  return {
-    scheduledTaskId: task.id,
-    title: task.title,
-    prompt: task.prompt,
-    enabled: task.enabled,
-    projectId: task.projectId,
-    boundThreadId: task.threadId,
-    schedule: task.schedule,
-    nextRunAt: task.nextRunAt,
-    lastRunStatus: task.lastRunStatus,
-    ...(task.webhook?.url == null || !mayRun ? {} : { webhookUrl: task.webhook.url }),
-    ...(task.webhook === undefined
-      ? {}
-      : { webhookSignature: task.webhook.hasSecret ? "set" : "none" }),
-  };
-}
-
 /**
  * Large catalogs (OpenCode, Cursor, Pi) can list hundreds of models, so agents
  * get a short list by default and search for the rest. These providers have
@@ -351,7 +333,6 @@ function listCapabilityModels(input: {
   return { listed, omitted: visible.length - listed.length };
 }
 
-/** Option ids and allowed values are all a delegating agent needs; labels are UI copy. */
 function capabilityModelOption(descriptor: ProviderOptionDescriptor): OrchestratorMcpModelOption {
   const defaultValue = getProviderOptionCurrentValue(descriptor);
   return {
@@ -2818,7 +2799,7 @@ const make = Effect.gen(function* () {
       yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
 
-      const mode = input.mode ?? "auto";
+      const mode = input.mode ?? "queue";
       const key = yield* requestKey(input.clientRequestId);
       const messageId = stableOperationMessageId({
         scope,

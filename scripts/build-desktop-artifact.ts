@@ -15,6 +15,7 @@ import {
   type DirectoryRecord,
 } from "@electron/asar";
 
+import { cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
@@ -1341,6 +1342,21 @@ export function resolveMacWebAuthnEntitlements(
   };
 }
 
+const MAC_HARDENED_RUNTIME_ENTITLEMENTS = `    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- The hardened runtime denies camera and microphone to the app and every
+         child process, with no prompt, unless the app claims these. Terminals
+         and coding agents inherit the app's TCC identity, so without these a
+         command like ffmpeg or imagesnap gets silent access-denied. -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>`;
+
 export function renderMacPasskeyEntitlements(
   configuration: MacPasskeySigningConfiguration,
   webAuthn: MacWebAuthnEntitlements,
@@ -1373,20 +1389,18 @@ export function renderMacPasskeyEntitlements(
     <array>
 ${associatedDomains}
     </array>${keychainAccessGroups}${browserPasskeys}
-    <key>com.apple.security.cs.allow-jit</key>
-    <true/>
-    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <true/>
-    <key>com.apple.security.cs.disable-library-validation</key>
-    <true/>
-    <!-- The hardened runtime denies camera and microphone to the app and every
-         child process, with no prompt, unless the app claims these. Terminals
-         and coding agents inherit the app's TCC identity, so without these a
-         command like ffmpeg or imagesnap gets silent access-denied. -->
-    <key>com.apple.security.device.camera</key>
-    <true/>
-    <key>com.apple.security.device.audio-input</key>
-    <true/>
+${MAC_HARDENED_RUNTIME_ENTITLEMENTS}
+  </dict>
+</plist>
+`;
+}
+
+export function renderMacHardenedRuntimeEntitlements(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+${MAC_HARDENED_RUNTIME_ENTITLEMENTS}
   </dict>
 </plist>
 `;
@@ -2705,8 +2719,24 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   };
 });
 
+export const resolveDesktopPublishConfig = Effect.fn("resolveDesktopPublishConfig")(function* (
+  updateChannel: "latest" | "nightly",
+) {
+  const updateUrl = Option.getOrUndefined(
+    yield* Config.String("T3CODE_DESKTOP_UPDATE_URL").pipe(Config.option),
+  )?.trim();
+  if (updateUrl) {
+    return {
+      provider: "generic" as const,
+      url: updateUrl,
+      ...(updateChannel === "nightly" ? { channel: "nightly" as const } : {}),
+    };
+  }
+  return yield* resolveGitHubPublishConfig(updateChannel);
+});
+
 export function resolveDesktopUpdateChannel(version: string): "latest" | "nightly" {
-  return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
+  return cliReleaseChannelOf(version) === "nightly" ? "nightly" : "latest";
 }
 
 export function isDesktopPreviewVersion(version: string): boolean {
@@ -2749,6 +2779,7 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 }
 
 export function resolveDesktopProductName(version: string): string {
+  if (version.includes(".aneym.")) return "T3 Dev";
   return resolveDesktopUpdateChannel(version) === "nightly"
     ? "T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
@@ -2761,10 +2792,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   signed: boolean,
   mockUpdates: boolean,
   mockUpdateServerPort: number | undefined,
-  macPasskeySigning:
+  macSigning:
     | {
         readonly entitlementsPath: string;
-        readonly provisioningProfilePath: string;
+        readonly provisioningProfilePath: string | undefined;
       }
     | undefined,
   wslRuntimeBundled = false,
@@ -2802,7 +2833,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   // Missing publish config infers a GitHub feed from tokens; staging has no repository, so manifest generation would crash.
   buildConfig.publish = null;
   if (!isDesktopPreviewVersion(version)) {
-    const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
+    const publishConfig = yield* resolveDesktopPublishConfig(updateChannel);
     if (publishConfig) {
       buildConfig.publish = [publishConfig];
     } else if (mockUpdates) {
@@ -2856,11 +2887,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       ],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
-      ...(macPasskeySigning
-        ? {
-            entitlements: macPasskeySigning.entitlementsPath,
-            provisioningProfile: macPasskeySigning.provisioningProfilePath,
-          }
+      ...(macSigning ? { entitlements: macSigning.entitlementsPath } : {}),
+      ...(macSigning?.provisioningProfilePath
+        ? { provisioningProfile: macSigning.provisioningProfilePath }
         : {}),
     };
   }
@@ -3758,10 +3787,12 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
+  const macSigningEnv =
+    options.platform === "mac" && options.signed ? loadRepoEnv({ repoRoot }) : undefined;
   const configuredMacPasskeySigning =
-    options.platform === "mac" && options.signed
+    macSigningEnv && macSigningEnv.T3CODE_MACOS_PROVISIONING_PROFILE?.trim()
       ? yield* Effect.try({
-          try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
+          try: () => resolveMacPasskeySigningConfiguration(macSigningEnv),
           catch: MacPasskeySigningConfigurationResolutionError.fromCause,
         })
       : undefined;
@@ -3774,7 +3805,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
         ),
       }
     : undefined;
-  const macEntitlementsPath = macPasskeySigning
+  const macEntitlementsPath = macSigningEnv
     ? path.join(stageAppDir, "entitlements.mac.plist")
     : undefined;
   let macWebAuthn: MacWebAuthnEntitlements | undefined;
@@ -3795,6 +3826,11 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       macEntitlementsPath,
       renderMacPasskeyEntitlements(macPasskeySigning, macWebAuthn),
     );
+  } else if (macEntitlementsPath) {
+    yield* Effect.log(
+      "[desktop-artifact] T3CODE_MACOS_PROVISIONING_PROFILE is unset: signing with hardened runtime entitlements only; native passkeys are disabled.",
+    );
+    yield* fs.writeFileString(macEntitlementsPath, renderMacHardenedRuntimeEntitlements());
   }
 
   const stageDependencies =
@@ -3837,10 +3873,10 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       options.signed,
       options.mockUpdates,
       options.mockUpdateServerPort,
-      macPasskeySigning && macEntitlementsPath
+      macEntitlementsPath
         ? {
             entitlementsPath: macEntitlementsPath,
-            provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
+            provisioningProfilePath: macPasskeySigning?.provisioningProfilePath,
           }
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),

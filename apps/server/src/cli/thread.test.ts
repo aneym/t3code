@@ -2,7 +2,8 @@ import { assert, it } from "@effect/vitest";
 import { RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { type ThreadTools, waitForRun } from "./thread.ts";
+import type { OwnerMcpTools } from "./ownerMcpTools.ts";
+import { waitForRun } from "./thread.ts";
 
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
@@ -14,8 +15,8 @@ const scriptedTools = (script: Record<string, Array<unknown>>) => {
     calls.push({ tool, args });
     const next = script[tool]?.shift();
     return next === undefined ? Effect.die(`unscripted ${tool} call`) : Effect.succeed(next);
-  }) as ThreadTools["call"];
-  return { tools: { call } satisfies ThreadTools, calls };
+  }) as OwnerMcpTools["call"];
+  return { tools: { call } satisfies OwnerMcpTools, calls };
 };
 
 it.effect("--wait follows the sent run to its continuation's terminal status", () =>
