@@ -238,11 +238,17 @@ export const legacyRestartHandoffs = Effect.fn("RestartHandoffImport.legacyResta
       .pipe(Stream.runCollect);
     const captured = new Map(input.threads.map((thread) => [thread.threadId, thread]));
     const discovered = new Map<ThreadId, Set<RunId>>();
+    const ranAfterCapture = new Map<ThreadId, Set<RunId>>();
     for (const row of observed) {
       const event = row.event;
       if (DateTime.isLessThan(event.occurredAt, startedAt)) continue;
       if (event.type !== "run.created" && event.type !== "run.updated") continue;
       const run = event.payload;
+      if (run.status !== "queued") {
+        const ran = ranAfterCapture.get(event.threadId) ?? new Set<RunId>();
+        ran.add(run.id);
+        ranAfterCapture.set(event.threadId, ran);
+      }
       const shutdown =
         run.status === "cancelled" && row.commandId?.startsWith("command:runtime-reconcile:");
       if (!shutdown && run.status !== "queued") continue;
@@ -250,7 +256,11 @@ export const legacyRestartHandoffs = Effect.fn("RestartHandoffImport.legacyResta
       if (shutdown) sources.add(run.id);
       discovered.set(event.threadId, sources);
     }
-    const threadIds = new Set([...captured.keys(), ...discovered.keys()]);
+    const threadIds = new Set([
+      ...captured.keys(),
+      ...discovered.keys(),
+      ...ranAfterCapture.keys(),
+    ]);
     const handoffs: ServerRestartHandoff[] = [];
     const events: OrchestrationV2DomainEvent[] = [];
     for (const threadId of threadIds) {
@@ -304,7 +314,7 @@ export const legacyRestartHandoffs = Effect.fn("RestartHandoffImport.legacyResta
       handoffs.push({
         threadId,
         runIds,
-        sourceRunIds: [...sourceIds],
+        sourceRunIds: [...new Set([...sourceIds, ...(ranAfterCapture.get(threadId) ?? [])])],
         queuedRunIds: projection.runs.filter((run) => run.status === "queued").map((run) => run.id),
         requestIds,
         delegatedTaskIds: projection.subagents

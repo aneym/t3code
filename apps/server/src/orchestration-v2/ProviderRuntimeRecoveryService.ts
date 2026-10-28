@@ -671,7 +671,9 @@ export const make = Effect.gen(function* () {
       if (
         trigger === "startup" &&
         handoff?.type === "provider-runtime.restart-handoff" &&
-        !handoff.handoff.paused
+        projection.thread.archivedAt === null &&
+        projection.thread.deletedAt === null &&
+        projection.thread.settledOverride !== "settled"
       ) {
         const full = yield* projections.getThreadProjection(threadId).pipe(
           Effect.mapError(

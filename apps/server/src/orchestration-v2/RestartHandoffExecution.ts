@@ -13,11 +13,10 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
   function* (input: {
     threadId: ThreadId;
     epoch: string;
-    handoff: Pick<ServerRestartHandoff, "runIds" | "paused" | "pausedRunIds">;
+    handoff: Pick<ServerRestartHandoff, "runIds" | "pausedRunIds">;
     humanReply?: string;
   }) {
     const threads = yield* ThreadManagementService.ThreadManagementService;
-    if (input.handoff.paused) return;
     for (const sourceRunId of input.handoff.runIds) {
       const projection = yield* threads.getThreadProjection(input.threadId);
       const source = projection.runs.find((run) => run.id === sourceRunId);
