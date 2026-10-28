@@ -1,4 +1,3 @@
-import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { Link } from "@tanstack/react-router";
 import { CircleCheckIcon, CircleDashedIcon, PinOffIcon, PinIcon } from "lucide-react";
@@ -16,30 +15,24 @@ import {
   resolveThreadLastVisitedAt,
 } from "../Sidebar.logic";
 import { SidebarSection } from "../sidebar/SidebarSection";
+import { JumpHintBadge } from "../sidebar/SidebarThreadRow";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  type RailsAgent,
-  railsAgentFaceUrl,
-  railsAgentThreadKey,
-  useRailsAgents,
-} from "./railsAgents";
-
-import { useProjects } from "../../state/entities";
-import { sidebarProjectPinKey, useSidebarPins } from "./sidebarPins";
+import { type RailsAgent, railsAgentFaceUrl, railsAgentThreadKey } from "./railsAgents";
+import { AGENTS_SECTION_STORAGE_KEY, sidebarAgentJumpKey } from "./sidebarAgentLists";
+import { useSidebarPins } from "./sidebarPins";
 
 export function SidebarAgents({
   onNavigate,
-  projectKeys,
+  pinned,
+  hidden,
+  jumpLabelByKey,
 }: {
   readonly onNavigate: () => void;
-  readonly projectKeys: ReadonlySet<string> | null;
+  readonly pinned: ReadonlyArray<RailsAgent>;
+  readonly hidden: ReadonlyArray<RailsAgent>;
+  readonly jumpLabelByKey: ReadonlyMap<string, string> | null;
 }) {
-  const inScope = (agent: RailsAgent) =>
-    projectKeys === null || projectKeys.has(scopedProjectKey(agent.projectRef));
-  const agents = useRailsAgents();
-  const { pinnedKeys, toggle, showMenu } = useSidebarPins();
-  const projects = useProjects();
-  const pinnedHandles = pinnedKeys;
+  const { toggle, showMenu } = useSidebarPins();
   const routeTarget = useThreadRouteTarget();
   const environmentLabelById = new Map(
     useEnvironmentIdentities().map((environment) => [environment.environmentId, environment.label]),
@@ -49,31 +42,6 @@ export function SidebarAgents({
       ? `${routeTarget.threadRef.environmentId}:${routeTarget.threadRef.threadId}`
       : null;
 
-  const agentByHandle = new Map(agents.map((agent) => [agent.handle, agent] as const));
-  const pinned = pinnedHandles
-    .flatMap((handle) => {
-      const agent = agentByHandle.get(handle);
-      if (agent) return [agent];
-      const project = projects.find((entry) => sidebarProjectPinKey(entry) === handle);
-      return project
-        ? [
-            {
-              handle,
-              name: project.title,
-              projectRef: {
-                environmentId: project.environmentId,
-                projectId: project.id,
-              },
-              environmentIds: [project.environmentId],
-              thread: null,
-            },
-          ]
-        : [];
-    })
-    .filter(inScope);
-  const hidden = agents
-    .filter((agent) => inScope(agent) && !pinnedHandles.includes(agent.handle))
-    .toSorted((a, b) => a.name.localeCompare(b.name));
   if (pinned.length === 0 && hidden.length === 0) return null;
   const rowProps = (agent: RailsAgent) => ({
     agent,
@@ -90,12 +58,13 @@ export function SidebarAgents({
 
   return (
     <div className="mt-2">
-      <SidebarSection label="Agents" storageKey="t3code:sidebar-section:agents:expanded">
+      <SidebarSection label="Agents" storageKey={AGENTS_SECTION_STORAGE_KEY}>
         <ul aria-label="Agents" className="flex flex-col">
           {pinned.map((agent) => (
             <AgentRow
               key={agent.handle}
               {...rowProps(agent)}
+              jumpLabel={jumpLabelByKey?.get(sidebarAgentJumpKey(agent)) ?? null}
               toggle={{
                 label: `Unpin ${agent.name}`,
                 icon: PinOffIcon,
@@ -136,6 +105,7 @@ function AgentRow(props: {
   readonly agent: RailsAgent;
   readonly active: boolean;
   readonly muted?: boolean;
+  readonly jumpLabel?: string | null;
   readonly machines: string;
   readonly onNavigate: () => void;
   readonly onContextMenu: (position: { x: number; y: number }) => void;
@@ -224,6 +194,7 @@ function AgentRow(props: {
         />
         <TooltipPopup side="top">{props.toggle.label}</TooltipPopup>
       </Tooltip>
+      {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
     </li>
   );
 }
