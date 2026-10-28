@@ -23,7 +23,6 @@ export const restartStatus = Effect.fn("RestartStatus.read")(
       if (effect.request.type !== "provider-runtime.restart-handoff") continue;
       const projection = yield* projections.getThreadProjection(effect.threadId);
       const handoff = effect.request.handoff;
-      const executable = new Set(handoff.runIds);
       const sources: ServerRestartStatus["threads"][number]["sources"][number][] = (
         handoff.sourceRunIds ?? handoff.runIds
       ).map((sourceRunId) => {
@@ -57,7 +56,7 @@ export const restartStatus = Effect.fn("RestartStatus.read")(
         if (requestIds.length > 0)
           return { sourceRunId, state: "paused", requestIds, reason: "human_review_required" };
         if (source?.status === "completed") return { sourceRunId, state: "completed" };
-        if (source !== undefined && !executable.has(sourceRunId) && endedOnItsOwn(source.status))
+        if (source !== undefined && endedOnItsOwn(source.status))
           return { sourceRunId, state: "completed", reason: source.status };
         return { sourceRunId, state: "pending" };
       });
