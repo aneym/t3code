@@ -137,6 +137,7 @@ import { useAutomationThreadKeys } from "../hooks/useAutomations";
 import { SidebarAutomationJobs } from "./automations/SidebarAutomationJobs";
 import { SidebarAgents } from "./agents/SidebarAgents";
 import { useSidebarPins } from "./agents/sidebarPins";
+import { useWithoutAgentMainThreads } from "./agents/railsAgents";
 import { SHELF_MORE_ROW_CLASS_NAME } from "./sidebar/shelfMoreRow";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
@@ -1149,13 +1150,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     scopedProjectKeys,
     serverConfigs,
     optimisticDrop,
-    threads,
+    threads: useWithoutAgentMainThreads(threads, scopedProjectKeys),
     routeRowThreadKey,
   });
 
-  // Ranked across environments as the palette ranks them, so one
-  // environment's list does not sit above another's better matches; rows
-  // already shown keep their places while slower environments answer.
   const threadByMatchKey =
     threadSearch.matches.length === 0
       ? null

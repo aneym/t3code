@@ -15,6 +15,7 @@ export interface RailsAgent {
   readonly projectRef: ScopedProjectRef;
   readonly environmentIds: ReadonlyArray<EnvironmentId>;
   readonly thread: EnvironmentThreadShell | null;
+  readonly threadIsBound?: boolean;
 }
 
 export function railsAgentHandle(workspaceRoot: string): string | null {
@@ -71,6 +72,7 @@ function resolveRailsAgents(
         projectRef,
         environmentIds: [project.environmentId],
         thread: null,
+        threadIsBound: false,
       });
     } else if (!agent.environmentIds.includes(project.environmentId)) {
       agent.environmentIds = [...agent.environmentIds, project.environmentId];
@@ -86,6 +88,7 @@ function resolveRailsAgents(
     if (!isBound && !isHomeThreadCandidate(thread)) continue;
     if (agent.thread === null || isPreferredHomeThread(thread, agent.thread, boundThreadIds)) {
       agent.thread = thread;
+      agent.threadIsBound = isBound;
       agent.projectRef = scopeProjectRef(thread.environmentId, thread.projectId);
     }
   }
@@ -96,4 +99,19 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
   const projects = useProjects();
   const homes = projects.filter((project) => railsAgentHandle(project.workspaceRoot) !== null);
   return resolveRailsAgents(projects, useQuietThreadShells(), useAgentHomeBoundThreadIds(homes));
+}
+
+export function useWithoutAgentMainThreads<T extends EnvironmentThreadShell>(
+  threads: ReadonlyArray<T>,
+  scopedProjectKeys: ReadonlySet<string> | null,
+): ReadonlyArray<T> {
+  const mainThreadKeys = new Set(
+    useRailsAgents().flatMap((agent) =>
+      agent.thread !== null && agent.threadIsBound === true
+        ? [railsAgentThreadKey(agent.thread)]
+        : [],
+    ),
+  );
+  if (scopedProjectKeys !== null || mainThreadKeys.size === 0) return threads;
+  return threads.filter((thread) => !mainThreadKeys.has(railsAgentThreadKey(thread)));
 }
