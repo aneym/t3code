@@ -9,7 +9,6 @@ import {
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   getClaudeCatalogModelCapabilities,
-  isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogEffort,
@@ -41,10 +40,19 @@ export function compileClaudeModelSelection(
   const thinking = supportsBoolean("thinking")
     ? getModelSelectionBooleanOptionValue(selection, "thinking")
     : undefined;
+  const ultracodeDescriptor = getProviderOptionDescriptors({
+    caps: capabilities,
+    selections: selection.options,
+  }).find((descriptor) => descriptor.id === "ultracode");
+  // Explicit when supported, so an Off toggle overrides Ultracode set in the user's settings.json.
+  const ultracode =
+    ultracodeDescriptor?.type === "boolean"
+      ? (ultracodeDescriptor.currentValue ?? false)
+      : undefined;
   const settings = {
     ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
     ...(typeof fastMode === "boolean" ? { fastMode } : {}),
-    ...(isClaudeCatalogUltracodeEffort(resolvedEffort) ? { ultracode: true } : {}),
+    ...(typeof ultracode === "boolean" ? { ultracode } : {}),
   };
   const apiModelId = resolveClaudeCatalogApiModelId(catalog, selection);
   const promptEffort = resolvePromptInjectedEffort(capabilities, rawEffort) ?? undefined;

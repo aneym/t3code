@@ -26,9 +26,45 @@ import { BUNDLED_MODEL_MANIFEST, resolveProviderCatalog } from "./ModelManifest.
 
 const CLAUDE = ProviderDriverKind.make("claudeAgent");
 const EMPTY_CAPABILITIES: ModelCapabilities = { optionDescriptors: [] };
+const ULTRACODE = "ultracode";
+// Before this, Claude Code switches to xhigh whenever Ultracode is on, so older versions
+// keep the manifest's Ultracode effort choice instead of the toggle.
+const ULTRACODE_ANY_EFFORT_MIN_VERSION = "2.1.284";
+
+// Older T3 releases read the same remote manifest and only understand Ultracode as an
+// effort choice, so the manifest keeps that shape and the choice is lifted out here.
+function withUltracodeToggle<T extends ModelCapabilities | null>(capabilities: T): T {
+  const descriptors = capabilities?.optionDescriptors;
+  if (!descriptors || descriptors.some((descriptor) => descriptor.id === ULTRACODE)) {
+    return capabilities;
+  }
+  const effortIndex = descriptors.findIndex(
+    (descriptor) => descriptor.id === "effort" && descriptor.type === "select",
+  );
+  const effort = descriptors[effortIndex];
+  if (effort?.type !== "select") return capabilities;
+  const choice = effort.options.find((option) => option.id === ULTRACODE);
+  if (!choice) return capabilities;
+
+  return {
+    ...capabilities,
+    optionDescriptors: [
+      ...descriptors.slice(0, effortIndex),
+      { ...effort, options: effort.options.filter((option) => option !== choice) },
+      {
+        id: ULTRACODE,
+        label: choice.label,
+        description: "Multi-agent workflow orchestration at any reasoning level",
+        type: "boolean",
+      },
+      ...descriptors.slice(effortIndex + 1),
+    ],
+  };
+}
 
 export interface ClaudeCatalogModel {
   readonly model: ServerProviderModel;
+  readonly manifestCapabilities?: ServerProviderModel["capabilities"];
   readonly runtime: ClaudeCodeProfile;
   readonly compatibility: ClaudeCodeCompatibility;
 }
@@ -47,8 +83,11 @@ function tryResolveClaudeModelCatalog(
     const profile = decodeClaudeProfileAdapter(entry.profileAdapter ?? {});
     const adapter = decodeClaudeModelAdapter(entry.adapter ?? {});
     if (Option.isNone(profile) || Option.isNone(adapter)) return null;
+    const model = ModelCatalog.catalogServerModel(resolved, entry);
+    const capabilities = withUltracodeToggle(model.capabilities);
     models.push({
-      model: ModelCatalog.catalogServerModel(resolved, entry),
+      model: { ...model, capabilities },
+      ...(capabilities === model.capabilities ? {} : { manifestCapabilities: model.capabilities }),
       runtime: profile.value.claudeCode ?? {},
       compatibility: adapter.value.claudeCode ?? {},
     });
@@ -158,9 +197,15 @@ export function resolveClaudeModelsForVersion(
   catalog: ClaudeModelCatalog,
   version: string | null | undefined,
 ): ReadonlyArray<ClaudeCatalogModel["model"]> {
+  const ultracodeAtAnyEffort =
+    !!version && compareSemverVersions(version, ULTRACODE_ANY_EFFORT_MIN_VERSION) >= 0;
   return catalog.models
     .filter((entry) => isVersionSupported(entry.compatibility, version))
-    .map((entry) => entry.model);
+    .map(({ model, manifestCapabilities }) =>
+      ultracodeAtAnyEffort || manifestCapabilities === undefined
+        ? model
+        : { ...model, capabilities: manifestCapabilities },
+    );
 }
 
 export function resolveClaudeUpdateRequiredModels(
@@ -233,10 +278,6 @@ export function normalizeClaudeCatalogEffort(
   const effortMap = resolveClaudeCatalogModel(catalog, model)?.runtime.effortMap;
   if (!effortMap || !Object.prototype.hasOwnProperty.call(effortMap, effort)) return effort;
   return effortMap[effort] ?? undefined;
-}
-
-export function isClaudeCatalogUltracodeEffort(effort: string | null | undefined): boolean {
-  return effort === "ultracode";
 }
 
 function resolveClaudeCatalogContextWindow(
