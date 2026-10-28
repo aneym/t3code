@@ -59,6 +59,10 @@ export function SidebarProjectScopePicker({
   const suppressSelection = useRef(false);
   const { canPin, togglePin, reorderPins } = useProjectPins(groups);
   const pinned = pinnedProjectGroups(groups);
+  const triggerProject =
+    scopedProject && !pinned.slice(0, 5).some((project) => project.projectKey === scopeKey)
+      ? scopedProject
+      : null;
   const ordered = [...pinned, ...groups.filter((group) => projectGroupPinOrder(group) === null)];
   const byKey = new Map(groups.map((group) => [group.projectKey, group]));
   const items = [
@@ -146,9 +150,9 @@ export function SidebarProjectScopePicker({
             />
           }
         >
-          {scopedProject ? (
+          {triggerProject ? (
             <span className="flex shrink-0">
-              <ProjectFavicon project={scopedProject} className="size-4" />
+              <ProjectFavicon project={triggerProject} className="size-4" />
             </span>
           ) : (
             <ListFilterIcon className="size-4" />
