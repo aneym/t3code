@@ -57,12 +57,13 @@ const RELEASE_INDEX_MAX_PAGES = 10;
 
 export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   channel: CliReleaseChannel,
+  currentVersion?: string,
 ) {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* HostProcess.Environment;
   const githubToken = environment.GH_TOKEN?.trim() || environment.GITHUB_TOKEN?.trim() || undefined;
   for (let page = 1; page <= RELEASE_INDEX_MAX_PAGES; page += 1) {
-    const request = HttpClientRequest.get(cliReleaseIndexPageUrl(page)).pipe(
+    const request = HttpClientRequest.get(cliReleaseIndexPageUrl(page, currentVersion)).pipe(
       HttpClientRequest.setHeader("Accept", "application/vnd.github+json"),
     );
     const authenticatedRequest =
@@ -313,7 +314,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   progress.status("Checking for updates...");
   const targetVersion = yield* (
     input.requestedVersion === undefined
-      ? resolveNewestVersion(channel)
+      ? resolveNewestVersion(channel, currentVersion)
       : Effect.succeed(input.requestedVersion)
   ).pipe(Effect.ensuring(Effect.sync(progress.finish)));
   const targetChannel = cliReleaseChannelOf(targetVersion);

@@ -1,3 +1,4 @@
+import { isCliForkVersion } from "@t3tools/shared/cliRelease";
 import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
@@ -33,6 +34,8 @@ const NO_VERSION_ATOM = Atom.make(AsyncResult.success(false)).pipe(
 );
 
 export function useNpmReleasePublished(version: string | null): boolean {
-  const result = useAtomValue(version ? npmReleasePublishedAtom(version) : NO_VERSION_ATOM);
+  const result = useAtomValue(
+    version && !isCliForkVersion(version) ? npmReleasePublishedAtom(version) : NO_VERSION_ATOM,
+  );
   return AsyncResult.getOrElse(result, () => false);
 }

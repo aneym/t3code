@@ -455,6 +455,12 @@ export const make = Effect.gen(function* () {
     const projectThreads = [...snapshot.threads, ...snapshot.archivedThreads].filter(
       (thread) => thread.projectId === projectId,
     );
+    const unarchivedThreads = projectThreads.filter(
+      (thread) => thread.archivedAt === null && thread.deletedAt === null,
+    );
+    if (unarchivedThreads.length > 0) {
+      return yield* new ProjectNotEmptyError({ projectId });
+    }
     if (projectThreads.length > 0 && input.force !== true) {
       return yield* new ProjectNotEmptyError({ projectId });
     }

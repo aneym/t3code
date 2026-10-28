@@ -1,4 +1,3 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
@@ -10,47 +9,18 @@ import {
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadSendResult,
   ProjectId,
-  ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderOptionDescriptor,
-  type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
-
-import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
-import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
-import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayTranscriptWorkspace,
-} from "@t3tools/provider-testing/replayTranscript";
-import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
-import * as ProjectService from "../project/ProjectService.ts";
-import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
-import * as SecretRequests from "../secrets/SecretRequests.ts";
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-
-const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
-  Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
-  Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-);
+import { makeOrchestratorMcpReplayFixture } from "./OrchestratorMcpReplay.testkit.ts";
 
 // Effect returns a declared tool failure as `isError` with its encoded payload
 // as JSON text, never as `structuredContent`.
@@ -77,52 +47,6 @@ const codexSelection = {
   model: codexModel,
 } satisfies ModelSelection;
 
-const delegatedTaskStatusTranscriptFile = new URL(
-  "../orchestration-v2/testkit/fixtures/delegated_task_status/codex_transcript.ndjson",
-  import.meta.url,
-);
-
-const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTranscript")(function* (
-  followupResult: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs.readFileString(
-    decodeURIComponent(delegatedTaskStatusTranscriptFile.pathname),
-  );
-  return yield* decodeProviderReplayNdjson(text.replaceAll(queuedFollowupResult, followupResult));
-}, Effect.provide(NodeServices.layer));
-
-function makeProviderSnapshot(input: {
-  readonly instanceId: ProviderInstanceId;
-  readonly driver: ProviderDriverKind;
-  readonly model: string;
-  readonly optionDescriptors?: ReadonlyArray<ProviderOptionDescriptor>;
-}): ServerProvider {
-  return {
-    instanceId: input.instanceId,
-    driver: input.driver,
-    enabled: true,
-    installed: true,
-    version: "test",
-    status: "ready",
-    auth: { status: "authenticated" },
-    checkedAt: "2026-06-17T00:00:00.000Z",
-    models: [
-      {
-        slug: input.model,
-        name: input.model,
-        isCustom: false,
-        capabilities:
-          input.optionDescriptors === undefined
-            ? null
-            : { optionDescriptors: input.optionDescriptors },
-      },
-    ],
-    slashCommands: [],
-    skills: [],
-  };
-}
-
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
   protocolVersion: "2025-06-18",
@@ -136,41 +60,6 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
-const layerMemorySecretStore = Layer.sync(ServerSecretStore.ServerSecretStore, () => {
-  const stored = new Map<string, Uint8Array>();
-  return ServerSecretStore.ServerSecretStore.of({
-    get: (name) => Effect.succeed(Option.fromNullishOr(stored.get(name))),
-    set: (name, value) => Effect.sync(() => void stored.set(name, value)),
-    create: (name, value) => Effect.sync(() => void stored.set(name, value)),
-    getOrCreateRandom: (name, bytes) =>
-      Effect.sync(() => {
-        const existing = stored.get(name);
-        if (existing) return existing;
-        const value = new Uint8Array(bytes).fill(7);
-        stored.set(name, value);
-        return value;
-      }),
-    remove: (name) => Effect.sync(() => void stored.delete(name)),
-  });
-});
-
-const layerUnusedScheduledTaskStub = Layer.succeed(
-  ScheduledTaskService.ScheduledTaskService,
-  ScheduledTaskService.ScheduledTaskService.of({
-    list: () => Effect.succeed({ tasks: [] }),
-    subscribeList: () => Stream.succeed({ tasks: [] }),
-    upsert: () => Effect.die("ScheduledTaskService.upsert is unused in this test"),
-    setEnabled: () => Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
-    delete: () => Effect.die("ScheduledTaskService.delete is unused in this test"),
-    deleteForThread: () => Effect.die("unused in this test"),
-    runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
-    rotateWebhookToken: () => Effect.die("unused in this test"),
-    listWebhookDeliveries: () => Effect.die("unused in this test"),
-    getWebhookDelivery: () => Effect.die("unused in this test"),
-    triggerWebhook: () => Effect.die("unused in this test"),
-  }),
-);
-
 describe("orchestrator MCP toolkit", () => {
   it.live.each([
     { label: "distinct", result: queuedFollowupResult, latestSummary: queuedFollowupResult },
@@ -178,57 +67,11 @@ describe("orchestrator MCP toolkit", () => {
   ])("reports $label child results", ({ result, latestSummary }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const cwd = yield* checkpointWorkspace("delegated-task-status");
-        const rawTranscript = yield* readDelegatedTaskStatusTranscript(result);
-        const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
-          materializeReplayTranscriptWorkspace(rawTranscript, cwd),
-        );
-        const layerOrchestrator = ProviderReplayHarness.layerProviderReplay(
-          {
-            name: "delegated-task-status/codex",
-            transcript,
-            commands: [],
-            runtimePolicyOverride: { cwd },
-          },
-          CodexOrchestratorReplayHarness,
-        );
-        const layerOrchestration = Layer.merge(
-          layerOrchestrator,
-          ThreadManagementService.layer.pipe(
-            Layer.provide(layerOrchestrator),
-            Layer.provide(ServerSettings.layerTest()),
-            Layer.provide(
-              CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
-            ),
-          ),
-        );
-        const layerProviderRegistry = ProviderRegistryMock.layer([
-          makeProviderSnapshot({
-            instanceId: codexInstanceId,
-            driver: ProviderDriverKind.make("codex"),
-            model: codexModel,
-          }),
-        ]);
-        const layerTest = layerOrchestratorToolkit.pipe(
-          Layer.provideMerge(McpServer.McpServer.layer),
-          Layer.provideMerge(layerOrchestration),
-          Layer.provide(
-            CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript).pipe(
-              Layer.provide(McpProviderSessions.layer),
-            ),
-          ),
-          Layer.provide(layerProviderRegistry),
-          Layer.provide(ServerSettings.layerTest()),
-          Layer.provide(layerUnusedScheduledTaskStub),
-          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
-          Layer.provideMerge(
-            SecretRequests.layer.pipe(
-              Layer.provide(layerMemorySecretStore),
-              Layer.provide(layerOrchestration),
-            ),
-          ),
-          Layer.provide(NodeServices.layer),
-        );
+        const { cwd, layerTest } = yield* makeOrchestratorMcpReplayFixture({
+          followupResult: result,
+          instanceId: codexInstanceId,
+          model: codexModel,
+        });
 
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -292,12 +135,17 @@ describe("orchestrator MCP toolkit", () => {
             issuedAt: 1,
           };
           const invoke = (name: string, args: Record<string, unknown>) =>
-            server
-              .callTool({ name, arguments: args })
-              .pipe(
-                Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-                Effect.provideService(McpSchema.McpServerClient, client),
-              );
+            server.callTool({ name, arguments: args }).pipe(
+              Effect.tap((result) =>
+                Effect.sync(() =>
+                  expect(result.isError, `${name}: ${JSON.stringify(result.content)}`).not.toBe(
+                    true,
+                  ),
+                ),
+              ),
+              Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+              Effect.provideService(McpSchema.McpServerClient, client),
+            );
 
           const delegationStartSequence =
             yield* orchestrator.getThreadEventSequence(parentThreadId);
@@ -576,7 +424,7 @@ describe("orchestrator MCP toolkit", () => {
             afterRead.subagents.find((task) => task.id === queuedFollowup.taskId)
               ?.completionDelivery?.state,
           ).toBe("acknowledged");
-        }).pipe(Effect.provide(layerTest));
+        }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(McpServer.McpServer.layer))));
       }),
     ),
   );

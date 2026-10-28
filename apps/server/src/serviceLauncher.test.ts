@@ -100,7 +100,7 @@ it("rejects contradictory service state", () => {
       update: {
         id: "update-2",
         fromVersion: "1.0.0",
-        targetVersion: "0.9.0",
+        targetVersion: "1.0.0",
         dbPath: "/tmp/state.sqlite",
         status: "pending",
       },
