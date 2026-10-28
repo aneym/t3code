@@ -144,6 +144,7 @@ import {
   useSidebarAgentLists,
 } from "./agents/sidebarAgentLists";
 import { useWithoutAgentMainThreads } from "./agents/railsAgents";
+import { useAgentMainThreadMenu } from "./agents/agentMainThreadMenu";
 import { SHELF_MORE_ROW_CLASS_NAME } from "./sidebar/shelfMoreRow";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
@@ -2427,6 +2428,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
 
+  const agentMainThreadMenu = useAgentMainThreadMenu();
   const handleThreadContextMenu = useStableCallback(
     (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
       void (async () => {
@@ -2497,6 +2499,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 titleRegeneration: configLoaded,
               },
               snoozePresets,
+              agentMainThreads: agentMainThreadMenu.options(thread),
             }),
             position,
           ),
@@ -2515,6 +2518,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 );
           if (preset) attemptSnooze(threadRef, preset);
           return;
+        }
+        if (clicked.value.startsWith("agent-main:")) {
+          return agentMainThreadMenu.assign(clicked.value.slice("agent-main:".length), thread);
         }
         switch (clicked.value) {
           case "filter-by-project":
