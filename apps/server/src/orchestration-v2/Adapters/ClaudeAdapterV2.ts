@@ -518,6 +518,15 @@ export interface ClaudeAgentSdkQuerySession {
   ) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  readonly mcpServerStatus: Effect.Effect<ReadonlyArray<unknown>, ClaudeAgentSdkQueryRunnerError>;
+  readonly readMcpResource: (
+    server: string,
+    uri: string,
+  ) => Effect.Effect<unknown, ClaudeAgentSdkQueryRunnerError>;
+  readonly callMcpTool: (
+    tool: string,
+    args: Record<string, unknown>,
+  ) => Effect.Effect<unknown, ClaudeAgentSdkQueryRunnerError>;
 }
 
 type ClaudeQueryStreamExit = Exit.Exit<void, ClaudeAgentSdkQueryRunnerError>;
@@ -1197,6 +1206,21 @@ export const layerQueryRunner: Layer.Layer<
                 }),
               ),
             ),
+            mcpServerStatus: Effect.tryPromise({
+              try: () => queryRuntime.mcpServerStatus(),
+              catch: (cause) => queryRunnerError(cause, "mcpServerStatus"),
+            }),
+            readMcpResource: (server, uri) =>
+              Effect.tryPromise({
+                try: () => queryRuntime.readMcpResource(server, uri),
+                catch: (cause) => queryRunnerError(cause, "readMcpResource"),
+              }),
+            callMcpTool: (tool, args) =>
+              Effect.tryPromise({
+                try: () =>
+                  queryRuntime.mcpCall({ tool, arguments: args, result_not_for_model: true }),
+                catch: (cause) => queryRunnerError(cause, "mcpCall"),
+              }),
             close: Queue.shutdown(promptQueue).pipe(
               Effect.andThen(closeClaudeQuery(queryRuntime)),
               Effect.tap(() =>
@@ -10523,6 +10547,53 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           },
         );
 
+        const mcpAppsError = (detail: string) => (cause: unknown) =>
+          new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: CLAUDE_PROVIDER,
+            detail,
+            payload: cause,
+          });
+        const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps = {
+          listTools: Effect.fn("ClaudeAdapterV2.listTools")(
+            function* (input) {
+              const live = yield* Ref.get(queryContext);
+              if (live === null) return [];
+              const servers = yield* live.query.mcpServerStatus;
+              const server = servers.find((entry: any) => entry.name === input.server) as any;
+              return Object.values(
+                server?.tools ?? {},
+              ) as ReadonlyArray<ProviderAdapter.ProviderAdapterV2McpTool>;
+            },
+            Effect.mapError(mcpAppsError("Failed to list Claude MCP tools.")),
+          ),
+          callTool: Effect.fn("ClaudeAdapterV2.callTool")(
+            function* (input) {
+              const live = yield* Ref.get(queryContext);
+              if (live === null)
+                return yield* Effect.fail(
+                  mcpAppsError("Claude query is not active.")("no live query"),
+                );
+              const result = yield* live.query.callMcpTool(
+                `mcp__${input.server}__${input.tool}`,
+                input.arguments,
+              );
+              return result as ProviderAdapter.ProviderAdapterV2McpCallToolResult;
+            },
+            Effect.mapError(mcpAppsError("Claude MCP tool call failed.")),
+          ),
+          readResource: Effect.fn("ClaudeAdapterV2.readResource")(
+            function* (input) {
+              const live = yield* Ref.get(queryContext);
+              if (live === null)
+                return yield* Effect.fail(
+                  mcpAppsError("Claude query is not active.")("no live query"),
+                );
+              return yield* live.query.readMcpResource(input.server, input.uri) as any;
+            },
+            Effect.mapError(mcpAppsError("Claude MCP resource read failed.")),
+          ),
+        };
+
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CLAUDE_PROVIDER,
@@ -10531,6 +10602,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           getModelContextWindow: (selection) =>
             resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, selection),
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          mcpApps,
           backgroundTasksEndWithProcess: true,
           hasPendingBackgroundWork: Effect.gen(function* () {
             for (const roster of (yield* Ref.get(pendingBackgroundTasksByNativeThread)).values()) {
