@@ -196,11 +196,39 @@ function withDescriptorCurrentValue(
   };
 }
 
+export function canonicalizeUltracodeSelections(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> | null | undefined,
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  if (!selections) return undefined;
+  if (!selections.some((selection) => selection.id === "effort" && selection.value === "ultracode"))
+    return selections;
+  const effort = descriptors?.find((descriptor) => descriptor.id === "effort");
+  const hasToggle = descriptors?.some(
+    (descriptor) => descriptor.id === "ultracode" && descriptor.type === "boolean",
+  );
+  if (
+    !hasToggle ||
+    effort?.type !== "select" ||
+    effort.options.some((option) => option.id === "ultracode")
+  )
+    return selections;
+  return [
+    ...selections.map((selection) =>
+      selection.id === "effort" ? { id: "effort", value: "xhigh" } : selection,
+    ),
+    ...(selections.some((selection) => selection.id === "ultracode")
+      ? []
+      : [{ id: "ultracode", value: true }]),
+  ];
+}
+
 export function getProviderOptionDescriptors(input: {
   caps: ModelCapabilities;
   selections?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
 }): ReadonlyArray<ProviderOptionDescriptor> {
-  const { caps, selections } = input;
+  const { caps } = input;
+  const selections = canonicalizeUltracodeSelections(caps.optionDescriptors, input.selections);
   const baseDescriptors = (caps.optionDescriptors ?? []).map(cloneDescriptor);
 
   return baseDescriptors.map((descriptor) =>
@@ -312,7 +340,11 @@ export function buildExplicitProviderOptionSelectionsFromDescriptors(
   if (!selections || selections.length === 0) {
     return undefined;
   }
-  const explicitIds = new Set(selections.map((selection) => selection.id));
+  const explicitIds = new Set(
+    (canonicalizeUltracodeSelections(descriptors, selections) ?? []).map(
+      (selection) => selection.id,
+    ),
+  );
   const normalized = buildProviderOptionSelectionsFromDescriptors(descriptors)?.filter(
     (selection) => explicitIds.has(selection.id),
   );

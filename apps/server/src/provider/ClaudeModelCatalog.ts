@@ -3,6 +3,7 @@ import {
   type ModelCapabilities,
   type ModelSelection,
   ProviderDriverKind,
+  type ProviderOptionDescriptor,
   type ServerProviderModel,
   type ServerProviderUpdateRequiredModel,
 } from "@t3tools/contracts";
@@ -37,6 +38,34 @@ export interface ClaudeModelCatalog {
   readonly models: ReadonlyArray<ClaudeCatalogModel>;
 }
 
+const ULTRACODE_TOGGLE: ProviderOptionDescriptor = {
+  id: "ultracode",
+  label: "Ultracode",
+  type: "boolean",
+  description: "Multi-agent workflow orchestration at the chosen reasoning level",
+};
+
+function withUltracodeToggle(model: ServerProviderModel): ServerProviderModel {
+  const descriptors = model.capabilities?.optionDescriptors ?? [];
+  const effort = descriptors.find((descriptor) => descriptor.id === "effort");
+  if (effort?.type !== "select" || !effort.options.some((option) => option.id === "ultracode")) {
+    return model;
+  }
+  const projected = descriptors.map((descriptor) =>
+    descriptor === effort
+      ? { ...effort, options: effort.options.filter((option) => option.id !== "ultracode") }
+      : descriptor,
+  );
+  const hasToggle = descriptors.some((descriptor) => descriptor.id === "ultracode");
+  return {
+    ...model,
+    capabilities: {
+      ...model.capabilities,
+      optionDescriptors: hasToggle ? projected : [...projected, ULTRACODE_TOGGLE],
+    },
+  };
+}
+
 function tryResolveClaudeModelCatalog(
   resolved: ModelCatalog.ProviderCatalog | undefined,
 ): ClaudeModelCatalog | null {
@@ -48,7 +77,7 @@ function tryResolveClaudeModelCatalog(
     const adapter = decodeClaudeModelAdapter(entry.adapter ?? {});
     if (Option.isNone(profile) || Option.isNone(adapter)) return null;
     models.push({
-      model: ModelCatalog.catalogServerModel(resolved, entry),
+      model: withUltracodeToggle(ModelCatalog.catalogServerModel(resolved, entry)),
       runtime: profile.value.claudeCode ?? {},
       compatibility: adapter.value.claudeCode ?? {},
     });
@@ -233,10 +262,6 @@ export function normalizeClaudeCatalogEffort(
   const effortMap = resolveClaudeCatalogModel(catalog, model)?.runtime.effortMap;
   if (!effortMap || !Object.prototype.hasOwnProperty.call(effortMap, effort)) return effort;
   return effortMap[effort] ?? undefined;
-}
-
-export function isClaudeCatalogUltracodeEffort(effort: string | null | undefined): boolean {
-  return effort === "ultracode";
 }
 
 function resolveClaudeCatalogContextWindow(
