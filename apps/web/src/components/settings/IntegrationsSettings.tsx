@@ -1647,4 +1647,3 @@ export function DevicesSettingsPanel() {
     </SettingsPageContainer>
   );
 }
-

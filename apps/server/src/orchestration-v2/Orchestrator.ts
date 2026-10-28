@@ -3273,7 +3273,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.archive":
           return {
             ...thread,
-            ...(command.projectId === undefined ? {} : { projectId: command.projectId }),
             archivedAt: now,
             titleRegeneration: null,
             guestShare: null,
@@ -3405,6 +3404,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   };
           return {
             ...thread,
+            ...(command.projectId === undefined ? {} : { projectId: command.projectId }),
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&

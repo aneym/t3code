@@ -608,8 +608,8 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
       input.worktreePath !== undefined ||
       input.regenerateTitle !== undefined ||
       input.linkedPullRequest !== undefined ||
-      input.limitRecovery !== undefined
-      || input.projectId !== undefined
+      input.limitRecovery !== undefined ||
+      input.projectId !== undefined
     ) {
       result = yield* dispatch({
         type: "thread.metadata.update",

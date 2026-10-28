@@ -58,7 +58,10 @@ export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () 
     Schema.Boolean,
   );
   if (automations.length === 0) return null;
-  const grouped = new Map<string, { environmentId: EnvironmentId; task: ScheduledTask; count: number }>();
+  const grouped = new Map<
+    string,
+    { environmentId: EnvironmentId; task: ScheduledTask; count: number }
+  >();
   for (const automation of automations) {
     const key = `${automation.environmentId}:${automation.task.threadId ?? automation.task.id}`;
     const current = grouped.get(key);
