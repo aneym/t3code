@@ -8,8 +8,6 @@ import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
 
 const AGENT_HOME_PATTERN = /\/\.agent-rails\/agents\/([a-z0-9][a-z0-9-]*)\/?$/;
 
-export const DEFAULT_PINNED_AGENT_HANDLES: ReadonlyArray<string> = ["content", "raise", "sunday"];
-
 export interface RailsAgent {
   readonly handle: string;
   readonly name: string;
@@ -18,7 +16,7 @@ export interface RailsAgent {
   readonly thread: EnvironmentThreadShell | null;
 }
 
-function railsAgentHandle(workspaceRoot: string): string | null {
+export function railsAgentHandle(workspaceRoot: string): string | null {
   return AGENT_HOME_PATTERN.exec(workspaceRoot)?.[1] ?? null;
 }
 
@@ -80,16 +78,4 @@ function resolveRailsAgents(
 
 export function useRailsAgents(): ReadonlyArray<RailsAgent> {
   return resolveRailsAgents(useProjects(), useQuietThreadShells());
-}
-
-export function useWithoutAgentThreads<T extends EnvironmentThreadShell>(
-  threads: ReadonlyArray<T>,
-): ReadonlyArray<T> {
-  const agentThreadKeys = new Set(
-    useRailsAgents().flatMap((agent) =>
-      agent.thread === null ? [] : [railsAgentThreadKey(agent.thread)],
-    ),
-  );
-  if (agentThreadKeys.size === 0) return threads;
-  return threads.filter((thread) => !agentThreadKeys.has(railsAgentThreadKey(thread)));
 }

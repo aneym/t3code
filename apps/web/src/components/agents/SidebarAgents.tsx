@@ -1,11 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { Link } from "@tanstack/react-router";
-import * as Schema from "effect/Schema";
-import { CircleCheckIcon, CircleDashedIcon, EyeOffIcon, PinIcon } from "lucide-react";
+import { CircleCheckIcon, CircleDashedIcon, PinOffIcon, PinIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
-import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
 import { useEnvironmentIdentities } from "../../state/environments";
 import { cn } from "~/lib/utils";
@@ -19,23 +17,20 @@ import {
 import { SidebarSection } from "../sidebar/SidebarSection";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
-  DEFAULT_PINNED_AGENT_HANDLES,
   type RailsAgent,
   railsAgentFaceUrl,
   railsAgentThreadKey,
   useRailsAgents,
 } from "./railsAgents";
 
-const PINNED_AGENTS_KEY = "t3code:sidebar-agents:pinned";
-const PinnedAgentHandles = Schema.Array(Schema.String);
+import { useProjects } from "../../state/entities";
+import { sidebarProjectPinKey, useSidebarPins } from "./sidebarPins";
 
 export function SidebarAgents({ onNavigate }: { readonly onNavigate: () => void }) {
   const agents = useRailsAgents();
-  const [pinnedHandles, setPinnedHandles] = useLocalStorage(
-    PINNED_AGENTS_KEY,
-    DEFAULT_PINNED_AGENT_HANDLES,
-    PinnedAgentHandles,
-  );
+  const { pinnedKeys, toggle, showMenu } = useSidebarPins();
+  const projects = useProjects();
+  const pinnedHandles = pinnedKeys;
   const routeTarget = useThreadRouteTarget();
   const environmentLabelById = new Map(
     useEnvironmentIdentities().map((environment) => [environment.environmentId, environment.label]),
@@ -44,10 +39,28 @@ export function SidebarAgents({ onNavigate }: { readonly onNavigate: () => void 
     routeTarget?.kind === "server"
       ? `${routeTarget.threadRef.environmentId}:${routeTarget.threadRef.threadId}`
       : null;
-  if (agents.length === 0) return null;
 
   const agentByHandle = new Map(agents.map((agent) => [agent.handle, agent] as const));
-  const pinned = pinnedHandles.flatMap((handle) => agentByHandle.get(handle) ?? []);
+  const pinned = pinnedHandles.flatMap((handle) => {
+    const agent = agentByHandle.get(handle);
+    if (agent) return [agent];
+    const project = projects.find((entry) => sidebarProjectPinKey(entry) === handle);
+    return project
+      ? [
+          {
+            handle,
+            name: project.title,
+            projectRef: {
+              environmentId: project.environmentId,
+              projectId: project.id,
+            },
+            environmentIds: [project.environmentId],
+            thread: null,
+          },
+        ]
+      : [];
+  });
+  if (agents.length === 0 && pinned.length === 0) return null;
   const hidden = agents
     .filter((agent) => !pinnedHandles.includes(agent.handle))
     .toSorted((a, b) => a.name.localeCompare(b.name));
@@ -59,6 +72,9 @@ export function SidebarAgents({ onNavigate }: { readonly onNavigate: () => void 
       .filter((label, index, all) => all.indexOf(label) === index)
       .join(" · "),
     onNavigate,
+    onContextMenu: (position: { x: number; y: number }) => {
+      void showMenu(agent.handle, agent.name, position);
+    },
   });
 
   return (
@@ -70,10 +86,9 @@ export function SidebarAgents({ onNavigate }: { readonly onNavigate: () => void 
               key={agent.handle}
               {...rowProps(agent)}
               toggle={{
-                label: `Hide ${agent.name}`,
-                icon: EyeOffIcon,
-                onClick: () =>
-                  setPinnedHandles((handles) => handles.filter((h) => h !== agent.handle)),
+                label: `Unpin ${agent.name}`,
+                icon: PinOffIcon,
+                onClick: () => toggle(agent.handle),
               }}
             />
           ))}
@@ -94,7 +109,7 @@ export function SidebarAgents({ onNavigate }: { readonly onNavigate: () => void 
                   toggle={{
                     label: `Pin ${agent.name}`,
                     icon: PinIcon,
-                    onClick: () => setPinnedHandles((handles) => [...handles, agent.handle]),
+                    onClick: () => toggle(agent.handle),
                   }}
                 />
               ))}
@@ -112,6 +127,7 @@ function AgentRow(props: {
   readonly muted?: boolean;
   readonly machines: string;
   readonly onNavigate: () => void;
+  readonly onContextMenu: (position: { x: number; y: number }) => void;
   readonly toggle: {
     readonly label: string;
     readonly icon: typeof PinIcon;
@@ -147,7 +163,19 @@ function AgentRow(props: {
   );
   const ToggleIcon = props.toggle.icon;
   return (
-    <li className="group/agent-row relative flex items-center">
+    <li
+      className="group/agent-row relative flex items-center"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        props.onContextMenu({ x: event.clientX, y: event.clientY });
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+        event.preventDefault();
+        const rect = event.currentTarget.getBoundingClientRect();
+        props.onContextMenu({ x: rect.left, y: rect.bottom });
+      }}
+    >
       {agent.thread === null ? (
         <button
           type="button"

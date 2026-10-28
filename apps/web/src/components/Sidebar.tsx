@@ -136,7 +136,7 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import { useAutomationThreadKeys } from "../hooks/useAutomations";
 import { SidebarAutomationJobs } from "./automations/SidebarAutomationJobs";
 import { SidebarAgents } from "./agents/SidebarAgents";
-import { useWithoutAgentThreads } from "./agents/railsAgents";
+import { useSidebarPins } from "./agents/sidebarPins";
 import { SHELF_MORE_ROW_CLASS_NAME } from "./sidebar/shelfMoreRow";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
@@ -1096,7 +1096,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       });
     },
   );
-  const handleProjectSettings = useStableCallback(
+  const pins = useSidebarPins();
+  const projectMenu = useStableCallback(
     (
       event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLInputElement>,
       projectGroup: SidebarProjectSnapshot,
@@ -1105,7 +1106,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       event.stopPropagation();
       suppressNextScopeChangeRef.current = true;
       dispatchProjectScopeMenu({ type: "project-settings-opened" });
-      openProjectSettings(projectGroup);
+      void pins.showProjectMenu(event, projectGroup, projectByKey, openProjectSettings);
     },
   );
 
@@ -1148,7 +1149,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     scopedProjectKeys,
     serverConfigs,
     optimisticDrop,
-    threads: useWithoutAgentThreads(threads),
+    threads,
     routeRowThreadKey,
   });
 
@@ -2783,7 +2784,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         }
                         const scopeKey = highlightedProjectScopeKeyRef.current;
                         const project = scopeKey ? projectGroupByScopeKey.get(scopeKey) : null;
-                        if (project) handleProjectSettings(event, project);
+                        if (project) projectMenu(event, project);
                       }}
                       onChange={(event) =>
                         dispatchProjectScopeMenu({
@@ -2802,7 +2803,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             hideIndicator
                             value={item}
                             onContextMenu={(event) => {
-                              if (project) handleProjectSettings(event, project);
+                              if (project) projectMenu(event, project);
                             }}
                           >
                             {project ? (
@@ -2828,7 +2829,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 className="ml-auto"
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
-                                  void handleProjectSettings(event, project);
+                                  void projectMenu(event, project);
                                 }}
                               >
                                 <SettingsIcon className="size-3.5" />
