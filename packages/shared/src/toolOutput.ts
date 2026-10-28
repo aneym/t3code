@@ -191,7 +191,11 @@ export function mcpAppFromToolItem(item: {
   readonly output?: unknown;
 }): McpAppReference | undefined {
   const app = compactDynamicToolOutput(item.output)?.[MCP_APP_OUTPUT_KEY];
-  return app !== undefined && item.toolName === `${app.server}.${app.tool}` ? app : undefined;
+  if (app === undefined || item.toolName == null) return undefined;
+  const qualified = `${app.server}.${app.tool}`;
+  const mcpQualified = `mcp__${app.server}__${app.tool}`;
+  const claudeQualified = `mcp__claude_ai_${app.server}__${app.tool}`;
+  return [qualified, mcpQualified, claudeQualified].includes(item.toolName) ? app : undefined;
 }
 
 /** Some providers report completion even when command output describes a failure. */
