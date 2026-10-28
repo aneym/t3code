@@ -407,7 +407,7 @@ export function ScheduledTasksSettings(target: {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Scheduled tasks"
+        title="Automations"
         variant="plain"
         headerAction={
           <Button
@@ -691,6 +691,11 @@ function ScheduledTaskRow({
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );
+  const projects = useProjects();
+  const environment = useEnvironment(environmentId);
+  const project = projects.find(
+    (entry) => entry.environmentId === environmentId && entry.id === task.projectId,
+  );
   const [busy, setBusy] = useState(false);
   const [deliveriesOpen, setDeliveriesOpen] = useState(false);
   const isWebhook = task.schedule.type === "webhook";
@@ -730,10 +735,8 @@ function ScheduledTaskRow({
       status={
         <div className="flex flex-wrap items-center gap-2">
           <span>
-            {scheduleLabel(task.schedule)} ·{" "}
-            {!task.enabled ? (
-              "Paused"
-            ) : isWebhook ? (
+            {task.enabled ? "Enabled" : "Paused"} · {scheduleLabel(task.schedule)} ·{" "}
+            {isWebhook ? (
               "Listening"
             ) : task.nextRunAt ? (
               <>
@@ -743,10 +746,33 @@ function ScheduledTaskRow({
               "Not scheduled"
             )}
           </span>
-          {task.lastRunStatus !== "never" ? (
-            <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
-          ) : null}
+          <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
+          <span>
+            Last run{" "}
+            {task.lastRunAt ? (
+              <time dateTime={task.lastRunAt}>
+                <ScheduledRelativeLabel value={task.lastRunAt} />
+              </time>
+            ) : (
+              "Never"
+            )}
+          </span>
+          <span>{task.runCount} runs</span>
+          <span>
+            {project?.title ?? task.projectId} · {environment?.label ?? environmentId}
+          </span>
           {task.lastRunError ? <span className="text-destructive">{task.lastRunError}</span> : null}
+          {task.threadId ? (
+            <Link
+              to="/$environmentId/$threadId"
+              params={{ environmentId, threadId: task.threadId }}
+              className="underline underline-offset-2"
+            >
+              Bound thread
+            </Link>
+          ) : (
+            <span>New thread per run</span>
+          )}
         </div>
       }
       control={

@@ -1,6 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as FileSystem from "effect/FileSystem";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -82,6 +84,66 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
 
 describe("ssh tunnel scripts", () => {
+  it.live.each([
+    {
+      archiveVersion: "0.1.3-nightly.20261026.3726.aneym.1",
+      expectedBaseUrl: "https://github.com/aneym/t3code/releases/download",
+    },
+    {
+      archiveVersion: "1.2.3",
+      expectedBaseUrl: "https://github.com/pingdotgg/t3code/releases/download",
+    },
+    {
+      archiveVersion: "0.1.3-nightly.20261026.3726",
+      expectedBaseUrl: "https://github.com/pingdotgg/t3code/releases/download",
+    },
+    {
+      ...ARCHIVE,
+      expectedBaseUrl: "https://github.com/pingdotgg/t3code/releases/download",
+    },
+    {
+      archiveVersion: "0.1.3-nightly.20261026.3726.aneym.1",
+      releaseBaseUrl: " https://releases.example.com/t3/// ",
+      expectedBaseUrl: "https://releases.example.com/t3",
+    },
+  ])("downloads SSH runtime $archiveVersion from $expectedBaseUrl", (options) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-release-" });
+      const command = yield* ChildProcess.make("/bin/sh", [], {
+        env: { HOME: home, PATH: "/usr/bin:/bin" },
+        extendEnv: false,
+        stdin: Stream.make(
+          new TextEncoder().encode(`curl() {
+  for arg do
+    case "$arg" in https://*) printf '%s\\n' "$arg" ;; esac
+  done
+  while [ "$1" != "-o" ]; do shift; done
+  : > "$2"
+}
+${SshTunnel.buildRemoteT3RunnerScript(options)}`),
+        ),
+      });
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          Stream.mkString(Stream.decodeText(command.stdout)),
+          Stream.mkString(Stream.decodeText(command.stderr)),
+          command.exitCode,
+        ],
+        { concurrency: "unbounded" },
+      );
+      const platform = (yield* HostProcess.Platform) === "darwin" ? "darwin" : "linux";
+      const arch = (yield* HostProcess.Architecture) === "arm64" ? "arm64" : "x64";
+      const releaseUrl = `${options.expectedBaseUrl}/v${options.archiveVersion}`;
+      assert.equal(exitCode, 1);
+      assert.include(stderr, "Checksum mismatch");
+      assert.deepEqual(stdout.trim().split("\n"), [
+        `${releaseUrl}/SHA256SUMS`,
+        `${releaseUrl}/t3-${options.archiveVersion}-${platform}-${arch}.tar.gz`,
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it("rejects archive versions that are not a single exact version segment", () => {
     for (const archiveVersion of [
       "../other",

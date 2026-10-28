@@ -33,3 +33,16 @@ export const DesktopBrowserCommand = Schema.Union([
   }),
 ]);
 export type DesktopBrowserCommand = typeof DesktopBrowserCommand.Type;
+
+export const DesktopBrowserRemoteSource = Schema.Struct({
+  deviceName: TrimmedNonEmptyString,
+  focused: Schema.Boolean,
+});
+export type DesktopBrowserRemoteSource = typeof DesktopBrowserRemoteSource.Type;
+
+export const DesktopBrowserRemoteEvents = Schema.Struct({
+  deviceName: TrimmedNonEmptyString,
+  focused: Schema.optional(Schema.Boolean),
+  events: Schema.Array(Schema.String),
+});
+export type DesktopBrowserRemoteEvents = typeof DesktopBrowserRemoteEvents.Type;
