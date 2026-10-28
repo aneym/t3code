@@ -1460,6 +1460,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly failedRunId?: RunId;
         readonly endedRunId?: RunId;
         readonly queuedRunId?: RunId;
+        readonly explicitResume?: boolean;
       },
     ) {
       if (options?.endedRunId !== undefined) {
@@ -1511,8 +1512,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
-      for (const run of projection.runs) {
-        if (yield* awaitsRestartContinuation(run)) return;
+      if (options?.explicitResume !== true) {
+        for (const run of projection.runs) {
+          if (yield* awaitsRestartContinuation(run)) return;
+        }
       }
 
       const storedQueuedRun =
@@ -5514,10 +5517,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
-    const queueBehindRun =
-      activeRun ??
-      worktreeMissingRun ??
-      projection.runs.find((run) => run.status === "queued" && run.queueHeld === true);
+    const queueBehindRun = activeRun ?? worktreeMissingRun;
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
@@ -12209,10 +12209,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
       if (command.type === "queue.resume" || command.type === "queued-run.start") {
         yield* mapDispatchError(command)(
-          startNextQueuedRun(
-            command.threadId,
-            command.type === "queued-run.start" ? { queuedRunId: command.runId } : undefined,
-          ),
+          startNextQueuedRun(command.threadId, {
+            explicitResume: true,
+            ...(command.type === "queued-run.start" ? { queuedRunId: command.runId } : {}),
+          }),
         );
       }
       return {
@@ -12356,10 +12356,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
     if (command.type === "queue.resume" || command.type === "queued-run.start") {
       yield* mapDispatchError(command)(
-        startNextQueuedRun(
-          command.threadId,
-          command.type === "queued-run.start" ? { queuedRunId: command.runId } : undefined,
-        ),
+        startNextQueuedRun(command.threadId, {
+          explicitResume: true,
+          ...(command.type === "queued-run.start" ? { queuedRunId: command.runId } : {}),
+        }),
       );
     }
     if (command.type === "notification.delivery.accept") {
