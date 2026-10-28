@@ -43,6 +43,10 @@ const SETTINGS_SEARCH_TERMS = {
   ],
   SettingsThreads: [
     "new threads",
+    "load balancing",
+    "auto balance",
+    "machines",
+    "load",
     "default workspace",
     "default permissions",
     "access",

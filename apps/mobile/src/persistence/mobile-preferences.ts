@@ -87,6 +87,8 @@ const ThreadProject = Schema.Struct({
 const isThreadProject = Schema.is(ThreadProject);
 
 export interface Preferences {
+  readonly loadBalancingEnabled?: boolean;
+  readonly loadBalancingWeights?: Readonly<Record<string, number>>;
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
   readonly pullRequestHideTestFiles?: boolean;
@@ -168,45 +170,19 @@ export class MobilePreferencesStore extends Context.Service<
 >()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
 
 function sanitizePreferences(parsed: Preferences): Preferences {
-  const preferences: {
-    navigationTabOrder?: readonly string[];
-    hiddenNavigationTabs?: readonly string[];
-    pullRequestHideTestFiles?: boolean;
-    pullRequestMergeMethod?: PullRequestMergeMethod;
-    liveActivitiesEnabled?: boolean;
-    themeId?: MobileThemeId;
-    lightThemeId?: MobileThemeId;
-    darkThemeId?: MobileThemeId;
-    themeMode?: MobileThemeMode;
-    androidNavigationStyle?: AndroidNavigationStyle;
-    baseFontSize?: number;
-    terminalFontSize?: number | null;
-    markdownFontSize?: number;
-    codeFontSize?: number | null;
-    codeWordBreak?: boolean;
-    mathRenderingEnabled?: boolean;
-    crashReportsEnabled?: boolean;
-    connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
-    collapsedProjectGroups?: readonly string[];
-    dismissedDatabaseStorageNotices?: readonly string[];
-    composerEnterBehavior?: ComposerEnterBehavior;
-    followUpBehavior?: FollowUpBehavior;
-    microphones?: ReadonlyArray<MicrophoneEntry>;
-    projectGroupingEnabled?: boolean;
-    projectGroupingMode?: SidebarProjectGroupingMode;
-    planModeEnabled?: boolean;
-    workingShelfEnabled?: boolean;
-    useLastProjectForNewThreads?: boolean;
-    lastThreadProject?: typeof ThreadProject.Type;
-    modelFavorites?: Preferences["modelFavorites"];
-    threadListSettledShelfExpanded?: boolean;
-    threadListSnoozedShelfExpanded?: boolean;
-    threadListWorkingShelfExpanded?: boolean;
-    threadListFilters?: ThreadListFilters;
-    pullRequestListFilters?: PullRequestListPreferences;
-    workspaceSelections?: WorkspaceSelections;
-  } = {};
+  const preferences: { -readonly [K in keyof Preferences]: Preferences[K] } = {};
 
+  if (typeof parsed.loadBalancingEnabled === "boolean") {
+    preferences.loadBalancingEnabled = parsed.loadBalancingEnabled;
+  }
+  if (parsed.loadBalancingWeights && typeof parsed.loadBalancingWeights === "object") {
+    preferences.loadBalancingWeights = Object.fromEntries(
+      Object.entries(parsed.loadBalancingWeights).map(([id, weight]) => [
+        id,
+        typeof weight === "number" && Number.isFinite(weight) && weight >= 0 ? weight : 0,
+      ]),
+    );
+  }
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
     preferences.hiddenNavigationTabs = parsed.hiddenNavigationTabs.filter(
       (tab): tab is string => typeof tab === "string",

@@ -1,3 +1,4 @@
+import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { useNavigation } from "@react-navigation/native";
 import { SettingsRow } from "./components/SettingsRow";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
@@ -302,6 +303,12 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
               ) : null}
               {props.page === "threads" ? (
                 <>
+                  <LoadBalancingSettings
+                    environments={selectedTargets.map((target) => ({
+                      environmentId: target.environmentId,
+                      environmentLabel: target.label,
+                    }))}
+                  />
                   <SettingsSection
                     title="Default workspace"
                     trailing={

@@ -1,3 +1,5 @@
+import { mobilePreferencesAtom } from "../../state/preferences";
+import { useAutoEnvironmentRouting } from "./use-auto-environment-routing";
 import { ActiveNewTaskContext } from "../../state/active-new-task";
 import * as Dialog from "../../components/ui/Dialog";
 import React, { useEffect, useRef, useState } from "react";
@@ -14,7 +16,6 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
-  repositoryGroupingKeyOf,
   ThreadId,
 } from "@t3tools/contracts";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
@@ -53,6 +54,7 @@ import {
   setComposerDraftText,
   setStickyComposerModelSelection,
   updateComposerDraftSettings,
+  updateComposerDraftRouting,
   useComposerDraft,
   useStickyComposerModelSelection,
 } from "../../state/use-composer-drafts";
@@ -132,6 +134,12 @@ type NewTaskFlowContextValue = {
   readonly activeNewTask: { readonly pendingKey: string | null } | null;
   readonly projectScopes: ReadonlyArray<HomeProjectScope>;
   readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly environmentSelection: "auto" | "manual";
+  readonly loadBalancedEnvironmentId: EnvironmentId | null;
+  readonly autoBalanceLabel: string;
+  readonly autoBalanceUnresolved: boolean;
+  readonly canAutoBalance: boolean;
+  readonly selectAutoEnvironment: () => boolean;
   readonly selectedProjectKey: string | null;
   readonly selectedModelKey: string | null;
   readonly workspaceMode: WorkspaceMode;
@@ -159,6 +167,7 @@ type NewTaskFlowContextValue = {
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly environmentLabel: string;
+    readonly projectId?: EnvironmentProject["id"];
   }>;
   readonly selectedProject: EnvironmentProject | null;
   /** The machines the selected project's environment links to, whose threads it can read. */
@@ -338,58 +347,27 @@ export function NewTaskFlowProvider(
       ) !== null,
   );
 
-  const selectedRepositoryKey = selectedProject?.repositoryIdentity
-    ? repositoryGroupingKeyOf(selectedProject.repositoryIdentity)
-    : null;
-  // Use || null: placeholder workspaceRoot can be empty, and an empty basename rejects real hosts.
-  const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
-  const selectedProjectTitle = selectedProject?.title ?? null;
-  const environments = (() => {
-    if (isScratchDraft) {
-      return scratchEnvironments.map((environment) => ({
+  const environments = isScratchDraft
+    ? scratchEnvironments.map((environment) => ({
         environmentId: environment.environmentId,
         environmentLabel: environment.environmentLabel,
-      }));
-    }
-    const seen = new Set<EnvironmentId>();
-    const result: Array<{
-      readonly environmentId: EnvironmentId;
-      readonly environmentLabel: string;
-    }> = [];
-    const hostsSelectedRepository = (project: EnvironmentProject) => {
-      if (selectedRepositoryKey === null && selectedWorkspaceBasename === null) {
-        return true;
-      }
-      const projectKey = project.repositoryIdentity
-        ? repositoryGroupingKeyOf(project.repositoryIdentity)
-        : null;
-      if (selectedRepositoryKey !== null && projectKey !== null) {
-        return projectKey === selectedRepositoryKey;
-      }
-      return (
-        project.workspaceRoot.split("/").at(-1) === selectedWorkspaceBasename ||
-        (selectedProjectTitle !== null && project.title === selectedProjectTitle)
-      );
-    };
-    for (const project of projects) {
-      if (!hostsSelectedRepository(project)) {
-        continue;
-      }
-      if (seen.has(project.environmentId)) {
-        continue;
-      }
-      const environment = savedConnectionsById[project.environmentId];
-      if (!environment) {
-        continue;
-      }
-      seen.add(project.environmentId);
-      result.push({
-        environmentId: project.environmentId,
-        environmentLabel: environment.environmentLabel,
+      }))
+    : Object.values(savedConnectionsById).flatMap((environment) => {
+        const project = resolveEnvironmentProjectMatch(
+          projects.filter((project) => project.environmentId === environment.environmentId),
+          selectedProject,
+          false,
+        );
+        return project
+          ? [
+              {
+                environmentId: environment.environmentId,
+                environmentLabel: environment.environmentLabel,
+                projectId: project.id,
+              },
+            ]
+          : [];
       });
-    }
-    return result;
-  })();
 
   const selectedProjectDraftKey = selectedProject ? activeDraftKey : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates the persistent draft in the new-task flow store once a project is selected, before the composer mounts
@@ -522,6 +500,26 @@ export function NewTaskFlowProvider(
     selectedEnvironmentServerConfig?.providers.find(
       (provider) => provider.instanceId === selectedModel?.instanceId,
     ) ?? null;
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const routing = useAutoEnvironmentRouting({
+    draftKey: selectedProjectDraftKey,
+    draft: selectedProjectDraft,
+    selectedProject,
+    selectedModel,
+    selectedProviderStatus,
+    projects,
+    serverConfigs,
+    connectedEnvironments,
+    preferences,
+    isScratchDraft,
+    locked: submitting || props.active === false,
+    onResolved: (project) => {
+      updateFlow({
+        environmentId: project.environmentId,
+        projectKey: scopedProjectKey(project.environmentId, project.id),
+      });
+    },
+  });
   const planModeEnabled =
     legacyPlanModeEnabled && selectedProviderStatus?.showInteractionModeToggle !== false;
   const interactionMode = planModeEnabled
@@ -618,6 +616,8 @@ export function NewTaskFlowProvider(
   };
 
   const setProject = (project: EnvironmentProject) => {
+    if (selectedProjectDraftKey)
+      updateComposerDraftRouting(selectedProjectDraftKey, { mode: "manual" });
     updateFlow({
       draftKey: carryDraftContentTo(project),
       environmentId: project.environmentId,
@@ -626,6 +626,8 @@ export function NewTaskFlowProvider(
   };
 
   const selectEnvironment = (environmentId: EnvironmentId) => {
+    if (selectedProjectDraftKey)
+      updateComposerDraftRouting(selectedProjectDraftKey, { mode: "manual" });
     const match = resolveEnvironmentProjectMatch(
       projects.filter((project) => project.environmentId === environmentId),
       selectedProject,
@@ -643,6 +645,9 @@ export function NewTaskFlowProvider(
   );
   const latestSwitchRef = useRef<object | null>(null);
   const switchEnvironment = async (environmentId: EnvironmentId): Promise<boolean> => {
+    if (submitting) return false;
+    if (selectedProjectDraftKey)
+      updateComposerDraftRouting(selectedProjectDraftKey, { mode: "manual" });
     if (environmentId === selectedEnvironmentId) {
       latestSwitchRef.current = null;
       setSwitchingToEnvironmentId(null);
@@ -676,6 +681,8 @@ export function NewTaskFlowProvider(
   };
 
   const setWorkspaceMode = (mode: WorkspaceMode) => {
+    if (selectedProjectDraftKey)
+      updateComposerDraftRouting(selectedProjectDraftKey, { mode: "manual" });
     if (!selectedProjectDraftKey) {
       return;
     }
@@ -701,6 +708,8 @@ export function NewTaskFlowProvider(
   };
 
   const selectBranch = (branch: VcsRef) => {
+    if (selectedProjectDraftKey)
+      updateComposerDraftRouting(selectedProjectDraftKey, { mode: "manual" });
     if (!selectedProject || !selectedProjectDraftKey) {
       return;
     }
@@ -765,6 +774,11 @@ export function NewTaskFlowProvider(
       return null;
     }
     const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
+    if (
+      draft.environmentSelection === "auto" &&
+      draft.loadBalancedEnvironmentId !== selectedProject.environmentId
+    )
+      return null;
     const text = draft.text.trim();
     const draftModelSelection =
       resolveSelectableModelSelection(
@@ -831,6 +845,7 @@ export function NewTaskFlowProvider(
     activeNewTask,
     projectScopes,
     selectedEnvironmentId,
+    ...routing,
     selectedProjectKey,
     selectedModelKey,
     workspaceMode,

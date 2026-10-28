@@ -214,7 +214,7 @@ function withReferencedContextFiles(
       !previousIds.has(attachment.id) ||
       retainedIds.has(attachment.id),
   );
-  // Keep the array identity on plain text edits so attachment readers see no change.
+
   return {
     ...draft,
     text,
@@ -368,6 +368,8 @@ export interface ComposerDraft {
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
   readonly project?: ComposerDraftProject;
+  readonly environmentSelection?: "auto" | "manual";
+  readonly loadBalancedEnvironmentId?: EnvironmentId | null;
 }
 
 export interface ComposerDraftProject {
@@ -399,7 +401,13 @@ export interface ComposerDraftWorkspaceSelection {
 
 export type ComposerDraftSettingsUpdate = Pick<
   ComposerDraft,
-  "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection" | "project"
+  | "modelSelection"
+  | "runtimeMode"
+  | "interactionMode"
+  | "workspaceSelection"
+  | "project"
+  | "environmentSelection"
+  | "loadBalancedEnvironmentId"
 >;
 
 const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
@@ -417,7 +425,6 @@ const ComposerDraftProjectSchema = Schema.Struct({
   createdAt: Schema.String,
 });
 
-// Recovery can exceed send limits; keep payloads reloadable and let send guards request trimming.
 const PersistedComposerContextSchema = Schema.Struct({
   version: Schema.Literal(1),
   records: ForwardCompatibleArray(ComposerContextRecord),
@@ -433,6 +440,8 @@ const ComposerDraftSchema = Schema.Struct({
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
   project: Schema.optional(ComposerDraftProjectSchema),
+  environmentSelection: Schema.optional(Schema.Literals(["auto", "manual"])),
+  loadBalancedEnvironmentId: Schema.optional(Schema.NullOr(EnvironmentIdSchema)),
 });
 
 const PersistedComposerDraftsSchema = Schema.Struct({
@@ -534,7 +543,7 @@ function attachmentContextRecord(
     mimeType: attachment.mimeType,
     sizeBytes: attachment.sizeBytes,
   };
-  // Document pickers label images as files; promote the record so every client can open them as images.
+
   return attachment.type === "image" || imageMimeType(attachment) !== null
     ? { ...common, kind: "image" as const }
     : { ...common, kind: "file" as const };
@@ -610,7 +619,8 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.modelSelection === undefined &&
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
-    draft.workspaceSelection === undefined
+    draft.workspaceSelection === undefined &&
+    draft.environmentSelection !== "auto"
   );
 }
 
@@ -676,15 +686,16 @@ export function decodePersistedComposerState(value: unknown): {
               draft.attachments.length === 0 &&
               draft.runtimeMode === undefined &&
               draft.interactionMode === undefined &&
-              draft.workspaceSelection === undefined
+              draft.workspaceSelection === undefined &&
+              draft.environmentSelection !== "auto"
               ? { ...draft, modelSelection: undefined }
               : draft,
             now,
           ),
         )
-        // Retain contentless drafts with import receipts to prevent re-importing native shares after restart.
+
         .filter(([, draft]) => !isEmptyDraft(draft) || (draft.importedShareIds?.length ?? 0) > 0)
-        // Queued-edit sessions are memory-only; persisted drafts would outlive their run association and become unreachable.
+
         .filter(([key]) => !isQueuedEditDraftKey(key)),
     ),
     stickyModelSelection: parsed.stickyModelSelection ?? null,
@@ -792,12 +803,11 @@ async function writePersistedComposerState(
 
 /** Propagates write failures so callers can decide whether to restart. */
 export async function flushComposerDrafts(): Promise<void> {
-  // Hydrate before writing or partial atom state would clobber persisted drafts.
   ensureComposerDraftsLoaded();
   if (loadPromise !== null) {
     await loadPromise;
   }
-  // Edits during writes schedule more debounces; drain until none remain.
+
   do {
     while (persistTimer !== null || persistRetryNeeded) {
       if (persistTimer !== null) clearTimeout(persistTimer);
@@ -815,7 +825,7 @@ export async function flushComposerDrafts(): Promise<void> {
         throw error;
       }
     }
-    // Draining includes fired debounce writes still awaiting hydration inside the queue.
+
     await persistenceQueue.run(() => Promise.resolve());
   } while (persistTimer !== null || persistRetryNeeded);
 }
@@ -904,11 +914,9 @@ export async function releaseUnusedComposerAttachmentFiles(
     return;
   }
 
-  // Hydrate before scanning references; cold-start atoms would otherwise mark owned files unused.
   await waitForComposerDraftsLoaded();
   await flushComposerDrafts();
   if (!(await threadOutboxManager.load())) {
-    // Unreadable outbox stores may still own files; do not treat them as empty.
     return;
   }
   await flushThreadOutbox();
@@ -943,7 +951,6 @@ export async function releaseUnusedComposerAttachmentFiles(
 
   const { removePersistedComposerAttachmentFile } = await import("../lib/composerImages");
   for (const fileUri of candidates) {
-    // Re-check immediately before deletion; restores or edits can acquire ownership after scanning.
     if (
       isComposerAttachmentFileReferenced(fileUri) ||
       incomingShareFileUris.has(composerAttachmentFileReferenceKey(fileUri))
@@ -963,7 +970,6 @@ export async function releaseUnusedComposerAttachmentFiles(
         try {
           await releasePendingAttachmentUploads(environmentId, [attachmentId]);
         } catch (error) {
-          // The server expires pending uploads; local discard must survive disconnection or deletion failure.
           console.warn("[composer-attachments] could not remove pending upload", {
             environmentId,
             attachmentId,
@@ -1001,7 +1007,7 @@ export function schedulePersistComposerState(): void {
   }
   persistTimer = setTimeout(() => {
     persistTimer = null;
-    // Enqueue before awaiting hydration so flushComposerDrafts cannot drain ahead of this write.
+
     void persistenceQueue.run(async () => {
       try {
         await waitForComposerDraftsLoaded();
@@ -1011,7 +1017,6 @@ export function schedulePersistComposerState(): void {
         );
         persistRetryNeeded = false;
       } catch (error) {
-        // Failed debounces leave no timer; final flush must retry after reading persisted ownership.
         persistRetryNeeded = true;
         console.warn("[composer-drafts] failed to persist drafts", error);
       }
@@ -1112,7 +1117,6 @@ export async function archiveCloudComposerDrafts(
   }
   appAtomRegistry.set(composerDraftsAtom, remaining);
   appAtomRegistry.set(composerCloudDraftsAtom, {
-    // Retain the owner through removal so cold-start cleanup can retry before another account activates.
     accountId: owner,
     signedOut: {
       ...cloud.signedOut,
@@ -1205,7 +1209,6 @@ export async function removeDeliveredCloudQueuedMessage(
   try {
     await flushComposerDrafts();
   } catch (error) {
-    // Keep archive updates pending after failure; live outbox removal can still require a later successful flush.
     schedulePersistComposerState();
     throw error;
   }
@@ -1240,7 +1243,7 @@ export async function restoreCloudComposerDrafts(accountId: string): Promise<voi
                 draft.context,
                 existing.context,
               ),
-              // A concurrent import must not lose files, even above the send limit.
+
               attachments: [
                 ...existing.attachments,
                 ...draft.attachments.filter((attachment) => !attachmentIds.has(attachment.id)),
@@ -1490,6 +1493,24 @@ export function updateComposerDraftSettings(
   });
 }
 
+export function updateComposerDraftRouting(
+  draftKey: string,
+  routing:
+    | { readonly mode: "manual" }
+    | {
+        readonly mode: "auto";
+        readonly project?: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId };
+      },
+): void {
+  if (routing.mode === "auto" && routing.project) retargetNewTaskDraft(draftKey, routing.project);
+  updateComposerDraftSettings(draftKey, {
+    environmentSelection: routing.mode,
+    loadBalancedEnvironmentId:
+      routing.mode === "auto" ? (routing.project?.environmentId ?? null) : null,
+    ...(routing.mode === "auto" ? { workspaceSelection: undefined } : {}),
+  });
+}
+
 export function subscribeComposerDraftModelReconciliation(input: {
   readonly registry: AtomRegistry.AtomRegistry;
   readonly threadRefsAtom: Atom.Atom<ReadonlyArray<ScopedThreadRef>>;
@@ -1571,6 +1592,8 @@ export function clearComposerDraftContentState(
     modelSelection,
     workspaceSelection,
     project: _project,
+    environmentSelection: _environmentSelection,
+    loadBalancedEnvironmentId: _loadBalancedEnvironmentId,
     ...retained
   } = existing;
   const draft = {
@@ -1674,10 +1697,7 @@ export function mergeComposerDraftContentState(
   }
   return {
     ...current,
-    // The composer shows non-image files only as inline chips, so a shared file
-    // merged without one would be attached but invisible until sent. Other
-    // merges carry their own text, and appending chips to it would defeat
-    // mergeComposerDraftText's duplicate check on a retried merge.
+
     [draftKey]: restoreMissingComposerFileReferences(
       {
         ...existing,
@@ -1716,7 +1736,7 @@ export async function mergeComposerDraftContent(
     (attachment) =>
       !currentAttachmentIds.has(attachment.id) && !nextAttachmentIds.has(attachment.id),
   ).length;
-  // Publish content and receipt before awaiting disk; concurrent typing then preserves the receipt in later serialized writes.
+
   if (next !== current) {
     appAtomRegistry.set(composerDraftsAtom, next);
   }
@@ -1735,7 +1755,9 @@ export function sameComposerDraftState(a: ComposerDraft, b: ComposerDraft): bool
     a.modelSelection === b.modelSelection &&
     a.runtimeMode === b.runtimeMode &&
     a.interactionMode === b.interactionMode &&
-    a.workspaceSelection === b.workspaceSelection
+    a.workspaceSelection === b.workspaceSelection &&
+    a.environmentSelection === b.environmentSelection &&
+    a.loadBalancedEnvironmentId === b.loadBalancedEnvironmentId
   );
 }
 
@@ -1815,7 +1837,7 @@ export function clearComposerDraftContent(
   options?: {
     readonly clearModelSelection?: boolean;
     readonly clearWorkspaceSelection?: boolean;
-    // Defer sweeping during enqueue; rollback can briefly remove ownership before restoring attachments.
+
     readonly deferAttachmentCleanup?: boolean;
   },
 ): void {
@@ -1890,7 +1912,7 @@ export function retargetNewTaskDraft(
       return current;
     }
     const { workspaceSelection: _workspaceSelection, ...retained } = normalizeDraft(existing);
-    // Keep bytes across environment moves but drop server-specific upload stamps.
+
     const attachments = retained.attachments.map((attachment) =>
       attachment.uploadEnvironmentId !== undefined &&
       attachment.uploadEnvironmentId !== project.environmentId
@@ -1901,6 +1923,8 @@ export function retargetNewTaskDraft(
       ...current,
       [draftKey]: {
         ...retained,
+        environmentSelection: "manual",
+        loadBalancedEnvironmentId: null,
         attachments,
         project: {
           environmentId: project.environmentId,
@@ -1940,7 +1964,7 @@ export async function clearComposerDraftsEnvironment(environmentId: EnvironmentI
   const removedAttachments = Object.entries(current)
     .filter(([draftKey]) => next[draftKey] === undefined)
     .flatMap(([, draft]) => draft.attachments);
-  // Keys with no stored draft yet (an empty thread composer) can still have a pick running.
+
   const environmentPrefix = `${environmentId}:`;
   abortComposerDraftOperationsWhere(
     (draftKey) =>
