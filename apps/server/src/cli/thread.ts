@@ -1,5 +1,6 @@
 import {
   OrchestratorMcpFailure,
+  OrchestrationV2DispatchCommandResult,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
@@ -699,6 +700,31 @@ const threadShowCommand = Command.make("show", {
   ),
 );
 
+const threadMoveCommand = Command.make("move", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  project: Argument.String("project"),
+}).pipe(
+  Command.withDescription("Move a thread to another project."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      yield* withThreadTools(flags, (tools) =>
+        Effect.gen(function* () {
+          const target = yield* resolveProject(tools, flags.project);
+          const result = yield* tools.call(
+            "t3_thread_move",
+            { threadId, projectId: target.id },
+            OrchestrationV2DispatchCommandResult,
+          );
+          yield* Console.log(`${threadId} moved to ${target.title}`);
+          return result;
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 export const threadCommand = Command.make("thread").pipe(
   Command.withDescription("Start, message, and read threads on the running server."),
   Command.withSubcommands([
@@ -706,5 +732,6 @@ export const threadCommand = Command.make("thread").pipe(
     threadStartCommand,
     threadSendCommand,
     threadShowCommand,
+    threadMoveCommand,
   ]),
 );
