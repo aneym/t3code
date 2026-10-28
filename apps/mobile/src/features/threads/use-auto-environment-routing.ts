@@ -74,6 +74,7 @@ export function useAutoEnvironmentRouting(input: {
         text: input.draft.text,
         records: input.draft.context?.records ?? [],
         environmentId: environment.environmentId,
+        linkedEnvironments: new Map(),
       }).length > 0 ||
       !buildModelOptions(config, input.selectedModel, undefined, project.id).some(
         (option) =>

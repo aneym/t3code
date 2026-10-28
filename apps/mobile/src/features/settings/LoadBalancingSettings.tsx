@@ -3,7 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
-import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
+import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 
 const WEIGHTS = [
   { label: "Prefer", weight: 100 },
@@ -41,7 +41,7 @@ export function LoadBalancingSettings(props: {
       {props.environments.map((environment) => (
         <SettingsSection key={environment.environmentId} title={environment.environmentLabel}>
           {WEIGHTS.map((choice, index) => (
-            <SettingsChoiceRow
+            <ListChoiceRow
               key={choice.weight}
               label={choice.label}
               selected={
