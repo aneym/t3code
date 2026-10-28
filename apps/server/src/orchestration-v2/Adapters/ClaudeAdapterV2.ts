@@ -20,7 +20,13 @@ import {
 } from "./claudeWorkflowProgress.ts";
 
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
-import { MCP_APP_OUTPUT_KEY, readMcpAppResourceUri } from "@t3tools/shared/mcpApp";
+import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
+import {
+  captureClaudeMcpApp,
+  claudeMcpQuerySession,
+  makeClaudeMcpApps,
+  type ClaudeMcpQuery,
+} from "./ClaudeMcpApps.ts";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import { withT3ThreadEnvironment } from "./T3ThreadEnvironment.ts";
 import {
@@ -503,7 +509,7 @@ export interface ClaudeAgentSdkQueryOpenInput {
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
 }
 
-export interface ClaudeAgentSdkQuerySession {
+export interface ClaudeAgentSdkQuerySession extends ClaudeMcpQuery<ClaudeAgentSdkQueryRunnerError> {
   readonly messages: Stream.Stream<SDKMessage, ClaudeAgentSdkQueryRunnerError>;
   readonly offer: (
     message: SDKUserMessage,
@@ -1210,37 +1216,7 @@ export const layerQueryRunner: Layer.Layer<
                 }),
               ),
             ),
-            mcpServerStatus: Effect.tryPromise({
-              try: () => queryRuntime.mcpServerStatus(),
-              catch: (cause) => queryRunnerError(cause, "mcpServerStatus"),
-            }),
-            readMcpResource: (server, uri) =>
-              Effect.tryPromise({
-                try: () => queryRuntime.readMcpResource(server, uri),
-                catch: (cause) => queryRunnerError(cause, "readMcpResource"),
-              }),
-            callMcpTool: (tool, args) =>
-              Effect.tryPromise({
-                try: () =>
-                  (
-                    queryRuntime as unknown as {
-                      request: (input: {
-                        subtype: "mcp_call";
-                        tool: string;
-                        arguments: Record<string, unknown>;
-                        result_not_for_model: true;
-                      }) => Promise<{ response: unknown }>;
-                    }
-                  )
-                    .request({
-                      subtype: "mcp_call",
-                      tool,
-                      arguments: args,
-                      result_not_for_model: true,
-                    })
-                    .then((result) => result.response),
-                catch: (cause) => queryRunnerError(cause, "mcpCall"),
-              }),
+            ...claudeMcpQuerySession(queryRuntime, queryRunnerError),
             close: Queue.shutdown(promptQueue).pipe(
               Effect.andThen(closeClaudeQuery(queryRuntime)),
               Effect.tap(() =>
@@ -1562,7 +1538,7 @@ export function makeClaudeQueryOptions(input: {
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
-    ...(input.environment === undefined ? {} : { env: input.environment }),
+    env: { ...input.environment, CLAUDE_CODE_MCP_APPS_HOST: "1" },
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     systemPrompt: {
       type: "preset" as const,
@@ -5501,12 +5477,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       ...(outputValue === undefined && input.mcpAppReference === undefined
                         ? {}
                         : {
-                            output: {
-                              ...(input.mcpAppReference === undefined
-                                ? {}
-                                : { [MCP_APP_OUTPUT_KEY]: input.mcpAppReference }),
-                              ...(outputValue === undefined ? {} : { result: outputValue }),
-                            },
+                            output:
+                              input.mcpAppReference === undefined
+                                ? outputValue
+                                : {
+                                    [MCP_APP_OUTPUT_KEY]: input.mcpAppReference,
+                                    result: outputValue,
+                                  },
                           }),
                     };
           return { node, turnItem };
@@ -8914,11 +8891,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context !== null && !isClaudeToolResultError(toolResult)
                 ? yield* captureClaudeMcpApp({
                     query: input.query,
-                    context,
+                    threadId: context.input.threadId,
+                    attachmentsDir,
                     toolName: toolCall.toolName,
-                    output,
+                    output: claudeNativeToolOutputValue(output),
                     toolResult,
-                  })
+                  }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem))
                 : undefined;
             yield* settleToolCall({
               context,
@@ -10653,59 +10631,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           },
         );
 
-        const mcpAppsError = (detail: string) => (cause: unknown) =>
-          new ProviderAdapter.ProviderAdapterProtocolError({
-            driver: CLAUDE_PROVIDER,
-            detail,
-            payload: cause,
-          });
-        const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps = {
-          listTools: Effect.fn("ClaudeAdapterV2.listTools")(
-            function* (
-              input: Parameters<ProviderAdapter.ProviderAdapterV2McpApps["listTools"]>[0],
-            ) {
-              const live = yield* Ref.get(queryContext);
-              if (live === null) return [];
-              if (live.query.mcpServerStatus === undefined) return [];
-              const servers = yield* live.query.mcpServerStatus;
-              const server = servers.find((entry: any) => entry.name === input.server) as any;
-              return Object.values(
-                server?.tools ?? {},
-              ) as ReadonlyArray<ProviderAdapter.ProviderAdapterV2McpTool>;
-            },
-            Effect.mapError(mcpAppsError("Failed to list Claude MCP tools.")),
-          ),
-          callTool: Effect.fn("ClaudeAdapterV2.callTool")(
-            function* (input: Parameters<ProviderAdapter.ProviderAdapterV2McpApps["callTool"]>[0]) {
-              const live = yield* Ref.get(queryContext);
-              if (live === null)
-                return yield* mcpAppsError("Claude query is not active.")("no live query");
-              if (live.query.callMcpTool === undefined)
-                return yield* mcpAppsError("Claude MCP tool calls are unavailable.")("unsupported");
-              const result = yield* live.query.callMcpTool(
-                `mcp__${input.server}__${input.tool}`,
-                input.arguments,
-              );
-              return result as ProviderAdapter.ProviderAdapterV2McpCallToolResult;
-            },
-            Effect.mapError(mcpAppsError("Claude MCP tool call failed.")),
-          ),
-          readResource: Effect.fn("ClaudeAdapterV2.readResource")(
-            function* (
-              input: Parameters<ProviderAdapter.ProviderAdapterV2McpApps["readResource"]>[0],
-            ) {
-              const live = yield* Ref.get(queryContext);
-              if (live === null)
-                return yield* mcpAppsError("Claude query is not active.")("no live query");
-              if (live.query.readMcpResource === undefined)
-                return yield* mcpAppsError("Claude MCP resource reads are unavailable.")(
-                  "unsupported",
-                );
-              return yield* live.query.readMcpResource(input.server, input.uri) as any;
-            },
-            Effect.mapError(mcpAppsError("Claude MCP resource read failed.")),
-          ),
-        } as unknown as ProviderAdapter.ProviderAdapterV2McpApps;
+        const mcpApps = makeClaudeMcpApps(
+          Ref.get(queryContext).pipe(Effect.map((live) => live?.query ?? null)),
+        );
 
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
