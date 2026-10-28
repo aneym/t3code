@@ -18,9 +18,10 @@ export const AGENTS_SECTION_STORAGE_KEY = "t3code:sidebar-section:agents:expande
 
 export function useSidebarAgentLists(projectKeys: ReadonlySet<string> | null) {
   const inScope = (agent: RailsAgent) =>
-    projectKeys === null || projectKeys.has(scopedProjectKey(agent.projectRef));
+    projectKeys === null ||
+    (agent.projectRef !== null && projectKeys.has(scopedProjectKey(agent.projectRef)));
   const agents = useRailsAgents();
-  const { pinnedKeys } = useSidebarPins();
+  const pinnedKeys = [...new Set(useSidebarPins().pinnedKeys)];
   const projects = useProjects();
   const [expanded] = useLocalStorage(AGENTS_SECTION_STORAGE_KEY, true, Schema.Boolean);
   const agentByHandle = new Map(agents.map((agent) => [agent.handle, agent] as const));
@@ -32,17 +33,19 @@ export function useSidebarAgentLists(projectKeys: ReadonlySet<string> | null) {
         (entry) =>
           sidebarProjectPinKey(entry) === handle && railsAgentHandle(entry.workspaceRoot) === null,
       );
-      return project
-        ? [
-            {
-              handle,
-              name: project.title,
-              projectRef: { environmentId: project.environmentId, projectId: project.id },
-              environmentIds: [project.environmentId],
-              thread: null,
-            },
-          ]
-        : [];
+      if (!project) return [];
+      const projectRef = { environmentId: project.environmentId, projectId: project.id };
+      return [
+        {
+          handle,
+          name: project.title,
+          projectRef,
+          homeProjectRefs: [projectRef],
+          environmentIds: [project.environmentId],
+          target: null,
+          thread: null,
+        },
+      ];
     })
     .filter(inScope);
   const hidden = agents
@@ -88,6 +91,7 @@ export interface AgentProjectScope {
 }
 
 export function agentFocusAction(agent: RailsAgent, scope: AgentProjectScope) {
+  if (agent.projectRef === null) return null;
   const target = scopedProjectKey(agent.projectRef);
   const group = scope.groups.find((entry) =>
     entry.memberProjectRefs.some((ref) => scopedProjectKey(ref) === target),

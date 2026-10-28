@@ -27,8 +27,9 @@ export function useCommandPaletteAgentThreads(
   );
   const threadItemByValue = new Map(threadItems.map((item) => [item.value, item]));
 
-  const agentItem = (agent: RailsAgent): CommandPaletteActionItem => {
-    const environmentLabel = labelById.get(agent.projectRef.environmentId);
+  const agentItem = (agent: RailsAgent): CommandPaletteActionItem[] => {
+    const environmentId = agent.target?.environmentId ?? agent.projectRef?.environmentId;
+    const environmentLabel = environmentId ? labelById.get(environmentId) : undefined;
     const base = {
       value: `agent:${agent.handle}`,
       searchTerms: [agent.name, agent.handle],
@@ -41,13 +42,17 @@ export function useCommandPaletteAgentThreads(
         ? undefined
         : threadItemByValue.get(`thread:${railsAgentThreadKey(agent.thread)}`);
     if (threadItem === undefined) {
-      return {
-        ...base,
-        kind: "action",
-        run: async () => {
-          await handleNewThread(agent.projectRef);
+      const projectRef = agent.projectRef;
+      if (projectRef === null) return [];
+      return [
+        {
+          ...base,
+          kind: "action",
+          run: async () => {
+            await handleNewThread(projectRef);
+          },
         },
-      };
+      ];
     }
     const {
       threadSearch: _threadSearch,
@@ -57,7 +62,7 @@ export function useCommandPaletteAgentThreads(
       timestamp: _timestamp,
       ...rest
     } = threadItem;
-    return { ...rest, ...base, value: threadItem.value };
+    return [{ ...rest, ...base, value: threadItem.value }];
   };
 
   return (
@@ -70,7 +75,7 @@ export function useCommandPaletteAgentThreads(
     const items = agents
       .filter((agent) => agentMatches(agent, folded))
       .toSorted((left, right) => left.name.localeCompare(right.name))
-      .map(agentItem);
+      .flatMap(agentItem);
     if (items.length === 0) return [...groups];
     const shown = new Set(items.map((item) => item.value));
     const rest = groups.flatMap((group) => {

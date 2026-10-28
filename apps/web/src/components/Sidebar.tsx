@@ -1318,7 +1318,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const agent = sidebarAgents.jumpable.find((entry) => sidebarAgentJumpKey(entry) === jumpKey);
     if (!agent) return false;
     if (agent.thread) navigateToThread(scopeThreadRef(agent.thread.environmentId, agent.thread.id));
-    else void handleNewThread(agent.projectRef);
+    else if (agent.target) navigateToThread(agent.target);
+    else if (agent.projectRef) void handleNewThread(agent.projectRef);
+    else return false;
     return true;
   };
 

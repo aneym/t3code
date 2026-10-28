@@ -29,7 +29,7 @@ export function railsAgentFaceUrl(handle: string): string {
   return `https://rails.so/api/mobile/v1/agent-faces/${handle}.png`;
 }
 
-function railsAgentThreadKey(thread: EnvironmentThreadShell): string {
+export function railsAgentThreadKey(thread: EnvironmentThreadShell): string {
   return `${thread.environmentId}:${thread.id}`;
 }
 
