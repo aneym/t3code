@@ -1,3 +1,4 @@
+import * as AgentHomes from "./agents/AgentHomeService.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -392,7 +393,6 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
-// Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
@@ -537,8 +537,6 @@ it.effect(
               sessionCookieName: "config-test-session",
             }),
         }),
-        // Signal subscription on either accessor so the test also fails, rather
-        // than hangs, against a handler that subscribes after the snapshot.
         Layer.succeed(Keybindings.Keybindings, {
           ...keybindings,
           streamChanges: Stream.unwrap(keybindingsChanges),
@@ -574,7 +572,7 @@ it.effect(
             {},
             yield* PreviewAutomationBroker.PreviewAutomationBroker,
             yield* ServerBrowser.ServerBrowser,
-          ).pipe(Layer.provide(configRpcServices)),
+          ).pipe(Layer.provide(AgentHomes.layer), Layer.provide(configRpcServices)),
         ),
       );
       const requestId = RpcMessage.RequestId("config");
@@ -603,7 +601,6 @@ it.effect(
       yield* Deferred.await(keybindingsSubscribed);
       yield* Deferred.await(settingsSubscribed);
 
-      // Later updates expose a dropped buffered event as a value mismatch, not a timeout.
       const latestSettings = yield* settings.updateSettings({ enableProviderUpdateChecks: false });
       const latestKeybindings = yield* keybindings.upsertKeybindingRule({
         key: "mod+alt+z",
@@ -613,7 +610,6 @@ it.effect(
         ServerSettings.redactServerSettingsForClient,
       );
       const expectedKeybindings = [duringAck, latestKeybindings];
-      // The two sources can interleave, but each must retain its own publication order.
       for (let i = 0; i < 4; i++) {
         const event = yield* Queue.take(responses);
         if (event.type === "settingsUpdated") {
@@ -742,7 +738,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
           {},
           yield* PreviewAutomationBroker.PreviewAutomationBroker,
           yield* ServerBrowser.ServerBrowser,
-        ).pipe(Layer.provide(configRpcServices)),
+        ).pipe(Layer.provide(AgentHomes.layer), Layer.provide(configRpcServices)),
       ),
     );
     const configRequest = RpcMessage.RequestId("config");
@@ -758,7 +754,6 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     assert.isUndefined(snapshot.config.providers[0]?.workspaceSnapshots);
     yield* server.write(0, { _tag: "Ack", requestId: configRequest });
 
-    // A rescan that only touches a snapshot sends nothing; the next real change does.
     yield* Queue.offer(providerChanges, [
       { ...provider, workspaceSnapshots: [snapshotFor("/a", "2026-10-25T00:05:00.000Z")] },
     ]);
@@ -799,10 +794,6 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
   ),
 );
 
-// Compaction keeps the oldest and newest event per message, so a cursor older
-// than the deleted rows still replays each message where the client would
-// first have seen it (reducers append on first sight) and reaches the same
-// final state. No snapshot fallback is needed.
 it.effect("thread resume across compacted history keeps message order and final state", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -837,7 +828,6 @@ it.effect("thread resume across compacted history keeps message order and final 
     const [second] = yield* insertMessage(1, "message:b", "b created");
     yield* insertMessage(2, "message:a", "a superseded");
     const [head] = yield* insertMessage(3, "message:a", "a final");
-    // thread.deleted is never superseded: clients switch on the event type.
     for (const version of [0, 1]) {
       yield* sql`
         INSERT INTO orchestration_events (
