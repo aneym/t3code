@@ -24,7 +24,7 @@ export const parseDocument = (text: string) => {
   return value as Record<string, unknown>;
 };
 
-export const readDocument = async (root: string, handle: string) =>
+const readDocument = async (root: string, handle: string) =>
   parseDocument(await readDocumentText(root, handle));
 const decodeBinding = Schema.decodeSync(AgentHomeBinding);
 const decodeHome = Schema.decodeSync(AgentHome);
