@@ -536,7 +536,6 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   }
 }
 
-// Validate before resolving the request: adapters may otherwise coerce unusable answers.
 const decodeUserInputAnswers = Schema.decodeUnknownEffect(
   Schema.Record(
     Schema.String,
@@ -604,8 +603,6 @@ function cancelledAppOwnedTask(
   };
 }
 
-// Provider wakes can start follow-up work; monitor updates only report progress.
-// Dispatch takes the parent's lock for follow-ups because intake writes the parent.
 function mayStartSubagentFollowup(
   command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
 ): boolean {
@@ -741,7 +738,6 @@ function queuedRunModelSelection(
   run: OrchestrationV2Run,
 ): ModelSelection {
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-  // App-owned monitor updates follow the agent currently handling the thread.
   return followsCurrentConversation(message)
     ? projection.thread.modelSelection
     : run.modelSelection;
@@ -1088,7 +1084,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return withId;
       });
 
-  // Runs in every command transaction; avoid reading thousands of finished leaf nodes.
   const readCommandProjection = (threadId: ThreadId) =>
     projectionStore
       .getThreadRecords(
@@ -1585,8 +1580,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         return;
       }
-      // Move queued ordinals after runs that started while they waited to preserve transcript and checkpoint order.
-      // Started runs have prompts; cancelled queued messages do not.
       const newerRunIds = projection.runs
         .filter((run) => run.status !== "queued" && run.ordinal > queuedRun.ordinal)
         .map((run) => run.id);
@@ -1688,7 +1681,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.modelSelection,
         queuedRun.modelSelection,
       );
-      // The picker may already have moved ahead of the native conversation.
       const switchFromActiveProvider =
         followsCurrent &&
         activeProviderThread !== undefined &&
@@ -2316,10 +2308,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : "disposed";
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
-    // task_status and t3_thread_read use distinct command IDs, so two
-    // valid observations can race after their read preflight. Re-emit the
-    // existing task row so the second dispatch is a successful idempotent
-    // no-op rather than "already acknowledged/disposed" or empty-events.
     if (
       task.completionDelivery?.state === state ||
       (command.type === "delegated_task.completion-delivery.acknowledge" &&
@@ -3430,6 +3418,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             ...(command.projectId === undefined ? {} : { projectId: command.projectId }),
             ...(command.title === undefined ? {} : { title: command.title }),
+            ...(command.automationTaskId === undefined
+              ? {}
+              : { automationTaskId: command.automationTaskId }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&
             limitRecovery?.snooze === true &&
@@ -5166,6 +5157,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
 
+    const retainAutomationPlacement = (yield* serverSettings.getSettings.pipe(Effect.orDie))
+      .retainAutomationPlacement;
+    if (
+      command.scheduledTaskId !== undefined &&
+      projection.thread.automationTaskId === undefined &&
+      retainAutomationPlacement
+    ) {
+      const event = yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        occurredAt: yield* DateTime.now,
+        payload: { ...projection.thread, automationTaskId: command.scheduledTaskId },
+      });
+      projection = applyToProjection(projection, event);
+    }
     const continuedTaskId = projection.runs.find(
       (run) => run.id === command.restartContinuationOfRunId,
     )?.delegatedTaskId;
@@ -5197,7 +5206,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Background wakes and delegated completions continue work the user already snoozed, so
     // only a message someone actually sent ends the snooze.
     const automaticWake =
-      command.notification !== undefined || command.delegatedCompletion !== undefined;
+      command.notification !== undefined ||
+      command.delegatedCompletion !== undefined ||
+      (retainAutomationPlacement &&
+        (command.scheduledTaskId !== undefined ||
+          (projection.thread.automationTaskId != null && command.createdBy === "agent")));
     if (projection.thread.snoozedUntil != null && !automaticWake) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {

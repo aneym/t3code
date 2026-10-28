@@ -391,8 +391,6 @@ export const OrchestrationV2ThreadOpens = Schema.Struct({
 });
 export type OrchestrationV2ThreadOpens = typeof OrchestrationV2ThreadOpens.Type;
 
-// Open stats only rank search results, so a value this build cannot read (an
-// older or newer shape) becomes null instead of failing the whole thread.
 const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
@@ -2896,6 +2894,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     projectId: Schema.optional(ProjectId),
     title: Schema.optional(TrimmedNonEmptyString),
+    automationTaskId: Schema.optional(Schema.NullOr(ScheduledTaskId)),
     regenerateTitle: Schema.optional(Schema.Boolean),
     branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
