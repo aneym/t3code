@@ -1475,7 +1475,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     ) {
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
-      const projection = yield* readCommandProjection(threadId);
+      let projection = yield* readCommandProjection(threadId);
+      const agentHeldRuns =
+        projection.thread.createdBy === "agent"
+          ? projection.runs.filter(
+              (run) =>
+                run.status === "queued" &&
+                run.queueHeld === true &&
+                run.queueHoldReason !== "stop",
+            )
+          : [];
+      if (agentHeldRuns.length > 0) {
+        const now = yield* DateTime.now;
+        yield* writeSystemEvents(
+          agentHeldRuns.map((run) => ({
+            type: "run.updated" as const,
+            threadId,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: { ...run, queueHeld: false },
+          })),
+        );
+        projection = yield* readCommandProjection(threadId);
+      }
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
