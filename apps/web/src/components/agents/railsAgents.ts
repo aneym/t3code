@@ -33,6 +33,16 @@ function isHomeThreadCandidate(thread: EnvironmentThreadShell): boolean {
   return thread.lineage.parentThreadId === null;
 }
 
+function isPreferredHomeThread(
+  candidate: EnvironmentThreadShell,
+  current: EnvironmentThreadShell,
+  boundThreadIds: ReadonlySet<string> | undefined,
+) {
+  const candidateBound = boundThreadIds?.has(candidate.id) === true;
+  if (candidateBound !== (boundThreadIds?.has(current.id) === true)) return candidateBound;
+  return candidate.createdAt < current.createdAt;
+}
+
 function resolveRailsAgents(
   projects: ReadonlyArray<EnvironmentProject>,
   threads: ReadonlyArray<EnvironmentThreadShell>,
@@ -72,12 +82,9 @@ function resolveRailsAgents(
     const agent = handle === undefined ? undefined : agents.get(handle);
     if (agent === undefined) continue;
     const boundThreadIds = boundThreadIdsByHandle.get(agent.handle);
-    if (
-      boundThreadIds === undefined ? !isHomeThreadCandidate(thread) : !boundThreadIds.has(thread.id)
-    ) {
-      continue;
-    }
-    if (agent.thread === null || thread.createdAt < agent.thread.createdAt) {
+    const isBound = boundThreadIds?.has(thread.id) === true;
+    if (!isBound && !isHomeThreadCandidate(thread)) continue;
+    if (agent.thread === null || isPreferredHomeThread(thread, agent.thread, boundThreadIds)) {
       agent.thread = thread;
       agent.projectRef = scopeProjectRef(thread.environmentId, thread.projectId);
     }
