@@ -173,7 +173,12 @@ const make = Effect.gen(function* () {
         metadataCommand({
           commandId: updateCommandId,
           threadId,
-          update: input,
+          update:
+            input.action === "mark_automation" &&
+            input.automationTaskId === undefined &&
+            shell.automationTaskId != null
+              ? { ...input, automationTaskId: shell.automationTaskId }
+              : input,
         }),
       )
       .pipe(
