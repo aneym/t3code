@@ -17,7 +17,7 @@ import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
-import { OrchestrationEffectRequestV2 } from "../orchestration-v2/EffectOutbox.ts";
+import { OrchestrationEffectRequestV2 } from "../orchestration-v2/EffectOutboxModel.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";

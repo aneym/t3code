@@ -64,6 +64,9 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
           runRecoveryOnce: Effect.succeed(false),
         }),
         Layer.mock(EffectOutbox.EffectOutboxV2)({
+          withDispatch: (effect) => effect,
+          restartPrepared: Effect.sync(() => undefined),
+          restartHandoffs: Effect.succeed([]),
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
         }),
       ),
@@ -116,6 +119,9 @@ it.effect("preserves async questions across startup and shutdown", () => {
           runRecoveryOnce: Effect.succeed(false),
         }),
         Layer.mock(EffectOutbox.EffectOutboxV2)({
+          withDispatch: (effect) => effect,
+          restartPrepared: Effect.sync(() => undefined),
+          restartHandoffs: Effect.succeed([]),
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
           cancelUnsettled: () => Effect.succeed([]),
           signalCancellations: () => Effect.void,
@@ -194,6 +200,9 @@ it.effect(
             runRecoveryOnce: Effect.succeed(false),
           }),
           Layer.mock(EffectOutbox.EffectOutboxV2)({
+            withDispatch: (effect) => effect,
+            restartPrepared: Effect.sync(() => undefined),
+            restartHandoffs: Effect.succeed([]),
             listByCommandId: () =>
               Effect.succeed([
                 {
@@ -336,6 +345,9 @@ it.effect(
             runRecoveryOnce: Effect.succeed(false),
           }),
           Layer.mock(EffectOutbox.EffectOutboxV2)({
+            withDispatch: (effect) => effect,
+            restartPrepared: Effect.sync(() => undefined),
+            restartHandoffs: Effect.succeed([]),
             reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
           }),
         ),
@@ -402,6 +414,9 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
           runRecoveryOnce: Effect.succeed(false),
         }),
         Layer.mock(EffectOutbox.EffectOutboxV2)({
+          withDispatch: (effect) => effect,
+          restartPrepared: Effect.sync(() => undefined),
+          restartHandoffs: Effect.succeed([]),
           listByCommandId: () => Effect.succeed([]),
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
         }),
@@ -487,6 +502,9 @@ it.effect.each(["queued", "preparing"] as const)("recovers $0 work after restart
           runRecoveryOnce: Effect.succeed(false),
         }),
         Layer.mock(EffectOutbox.EffectOutboxV2)({
+          withDispatch: (effect) => effect,
+          restartPrepared: Effect.sync(() => undefined),
+          restartHandoffs: Effect.succeed([]),
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
           cancelUnsettled: () => Effect.succeed([]),
           signalCancellations: () => Effect.void,
@@ -605,6 +623,9 @@ it.effect(
             runRecoveryOnce: Effect.succeed(false),
           }),
           Layer.mock(EffectOutbox.EffectOutboxV2)({
+            withDispatch: (effect) => effect,
+            restartPrepared: Effect.sync(() => undefined),
+            restartHandoffs: Effect.succeed([]),
             reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
           }),
         ),
@@ -713,6 +734,9 @@ it.effect("cancels workflow members and child roots without run ids after restar
           runRecoveryOnce: Effect.succeed(false),
         }),
         Layer.mock(EffectOutbox.EffectOutboxV2)({
+          withDispatch: (effect) => effect,
+          restartPrepared: Effect.sync(() => undefined),
+          restartHandoffs: Effect.succeed([]),
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
         }),
       ),
@@ -877,6 +901,9 @@ it.effect(
             runRecoveryOnce: Effect.succeed(false),
           }),
           Layer.mock(EffectOutbox.EffectOutboxV2)({
+            withDispatch: (effect) => effect,
+            restartPrepared: Effect.sync(() => undefined),
+            restartHandoffs: Effect.succeed([]),
             listByCommandId: () => Effect.succeed([]),
             reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
           }),
@@ -1034,6 +1061,9 @@ it.effect(
             runRecoveryOnce: Effect.succeed(false),
           }),
           Layer.mock(EffectOutbox.EffectOutboxV2)({
+            withDispatch: (effect) => effect,
+            restartPrepared: Effect.sync(() => undefined),
+            restartHandoffs: Effect.succeed([]),
             listByCommandId: () => Effect.succeed([]),
             reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
           }),
@@ -1164,6 +1194,9 @@ it.effect(
             runRecoveryOnce: Effect.succeed(false),
           }),
           Layer.mock(EffectOutbox.EffectOutboxV2)({
+            withDispatch: (effect) => effect,
+            restartPrepared: Effect.sync(() => undefined),
+            restartHandoffs: Effect.succeed([]),
             listByCommandId: () => Effect.succeed([]),
             reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
           }),
@@ -1321,6 +1354,9 @@ it.effect("leaves delegated tasks to their own child threads after process loss"
           runRecoveryOnce: Effect.succeed(false),
         }),
         Layer.mock(EffectOutbox.EffectOutboxV2)({
+          withDispatch: (effect) => effect,
+          restartPrepared: Effect.sync(() => undefined),
+          restartHandoffs: Effect.succeed([]),
           listByCommandId: () => Effect.succeed([]),
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
         }),

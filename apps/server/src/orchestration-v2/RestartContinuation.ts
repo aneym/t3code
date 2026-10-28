@@ -180,7 +180,13 @@ export function restartContinuationRun(
 }
 
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
-  function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
+  function* (input: {
+    readonly threadId: ThreadId;
+    readonly sourceRunId: RunId;
+    readonly prepared?: boolean;
+    readonly epoch?: string;
+    readonly humanReply?: string;
+  }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
     if (!enabled) return;
@@ -192,17 +198,41 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       { messageIds: [messageId], turnItemTypes: ["secret_request"] },
     );
     if (
+      !input.prepared &&
       !resolveProjectSettings(enabled, projection.thread.projectId).settings
         .continueThreadsAfterServerUpdate
     )
       return;
-    if (projection.messages.some((message) => message.id === messageId)) return;
+    if (
+      projection.messages.some((message) => message.id === messageId) ||
+      projection.runs.some((run) => run.restartContinuationOfRunId === input.sourceRunId)
+    )
+      return;
+    if (
+      projection.runtimeRequests.some(
+        (request) =>
+          request.status === "pending" &&
+          request.restartContinuationRunIds?.includes(input.sourceRunId),
+      )
+    )
+      return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
     if (
       !source ||
-      !isRestartContinuationSource(source, projection.providerTurns) ||
+      (!input.prepared && !isRestartContinuationSource(source, projection.providerTurns)) ||
+      (input.prepared && source.status !== "cancelled") ||
       restartContinuationBlocked(
-        projection,
+        input.humanReply === undefined
+          ? projection
+          : {
+              ...projection,
+              runtimeRequests: projection.runtimeRequests.filter(
+                (request) => request.status === "pending",
+              ),
+              turnItems: projection.turnItems.filter(
+                (item) => item.type !== "secret_request" || item.secretStatus === "pending",
+              ),
+            },
         source,
         yield* DateTime.now,
         isRestartNoteSource(source, projection.providerTurns),
@@ -210,6 +240,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     )
       return;
     if (
+      !input.prepared &&
       projection.runs.some(
         (run) =>
           run.id !== source.id &&
@@ -281,10 +312,17 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     yield* threads
       .dispatch({
         type: "message.dispatch",
-        commandId: CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
+        commandId: CommandId.make(
+          input.epoch === undefined
+            ? `command:restart-continuation:${input.sourceRunId}`
+            : `command:restart-handoff:${input.epoch}:${input.sourceRunId}`,
+        ),
         threadId: input.threadId,
         messageId,
-        text,
+        text:
+          input.humanReply === undefined
+            ? text
+            : `${text}\n\nThe user reviewed the restart interruption and replied:\n${input.humanReply}\nNo prior tool approval is granted; request a new approval or secure-input prompt if still needed.`,
         notification: {
           source: { kind: "system" },
           outcome: "updated",
@@ -298,7 +336,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
           : {}),
         attachments: replayUnacceptedPrompt ? (sourceMessage?.attachments ?? []) : [],
         modelSelection: source.modelSelection,
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: { type: input.prepared ? "queue_after_active" : "start_immediately" },
         createdBy: "agent",
         creationSource: "server",
         restartContinuationOfRunId: input.sourceRunId,

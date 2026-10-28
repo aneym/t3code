@@ -56,6 +56,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EffectOutboxModel from "./EffectOutboxModel.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
@@ -1961,6 +1962,8 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       };
       const executionCount = yield* Ref.make(0);
       const layerOutbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
+        withDispatch: (effect) => effect,
+        restartPrepared: Effect.sync(() => undefined),
         claimNext: () => Effect.succeedSome(claimedEffect),
         get: () =>
           Effect.succeedSome({
@@ -2245,7 +2248,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const insert = (
         prefix: string,
         count: number,
-        status: EffectOutbox.OrchestrationEffectStatusV2,
+        status: EffectOutboxModel.OrchestrationEffectStatusV2,
         completedAgo: Duration.Duration | null,
       ) => {
         const completedAt =
@@ -2265,8 +2268,11 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           FROM n
         `;
       };
-      const old = Duration.sum(EffectOutbox.SETTLED_EFFECT_RETENTION, Duration.minutes(1));
-      const recent = Duration.subtract(EffectOutbox.SETTLED_EFFECT_RETENTION, Duration.minutes(1));
+      const old = Duration.sum(EffectOutboxModel.SETTLED_EFFECT_RETENTION, Duration.minutes(1));
+      const recent = Duration.subtract(
+        EffectOutboxModel.SETTLED_EFFECT_RETENTION,
+        Duration.minutes(1),
+      );
       yield* insert("succeeded-old:", 1_201, "succeeded", old);
       yield* insert("cancelled-old:", 2, "cancelled", old);
       yield* insert("succeeded-recent:", 1, "succeeded", recent);

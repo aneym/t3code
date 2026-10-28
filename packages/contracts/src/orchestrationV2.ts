@@ -1108,6 +1108,7 @@ export function latestProviderTurnForAttempt<
 }
 
 export const OrchestrationV2RuntimeRequest = Schema.Struct({
+  restartContinuationRunIds: Schema.optional(Schema.Array(RunId)),
   id: RuntimeRequestId,
   nodeId: NodeId,
   providerTurnId: Schema.NullOr(ProviderTurnId),

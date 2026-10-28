@@ -1,3 +1,4 @@
+import { importRestartManifest } from "./orchestration-v2/RestartManifest.ts";
 import {
   CommandId,
   DEFAULT_MODEL,
@@ -542,7 +543,10 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
           ),
         ),
       ),
-      recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
+      recover: runStartupPhase(
+        "orchestration-v2.recovery",
+        importRestartManifest.pipe(Effect.andThen(providerRuntimeRecovery.recover)),
+      ),
       recoverDelegatedTasks: runStartupPhase(
         "orchestration-v2.delegated-tasks.recover",
         orchestrator.recoverDelegatedTasks,
