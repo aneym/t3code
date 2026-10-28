@@ -1,10 +1,12 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import { ThreadId } from "@t3tools/contracts";
 import { useEffect } from "react";
 import { create } from "zustand";
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { projectEnvironment } from "../../state/projects";
+import { threadFamilies } from "../../state/threads";
 
 const AGENT_HOME_FILE = "agent.json";
 const RETRY_AFTER_MS = 30_000;
@@ -55,12 +57,12 @@ async function loadBinding(project: EnvironmentProject): Promise<void> {
     return;
   }
   inFlight.delete(key);
-  useAgentHomeBindingStore
-    .getState()
-    .settle(
-      key,
-      result.value.exists === false ? null : parseAgentHomeThreadId(result.value.contents),
-    );
+  const threadId =
+    result.value.exists === false ? null : parseAgentHomeThreadId(result.value.contents);
+  if (threadId !== null) {
+    threadFamilies.mount(appAtomRegistry, project.environmentId, ThreadId.make(threadId));
+  }
+  useAgentHomeBindingStore.getState().settle(key, threadId);
 }
 
 export function useAgentHomeBoundThreadIds(
