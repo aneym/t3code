@@ -54,6 +54,7 @@ import {
   type ScheduledTaskId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
@@ -332,6 +333,7 @@ export interface ThreadFeedProps {
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
+  readonly connectionState?: EnvironmentConnectionPhase;
   readonly dispatchingMessageId: MessageId | null;
   readonly onEditPendingMessage: ((message: QueuedThreadMessage) => void) | null;
   readonly environmentId: EnvironmentId;
@@ -1302,6 +1304,7 @@ function renderFeedEntry(
     | "onUseArtifactTemplate"
     | "skills"
     | "dispatchingMessageId"
+    | "connectionState"
     | "onEditPendingMessage"
     | "threadId"
     | "workspaceRoot"
@@ -1757,7 +1760,13 @@ function renderFeedEntry(
                 </Text>
               ) : null}
               <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
-                {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
+                {entry.pendingMessage && !entry.acknowledged
+                  ? props.connectionState !== "connected"
+                    ? "Sends when connected"
+                    : entry.pendingMessage.messageId === props.dispatchingMessageId
+                      ? "Sending…"
+                      : "Queued"
+                  : timestampLabel}
               </Text>
               {props.onEditPendingMessage !== null &&
               entry.pendingMessage &&
@@ -3140,6 +3149,7 @@ export const ThreadFeed = memo(function ThreadFeed({
         <ThreadMediaVisibility>
           {renderFeedEntry(info, {
             environmentId: props.environmentId,
+            connectionState: props.connectionState,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
             onUseArtifactTemplate: props.onUseArtifactTemplate,

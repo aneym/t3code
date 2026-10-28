@@ -7,6 +7,7 @@ import {
   makeStoredShellSnapshotEncoder,
 } from "@t3tools/client-runtime/platform";
 import { type EnvironmentId, ServerConfig, VcsListRefsResult } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -147,7 +148,14 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         snapshot,
       }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
       yield* database
-        .saveCache(environmentId, "thread", threadId, COMPACT_THREAD_CACHE_SCHEMA_VERSION, payload)
+        .saveCache(
+          environmentId,
+          "thread",
+          threadId,
+          COMPACT_THREAD_CACHE_SCHEMA_VERSION,
+          payload,
+          DateTime.toEpochMillis(snapshot.projection.thread.updatedAt),
+        )
         .pipe(Effect.mapError(mapDatabaseError("save-thread")));
     }),
     removeThread: Effect.fn("MobileEnvironmentCache.removeThread")((environmentId, threadId) =>

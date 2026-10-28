@@ -24,8 +24,8 @@ describe("thread content presentation", () => {
       }),
     ).toEqual({
       kind: "unavailable",
-      title: "Messages not cached",
-      detail: "Reconnect this environment to load the conversation.",
+      title: "Not downloaded yet",
+      detail: "It will load when you’re back online.",
     });
   });
 });
