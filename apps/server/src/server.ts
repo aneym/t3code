@@ -1,3 +1,4 @@
+import * as AgentHomes from "./agents/AgentHomeService.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Random from "effect/Random";
@@ -6,7 +7,6 @@ import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
-// Effect wraps this raw Node HTTP server after its startup and write-error guards attach.
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 
@@ -204,12 +204,10 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 import * as ServerActivation from "./serverActivation.ts";
 
-// Escaped MCP handoff provenance can exceed find-my-way's 100-character segment default.
 const HTTP_ROUTER_CONFIG = {
   maxParamLength: 512,
 } as const;
 
-// Skip Effect's default 20 s grace; WebSocket scope finalizers already close connections gracefully.
 const HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS = 0;
 const layerResourceAttribution = ResourceAttribution.layer;
 const layerApplicationObservability = EventLoopMonitor.layer.pipe(
@@ -217,7 +215,6 @@ const layerApplicationObservability = EventLoopMonitor.layer.pipe(
   Layer.provideMerge(layerResourceAttribution),
 );
 
-// Share rotation state so driver loggers cannot race.
 const layerProviderEventLoggers = Layer.effect(
   ProviderEventLoggers.ProviderEventLoggers,
   Effect.gen(function* () {
@@ -262,7 +259,6 @@ const layerHostPowerMonitor = HostPowerMonitor.layer.pipe(
   Layer.provide(layerDesktopTelemetryReceiver),
 );
 
-// A fresh receiver layer would open a second reader on the desktop telemetry fd.
 const layerDesktopAppUpdate = DesktopAppUpdate.layer.pipe(
   Layer.provide(layerDesktopTelemetryReceiver),
 );
@@ -322,10 +318,6 @@ const layerHttpServer = Layer.unwrap(
         host: config.host ?? "127.0.0.1",
         port: config.port,
         gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-        // Context takeover stays enabled (ws default) so the compression
-        // window is shared across frames — that also makes small frames cheap
-        // to compress, so no size threshold is set (ws only honors
-        // `threshold` when context takeover is disabled).
         websocket: { perMessageDeflate: true },
       },
     );
@@ -428,9 +420,6 @@ const layerVcs = Layer.empty.pipe(
     VcsStatusBroadcaster.layer.pipe(
       Layer.provide(layerGitWorkflow),
       Layer.provide(VcsStatusBroadcaster.layerAutomaticFetchInterval),
-      // The orchestration runtime also consumes the broadcaster (run
-      // finalization), so the policy cannot read the store from the runtime's
-      // output.
       Layer.provide(
         VcsStatusBroadcaster.layerAutoPullPolicy.pipe(Layer.provide(ProjectStore.layer)),
       ),
@@ -693,7 +682,8 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   ),
 );
 
-const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
+const layerRuntimeDependencies = AgentHomes.layer.pipe(
+  Layer.provideMerge(layerRuntimeCoreDependencies),
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),

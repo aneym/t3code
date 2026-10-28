@@ -1,3 +1,5 @@
+import { AgentToolkit } from "./toolkits/agent/tools.ts";
+import * as AgentHandlers from "./toolkits/agent/handlers.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -151,7 +153,6 @@ const normalizeMcpHttpResponse = (
     : response;
 };
 
-// Session tokens are `<payload>.<signature>`; registry tokens are a bare base64url secret.
 const looksLikeProviderToken = (token: string) => token.length > 0 && !token.includes(".");
 
 const decodeModeLimit = Schema.decodeUnknownOption(
@@ -325,7 +326,6 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
     actionTimeline: tail(metadata.actionTimeline, "action timeline entries"),
   };
 
-  // Per-field character caps can still exceed the total byte ceiling.
   const shedOrder = [
     "actionTimeline",
     "networkEntries",
@@ -354,7 +354,6 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   });
   let text = encodeJsonText(value());
   while (utf8Length(text) > MAX_SNAPSHOT_TEXT_BYTES) {
-    // Elements carry the locators, so they go last; logs shed newest-last.
     const key =
       shedOrder.find(
         (candidate) => candidate !== "interactiveElements" && lists[candidate].length > 0,
@@ -470,7 +469,6 @@ const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
     typeof firstFailure._tag === "string"
       ? firstFailure._tag
       : "PreviewSnapshotError";
-  // Preview errors contain server-authored recovery guidance, never page output.
   const message = isPreviewAutomationError(firstFailure) ? firstFailure.message : undefined;
   const result = new McpSchema.CallToolResult({
     isError: true,
@@ -482,7 +480,6 @@ const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
         ...(message === undefined ? {} : { message }),
       },
     },
-    // Some clients show only the text content and others only structuredContent, so both carry it.
     content: [{ type: "text", text: `Preview snapshot failed: ${message ?? `${errorTag}.`}` }],
   });
   return Effect.logWarning("preview snapshot failed", {
@@ -546,7 +543,6 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
               const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
               const screenshotPath =
                 payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
-              // Providers replay images on later requests, and some reject them; include images only when requested.
               const includeImage = payload?.includeImage === true;
               if (screenshotPath !== undefined && !includeImage) {
                 const saved = {
@@ -648,7 +644,6 @@ const imageToolFailure =
           ...(message === undefined ? {} : { message }),
         },
       },
-      // Some clients show only the text content and others only structuredContent, so both carry it.
       content: [
         {
           type: "text",
@@ -877,7 +872,6 @@ const withToolAnalytics =
         : threads.value
             .getThreadShell(ThreadId.make(threadId))
             .pipe(Effect.orElseSucceed(() => null));
-    // Delegation depth: parents walked from the caller, capped.
     const depthOf =
       /* Request instrumentation already owns the span; keep this helper in that context. */
       Effect.fnUntraced(function* (thread: AgentThread) {
@@ -894,7 +888,6 @@ const withToolAnalytics =
         }
         return depth;
       });
-    // Whether the caller's active run was started by a scheduled task.
     const scheduledRunOf = (threadId: string, runId: RunId | null) =>
       Option.isNone(threads) || runId === null
         ? Effect.succeed(false)
@@ -927,8 +920,6 @@ const withToolAnalytics =
             isInputTargetHandoff(tool, args) ||
             hasAction(RESULT_TARGET_ACTIONS, tool, args);
           const outcome = toolOutcome(result);
-          // Agents call status, read, and preview tools in tight loops, so an
-          // event per successful call floods analytics. Only failures count there.
           if (!handoff && outcome.outcome === "ok") return;
           // Client credentials (no calling thread) report an unknown caller.
           const invocation = Option.getOrUndefined(
@@ -1149,6 +1140,7 @@ export const layerTools = Layer.mergeAll(
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,
+  toolkitRegistration(AgentToolkit, AgentHandlers.layer),
   layerAttachmentToolkit,
   layerProjectRegistration,
   layerEnvironmentToolkit,

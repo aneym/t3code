@@ -2951,8 +2951,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} is no longer empty.`,
         });
     }
+    let moveCwd: string | undefined;
     if (command.type === "thread.metadata.update" && command.projectId !== undefined) {
       yield* projects.get(command.projectId).pipe(mapDispatchError(command));
+      if (
+        command.projectId !== thread.projectId &&
+        thread.worktreePath === null &&
+        thread.cwd === undefined
+      ) {
+        const sourceProject = yield* projects.get(thread.projectId).pipe(mapDispatchError(command));
+        moveCwd = sourceProject.pipe(
+          Option.map((project) => project.workspaceRoot),
+          Option.getOrUndefined,
+        );
+      }
     }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
@@ -3382,6 +3394,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             ...(command.projectId === undefined ? {} : { projectId: command.projectId }),
+            ...(command.cwd === undefined && moveCwd === undefined
+              ? {}
+              : { cwd: command.cwd ?? moveCwd }),
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.automationTaskId === undefined
               ? {}
@@ -5641,7 +5656,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         status: "queued",
         ...(wakeSkipsHold && worktreeMissingRun === undefined
           ? {}
-          : inheritedQueueHold(projection.runs, heldRunsToRelease, worktreeMissingRun !== undefined)),
+          : inheritedQueueHold(
+              projection.runs,
+              heldRunsToRelease,
+              worktreeMissingRun !== undefined,
+            )),
         queuePosition:
           goalStopRunId !== undefined
             ? 1

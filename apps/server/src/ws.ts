@@ -1,3 +1,4 @@
+import { AgentHomeService } from "./agents/AgentHomeService.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -324,7 +325,6 @@ export const withLateEditorConfig = <E, R>(
         editors.join() !== config.availableEditors.join() ||
         (editors.includes("file-manager") && config.shellRevealInFileManagerKind === undefined),
     ),
-    // Leave the unshared reveal probe unbounded so timeouts cannot cancel every attempt on slow hosts.
     Stream.mapEffect((editors) =>
       resolveEditorConfig(editors, launcher.resolveFileManagerRevealKind()),
     ),
@@ -357,7 +357,6 @@ export const withLateEditorConfig = <E, R>(
             return [{ ...current, providers: event.payload.providers }, [event]];
           case "settingsUpdated":
             return [{ ...current, settings: event.payload.settings }, [event]];
-          // Themes and usage-limit sources survive snapshots because snapshots never include them.
           default:
             return [current, [event]];
         }
@@ -558,13 +557,8 @@ function projectFileFailureContext(
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
-// Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 
-// RpcGroup.toLayer derives each handler's requirements by scanning every RPC in
-// the group, so its type cost grows with handlers × RPCs. Near 200 methods that
-// crosses TypeScript's instantiation limit and the layer's requirements degrade to
-// `any`, so the handlers are registered as two disjoint, smaller groups.
 type ServerWsRpc = RpcGroup.Rpcs<typeof ServerWsRpcGroup>;
 const SPLIT_WS_RPC_PREFIXES = ["server", "pullRequests", "provider", "orchestration"] as const;
 type SplitWsRpc = Extract<
@@ -578,10 +572,7 @@ const isOtherWsRpc = (rpc: ServerWsRpc): rpc is Exclude<ServerWsRpc, SplitWsRpc>
 const serverWsRpcs = Array.from(ServerWsRpcGroup.requests.values());
 const SplitWsRpcGroup = RpcGroup.make(...serverWsRpcs.filter(isSplitWsRpc));
 const OtherWsRpcGroup = RpcGroup.make(...serverWsRpcs.filter(isOtherWsRpc));
-// Replaying each intervening event costs a shell refetch; past this gap a
-// single O(active-threads) snapshot is cheaper and bounded.
 const SHELL_RESUME_MAX_GAP = 1_000;
-// Row counts do not bound large tool payloads; sum stored JSON bytes in SQL and snapshot above budget.
 const ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES = 8 * 1024 * 1024;
 
 function toAuthAccessStreamEvent(
@@ -1226,6 +1217,7 @@ export const layerWsRpc = (
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
+      const agentHomes = yield* AgentHomeService;
       const currentSessionId = currentSession.sessionId;
       const desktopChannel = Option.getOrUndefined(
         yield* Effect.serviceOption(DesktopBrowserChannel.DesktopBrowserChannel),
@@ -2141,6 +2133,8 @@ export const layerWsRpc = (
               Effect.as(commandOutputHub.subscribe(input)),
             ),
           ),
+        [WS_METHODS.agentsSubscribeHomes]: () => agentHomes.subscribe(),
+        [WS_METHODS.agentsBind]: (input) => agentHomes.bind(input),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),

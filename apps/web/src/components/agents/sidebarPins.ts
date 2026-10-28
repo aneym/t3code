@@ -11,7 +11,7 @@ const PINNED_KEY = "t3code:sidebar-agents:pinned";
 const PinnedKeys = Schema.Array(Schema.String);
 const DEFAULT_PINNED_KEYS: ReadonlyArray<string> = ["cos"];
 
-export function sidebarProjectPinKey(project: EnvironmentProject) {
+function sidebarProjectPinKey(project: EnvironmentProject) {
   return (
     railsAgentHandle(project.workspaceRoot) ?? `project:${project.environmentId}:${project.id}`
   );

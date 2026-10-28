@@ -404,6 +404,12 @@ import {
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 import { DesktopBrowserRemoteEvents, DesktopBrowserRemoteSource } from "./desktopBrowser.ts";
+import {
+  AgentBindInput,
+  AgentBindResult,
+  AgentHomeError,
+  AgentHomesSnapshot,
+} from "./agentHome.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
@@ -413,6 +419,8 @@ export const WS_METHODS = {
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
   projectsMutate: "projects.mutate",
+  agentsSubscribeHomes: "agents.subscribeHomes",
+  agentsBind: "agents.bind",
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
 
@@ -1338,6 +1346,19 @@ const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
 });
 
+const WsAgentsSubscribeHomesRpc = Rpc.make(WS_METHODS.agentsSubscribeHomes, {
+  payload: Schema.Struct({}),
+  success: AgentHomesSnapshot,
+  error: Schema.Union([AgentHomeError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsAgentsBindRpc = Rpc.make(WS_METHODS.agentsBind, {
+  payload: AgentBindInput,
+  success: AgentBindResult,
+  error: Schema.Union([AgentHomeError, EnvironmentAuthorizationError]),
+});
+
 const WsProjectsMutateRpc = Rpc.make(WS_METHODS.projectsMutate, {
   payload: ProjectMutation,
   success: Project,
@@ -2099,6 +2120,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsCreateNewRpc,
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,
+  WsAgentsSubscribeHomesRpc,
+  WsAgentsBindRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsFilesystemGetMetadataRpc,

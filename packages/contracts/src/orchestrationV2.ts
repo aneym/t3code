@@ -441,6 +441,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  cwd: Schema.optional(TrimmedNonEmptyString),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -2032,6 +2033,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  cwd: Schema.optional(TrimmedNonEmptyString),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -2995,6 +2997,7 @@ export const OrchestrationV2Command = Schema.Union([
     regenerateTitle: Schema.optional(Schema.Boolean),
     branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    cwd: Schema.optional(TrimmedNonEmptyString),
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     /** Reject unless no message or run has landed on this thread. */

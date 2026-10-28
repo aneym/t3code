@@ -1,3 +1,4 @@
+import * as AgentHomes from "../agents/AgentHomeService.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -128,6 +129,7 @@ it.effect("agent context matches the committed budget", () =>
     Effect.provide(
       McpHttpServer.layerTools.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(AgentHomes.layer),
         Layer.provide(toolHandlerServices),
       ),
     ),

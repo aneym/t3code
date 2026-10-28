@@ -1,3 +1,4 @@
+import { rememberAgentFirstOpen } from "./agentFirstOpen";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CircleCheckIcon, CircleDashedIcon, PinOffIcon, PinIcon } from "lucide-react";
@@ -16,7 +17,7 @@ import { SidebarSection } from "../sidebar/SidebarSection";
 import { JumpHintBadge } from "../sidebar/SidebarThreadRow";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AgentFace } from "./AgentFace";
-import { type RailsAgent, railsAgentThreadKey } from "./railsAgents";
+import type { RailsAgent } from "./railsAgents";
 import {
   AGENTS_SECTION_STORAGE_KEY,
   type AgentProjectScope,
@@ -51,8 +52,10 @@ export function SidebarAgents({
   if (pinned.length === 0 && hidden.length === 0) return null;
   const rowProps = (agent: RailsAgent) => ({
     agent,
-    active: agent.thread !== null && railsAgentThreadKey(agent.thread) === activeThreadKey,
-    machines: [agent.projectRef.environmentId, ...agent.environmentIds]
+    active:
+      agent.target !== null &&
+      `${agent.target.environmentId}:${agent.target.threadId}` === activeThreadKey,
+    machines: agent.environmentIds
       .flatMap((id) => environmentLabelById.get(id) ?? [])
       .filter((label, index, all) => all.indexOf(label) === index)
       .join(" · "),
@@ -122,6 +125,7 @@ function AgentRow(props: {
   const { agent } = props;
   const handleNewThread = useNewThreadHandler();
   const navigate = useNavigate();
+  const environments = useEnvironmentIdentities();
   const { openMenu } = useThreadActionMenu({
     threadRef:
       agent.thread === null
@@ -156,7 +160,11 @@ function AgentRow(props: {
     <>
       <AgentFace handle={agent.handle} name={agent.name} />
       <span className="min-w-0 flex-1 truncate">{agent.name}</span>
-      {agent.thread === null ? null : (
+      {agent.thread === null ? (
+        agent.target ? (
+          <span className="text-xs text-sidebar-muted-foreground">Loading</span>
+        ) : null
+      ) : (
         <span className="flex shrink-0 group-focus-within/agent-row:invisible group-hover/agent-row:invisible">
           <AgentStatus thread={agent.thread} />
         </span>
@@ -182,13 +190,24 @@ function AgentRow(props: {
         showMenu({ x: rect.left, y: rect.bottom });
       }}
     >
-      {agent.thread === null ? (
+      {agent.target === null ? (
         <button
           type="button"
           className={rowClassName}
           onClick={() => {
             props.onNavigate();
-            void handleNewThread(agent.projectRef);
+            if (agent.projectRef === null) return;
+            void handleNewThread(agent.projectRef).then((opened) => {
+              if (opened && agent.projectRef)
+                rememberAgentFirstOpen(
+                  opened.threadId,
+                  agent,
+                  agent.projectRef.environmentId,
+                  environments
+                    .find((env) => env.environmentId === agent.projectRef?.environmentId)
+                    ?.label.toLowerCase() ?? agent.projectRef.environmentId,
+                );
+            });
           }}
         >
           {content}
@@ -196,7 +215,7 @@ function AgentRow(props: {
       ) : (
         <Link
           to="/$environmentId/$threadId"
-          params={{ environmentId: agent.thread.environmentId, threadId: agent.thread.id }}
+          params={{ environmentId: agent.target.environmentId, threadId: agent.target.threadId }}
           aria-current={props.active ? "page" : undefined}
           className={rowClassName}
           onClick={props.onNavigate}
@@ -261,6 +280,13 @@ function AgentStatus({ thread }: { readonly thread: EnvironmentThreadShell }) {
   }
   if (status === "waiting") {
     return <span className="shrink-0 text-xs text-sidebar-muted-foreground">Waiting</span>;
+  }
+  if (status === "failed" || status === "limited") {
+    return (
+      <span className="text-xs text-sidebar-muted-foreground">
+        {status === "limited" ? "Limited" : "Error"}
+      </span>
+    );
   }
   if (hasUnseenCompletion({ ...thread, lastVisitedAt })) {
     return (
