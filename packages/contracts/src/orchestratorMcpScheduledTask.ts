@@ -7,6 +7,7 @@ import {
   ScheduledTaskId,
   ThreadId,
 } from "./baseSchemas.ts";
+import { OrchestratorMcpEnvironmentTarget } from "./orchestratorMcp.ts";
 import { ScheduledTaskRunStatus, ScheduledTaskSchedule } from "./scheduledTask.ts";
 
 export const OrchestratorMcpScheduledTask = Schema.Struct({
@@ -33,6 +34,7 @@ export const OrchestratorMcpScheduleTaskResult = OrchestratorMcpScheduledTask;
 export type OrchestratorMcpScheduleTaskResult = typeof OrchestratorMcpScheduleTaskResult.Type;
 
 export const OrchestratorMcpListScheduledTasksInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
   projectId: Schema.optional(
     ProjectId.annotate({
       description: "Default: your thread's project, or all outside a thread.",
@@ -49,6 +51,7 @@ export type OrchestratorMcpListScheduledTasksResult =
   typeof OrchestratorMcpListScheduledTasksResult.Type;
 
 export const OrchestratorMcpDeleteScheduledTaskInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
   scheduledTaskId: ScheduledTaskId,
 });
 export type OrchestratorMcpDeleteScheduledTaskInput =

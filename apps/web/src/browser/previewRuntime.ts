@@ -45,13 +45,14 @@ export function usePreviewAvailable(environmentId: EnvironmentId | null): boolea
 export function rendersServerTabNatively(
   environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
-  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "device"> | null | undefined,
+  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "device" | "headless"> | null | undefined,
 ): boolean {
   const localDevice =
     typeof window !== "undefined" ? window.desktopBridge?.getDeviceName?.() : undefined;
   return (
     isElectron &&
     snapshot?.runtime === "server" &&
+    !snapshot.headless &&
     ((primaryEnvironmentId !== null && environmentId === primaryEnvironmentId) ||
       (snapshot.device !== undefined &&
         snapshot.device === localDevice &&
@@ -61,7 +62,7 @@ export function rendersServerTabNatively(
 
 export function useRendersServerTabNatively(
   environmentId: EnvironmentId,
-  snapshot: Pick<PreviewSessionSnapshot, "runtime"> | null | undefined,
+  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "headless"> | null | undefined,
 ): boolean {
   return rendersServerTabNatively(environmentId, useAtomValue(primaryEnvironmentIdAtom), snapshot);
 }
