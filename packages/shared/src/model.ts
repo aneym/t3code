@@ -197,7 +197,7 @@ function withDescriptorCurrentValue(
 }
 
 // Saved selections from when Ultracode was a Claude effort choice that ran at xhigh.
-function withLegacyUltracodeEffort(
+export function withLegacyUltracodeEffort(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
 ): ReadonlyArray<ProviderOptionSelection> | null | undefined {

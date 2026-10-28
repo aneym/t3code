@@ -22,7 +22,11 @@ import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { getProviderOptionCurrentLabel, getProviderOptionStatedValue } from "@t3tools/shared/model";
+import {
+  withLegacyUltracodeEffort,
+  getProviderOptionCurrentLabel,
+  getProviderOptionStatedValue,
+} from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
@@ -160,6 +164,13 @@ export function formatModelSelectionEffort(
 ): string | null {
   const caps = models.find((model) => model.slug === selection.model)?.capabilities;
   if (!caps) return null;
+  const canonical = (value: ModelSelection): ModelSelection => {
+    const options =
+      withLegacyUltracodeEffort(caps.optionDescriptors ?? [], value.options) ?? undefined;
+    return options === value.options ? value : { ...value, ...(options ? { options } : {}) };
+  };
+  selection = canonical(selection);
+  reportedSelection = reportedSelection ? canonical(reportedSelection) : reportedSelection;
   for (const id of REASONING_EFFORT_OPTION_IDS) {
     const descriptor = caps.optionDescriptors?.find((candidate) => candidate.id === id);
     if (descriptor?.type !== "select") continue;
