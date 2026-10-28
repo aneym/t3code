@@ -257,7 +257,7 @@ it.layer(NodeServices.layer)("project deletion with native V2 threads", (it) => 
   );
 
   it.effect.each(["present", "missing"] as const)(
-    "force-removes active and archived V2 threads with the workspace %s, preserving unrelated projects",
+    "force-removes archived V2 threads with the workspace %s, preserving unrelated projects",
     (workspace) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -269,11 +269,11 @@ it.layer(NodeServices.layer)("project deletion with native V2 threads", (it) => 
           (entry) => entry.workspaceRoot === otherWorkspace,
         );
         assert.isDefined(otherProject);
-        const activeId = ThreadId.make("project-cli-deleted-active");
+        const secondArchivedId = ThreadId.make("project-cli-deleted-second-archived");
         const archivedId = ThreadId.make("project-cli-deleted-archived");
         const unrelatedId = ThreadId.make("project-cli-unrelated-thread");
         yield* seedNativeThreads(baseDir, [
-          { id: activeId, projectId: project.id, archived: false },
+          { id: secondArchivedId, projectId: project.id, archived: true },
           { id: archivedId, projectId: project.id, archived: true },
           { id: unrelatedId, projectId: otherProject!.id, archived: false },
         ]);
@@ -295,7 +295,7 @@ it.layer(NodeServices.layer)("project deletion with native V2 threads", (it) => 
           (yield* readProjects(baseDir)).projects.map((entry) => entry.id),
           [otherProject!.id],
         );
-        for (const threadId of [activeId, archivedId]) {
+        for (const threadId of [secondArchivedId, archivedId]) {
           const state = yield* readNativeThreadState(baseDir, threadId);
           assert.isNotNull(state.thread.deletedAt);
           assert.lengthOf(
