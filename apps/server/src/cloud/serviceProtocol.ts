@@ -37,6 +37,7 @@ export type ServiceLauncherChildMessage =
       readonly type: "request-update";
       readonly targetVersion: string;
       readonly dbPath: string;
+      readonly allowDowngrade?: boolean;
     }
   | {
       readonly type: "prepared";
@@ -148,7 +149,7 @@ export function decodeServiceState(value: unknown): ServiceState | undefined {
     !isExactServiceVersion(value.activeVersion) ||
     (value.update !== undefined && update === undefined) ||
     (update !== undefined &&
-      compareExactServiceVersions(update.targetVersion, update.fromVersion) <= 0) ||
+      compareExactServiceVersions(update.targetVersion, update.fromVersion) === 0) ||
     (update?.status === "pending" && update.fromVersion !== value.activeVersion) ||
     (update?.status === "committed" && update.targetVersion !== value.activeVersion) ||
     ((update?.status === "rolled-back" || update?.status === "failed") &&
@@ -233,9 +234,15 @@ export function decodeServiceLauncherChildMessage(
   if (
     value.type === "request-update" &&
     typeof value.targetVersion === "string" &&
-    typeof value.dbPath === "string"
+    typeof value.dbPath === "string" &&
+    (value.allowDowngrade === undefined || typeof value.allowDowngrade === "boolean")
   ) {
-    return { type: value.type, targetVersion: value.targetVersion, dbPath: value.dbPath };
+    return {
+      type: value.type,
+      targetVersion: value.targetVersion,
+      dbPath: value.dbPath,
+      ...(value.allowDowngrade === undefined ? {} : { allowDowngrade: value.allowDowngrade }),
+    };
   }
   return value.type === "prepared" && typeof value.updateId === "string"
     ? { type: value.type, updateId: value.updateId }

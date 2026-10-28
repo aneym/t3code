@@ -40,11 +40,13 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
     Effect.gen(function* () {
       const npx = "/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs";
       expect(yield* rootCommand({ node: "/usr/bin/node", entry: npx })).toBe(
-        "sudo npx t3 browser setup",
+        `sudo npx ${packageJson.version.includes("-nightly.") ? "t3@nightly" : packageJson.version.includes("-preview.") ? "t3@preview" : "t3"} browser setup`,
       );
       expect(
         yield* rootCommand({ node: "/home/theo/.nvm/versions/node/v24/bin/node", entry: npx }),
-      ).toBe('sudo env "PATH=$PATH" npx t3 browser setup');
+      ).toBe(
+        `sudo env "PATH=$PATH" npx ${packageJson.version.includes("-nightly.") ? "t3@nightly" : packageJson.version.includes("-preview.") ? "t3@preview" : "t3"} browser setup`,
+      );
       expect(
         yield* rootCommand({
           node: "/home/theo/.local/node/bin/node",

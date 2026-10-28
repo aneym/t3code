@@ -124,6 +124,26 @@ function nativeThreadCreated(projectId: ProjectId, threadId: ThreadId) {
   };
 }
 
+const archiveThread = Effect.fn("ProjectDeletionTest.archiveThread")(function* (
+  threadId: ThreadId,
+) {
+  const eventSink = yield* EventSink.EventSinkV2;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const projection = yield* projections.getThreadProjection(threadId);
+  const archivedAt = yield* DateTime.now;
+  yield* eventSink.write({
+    events: [
+      {
+        id: EventId.make(`archived:${threadId}`),
+        type: "thread.archived",
+        threadId,
+        occurredAt: archivedAt,
+        payload: { ...projection.thread, archivedAt },
+      },
+    ],
+  });
+});
+
 it.effect("retries a partial project deletion without repeating child events or cleanup", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -139,6 +159,15 @@ it.effect("retries a partial project deletion without repeating child events or 
       yield* eventSink.write({
         events: threadIds.map((threadId) => nativeThreadCreated(projectId, threadId)),
       });
+      const serviceBeforeArchive = yield* ProjectService.make;
+      const activeThreadFailure = yield* serviceBeforeArchive
+        .delete({ commandId, projectId, force: true })
+        .pipe(Effect.flip);
+      assert.equal(activeThreadFailure._tag, "ProjectNotEmptyError");
+      for (const threadId of threadIds) {
+        assert.isNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
+        yield* archiveThread(threadId);
+      }
       const attempts: ThreadId[] = [];
       const failingEventSink = EventSink.EventSinkV2.of({
         ...eventSink,
@@ -329,6 +358,8 @@ it.effect(
           [],
         );
 
+        yield* archiveThread(threadId);
+        assert.equal(yield* importer.pendingThreadCount, 1);
         const deletedProject = yield* service.delete({ commandId, projectId, force: true });
         assert.isNotNull(deletedProject.deletedAt);
         assert.isTrue(Option.isNone(yield* service.getById(projectId)));
@@ -401,6 +432,7 @@ it.effect("rejects a child deletion command ID already accepted for an unrelated
         effects: [],
       });
       assert.equal(accepted.receipt.status, "accepted");
+      yield* archiveThread(threadId);
 
       const failure = yield* service
         .delete({ commandId, projectId, force: true })

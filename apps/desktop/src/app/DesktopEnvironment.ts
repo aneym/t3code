@@ -103,6 +103,9 @@ export function resolveDesktopAppBranding(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
 }): DesktopAppBranding {
+  if (input.appVersion.includes(".aneym.")) {
+    return { baseName: "T3", stageLabel: "Dev", displayName: "T3 Dev" };
+  }
   const stageLabel = resolveDesktopAppStageLabel(input);
   return {
     baseName: APP_BASE_NAME,

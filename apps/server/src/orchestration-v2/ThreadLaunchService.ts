@@ -906,6 +906,9 @@ const make = Effect.gen(function* () {
                 modelSelection: input.modelSelection,
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,
+                ...(input.initialMessage?.scheduledTaskId === undefined
+                  ? {}
+                  : { automationTaskId: input.initialMessage.scheduledTaskId }),
                 branch: initialBranch,
                 worktreePath: initialWorktreePath,
                 ...(input.importedNativeThread === undefined
