@@ -8405,15 +8405,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (yield* goalDriverFor(command, queuedRun.providerInstanceId)) === undefined
         ? null
         : parsedGoalCommand;
-    if (goalCommand !== null) {
-      yield* ensureGoalCommandSupported(command, queuedMessage, queuedRun.providerInstanceId);
-      const target = projection.runs.find((run) => run.id === command.targetRunId);
+    const target = projection.runs.find((run) => run.id === command.targetRunId);
+    const targetMessage = projection.messages.find(
+      (message) => message.id === target?.userMessageId,
+    );
+    const skipsCompaction =
+      targetMessage !== undefined &&
+      isNativeMaintenanceCommand(targetMessage) &&
+      targetMessage.text.trim().toLowerCase() === "/compact";
+    if (goalCommand !== null || skipsCompaction) {
+      if (goalCommand !== null) {
+        yield* ensureGoalCommandSupported(command, queuedMessage, queuedRun.providerInstanceId);
+      }
       const goal = projection.providerThreads.find(
         (candidate) => candidate.id === target?.providerThreadId,
       )?.goal;
-      const targetMessage = projection.messages.find(
-        (message) => message.id === target?.userMessageId,
-      );
       yield* emitEvent({
         type: "run.updated",
         threadId: command.threadId,
@@ -8426,8 +8432,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const stops =
         target !== undefined &&
         isLiveRun(target) &&
-        goalCommandStopsActiveRun(goalCommand, goal?.status ?? null) &&
-        (targetMessage === undefined || !isNativeMaintenanceCommand(targetMessage)) &&
+        (skipsCompaction ||
+          (goalCommand !== null &&
+            goalCommandStopsActiveRun(goalCommand, goal?.status ?? null) &&
+            (targetMessage === undefined || !isNativeMaintenanceCommand(targetMessage)))) &&
         !(yield* stopReachedRun(command, command.threadId, target.id));
       return yield* stopRunForGoalCommand({
         command,
@@ -8436,6 +8444,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection,
         queuedRunId: queuedRun.id,
         targetRunId: stops ? target.id : undefined,
+        ...(skipsCompaction ? { reason: "Skipped compaction to send a queued message" } : {}),
         now,
       });
     }
@@ -10555,6 +10564,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">;
     readonly queuedRunId: RunId;
     readonly targetRunId: RunId | undefined;
+    readonly reason?: string;
     readonly now: DateTime.Utc;
   }) {
     const { command, events, effects, projection, now, targetRunId } = input;
@@ -10587,7 +10597,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           threadId: command.threadId,
           runId: targetRunId,
-          reason: "Stopped to apply /goal",
+          reason: input.reason ?? "Stopped to apply /goal",
         },
         interruptEvents,
         interruptEffects,
