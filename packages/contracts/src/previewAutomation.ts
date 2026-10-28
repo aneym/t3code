@@ -126,6 +126,15 @@ export const PreviewAutomationStatus = Schema.Struct({
   ),
   profiles: Schema.optional(Schema.Array(PreviewAutomationProfile)),
   defaultProfileId: Schema.optional(BrowserProfileId),
+  devices: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        focused: Schema.Boolean,
+        lastFocusedAt: Schema.Number,
+      }),
+    ),
+  ),
 });
 export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
 
@@ -159,6 +168,7 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   profileId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))).annotate({
     description: PROFILE_GUIDANCE,
   }),
+  device: Schema.optional(TrimmedNonEmptyString),
 }).check(
   Schema.makeFilter(
     (input) =>

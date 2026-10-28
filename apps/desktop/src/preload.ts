@@ -85,6 +85,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL) === true,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   getClientPlatform: () => clientPlatform,
+  getDeviceName: () => ipcRenderer.sendSync(IpcChannels.GET_DEVICE_NAME_CHANNEL) as string,
   setNotificationBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, badge),
   onNotificationBadgeClear: (listener) => {
@@ -441,5 +442,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, wrappedListener);
     },
+  },
+  desktopBrowser: {
+    onEvent: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, line: unknown) => {
+        if (typeof line === "string") listener(line);
+      };
+      ipcRenderer.on(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, handler);
+    },
+    sendCommand: (line) => ipcRenderer.invoke(IpcChannels.DESKTOP_BROWSER_COMMAND_CHANNEL, line),
   },
 } satisfies DesktopBridge);

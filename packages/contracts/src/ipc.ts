@@ -1007,6 +1007,7 @@ export interface DesktopBridge {
   getRelayTelemetryEnabled?: () => boolean;
   getPathForFile?: (file: File) => string;
   getClientPlatform?: () => string;
+  getDeviceName?: () => string;
   setNotificationBadge?: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear?: (listener: () => void) => () => void;
   onTrackpadScrollEnd?: (listener: () => void) => () => void;
@@ -1124,6 +1125,10 @@ export interface DesktopBridge {
     onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
   };
   preview?: DesktopPreviewBridge;
+  desktopBrowser?: {
+    onEvent: (listener: (line: string) => void) => () => void;
+    sendCommand: (line: string) => Promise<void>;
+  };
 }
 
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */

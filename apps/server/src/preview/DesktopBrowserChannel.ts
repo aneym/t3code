@@ -5,9 +5,12 @@ import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer";
 import {
   DesktopBrowserCommand,
   DesktopBrowserEvent,
+  DesktopBrowserRemoteEvents,
+  DesktopBrowserRemoteSource,
   type DesktopBrowserCommand as DesktopBrowserCommandType,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -27,6 +30,7 @@ import { writeAllToFileDescriptor } from "../resourceTelemetry/DesktopTelemetryR
 
 const decodeEvent = Schema.decodeUnknownEffect(DesktopBrowserEvent);
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(DesktopBrowserCommand));
+const encodeRemoteCommand = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserCommand));
 
 export interface DesktopTabKey {
   readonly threadId: string;
@@ -40,7 +44,11 @@ export class DesktopBrowserChannel extends Context.Service<
   {
     readonly available: boolean;
     /** Subscribe before checking so concurrent attaches cannot be missed. */
-    readonly awaitAttached: (key: DesktopTabKey, timeout: Duration.Input) => Effect.Effect<boolean>;
+    readonly awaitAttached: (
+      key: DesktopTabKey,
+      timeout: Duration.Input,
+      deviceName?: string,
+    ) => Effect.Effect<boolean>;
     readonly detached: Stream.Stream<DesktopTabKey>;
     readonly attached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
@@ -51,6 +59,13 @@ export class DesktopBrowserChannel extends Context.Service<
     ) => Effect.Effect<void>;
     /** Never fails. A failed write means a broken channel; the next backend starts with no turns. */
     readonly turn: (threadId: string, active: boolean) => Effect.Effect<void>;
+    readonly remoteCommands?: (
+      source: DesktopBrowserRemoteSource,
+    ) => Effect.Effect<Stream.Stream<string>, never, Scope.Scope>;
+    readonly remoteEvents?: (input: DesktopBrowserRemoteEvents) => Effect.Effect<void>;
+    readonly devices?: Effect.Effect<
+      ReadonlyArray<{ name: string; focused: boolean; lastFocusedAt: number }>
+    >;
   }
 >()("t3/preview/DesktopBrowserChannel") {}
 
@@ -62,77 +77,136 @@ const make = Effect.gen(function* () {
   const attachedTabs = new Set<string>();
   const inbound = new Map<string, Queue.Queue<string>>();
   const writeLock = yield* Semaphore.make(1);
+  const remoteSources = new Map<
+    string,
+    {
+      readonly queue: Queue.Queue<string>;
+      readonly attached: Set<string>;
+      focused: boolean;
+      lastFocusedAt: number;
+    }
+  >();
 
-  if (inputFd === undefined || controlFd === undefined) {
-    return DesktopBrowserChannel.of({
-      available: false,
-      awaitAttached: Effect.fn("DesktopBrowserChannel.awaitAttached")(function () {
-        return Effect.succeed(false);
+  const sourceForKey = (id: string) => {
+    for (const source of remoteSources.values()) if (source.attached.has(id)) return source;
+    return null;
+  };
+
+  const sourceCommand = (
+    source: typeof remoteSources extends Map<string, infer A> ? A : never,
+    message: DesktopBrowserCommandType,
+  ) => Queue.offer(source.queue, `${encodeRemoteCommand(message)}\n`);
+
+  const remoteCommands = Effect.fn("DesktopBrowserChannel.remoteCommands")(function* (
+    source: DesktopBrowserRemoteSource,
+  ) {
+    const existing = remoteSources.get(source.deviceName);
+    if (existing) yield* Queue.shutdown(existing.queue);
+    const entry = {
+      queue: yield* Queue.unbounded<string>(),
+      attached: new Set<string>(),
+      focused: source.focused,
+      lastFocusedAt: yield* Clock.currentTimeMillis,
+    };
+    remoteSources.set(source.deviceName, entry);
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (remoteSources.get(source.deviceName) !== entry) return;
+        remoteSources.delete(source.deviceName);
+        for (const id of entry.attached) {
+          attachedTabs.delete(id);
+          const [threadId, tabId] = id.split("\u0000");
+          if (threadId !== undefined && tabId !== undefined)
+            void PubSub.publish(changes, { key: { threadId, tabId }, attached: false });
+        }
+        entry.attached.clear();
       }),
-      detached: Stream.empty,
-      attached: Stream.empty,
-      isAttached: Effect.fn("DesktopBrowserChannel.isAttached")(function () {
-        return Effect.succeed(false);
-      }),
-      endpoint: Effect.fn("DesktopBrowserChannel.endpoint")(function () {
-        return Effect.die("No desktop app is attached to this server.");
-      }),
-      turn: Effect.fn("DesktopBrowserChannel.turn")(function () {
-        return Effect.void;
-      }),
-      pointer: Effect.fn("DesktopBrowserChannel.pointer")(function () {
-        return Effect.void;
-      }),
-    });
-  }
+    );
+    return Stream.fromQueue(entry.queue);
+  });
+
+  const remoteEvents = Effect.fn("DesktopBrowserChannel.remoteEvents")(function* (
+    input: DesktopBrowserRemoteEvents,
+  ) {
+    const source = remoteSources.get(input.deviceName);
+    if (!source) return;
+    if (input.focused !== undefined) {
+      source.focused = input.focused;
+      if (input.focused) source.lastFocusedAt = yield* Clock.currentTimeMillis;
+    }
+    for (const line of input.events) {
+      const event = yield* decodeEvent(line).pipe(Effect.option);
+      if (Option.isNone(event)) continue;
+      const key = { threadId: event.value.threadId, tabId: event.value.tabId };
+      const id = keyOf(key);
+      if (event.value.type === "cdp") {
+        const queue = inbound.get(id);
+        if (queue) yield* Queue.offer(queue, event.value.message);
+      } else if (event.value.type === "attached") {
+        source.attached.add(id);
+        attachedTabs.add(id);
+        yield* PubSub.publish(changes, { key, attached: true });
+      } else {
+        source.attached.delete(id);
+        attachedTabs.delete(id);
+        const queue = inbound.get(id);
+        if (queue) yield* Queue.shutdown(queue);
+        yield* PubSub.publish(changes, { key, attached: false });
+      }
+    }
+  });
 
   const command = (message: DesktopBrowserCommandType) =>
-    writeLock.withPermits(1)(
-      encodeCommand(message).pipe(
-        Effect.flatMap((line) => writeAllToFileDescriptor(controlFd, Buffer.from(`${line}\n`))),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("desktop browser command failed", { cause }),
-        ),
-      ),
-    );
+    controlFd === undefined
+      ? Effect.void
+      : writeLock.withPermits(1)(
+          encodeCommand(message).pipe(
+            Effect.flatMap((line) => writeAllToFileDescriptor(controlFd, Buffer.from(`${line}\n`))),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("desktop browser command failed", { cause }),
+            ),
+          ),
+        );
 
   // Use cancellable socket reads; filesystem pipe reads keep Node alive after scope shutdown.
-  const readable = yield* Effect.acquireRelease(
-    Effect.sync(() => new NodeNet.Socket({ fd: inputFd, readable: true, writable: false })),
-    (stream) => Effect.sync(() => stream.destroy()),
-  );
-  yield* NodeStream.fromReadable<Uint8Array, Error>({
-    evaluate: () => readable,
-    closeOnDone: true,
-    onError: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-  }).pipe(
-    Stream.pipeThroughChannel(Ndjson.decode({ ignoreEmptyLines: true })),
-    Stream.mapEffect((value) => decodeEvent(value).pipe(Effect.option)),
-    Stream.runForEach((decoded) => {
-      if (Option.isNone(decoded)) return Effect.void;
-      const event = decoded.value;
-      const key = { threadId: event.threadId, tabId: event.tabId };
-      const id = keyOf(key);
-      switch (event.type) {
-        case "cdp": {
-          const queue = inbound.get(id);
-          return queue ? Queue.offer(queue, event.message).pipe(Effect.asVoid) : Effect.void;
+  if (inputFd !== undefined) {
+    const readable = yield* Effect.acquireRelease(
+      Effect.sync(() => new NodeNet.Socket({ fd: inputFd, readable: true, writable: false })),
+      (stream) => Effect.sync(() => stream.destroy()),
+    );
+    yield* NodeStream.fromReadable<Uint8Array, Error>({
+      evaluate: () => readable,
+      closeOnDone: true,
+      onError: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }).pipe(
+      Stream.pipeThroughChannel(Ndjson.decode({ ignoreEmptyLines: true })),
+      Stream.mapEffect((value) => decodeEvent(value).pipe(Effect.option)),
+      Stream.runForEach((decoded) => {
+        if (Option.isNone(decoded)) return Effect.void;
+        const event = decoded.value;
+        const key = { threadId: event.threadId, tabId: event.tabId };
+        const id = keyOf(key);
+        switch (event.type) {
+          case "cdp": {
+            const queue = inbound.get(id);
+            return queue ? Queue.offer(queue, event.message).pipe(Effect.asVoid) : Effect.void;
+          }
+          case "attached":
+            attachedTabs.add(id);
+            return PubSub.publish(changes, { key, attached: true });
+          case "detached": {
+            attachedTabs.delete(id);
+            const queue = inbound.get(id);
+            return (queue ? Queue.shutdown(queue) : Effect.void).pipe(
+              Effect.andThen(PubSub.publish(changes, { key, attached: false })),
+            );
+          }
         }
-        case "attached":
-          attachedTabs.add(id);
-          return PubSub.publish(changes, { key, attached: true });
-        case "detached": {
-          attachedTabs.delete(id);
-          const queue = inbound.get(id);
-          return (queue ? Queue.shutdown(queue) : Effect.void).pipe(
-            Effect.andThen(PubSub.publish(changes, { key, attached: false })),
-          );
-        }
-      }
-    }),
-    Effect.catchCause((cause) => Effect.logWarning("desktop browser channel stopped", { cause })),
-    Effect.forkScoped,
-  );
+      }),
+      Effect.catchCause((cause) => Effect.logWarning("desktop browser channel stopped", { cause })),
+      Effect.forkScoped,
+    );
+  }
 
   const endpoint = Effect.fn("DesktopBrowserChannel.endpoint")(function* (key: DesktopTabKey) {
     const id = keyOf(key);
@@ -153,7 +227,9 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         if (inbound.get(id) === queue) inbound.delete(id);
         yield* Queue.shutdown(queue);
-        yield* command({ type: "release", ...key });
+        const source = sourceForKey(id);
+        if (source) yield* sourceCommand(source, { type: "release", ...key });
+        else yield* command({ type: "release", ...key });
       }),
     );
     // The relay serves one Playwright connection; a second would see the first's sessions.
@@ -175,11 +251,17 @@ const make = Effect.gen(function* () {
               Effect.forEach(
                 frames,
                 (frame) =>
-                  command({
-                    type: "cdp",
-                    ...key,
-                    message: typeof frame === "string" ? frame : decoder.decode(frame),
-                  }),
+                  sourceForKey(id)
+                    ? sourceCommand(sourceForKey(id)!, {
+                        type: "cdp",
+                        ...key,
+                        message: typeof frame === "string" ? frame : decoder.decode(frame),
+                      })
+                    : command({
+                        type: "cdp",
+                        ...key,
+                        message: typeof frame === "string" ? frame : decoder.decode(frame),
+                      }),
                 { discard: true },
               ),
             ),
@@ -194,22 +276,38 @@ const make = Effect.gen(function* () {
   });
 
   return DesktopBrowserChannel.of({
-    available: true,
-    awaitAttached: Effect.fn("DesktopBrowserChannel.awaitAttached")(function (key, timeout) {
-      return Effect.scoped(
-        Effect.gen(function* () {
-          const subscription = yield* PubSub.subscribe(changes);
-          if (attachedTabs.has(keyOf(key))) return true;
-          return yield* Stream.fromSubscription(subscription).pipe(
-            Stream.filter((change) => change.attached && keyOf(change.key) === keyOf(key)),
-            Stream.runHead,
-            Effect.map(Option.isSome),
-            Effect.timeoutOption(timeout),
-            Effect.map((result) => Option.getOrElse(result, () => false)),
-          );
-        }),
-      );
-    }),
+    get available() {
+      return (inputFd !== undefined && controlFd !== undefined) || remoteSources.size > 0;
+    },
+    awaitAttached: Effect.fn("DesktopBrowserChannel.awaitAttached")(
+      function (key, timeout, deviceName) {
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const subscription = yield* PubSub.subscribe(changes);
+            const id = keyOf(key);
+            if (
+              deviceName === undefined
+                ? attachedTabs.has(id)
+                : remoteSources.get(deviceName)?.attached.has(id) === true
+            )
+              return true;
+            return yield* Stream.fromSubscription(subscription).pipe(
+              Stream.filter(
+                (change) =>
+                  change.attached &&
+                  keyOf(change.key) === id &&
+                  (deviceName === undefined ||
+                    remoteSources.get(deviceName)?.attached.has(id) === true),
+              ),
+              Stream.runHead,
+              Effect.map(Option.isSome),
+              Effect.timeoutOption(timeout),
+              Effect.map((result) => Option.getOrElse(result, () => false)),
+            );
+          }),
+        );
+      },
+    ),
     detached: Stream.fromPubSub(changes).pipe(
       Stream.filter((change) => !change.attached),
       Stream.map((change) => change.key),
@@ -223,11 +321,28 @@ const make = Effect.gen(function* () {
     }),
     endpoint,
     turn: Effect.fn("DesktopBrowserChannel.turn")(function (threadId, active) {
-      return command({ type: "turn", threadId, active });
+      const source = [...remoteSources.values()].find((candidate) =>
+        [...candidate.attached].some((id) => id.startsWith(`${threadId}\u0000`)),
+      );
+      return source
+        ? sourceCommand(source, { type: "turn", threadId, active })
+        : command({ type: "turn", threadId, active });
     }),
     pointer: Effect.fn("DesktopBrowserChannel.pointer")(function (key, pointer) {
-      return command({ type: "pointer", ...key, ...pointer });
+      const source = sourceForKey(keyOf(key));
+      return source
+        ? sourceCommand(source, { type: "pointer", ...key, ...pointer })
+        : command({ type: "pointer", ...key, ...pointer });
     }),
+    remoteCommands,
+    remoteEvents,
+    devices: Effect.sync(() =>
+      [...remoteSources].map(([name, source]) => ({
+        name,
+        focused: source.focused,
+        lastFocusedAt: source.lastFocusedAt,
+      })),
+    ),
   });
 });
 

@@ -1137,6 +1137,29 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   );
 }
 
+function BrowserRemoteDeviceTabsSetting({ disabled }: { readonly disabled: boolean }) {
+  const enabled = useClientSettings((settings) => settings.browserAllowRemoteDeviceTabs);
+  return (
+    <SettingsRow
+      {...searchableSetting("browser-auto-show-floating-preview")}
+      description="Let agents open browser tabs on this device."
+      control={
+        <Switch
+          disabled={disabled}
+          checked={enabled}
+          onCheckedChange={(checked) =>
+            void persistClientSettingsUpdate((settings) => ({
+              ...settings,
+              browserAllowRemoteDeviceTabs: Boolean(checked),
+            }))
+          }
+          aria-label="Let agents open browser tabs on this device"
+        />
+      }
+    />
+  );
+}
+
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
@@ -1613,6 +1636,7 @@ export function BrowserSettingsPanel() {
           <BrowserProfilesSetting disabled={desktopOnly} />
           <BrowserLinkTargetSetting disabled={desktopOnly} />
           <BrowserAutoShowFloatingPreviewSetting disabled={desktopOnly} />
+          <BrowserRemoteDeviceTabsSetting disabled={desktopOnly} />
         </SettingsUnavailableGroup>
         {/* Not desktop-only: web clients search from server-run browser tabs too. */}
         <BrowserSearchEngineSetting />
