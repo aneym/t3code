@@ -521,6 +521,12 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
         worktreePath: null,
       });
 
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-thread-delete-concurrent-archive"),
+        threadId,
+      });
+
       const updateReady = yield* Deferred.make<void>();
       const releaseUpdate = yield* Deferred.make<void>();
       const deletionQueued = yield* Deferred.make<void>();
