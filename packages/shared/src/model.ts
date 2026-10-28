@@ -196,12 +196,37 @@ function withDescriptorCurrentValue(
   };
 }
 
+// Saved selections from when Ultracode was a Claude effort choice that ran at xhigh.
+export function withLegacyUltracodeEffort(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): ReadonlyArray<ProviderOptionSelection> | null | undefined {
+  if (getRawSelectionValueById(selections, "effort") !== "ultracode") return selections;
+  const effort = descriptors.find((descriptor) => descriptor.id === "effort");
+  if (
+    effort?.type !== "select" ||
+    effort.options.some((option) => option.id === "ultracode") ||
+    !effort.options.some((option) => option.id === "xhigh")
+  ) {
+    return selections;
+  }
+  const hasToggle = descriptors.some(
+    (descriptor) => descriptor.id === "ultracode" && descriptor.type === "boolean",
+  );
+  const next = (selections ?? []).map((selection) =>
+    selection.id === "effort" ? { id: "effort", value: "xhigh" } : selection,
+  );
+  return hasToggle && getRawSelectionValueById(selections, "ultracode") === undefined
+    ? [...next, { id: "ultracode", value: true }]
+    : next;
+}
+
 export function getProviderOptionDescriptors(input: {
   caps: ModelCapabilities;
   selections?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
 }): ReadonlyArray<ProviderOptionDescriptor> {
-  const { caps, selections } = input;
-  const baseDescriptors = (caps.optionDescriptors ?? []).map(cloneDescriptor);
+  const baseDescriptors = (input.caps.optionDescriptors ?? []).map(cloneDescriptor);
+  const selections = withLegacyUltracodeEffort(baseDescriptors, input.selections);
 
   return baseDescriptors.map((descriptor) =>
     withDescriptorCurrentValue(
@@ -312,7 +337,11 @@ export function buildExplicitProviderOptionSelectionsFromDescriptors(
   if (!selections || selections.length === 0) {
     return undefined;
   }
-  const explicitIds = new Set(selections.map((selection) => selection.id));
+  const explicitIds = new Set(
+    (withLegacyUltracodeEffort(descriptors ?? [], selections) ?? []).map(
+      (selection) => selection.id,
+    ),
+  );
   const normalized = buildProviderOptionSelectionsFromDescriptors(descriptors)?.filter(
     (selection) => explicitIds.has(selection.id),
   );

@@ -3395,7 +3395,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.automationTaskId === undefined
               ? {}
-              : { automationTaskId: command.automationTaskId }),
+              : {
+                  automationTaskId: command.automationTaskId,
+                  automationPlacementAt: command.automationTaskId == null ? null : now,
+                }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&
             limitRecovery?.snooze === true &&

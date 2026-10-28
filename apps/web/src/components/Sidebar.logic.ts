@@ -1,3 +1,4 @@
+import { isAutomationOnlyThread, type AutomationPlacement } from "./automations/threadPlacement";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -171,9 +172,9 @@ export function resolveSidebarThreadSection(input: {
   readonly settled: boolean;
   readonly pinned: boolean;
 }): SidebarSection {
+  if (input.pinned) return "pinned";
   if (input.snoozed) return "snoozed";
   if (input.settled) return "settled";
-  if (input.pinned) return "pinned";
   return "active";
 }
 
@@ -581,12 +582,8 @@ export function resolveSidebarRowThreadId(
 }
 
 export function filterSidebarV2VisibleThreads<
-  T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
-    environmentId: string;
-    projectId: string;
-    id?: string;
-    automationTaskId?: string | null | undefined;
-  },
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> &
+    AutomationPlacement & { projectId: string },
 >(
   threads: readonly T[],
   scopedProjectKeys: ReadonlySet<string> | null,
@@ -595,8 +592,7 @@ export function filterSidebarV2VisibleThreads<
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
-      thread.automationTaskId == null &&
-      !automationThreadKeys?.has(`${thread.environmentId}:${thread.id}`) &&
+      !isAutomationOnlyThread(thread, automationThreadKeys) &&
       !isSidebarSubagentThread(thread) &&
       (scopedProjectKeys === null ||
         scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),

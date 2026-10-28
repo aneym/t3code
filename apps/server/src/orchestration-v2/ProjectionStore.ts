@@ -1643,6 +1643,7 @@ export function threadShellFromProjection(
     ...(projection.thread.automationTaskId === undefined
       ? {}
       : { automationTaskId: projection.thread.automationTaskId }),
+    automationPlacementAt: projection.thread.automationPlacementAt,
     branch: projection.thread.branch,
     worktreePath: projection.thread.worktreePath,
     pullRequests: threadPullRequestsOf(projection.thread),
@@ -1687,7 +1688,12 @@ export function threadShellFromProjection(
     latestVisibleMessage: null,
     latestUserMessageAt: latestUserMessage?.updatedAt ?? null,
     latestUserAuthoredMessageAt:
-      userMessages.find((message) => message.createdBy === "user")?.updatedAt ?? null,
+      userMessages.find(
+        (message) =>
+          message.createdBy === "user" &&
+          message.creationSource !== "server" &&
+          message.scheduledTaskId === undefined,
+      )?.updatedAt ?? null,
     hasActionableProposedPlan: projection.plans.some(
       (plan) => plan.kind === "proposed_plan" && plan.status === "active",
     ),
@@ -1922,6 +1928,7 @@ function shellFromState(input: {
     ...(input.state.thread.automationTaskId === undefined
       ? {}
       : { automationTaskId: input.state.thread.automationTaskId }),
+    automationPlacementAt: input.state.thread.automationPlacementAt,
     branch: input.state.thread.branch,
     worktreePath: input.state.thread.worktreePath,
     pullRequests: threadPullRequestsOf(input.state.thread),
@@ -5923,6 +5930,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE message.thread_id = t.thread_id
                   AND message.role = 'user'
                   AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                  AND json_extract(message.payload_json, '$.scheduledTaskId') IS NULL
+                  AND COALESCE(json_extract(message.payload_json, '$.creationSource'), '') <> 'server'
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
               ) AS latest_user_authored_message_at,
@@ -6177,6 +6186,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id AND message.role = 'user'
                   AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                  AND json_extract(message.payload_json, '$.scheduledTaskId') IS NULL
+                  AND COALESCE(json_extract(message.payload_json, '$.creationSource'), '') <> 'server'
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
               ) AS latest_user_authored_message_at

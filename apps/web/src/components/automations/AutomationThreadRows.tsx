@@ -1,3 +1,4 @@
+import { isAutomationOnlyThread } from "./threadPlacement";
 import { Link } from "@tanstack/react-router";
 import { CalendarClockIcon } from "lucide-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -9,7 +10,7 @@ export function automationThreadsWithoutJobs(
 ): ReadonlyArray<EnvironmentThreadShell> {
   return threads.filter(
     (thread) =>
-      thread.automationTaskId != null &&
+      isAutomationOnlyThread(thread) &&
       thread.archivedAt === null &&
       !automations.some(
         ({ environmentId, task }) =>
