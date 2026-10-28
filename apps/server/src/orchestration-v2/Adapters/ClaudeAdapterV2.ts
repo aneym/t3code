@@ -135,7 +135,6 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
   planClaudeSkillDispatch,
@@ -7877,61 +7876,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
           return subagent?.task.status === "running" ? settled : null;
-        });
-
-        const claudeMcpAppResourceUri = (output: ClaudeNativeToolOutput, toolResult: unknown) => {
-          const values = [claudeNativeToolOutputValue(output), toolResult];
-          for (const value of values) {
-            if (value === undefined) continue;
-            const direct = readMcpAppResourceUri(value);
-            if (direct !== undefined) return direct;
-            if (typeof value === "object" && value !== null) {
-              const meta = Reflect.get(value, "_meta");
-              const nested = readMcpAppResourceUri(meta);
-              if (nested !== undefined) return nested;
-            }
-          }
-          return undefined;
-        };
-
-        const captureClaudeMcpApp = Effect.fnUntraced(function* (input: {
-          readonly query: ClaudeAgentSdkQuerySession;
-          readonly context: ActiveClaudeTurnContext;
-          readonly toolName: string;
-          readonly output: ClaudeNativeToolOutput;
-          readonly toolResult: ClaudeToolResultContentBlock;
-        }) {
-          const normalized = input.toolName.replace(/^mcp__claude_ai_/u, "mcp__");
-          const parts = normalized.split("__");
-          const server = parts[1];
-          const tool = parts.slice(2).join("__");
-          const resourceUri = claudeMcpAppResourceUri(input.output, input.toolResult);
-          if (server === undefined || tool.length === 0 || resourceUri === undefined)
-            return undefined;
-          const readMcpResource = input.query.readMcpResource;
-          if (readMcpResource === undefined) return undefined;
-          return yield* readMcpResource(server, resourceUri).pipe(
-            Effect.flatMap((response) =>
-              snapshotMcpApp({
-                attachmentsDir,
-                threadId: input.context.input.threadId,
-                server,
-                tool,
-                resourceUri,
-                contents:
-                  (response as { readonly contents?: ReadonlyArray<unknown> }).contents ?? [],
-              }),
-            ),
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Failed to capture Claude MCP app; showing a plain tool row.", {
-                server,
-                tool,
-                resourceUri,
-                cause,
-              }).pipe(Effect.as(undefined)),
-            ),
-          );
         });
 
         const handleSdkMessageFrame = Effect.fnUntraced(function* (input: {
