@@ -51,6 +51,16 @@ export const installUpdate = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const installDesktopVersion = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.UPDATE_INSTALL_VERSION_CHANNEL,
+  payload: Schema.String,
+  result: DesktopUpdateActionResultSchema,
+  handler: Effect.fn("desktop.ipc.updates.installVersion")(function* (version) {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    return yield* updates.installVersion(version);
+  }),
+});
+
 export const checkForUpdate = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.UPDATE_CHECK_CHANNEL,
   payload: Schema.Void,

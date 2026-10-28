@@ -54,6 +54,7 @@ export interface ServerUpdateTarget {
   readonly desktopAppUpdate?: boolean;
   readonly threadContinuation?: boolean;
   readonly targetVersion: string;
+  readonly allowDowngrade?: boolean;
   readonly continueThreadsAfterServerUpdate?: boolean;
 }
 
@@ -84,6 +85,7 @@ export function useServerUpdate() {
       environmentId,
       input: {
         targetVersion,
+        ...(target.allowDowngrade ? { allowDowngrade: true } : {}),
         ...(target.threadContinuation && target.continueThreadsAfterServerUpdate
           ? { continueRunningThreads: true }
           : {}),
