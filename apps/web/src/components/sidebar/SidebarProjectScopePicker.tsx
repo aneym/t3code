@@ -87,7 +87,6 @@ export function SidebarProjectScopePicker({
     project: SidebarProjectSnapshot,
     position: { x: number; y: number },
   ) => {
-    suppressSelection.current = true;
     const api = readLocalApi();
     if (!api) return;
     const action = await api.contextMenu.show(
