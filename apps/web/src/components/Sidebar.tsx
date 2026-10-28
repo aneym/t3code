@@ -84,7 +84,6 @@ import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
   shouldShowThreadJumpHintsForModifiers,
-  threadJumpCommandForIndex,
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
@@ -136,6 +135,12 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import { useAutomationThreadKeys } from "../hooks/useAutomations";
 import { SidebarAutomationJobs } from "./automations/SidebarAutomationJobs";
 import { SidebarAgents } from "./agents/SidebarAgents";
+import {
+  sidebarAgentJumpKey,
+  sidebarJumpKeys,
+  sidebarJumpLabels,
+  useSidebarAgentLists,
+} from "./agents/sidebarAgentLists";
 import { useSidebarPins } from "./agents/sidebarPins";
 import { SHELF_MORE_ROW_CLASS_NAME } from "./sidebar/shelfMoreRow";
 import { environmentProjects } from "../state/projects";
@@ -1153,6 +1158,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     threads,
     routeRowThreadKey,
   });
+  const sidebarAgents = useSidebarAgentLists(scopedProjectKeys);
+  const jumpKeys = sidebarJumpKeys(sidebarAgents.jumpable, orderedThreadKeys);
 
   // Ranked across environments as the palette ranks them, so one
   // environment's list does not sit above another's better matches; rows
@@ -1233,16 +1240,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const settledThreadKeysRef = useRef(settledThreadKeys);
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
 
-  const jumpLabelByKey = (() => {
-    const mapping = new Map<string, string>();
-    for (const [index, threadKey] of orderedThreadKeys.entries()) {
-      const jumpCommand = threadJumpCommandForIndex(index);
-      if (!jumpCommand) break;
-      const label = shortcutLabelForCommand(keybindings, jumpCommand);
-      if (label) mapping.set(threadKey, label);
-    }
-    return mapping;
-  })();
+  const jumpLabelByKey = sidebarJumpLabels(jumpKeys, keybindings);
 
   const navigateToThread = (threadRef: ScopedThreadRef) => {
     if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
@@ -1254,6 +1252,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
     });
+  };
+  const openJumpAgent = (jumpKey: string | null) => {
+    const agent = sidebarAgents.jumpable.find((entry) => sidebarAgentJumpKey(entry) === jumpKey);
+    if (!agent) return false;
+    if (agent.thread) navigateToThread(scopeThreadRef(agent.thread.environmentId, agent.thread.id));
+    else void handleNewThread(agent.projectRef);
+    return true;
   };
 
   const handleThreadFileDrop = async (threadRef: ScopedThreadRef, files: File[]) => {
@@ -2653,13 +2658,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
       const jumpIndex = threadJumpIndexFromCommand(command ?? "");
       if (jumpIndex === null) return;
-      navigateToThreadKey(orderedThreadKeys[jumpIndex] ?? null);
+      const jumpKey = jumpKeys[jumpIndex] ?? null;
+      if (navigateToThreadKey(jumpKey) || !openJumpAgent(jumpKey)) return;
+      event.preventDefault();
+      event.stopPropagation();
     };
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
+    jumpKeys,
     keybindings,
     navigateToThread,
+    openJumpAgent,
     orderedThreadKeys,
     routeRowThreadKey,
     routeTerminalOpen,
@@ -2854,7 +2864,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
-            <SidebarAgents onNavigate={closeMobileSidebar} projectKeys={scopedProjectKeys} />
+            <SidebarAgents
+              onNavigate={closeMobileSidebar}
+              pinned={sidebarAgents.pinned}
+              hidden={sidebarAgents.hidden}
+              jumpLabelByKey={showJumpHints ? jumpLabelByKey : null}
+            />
           </SidebarGroup>
         }
       >
