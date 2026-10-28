@@ -40,6 +40,22 @@ function machine(
 }
 
 describe("collectServerUpdateTargets", () => {
+  it("does not cross release distributions when selecting server targets", () => {
+    const forkVersion = "0.1.3-nightly.20261026.3726.aneym.1";
+    expect(
+      collectServerUpdateTargets(
+        [machine("fork", forkVersion, "boot-service")],
+        "0.1.3-nightly.20261027.1",
+      ),
+    ).toMatchObject({ targets: [], skipped: [{ reason: "on a different release" }] });
+    expect(
+      collectServerUpdateTargets(
+        [machine("upstream", "0.1.3-nightly.20261026.3726", "boot-service")],
+        forkVersion,
+      ),
+    ).toMatchObject({ targets: [], skipped: [{ reason: "on a different release" }] });
+  });
+
   it("updates remote servers that can move to the target and names every skipped one", () => {
     const { targets, skipped } = collectServerUpdateTargets(
       [

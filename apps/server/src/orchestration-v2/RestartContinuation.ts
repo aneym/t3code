@@ -179,6 +179,26 @@ export function restartContinuationRun(
   return run;
 }
 
+export function unacceptedRestartRun(
+  projection: Pick<
+    ProjectionRuntimeRecoveryState,
+    "thread" | "runs" | "providerTurns" | "runtimeRequests" | "turnItems"
+  >,
+  now: DateTime.Utc,
+): OrchestrationV2Run | undefined {
+  const run = projection.runs.findLast(
+    (candidate) => candidate.status === "starting" || candidate.status === "running",
+  );
+  if (
+    run !== undefined &&
+    projection.thread.providerInstanceId === run.providerInstanceId &&
+    !projection.providerTurns.some((turn) => turn.runAttemptId === run.activeAttemptId) &&
+    !restartContinuationBlocked(projection, run, now, false)
+  )
+    return run;
+  return undefined;
+}
+
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
   function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
     const settings = yield* ServerSettings.ServerSettingsService;
@@ -267,12 +287,17 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     );
     const noteText =
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
+    const replayUnacceptedPrompt = !projection.providerTurns.some(
+      (turn) => turn.runAttemptId === source.activeAttemptId,
+    );
     const text =
-      noteText === undefined
-        ? CONTINUE_PROMPT
-        : note.settled
-          ? noteText
-          : `${noteText}\n\n${CONTINUE_PROMPT}`;
+      replayUnacceptedPrompt && sourceMessage !== undefined
+        ? sourceMessage.text
+        : noteText === undefined
+          ? CONTINUE_PROMPT
+          : note.settled
+            ? noteText
+            : `${noteText}\n\n${CONTINUE_PROMPT}`;
     yield* threads
       .dispatch({
         type: "message.dispatch",
@@ -288,7 +313,10 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
             : "T3 Code restarted and resumed this turn",
           detail: text,
         },
-        attachments: [],
+        ...(replayUnacceptedPrompt && sourceMessage?.context !== undefined
+          ? { context: sourceMessage.context }
+          : {}),
+        attachments: replayUnacceptedPrompt ? (sourceMessage?.attachments ?? []) : [],
         modelSelection: source.modelSelection,
         dispatchMode: { type: "start_immediately" },
         createdBy: "agent",

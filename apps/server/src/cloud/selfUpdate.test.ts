@@ -287,6 +287,19 @@ it.layer(NodeServices.layer)("server self update", (it) => {
     }),
   );
 
+  it.effect("rejects updates across fork and upstream distributions before staging", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness();
+      const error = yield* selfUpdate
+        .update({ targetVersion: "0.1.3-nightly.20261026.3726.aneym.1" })
+        .pipe(Effect.flip);
+      expect(error.reason).toBe(
+        "This runtime can only update to a release from the same distribution.",
+      );
+      expect(order).toEqual([]);
+    }),
+  );
+
   // regression: #5181 make remote updates rollback-safe
   it.effect("rejects invalid versions and desktop-managed servers before staging", () =>
     Effect.gen(function* () {
