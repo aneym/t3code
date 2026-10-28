@@ -805,6 +805,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   } = useSidebarLookups();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
+  const closeMobileSidebar = () => {
+    if (isMobile) setOpenMobile(false);
+  };
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -1080,9 +1083,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const openProjectSettings = useStableCallback(
     (projectGroup: SidebarProjectSnapshot, projectRef?: ScopedProjectRef) => {
-      if (isMobile) {
-        setOpenMobile(false);
-      }
+      closeMobileSidebar();
       void router.navigate({
         to: "/projects/$projectKey",
         params: {
@@ -1248,9 +1249,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       clearSelection();
     }
     setSelectionAnchor(scopedThreadKey(threadRef));
-    if (isMobile) {
-      setOpenMobile(false);
-    }
+    closeMobileSidebar();
     return router.navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
@@ -1281,9 +1280,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const navigateToDraft = (draftId: DraftId) => {
     clearSelection();
-    if (isMobile) {
-      setOpenMobile(false);
-    }
+    closeMobileSidebar();
     void router.navigate({ to: "/draft/$draftId", params: { draftId } });
   };
 
@@ -2687,7 +2684,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const handleNewThreadClick = (event?: ReactMouseEvent) => {
     if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)) {
-      if (isMobile) setOpenMobile(false);
+      closeMobileSidebar();
       void startNewThreadFromContext({
         activeDraftThread: newThreadContext.activeDraftThread,
         activeThread: newThreadContext.activeThread ?? undefined,
@@ -2696,11 +2693,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       });
       return;
     }
-    if (isMobile) setOpenMobile(false);
+    closeMobileSidebar();
     openCommandPalette({ open: "new-thread-in" });
-  };
-  const closeMobileSidebar = () => {
-    if (isMobile) setOpenMobile(false);
   };
 
   const newThreadShortcutLabel =
@@ -2860,7 +2854,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
-            <SidebarAgents onNavigate={() => isMobile && setOpenMobile(false)} />
+            <SidebarAgents onNavigate={closeMobileSidebar} projectKeys={scopedProjectKeys} />
           </SidebarGroup>
         }
       >

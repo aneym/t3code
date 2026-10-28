@@ -1,3 +1,4 @@
+import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { Link } from "@tanstack/react-router";
 import { CircleCheckIcon, CircleDashedIcon, PinOffIcon, PinIcon } from "lucide-react";
@@ -26,7 +27,15 @@ import {
 import { useProjects } from "../../state/entities";
 import { sidebarProjectPinKey, useSidebarPins } from "./sidebarPins";
 
-export function SidebarAgents({ onNavigate }: { readonly onNavigate: () => void }) {
+export function SidebarAgents({
+  onNavigate,
+  projectKeys,
+}: {
+  readonly onNavigate: () => void;
+  readonly projectKeys: ReadonlySet<string> | null;
+}) {
+  const inScope = (agent: RailsAgent) =>
+    projectKeys === null || projectKeys.has(scopedProjectKey(agent.projectRef));
   const agents = useRailsAgents();
   const { pinnedKeys, toggle, showMenu } = useSidebarPins();
   const projects = useProjects();
@@ -41,29 +50,31 @@ export function SidebarAgents({ onNavigate }: { readonly onNavigate: () => void 
       : null;
 
   const agentByHandle = new Map(agents.map((agent) => [agent.handle, agent] as const));
-  const pinned = pinnedHandles.flatMap((handle) => {
-    const agent = agentByHandle.get(handle);
-    if (agent) return [agent];
-    const project = projects.find((entry) => sidebarProjectPinKey(entry) === handle);
-    return project
-      ? [
-          {
-            handle,
-            name: project.title,
-            projectRef: {
-              environmentId: project.environmentId,
-              projectId: project.id,
+  const pinned = pinnedHandles
+    .flatMap((handle) => {
+      const agent = agentByHandle.get(handle);
+      if (agent) return [agent];
+      const project = projects.find((entry) => sidebarProjectPinKey(entry) === handle);
+      return project
+        ? [
+            {
+              handle,
+              name: project.title,
+              projectRef: {
+                environmentId: project.environmentId,
+                projectId: project.id,
+              },
+              environmentIds: [project.environmentId],
+              thread: null,
             },
-            environmentIds: [project.environmentId],
-            thread: null,
-          },
-        ]
-      : [];
-  });
-  if (agents.length === 0 && pinned.length === 0) return null;
+          ]
+        : [];
+    })
+    .filter(inScope);
   const hidden = agents
-    .filter((agent) => !pinnedHandles.includes(agent.handle))
+    .filter((agent) => inScope(agent) && !pinnedHandles.includes(agent.handle))
     .toSorted((a, b) => a.name.localeCompare(b.name));
+  if (pinned.length === 0 && hidden.length === 0) return null;
   const rowProps = (agent: RailsAgent) => ({
     agent,
     active: agent.thread !== null && railsAgentThreadKey(agent.thread) === activeThreadKey,
