@@ -473,6 +473,42 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("packages fork and upstream nightlies with nightly branding and release metadata", () =>
+    Effect.gen(function* () {
+      for (const [version, productName] of [
+        ["0.1.3-nightly.20261026.3726.aneym.1", "T3 Dev"],
+        ["0.1.3-nightly.20261026.3726.aneym.build", "T3 Dev"],
+        ["0.1.3-nightly.20261026.3726", "T3 Code (Nightly)"],
+      ] as const) {
+        const config = yield* createBuildConfig(
+          "mac",
+          "dmg",
+          version,
+          false,
+          false,
+          undefined,
+          undefined,
+        );
+        assert.equal(config.productName, productName);
+        assert.deepStrictEqual(config.publish, [
+          {
+            provider: "github",
+            owner: "aneym",
+            repo: "t3code",
+            releaseType: "prerelease",
+            channel: "nightly",
+          },
+        ]);
+      }
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "aneym/t3code" } }),
+        ),
+      ),
+    ),
+  );
+
   it.effect("omits update feeds for pull request preview builds", () =>
     Effect.gen(function* () {
       const preview = yield* createBuildConfig(
