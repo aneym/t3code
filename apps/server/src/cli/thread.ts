@@ -202,6 +202,18 @@ const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
   return { thread: page.thread, items };
 });
 
+const readThreadOnly = Effect.fn("cli.thread.readThreadOnly")(function* (
+  tools: OwnerMcpTools,
+  threadId: ThreadId,
+) {
+  const page = yield* tools.call(
+    "t3_thread_read",
+    { threadId, view: "messages", limit: 1, runLimit: 1 },
+    OrchestratorMcpThreadReadResult,
+  );
+  return { thread: page.thread, items: [] as Array<OrchestratorMcpThreadTimelineItem> };
+});
+
 /** Item text past the read's per-item cap. */
 const readFullText = Effect.fn("cli.thread.readFullText")(function* (
   tools: OwnerMcpTools,
@@ -714,7 +726,10 @@ const threadShowCommand = Command.make("show", {
         "thread",
         flags,
         Effect.fn("cli.thread.show")(function* (tools) {
-          const { thread, items } = yield* readTimeline(tools, threadId, "messages");
+          const { thread, items } =
+            flags.messages > 0
+              ? yield* readTimeline(tools, threadId, "messages")
+              : yield* readThreadOnly(tools, threadId);
           const conversation = items.filter(
             (item) => item.type === "user_message" || item.type === "assistant_message",
           );
