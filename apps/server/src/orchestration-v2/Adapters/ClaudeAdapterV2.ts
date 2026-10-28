@@ -139,6 +139,7 @@ import {
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as ThreadSessionRestarts from "../ThreadSessionRestarts.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -5255,6 +5256,44 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return ordinal;
           });
 
+        const emitSessionRestartNotice = Effect.fn("ClaudeAdapterV2.emitSessionRestartNotice")(
+          function* (notice: string) {
+            const context = yield* Ref.get(activeTurn);
+            if (context === null) return;
+            const now = yield* DateTime.now;
+            const nativeItemId = `session-restart:${context.providerTurnId}`;
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId,
+                }),
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                nodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: nativeItemId,
+                  strength: "weak",
+                },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                type: "system_notice",
+                status: "completed",
+                title: "Session restarted",
+                message: notice,
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            });
+          },
+        );
+
         const providerTurnPayload = (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly status: OrchestrationV2ProviderTurn["status"];
@@ -9825,6 +9864,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       message.permissionMode ?? context.openedPermissionMode;
                     context.receivedInit = true;
                   }
+                  const restartNotice =
+                    message.type === "system" && message.subtype === "init"
+                      ? ThreadSessionRestarts.recordMcpInventory(
+                          turnInput.threadId,
+                          ThreadSessionRestarts.claudeMcpInventory(message),
+                        )
+                      : null;
                   if (
                     message.type === "system" &&
                     (message.subtype === "init" || message.subtype === "status") &&
@@ -9832,7 +9878,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     context.permissionMode = message.permissionMode;
                   }
-                  return handleSdkMessage({ query: querySession, message });
+                  const handled = handleSdkMessage({ query: querySession, message });
+                  return restartNotice === null
+                    ? handled
+                    : handled.pipe(Effect.andThen(emitSessionRestartNotice(restartNotice)));
                 }),
               ),
             ),

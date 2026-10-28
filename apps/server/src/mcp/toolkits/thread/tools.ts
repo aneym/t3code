@@ -156,6 +156,24 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
   success: Schema.Union([threadConfiguration, OrchestrationV2DispatchCommandResult]),
 }).annotate(Tool.Destructive, true);
 
+export const ThreadRestartResult = Schema.Struct({
+  threadId: ThreadId,
+  appliesAt: Schema.Literals(["next_turn", "after_current_turn", "after_background_tasks"]),
+  backgroundTasks: NonNegativeInt,
+  mcpBefore: Schema.NullOr(
+    Schema.Array(
+      Schema.Struct({ name: Schema.String, status: Schema.String, tools: NonNegativeInt }),
+    ),
+  ),
+});
+const ThreadRestartTool = Tool.make("t3_thread_restart", {
+  ...commandTool,
+  description:
+    "Restart a thread's agent session so its next turn reloads MCP servers, tools and settings. History and queue stay. Omit `threadId` for this thread; a running turn finishes first.",
+  parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+  success: ThreadRestartResult,
+}).annotate(Tool.Destructive, true);
+
 const ThreadTransferTool = Tool.make("t3_thread_transfer", {
   ...commandTool,
   description:
@@ -229,6 +247,7 @@ export const ThreadToolkit = Toolkit.make(
   ScheduledTaskRunTool,
   ThreadSearchTool,
   ThreadConfigureTool,
+  ThreadRestartTool,
   ThreadTransferTool,
   ThreadOrganizeTool,
   PendingRequestTool,

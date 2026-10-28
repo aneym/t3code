@@ -53,6 +53,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ThreadSessionRestarts from "./ThreadSessionRestarts.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -707,6 +708,18 @@ export const layer: Layer.Layer<
           ),
         });
         if (!repaired.committed) return;
+      }
+      if (
+        (providerThread.pendingBackgroundTasks?.length ?? 0) === 0 &&
+        ThreadSessionRestarts.takeThreadSessionRestart(projection.thread.id)
+      ) {
+        yield* providerSessions
+          .detach({
+            providerSessionId,
+            threadId: projection.thread.id,
+            detail: ThreadSessionRestarts.THREAD_SESSION_RESTART_DETAIL,
+          })
+          .pipe(Effect.ignoreCause({ log: true }));
       }
       const sessionResult = yield* Effect.result(
         providerSessions.open({

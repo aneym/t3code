@@ -207,6 +207,17 @@ export function useComposerMenuItems({
               },
             ] as const)
           : []),
+        ...(activeThreadId === null
+          ? []
+          : ([
+              {
+                id: "slash:restart",
+                type: "slash-command",
+                command: "restart",
+                label: "/restart",
+                description: "Restart the agent session to reload MCP servers and settings",
+              },
+            ] as const)),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const slashMenuSkills = getProviderSkillsForSlashMenu(
         selectedProviderSkills,
