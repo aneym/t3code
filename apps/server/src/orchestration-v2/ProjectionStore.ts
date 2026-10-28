@@ -705,7 +705,8 @@ function needsRecovery(
         projection.runs.some(
           (run) =>
             ["preparing", "starting", "running", "waiting"].includes(run.status) ||
-            (run.status === "queued" && run.queueHeld !== true),
+            (run.status === "queued" &&
+              (run.queueHeld !== true || run.queueHoldReason === "restart")),
         ) ||
         projection.runtimeRequests.some((request) => request.status === "pending") ||
         projection.subagents.some(
@@ -1639,6 +1640,9 @@ export function threadShellFromProjection(
     modelSelection: projection.thread.modelSelection,
     runtimeMode: projection.thread.runtimeMode,
     interactionMode: projection.thread.interactionMode,
+    ...(projection.thread.automationTaskId === undefined
+      ? {}
+      : { automationTaskId: projection.thread.automationTaskId }),
     branch: projection.thread.branch,
     worktreePath: projection.thread.worktreePath,
     pullRequests: threadPullRequestsOf(projection.thread),
@@ -1915,6 +1919,9 @@ function shellFromState(input: {
     modelSelection: input.state.thread.modelSelection,
     runtimeMode: input.state.thread.runtimeMode,
     interactionMode: input.state.thread.interactionMode,
+    ...(input.state.thread.automationTaskId === undefined
+      ? {}
+      : { automationTaskId: input.state.thread.automationTaskId }),
     branch: input.state.thread.branch,
     worktreePath: input.state.thread.worktreePath,
     pullRequests: threadPullRequestsOf(input.state.thread),
@@ -4035,12 +4042,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT thread_id FROM orchestration_v2_projection_runs
                 WHERE status IN ('preparing', 'starting', 'running', 'waiting')
                 UNION
-                -- A held queue already went through recovery; rereading it on
-                -- every boot costs a projection read per held thread.
                 SELECT thread_id FROM orchestration_v2_projection_runs
                 WHERE status = 'queued'
                   AND CASE WHEN json_valid(payload_json)
                     THEN json_extract(payload_json, '$.queueHeld') IS NOT 1
+                      OR json_extract(payload_json, '$.queueHoldReason') = 'restart'
                     ELSE 1 END
                 UNION
                 SELECT thread_id FROM orchestration_v2_projection_runtime_requests

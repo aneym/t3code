@@ -16,6 +16,8 @@ import type {
   ServiceState,
   ServiceUpdateRecord,
 } from "./cloud/serviceProtocol.ts";
+import { isCliForkVersion } from "@t3tools/shared/cliRelease";
+
 import {
   compareExactServiceVersions,
   decodeServiceLauncherChildMessage,
@@ -649,7 +651,12 @@ export class Launcher {
       await reject("The requested target is not an exact version.");
       return;
     }
-    if (compareExactServiceVersions(message.targetVersion, child.version) <= 0) {
+    if (isCliForkVersion(child.version) !== isCliForkVersion(message.targetVersion)) {
+      await reject("The requested target is from a different distribution.");
+      return;
+    }
+    const comparison = compareExactServiceVersions(message.targetVersion, child.version);
+    if (comparison === 0 || (comparison < 0 && message.allowDowngrade !== true)) {
       await reject("Remote updates must select a newer server version.");
       return;
     }

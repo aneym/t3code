@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ServerSelfUpdateError, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isCliForkVersion } from "@t3tools/shared/cliRelease";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -30,6 +31,15 @@ interface HarnessOptions {
   readonly desktopAppUpdate?: DesktopAppUpdate.DesktopAppUpdate["Service"];
 }
 
+const sameDistributionVersion = (version: string) =>
+  isCliForkVersion(packageJson.version) ? `${version}-nightly.20261026.3726.aneym.1` : version;
+const targetVersion = sameDistributionVersion("1.1.0");
+const concurrentVersion = sameDistributionVersion("1.1.1");
+const nextVersion = sameDistributionVersion("1.2.0");
+const otherDistributionVersion = isCliForkVersion(packageJson.version)
+  ? "1.1.0"
+  : "0.1.3-nightly.20261026.3726.aneym.1";
+
 const archiveBytes = new TextEncoder().encode("not really a tarball");
 const releaseHttpClient = (order: string[], beforeDownload?: Effect.Effect<void>) =>
   HttpClient.make((request) =>
@@ -41,7 +51,7 @@ const releaseHttpClient = (order: string[], beforeDownload?: Effect.Effect<void>
         ).join("");
         return HttpClientResponse.fromWeb(
           request,
-          new Response(`${hex}  t3-1.1.0-linux-x64.tar.gz\n`),
+          new Response(`${hex}  t3-${targetVersion}-linux-x64.tar.gz\n`),
         );
       }
       if (beforeDownload) yield* beforeDownload;
@@ -79,10 +89,10 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
         order.push("preflight");
         const result =
           options.preflight === "blocked"
-            ? { status: "blocked", version: "1.1.0", reason: "local update required" }
+            ? { status: "blocked", version: targetVersion, reason: "local update required" }
             : {
                 status: "ready",
-                version: "1.1.0",
+                version: targetVersion,
                 launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
               };
         return {
@@ -287,6 +297,19 @@ it.layer(NodeServices.layer)("server self update", (it) => {
     }),
   );
 
+  it.effect("rejects updates across fork and upstream distributions before staging", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness();
+      const error = yield* selfUpdate
+        .update({ targetVersion: otherDistributionVersion })
+        .pipe(Effect.flip);
+      expect(error.reason).toBe(
+        "This runtime can only update to a release from the same distribution.",
+      );
+      expect(order).toEqual([]);
+    }),
+  );
+
   // regression: #5181 make remote updates rollback-safe
   it.effect("rejects invalid versions and desktop-managed servers before staging", () =>
     Effect.gen(function* () {
@@ -296,7 +319,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       ).toBe("'latest' is not an exact t3 version.");
       const desktop = yield* makeHarness({ mode: "desktop" });
       expect(
-        (yield* desktop.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
+        (yield* desktop.selfUpdate.update({ targetVersion }).pipe(Effect.flip)).reason,
       ).toContain("desktop app");
       expect([...web.order, ...desktop.order]).toEqual([]);
     }),
@@ -312,15 +335,15 @@ it.layer(NodeServices.layer)("server self update", (it) => {
           run: (reportProgress) =>
             reportProgress("downloading").pipe(
               Effect.andThen(reportProgress("installing")),
-              Effect.as({ targetVersion: "1.2.0", method: "desktop-app" as const }),
+              Effect.as({ targetVersion: nextVersion, method: "desktop-app" as const }),
             ),
           commit: () => Effect.never,
         },
       });
-      const result = yield* selfUpdate.update({ targetVersion: "1.1.0" }, (stage) =>
+      const result = yield* selfUpdate.update({ targetVersion }, (stage) =>
         Effect.sync(() => void stages.push(stage)),
       );
-      expect(result).toEqual({ targetVersion: "1.2.0", method: "desktop-app" });
+      expect(result).toEqual({ targetVersion: nextVersion, method: "desktop-app" });
       expect(stages).toEqual(["downloading", "installing"]);
       expect(order).toEqual([]);
     }),
@@ -334,13 +357,13 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         requestUpdate: () =>
           Deferred.succeed(requested, undefined).pipe(Effect.andThen(Deferred.await(accepted))),
       });
-      const first = yield* Effect.forkChild(selfUpdate.update({ targetVersion: "1.1.0" }), {
+      const first = yield* Effect.forkChild(selfUpdate.update({ targetVersion }), {
         startImmediately: true,
       });
       yield* Deferred.await(requested);
-      expect((yield* selfUpdate.update({ targetVersion: "1.1.1" }).pipe(Effect.flip)).reason).toBe(
-        "A server update is already in progress.",
-      );
+      expect(
+        (yield* selfUpdate.update({ targetVersion: concurrentVersion }).pipe(Effect.flip)).reason,
+      ).toBe("A server update is already in progress.");
       yield* Deferred.succeed(accepted, "launcher-id");
       expect((yield* Fiber.join(first)).updateId).toBe("launcher-id");
     }),
@@ -360,7 +383,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       });
 
       const consumed = yield* ServerSelfUpdate.updateProgressStream(selfUpdate, {
-        targetVersion: "1.1.0",
+        targetVersion,
       }).pipe(
         Stream.tap((event) =>
           event.type === "progress" && event.stage === "downloading"
@@ -373,14 +396,14 @@ it.layer(NodeServices.layer)("server self update", (it) => {
 
       yield* Deferred.await(sawDownloading);
       yield* Fiber.interrupt(consumed);
-      expect((yield* selfUpdate.update({ targetVersion: "1.2.0" }).pipe(Effect.flip)).reason).toBe(
-        "A server update is already in progress.",
-      );
+      expect(
+        (yield* selfUpdate.update({ targetVersion: nextVersion }).pipe(Effect.flip)).reason,
+      ).toBe("A server update is already in progress.");
 
       yield* Deferred.succeed(releaseDownload, undefined);
       yield* Deferred.await(accepted);
       expect(order).toEqual(["download", "extract", "preflight", "accept"]);
-      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+      expect((yield* selfUpdate.update({ targetVersion }).pipe(Effect.flip)).reason).toBe(
         "A server update is already in progress.",
       );
     }),

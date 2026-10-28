@@ -1,5 +1,6 @@
 const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
-export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
+const CLI_FORK_RELEASE_REPOSITORY = "aneym/t3code";
+const CLI_FORK_VERSION_RE = /^\d+\.\d+\.\d+-nightly\.\d{8}\.\d+\.aneym\.[0-9A-Za-z-]+$/;
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 
@@ -36,13 +37,15 @@ export function cliArchiveFileName(version: string, platformKey: CliArchivePlatf
   return `t3-${version}-${platformKey}.${platformKey.startsWith("win32") ? "zip" : "tar.gz"}`;
 }
 
-const CLI_RELEASE_DEFAULT_BASE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases/download`;
+const cliReleaseDefaultBaseUrl = (version: string) =>
+  `https://github.com/${cliReleaseRepositoryOf(version)}/releases/download`;
 
-export function cliReleaseDownloadBaseUrl(
-  version: string,
-  baseUrl: string | undefined = CLI_RELEASE_DEFAULT_BASE_URL,
-): string {
-  return `${(baseUrl?.trim() || CLI_RELEASE_DEFAULT_BASE_URL).replace(/\/+$/, "")}/v${version}`;
+export function cliReleaseDownloadBaseUrl(version: string, baseUrl?: string): string {
+  return `${(baseUrl?.trim() || cliReleaseDefaultBaseUrl(version)).replace(/\/+$/, "")}/v${version}`;
+}
+
+export function cliReleasePageUrl(version: string, suffix = ""): string {
+  return `https://github.com/${cliReleaseRepositoryOf(version)}/releases${suffix}`;
 }
 
 export function parseChecksums(text: string): ReadonlyMap<string, string> {
@@ -64,13 +67,23 @@ export const CLI_RELEASE_CHANNELS: ReadonlyArray<CliReleaseChannel> = [
 ];
 
 export function cliReleaseChannelOf(version: string): CliReleaseChannel {
+  if (isCliForkVersion(version)) return "nightly";
   const channel = /^[^-+]+-(nightly|preview)\.\d{8}\.\d+$/.exec(version)?.[1];
   return channel === "nightly" || channel === "preview" ? channel : "stable";
 }
 
+export function isCliForkVersion(version: string): boolean {
+  return CLI_FORK_VERSION_RE.test(version);
+}
+
+export function cliReleaseRepositoryOf(version: string): string {
+  return isCliForkVersion(version) ? CLI_FORK_RELEASE_REPOSITORY : CLI_RELEASE_REPOSITORY;
+}
+
 /** Page until the channel matches; nightlies can push preview/stable releases past the first page. */
-export function cliReleaseIndexPageUrl(page: number): string {
-  return `https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases?per_page=100&page=${page}`;
+export function cliReleaseIndexPageUrl(page: number, version?: string): string {
+  const repository = cliReleaseRepositoryOf(version ?? "");
+  return `https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`;
 }
 
 /** Draft assets are not downloadable. */

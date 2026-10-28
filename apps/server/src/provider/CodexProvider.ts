@@ -160,8 +160,8 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
   return account.email;
 }
 
-export function codexDefaultReasoningEffortOverride(model: string): "medium" | undefined {
-  return codexModelFamily(model) === "gpt-6-astra" ? "medium" : undefined;
+export function codexDefaultReasoningEffortOverride(model: string): "high" | undefined {
+  return /^gpt-6(?:[.-]|$)/.test(codexModelFamily(model)) ? "high" : undefined;
 }
 
 export function mapCodexModelCapabilities(

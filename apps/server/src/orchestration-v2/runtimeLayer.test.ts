@@ -283,7 +283,7 @@ const layerTest = Layer.mergeAll(
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),
-  Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(ServerSettings.layerTest({ batchQueuedMessages: false })),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
   Layer.provide(layerProjectServiceTest),
@@ -296,7 +296,7 @@ const layerLegacyImportTest = RuntimeLayer.layer.pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),
-  Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(ServerSettings.layerTest({ batchQueuedMessages: false })),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
   Layer.provide(layerProjectServiceTest),
@@ -361,7 +361,7 @@ const layerProjectDeletionTest = Layer.mergeAll(
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),
-  Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(ServerSettings.layerTest({ batchQueuedMessages: false })),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
   Layer.provide(layerPlatformTest),
@@ -521,6 +521,12 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
         worktreePath: null,
       });
 
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-thread-delete-concurrent-archive"),
+        threadId,
+      });
+
       const updateReady = yield* Deferred.make<void>();
       const releaseUpdate = yield* Deferred.make<void>();
       const deletionQueued = yield* Deferred.make<void>();
@@ -629,7 +635,7 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),
-  Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(ServerSettings.layerTest({ batchQueuedMessages: false })),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
   Layer.provide(layerPlatformTest),
@@ -4965,7 +4971,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   );
 
   it.effect.each(["startup", "shutdown"] as const)(
-    "preserves and holds queued messages across %s until explicitly resumed",
+    "recovers queued messages across %s and preserves a later Stop until explicitly resumed",
     (trigger) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -5006,7 +5012,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* recovery.reconcile("startup");
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
         assert.isTrue((yield* maintenance.rebuild).valid);
-        assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        for (const recoveredThreadId of yield* projections.getRecoveryThreadIds("queued-runs")) {
+          if (recoveredThreadId === threadId) continue;
+          yield* orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make(`${threadId}:cleanup:${recoveredThreadId}`),
+            threadId: recoveredThreadId,
+          });
+        }
         const held = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(
           held.runs.map((run) => run.status),
@@ -5015,7 +5029,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         for (const run of queued) {
           assert.deepEqual(
             held.runs.find((row) => row.id === run.id),
-            { ...run, queueHeld: true },
+            trigger === "startup" ? run : { ...run, queueHeld: false },
           );
           assert.deepEqual(
             held.messages.find((row) => row.id === run.userMessageId),
@@ -5043,6 +5057,28 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           runId: second.id,
           beforeRunId: first.id,
         });
+        yield* orchestrator.resumeQueuedRuns;
+        const automatic = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(automatic.runs.find((run) => run.id === second.id)?.status, "starting");
+        assert.equal(automatic.runs.find((run) => run.id === first.id)?.status, "queued");
+        assert.isFalse(automatic.runs.some((run) => run.status === "queued" && run.queueHeld));
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make(`${threadId}:stop-recovered`),
+          threadId,
+          runId: second.id,
+          holdQueue: true,
+        });
+        const stopped = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(stopped.runs.find((run) => run.id === second.id)?.status, "interrupted");
+        assert.deepInclude(
+          stopped.runs.find((run) => run.id === first.id),
+          {
+            status: "queued",
+            queueHeld: true,
+            queueHoldReason: "stop",
+          },
+        );
         assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
         const resume = {
           type: "queue.resume" as const,
@@ -5052,14 +5088,19 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* orchestrator.dispatch(resume);
         yield* orchestrator.dispatch(resume);
         const resumed = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(resumed.runs.find((run) => run.id === second.id)?.status, "starting");
-        assert.equal(resumed.runs.find((run) => run.id === first.id)?.status, "queued");
+        assert.equal(resumed.runs.find((run) => run.id === first.id)?.status, "starting");
+        assert.equal(resumed.runs.find((run) => run.id === second.id)?.status, "interrupted");
         assert.isFalse(resumed.runs.some((run) => run.status === "queued" && run.queueHeld));
         assert.equal(
           resumed.messages.find((row) => row.id === second.userMessageId)?.text,
           "Edited second message",
         );
         assert.equal(resumed.runs.length, 3, "resume retries must not duplicate messages or runs");
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make(`${threadId}:cleanup`),
+          threadId,
+        });
       }),
   );
 
