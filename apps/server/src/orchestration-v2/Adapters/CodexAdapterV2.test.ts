@@ -52,7 +52,6 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
-import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
 import * as PlatformError from "effect/PlatformError";
 import { TestClock } from "effect/testing";

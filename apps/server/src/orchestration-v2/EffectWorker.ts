@@ -599,7 +599,7 @@ export const layerExecutor: Layer.Layer<
 const DELEGATED_TASKS_STOP_TIMEOUT = Duration.seconds(30);
 
 const boundExecution =
-  (effect: EffectOutbox.OrchestrationEffectV2) =>
+  (effect: EffectOutboxModel.OrchestrationEffectV2) =>
   (execution: Effect.Effect<void, OrchestrationEffectExecutionError>) =>
     effect.request.type === "delegated-tasks.stop"
       ? execution.pipe(
