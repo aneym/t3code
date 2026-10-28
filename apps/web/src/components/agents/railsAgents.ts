@@ -1,22 +1,24 @@
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { scopeProjectRef, scopedProjectKey } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId, ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
+import { useEffect } from "react";
 
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useProjects, useQuietThreadShells } from "../../state/entities";
-import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
-import { type AgentHomeIdentity, useAgentHomeIdentities } from "./agentHomeBindings";
+import { useEnvironmentIdentities } from "../../state/environments";
+import { threadFamilies } from "../../state/threads";
+import { type EnvironmentAgentHome, useAgentHomes } from "./agentHomeBindings";
 
-const ORCH_ROLE = "orch";
 const AGENT_HOME_PATTERN = /\/\.agent-rails\/agents\/([a-z0-9][a-z0-9-]*)\/?$/;
 
 export interface RailsAgent {
   readonly handle: string;
   readonly name: string;
-  readonly projectRef: ScopedProjectRef;
+  readonly projectRef: ScopedProjectRef | null;
+  readonly homeProjectRefs: ReadonlyArray<ScopedProjectRef>;
   readonly environmentIds: ReadonlyArray<EnvironmentId>;
+  readonly target: ScopedThreadRef | null;
   readonly thread: EnvironmentThreadShell | null;
-  readonly threadIsBound?: boolean;
 }
 
 export function railsAgentHandle(workspaceRoot: string): string | null {
@@ -27,99 +29,104 @@ export function railsAgentFaceUrl(handle: string): string {
   return `https://rails.so/api/mobile/v1/agent-faces/${handle}.png`;
 }
 
-export function railsAgentThreadKey(thread: EnvironmentThreadShell): string {
+function railsAgentThreadKey(thread: EnvironmentThreadShell): string {
   return `${thread.environmentId}:${thread.id}`;
 }
 
-function isHomeThreadCandidate(thread: EnvironmentThreadShell): boolean {
-  return thread.lineage.parentThreadId === null;
-}
-
-function resolveRailsAgents(
-  projects: ReadonlyArray<EnvironmentProject>,
-  threads: ReadonlyArray<EnvironmentThreadShell>,
-  identityByProjectKey: ReadonlyMap<string, AgentHomeIdentity>,
-): ReadonlyArray<RailsAgent> {
-  const handleByProjectKey = new Map<string, string>();
-  const boundThreadIdsByHandle = new Map<string, Set<string>>();
-  const orchHandles = new Set<string>();
-  const agents = new Map<string, { -readonly [K in keyof RailsAgent]: RailsAgent[K] }>();
-  for (const project of projects) {
-    const handle = railsAgentHandle(project.workspaceRoot);
-    if (handle === null) continue;
-    const projectRef = scopeProjectRef(project.environmentId, project.id);
-    handleByProjectKey.set(scopedProjectKey(projectRef), handle);
-    const identity = identityByProjectKey.get(scopedProjectKey(projectRef));
-    if (identity?.role === ORCH_ROLE) orchHandles.add(handle);
-    if (identity?.threadId != null) {
-      boundThreadIdsByHandle.set(
-        handle,
-        (boundThreadIdsByHandle.get(handle) ?? new Set()).add(identity.threadId),
-      );
-    }
-    const agent = agents.get(handle);
-    if (agent === undefined) {
-      agents.set(handle, {
-        handle,
-        name: identity?.displayName ?? project.title,
-        projectRef,
-        environmentIds: [project.environmentId],
-        thread: null,
-        threadIsBound: false,
-      });
-    } else {
-      if (identity?.displayName != null) agent.name = identity.displayName;
-      if (!agent.environmentIds.includes(project.environmentId)) {
-        agent.environmentIds = [...agent.environmentIds, project.environmentId];
-      }
-    }
-  }
-  for (const handle of agents.keys()) {
-    if (!orchHandles.has(handle)) agents.delete(handle);
-  }
-  const handleByBoundThreadId = new Map<string, string>();
-  for (const [handle, threadIds] of boundThreadIdsByHandle) {
-    for (const threadId of threadIds) handleByBoundThreadId.set(threadId, handle);
-  }
-  for (const thread of threads) {
-    const handle = handleByBoundThreadId.get(thread.id);
-    const agent = handle === undefined ? undefined : agents.get(handle);
-    if (agent === undefined || thread.archivedAt !== null) continue;
-    agent.thread = thread;
-    agent.threadIsBound = true;
-    agent.projectRef = scopeProjectRef(thread.environmentId, thread.projectId);
-  }
-  const agentThreads = filterSidebarV2VisibleThreads(threads, new Set(handleByProjectKey.keys()));
-  for (const thread of agentThreads) {
-    const handle = handleByProjectKey.get(`${thread.environmentId}:${thread.projectId}`);
-    const agent = handle === undefined ? undefined : agents.get(handle);
-    if (agent === undefined || agent.threadIsBound === true) continue;
-    if (!isHomeThreadCandidate(thread)) continue;
-    if (agent.thread === null || thread.createdAt < agent.thread.createdAt) {
-      agent.thread = thread;
-      agent.projectRef = scopeProjectRef(thread.environmentId, thread.projectId);
-    }
-  }
-  return [...agents.values()];
+function bindingTime(home: EnvironmentAgentHome): number {
+  const time = Date.parse(home.binding?.at ?? "");
+  return Number.isFinite(time) ? time : 0;
 }
 
 export function useRailsAgents(): ReadonlyArray<RailsAgent> {
   const projects = useProjects();
-  const homes = projects.filter((project) => railsAgentHandle(project.workspaceRoot) !== null);
-  return resolveRailsAgents(projects, useQuietThreadShells(), useAgentHomeIdentities(homes));
+  const threads = useQuietThreadShells();
+  const homes = useAgentHomes();
+  const environments = useEnvironmentIdentities();
+  const groups = new Map<string, EnvironmentAgentHome[]>();
+  for (const home of homes) {
+    const group = groups.get(home.handle) ?? [];
+    group.push(home);
+    groups.set(home.handle, group);
+  }
+  const agents: RailsAgent[] = [];
+  for (const [handle, group] of groups) {
+    if (!group.some((home) => home.role === "orch")) continue;
+    const ordered = group.toSorted((a, b) => a.environmentId.localeCompare(b.environmentId));
+    const winner = ordered
+      .filter((home) => home.binding !== null)
+      .toSorted((a, b) => bindingTime(b) - bindingTime(a))[0];
+    const binding = winner?.binding;
+    const target =
+      binding && winner
+        ? {
+            environmentId:
+              environments.find((env) => env.environmentId === binding.environmentId)
+                ?.environmentId ??
+              environments.find((env) => env.label.toLowerCase() === binding.host?.toLowerCase())
+                ?.environmentId ??
+              winner.environmentId,
+            threadId: binding.threadId,
+          }
+        : null;
+    const homeProjectRefs = ordered.flatMap((home) => {
+      const project = projects.find(
+        (entry) =>
+          entry.environmentId === home.environmentId &&
+          entry.workspaceRoot.replace(/\/$/, "") === home.workspaceRoot.replace(/\/$/, ""),
+      );
+      return project ? [scopeProjectRef(project.environmentId, project.id)] : [];
+    });
+    const preferred = winner ?? ordered[0];
+    const projectRef =
+      homeProjectRefs.find((ref) => ref.environmentId === preferred?.environmentId) ??
+      homeProjectRefs[0] ??
+      null;
+    const project = projects.find(
+      (entry) =>
+        entry.environmentId === projectRef?.environmentId && entry.id === projectRef.projectId,
+    );
+    agents.push({
+      handle,
+      name:
+        preferred?.displayName ??
+        ordered.find((home) => home.displayName)?.displayName ??
+        project?.title ??
+        handle,
+      projectRef,
+      homeProjectRefs,
+      environmentIds: ordered.map((home) => home.environmentId),
+      target,
+      thread: target
+        ? (threads.find(
+            (thread) =>
+              thread.environmentId === target.environmentId && thread.id === target.threadId,
+          ) ?? null)
+        : null,
+    });
+  }
+  const targetKey = JSON.stringify(agents.flatMap((agent) => (agent.target ? [agent.target] : [])));
+  // oxlint-disable-next-line t3code/react-effect-budget -- bound threads outside the shell window need a live detail subscription
+  useEffect(() => {
+    const targets = JSON.parse(targetKey) as ScopedThreadRef[];
+    const releases = targets.map((target) =>
+      threadFamilies.mount(appAtomRegistry, target.environmentId, target.threadId),
+    );
+    return () => {
+      for (const release of releases) release();
+    };
+  }, [targetKey]);
+  return agents;
 }
 
 export function useWithoutAgentMainThreads<T extends EnvironmentThreadShell>(
   threads: ReadonlyArray<T>,
-  scopedProjectKeys: ReadonlySet<string> | null,
+  _scopedProjectKeys: ReadonlySet<string> | null,
 ): ReadonlyArray<T> {
   const mainThreadKeys = new Set(
     useRailsAgents().flatMap((agent) =>
-      agent.thread !== null && agent.threadIsBound === true
-        ? [railsAgentThreadKey(agent.thread)]
-        : [],
+      agent.target ? [`${agent.target.environmentId}:${agent.target.threadId}`] : [],
     ),
   );
-  if (scopedProjectKeys !== null || mainThreadKeys.size === 0) return threads;
   return threads.filter((thread) => !mainThreadKeys.has(railsAgentThreadKey(thread)));
 }

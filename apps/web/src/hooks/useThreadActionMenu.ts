@@ -1,3 +1,4 @@
+import { useAgentMainThreadMenu } from "../components/agents/agentMainThreadMenu";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
@@ -66,6 +67,7 @@ export function useThreadActionMenu(input: {
   readonly agentPin?: { readonly label: string; readonly onToggle: () => void };
 }) {
   const { threadRef, projectCwd, onStartRename, canShareWithGuest, agentPin } = input;
+  const agentMainThreadMenu = useAgentMainThreadMenu();
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -145,6 +147,7 @@ export function useThreadActionMenu(input: {
         supports,
         snoozePresets,
         canShareWithGuest,
+        agentMainThreads: agentMainThreadMenu.options(thread),
       });
       const menuItems = agentPin
         ? [{ id: "agent-pin" as const, label: agentPin.label }, ...items]
@@ -152,6 +155,10 @@ export function useThreadActionMenu(input: {
       const clicked = await settlePromise(() => api.contextMenu.show(menuItems, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
       const action: ThreadActionMenuId = clicked.value;
+      if (action.startsWith("agent-main:")) {
+        await agentMainThreadMenu.assign(action.slice("agent-main:".length), thread);
+        return;
+      }
       if (action === "agent-pin") {
         agentPin?.onToggle();
         return;
