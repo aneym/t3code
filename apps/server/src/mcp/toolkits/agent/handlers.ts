@@ -8,9 +8,8 @@ export const layer = McpToolAccess.toLayer(AgentToolkit, {
   t3_agent_list: McpToolAccess.reads(() =>
     Effect.flatMap(AgentHomeService, (service) => service.list).pipe(Effect.mapError(unavailable)),
   ),
-  t3_agent_bind: McpToolAccess.writesEnvironment((input, check) =>
+  t3_agent_bind: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
-      yield* check;
       const service = yield* AgentHomeService;
       return yield* service
         .bind(input)

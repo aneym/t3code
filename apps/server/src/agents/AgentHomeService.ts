@@ -19,7 +19,8 @@ import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import {
   homeFromDocument,
-  readDocument,
+  parseDocument,
+  readDocumentText,
   readHomes,
   watchHomes,
   writeBinding,
@@ -69,21 +70,28 @@ export const layer = Layer.effect(
       (close) => Effect.sync(close),
     );
     const bind = Effect.fn("AgentHomeService.bind")(function* (input: AgentBindInput) {
+      const readText = Effect.tryPromise({
+        try: () => readDocumentText(root, input.handle),
+        catch: (cause) =>
+          new AgentHomeError({
+            handle: input.handle,
+            message: "Agent home missing or unreadable",
+            cause,
+          }),
+      });
       let lock = locks.get(input.handle);
       if (!lock) {
+        yield* readText;
         lock = Semaphore.makeUnsafe(1);
         locks.set(input.handle, lock);
       }
       return yield* lock.withPermit(
         Effect.gen(function* () {
-          const doc = yield* Effect.tryPromise({
-            try: () => readDocument(root, input.handle),
+          const text = yield* readText;
+          const doc = yield* Effect.try({
+            try: () => parseDocument(text),
             catch: (cause) =>
-              new AgentHomeError({
-                handle: input.handle,
-                message: "Agent home missing or unreadable",
-                cause,
-              }),
+              new AgentHomeError({ handle: input.handle, message: "Invalid agent.json", cause }),
           });
           const home = yield* Effect.try({
             try: () => homeFromDocument(root, input.handle, doc),
@@ -136,6 +144,7 @@ export const layer = Layer.effect(
                   DateTime.toEpochMillis(shell.latestUserAuthoredMessageAt) <=
                     DateTime.toEpochMillis(shell.automationPlacementAt)));
             if (
+              projection.thread.deletedAt !== null ||
               projection.thread.lineage.parentThreadId !== null ||
               projection.thread.forkedFrom !== null ||
               automationOnly
@@ -148,13 +157,19 @@ export const layer = Layer.effect(
           const at = DateTime.formatIso(yield* DateTime.now).replace(/\.\d{3}Z$/, "Z");
           yield* Effect.tryPromise({
             try: () =>
-              writeBinding(root, input.handle, doc, {
-                thread_id: input.threadId,
-                environment_id: environmentId,
-                host: input.host ?? descriptor.label.toLowerCase(),
-                at,
-                by: input.by ?? "t3",
-              }),
+              writeBinding(
+                root,
+                input.handle,
+                doc,
+                {
+                  thread_id: input.threadId,
+                  environment_id: environmentId,
+                  host: input.host ?? descriptor.label.toLowerCase(),
+                  at,
+                  by: input.by ?? "t3",
+                },
+                text,
+              ),
             catch: (cause) =>
               new AgentHomeError({
                 handle: input.handle,

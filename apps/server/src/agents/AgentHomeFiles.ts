@@ -5,15 +5,27 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 
-export const readDocument = async (root: string, handle: string) => {
+const agentFile = async (root: string, handle: string) => {
   if (!AGENT_HOME_HANDLE_PATTERN.test(handle)) throw new Error("Invalid agent handle");
-  const value: unknown = JSON.parse(
-    await NodeFSP.readFile(NodePath.join(root, handle, "agent.json"), "utf8"),
-  );
+  const home = NodePath.join(root, handle);
+  const file = NodePath.join(home, "agent.json");
+  if (!(await NodeFSP.lstat(home)).isDirectory() || (await NodeFSP.lstat(file)).isSymbolicLink())
+    throw new Error("Agent home must be a plain directory with a plain agent.json");
+  return file;
+};
+
+export const readDocumentText = async (root: string, handle: string) =>
+  NodeFSP.readFile(await agentFile(root, handle), "utf8");
+
+export const parseDocument = (text: string) => {
+  const value: unknown = JSON.parse(text);
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new Error("agent.json must contain an object");
   return value as Record<string, unknown>;
 };
+
+export const readDocument = async (root: string, handle: string) =>
+  parseDocument(await readDocumentText(root, handle));
 const decodeBinding = Schema.decodeSync(AgentHomeBinding);
 const decodeHome = Schema.decodeSync(AgentHome);
 const text = (value: unknown) => (typeof value === "string" ? value : null);
@@ -70,6 +82,7 @@ export const writeBinding = async (
   handle: string,
   doc: Record<string, unknown>,
   next: Record<string, unknown>,
+  readText: string,
 ) => {
   const old =
     typeof doc.t3 === "object" && doc.t3 !== null ? (doc.t3 as Record<string, unknown>) : null;
@@ -77,12 +90,14 @@ export const writeBinding = async (
     const { previous: _previous, reason: _reason, ...previous } = old;
     next.previous = previous;
   }
-  const target = NodePath.join(root, handle, "agent.json");
+  const target = await agentFile(root, handle);
   const temporary = `${target}.${crypto.randomUUID()}.tmp`;
   try {
     await NodeFSP.writeFile(temporary, JSON.stringify({ ...doc, t3: next }, null, 2) + "\n", {
       mode: (await NodeFSP.stat(target)).mode,
     });
+    if ((await NodeFSP.readFile(target, "utf8")) !== readText)
+      throw new Error("agent.json changed while binding; try again");
     await NodeFSP.rename(temporary, target);
   } finally {
     await NodeFSP.unlink(temporary).catch(() => undefined);
