@@ -1,17 +1,19 @@
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
-  executeAtomQuery,
-  runAtomCommand,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+  AuthFilesystemWriteScope,
+  type EnvironmentId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
+import { readEnvironmentScope } from "../../state/session";
+import { useAutomationThreadKeys } from "../../hooks/useAutomations";
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useProjects } from "../../state/entities";
 import { useEnvironmentIdentities } from "../../state/environments";
-import { projectEnvironment } from "../../state/projects";
+import { isAutomationOnlyThread } from "../automations/threadPlacement";
 import { toastManager } from "../ui/toast";
-import { AGENT_HOME_FILE, settleAgentHomeBinding } from "./agentHomeBindings";
+import { bindAgentHome } from "./agentHomeBindings";
 import { railsAgentHandle, useRailsAgents } from "./railsAgents";
 
 export interface AgentMainThreadOption {
@@ -20,94 +22,101 @@ export interface AgentMainThreadOption {
   readonly isCurrent: boolean;
 }
 
-type AgentHomeBinding = { thread_id: string; host?: string; at?: string; by?: string };
-
-async function bindHome(
-  home: EnvironmentProject,
-  thread: EnvironmentThreadShell,
-  host: string,
-): Promise<void> {
-  const read = await executeAtomQuery(
-    appAtomRegistry,
-    projectEnvironment.readFile({
-      environmentId: home.environmentId,
-      input: { cwd: home.workspaceRoot, relativePath: AGENT_HOME_FILE, allowMissing: true },
-    }),
-    { label: "Read agent home binding", refresh: true },
-  );
-  if (read._tag === "Failure") throw squashAtomCommandFailure(read);
-  if (read.value.exists === false) return;
-  const document = JSON.parse(read.value.contents) as { t3?: AgentHomeBinding };
-  const previous = document.t3;
-  document.t3 = {
-    thread_id: thread.id,
-    host,
-    at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
-    by: "t3-menu",
-    ...(previous?.thread_id !== undefined && previous.thread_id !== thread.id
-      ? {
-          previous: {
-            thread_id: previous.thread_id,
-            host: previous.host,
-            at: previous.at,
-            by: previous.by,
-          },
-        }
-      : {}),
-  };
-  const written = await runAtomCommand(appAtomRegistry, projectEnvironment.writeFile, {
-    environmentId: home.environmentId,
-    input: {
-      cwd: home.workspaceRoot,
-      relativePath: AGENT_HOME_FILE,
-      contents: `${JSON.stringify(document, null, 2)}\n`,
-    },
-  });
-  if (written._tag === "Failure") throw squashAtomCommandFailure(written);
-  settleAgentHomeBinding(home, thread.id);
+export async function assignAgentHomes(input: {
+  readonly handle: string;
+  readonly target: ScopedThreadRef;
+  readonly environmentIds: ReadonlyArray<EnvironmentId>;
+  readonly host: string;
+  readonly onlyIfUnbound?: boolean;
+}): Promise<ReadonlyArray<EnvironmentId>> {
+  const failed: EnvironmentId[] = [];
+  for (const environmentId of input.environmentIds.toSorted()) {
+    const result = await runAtomCommand(appAtomRegistry, bindAgentHome, {
+      environmentId,
+      input: {
+        handle: input.handle,
+        threadId: input.target.threadId,
+        threadEnvironmentId: input.target.environmentId,
+        host: input.host,
+        by: input.onlyIfUnbound ? "t3-first-open" : "t3-menu",
+        ...(input.onlyIfUnbound ? { onlyIfUnbound: true } : {}),
+      },
+    });
+    if (result._tag === "Failure") {
+      failed.push(environmentId);
+      if (input.onlyIfUnbound) break;
+    } else if (
+      input.onlyIfUnbound &&
+      (result.value.home.binding?.threadId !== input.target.threadId ||
+        result.value.home.binding.environmentId !== input.target.environmentId)
+    ) {
+      break;
+    }
+  }
+  return failed;
 }
 
 export function useAgentMainThreadMenu() {
   const agents = useRailsAgents();
   const projects = useProjects();
+  const automationThreadKeys = useAutomationThreadKeys();
   const environments = useEnvironmentIdentities();
-  const homesOf = (handle: string) =>
-    projects.filter((project) => railsAgentHandle(project.workspaceRoot) === handle);
   return {
     options(thread: EnvironmentThreadShell): ReadonlyArray<AgentMainThreadOption> {
+      if (
+        thread.lineage.parentThreadId !== null ||
+        isAutomationOnlyThread(thread, automationThreadKeys)
+      )
+        return [];
       const project = projects.find(
         (candidate) =>
           candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
       );
-      const homeHandle = project === undefined ? null : railsAgentHandle(project.workspaceRoot);
+      const homeHandle = project ? railsAgentHandle(project.workspaceRoot) : null;
       return agents
-        .filter((agent) => homeHandle === null || agent.handle === homeHandle)
+        .filter(
+          (agent) =>
+            (homeHandle === null || agent.handle === homeHandle) &&
+            agent.environmentIds.every((id) => readEnvironmentScope(id, AuthFilesystemWriteScope)),
+        )
         .map((agent) => ({
           handle: agent.handle,
           name: agent.name,
-          isCurrent: agent.threadIsBound === true && agent.thread?.id === thread.id,
+          isCurrent:
+            agent.target?.environmentId === thread.environmentId &&
+            agent.target.threadId === thread.id,
         }))
-        .toSorted((left, right) => left.name.localeCompare(right.name));
+        .toSorted((a, b) => a.name.localeCompare(b.name));
     },
     async assign(handle: string, thread: EnvironmentThreadShell): Promise<void> {
+      const agent = agents.find((entry) => entry.handle === handle);
+      if (
+        !agent ||
+        thread.lineage.parentThreadId !== null ||
+        isAutomationOnlyThread(thread, automationThreadKeys)
+      )
+        return;
       const host =
         environments
-          .find((environment) => environment.environmentId === thread.environmentId)
+          .find((entry) => entry.environmentId === thread.environmentId)
           ?.label.toLowerCase() ?? thread.environmentId;
-      const name = agents.find((agent) => agent.handle === handle)?.name ?? handle;
-      try {
-        await Promise.all(homesOf(handle).map((home) => bindHome(home, thread, host)));
-        toastManager.add({
-          type: "success",
-          title: `${thread.title} is now ${name}'s main thread`,
-        });
-      } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: `Could not make this ${name}'s main thread`,
-          description: error instanceof Error ? error.message : "An error occurred.",
-        });
-      }
+      const failed = await assignAgentHomes({
+        handle,
+        target: { environmentId: thread.environmentId, threadId: thread.id },
+        environmentIds: agent.environmentIds,
+        host,
+      });
+      toastManager.add(
+        failed.length
+          ? {
+              type: "error",
+              title: `Could not update all homes for ${agent.name}`,
+              description: failed
+                .map((id) => environments.find((entry) => entry.environmentId === id)?.label ?? id)
+                .join(", "),
+            }
+          : { type: "success", title: `${thread.title} is now ${agent.name}'s main thread` },
+      );
     },
   };
 }

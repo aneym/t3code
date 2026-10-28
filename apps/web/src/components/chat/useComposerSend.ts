@@ -1,3 +1,4 @@
+import { bindAgentFirstOpen } from "../agents/agentFirstOpen";
 import {
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
@@ -1276,8 +1277,6 @@ export function useComposerSend(input: ComposerSendInput) {
               context: buildOutgoingMessageContext(
                 boundAttachmentIds(turnAttachmentsResult.value, composerAttachmentsSnapshot),
               ),
-              // Read at dispatch time: the upload and persistence awaits above can
-              // span a server reconnect that changes it.
               supportsInlineMessageContext:
                 appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
                   .capabilities.inlineMessageContext === true,
@@ -1320,13 +1319,13 @@ export function useComposerSend(input: ComposerSendInput) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        if (isLocalDraftThread) void bindAgentFirstOpen(threadIdForSend, environmentId);
         setKeepFullHistory(routeThreadKey, false);
         clearUsageLimitsFor(routeThreadKey);
         if (turnUsesAttachmentUploads) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }
         acknowledgeActiveThreadWoke();
-        // A draft still on screen finalizes once its thread route takes over.
         if (sentDraftThreadRef) {
           if (backgroundDraftOpened || currentRouteThreadKeyRef.current !== routeThreadKey) {
             finalizePromotedDraftThreadByRef(sentDraftThreadRef);
