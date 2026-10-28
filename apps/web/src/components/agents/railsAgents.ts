@@ -78,9 +78,13 @@ function resolveRailsAgents(
       agent.environmentIds = [...agent.environmentIds, project.environmentId];
     }
   }
-  const agentThreads = filterSidebarV2VisibleThreads(threads, new Set(handleByProjectKey.keys()));
-  for (const thread of agentThreads) {
-    const handle = handleByProjectKey.get(`${thread.environmentId}:${thread.projectId}`);
+  const handleByBoundThreadId = new Map<string, string>();
+  for (const [handle, threadIds] of boundThreadIdsByHandle) {
+    for (const threadId of threadIds) handleByBoundThreadId.set(threadId, handle);
+  }
+  for (const thread of filterSidebarV2VisibleThreads(threads, null)) {
+    const projectKey = `${thread.environmentId}:${thread.projectId}`;
+    const handle = handleByBoundThreadId.get(thread.id) ?? handleByProjectKey.get(projectKey);
     const agent = handle === undefined ? undefined : agents.get(handle);
     if (agent === undefined) continue;
     const boundThreadIds = boundThreadIdsByHandle.get(agent.handle);
@@ -89,7 +93,9 @@ function resolveRailsAgents(
     if (agent.thread === null || isPreferredHomeThread(thread, agent.thread, boundThreadIds)) {
       agent.thread = thread;
       agent.threadIsBound = isBound;
-      agent.projectRef = scopeProjectRef(thread.environmentId, thread.projectId);
+      if (handleByProjectKey.has(projectKey)) {
+        agent.projectRef = scopeProjectRef(thread.environmentId, thread.projectId);
+      }
     }
   }
   return [...agents.values()];

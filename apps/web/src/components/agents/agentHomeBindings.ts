@@ -8,7 +8,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { projectEnvironment } from "../../state/projects";
 import { threadFamilies } from "../../state/threads";
 
-const AGENT_HOME_FILE = "agent.json";
+export const AGENT_HOME_FILE = "agent.json";
 const RETRY_AFTER_MS = 30_000;
 
 interface AgentHomeBindingState {
@@ -57,12 +57,17 @@ async function loadBinding(project: EnvironmentProject): Promise<void> {
     return;
   }
   inFlight.delete(key);
-  const threadId =
-    result.value.exists === false ? null : parseAgentHomeThreadId(result.value.contents);
+  settleAgentHomeBinding(
+    project,
+    result.value.exists === false ? null : parseAgentHomeThreadId(result.value.contents),
+  );
+}
+
+export function settleAgentHomeBinding(project: EnvironmentProject, threadId: string | null) {
   if (threadId !== null) {
     threadFamilies.mount(appAtomRegistry, project.environmentId, ThreadId.make(threadId));
   }
-  useAgentHomeBindingStore.getState().settle(key, threadId);
+  useAgentHomeBindingStore.getState().settle(homeKey(project), threadId);
 }
 
 export function useAgentHomeBoundThreadIds(
