@@ -4,6 +4,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ScheduledTaskId,
+  ThreadId,
   type ScheduledTask,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -38,7 +39,13 @@ const task: ScheduledTask = {
   runCount: 0,
 };
 
-const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true }));
+const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true, health: false }));
+
+function setup() {
+  state.connected = true;
+  state.tasksLoaded = true;
+  state.health = false;
+}
 
 function environment() {
   return {
@@ -85,7 +92,32 @@ vi.mock(import("../../state/server"), async (original) => {
 vi.mock(import("../../state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: ((request: unknown) => ({
-    data: request === null ? null : { tasks: state.tasksLoaded ? [task] : [] },
+    data:
+      request === null
+        ? null
+        : {
+            tasks: state.tasksLoaded
+              ? state.health
+                ? [
+                    {
+                      ...task,
+                      threadId: ThreadId.make("bound"),
+                      lastRunStatus: "failed",
+                      lastRunError: "Registry unavailable",
+                      lastRunAt: "2026-09-17T09:00:00.000Z",
+                      nextRunAt: "2027-01-01T09:00:00.000Z",
+                      runCount: 7,
+                    },
+                    {
+                      ...task,
+                      id: ScheduledTaskId.make("paused"),
+                      title: "Paused audit",
+                      enabled: false,
+                    },
+                  ]
+                : [task]
+              : [],
+          },
     error: null,
     isPending: false,
     refresh: vi.fn(),
@@ -105,9 +137,33 @@ vi.mock(import("../../hooks/useSettings"), async (original) => ({
 }));
 
 describe("ScheduledTasksSettings", () => {
+  it("shows automation health and links a bound thread without losing unbound tasks", async () => {
+    setup();
+    state.health = true;
+    await using screen = await render(<ScheduledTasksSettings />);
+    await expect.element(screen.getByText("Enabled", { exact: false })).toBeInTheDocument();
+    await expect.element(screen.getByText("Paused", { exact: false }).first()).toBeInTheDocument();
+    await expect.element(screen.getByText("failed", { exact: true })).toBeInTheDocument();
+    await expect.element(screen.getByText("Registry unavailable")).toBeInTheDocument();
+    await expect
+      .element(screen.getByText("Last run", { exact: false }).first())
+      .toBeInTheDocument();
+    await expect
+      .element(screen.getByText("Next run", { exact: false }).first())
+      .toBeInTheDocument();
+    await expect.element(screen.getByText("7 runs")).toBeInTheDocument();
+    await expect.element(screen.getByText("New thread per run")).toBeInTheDocument();
+    await expect
+      .element(screen.getByText("Project · Laptop", { exact: true }).first())
+      .toBeInTheDocument();
+    await expect.element(screen.getByText("New thread per run")).toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("link", { name: "Bound thread" }))
+      .toHaveAttribute("href", "/laptop/bound");
+  });
+
   it("keeps a linked task's unsaved edits across a disconnect and reconnect", async () => {
-    state.connected = true;
-    state.tasksLoaded = true;
+    setup();
     await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
     const name = page.getByRole("dialog").getByRole("textbox", { name: "Name" });
     await expect.element(name).toHaveValue("Review issues");
@@ -124,7 +180,7 @@ describe("ScheduledTasksSettings", () => {
   });
 
   it("keeps an editor the user opened when the linked task loads later", async () => {
-    state.connected = true;
+    setup();
     state.tasksLoaded = false;
     await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
     await userEvent.click(page.getByRole("button", { name: "New task" }));

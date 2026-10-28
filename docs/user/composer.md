@@ -1,10 +1,6 @@
 # Messages and context
 
-Give the agent a task in the composer. Add files, quote a previous response, or
-include a skill when the task needs more context.
-
-Messages can contain up to 120,000 characters. Longer drafts stay in the composer
-so you can shorten them or split them into several messages.
+Messages accept 120,000 characters; longer drafts stay unsent.
 
 Pasting 32 KiB or more of text adds that fragment as a text-file attachment so
 the agent can inspect it without filling the model context. A smaller paste also
@@ -76,6 +72,12 @@ Mobile has the same choice under **Settings → Chat**. While a turn is
 running the send button shows which action it will take. Long-press it to use the
 other action for a single message, or hold `Cmd` while sending from a hardware
 keyboard. The button only offers Steer when the running agent supports it.
+
+Stop holds the queue across restarts. Resume or a client send returns to work;
+unclassified older holds need Resume or cancellation. Restart releases only
+restart holds. CLI/MCP sends default to Queue; opt-in auto/steer/restart and
+interrupts preserve holds. `thread resume` / `t3_queue_resume`
+resume; `thread unqueue` cancels.
 
 ## Queue messages offline on mobile
 
@@ -213,6 +215,11 @@ If you stop the agent or the server restarts, queued messages keep their order a
 Press **Resume** in an empty composer on web and desktop, or **Resume queue** on mobile, to
 continue. Sending a new message also resumes the queue, unless it steers a turn that is already
 running. You can edit or remove held messages without starting them.
+
+With **Settings → Chat → Send queued messages together** on (the default), every queued
+message starts as one turn when the agent finishes, in queue order and labeled with its sender,
+so the agent can take them in at once. A completed turn also releases held messages; after Stop
+they stay held until you resume. Turn the setting off to start queued messages one turn at a time.
 
 The pencil on a queued message opens it in the composer for editing. The original message
 stays in the queue until you save, and it is highlighted while you edit. The message's

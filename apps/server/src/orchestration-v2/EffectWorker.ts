@@ -19,6 +19,7 @@ import {
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EffectOutboxModel from "./EffectOutboxModel.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -27,6 +28,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { executeRestartHandoff } from "./RestartHandoffExecution.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
@@ -58,7 +60,7 @@ function isNonRetryableProviderTurnControlFailure(effectType: string, errorText:
 
 export interface OrchestrationEffectExecutorV2Shape {
   readonly execute: (
-    effect: EffectOutbox.OrchestrationEffectV2,
+    effect: EffectOutboxModel.OrchestrationEffectV2,
     options?: { readonly willRetry: boolean },
   ) => Effect.Effect<void, OrchestrationEffectExecutionError>;
 }
@@ -98,6 +100,32 @@ export const layerExecutor: Layer.Layer<
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
+          case "provider-runtime.restart-handoff":
+          case "provider-runtime.restart-reapproval": {
+            const request = effect.request;
+            return executeRestartHandoff({
+              threadId: effect.threadId,
+              epoch: request.epoch,
+              handoff:
+                request.type === "provider-runtime.restart-handoff"
+                  ? request.handoff
+                  : { runIds: request.sourceRunIds, paused: false },
+              ...(request.type === "provider-runtime.restart-reapproval"
+                ? { humanReply: request.text }
+                : {}),
+            }).pipe(
+              Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+              Effect.provideService(ServerSettings.ServerSettingsService, settings),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          }
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
             return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
@@ -620,7 +648,7 @@ export const layerWithOptions = (
           ),
         );
       const requeueClaim = (
-        effect: EffectOutbox.OrchestrationEffectV2,
+        effect: EffectOutboxModel.OrchestrationEffectV2,
         cause: Cause.Cause<unknown>,
       ) =>
         Cause.hasInterruptsOnly(cause)
@@ -653,7 +681,7 @@ export const layerWithOptions = (
                 ),
               );
       const terminalizeClaim = (
-        effect: EffectOutbox.OrchestrationEffectV2,
+        effect: EffectOutboxModel.OrchestrationEffectV2,
         cause: Cause.Cause<unknown>,
       ) => {
         if (Cause.hasInterruptsOnly(cause)) return Effect.void;
@@ -691,10 +719,10 @@ export const layerWithOptions = (
           );
       };
       const recoverPostSuccessSettlement = (
-        effect: EffectOutbox.OrchestrationEffectV2,
+        effect: EffectOutboxModel.OrchestrationEffectV2,
         cause: Cause.Cause<unknown>,
       ) =>
-        EffectOutbox.REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS.some(
+        EffectOutboxModel.REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS.some(
           (effectType) => effectType === effect.request.type,
         )
           ? requeueClaim(effect, cause)
