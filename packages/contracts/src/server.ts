@@ -855,8 +855,25 @@ export const ServerSelfUpdateInput = Schema.Struct({
   /** Exact npm version, never a dist-tag, so server and client agree on the request. */
   targetVersion: TrimmedNonEmptyString,
   continueRunningThreads: Schema.optionalKey(Schema.Boolean),
+  allowDowngrade: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerSelfUpdateInput = typeof ServerSelfUpdateInput.Type;
+
+export const ForkRelease = Schema.Struct({
+  version: TrimmedNonEmptyString,
+  builtAt: IsoDateTime,
+  current: Schema.Boolean,
+  latest: Schema.Boolean,
+  cached: Schema.Boolean,
+  desktop: Schema.Array(Schema.String),
+});
+export type ForkRelease = typeof ForkRelease.Type;
+
+export const ForkReleaseList = Schema.Struct({
+  releases: Schema.Array(ForkRelease),
+  reason: Schema.optionalKey(Schema.String),
+});
+export type ForkReleaseList = typeof ForkReleaseList.Type;
 
 export const ServerSelfUpdateResult = Schema.Struct({
   targetVersion: TrimmedNonEmptyString,

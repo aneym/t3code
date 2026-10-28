@@ -1,3 +1,4 @@
+import { AutomationPlacementSetting } from "./AutomationPlacementSetting";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
@@ -436,6 +437,16 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarThreadShowMachine !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowMachine
+      ? ["Machine in thread rows"]
+      : []),
+    ...(settings.sidebarThreadShowAgent !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowAgent
+      ? ["Agent in thread rows"]
+      : []),
+    ...(settings.sidebarThreadShowStatusText !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowStatusText
+      ? ["Status text and working time"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -463,6 +474,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
       ? ["Diff whitespace changes"]
+      : []),
+    ...(settings.showChatChangedFiles !== DEFAULT_UNIFIED_SETTINGS.showChatChangedFiles
+      ? ["Changed files in chat"]
       : []),
     ...(settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? ["Diff layout"] : []),
     ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
@@ -493,6 +507,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.continueThreadsAfterServerUpdate !==
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? ["Continue threads after restarts"]
+      : []),
+    ...(settings.batchQueuedMessages !== DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages
+      ? ["Send queued messages together"]
       : []),
     ...(isBackgroundActivityDirty ? ["Background activity"] : []),
     ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
@@ -536,8 +553,6 @@ export function useSettingsRestore(onRestored?: () => void) {
     );
     if (!confirmed) return;
 
-    // Reset only dirty theme keys so storage failures cannot block other settings; re-read after confirmation
-    // for safe rollback.
     let previousTheme = theme;
     try {
       previousTheme = readThemePreference();
@@ -589,6 +604,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
+      showChatChangedFiles: DEFAULT_UNIFIED_SETTINGS.showChatChangedFiles,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
@@ -603,6 +619,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarThreadShowMachine: DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowMachine,
+      sidebarThreadShowAgent: DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowAgent,
+      sidebarThreadShowStatusText: DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowStatusText,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -611,6 +630,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
+      batchQueuedMessages: DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -1220,6 +1240,35 @@ export function ChatSettingsPanel() {
             </Select>
           }
         />
+        <AutomationPlacementSetting />
+        <SettingsRow
+          {...searchableSetting("batch-queued-messages")}
+          serverScoped
+          settingKeys={["batchQueuedMessages"]}
+          description="When a turn ends, start up to 20 compatible queued messages on the thread together as one turn instead of one turn each."
+          resetAction={
+            settings.batchQueuedMessages !== DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages ? (
+              <SettingResetButton
+                label="send queued messages together"
+                onClick={() =>
+                  updateSettings({
+                    batchQueuedMessages: DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["batchQueuedMessages"]}
+              checked={settings.batchQueuedMessages}
+              onCheckedChange={(checked) =>
+                updateSettings({ batchQueuedMessages: Boolean(checked) })
+              }
+              aria-label="Send queued messages together"
+            />
+          }
+        />
       </SettingsSection>
     </SettingsPageContainer>
   );
@@ -1341,6 +1390,31 @@ export function DiffsSettingsPanel() {
                 updateSettings({ diffIgnoreWhitespace: Boolean(checked) })
               }
               aria-label="Hide whitespace changes by default"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("show-chat-changed-files")}
+          description="Show the changed-files card under assistant messages. Diffs stay available in the diff panel."
+          resetAction={
+            settings.showChatChangedFiles !== DEFAULT_UNIFIED_SETTINGS.showChatChangedFiles ? (
+              <SettingResetButton
+                label="changed files in chat"
+                onClick={() =>
+                  updateSettings({
+                    showChatChangedFiles: DEFAULT_UNIFIED_SETTINGS.showChatChangedFiles,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.showChatChangedFiles}
+              onCheckedChange={(checked) =>
+                updateSettings({ showChatChangedFiles: Boolean(checked) })
+              }
+              aria-label="Show changed files in chat"
             />
           }
         />

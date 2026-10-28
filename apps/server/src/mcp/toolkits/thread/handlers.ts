@@ -214,6 +214,13 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       }),
     ),
   ),
+  t3_thread_move: writesThread((input) =>
+    dispatch(input.threadId, (common) => ({
+      type: "thread.metadata.update",
+      ...common,
+      projectId: input.projectId,
+    })),
+  ),
   t3_pending_request: McpToolAccess.either(
     (input) => input.action !== "respond",
     McpToolAccess.reads((input) =>
