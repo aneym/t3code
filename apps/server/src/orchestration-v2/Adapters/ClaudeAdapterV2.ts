@@ -20,6 +20,7 @@ import {
 } from "./claudeWorkflowProgress.ts";
 
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { MCP_APP_OUTPUT_KEY, readMcpAppResourceUri } from "@t3tools/shared/mcpApp";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import {
   type CanUseTool,
@@ -127,6 +128,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
   planClaudeSkillDispatch,
@@ -518,12 +520,12 @@ export interface ClaudeAgentSdkQuerySession {
   ) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
-  readonly mcpServerStatus: Effect.Effect<ReadonlyArray<unknown>, ClaudeAgentSdkQueryRunnerError>;
-  readonly readMcpResource: (
+  readonly mcpServerStatus?: Effect.Effect<ReadonlyArray<unknown>, ClaudeAgentSdkQueryRunnerError>;
+  readonly readMcpResource?: (
     server: string,
     uri: string,
   ) => Effect.Effect<unknown, ClaudeAgentSdkQueryRunnerError>;
-  readonly callMcpTool: (
+  readonly callMcpTool?: (
     tool: string,
     args: Record<string, unknown>,
   ) => Effect.Effect<unknown, ClaudeAgentSdkQueryRunnerError>;
@@ -1218,7 +1220,11 @@ export const layerQueryRunner: Layer.Layer<
             callMcpTool: (tool, args) =>
               Effect.tryPromise({
                 try: () =>
-                  queryRuntime.mcpCall({ tool, arguments: args, result_not_for_model: true }),
+                  (queryRuntime as any).mcpCall({
+                    tool,
+                    arguments: args,
+                    result_not_for_model: true,
+                  }),
                 catch: (cause) => queryRunnerError(cause, "mcpCall"),
               }),
             close: Queue.shutdown(promptQueue).pipe(
@@ -5318,6 +5324,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly startedAt: DateTime.Utc;
           readonly updatedAt: DateTime.Utc;
           readonly presentation: ClaudeToolPresentation | undefined;
+          readonly mcpAppReference?: import("@t3tools/shared/mcpApp").McpAppReference;
           readonly toolNonExecutionKind?: string;
         }) => {
           const completedAt = input.status === "running" ? null : input.updatedAt;
@@ -5475,7 +5482,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       toolName: input.toolName,
                       ...(viewedImagePath === undefined ? {} : { viewedImagePath }),
                       input: claudeNativeToolInputValue(input.toolInput),
-                      ...(outputValue === undefined ? {} : { output: outputValue }),
+                      ...(outputValue === undefined && input.mcpAppReference === undefined
+                        ? {}
+                        : {
+                            output: {
+                              ...(input.mcpAppReference === undefined
+                                ? {}
+                                : { [MCP_APP_OUTPUT_KEY]: input.mcpAppReference }),
+                              ...(outputValue === undefined ? {} : { result: outputValue }),
+                            },
+                          }),
                     };
           return { node, turnItem };
         };
@@ -6702,6 +6718,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly message: SDKMessage;
           readonly toolResult: ClaudeToolResultContentBlock;
           readonly output: ClaudeNativeToolOutput;
+          readonly mcpAppReference?: import("@t3tools/shared/mcpApp").McpAppReference;
           readonly completedAt: DateTime.Utc;
         }) {
           const { toolCall } = input;
@@ -6723,6 +6740,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               parentNodeId: toolCall.parentNodeId,
               ordinal: toolCall.ordinal,
               output: input.output,
+              ...(input.mcpAppReference === undefined
+                ? {}
+                : { mcpAppReference: input.mcpAppReference }),
               status:
                 toolNonExecutionKind === "cancelled"
                   ? "cancelled"
@@ -7866,6 +7886,61 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return subagent?.task.status === "running" ? settled : null;
         });
 
+        const claudeMcpAppResourceUri = (output: ClaudeNativeToolOutput, toolResult: unknown) => {
+          const values = [claudeNativeToolOutputValue(output), toolResult];
+          for (const value of values) {
+            if (value === undefined) continue;
+            const direct = readMcpAppResourceUri(value);
+            if (direct !== undefined) return direct;
+            if (typeof value === "object" && value !== null) {
+              const meta = Reflect.get(value, "_meta");
+              const nested = readMcpAppResourceUri(meta);
+              if (nested !== undefined) return nested;
+            }
+          }
+          return undefined;
+        };
+
+        const captureClaudeMcpApp = Effect.fnUntraced(function* (input: {
+          readonly query: ClaudeAgentSdkQuerySession;
+          readonly context: ActiveClaudeTurnContext;
+          readonly toolName: string;
+          readonly output: ClaudeNativeToolOutput;
+          readonly toolResult: ClaudeToolResultContentBlock;
+        }) {
+          const normalized = input.toolName.replace(/^mcp__claude_ai_/u, "mcp__");
+          const parts = normalized.split("__");
+          const server = parts[1];
+          const tool = parts.slice(2).join("__");
+          const resourceUri = claudeMcpAppResourceUri(input.output, input.toolResult);
+          if (server === undefined || tool.length === 0 || resourceUri === undefined)
+            return undefined;
+          const readMcpResource = input.query.readMcpResource;
+          if (readMcpResource === undefined) return undefined;
+          return yield* readMcpResource(server, resourceUri).pipe(
+            Effect.flatMap((response) =>
+              snapshotMcpApp({
+                attachmentsDir,
+                threadId: input.context.input.threadId,
+                server,
+                tool,
+                resourceUri,
+                contents:
+                  (response as { readonly contents?: ReadonlyArray<unknown> }).contents ?? [],
+              }),
+            ),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to capture Claude MCP app; showing a plain tool row.", {
+                server,
+                tool,
+                resourceUri,
+                cause,
+              }).pipe(Effect.as(undefined)),
+            ),
+          );
+        });
+
         const handleSdkMessageFrame = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
@@ -8819,6 +8894,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 toolInput: EMPTY_CLAUDE_NATIVE_TOOL_INPUT,
                 parentToolUseId,
               }));
+            const mcpAppReference =
+              context !== null && !isClaudeToolResultError(toolResult)
+                ? yield* captureClaudeMcpApp({
+                    query: input.query,
+                    context,
+                    toolName: toolCall.toolName,
+                    output,
+                    toolResult,
+                  })
+                : undefined;
             yield* settleToolCall({
               context,
               toolCall,
@@ -8826,6 +8911,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message,
               toolResult,
               output,
+              ...(mcpAppReference === undefined ? {} : { mcpAppReference }),
               completedAt: yield* DateTime.now,
             });
             // Subagents write to the session's shared task store, so their
@@ -10555,9 +10641,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps = {
           listTools: Effect.fn("ClaudeAdapterV2.listTools")(
-            function* (input) {
+            function* (
+              input: Parameters<ProviderAdapter.ProviderAdapterV2McpApps["listTools"]>[0],
+            ) {
               const live = yield* Ref.get(queryContext);
               if (live === null) return [];
+              if (live.query.mcpServerStatus === undefined) return [];
               const servers = yield* live.query.mcpServerStatus;
               const server = servers.find((entry: any) => entry.name === input.server) as any;
               return Object.values(
@@ -10567,12 +10656,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.mapError(mcpAppsError("Failed to list Claude MCP tools.")),
           ),
           callTool: Effect.fn("ClaudeAdapterV2.callTool")(
-            function* (input) {
+            function* (input: Parameters<ProviderAdapter.ProviderAdapterV2McpApps["callTool"]>[0]) {
               const live = yield* Ref.get(queryContext);
               if (live === null)
-                return yield* Effect.fail(
-                  mcpAppsError("Claude query is not active.")("no live query"),
-                );
+                return yield* mcpAppsError("Claude query is not active.")("no live query");
+              if (live.query.callMcpTool === undefined)
+                return yield* mcpAppsError("Claude MCP tool calls are unavailable.")("unsupported");
               const result = yield* live.query.callMcpTool(
                 `mcp__${input.server}__${input.tool}`,
                 input.arguments,
@@ -10582,17 +10671,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.mapError(mcpAppsError("Claude MCP tool call failed.")),
           ),
           readResource: Effect.fn("ClaudeAdapterV2.readResource")(
-            function* (input) {
+            function* (
+              input: Parameters<ProviderAdapter.ProviderAdapterV2McpApps["readResource"]>[0],
+            ) {
               const live = yield* Ref.get(queryContext);
               if (live === null)
-                return yield* Effect.fail(
-                  mcpAppsError("Claude query is not active.")("no live query"),
+                return yield* mcpAppsError("Claude query is not active.")("no live query");
+              if (live.query.readMcpResource === undefined)
+                return yield* mcpAppsError("Claude MCP resource reads are unavailable.")(
+                  "unsupported",
                 );
               return yield* live.query.readMcpResource(input.server, input.uri) as any;
             },
             Effect.mapError(mcpAppsError("Claude MCP resource read failed.")),
           ),
-        };
+        } as unknown as ProviderAdapter.ProviderAdapterV2McpApps;
 
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
