@@ -10,6 +10,7 @@ import {
   batchableQueuedMessage as batchableMessage,
   compatibleQueuedRuns,
   MAX_QUEUED_MESSAGE_BATCH_SIZE as MAX_BATCH_SIZE,
+  sendAllQueuedMembers,
 } from "@t3tools/shared/queuedMessages";
 
 import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
@@ -42,6 +43,8 @@ export function queuedRunBatch(
   first: OrchestrationV2Run,
   explicitRelease = false,
 ): ReadonlyArray<QueuedRunBatchMember> {
+  if (explicitRelease)
+    return sendAllQueuedMembers(projection).filter(({ run }) => run.id !== first.id);
   if (batchableMessage(projection, first) === undefined) return [];
   const members: Array<QueuedRunBatchMember> = [];
   for (const run of queuedRunsInDeliveryOrder(projection)) {
@@ -49,7 +52,7 @@ export function queuedRunBatch(
     if (run.id === first.id || run.queueHeld === true) continue;
     const message = batchableMessage(projection, run);
     if (message === undefined) {
-      if (!explicitRelease && changesConversation(projection, run)) break;
+      if (changesConversation(projection, run)) break;
       continue;
     }
     if (compatibleQueuedRuns(first, run)) {
