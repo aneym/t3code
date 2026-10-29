@@ -21,7 +21,7 @@ import type {
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
 
 const MAX_COMMAND_LENGTH = 1000;
-const BASH_OUTPUT_PATH = /Output is being written to: (\S+?\.output)/;
+const BASH_OUTPUT_PATH = /Output is being written to: (\S+\.output)\.?(?!\S)/;
 
 interface Launch {
   readonly command: string | undefined;
@@ -54,6 +54,7 @@ function launches(items: ReadonlyArray<OrchestrationV2TurnItem>) {
   const byTaskId = new Map<string, Launch>();
   const byItemId = new Map<string, Launch>();
   const taskDirs = new Set<string>();
+  const unstartedMonitors: Array<Launch> = [];
   for (const item of items) {
     const outputPath =
       item.type === "command_execution" ? BASH_OUTPUT_PATH.exec(item.output ?? "")?.[1] : undefined;
@@ -62,8 +63,10 @@ function launches(items: ReadonlyArray<OrchestrationV2TurnItem>) {
     byItemId.set(item.id, launch);
     const taskId = launchedTaskId(item);
     if (taskId !== undefined) byTaskId.set(taskId, launch);
+    else if (item.type === "dynamic_tool" && item.toolName === "Monitor")
+      unstartedMonitors.push(launch);
   }
-  return { byTaskId, byItemId, taskDirs };
+  return { byTaskId, byItemId, taskDirs, unstartedMonitors };
 }
 
 const exists = (path: string) =>
@@ -102,11 +105,21 @@ const findOutputPath = Effect.fnUntraced(function* (
 
 const writersOf = (path: string) =>
   Effect.callback<ReadonlyArray<string> | undefined>((resume) => {
-    NodeChildProcess.execFile("lsof", ["-t", "--", path], { timeout: 5000 }, (error, stdout) => {
-      const pids = stdout.split("\n").filter((pid) => /^\d+$/.test(pid));
-      const unknown = error !== null && (error.code !== 1 || error.killed);
-      resume(Effect.succeed(unknown && pids.length === 0 ? undefined : pids));
-    });
+    NodeChildProcess.execFile(
+      "lsof",
+      ["-F", "pa", "--", path],
+      { timeout: 5000 },
+      (error, stdout) => {
+        const pids = new Set<string>();
+        let pid = "";
+        for (const line of stdout.split("\n")) {
+          if (line.startsWith("p")) pid = line.slice(1);
+          else if (/^a[wu]/.test(line)) pids.add(pid);
+        }
+        const unknown = error !== null && (error.code !== 1 || error.killed);
+        resume(Effect.succeed(unknown && pids.size === 0 ? undefined : [...pids]));
+      },
+    );
   });
 
 const quote = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
@@ -132,10 +145,11 @@ function shellRearm(
         : `run it again in the background: ${commandText(command)}`;
   if (outputPath !== undefined && (writers === undefined || writers.length > 0)) {
     const path = quote(outputPath);
-    const join = `run \`while lsof -t -- ${path} >/dev/null 2>&1; do sleep 5; done; tail -n 40 ${path}\` in the background and wait for it.`;
+    const writing = `lsof -F a -- ${path} 2>/dev/null | grep -q '^a[wu]'`;
+    const join = `run \`while ${writing}; do sleep 5; done; tail -n 40 ${path}\` in the background and wait for it.`;
     const check =
       writers === undefined
-        ? `If \`lsof -t -- ${path}\` lists a process, it survived the restart: ${join}`
+        ? `If \`${writing}\` succeeds, it survived the restart: ${join}`
         : `It survived the restart (pid ${writers.join(", ")}). Rejoin it: ${join}`;
     if (rerun === undefined) return check;
     return writers === undefined
@@ -165,6 +179,17 @@ const rearm = Effect.fnUntraced(function* (
   const needsLaunches = work.some((entry) => entry.kind === "shell" || entry.kind === "monitor");
   const found = launches(needsLaunches ? yield* loadItems : []);
   const sessionId = providerThread.nativeThreadRef?.nativeId ?? undefined;
+  const unmatchedMonitors = work.filter(
+    (entry) =>
+      entry.kind === "monitor" &&
+      entry.id !== undefined &&
+      !found.byTaskId.has(entry.id) &&
+      !found.byItemId.has(entry.id),
+  );
+  const orphanMonitor =
+    unmatchedMonitors.length === 1 && found.unstartedMonitors.length === 1
+      ? found.unstartedMonitors[0]
+      : undefined;
   const rearmed: Array<Work> = [];
   for (const entry of work) {
     if (entry.rearm !== undefined || entry.id === undefined) {
@@ -175,7 +200,10 @@ const rearm = Effect.fnUntraced(function* (
     if (entry.kind === "subagent") {
       action = subagentRearm(entry, driver);
     } else if (entry.kind === "shell" || entry.kind === "monitor") {
-      const launch = found.byTaskId.get(entry.id) ?? found.byItemId.get(entry.id);
+      const launch =
+        found.byTaskId.get(entry.id) ??
+        found.byItemId.get(entry.id) ??
+        (entry.kind === "monitor" ? orphanMonitor : undefined);
       const outputPath =
         launch?.outputPath ??
         (driver === "claudeAgent"
