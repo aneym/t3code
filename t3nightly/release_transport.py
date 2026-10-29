@@ -48,7 +48,7 @@ def remote_disk_free(log):
 
 def remote_worker(config, action, log):
     seed = os.environ.get("T3NIGHTLY_GATE_SEED") if action == "gate" else None
-    prefix = ["env", f"T3NIGHTLY_GATE_SEED={seed}"] if seed else []
+    prefix = ["env", f"T3NIGHTLY_GATE_SEED={seed}"] if seed is not None else []
     return ssh(prefix + [
         "python3", f"{config.remote_root}/tools/release-worker", action,
         "--repo", config.remote_repo, "--tree", config.remote_tree,
