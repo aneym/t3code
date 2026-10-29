@@ -176,7 +176,7 @@ def install(run):
                 if not stopped:
                     try:
                         stop()
-                    except ValueError as reaping:
+                    except (OSError, ValueError, subprocess.SubprocessError) as reaping:
                         if not stopped:
                             raise
                         run.step("hard-rollback-stop", error=str(reaping))

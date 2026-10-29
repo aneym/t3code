@@ -1,5 +1,6 @@
 import os
 import re
+import select
 import signal
 import subprocess
 import sys
@@ -125,11 +126,27 @@ def gone(pid, stray, seconds):
         time.sleep(0.5)
 
 
+class ProcessWatch:
+    def __init__(self, pid):
+        self.queue = select.kqueue()
+        try:
+            self.queue.control([select.kevent(int(pid), select.KQ_FILTER_PROC, select.KQ_EV_ADD | select.KQ_EV_ONESHOT, select.KQ_NOTE_EXIT)], 0, 0)
+        except OSError:
+            self.queue.close()
+            raise ProcessLookupError(pid)
+        self.exited = False
+
+    def gone(self):
+        self.exited = self.exited or bool(self.queue.control(None, 1, 0))
+        return self.exited
+
+    def close(self):
+        self.queue.close()
+
+
 def bound(pid):
-    if sys.platform == "darwin":
-        return None
     try:
-        return os.pidfd_open(int(pid))
+        return ProcessWatch(pid) if sys.platform == "darwin" else os.pidfd_open(int(pid))
     except ProcessLookupError:
         return -1
 
@@ -138,8 +155,9 @@ def send(pid, handle, stray, sig):
     if process_started(pid) != stray["started"] or process_argv(pid) != stray["argv"]:
         raise ValueError("managed ssh-launch server identity changed before signal")
     try:
-        if handle is None:
-            os.kill(int(pid), sig)
+        if isinstance(handle, ProcessWatch):
+            if not handle.gone():
+                os.kill(int(pid), sig)
         else:
             signal.pidfd_send_signal(handle, sig)
     except ProcessLookupError:
@@ -162,7 +180,9 @@ def reap(run, stray):
             if not gone(pid, stray, KILL_WAIT_S):
                 raise ValueError("managed ssh-launch server did not exit")
     finally:
-        if handle is not None:
+        if isinstance(handle, ProcessWatch):
+            handle.close()
+        else:
             os.close(handle)
     entry = {key: stray[key] for key in ("pid", "argv", "launchDir")} | {"signal": signalled, "at": time.time()}
     run.reaped.append(entry)
