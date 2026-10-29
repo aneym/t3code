@@ -86,6 +86,8 @@ const work = join(home, `worktree-cleanup-story-${Date.now()}`);
 let original;
 try {
   original = await rpc((_client, config) => Effect.succeed(config.settings?.storageCleanup ?? null));
+  assert(original, 'could not read storage cleanup settings to restore');
+  evidence.cli = { executable: process.env.T3_SMOKE_CLI ?? `${tree}/apps/server/src/bin.ts`, version: process.env.T3_SMOKE_VERSION ?? null, reported: (await t3(['--version']).catch(() => '')).trim().split('\n').at(-1) };
   const origin = join(work, 'origin.git');
   const repo = join(work, `story-repo-${Date.now()}`);
   const lander = join(work, 'lander');
@@ -146,7 +148,16 @@ try {
   evidence.error = String(error.stack ?? error);
   process.exitCode = 1;
 } finally {
-  if (original) await rpc((client) => client['server.updateSettings']({ patch: { storageCleanup: original } })).catch(() => {});
+  if (original) {
+    await rpc((client) => client['server.updateSettings']({ patch: { storageCleanup: original } })).then(
+      () => { evidence.settingsRestored = true; },
+      (error) => {
+        evidence.pass = false;
+        evidence.error = `settings restore failed: ${error}`;
+        process.exitCode = 1;
+      },
+    );
+  }
   evidence.completedAt = new Date().toISOString();
   await writeFile(output, JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify({ pass: evidence.pass ?? false, output, error: evidence.error?.split('\n')[0], assertions: evidence.assertions }));
