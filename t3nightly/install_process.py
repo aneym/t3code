@@ -1,4 +1,5 @@
 import os
+import plistlib
 import re
 import subprocess
 import sys
@@ -19,6 +20,17 @@ def descends(pid, root, parents):
     return True
 
 
+def service_binary(run):
+    if sys.platform == "darwin":
+        with run.service_plist.open("rb") as handle:
+            return Path(plistlib.load(handle)["ProgramArguments"][0])
+    result = subprocess.run(["systemctl", "--user", "show", run.service_label, "--property=ExecStart", "--value"], capture_output=True, text=True, check=True, timeout=15)
+    paths = re.findall(r"path=([^ ;]+)", result.stdout)
+    if len(paths) != 1:
+        raise ValueError("intended service has no unambiguous ExecStart binary")
+    return Path(paths[0])
+
+
 def serving_process(run, version, expected):
     if sys.platform == "darwin":
         result = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{run.service_label}"], capture_output=True, text=True, check=True, timeout=15)
@@ -36,7 +48,7 @@ def serving_process(run, version, expected):
     if len(owned) != 1:
         raise ValueError("endpoint listener does not belong to intended service" if not owned else "intended service has more than one listener PID")
     pid = next(iter(owned))
-    allowed = {run.runtime(version).resolve(), (run.home / "runtime/launcher/t3").resolve()}
+    allowed = {run.runtime(version).resolve(), service_binary(run).resolve()}
     if sys.platform == "darwin":
         files = subprocess.run(["/usr/sbin/lsof", "-a", "-p", pid, "-d", "txt", "-Fn"], capture_output=True, text=True, check=True, timeout=15)
         executables = {Path(line[1:]).resolve() for line in files.stdout.splitlines() if line.startswith("n")}

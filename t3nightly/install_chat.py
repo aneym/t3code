@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from contextlib import closing
 from pathlib import Path
 
@@ -30,6 +31,18 @@ def retained(run, before):
     after = identities(run)
     if any(not values.issubset(after[table]) for table, values in before.items()):
         raise ValueError("historical thread or message identities disappeared")
+
+
+def candidate_writes(run, version, proof):
+    until = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    command = [str(run.runtime(version)), "thread", "snooze", proof["threadId"], "--snoozed-until", until, "--json", "--base-dir", str(run.home)]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+    if result.returncode:
+        raise ValueError("candidate snooze write failed")
+    writes = {"version": version, "threadId": proof["threadId"], "messageId": proof["messageId"], "nonce": proof["nonce"], "snoozedUntil": until}
+    (run.state / "candidate-writes.json").write_text(json.dumps(writes, indent=2) + "\n")
+    run.step("candidate-writes", **writes)
+    return writes
 
 
 def prove(run, version, baseline=None):

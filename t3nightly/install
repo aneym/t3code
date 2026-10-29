@@ -57,6 +57,7 @@ def parse():
     parser.add_argument("--receipt-host", choices=("studio", "ax42"))
     parser.add_argument("--rehearsal", action="store_true")
     parser.add_argument("--compatibility-probe", action="store_true")
+    parser.add_argument("--force-rollback", action="store_true")
     parser.add_argument("--chat-project", default="")
     parser.add_argument("--chat-provider", default="claudeAgent")
     parser.add_argument("--chat-model", default="claude-sonnet-4-6")
@@ -74,6 +75,8 @@ def parse():
         parser.error("--hard requires --manifest, --artifact-manifest, --chat-project and --receipt (or isolated --rehearsal)")
     if args.rehearsal and not args.hard:
         parser.error("--rehearsal requires --hard")
+    if args.force_rollback and not args.rehearsal:
+        parser.error("--force-rollback requires isolated --rehearsal")
     if args.compatibility_probe and not args.rehearsal:
         parser.error("--compatibility-probe requires isolated --rehearsal")
     return args

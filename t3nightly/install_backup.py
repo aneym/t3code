@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -19,6 +20,18 @@ def database_copy(source, target, deadline):
             reader.backup(writer, pages=4096, progress=progress)
 
 
+def copy_rate(path):
+    if sys.platform == "darwin":
+        return 80_000_000
+    device = os.stat(path).st_dev
+    rotational = Path(f"/sys/dev/block/{os.major(device)}:{os.minor(device)}/queue/rotational")
+    try:
+        spinning = rotational.read_text().strip() == "1"
+    except OSError:
+        spinning = True
+    return 15_000_000 if spinning else 40_000_000
+
+
 def quiescent(db):
     paths = [str(path) for path in (db, Path(str(db) + "-wal"), Path(str(db) + "-shm")) if path.exists()]
     result = subprocess.run(["/usr/sbin/lsof", "-t", *paths], capture_output=True, text=True, timeout=15, check=False)
@@ -26,7 +39,7 @@ def quiescent(db):
         raise ValueError("database users remain or lsof could not establish quiescence")
 
 
-def capture(run, previous, stop, binary_rollback=False):
+def capture(run, previous, stop, rollback_gate):
     started = time.monotonic()
     root = run.home / "runtime" / "rollback"
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -46,11 +59,12 @@ def capture(run, previous, stop, binary_rollback=False):
         probe.unlink()
         copied.unlink(missing_ok=True)
         clone = result.returncode == 0
+    binary = rollback_gate()
     stop()
     if sys.platform == "darwin":
         quiescent(source)
-    if binary_rollback:
-        metadata = {"method": "binary-rollback", "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
+    if binary:
+        metadata = {"method": "binary-rollback", **binary, "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
         destination.rmdir()
         run.step("hard-backup", **metadata)
         return metadata
@@ -60,7 +74,7 @@ def capture(run, previous, stop, binary_rollback=False):
             if original.exists():
                 subprocess.run(["/bin/cp", "-c", str(original), str(target) + suffix], check=True, capture_output=True, timeout=30)
     else:
-        database_copy(source, target, time.monotonic() + 120 + size / 40_000_000)
+        database_copy(source, target, time.monotonic() + 120 + size / copy_rate(source))
     metadata = {"path": str(target), "method": "apfs-clone" if clone else "sqlite-backup", "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
     (destination / "payload.json").write_text(json.dumps(metadata))
     run.step("hard-backup", **metadata)

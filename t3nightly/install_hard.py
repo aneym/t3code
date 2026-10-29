@@ -10,10 +10,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .install_backup import capture
-from .install_chat import identities, prove, retained
-from .install_process import serving_process
+from .install_chat import candidate_writes, identities, prove, retained
+from .install_process import service_binary, serving_process
 from .install_strays import managed_strays, reap_strays
-from .install_provenance import file_digest, validate
+from .install_provenance import file_digest, migration_history, validate
 from .install_runtime import pin_runtime, stage_runtime
 from .release_receipts import INSTALL_SCHEMA, write
 from .release_signatures import cli_binary
@@ -120,7 +120,12 @@ def install(run):
     with cli_binary(archive) as candidate:
         manifest, rehearsal, host, observed = validate(run, previous, candidate)
     compatibility = manifest.get("compatibility", {})
-    binary_rollback = compatibility.get("binaryRollback") is True and observed["oldMigrationHistory"] == compatibility.get("candidateMigrations", {}).get("history")
+    base_history = compatibility.get("baseMigrations", {}).get("history")
+
+    def rollback_gate():
+        live = migration_history(run)
+        eligible = compatibility.get("binaryRollback") is True and compatibility.get("persistedState") == "compatible" and compatibility.get("migrationFiles") == [] and live == base_history
+        return {"liveMigrationHistory": live, "baseMigrationHistory": base_history} if eligible else None
     precheck(run, previous, observed["oldRuntime.digest"])
     try:
         baseline = prove(run, previous)
@@ -150,7 +155,7 @@ def install(run):
             staged = stage_runtime(run.home, args.version, args.assets)
             if file_digest(staged) != observed["candidateRuntime.digest"]:
                 raise ValueError("staged candidate runtime changed after provenance check")
-            backup = capture(run, previous, stop, binary_rollback)
+            backup = capture(run, previous, stop, rollback_gate)
             activate(run, args.version)
             stopped = False
             serving(run, args.version, observed["candidateRuntime.digest"])
@@ -158,6 +163,9 @@ def install(run):
             if connect and not run.connect_reachable(args.version):
                 raise ValueError("previously healthy Connect is unavailable")
             post = prove(run, args.version, baseline)
+            if args.force_rollback:
+                candidate_writes(run, args.version, post["proof"])
+                raise ValueError("forced rehearsal rollback")
             if not args.rehearsal:
                 run.link_cli(args.version)
             outcome = "installed"
@@ -188,7 +196,7 @@ def install(run):
                 run.step("advisory-backup-check-failed", error=str(error))
     moment = datetime.now(timezone.utc).isoformat()
     serving_version = run.server_version() or previous
-    serving_binary = run.runtime(serving_version)
+    serving_binary = service_binary(run)
     receipt = {
         "schema": INSTALL_SCHEMA, "release": args.version, "runId": uuid.uuid4().hex,
         "host": host, "platform": manifest["targets"][host]["platform"], "arch": manifest["targets"][host]["arch"],

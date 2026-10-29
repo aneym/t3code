@@ -22,6 +22,7 @@ def main():
     parser.add_argument("--model", default="claude-sonnet-4-6")
     parser.add_argument("--chat-timeout", type=int, default=180)
     parser.add_argument("--health-s", type=int, default=180)
+    parser.add_argument("--force-rollback", action="store_true", help="non-release proof: the candidate writes, the installer rolls back, and the old runtime reads those rows")
     parser.add_argument("--compatibility-probe", action="store_true", help="non-release evidence for migration-ineligible historical builds; never yields eligible provenance")
     args = parser.parse_args()
     return Rehearsal(args).main()

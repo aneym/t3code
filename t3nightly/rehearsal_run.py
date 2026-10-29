@@ -80,6 +80,8 @@ class Rehearsal:
             command.extend(["--rehearsal", "--manifest", str(self.args.candidate_manifest.resolve()), "--artifact-manifest", str(artifact_path.resolve()), "--receipt-host", self.args.target_host, "--chat-project", str(sandbox.project), "--chat-provider", self.args.provider, "--chat-model", self.args.model, "--chat-timeout", str(self.args.chat_timeout)])
             if self.args.compatibility_probe:
                 command.append("--compatibility-probe")
+            if self.args.force_rollback:
+                command.append("--force-rollback")
         if self.args.verdict:
             command.extend(["--verdict", str(self.args.verdict)])
         installer_home = Path.home() if (self.engine / "install_hard.py").is_file() else sandbox.os_home
@@ -87,6 +89,12 @@ class Rehearsal:
         with (sandbox.evidence / "installer.log").open("w") as output:
             result = subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=260, check=False)
         report = json.loads((sandbox.evidence / "installer-state/last.json").read_text())
+        if self.args.force_rollback:
+            if report["outcome"] != "rolled-back":
+                raise RuntimeError(f"forced rollback did not roll back: {report['outcome']}; see installer.log")
+            if sandbox.version() != sandbox.old.name or sandbox.serving_digest() != sha256(sandbox.old / "t3"):
+                raise ValueError("old runtime is not serving after forced rollback")
+            return
         if result.returncode or report["outcome"] not in ("installed", "current"):
             raise RuntimeError(f"hard installer failed: {report['outcome']}; see installer.log")
         if sandbox.version() != self.version or sandbox.serving_digest() != self.candidate_digest:
@@ -119,6 +127,13 @@ class Rehearsal:
             tick = time.monotonic()
             self.install()
             self.mark("install", tick)
+            if self.args.force_rollback:
+                self.phase = "rollback-verify"
+                tick = time.monotonic()
+                proof = self.rollback_proof(workload)
+                self.mark("rollback-verify", tick)
+                result = {"result": "ROLLBACK-PROOF", "releaseEligible": False, "proof": str(proof)}
+                return self.report(result)
             self.phase = "verify"
             tick = time.monotonic()
             post, evidence = workload.verify()
@@ -138,10 +153,31 @@ class Rehearsal:
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, TimeoutError) as error:
             blocked = "environment-refused" if "sandbox" in str(error) or "live T3" in str(error) else "environment-blocked"
             result = {"result": blocked if self.phase in ("prepare", "baseline") else "FAIL", "phase": self.phase, "error": str(error)}
-        finally:
-            self.sandbox.close()
+        return self.report(result)
+
+    def report(self, result):
+        self.sandbox.close()
         result = {**result, "timings": self.timings, "elapsedSeconds": round(time.monotonic() - self.clock, 3), "startedAt": self.started, "finishedAt": now()}
         if self.sandbox.evidence.exists():
             (self.sandbox.evidence / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps(result, indent=2), flush=True)
-        return 0 if result["result"] in ("PASS", "COMPATIBILITY-PROBE") else 1
+        return 0 if result["result"] in ("PASS", "COMPATIBILITY-PROBE", "ROLLBACK-PROOF") else 1
+
+    def rollback_proof(self, workload):
+        state = self.sandbox.evidence / "installer-state"
+        writes = json.loads((state / "candidate-writes.json").read_text())
+        receipt = json.loads((state / "receipts" / f"install-{self.args.target_host}.json").read_text())
+        if receipt["backup"].get("method") != "binary-rollback":
+            raise ValueError(f"rollback used {receipt['backup'].get('method')}, not binary-rollback")
+        shown = self.sandbox.t3("thread", "show", writes["threadId"], "--messages", "50", "--json")
+        if not any(message["role"] == "assistant" and message["text"].strip() == writes["nonce"] for message in shown["messages"]):
+            raise ValueError("old runtime cannot read the candidate's turn reply")
+        snoozed = shown["thread"].get("snoozedUntil")
+        if not snoozed or datetime.fromisoformat(snoozed.replace("Z", "+00:00")) != datetime.fromisoformat(writes["snoozedUntil"]):
+            raise ValueError("old runtime cannot read the candidate's snooze")
+        post, evidence = workload.verify()
+        proof = {"candidateWrites": writes, "backup": receipt["backup"], "receiptOutcome": receipt["outcome"], "oldReadBack": {"thread": shown["thread"], "messages": shown["messages"]},
+                 "servingAfterRollback": {"version": self.sandbox.version(), "digest": self.sandbox.serving_digest()}, "oldRuntimeWrites": post, "workload": evidence}
+        path = self.sandbox.evidence / "rollback-proof.json"
+        path.write_text(json.dumps(proof, indent=2) + "\n")
+        return path
