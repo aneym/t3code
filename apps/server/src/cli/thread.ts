@@ -16,21 +16,18 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as References from "effect/References";
 import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as ServerConfig from "../config.ts";
-import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
+import type { McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { openThreadCliSession } from "./threadCliSession.ts";
 
 /**
  * Short enough that a run which stops to ask the user something is noticed
@@ -199,8 +196,8 @@ const makeThreadTools = (session: McpToolSession, origin: string) => {
 export type ThreadTools = ReturnType<typeof makeThreadTools>;
 
 /**
- * Signs in as a short-lived MCP client of the running server, the same way an
- * outside agent does, and revokes that session when the command ends.
+ * Signs in as an MCP client of the running server, the same way an outside
+ * agent does, and reuses that session until it nears expiry.
  */
 const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
   flags: { readonly baseDir: Option.Option<string> },
@@ -214,33 +211,14 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
       return yield* new ThreadServerNotRunningError({ baseDir: config.baseDir });
     }
     const origin = runtimeState.value.origin;
-    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const issued = yield* Effect.acquireRelease(
-      environmentAuth.issueMcpClientSession({
-        label: "t3 thread cli",
-        // The CLI runs as the machine's owner. New threads still start at
-        // the project's default mode, never at this ceiling by default.
-        access: "full-access",
-        client: { deviceType: "bot" },
+    const session = yield* openThreadCliSession(config, new URL("/mcp", origin).href).pipe(
+      Effect.catchTags({
+        AcpMcpBridgeError: (cause) =>
+          Effect.fail(new ThreadServerUnreachableError({ origin, cause })),
       }),
-      (session) =>
-        environmentAuth.revokeSession(session.sessionId).pipe(Effect.ignore({ log: true })),
     );
-    const session = yield* mcpToolSession({
-      endpoint: new URL("/mcp", origin).href,
-      authorization: `Bearer ${issued.token}`,
-      clientName: "t3-thread-cli",
-    }).pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
     return yield* run(makeThreadTools(session, origin));
-  }).pipe(
-    Effect.scoped,
-    Effect.provide(
-      EnvironmentAuth.layerRuntime.pipe(
-        Layer.provide(ServerConfig.layer(config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
-      ),
-    ),
-  );
+  }).pipe(Effect.scoped);
 });
 
 const readMessageArgument = Effect.fn("cli.thread.readMessage")(function* (argument: string) {
