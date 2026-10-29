@@ -170,7 +170,11 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
-import { makeQueuedRunSendAll, sendAllStartRun } from "./QueuedRunSendAll.ts";
+import {
+  isBlockedCompletionRun,
+  makeQueuedRunSendAll,
+  sendAllStartRun,
+} from "./QueuedRunSendAll.ts";
 import { makeQueuedSteerRecovery } from "./QueuedSteerRecovery.ts";
 import { queuedRunBatch, queuedRunBatchEvents } from "./QueuedRunBatch.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
@@ -1316,8 +1320,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             yield* offerDelegatedCompletionDelivery(threadId, run.id);
           }
         }
-        const held = before.runs.filter((run) =>
-          releasesQueueHoldAtRunEnd(run, ended, before.thread.createdBy === "agent"),
+        const held = before.runs.filter(
+          (run) =>
+            releasesQueueHoldAtRunEnd(run, ended, before.thread.createdBy === "agent") &&
+            !(ended?.retainBlockedCompletionHolds && isBlockedCompletionRun(before, run)),
         );
         if (held.length > 0) {
           const now = yield* DateTime.now;
@@ -1761,6 +1767,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       };
       const startingRun: OrchestrationV2Run = {
         ...queuedRun,
+        ...(options?.sendAll ? { retainBlockedCompletionHolds: true } : {}),
         providerThreadId: queuedProviderThread.id,
         ordinal,
         status: "starting",

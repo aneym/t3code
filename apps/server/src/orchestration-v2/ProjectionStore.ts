@@ -1,3 +1,4 @@
+import { preserveRunRecordedFields } from "./RecordedRunFields.ts";
 import { pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
@@ -671,23 +672,6 @@ function upsertProviderTurn(
       ? {}
       : { tokenUsage: next.tokenUsage ?? current?.tokenUsage }),
   });
-}
-
-function preserveRunRecordedFields(
-  current: OrchestrationV2Run | undefined,
-  next: OrchestrationV2Run,
-): OrchestrationV2Run {
-  if (current === undefined) return next;
-  return {
-    ...next,
-    ...(next.delegatedCompletion === undefined && current.delegatedCompletion !== undefined
-      ? { delegatedCompletion: current.delegatedCompletion }
-      : {}),
-    ...(next.restartCancelledBackgroundWork === undefined &&
-    current.restartCancelledBackgroundWork !== undefined
-      ? { restartCancelledBackgroundWork: current.restartCancelledBackgroundWork }
-      : {}),
-  };
 }
 
 function preserveCompletionDelivery(
@@ -1839,7 +1823,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         THEN json_set(
           ${payload},
           ${path},
-          json_extract(orchestration_v2_projection_runs.payload_json, ${path})
+          json(orchestration_v2_projection_runs.payload_json -> ${path})
         )
         ELSE ${payload}
       END
@@ -1971,8 +1955,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 requested_at = excluded.requested_at,
                 completed_at = excluded.completed_at,
                 payload_json = ${keepRecordedRunField(
-                  keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
-                  "$.restartCancelledBackgroundWork",
+                  keepRecordedRunField(
+                    keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
+                    "$.restartCancelledBackgroundWork",
+                  ),
+                  "$.retainBlockedCompletionHolds",
                 )}
             `;
               break;
