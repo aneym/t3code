@@ -14,6 +14,11 @@ import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpRespon
 
 export class AcpMcpBridgeError extends Error {
   readonly _tag = "AcpMcpBridgeError";
+  readonly status: number | undefined;
+  constructor(message: string, options?: ErrorOptions & { readonly status?: number }) {
+    super(message, options);
+    this.status = options?.status;
+  }
 }
 
 const bridgeError = (cause: unknown): AcpMcpBridgeError =>
@@ -102,7 +107,9 @@ export const mcpToolSession = (
     if (!response.ok) {
       yield* discardResponseBody(response);
       return yield* Effect.fail(
-        new AcpMcpBridgeError(`T3 Code MCP endpoint responded with HTTP ${response.status}.`),
+        new AcpMcpBridgeError(`T3 Code MCP endpoint responded with HTTP ${response.status}.`, {
+          status: response.status,
+        }),
       );
     }
     const payloads = yield* Stream.runCollect(responsePayloads(response, bridgeError));
