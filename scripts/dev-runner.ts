@@ -643,11 +643,11 @@ const prepareFirstStart = Effect.fn("dev-runner.prepareFirstStart")(function* (i
           );
         } else {
           yield* Effect.logInfo(
-            `[dev-runner] seeding ${input.worktreeHome} from ${source} (read-only). --no-seed or T3CODE_DEV_SEED=0 skips this.`,
+            `[dev-runner] seeding ${input.worktreeHome} from ${source} (read-only; reflink or consistent read). --no-seed/T3CODE_DEV_SEED=0 skips.`,
           );
           yield* runRepoScript(
             "apps/server/scripts/migrate-dev-db.ts",
-            ["--base-dir", input.worktreeHome, "--source", source],
+            ["--base-dir", input.worktreeHome],
             input.env,
           );
         }
