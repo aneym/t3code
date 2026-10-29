@@ -44,7 +44,12 @@ const handlers = {
       const { worktreePath, branch } = thread;
       return yield* WorktreeTransfer.WorktreeTransfer.pipe(
         Effect.flatMap((transfer) =>
-          transfer.exportBranch({ worktreePath, branch, bases: input.bases }),
+          transfer.exportBranch({
+            worktreePath,
+            branch,
+            bases: input.bases,
+            branches: input.branches,
+          }),
         ),
         Effect.provide(WorktreeTransfer.layer),
         Effect.mapError(

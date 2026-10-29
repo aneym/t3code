@@ -128,7 +128,8 @@ const make = Effect.gen(function* () {
     const exported = yield* forwarding
       .call(scope, WorktreeToolkit.tools.t3_worktree_export, remote.environmentId, {
         threadId: remote.threadId,
-        bases: [remote.worktreeBase, ...branches],
+        bases: [remote.worktreeBase, ...branches.map(({ commit }) => commit)],
+        branches: branches.map(({ name }) => name),
       })
       .pipe(
         Effect.asSome,
@@ -150,9 +151,18 @@ const make = Effect.gen(function* () {
     const local =
       bundle === null || cwd === undefined
         ? undefined
-        : yield* transfer
-            .importBranch({ cwd, exported: { ...out, bundle }, suffix })
-            .pipe(Effect.orElseSucceed(() => undefined));
+        : yield* transfer.importBranch({ cwd, exported: { ...out, bundle }, suffix }).pipe(
+            Effect.catch((error) =>
+              error.retryable
+                ? Effect.fail(
+                    new OrchestratorMcpFailure({
+                      code: "orchestration_error",
+                      message: error.message,
+                    }),
+                  )
+                : Effect.void,
+            ),
+          );
     if (local === undefined)
       return `Its ${out.commitCount} commit${out.commitCount === 1 ? "" : "s"} are on ${there}; they could not be brought back.${left}`;
     return `Branch ${local} here has its ${out.commitCount} commit${out.commitCount === 1 ? "" : "s"} (head ${out.headCommit.slice(0, 12)}) on ${out.baseCommit.slice(0, 12)}, from ${there}.${left}\n${out.diffStat}`;
