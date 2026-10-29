@@ -1,15 +1,27 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import * as Schema from "effect/Schema";
+import type { SidebarAgentsSettings } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import type { KeyboardEvent, MouseEvent } from "react";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 
-import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { readLocalApi } from "../../localApi";
+import { environmentPresentations } from "../../state/presentation";
 import { railsAgentHandle } from "./railsAgents";
 
-const PINNED_KEY = "t3code:sidebar-agents:pinned";
-const PinnedKeys = Schema.Array(Schema.String);
 const DEFAULT_PINNED_KEYS: ReadonlyArray<string> = ["cos"];
+
+const sidebarAgentsAtom = Atom.make((get) =>
+  [
+    ...get(environmentPresentations.presentationsAtom).values(),
+  ].reduce<SidebarAgentsSettings | null>((newest, presentation) => {
+    const entry = presentation.serverConfig?.settings.sidebarAgents ?? null;
+    return entry !== null && (newest === null || entry.updatedAt > newest.updatedAt)
+      ? entry
+      : newest;
+  }, null),
+).pipe(Atom.withLabel("web-sidebar-agents"));
 
 export function sidebarProjectPinKey(project: EnvironmentProject) {
   return (
@@ -18,11 +30,19 @@ export function sidebarProjectPinKey(project: EnvironmentProject) {
 }
 
 export function useSidebarPins() {
-  const [pinnedKeys, setPinnedKeys] = useLocalStorage(PINNED_KEY, DEFAULT_PINNED_KEYS, PinnedKeys);
+  const synced = useAtomValue(sidebarAgentsAtom);
+  const updateSettings = useUpdatePrimarySettings();
+  const pinnedKeys = synced?.pinned ?? DEFAULT_PINNED_KEYS;
   const toggle = (key: string) =>
-    setPinnedKeys((keys) =>
-      keys.includes(key) ? keys.filter((entry) => entry !== key) : [...keys, key],
-    );
+    updateSettings({
+      sidebarAgents: {
+        pinned: pinnedKeys.includes(key)
+          ? pinnedKeys.filter((entry) => entry !== key)
+          : [...pinnedKeys, key],
+        hidden: synced?.hidden ?? [],
+        updatedAt: new Date().toISOString(),
+      },
+    });
   const showMenu = async (
     key: string,
     name: string,
