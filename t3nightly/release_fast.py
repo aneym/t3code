@@ -57,8 +57,9 @@ def drive_fast(args):
     invocation = json.loads(coordinator_status.read_text()) if coordinator_status.exists() else {}
     start = existing.get("monotonicStart", invocation.get("monotonicStart", time.monotonic()))
     started_at = existing.get("start", utc_now())
-    done, failed, running = set(), set(), {}
-    pending = {node.id: node for node in FAST_GRAPH if not (args.rehearse_only and node.id in LIVE_NODES)}
+    advisory = {node.id for node in FAST_GRAPH if not node.gating}
+    done, failed, running = set(), set(existing.get("failed", [])) & advisory, {}
+    pending = {node.id: node for node in FAST_GRAPH if not (args.rehearse_only and node.id in LIVE_NODES) and node.id not in failed}
     recorded = set(existing.get("recorded", []))
     completed_at = existing.get("releaseSeconds")
     while pending or running:
