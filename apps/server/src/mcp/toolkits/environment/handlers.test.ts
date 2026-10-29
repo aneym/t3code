@@ -1,3 +1,4 @@
+import { HostResources } from "../../../resourceTelemetry/HostResources.ts";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -33,6 +34,7 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
     const checked = yield* Deferred.make<void>();
     const layerDependencies = Layer.mergeAll(
       ThreadCommandExecutor.layer,
+      Layer.mock(HostResources)({}),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId,
         requestNamespace: "provider:preferences",

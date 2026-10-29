@@ -1,3 +1,4 @@
+import { HostResources } from "../resourceTelemetry/HostResources.ts";
 import * as AgentHomes from "../agents/AgentHomeService.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -47,6 +48,7 @@ import budget from "./agentContextBudget.json" with { type: "json" };
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
   Layer.mock(DeviceService)({}),
+  Layer.mock(HostResources)({}),
   Layer.mock(DocumentText)({}),
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),
