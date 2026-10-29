@@ -1,14 +1,13 @@
 import {
   CommandId,
   type OrchestrationV2Run,
-  type RunId,
   ServerPrepareRestartError,
   type ServerRestartStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { restartSourceSuperseded } from "./RestartDispatchPolicy.ts";
+import { restartSourceSupersededAtDispatch } from "./RestartDispatchPolicy.ts";
 
 const endedOnItsOwn = (status: OrchestrationV2Run["status"]) =>
   status === "failed" || status === "interrupted" || status === "rolled_back";
@@ -20,18 +19,12 @@ export const restartStatus = Effect.fn("RestartStatus.read")(
     const effects = yield* outbox.listByCommandId(
       CommandId.make(`command:restart-handoff:${epoch}`),
     );
+    const preparedHandoffs = yield* outbox.restartHandoffs;
     const threads: ServerRestartStatus["threads"][number][] = [];
     for (const effect of effects) {
       if (effect.request.type !== "provider-runtime.restart-handoff") continue;
       const projection = yield* projections.getThreadProjection(effect.threadId);
       const handoff = effect.request.handoff;
-      const prepared = (id: RunId) =>
-        effects.some(
-          (other) =>
-            other.threadId === effect.threadId &&
-            other.request.type === "provider-runtime.restart-handoff" &&
-            other.request.handoff.runIds.includes(id),
-        );
       const sources: ServerRestartStatus["threads"][number]["sources"][number][] = (
         handoff.sourceRunIds ?? handoff.runIds
       ).map((sourceRunId) => {
@@ -69,11 +62,7 @@ export const restartStatus = Effect.fn("RestartStatus.read")(
           return { sourceRunId, state: "completed", reason: source.status };
         if (
           source?.status === "cancelled" &&
-          restartSourceSuperseded(
-            projection.runs,
-            source,
-            prepared(source.id) ? prepared : undefined,
-          )
+          restartSourceSupersededAtDispatch(projection, source, preparedHandoffs)
         )
           return { sourceRunId, state: "completed", reason: "superseded" };
         return { sourceRunId, state: "pending" };

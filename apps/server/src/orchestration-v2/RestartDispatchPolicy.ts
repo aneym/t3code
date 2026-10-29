@@ -25,15 +25,16 @@ export function restartSourceSuperseded(
   );
 }
 
-export function restartDispatchAllowed(
-  projection: Pick<
-    OrchestrationV2ThreadProjection,
-    "thread" | "runs" | "runtimeRequests" | "providerTurns"
-  >,
+type DispatchProjection = Pick<
+  OrchestrationV2ThreadProjection,
+  "thread" | "runs" | "runtimeRequests" | "providerTurns"
+>;
+
+function restartDispatchPreparation(
+  projection: DispatchProjection,
   sourceRunId: RunId,
   preparedHandoffs: ReadonlyArray<OrchestrationEffectV2>,
 ) {
-  const source = projection.runs.find((run) => run.id === sourceRunId);
   const covered = (id: RunId) =>
     preparedHandoffs.some(
       (effect) =>
@@ -53,6 +54,25 @@ export function restartDispatchAllowed(
         ) &&
         request.restartContinuationRunIds?.includes(sourceRunId),
     ) || covered(sourceRunId);
+  return { prepared, covered };
+}
+
+export function restartSourceSupersededAtDispatch(
+  projection: DispatchProjection,
+  source: OrchestrationV2Run,
+  preparedHandoffs: ReadonlyArray<OrchestrationEffectV2>,
+) {
+  const { prepared, covered } = restartDispatchPreparation(projection, source.id, preparedHandoffs);
+  return restartSourceSuperseded(projection.runs, source, prepared ? covered : undefined);
+}
+
+export function restartDispatchAllowed(
+  projection: DispatchProjection,
+  sourceRunId: RunId,
+  preparedHandoffs: ReadonlyArray<OrchestrationEffectV2>,
+) {
+  const source = projection.runs.find((run) => run.id === sourceRunId);
+  const { prepared } = restartDispatchPreparation(projection, sourceRunId, preparedHandoffs);
   return (
     source !== undefined &&
     !projection.runtimeRequests.some(
@@ -66,6 +86,6 @@ export function restartDispatchAllowed(
     projection.thread.archivedAt === null &&
     projection.thread.deletedAt === null &&
     projection.thread.providerInstanceId === source.providerInstanceId &&
-    !restartSourceSuperseded(projection.runs, source, prepared ? covered : undefined)
+    !restartSourceSupersededAtDispatch(projection, source, preparedHandoffs)
   );
 }
