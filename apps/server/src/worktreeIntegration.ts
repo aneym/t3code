@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import * as Effect from "effect/Effect";
 
 import type * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -11,12 +13,20 @@ export function makeWorktreeIntegrationCheck(git: GitVcsDriver.GitVcsDriver["Ser
     headSha: string,
   ) {
     const run = (operation: string, args: ReadonlyArray<string>) =>
-      git.execute({ operation, cwd, args: [...args], allowNonZeroExit: true }).pipe(
-        Effect.map((result) =>
-          result.exitCode === 0 && !result.stdoutTruncated ? result.stdout : null,
-        ),
-        Effect.orElseSucceed(() => null),
-      );
+      git
+        .execute({
+          operation,
+          cwd,
+          args: ["--no-replace-objects", ...args],
+          env: { GIT_GRAFT_FILE: NodeOS.devNull, GIT_NO_REPLACE_OBJECTS: "1" },
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.map((result) =>
+            result.exitCode === 0 && !result.stdoutTruncated ? result.stdout : null,
+          ),
+          Effect.orElseSucceed(() => null),
+        );
     const bases = yield* run("StorageCleanup.contentMergeBases", [
       "merge-base",
       "--all",
