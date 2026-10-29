@@ -1,4 +1,5 @@
 import hashlib
+import json
 import shutil
 import sys
 import tempfile
@@ -8,6 +9,17 @@ from pathlib import Path
 
 from .release_approval import require_approval, require_archive_smoke, verdict_path
 from .release_signatures import verify_archive
+
+
+def require_smoke(args, name, digest):
+    if args.rehearsal:
+        return
+    if not args.smoke_verdict:
+        require_archive_smoke(args.version, verdict_path(args.version, args.verdict), name, digest)
+        return
+    smoke = json.loads(Path(args.smoke_verdict).read_text())
+    if (smoke.get("kind"), smoke.get("ok"), smoke.get("version"), smoke.get("archiveSha256")) != ("t3-smoke", True, args.version, digest):
+        raise ValueError(f"e2e smoke verdict does not pass for {name}")
 
 
 @contextmanager
@@ -36,6 +48,6 @@ def checked_assets(args):
                 raise ValueError("release checksum does not match the downloaded archive")
         with archive.open("rb") as handle:
             digest = hashlib.file_digest(handle, "sha256").hexdigest()
-        require_archive_smoke(args.version, verdict_path(args.version, args.verdict), name, digest)
+        require_smoke(args, name, digest)
         (directory / "SHA256SUMS").write_text(f"{digest}  {name}\n")
         yield directory
