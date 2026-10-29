@@ -54,7 +54,7 @@ def serving_version():
 
 
 def resolve_topic(repo, topic):
-    for ref in (f"refs/heads/{topic}", f"refs/remotes/origin/{topic}"):
+    for ref in (f"refs/remotes/origin/{topic}", f"refs/heads/{topic}"):
         result = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], capture_output=True, text=True, check=False)
         if result.returncode == 0:
             return result.stdout.strip()

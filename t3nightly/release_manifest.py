@@ -21,6 +21,7 @@ VERSION = re.compile(r"(\d+\.\d+\.\d+-nightly\.\d+\.\d+)\.aneym\.\d+")
 ENTRY = re.compile(r"\[(\d+),\s*\"([^\"]+)\",\s*(Migration\d+)\]")
 IMPORT = re.compile(r"import (Migration\d+) from \"\./(Migrations/[^\"]+)\"")
 UNHASHED = ("__pycache__", ".pyc")
+CONNECTION_ONLY = re.compile(r"//.*|yield\* sql`PRAGMA (?:busy_timeout|cache_size|temp_store|mmap_size) = \d+;?`;")
 
 
 def blobs(tree, ref, paths):
@@ -157,10 +158,18 @@ def topics(tree, base, head):
     return rows
 
 
+def connection_only(tree, base, head, path):
+    lines = git(tree, "diff", "-U0", base, head, "--", path).splitlines()
+    edits = [line[1:].strip() for line in lines if line[:1] in "+-" and not line.startswith(("+++", "---"))]
+    return bool(edits) and all(not edit or CONNECTION_ONLY.fullmatch(edit) for edit in edits)
+
+
 def compatibility(tree, base, head):
     changed = git(tree, "diff", "--name-only", base, head).splitlines()
     migrations = [path for path in changed if path.startswith(MIGRATION_PATHS)]
     persisted = [path for path in changed if path.startswith(PERSISTED_STATE_PATHS) and path not in migrations]
+    connection = [path for path in persisted if connection_only(tree, base, head, path)]
+    persisted = [path for path in persisted if path not in connection]
     base_tag, head_tag = newest_tag(tree, base), newest_tag(tree, head)
     rebased = git(tree, "tag", "--merged", head, "--no-merged", base, "-l", NIGHTLY_TAGS).split()
     old, new = migration_identity(tree, base), migration_identity(tree, head)
@@ -177,6 +186,7 @@ def compatibility(tree, base, head):
         "changedFiles": len(changed),
         "migrationFiles": migrations,
         "persistedStateFiles": persisted,
+        "connectionOnlyFiles": connection,
         "upstreamTag": {"base": base_tag, "candidate": head_tag, "newlyMerged": rebased},
         "persistedState": "compatible" if not (migrations or persisted) else "unproved",
         "binaryRollback": not reasons,
