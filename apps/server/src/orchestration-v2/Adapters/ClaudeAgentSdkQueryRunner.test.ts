@@ -29,8 +29,8 @@ import {
   ClaudeAgentSdkQueryRunner,
   type ClaudeAgentSdkQueryOpenInput,
   layerQueryRunner,
-  spawnClaudeProcessGroup,
 } from "./ClaudeAdapterV2.ts";
+import { spawnClaudeProcessGroup } from "./ClaudeProcessGroup.ts";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 

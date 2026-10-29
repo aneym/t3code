@@ -137,8 +137,8 @@ const readClaudeCancelledSubagentResumeTranscript = Effect.fn(
             message: {
               ...frame.message.message,
               content: [
-                "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
-                "- subagent: Audit src/math.ts (id a44c0ed810da9e4f3)",
+                "Note: the T3 server restarted while this background work ran, and it will not report back on its own. Now, without asking, take the action listed for each item you still need, or resume or restart it yourself where none is listed, and wait for its result:",
+                '- subagent: Audit src/math.ts (id a44c0ed810da9e4f3). Resume it: SendMessage to "a44c0ed810da9e4f3" asking it to finish its task and report back; if SendMessage cannot find it, launch it again with its original prompt.',
                 "",
                 "User message:",
                 frame.message.message.content,

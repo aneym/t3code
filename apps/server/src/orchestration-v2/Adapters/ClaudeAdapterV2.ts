@@ -154,7 +154,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as ThreadSessionRestarts from "../ThreadSessionRestarts.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
-import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
+import { spawnClaudeProcessGroup } from "./ClaudeProcessGroup.ts";
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
@@ -328,41 +328,6 @@ const WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS = 500;
 // A steer waits at most this long, from its request, for its foreground
 // subagents to move to the background before it is sent.
 const BACKGROUND_MOVE_TIMEOUT_MS = 5_000;
-
-const CLAUDE_GROUP_WATCH_SCRIPT = [
-  "{ trap '' TERM; read -r _ <&3; kill -TERM 0; sleep 5; kill -KILL 0; } </dev/null >/dev/null 2>&1 &",
-  'exec "$@" 3<&-',
-].join("\n");
-
-/**
- * Kill the CLI's group on exit to stop MCP grandchildren; `onExit` stops its agent scope for
- * setsid daemons. The CLI keeps working after its pipes close, so a watcher stops the group on
- * EOF from a pipe only this server holds, including when the server crashes.
- */
-export function spawnClaudeProcessGroup(
-  options: ClaudeSpawnOptions,
-  onExit?: () => void,
-): ClaudeSpawnedProcess {
-  const child = NodeChildProcess.spawn(
-    "/bin/sh",
-    ["-c", CLAUDE_GROUP_WATCH_SCRIPT, "t3-claude", options.command, ...options.args],
-    {
-      cwd: options.cwd,
-      env: options.env,
-      signal: options.signal,
-      stdio: ["pipe", "pipe", "ignore", "pipe"],
-      detached: true,
-    },
-  );
-  child.once("exit", () => {
-    try {
-      signalProcessGroup(child.pid ?? 0, "SIGKILL");
-    } catch {}
-    onExit?.();
-  });
-  // Node's typings make stdin and stdout nullable once stdio has a fourth entry; both are pipes.
-  return child as ClaudeSpawnedProcess;
-}
 
 export const ClaudeProviderCapabilitiesV2 = {
   sessions: {

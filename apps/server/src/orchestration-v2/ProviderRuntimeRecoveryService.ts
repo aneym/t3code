@@ -18,6 +18,7 @@ import {
   prepareForShutdown,
 } from "./RestartPreparation.ts";
 import { recoveryQueueHold } from "./QueueHoldPolicy.ts";
+import { rearmCancelledBackgroundWork } from "./RestartBackgroundRearm.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
@@ -172,8 +173,6 @@ export const make = Effect.gen(function* () {
       const pendingRequests = projection.runtimeRequests.filter(
         (request) => request.status === "pending",
       );
-      // The lost provider callback cannot resume; persisted questions can be
-      // answered by a new user message in threads that accept messages.
       const questions = pendingRequests.filter(
         (request) =>
           request.kind === "user_input" &&
@@ -495,7 +494,6 @@ export const make = Effect.gen(function* () {
           }
         }
       }
-      // No provider process survives the server; open native subagents can never report completion.
       for (const subagent of projection.subagents ?? []) {
         events.push(
           ...(yield* endOrphanedNativeSubagent({
@@ -580,9 +578,14 @@ export const make = Effect.gen(function* () {
           occurredAt: now,
           payload: {
             runId: noteRun.id,
-            restartCancelledBackgroundWork: mergeRestartCancelledBackgroundWork(
-              noteRun.restartCancelledBackgroundWork ?? [],
-              work,
+            restartCancelledBackgroundWork: yield* rearmCancelledBackgroundWork(
+              mergeRestartCancelledBackgroundWork(
+                noteRun.restartCancelledBackgroundWork ?? [],
+                work,
+              ),
+              projection,
+              providerThreadId,
+              projections,
             ),
           },
         });

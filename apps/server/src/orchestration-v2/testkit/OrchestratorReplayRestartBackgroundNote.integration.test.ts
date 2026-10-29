@@ -35,8 +35,8 @@ const SESSION_ID = "cca274e4-25ae-4171-b972-bbb31118517e";
 const FIRST_AFTER_RESTART = "Is the background subagent done yet?";
 const SECOND_AFTER_RESTART = "Thanks. Anything else?";
 const NOTE = [
-  "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
-  "- subagent: Background subagent test (id a2995bfced8019363)",
+  "Note: the T3 server restarted while this background work ran, and it will not report back on its own. Now, without asking, take the action listed for each item you still need, or resume or restart it yourself where none is listed, and wait for its result:",
+  '- subagent: Background subagent test (id a2995bfced8019363). Resume it: SendMessage to "a2995bfced8019363" asking it to finish its task and report back; if SendMessage cannot find it, launch it again with its original prompt.',
 ].join("\n");
 
 const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (

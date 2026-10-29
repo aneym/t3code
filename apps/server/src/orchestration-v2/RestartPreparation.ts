@@ -1,4 +1,5 @@
 import * as ServerSettings from "../serverSettings.ts";
+import { releaseClaudeBackgroundWork } from "./Adapters/ClaudeProcessGroup.ts";
 import { restartContinuationRun, unacceptedRestartRun } from "./RestartContinuation.ts";
 import * as Cause from "effect/Cause";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -156,11 +157,16 @@ export const importRestartHandoff = Effect.fn("RestartPreparation.importRestartH
 );
 export const prepareForShutdown = Effect.gen(function* () {
   const outbox = yield* EffectOutbox.EffectOutboxV2;
-  if ((yield* outbox.restartPrepared) !== undefined) return;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
+  if (enabled?.continueThreadsAfterServerUpdate === true) {
+    const released = releaseClaudeBackgroundWork();
+    if (released > 0)
+      yield* Effect.logInfo("Released Claude background work for restart", { released });
+  }
+  if ((yield* outbox.restartPrepared) !== undefined) return;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
-  const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
   if (!enabled) return;
   const threadIds = yield* projections.getRecoveryThreadIds("runtime");
   for (const threadId of threadIds) {

@@ -122,8 +122,13 @@ const MAX_NOTE_ENTRIES = 10;
 export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): string {
   const omitted = work.length - MAX_NOTE_ENTRIES;
   return [
-    "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
-    ...work.slice(0, MAX_NOTE_ENTRIES).map((entry) => `- ${entry.kind}: ${entry.label}`),
+    "Note: the T3 server restarted while this background work ran, and it will not report back on its own. Now, without asking, take the action listed for each item you still need, or resume or restart it yourself where none is listed, and wait for its result:",
+    ...work
+      .slice(0, MAX_NOTE_ENTRIES)
+      .map(
+        (entry) =>
+          `- ${entry.kind}: ${entry.label}${entry.rearm === undefined ? "" : `. ${entry.rearm}`}`,
+      ),
     ...(omitted > 0 ? [`- and ${omitted} more`] : []),
   ].join("\n");
 }
