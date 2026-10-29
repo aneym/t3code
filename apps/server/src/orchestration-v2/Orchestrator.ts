@@ -79,6 +79,7 @@ import {
   type ProviderSessionId,
   RunId,
   RuntimeMode,
+  THREAD_SESSION_RESTART_REASON,
   ThreadLinkedPullRequest,
   ThreadId,
   ThreadOrganizeRefusalReason,
@@ -4108,6 +4109,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: command.type,
           cause: `Provider session ${command.providerSessionId} does not belong to thread ${command.threadId}.`,
         });
+      }
+      if (command.reason === THREAD_SESSION_RESTART_REASON) {
+        const activity = yield* projectionStore
+          .getThreadRecords(command.threadId, ["runs", "providerThreads"])
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        const busy =
+          activity.runs.some((run) => isLiveRun(run) || run.status === "waiting") ||
+          activity.providerThreads.some(
+            (providerThread) => (providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+          );
+        if (busy) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "The agent is working or has background tasks. Restart the session after they finish.",
+          });
+        }
       }
       const now = yield* DateTime.now;
       yield* emit(

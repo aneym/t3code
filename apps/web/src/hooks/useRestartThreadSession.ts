@@ -43,7 +43,7 @@ export function useRestartThreadSession() {
     if (thread.runtime !== null) {
       const stopped = await stopThreadSession({
         environmentId: thread.environmentId,
-        input: { threadId: thread.id },
+        input: { threadId: thread.id, restart: true },
       });
       if (stopped._tag === "Failure") throw squashAtomCommandFailure(stopped);
     }

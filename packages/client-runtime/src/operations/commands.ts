@@ -27,6 +27,7 @@ import {
   type ThreadId,
   type UploadChatAttachment,
   type GuestMessageId,
+  THREAD_SESSION_RESTART_REASON,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -202,7 +203,9 @@ export interface RevertThreadCheckpointInput extends ThreadCommandInput {
   readonly turnCount?: number;
 }
 
-export type StopThreadSessionInput = ThreadCommandInput;
+export interface StopThreadSessionInput extends ThreadCommandInput {
+  readonly restart?: boolean;
+}
 
 export interface ForkThreadFromRunInput extends CommandMetadata {
   readonly sourceThreadId: ThreadId;
@@ -924,7 +927,7 @@ export const stopThreadSession = Effect.fn("EnvironmentCommands.stopThreadSessio
       commandId: CommandId.make(`${commandId}:detach:${session.id}`),
       threadId: input.threadId,
       providerSessionId: session.id,
-      reason: "client-requested",
+      reason: input.restart === true ? THREAD_SESSION_RESTART_REASON : "client-requested",
     });
   }
   return result;
