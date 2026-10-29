@@ -10,6 +10,7 @@ from pathlib import Path
 from .release_manifest import TARGETS, digest, engine_identity, load
 from .release_receipts import REHEARSAL_SCHEMA, provenance, seal, write
 from .release_signatures import cli_binary, verify_archive
+from .rehearsal_retention import retain
 from .rehearsal_sandbox import Sandbox, sha256
 from .rehearsal_workload import Workload
 
@@ -161,7 +162,13 @@ class Rehearsal:
         self.sandbox.close()
         result = {**result, "timings": self.timings, "elapsedSeconds": round(time.monotonic() - self.clock, 3), "startedAt": self.started, "finishedAt": now()}
         if self.sandbox.evidence.exists():
-            (self.sandbox.evidence / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+            path = self.sandbox.evidence / "result.json"
+            path.write_text(json.dumps(result, indent=2) + "\n")
+            try:
+                result = {**result, "retention": retain(self.sandbox.home.parent)}
+            except (OSError, subprocess.SubprocessError) as error:
+                result = {**result, "retention": {"error": str(error)}}
+            path.write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps(result, indent=2), flush=True)
         return 0 if result["result"] in ("PASS", "COMPATIBILITY-PROBE", "ROLLBACK-PROOF") else 1
 
