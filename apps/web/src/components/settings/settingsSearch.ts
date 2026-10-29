@@ -618,6 +618,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["automation sidebar placement webhook scheduled event"],
   },
   {
+    id: "queued-messages-answer-pending-input",
+    title: "Queued messages answer open questions",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["queue pending input ask question answer messages follow up"],
+  },
+  {
     id: "batch-queued-messages",
     title: "Send queued messages together",
     to: "/settings/chat",

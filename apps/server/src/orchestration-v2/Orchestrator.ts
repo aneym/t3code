@@ -1,4 +1,5 @@
 import { readRejection, tagRejection } from "./RejectionReason.ts";
+import { makePendingInputQueueRelease, isQueuedInputRelease } from "./PendingInputQueueRelease.ts";
 import {
   completionDeliveryRun,
   completionDeliveryMessage,
@@ -19,6 +20,7 @@ import {
   releasesQueueHoldAtRunEnd,
   stoppedQueueHold,
   usageLimitHoldsQueue,
+  providerInstanceDisabledForProject,
 } from "./QueueHoldPolicy.ts";
 import type {
   GuestShareId,
@@ -78,10 +80,8 @@ import {
   type OrchestrationV2TurnItem,
   latestProviderTurnForAttempt,
   parseGoalCommand,
-  orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
   ProviderInteractionMode,
-  resolveProviderInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
   type ProviderSessionId,
   RunId,
@@ -171,7 +171,12 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
-import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import {
+  isAutomaticCompletionRun,
+  queuedRunsInDeliveryOrder,
+  nextRunOrdinal,
+  wakeWorkStartedAt,
+} from "./QueuedRunOrder.ts";
 import { queuedRunBatch, queuedRunBatchEvents } from "./QueuedRunBatch.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
@@ -446,36 +451,6 @@ export interface OrchestratorV2Shape {
 export class OrchestratorV2 extends Context.Service<OrchestratorV2, OrchestratorV2Shape>()(
   "t3/orchestration-v2/Orchestrator/OrchestratorV2",
 ) {}
-
-/** Run ordinals can skip values: a queued run moves past newer runs when it starts. */
-function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs">): number {
-  return projection.runs.reduce((max, run) => Math.max(max, run.ordinal), 0) + 1;
-}
-
-/** Stamp at wake start; queued prompts lack start times and delegated results jump the queue. */
-function wakeWorkStartedAt(
-  runs: ReadonlyArray<OrchestrationV2Run>,
-  trigger: {
-    readonly notification?: unknown;
-    readonly delegatedCompletion?: unknown;
-    readonly restartContinuationOfRunId?: RunId | undefined;
-  },
-): Pick<OrchestrationV2Run, "workStartedAt"> {
-  if (
-    trigger.notification === undefined &&
-    trigger.delegatedCompletion === undefined &&
-    trigger.restartContinuationOfRunId === undefined
-  ) {
-    return {};
-  }
-  const previous = runs
-    .flatMap((run) => (run.startedAt === null ? [] : [{ run, startedAt: run.startedAt }]))
-    .toSorted(
-      (left, right) =>
-        DateTime.Order(right.startedAt, left.startedAt) || right.run.ordinal - left.run.ordinal,
-    )[0]?.run;
-  return previous === undefined ? {} : { workStartedAt: orchestrationV2RunWorkStartedAt(previous) };
-}
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
@@ -958,6 +933,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerSessions = yield* ProviderSessionManagerV2;
   const providerSwitchService = yield* ProviderSwitchServiceV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const queuedInputRelease = yield* makePendingInputQueueRelease();
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -1505,20 +1481,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         failedRun.status !== "completed" &&
         projection.thread.worktreePath === null;
       const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
-      const projectOverride =
-        settings.projectSettingsOverrides[projection.thread.projectId]?.providerInstances?.[
-          queuedRun.providerInstanceId
-        ]?.enabled;
-      const machineInstance = Object.hasOwn(
-        settings.providerInstances,
+      const instanceDisabledForProject = providerInstanceDisabledForProject(
+        settings,
+        projection.thread.projectId,
         queuedRun.providerInstanceId,
-      )
-        ? settings.providerInstances[queuedRun.providerInstanceId]
-        : undefined;
-      const instanceDisabledForProject =
-        projectOverride !== undefined
-          ? !projectOverride
-          : machineInstance !== undefined && !resolveProviderInstanceEnabled(machineInstance);
+      );
       if (
         worktreeMissing ||
         instanceDisabledForProject ||
@@ -12910,6 +12877,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.thread_id": commandThreadId(command),
     });
 
+    if (
+      isQueuedInputRelease(command) &&
+      !(yield* queuedInputRelease.isDue(command).pipe(mapDispatchError(command)))
+    )
+      return {
+        sequence: yield* eventSink.latestSequence().pipe(mapDispatchError(command)),
+        storedEvents: [],
+      };
+
     const existingReceipt = yield* commandReceipts.getByCommandId(command.commandId).pipe(
       Effect.mapError(
         (cause) =>
@@ -13223,6 +13199,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Stream.runForEach(handleRunUpdate),
       Effect.forkDetach,
     );
+
+  yield* queuedInputRelease.watch(dispatchWithReceipt);
 
   // A child whose run ends while its background tasks or its own subagents still run has no
   // result yet. When that work settles there is no run update to finalize it, so these events

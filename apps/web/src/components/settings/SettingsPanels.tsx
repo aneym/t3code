@@ -489,6 +489,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Rich text composer"]
       : []),
     ...(settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? ["Send shortcut"] : []),
+    ...(settings.queuedMessagesAnswerPendingInput !==
+    DEFAULT_UNIFIED_SETTINGS.queuedMessagesAnswerPendingInput
+      ? ["Queued messages answer open questions"]
+      : []),
     ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
       ? ["Follow-up behavior"]
       : []),
@@ -607,6 +611,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
+      queuedMessagesAnswerPendingInput: DEFAULT_UNIFIED_SETTINGS.queuedMessagesAnswerPendingInput,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
@@ -1196,6 +1201,36 @@ export function ChatSettingsPanel() {
                 <SelectItem value="steer">Steer</SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("queued-messages-answer-pending-input")}
+          serverScoped
+          settingKeys={["queuedMessagesAnswerPendingInput"]}
+          description="Notify the agent of queued messages so it can end its turn and read them next."
+          resetAction={
+            settings.queuedMessagesAnswerPendingInput !==
+            DEFAULT_UNIFIED_SETTINGS.queuedMessagesAnswerPendingInput ? (
+              <SettingResetButton
+                label="queued messages answer open questions"
+                onClick={() =>
+                  updateSettings({
+                    queuedMessagesAnswerPendingInput:
+                      DEFAULT_UNIFIED_SETTINGS.queuedMessagesAnswerPendingInput,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["queuedMessagesAnswerPendingInput"]}
+              checked={settings.queuedMessagesAnswerPendingInput}
+              onCheckedChange={(checked) =>
+                updateSettings({ queuedMessagesAnswerPendingInput: Boolean(checked) })
+              }
+              aria-label="Queued messages answer open questions"
+            />
           }
         />
         <AutomationPlacementSetting />

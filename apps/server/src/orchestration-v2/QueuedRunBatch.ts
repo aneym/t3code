@@ -190,7 +190,7 @@ export interface QueuedRunBatchPart {
   readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
 }
 
-function batchSender(part: QueuedRunBatchPart): string {
+export function queuedMessageSender(part: QueuedRunBatchPart): string {
   if (part.senderThreadId !== undefined) return `an agent in thread ${part.senderThreadId}`;
   return part.createdBy === "user"
     ? `the user (${part.creationSource})`
@@ -203,7 +203,7 @@ function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): string {
     `These ${parts.length} messages were queued separately while you were working. They are listed with their senders: task completions first, then queued messages in the order they were sent. Handle each one accordingly.`,
     ...parts.map(
       (part, index) =>
-        `Message ${index + 1} of ${parts.length}, from ${batchSender(part)}:\n${part.text}`,
+        `Message ${index + 1} of ${parts.length}, from ${queuedMessageSender(part)}:\n${part.text}`,
     ),
   ].join("\n\n");
 }
