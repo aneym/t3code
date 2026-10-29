@@ -1852,6 +1852,14 @@ it.live.each([
     repository: "scratch",
     reason: "Has a nested repository (scratch/)",
   },
+  {
+    state: "nested repository with parent-tracked files",
+    policy: "tracked-changes",
+    directory: "vendor",
+    repository: "vendor",
+    tracked: "vendor/README.md",
+    reason: "Has a nested repository (vendor/)",
+  },
 ] as const)("keeps $state local state in a settled, landed checkout", (row) =>
   runCleanupTest(
     Effect.gen(function* () {
@@ -1865,6 +1873,11 @@ it.live.each([
         yield* fixture.fs.writeFileString(`${fixture.repo}/.git/info/exclude`, "notes/\n");
       const ledger = `${fixture.worktree}/${row.directory}/ledger.md`;
       yield* fixture.fs.makeDirectory(`${fixture.worktree}/${row.directory}`, { recursive: true });
+      if ("tracked" in row) {
+        yield* fixture.fs.writeFileString(`${fixture.worktree}/${row.tracked}`, "tracked\n");
+        yield* fixture.command(fixture.worktree, ["add", row.tracked]);
+        yield* fixture.command(fixture.worktree, ["commit", "-qm", "track vendor"]);
+      }
       if ("repository" in row)
         yield* fixture.command(`${fixture.worktree}/${row.repository}`, ["init", "-q"]);
       yield* fixture.fs.writeFileString(ledger, "state\n");

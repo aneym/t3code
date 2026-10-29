@@ -221,6 +221,20 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       if (entry.endsWith("/") && (yield* fs.exists(path.join(cwd, entry, ".git"))))
         return `has a nested repository (${entry})`;
     }
+    // Git hides a nested repository inside a directory the parent also tracks.
+    const tracked = yield* git.execute({
+      operation: "StorageCleanup.trackedDirectories",
+      cwd,
+      args: ["ls-tree", "-r", "-d", "-z", "--format=%(objecttype) %(path)", "HEAD"],
+      maxOutputBytes: 4 * 1024 * 1024,
+    });
+    if (tracked.stdoutTruncated) return "tracked directories exceed the inspection limit";
+    for (const line of tracked.stdout.split("\0")) {
+      if (!line.startsWith("tree ")) continue;
+      const entry = line.slice("tree ".length);
+      if (yield* fs.exists(path.join(cwd, entry, ".git")))
+        return `has a nested repository (${entry}/)`;
+    }
     return null;
   });
 
