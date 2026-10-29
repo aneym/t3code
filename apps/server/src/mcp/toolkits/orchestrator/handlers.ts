@@ -60,10 +60,19 @@ const handlers = {
         );
       }),
   ),
-  t3_background_wait: McpToolAccess.actsAsCaller((input) =>
+  t3_background_wait: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
-      const { scope, threads } = yield* readCaller();
+      const { scope, threads, caller: shell } = yield* readCaller();
       const caller = yield* McpInvocationContext.requireThreadScope(scope, "t3_background_wait");
+      if (
+        shell?.archivedAt !== null ||
+        shell.providerInstanceId !== caller.thread.providerInstanceId
+      ) {
+        return yield* new OrchestratorMcpFailure({
+          code: "parent_not_active",
+          message: "The calling provider no longer owns this thread.",
+        });
+      }
       return yield* threads
         .awaitBackgroundTasks({
           threadId: caller.thread.threadId,
