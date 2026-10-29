@@ -51,12 +51,23 @@ function sendAllQueuedMembers(
   return members;
 }
 
+export function isBlockedCompletionRun(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
+  run: OrchestrationV2Run,
+): boolean {
+  return (
+    run.queueHeld === true &&
+    run.queueHoldReason === "blocked" &&
+    isAutomaticCompletionRun(projection, run)
+  );
+}
+
 export function sendAllStartRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
   return (
-    queuedRunsInDeliveryOrder(projection).find((run) =>
-      isAutomaticCompletionRun(projection, run),
+    queuedRunsInDeliveryOrder(projection).find(
+      (run) => !run.queueHeld && isAutomaticCompletionRun(projection, run),
     ) ?? sendAllQueuedMembers(projection)[0]?.run
   );
 }
@@ -128,11 +139,7 @@ export const makeQueuedRunSendAll = Effect.gen(function* () {
       return yield* fail("Continue the limited thread before resuming its queue.");
     const now = yield* DateTime.now;
     const released = new Set(members.map(({ run }) => run.id));
-    for (const event of queueReleaseEvents(
-      projection,
-      now,
-      (run) => released.has(run.id) || isAutomaticCompletionRun(projection, run),
-    ))
+    for (const event of queueReleaseEvents(projection, now, (run) => released.has(run.id)))
       yield* input.emit<OrchestrationV2DomainEvent>(event);
     if (target === undefined || first === undefined) return;
     const cancelUnsettled = yield* input.promote(
@@ -161,7 +168,18 @@ export const makeQueuedRunSendAll = Effect.gen(function* () {
     const targetRun = pending.findLast(
       (event) => event.type === "run.updated" && event.payload.id === target.id,
     );
-    const effectiveTarget = targetRun?.type === "run.updated" ? targetRun.payload : target;
+    const effectiveTarget = {
+      ...(targetRun?.type === "run.updated" ? targetRun.payload : target),
+      retainBlockedCompletionHolds: true,
+    };
+    yield* input.emit<OrchestrationV2DomainEvent>({
+      type: "run.updated",
+      threadId: command.threadId,
+      runId: target.id,
+      providerInstanceId: target.providerInstanceId,
+      occurredAt: now,
+      payload: effectiveTarget,
+    });
     for (const event of queuedRunBatchEvents({
       members: members.slice(1),
       projection,

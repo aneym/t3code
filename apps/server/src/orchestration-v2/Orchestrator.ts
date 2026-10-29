@@ -179,7 +179,7 @@ import {
   nextRunOrdinal,
   wakeWorkStartedAt,
 } from "./QueuedRunOrder.ts";
-import { makeQueuedRunSendAll, sendAllStartRun } from "./QueuedRunSendAll.ts";
+import { isBlockedCompletionRun, makeQueuedRunSendAll, sendAllStartRun } from "./QueuedRunSendAll.ts";
 import { makeQueuedSteerRecovery } from "./QueuedSteerRecovery.ts";
 import { queuedRunBatch, queuedRunBatchEvents } from "./QueuedRunBatch.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
@@ -1351,7 +1351,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : ended,
               view,
               options?.endedRunId === undefined,
-            ),
+            ) &&
+            !(ended?.retainBlockedCompletionHolds && isBlockedCompletionRun(view, run)),
         );
         if (held.length > 0) {
           const now = yield* DateTime.now;
@@ -1786,6 +1787,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       };
       const startingRun: OrchestrationV2Run = {
         ...queuedRun,
+        ...(options?.sendAll ? { retainBlockedCompletionHolds: true } : {}),
         providerThreadId: queuedProviderThread.id,
         ordinal,
         status: "starting",

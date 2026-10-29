@@ -19,7 +19,7 @@ export const makeQueuedSteerRecovery = Effect.gen(function* () {
   ) {
     if (!command.retrySteeringBatch) return [];
     const projection = yield* store
-      .getThreadRecords(command.threadId, ["messages", "turnItems"], {
+      .getThreadRecords(command.threadId, ["runs", "messages", "turnItems"], {
         messageRoles: ["user"],
         turnItemTypes: ["user_message"],
       })
@@ -30,7 +30,10 @@ export const makeQueuedSteerRecovery = Effect.gen(function* () {
       id: source.runId,
       userMessageId: source.id,
     }).filter((item) => item.parentItemId !== null);
-    if (members.length === 0) return [];
+    const retain = projection.runs.find(
+      (run) => run.id === source.runId,
+    )?.retainBlockedCompletionHolds;
+    if (members.length === 0 && !retain) return [];
     const firstEvent = pending.findLast(
       (event) =>
         event.type === "turn-item.updated" &&
@@ -60,7 +63,23 @@ export const makeQueuedSteerRecovery = Effect.gen(function* () {
             }
           : undefined;
     if (first === undefined || first.runId === source.runId) return [];
-    return recoveredBatchEvents(projection, first, members, firstEvent === undefined);
+    const carried = recoveredBatchEvents(projection, first, members, firstEvent === undefined);
+    const targetEvent = pending.findLast(
+      (event) => event.type === "run.updated" && event.payload.id === first.runId,
+    );
+    const target =
+      targetEvent?.type === "run.updated"
+        ? targetEvent.payload
+        : projection.runs.find((run) => run.id === first.runId);
+    if (retain && target !== undefined)
+      carried.push({
+        type: "run.updated",
+        threadId: command.threadId,
+        runId: target.id,
+        occurredAt: first.updatedAt,
+        payload: { ...target, retainBlockedCompletionHolds: true },
+      });
+    return carried;
   });
 });
 
