@@ -19,7 +19,7 @@ import {
 } from "./OrchestratorErrors.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { queuedRunBatchEvents } from "./QueuedRunBatch.ts";
-import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import { isAutomaticCompletionRun } from "./QueuedRunOrder.ts";
 import { queueReleaseEvents, usageLimitHoldsQueue } from "./QueueHoldPolicy.ts";
 
 type SendAllCommand = Extract<OrchestrationV2Command, { type: "queue.send-all" }>;
@@ -39,11 +39,7 @@ export function isBlockedCompletionRun(
 export function sendAllStartRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
-  return (
-    queuedRunsInDeliveryOrder(projection).find(
-      (run) => !run.queueHeld && isAutomaticCompletionRun(projection, run),
-    ) ?? sendAllQueuedMembers(projection)[0]?.run
-  );
+  return sendAllQueuedMembers(projection)[0]?.run;
 }
 
 export const makeQueuedRunSendAll = Effect.gen(function* () {

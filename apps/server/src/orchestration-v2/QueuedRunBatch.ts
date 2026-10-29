@@ -11,6 +11,7 @@ import {
   batchableQueuedMessage as batchableMessage,
   compatibleQueuedRuns,
   MAX_QUEUED_MESSAGE_BATCH_SIZE as MAX_BATCH_SIZE,
+  sendAllQueuedMembers,
 } from "@t3tools/shared/queuedMessages";
 
 import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
@@ -27,22 +28,13 @@ type DraftEvent = OrchestrationV2DomainEvent extends infer Event
     : never
   : never;
 
-function changesConversation(
-  projection: Pick<OrchestrationV2ThreadProjection, "messages">,
-  run: OrchestrationV2Run,
-): boolean {
-  const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-  return (
-    message !== undefined &&
-    (message.idleCompaction !== undefined || message.text.trimStart().startsWith("/"))
-  );
-}
-
 export function queuedRunBatch(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
   first: OrchestrationV2Run,
   explicitRelease = false,
 ): ReadonlyArray<QueuedRunBatchMember> {
+  if (explicitRelease)
+    return sendAllQueuedMembers(projection).filter(({ run }) => run.id !== first.id);
   if (batchableMessage(projection, first) === undefined) return [];
   const members: Array<QueuedRunBatchMember> = [];
   for (const run of queuedRunsInDeliveryOrder(projection)) {
