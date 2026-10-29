@@ -39,7 +39,7 @@ import {
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
-const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
+export const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
 const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
 export const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(256))
   .check(
@@ -305,7 +305,7 @@ export const OrchestratorMcpThreadStatus = Schema.Union([
 ]);
 export type OrchestratorMcpThreadStatus = typeof OrchestratorMcpThreadStatus.Type;
 
-const OrchestratorMcpProjectTarget = Schema.optional(
+export const OrchestratorMcpProjectTarget = Schema.optional(
   ProjectId.annotate({
     description: "Project to use. Default: your thread's project. Required outside a thread.",
   }),
@@ -323,22 +323,6 @@ export const OrchestratorMcpEnvironmentTarget = Schema.optional(
   }),
 );
 
-export const OrchestratorMcpThreadListInput = Schema.Struct({
-  environmentId: OrchestratorMcpEnvironmentTarget,
-  projectId: OrchestratorMcpProjectTarget,
-  allProjects: Schema.optional(Schema.Boolean),
-  statuses: Schema.optional(
-    Schema.Array(OrchestratorMcpThreadStatus).check(Schema.isMaxLength(10)),
-  ),
-  titleContains: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
-  settled: Schema.optional(Schema.Boolean),
-  snoozed: Schema.optional(Schema.Boolean),
-  includeSubagents: Schema.optional(Schema.Boolean),
-  cursor: Schema.optional(NonNegativeInt),
-  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
-});
-export type OrchestratorMcpThreadListInput = typeof OrchestratorMcpThreadListInput.Type;
-
 /** state is null until the host is read. */
 export const OrchestratorMcpThreadPullRequest = Schema.Struct({
   ...ThreadPullRequestKey.fields,
@@ -347,43 +331,6 @@ export const OrchestratorMcpThreadPullRequest = Schema.Struct({
   state: Schema.NullOr(PullRequestState),
 });
 export type OrchestratorMcpThreadPullRequest = typeof OrchestratorMcpThreadPullRequest.Type;
-
-export const OrchestratorMcpThreadListItem = Schema.Struct({
-  threadId: ThreadId,
-  projectId: ProjectId,
-  title: Schema.String,
-  link: Schema.optional(Schema.String),
-  createdBy: OrchestrationV2Actor,
-  creationSource: OrchestrationV2CreationSource,
-  status: OrchestratorMcpThreadStatus,
-  latestRunId: Schema.NullOr(RunId),
-  providerInstanceId: ProviderInstanceId,
-  model: Schema.String,
-  runtimeMode: RuntimeMode,
-  interactionMode: ProviderInteractionMode,
-  linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
-  pullRequests: Schema.optional(Schema.Array(OrchestratorMcpThreadPullRequest)),
-  settled: Schema.Boolean,
-  settledAt: Schema.NullOr(IsoDateTime),
-  snoozed: Schema.Boolean,
-  snoozedUntil: Schema.NullOr(IsoDateTime),
-  parentThreadId: Schema.NullOr(ThreadId),
-  relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
-  itemCount: NonNegativeInt,
-  createdAt: IsoDateTime,
-  updatedAt: IsoDateTime,
-});
-export type OrchestratorMcpThreadListItem = typeof OrchestratorMcpThreadListItem.Type;
-
-export const OrchestratorMcpThreadListResult = Schema.Struct({
-  /** null with `allProjects`. */
-  projectId: Schema.NullOr(ProjectId),
-  currentThreadId: Schema.NullOr(ThreadId),
-  threads: Schema.Array(OrchestratorMcpThreadListItem),
-  nextCursor: Schema.NullOr(NonNegativeInt),
-  total: NonNegativeInt,
-});
-export type OrchestratorMcpThreadListResult = typeof OrchestratorMcpThreadListResult.Type;
 
 // Codex hides `minimum` and `maximum` from the model, so a value above the maximum clamps on
 // decode instead of failing the call; pagination returns the rest. Values below 1 still fail:
@@ -493,26 +440,6 @@ export const OrchestratorMcpThreadReadResult = Schema.Struct({
   hasMore: Schema.Boolean,
 });
 export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadResult.Type;
-
-export const OrchestratorMcpThreadSendInput = Schema.Struct({
-  environmentId: OrchestratorMcpEnvironmentTarget,
-  threadId: ThreadId,
-  message: OrchestratorMcpPrompt,
-  mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
-  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-});
-export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
-
-export const OrchestratorMcpThreadSendResult = Schema.Struct({
-  threadId: ThreadId,
-  link: Schema.optional(Schema.String),
-  messageId: MessageId,
-  runId: RunId,
-  taskId: Schema.optional(NodeId),
-  status: OrchestrationV2RunStatus,
-  delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
-});
-export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
 
 export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,

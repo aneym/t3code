@@ -222,7 +222,7 @@ const CreateThreadsTool = Tool.make("create_threads", {
 
 const ThreadListTool = Tool.make("t3_thread_list", {
   description:
-    "List threads newest first, in one project or with `allProjects`. Page with `cursor`.",
+    "List threads newest first, in one project or with `allProjects`. Delegated child threads are left out; add `includeSubagents`, or `onlySubagents` to list just them, such as `statuses:['failed']` for failed children. Page with `cursor`.",
   parameters: OrchestratorMcpThreadListInput,
   success: OrchestratorMcpThreadListResult,
   failure: OrchestratorMcpFailure,
@@ -268,7 +268,7 @@ const ThreadUpdateTool = Tool.make("t3_thread_update", {
 
 const ThreadSendTool = Tool.make("t3_thread_send", {
   description:
-    "Send a message to any thread. The target cannot run with broader modes than yours. Default `queue`: a new turn without interrupting. Opt in to `auto` to start an idle thread, steer a running turn, or queue; `steer` for a mid-turn update; `restart` to interrupt and restart execution without pausing the queue. A send to a finished child thread starts a fresh task and returns its `taskId`. In your reply, name it as its `link` verbatim.",
+    "Send a message to any thread. The target cannot run with broader modes than yours. Default `queue`: a new turn without interrupting. Opt in to `auto` to start an idle thread, steer a running turn, or queue; `steer` for a mid-turn update; `restart` to interrupt and restart execution without pausing the queue. A send to a finished child thread starts a fresh task and returns its `taskId`. Pass a `clientRequestId` to retry a send that timed out: it is delivered once and the retry returns the same `receipt`. In your reply, name it as its `link` verbatim.",
   parameters: OrchestratorMcpThreadSendInput,
   success: OrchestratorMcpThreadSendResult,
   failure: OrchestratorMcpFailure,

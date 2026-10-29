@@ -398,7 +398,8 @@ it("readThread and sendToThread reach threads in other projects", async () => {
             Effect.succeed({
               run: { id: "run-foreign", status: "queued" },
               delivery: "started",
-            } as unknown as ThreadManagementService.ThreadManagementSendResult),
+              dispatch: { sequence: 1 },
+            } as never),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
