@@ -158,6 +158,8 @@ it("takes the T3 home once a legacy SSH-launched server holding it dies, even af
   const statePath = NodePath.join(home, "runtime", "service-state.json");
   const served = Promise.withResolvers<void>();
   const listener = NodeNet.createServer(() => served.resolve());
+  await NodeFSP.mkdir(NodePath.dirname(lockPath), { recursive: true });
+  await NodeFSP.mkdir(versionDir, { recursive: true });
   const owner = NodeChildProcess.spawn(
     process.execPath,
     [
@@ -172,14 +174,20 @@ process.stdin.on("end", () => process.exit()).resume();`,
     ],
     { stdio: ["pipe", "pipe", "ignore"] },
   );
+  const held = new Promise<void>((resolve, reject) => {
+    owner.stdout.once("data", () => resolve());
+    owner.once("error", reject);
+    owner.once("exit", (code, signal) =>
+      reject(new Error(`Owner exited before readiness: ${String(code ?? signal)}`)),
+    );
+  });
   const refused = Promise.withResolvers<void>();
   const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
     if (String(chunk).includes("owns this T3 home")) refused.resolve();
     return true;
   });
   try {
-    await NodeFSP.mkdir(NodePath.dirname(lockPath), { recursive: true });
-    await NodeFSP.mkdir(versionDir, { recursive: true });
+    await held;
     await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
     const address = listener.address();
     const port = typeof address === "object" && address !== null ? address.port : 0;
@@ -198,7 +206,6 @@ setInterval(() => {}, 1 << 30);
       protocol: SERVICE_LAUNCHER_PROTOCOL,
       activeVersion: "1.0.0",
     });
-    await new Promise((resolve) => owner.stdout.once("data", resolve));
     const legacyRecord = NodePath.join(home, "ssh-launch", "legacy");
     await NodeFSP.mkdir(legacyRecord, { recursive: true });
     await NodeFSP.writeFile(NodePath.join(legacyRecord, "pid"), `${String(owner.pid)}\n`);

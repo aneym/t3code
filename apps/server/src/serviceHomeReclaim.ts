@@ -202,9 +202,20 @@ async function homeOwned(baseDir: string): Promise<boolean> {
   const runtime = await readText(NodePath.join(stateDir, "server-runtime.json"));
   const pid = Number(/"pid"\s*:\s*(\d+)/.exec(runtime)?.[1]);
   const preLockOwner = !/"ownerId"\s*:/.test(runtime);
-  return pid > 1 && isAlive(pid) && (lockHeld === undefined || preLockOwner);
+  if (pid <= 1 || !isAlive(pid) || (lockHeld === false && !preLockOwner)) return false;
+  const recordedAt = Date.parse(/"startedAt"\s*:\s*"([^"]+)"/.exec(runtime)?.[1] ?? "");
+  if (!Number.isFinite(recordedAt)) return true;
+  const startedAt = Date.parse(`${await ps(pid, ["lstart"])} UTC`);
+  return !Number.isFinite(startedAt) || startedAt <= recordedAt + 1_000;
 }
 
-export async function freeOwnedHome(baseDir: string, acquire: boolean): Promise<boolean> {
-  return (await stopSshLaunchedServers(baseDir)) || (acquire && !(await homeOwned(baseDir)));
+export async function freeOwnedHome(baseDir: string) {
+  if (await stopSshLaunchedServers(baseDir)) return "reclaimed";
+  return (await homeOwned(baseDir)) ? "owned" : "free";
+}
+
+export async function homeStarted(baseDir: string, pid: number): Promise<boolean> {
+  const stateDir = NodePath.join(baseDir, "userdata");
+  const runtime = await readText(NodePath.join(stateDir, "server-runtime.json"));
+  return Number(/"pid"\s*:\s*(\d+)/.exec(runtime)?.[1]) === pid && ownerLockHeld(stateDir) === true;
 }
