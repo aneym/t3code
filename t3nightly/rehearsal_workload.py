@@ -110,7 +110,7 @@ class Workload:
         (self.sandbox.home / "release-gate").touch()
         nonce = f"RESUME_{uuid.uuid4().hex}"
         active = self.work["active-turn"]
-        result = self.sandbox.t3("thread", "send", active["threadId"], f"Reply with exactly {nonce} and nothing else. Do not use tools.", "--mode", "auto", "--json")
+        result = self.sandbox.t3("thread", "send", active["threadId"], f"Reply with exactly {nonce} and nothing else. Do not use tools.", "--mode", "queue", "--json")
         proof = self.reply({"threadId": active["threadId"], "runId": result["runId"]}, nonce)
         evidence = {"before": self.before, "after": after, "dispositions": dispositions, "queued": queued, "snoozedUntil": json.loads(snoozed)["snoozedUntil"], "resume": proof}
         return proof, evidence
