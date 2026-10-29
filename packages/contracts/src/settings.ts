@@ -1,3 +1,4 @@
+import { SidebarAgentsSettings } from "./sidebarAgents.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
@@ -113,12 +114,6 @@ export type SnoozePresetSetting = typeof SnoozePresetSetting.Type;
 export const SnoozePresetSettings = Schema.Array(SnoozePresetSetting).check(
   Schema.isMaxLength(MAX_SNOOZE_PRESETS),
 );
-export const SidebarAgentsSettings = Schema.Struct({
-  pinned: Schema.Array(Schema.String),
-  hidden: Schema.Array(Schema.String),
-  updatedAt: Schema.String,
-});
-export type SidebarAgentsSettings = typeof SidebarAgentsSettings.Type;
 export const DEFAULT_SNOOZE_PRESETS: ReadonlyArray<SnoozePresetSetting> = [
   { kind: "after", minutes: 60 },
   { kind: "after", minutes: 180 },

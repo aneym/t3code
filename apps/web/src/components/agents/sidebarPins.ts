@@ -15,7 +15,6 @@ import { railsAgentHandle } from "./railsAgents";
 
 const DEFAULT_PINNED_KEYS: ReadonlyArray<string> = ["cos"];
 const LOCAL_PINNED_KEY = "t3code:sidebar-agents:pinned";
-
 const LOCAL_HIDDEN_KEY = "t3code:sidebar-agents:hidden";
 const readLocalKeys = (key: string) => {
   try {
@@ -27,10 +26,11 @@ const readLocalKeys = (key: string) => {
 const localPinnedKeys = readLocalKeys(LOCAL_PINNED_KEY);
 const localHiddenKeys = readLocalKeys(LOCAL_HIDDEN_KEY);
 const migrationWrites = new Set<string>();
+let migrationComplete = false;
 let stopMigration: (() => void) | null = null;
 
 function watchMigrationWrite(updatedAt: string) {
-  if (localPinnedKeys === null && localHiddenKeys === null) return;
+  if (migrationComplete) return;
   migrationWrites.add(updatedAt);
   stopMigration ??= appAtomRegistry.subscribe(
     environmentPresentations.presentationsAtom,
@@ -50,6 +50,7 @@ function watchMigrationWrite(updatedAt: string) {
       }
       stopMigration?.();
       migrationWrites.clear();
+      migrationComplete = true;
     },
   );
 }
@@ -88,23 +89,33 @@ export function useSidebarPins() {
   const hiddenKeys = hiddenFrom(synced);
   const isPinned = (key: string) =>
     pinnedKeys.includes(key) || (!key.startsWith("project:") && !hiddenKeys.includes(key));
-  const toggle = (key: string) => {
+  const write = (change: Partial<Pick<SidebarAgentsSettings, "pinned" | "hidden" | "order">>) => {
     const current = appAtomRegistry.get(sidebarAgentsAtom);
-    const pinned = pinnedFrom(current);
-    const hidden = hiddenFrom(current);
-    const wasPinned =
-      pinned.includes(key) || (!key.startsWith("project:") && !hidden.includes(key));
     const next = {
-      pinned: wasPinned ? pinned.filter((entry) => entry !== key) : [...pinned, key],
-      hidden: [...hidden.filter((entry) => entry !== key), ...(wasPinned ? [key] : [])],
+      pinned: pinnedFrom(current),
+      hidden: hiddenFrom(current),
+      order: current?.order ?? [],
+      ...change,
       updatedAt: new Date(
-        Math.max(Date.now(), Date.parse(current?.updatedAt ?? "") + 1 || 0),
+        Math.max(Date.now(), (Date.parse(current?.updatedAt ?? "") || 0) + 1),
       ).toISOString(),
     };
     appAtomRegistry.set(pendingSidebarAgentsAtom, next);
     watchMigrationWrite(next.updatedAt);
     updateSettings({ sidebarAgents: next });
   };
+  const toggle = (key: string) => {
+    const current = appAtomRegistry.get(sidebarAgentsAtom);
+    const pinned = pinnedFrom(current);
+    const hidden = hiddenFrom(current);
+    const wasPinned =
+      pinned.includes(key) || (!key.startsWith("project:") && !hidden.includes(key));
+    write({
+      pinned: wasPinned ? pinned.filter((entry) => entry !== key) : [...pinned, key],
+      hidden: [...hidden.filter((entry) => entry !== key), ...(wasPinned ? [key] : [])],
+    });
+  };
+  const setOrder = (handles: ReadonlyArray<string>) => write({ order: [...handles] });
   const showMenu = async (
     key: string,
     name: string,
@@ -148,5 +159,13 @@ export function useSidebarPins() {
     );
     if (selected === "project-settings") openSettings(group);
   };
-  return { pinnedKeys, hiddenKeys, toggle, showMenu, showProjectMenu };
+  return {
+    pinnedKeys,
+    hiddenKeys,
+    order: synced?.order ?? [],
+    toggle,
+    setOrder,
+    showMenu,
+    showProjectMenu,
+  };
 }

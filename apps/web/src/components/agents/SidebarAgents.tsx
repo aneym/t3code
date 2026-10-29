@@ -1,6 +1,24 @@
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
+  GripVerticalIcon,
   CircleAlertIcon,
   CircleDashedIcon,
   CircleDotDashedIcon,
@@ -41,7 +59,14 @@ export function SidebarAgents({
   readonly jumpLabelByKey: ReadonlyMap<string, string> | null;
   readonly setProjectScope: (keys: readonly string[]) => void;
 }) {
-  const { toggle, showMenu } = useSidebarPins();
+  const { toggle, setOrder, showMenu } = useSidebarPins();
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const handles = pinned.map((agent) => agent.handle);
+  const name = (id: string | number) =>
+    pinned.find((agent) => agent.handle === id)?.name ?? String(id);
   const focusAction = useAgentFocusAction(setProjectScope);
   const routeTarget = useThreadRouteTarget();
   const environmentLabelById = new Map(
@@ -72,20 +97,53 @@ export function SidebarAgents({
   return (
     <div className="mt-2">
       <SidebarSection label="Agents" storageKey={AGENTS_SECTION_STORAGE_KEY}>
-        <ul aria-label="Agents" className="flex flex-col">
-          {pinned.map((agent) => (
-            <AgentRow
-              key={agent.handle}
-              {...rowProps(agent)}
-              jumpLabel={jumpLabelByKey?.get(sidebarAgentJumpKey(agent)) ?? null}
-              toggle={{
-                label: `Unpin ${agent.name}`,
-                icon: PinOffIcon,
-                onClick: () => toggle(agent.handle),
-              }}
-            />
-          ))}
-        </ul>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          modifiers={[restrictToVerticalAxis]}
+          accessibility={{
+            screenReaderInstructions: {
+              draggable:
+                "Press Space to pick up an agent. Use the arrow keys to move it, Space to drop, or Escape to cancel.",
+            },
+            announcements: {
+              onDragStart: ({ active }) => `Picked up ${name(active.id)}.`,
+              onDragOver: ({ active, over }) =>
+                over
+                  ? `${name(active.id)} is at position ${handles.indexOf(String(over.id)) + 1} of ${handles.length}, over ${name(over.id)}.`
+                  : `${name(active.id)} is outside the list.`,
+              onDragEnd: ({ active, over }) =>
+                over
+                  ? `Dropped ${name(active.id)} at position ${handles.indexOf(String(over.id)) + 1} of ${handles.length}.`
+                  : `Dropped ${name(active.id)} without moving.`,
+              onDragCancel: ({ active }) => `Reordering ${name(active.id)} cancelled.`,
+            },
+          }}
+          onDragEnd={({ active, over }) => {
+            if (over === null || active.id === over.id) return;
+            const from = handles.indexOf(String(active.id));
+            const to = handles.indexOf(String(over.id));
+            if (from < 0 || to < 0) return;
+            setOrder(arrayMove(handles, from, to));
+          }}
+        >
+          <SortableContext items={handles} strategy={verticalListSortingStrategy}>
+            <ul aria-label="Agents" className="flex flex-col">
+              {pinned.map((agent) => (
+                <AgentRow
+                  key={agent.handle}
+                  {...rowProps(agent)}
+                  jumpLabel={jumpLabelByKey?.get(sidebarAgentJumpKey(agent)) ?? null}
+                  toggle={{
+                    label: `Unpin ${agent.name}`,
+                    icon: PinOffIcon,
+                    onClick: () => toggle(agent.handle),
+                  }}
+                />
+              ))}
+            </ul>
+          </SortableContext>
+        </DndContext>
         {hidden.length > 0 ? (
           <SidebarSection
             label="Hidden"
@@ -126,6 +184,15 @@ function AgentRow(props: {
   readonly toggle: AgentRowAction;
 }) {
   const { agent } = props;
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: agent.handle, disabled: props.muted === true });
   const handleNewThread = useNewThreadHandler();
   const navigate = useNavigate();
   const { openMenu } = useThreadActionMenu({
@@ -175,9 +242,12 @@ function AgentRow(props: {
   );
   return (
     <li
+      ref={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
         "group/agent-row relative flex h-8 items-center rounded-md",
         props.active ? "bg-sidebar-row-active" : "hover:bg-sidebar-row-hover",
+        isDragging && "z-10 bg-sidebar-row-active",
       )}
       onContextMenu={(event) => {
         event.preventDefault();
@@ -222,6 +292,18 @@ function AgentRow(props: {
         </Link>
       )}
       <span className="mr-1 flex shrink-0">
+        {props.muted ? null : (
+          <button
+            type="button"
+            ref={setActivatorNodeRef}
+            {...attributes}
+            {...listeners}
+            aria-label={`Reorder ${agent.name}`}
+            className="inline-flex h-6 w-0 shrink-0 touch-none cursor-grab items-center justify-center overflow-hidden rounded-md text-sidebar-muted-foreground opacity-0 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-focus-within/agent-row:w-6 group-focus-within/agent-row:opacity-100 group-hover/agent-row:w-6 group-hover/agent-row:opacity-100 active:cursor-grabbing"
+          >
+            <GripVerticalIcon aria-hidden className="size-3.5" />
+          </button>
+        )}
         {props.focus ? <AgentRowButton action={props.focus} /> : null}
         <AgentRowButton action={props.toggle} />
       </span>
