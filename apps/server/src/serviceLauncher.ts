@@ -6,7 +6,6 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeUtil from "node:util";
 
 import type {
   PendingServiceUpdate,
@@ -23,13 +22,14 @@ import {
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
   parseServiceState,
-  SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
+import { readServiceEnvironment } from "./serviceEnvironment.ts";
+import { stopSshLaunchedServers } from "./serviceHomeReclaim.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 /**
@@ -40,6 +40,7 @@ const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
+const MAX_HOME_RECLAIMS = 3;
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
@@ -83,36 +84,6 @@ async function pathExists(target: string): Promise<boolean> {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return false;
     throw cause;
   }
-}
-
-const MANAGED_SERVICE_ENV_NAMES = new Set([
-  "PATH",
-  "T3CODE_HOME",
-  "T3_BOOT_SERVICE_UNIT",
-  SERVICE_LAUNCHER_CONTEXT_ENV,
-]);
-
-export async function readServiceEnvironment(
-  baseDir: string,
-  inherited: NodeJS.ProcessEnv = process.env,
-): Promise<NodeJS.ProcessEnv> {
-  const environment = { ...inherited };
-  let contents: string;
-  try {
-    contents = await NodeFSP.readFile(NodePath.join(baseDir, SERVICE_ENV_FILE), "utf8");
-  } catch (cause) {
-    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return environment;
-    throw cause;
-  }
-  for (const [name, value] of Object.entries(NodeUtil.parseEnv(contents))) {
-    if (
-      /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) &&
-      !MANAGED_SERVICE_ENV_NAMES.has(name.toUpperCase())
-    ) {
-      environment[name] = value;
-    }
-  }
-  return environment;
 }
 
 // Opened read-write: Windows refuses to flush a handle without write access.
@@ -446,6 +417,7 @@ export class Launcher {
   #stopRequested = false;
   #stopping = false;
   #done = false;
+  #reclaims = 0;
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
@@ -753,9 +725,10 @@ export class Launcher {
     if (this.#child !== child || this.#stopping) return;
     this.#child = null;
     if (code === STATE_DIR_OWNED_EXIT_CODE) {
-      await this.#idleWhileStateDirOwned();
+      await this.#handleStateDirOwned();
       return;
     }
+    this.#reclaims = 0;
     if (child.role === "trial") {
       this.#clearTimer();
       const pending = this.#state.update;
@@ -780,7 +753,7 @@ export class Launcher {
   }
 
   // Stay idle to avoid supervisor restart loops; never restore backups over another owner's possible writes.
-  async #idleWhileStateDirOwned(): Promise<void> {
+  async #handleStateDirOwned(): Promise<void> {
     this.#clearTimer();
     const pending = this.#state.update;
     if (pending?.status === "pending") {
@@ -792,6 +765,11 @@ export class Launcher {
       await writeServiceState(this.#statePath, next);
       this.#state = next;
       await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
+    }
+    if (this.#reclaims < MAX_HOME_RECLAIMS && (await stopSshLaunchedServers(this.#baseDir))) {
+      this.#reclaims += 1;
+      await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
+      return;
     }
     // Signal listeners alone do not keep Node alive.
     this.#timer = setInterval(() => {}, 2_147_483_647);

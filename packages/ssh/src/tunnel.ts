@@ -23,6 +23,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
+import { REMOTE_HOME_SERVER_SCRIPT } from "./remoteHomeServerScript.ts";
 import {
   baseSshArgs,
   buildSshHostSpecEffect,
@@ -593,32 +594,7 @@ server_running() {
     *Z*) return 1 ;;
   esac
 }
-resolve_default_runtime_port() {
-  if [ "$T3_ARCHIVE_MODE" = "1" ]; then
-    "$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"
-    return
-  fi
-  node - "$DEFAULT_RUNTIME_FILE" <<'NODE'
-const fs = require("node:fs");
-const runtimePath = process.argv[2] ?? "";
-try {
-	  const runtime = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
-	  const pid = Number(runtime.pid);
-	  const port = Number(runtime.port);
-	  if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) {
-	    process.exit(1);
-	  }
-  const origin = new URL(String(runtime.origin ?? ""));
-  if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
-    process.exit(1);
-  }
-  process.kill(pid, 0);
-  process.stdout.write(\`\${pid} \${port}\`);
-} catch {
-  process.exit(1);
-}
-NODE
-}
+@@T3_HOME_SERVER_SCRIPT@@
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
@@ -690,6 +666,9 @@ else
   REMOTE_PID=""
   REMOTE_PORT=""
   REMOTE_MANAGED=""
+fi
+if [ -z "$REMOTE_PORT" ]; then
+  adopt_service_server
 fi
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
@@ -830,6 +809,7 @@ function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
+    T3_HOME_SERVER_SCRIPT: REMOTE_HOME_SERVER_SCRIPT,
     T3_PICK_PORT_SCRIPT: stripTrailingNewlines(REMOTE_PICK_PORT_SCRIPT),
     T3_WAIT_READY_SCRIPT: stripTrailingNewlines(REMOTE_WAIT_READY_SCRIPT),
     T3_DEFAULT_REMOTE_PORT: String(DEFAULT_REMOTE_PORT),

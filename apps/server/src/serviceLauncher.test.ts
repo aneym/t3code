@@ -13,11 +13,11 @@ import {
   databaseBackupBlocker,
   Launcher,
   main,
-  readServiceEnvironment,
   type BackupSpaceProbe,
   readServiceState,
   writeServiceState,
 } from "./serviceLauncher.ts";
+import { readServiceEnvironment } from "./serviceEnvironment.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
