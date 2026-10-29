@@ -1,9 +1,5 @@
 import type { ThreadId } from "@t3tools/contracts";
 
-export const THREAD_SESSION_RESTART_DETAIL =
-  "Session restarted to reload MCP servers and settings.";
-export const CLIENT_SESSION_RESTART_DETAIL = "client-requested";
-
 export interface McpServerInventory {
   readonly name: string;
   readonly status: string;
@@ -39,6 +35,10 @@ export function requestThreadSessionRestart(threadId: ThreadId): void {
     const oldest = requested.values().next().value;
     if (oldest !== undefined) requested.delete(oldest);
   }
+}
+
+export function threadSessionRestartRequested(threadId: ThreadId): boolean {
+  return requested.has(threadId);
 }
 
 export function takeThreadSessionRestart(threadId: ThreadId): boolean {
