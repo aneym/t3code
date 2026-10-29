@@ -1,20 +1,30 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { CircleDashedIcon, PinOffIcon, PinIcon } from "lucide-react";
+import {
+  CircleAlertIcon,
+  CircleDashedIcon,
+  CircleDotDashedIcon,
+  MessageCircleQuestionIcon,
+  PinOffIcon,
+  PinIcon,
+  ShieldQuestionIcon,
+  UserRoundIcon,
+} from "lucide-react";
 
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { useClientSettings } from "../../hooks/useSettings";
 import { useThreadActionMenu } from "../../hooks/useThreadActionMenu";
 import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
 import { useEnvironmentIdentities } from "../../state/environments";
 import { cn } from "~/lib/utils";
-import { resolveSidebarThreadStatus } from "../Sidebar.logic";
+import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
 import { SidebarSection } from "../sidebar/SidebarSection";
 import { JumpHintBadge } from "../sidebar/SidebarThreadRow";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AgentFace } from "./AgentFace";
 import type { RailsAgent } from "./railsAgents";
-import { agentFocusAction, useAgentFocusHandle } from "./agentFocus";
+import { useAgentFocusAction } from "./agentFocus";
 import { AGENTS_SECTION_STORAGE_KEY, sidebarAgentJumpKey } from "./sidebarAgentLists";
 import { useSidebarPins } from "./sidebarPins";
 
@@ -23,16 +33,16 @@ export function SidebarAgents({
   pinned,
   hidden,
   jumpLabelByKey,
-  clearProjectScope,
+  setProjectScope,
 }: {
   readonly onNavigate: () => void;
   readonly pinned: ReadonlyArray<RailsAgent>;
   readonly hidden: ReadonlyArray<RailsAgent>;
   readonly jumpLabelByKey: ReadonlyMap<string, string> | null;
-  readonly clearProjectScope: () => void;
+  readonly setProjectScope: (keys: readonly string[]) => void;
 }) {
   const { toggle, showMenu } = useSidebarPins();
-  const [focused, setFocused] = useAgentFocusHandle();
+  const focusAction = useAgentFocusAction(setProjectScope);
   const routeTarget = useThreadRouteTarget();
   const environmentLabelById = new Map(
     useEnvironmentIdentities().map((environment) => [environment.environmentId, environment.label]),
@@ -53,7 +63,7 @@ export function SidebarAgents({
       .filter((label, index, all) => all.indexOf(label) === index)
       .join(" · "),
     onNavigate,
-    focus: agentFocusAction(agent, focused, setFocused, clearProjectScope),
+    focus: focusAction(agent),
     onContextMenu: (position: { x: number; y: number }) => {
       void showMenu(agent.handle, agent.name, position);
     },
@@ -140,34 +150,24 @@ function AgentRow(props: {
     else openMenu(position);
   };
   const rowClassName = cn(
-    "flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-sm outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset",
-    props.focus?.active && "pr-8",
-    props.active
-      ? "bg-sidebar-row-active text-sidebar-foreground"
-      : cn(
-          "group-hover/agent-row:bg-sidebar-row-hover",
-          props.muted ? "text-sidebar-muted-foreground" : "text-sidebar-foreground",
-        ),
+    "flex h-full min-w-0 flex-1 items-center gap-2 rounded-md pr-1 pl-2 text-left text-sm outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset",
+    props.muted && !props.active ? "text-sidebar-muted-foreground" : "text-sidebar-foreground",
   );
   const content = (
     <>
-      <AgentFace handle={agent.handle} name={agent.name} />
+      <AgentFace agent={agent} />
       <span className="min-w-0 flex-1 truncate">{agent.name}</span>
-      {agent.thread === null ? (
-        agent.target ? (
-          <span className="text-xs text-sidebar-muted-foreground">Loading</span>
-        ) : agent.remoteHost ? (
-          <span className="shrink-0 text-xs text-sidebar-muted-foreground">
-            On {agent.remoteHost}
-          </span>
-        ) : null
-      ) : (
-        <span className="flex shrink-0 group-focus-within/agent-row:invisible group-hover/agent-row:invisible">
+      <span className="flex shrink-0 text-xs text-sidebar-muted-foreground group-focus-within/agent-row:hidden group-hover/agent-row:hidden">
+        {agent.thread !== null ? (
           <AgentStatus thread={agent.thread} />
-        </span>
-      )}
+        ) : agent.target ? (
+          "Loading"
+        ) : agent.remoteHost ? (
+          `On ${agent.remoteHost}`
+        ) : null}
+      </span>
       {props.machines === "" ? null : (
-        <span className="mr-12 hidden shrink-0 text-xs text-sidebar-muted-foreground group-focus-within/agent-row:inline group-hover/agent-row:inline">
+        <span className="hidden shrink-0 text-xs text-sidebar-muted-foreground group-focus-within/agent-row:inline group-hover/agent-row:inline">
           {props.machines}
         </span>
       )}
@@ -175,7 +175,10 @@ function AgentRow(props: {
   );
   return (
     <li
-      className="group/agent-row relative flex items-center"
+      className={cn(
+        "group/agent-row relative flex h-8 items-center rounded-md",
+        props.active ? "bg-sidebar-row-active" : "hover:bg-sidebar-row-hover",
+      )}
       onContextMenu={(event) => {
         event.preventDefault();
         showMenu({ x: event.clientX, y: event.clientY });
@@ -218,7 +221,7 @@ function AgentRow(props: {
           {content}
         </Link>
       )}
-      <span className="absolute right-1 flex">
+      <span className="mr-1 flex shrink-0">
         {props.focus ? <AgentRowButton action={props.focus} /> : null}
         <AgentRowButton action={props.toggle} />
       </span>
@@ -246,8 +249,10 @@ function AgentRowButton({ action }: { readonly action: AgentRowAction }) {
             aria-pressed={action.active}
             onClick={action.onClick}
             className={cn(
-              "inline-flex size-6 items-center justify-center rounded-md hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/agent-row:opacity-100",
-              action.active ? "text-sidebar-foreground" : "text-sidebar-muted-foreground opacity-0",
+              "inline-flex h-6 shrink-0 items-center justify-center overflow-hidden rounded-md hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              action.active
+                ? "w-6 text-sidebar-foreground"
+                : "w-0 text-sidebar-muted-foreground opacity-0 group-focus-within/agent-row:w-6 group-focus-within/agent-row:opacity-100 group-hover/agent-row:w-6 group-hover/agent-row:opacity-100",
             )}
           >
             <Icon aria-hidden className="size-3.5" />
@@ -259,28 +264,42 @@ function AgentRowButton({ action }: { readonly action: AgentRowAction }) {
   );
 }
 
+const AGENT_STATUS: Partial<
+  Record<
+    SidebarThreadStatus,
+    { readonly label: string; readonly icon: typeof PinIcon; readonly className: string }
+  >
+> = {
+  working: { label: "Working", icon: CircleDashedIcon, className: "text-info-foreground" },
+  waiting: {
+    label: "Waiting",
+    icon: CircleDotDashedIcon,
+    className: "text-sidebar-muted-foreground",
+  },
+  approval: { label: "Approval", icon: ShieldQuestionIcon, className: "text-warning-foreground" },
+  input: {
+    label: "Input",
+    icon: MessageCircleQuestionIcon,
+    className: "text-indigo-600 dark:text-indigo-300",
+  },
+  request: { label: "Request", icon: UserRoundIcon, className: "text-guest-foreground" },
+  limited: { label: "Limited", icon: CircleAlertIcon, className: "text-warning-foreground" },
+  failed: { label: "Failed", icon: CircleAlertIcon, className: "text-error-foreground" },
+};
+
 function AgentStatus({ thread }: { readonly thread: EnvironmentThreadShell }) {
-  const status = resolveSidebarThreadStatus(thread);
-  if (status === "working") {
-    return (
-      <span className="inline-flex shrink-0 items-center gap-1 text-xs text-sidebar-muted-foreground">
-        <CircleDashedIcon aria-hidden className="size-3.5" />
-        Working
-      </span>
-    );
-  }
-  if (status === "approval" || status === "input" || status === "request") {
-    return <span className="shrink-0 text-xs font-medium text-sidebar-foreground">Needs you</span>;
-  }
-  if (status === "waiting") {
-    return <span className="shrink-0 text-xs text-sidebar-muted-foreground">Waiting</span>;
-  }
-  if (status === "failed" || status === "limited") {
-    return (
-      <span className="text-xs text-sidebar-muted-foreground">
-        {status === "limited" ? "Limited" : "Error"}
-      </span>
-    );
-  }
-  return null;
+  const showText = useClientSettings((settings) => settings.sidebarThreadShowStatusText);
+  const status = AGENT_STATUS[resolveSidebarThreadStatus(thread)];
+  if (status === undefined) return null;
+  const Icon = status.icon;
+  return (
+    <span
+      role={showText ? undefined : "img"}
+      aria-label={showText ? undefined : status.label}
+      className={cn("inline-flex items-center gap-1 font-medium", status.className)}
+    >
+      <Icon aria-hidden className="size-3.5" />
+      {showText ? status.label : null}
+    </span>
+  );
 }

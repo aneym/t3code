@@ -10,6 +10,8 @@ import { railsAgentHandle } from "./railsAgents";
 const PINNED_KEY = "t3code:sidebar-agents:pinned";
 const PinnedKeys = Schema.Array(Schema.String);
 const DEFAULT_PINNED_KEYS: ReadonlyArray<string> = ["cos"];
+const HIDDEN_KEY = "t3code:sidebar-agents:hidden";
+const DEFAULT_HIDDEN_KEYS: ReadonlyArray<string> = [];
 
 export function sidebarProjectPinKey(project: EnvironmentProject) {
   return (
@@ -19,10 +21,14 @@ export function sidebarProjectPinKey(project: EnvironmentProject) {
 
 export function useSidebarPins() {
   const [pinnedKeys, setPinnedKeys] = useLocalStorage(PINNED_KEY, DEFAULT_PINNED_KEYS, PinnedKeys);
-  const toggle = (key: string) =>
-    setPinnedKeys((keys) =>
-      keys.includes(key) ? keys.filter((entry) => entry !== key) : [...keys, key],
-    );
+  const [hiddenKeys, setHiddenKeys] = useLocalStorage(HIDDEN_KEY, DEFAULT_HIDDEN_KEYS, PinnedKeys);
+  const isPinned = (key: string) =>
+    pinnedKeys.includes(key) || (!key.startsWith("project:") && !hiddenKeys.includes(key));
+  const toggle = (key: string) => {
+    const pinned = isPinned(key);
+    setPinnedKeys((keys) => (pinned ? keys.filter((entry) => entry !== key) : [...keys, key]));
+    setHiddenKeys((keys) => [...keys.filter((entry) => entry !== key), ...(pinned ? [key] : [])]);
+  };
   const showMenu = async (
     key: string,
     name: string,
@@ -33,7 +39,7 @@ export function useSidebarPins() {
     if (!api) return;
     const selected = await api.contextMenu.show(
       [
-        { id: "toggle-pin", label: `${pinnedKeys.includes(key) ? "Unpin" : "Pin"} ${name}` },
+        { id: "toggle-pin", label: `${isPinned(key) ? "Unpin" : "Pin"} ${name}` },
         ...(projectSettings ? [{ id: "project-settings", label: "Project settings" }] : []),
       ],
       position,
@@ -66,5 +72,5 @@ export function useSidebarPins() {
     );
     if (selected === "project-settings") openSettings(group);
   };
-  return { pinnedKeys, toggle, showMenu, showProjectMenu };
+  return { pinnedKeys, hiddenKeys, toggle, showMenu, showProjectMenu };
 }
