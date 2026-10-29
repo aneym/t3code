@@ -1,5 +1,11 @@
-import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
-export { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
+import {
+  OrchestratorCommandRejectedError,
+  OrchestratorDispatchError,
+} from "./OrchestratorDispatchError.ts";
+export {
+  OrchestratorCommandRejectedError,
+  OrchestratorDispatchError,
+} from "./OrchestratorDispatchError.ts";
 import { readRejection, tagRejection } from "./RejectionReason.ts";
 import {
   rootProviderThreadsForProvider,
@@ -196,15 +202,6 @@ export class OrchestratorThreadAlreadyExistsError extends Schema.TaggedError<Orc
 ) {
   override get message(): string {
     return `Thread ${this.threadId} already exists. Use a new thread id.`;
-  }
-}
-
-export class OrchestratorCommandRejectedError extends Schema.TaggedError<OrchestratorCommandRejectedError>()(
-  "OrchestratorCommandRejectedError",
-  { commandId: CommandId, commandType: Schema.String, cause: Schema.optional(Schema.Defect()) },
-) {
-  override get message(): string {
-    return `Orchestration command ${this.commandType} (${this.commandId}) was rejected before commit.`;
   }
 }
 

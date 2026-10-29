@@ -1,5 +1,11 @@
-import { OrchestrationV2DispatchCommandResult } from "./orchestrationDispatchResult.ts";
-export { OrchestrationV2DispatchCommandResult } from "./orchestrationDispatchResult.ts";
+import {
+  OrchestrationV2DispatchCommandResult,
+  OrchestrationV2GetThreadProjectionInput,
+} from "./orchestrationDispatchResult.ts";
+export {
+  OrchestrationV2DispatchCommandResult,
+  OrchestrationV2GetThreadProjectionInput,
+} from "./orchestrationDispatchResult.ts";
 import { ModelSelectionPrecondition } from "./modelSelectionPrecondition.ts";
 import { QueueHoldReason } from "./queueHoldReason.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
@@ -3596,12 +3602,6 @@ export const OrchestrationV2ThreadLaunchResult = Schema.Struct({
   sequence: Schema.optionalKey(NonNegativeInt),
 });
 export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaunchResult.Type;
-
-export const OrchestrationV2GetThreadProjectionInput = Schema.Struct({
-  threadId: ThreadId,
-});
-export type OrchestrationV2GetThreadProjectionInput =
-  typeof OrchestrationV2GetThreadProjectionInput.Type;
 
 export const OrchestrationV2SubscribeShellInput = Schema.Struct({
   afterSequence: Schema.optionalKey(NonNegativeInt),
