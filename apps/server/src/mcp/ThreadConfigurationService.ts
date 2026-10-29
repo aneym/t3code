@@ -7,6 +7,7 @@ import {
   ProviderInteractionMode,
   ModelSelection as ModelSelectionSchema,
   ThreadId as ThreadIdSchema,
+  NonNegativeInt,
 } from "@t3tools/contracts";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
@@ -25,6 +26,7 @@ export const ThreadConfiguration = Schema.Struct({
   modelSelection: ModelSelectionSchema,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  sequence: Schema.optional(NonNegativeInt),
 });
 type Input = {
   readonly threadId?: ThreadId | undefined;
@@ -45,7 +47,7 @@ const configure = Effect.fn("ThreadConfigurationService.configure")(function* (
     projection: { thread },
   } = yield* readThread(input.threadId);
   let selection = input.modelSelection;
-  let effortOption: string | undefined;
+  let sequence: number | undefined;
   if (input.effort !== undefined) {
     const service = yield* Effect.serviceOption(Orchestrator.OrchestratorMcpService);
     if (Option.isNone(service))
@@ -67,7 +69,6 @@ const configure = Effect.fn("ThreadConfigurationService.configure")(function* (
         code: "invalid_request",
         message: "Effort is not supported by this thread's provider and model.",
       });
-    effortOption = option.id;
     selection = {
       ...thread.modelSelection,
       options: [
@@ -77,31 +78,22 @@ const configure = Effect.fn("ThreadConfigurationService.configure")(function* (
     };
   }
   if (selection !== undefined) {
-    yield* threads
+    const result = yield* threads
       .dispatch({
         type: modelSelectionCommandType(thread.providerInstanceId, selection),
         threadId: thread.id,
         commandId: yield* newCommandId(),
         modelSelection: selection,
+        ...(input.effort === undefined ? {} : { expectedModelSelection: thread.modelSelection }),
       })
       .pipe(Effect.mapError(dispatchFailure));
+    sequence = result.sequence;
   }
   const {
     projection: { thread: after },
   } = yield* readThread(thread.id);
-  if (effortOption !== undefined) {
-    const value = after.modelSelection.options?.find((item) => item.id === effortOption)?.value;
-    const normalized =
-      input.effort === "ultracode" &&
-      value === "xhigh" &&
-      after.modelSelection.options?.some((item) => item.id === "ultracode" && item.value === true);
-    if (value !== input.effort && !normalized)
-      return yield* new OrchestratorMcpFailure({
-        code: "orchestration_error",
-        message: "Configuration readback did not match the requested effort.",
-      });
-  }
   return {
+    ...(sequence === undefined ? {} : { sequence }),
     threadId: after.id,
     modelSelection: after.modelSelection,
     runtimeMode: after.runtimeMode,

@@ -1,18 +1,10 @@
-import { ModelSelection, RuntimeMode, ProviderInteractionMode, ThreadId } from "@t3tools/contracts";
+import { ThreadConfiguration } from "../mcp/ThreadConfigurationService.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
 import { projectLocationFlags } from "./config.ts";
 import { printJson, withOwnerMcpTools } from "./ownerMcpTools.ts";
 import { decodeThreadId, jsonFlag, reportThreadErrors, threadArgument } from "./threadCommon.ts";
-
-const Configuration = Schema.Struct({
-  threadId: ThreadId,
-  modelSelection: ModelSelection,
-  runtimeMode: RuntimeMode,
-  interactionMode: ProviderInteractionMode,
-});
 
 export const threadConfigureCommand = Command.make("configure", {
   ...projectLocationFlags,
@@ -42,7 +34,7 @@ export const threadConfigureCommand = Command.make("configure", {
                 onSome: (effort) => ({ effort }),
               }),
             },
-            Configuration,
+            ThreadConfiguration,
           );
           yield* printJson(configuration);
         }),

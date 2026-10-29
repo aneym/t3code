@@ -1,3 +1,5 @@
+import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
+export { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
 import { readRejection, tagRejection } from "./RejectionReason.ts";
 import {
   rootProviderThreadsForProvider,
@@ -187,20 +189,6 @@ import * as ServerSettings from "../serverSettings.ts";
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
 );
-
-export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
-  "OrchestratorDispatchError",
-  {
-    commandId: CommandId,
-    commandType: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-    reason: Schema.optional(ThreadOrganizeRefusalReason),
-  },
-) {
-  override get message(): string {
-    return `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`;
-  }
-}
 
 export class OrchestratorThreadAlreadyExistsError extends Schema.TaggedError<OrchestratorThreadAlreadyExistsError>()(
   "OrchestratorThreadAlreadyExistsError",
@@ -2868,6 +2856,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
       ),
     );
+    if (
+      command.type === "thread.model-selection.set" &&
+      command.expectedModelSelection &&
+      !modelSelectionsEqual(thread.modelSelection, command.expectedModelSelection)
+    )
+      return yield* new OrchestratorCommandRejectedError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Configuration changed; read it and retry.",
+      });
     if (thread.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
