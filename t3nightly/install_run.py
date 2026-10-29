@@ -201,11 +201,15 @@ class Run:
                 return reasons
             time.sleep(self.args.recheck_s)
 
-    def connect_reachable(self, version, timeout=120):
+    def connect_binary(self, version):
         binary = self.runtime(version)
         if not binary.exists():
             binary = Path(shutil.which("t3") or "t3")
         verify_cli(binary)
+        return binary
+
+    def connect_reachable(self, version, timeout=120, binary=None):
+        binary = binary or self.connect_binary(version)
         out = subprocess.run(
             [str(binary), "connect", "status", "--base-dir", str(self.home)],
             capture_output=True,

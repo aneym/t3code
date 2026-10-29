@@ -83,6 +83,7 @@ def precheck(run, version, expected):
 
 
 def connect_returns(run, version):
+    binary = run.connect_binary(version)
     start = time.monotonic()
     end = start + CONNECT_WAIT_S
     while True:
@@ -90,7 +91,7 @@ def connect_returns(run, version):
         if remaining <= 0:
             return False
         try:
-            reachable = run.connect_reachable(version, timeout=remaining)
+            reachable = run.connect_reachable(version, timeout=remaining, binary=binary)
         except subprocess.TimeoutExpired:
             return False
         if reachable and time.monotonic() <= end:
