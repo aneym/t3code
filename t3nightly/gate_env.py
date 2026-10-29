@@ -65,13 +65,9 @@ def guard_isolated(home):
         raise CheckFailed("refusing to use the live T3 home %s" % live)
 
 
-def snapshot_live_db(key, deadline, *, home=None):
-    return for_run(key, home=home if home is not None else LIVE_HOME, timeout=deadline.left())
-
-
 def build_seed(ctx, home, deadline):
     guard_isolated(home)
-    snapshot = snapshot_live_db(ctx.version, deadline)
+    snapshot = for_run(ctx.version, home=LIVE_HOME, timeout=deadline.left())
     code, _ = run(
         background_command([
             ctx.node,

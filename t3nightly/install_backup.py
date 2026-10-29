@@ -46,8 +46,6 @@ def capture(run, previous, stop):
         probe.unlink()
         copied.unlink(missing_ok=True)
         clone = result.returncode == 0
-    if not clone:
-        database_copy(source, target, started + 120)
     stop()
     if sys.platform == "darwin":
         quiescent(source)
@@ -56,6 +54,8 @@ def capture(run, previous, stop):
             original = Path(str(source) + suffix)
             if original.exists():
                 subprocess.run(["/bin/cp", "-c", str(original), str(target) + suffix], check=True, capture_output=True, timeout=30)
+    else:
+        database_copy(source, target, time.monotonic() + 120)
     metadata = {"path": str(target), "method": "apfs-clone" if clone else "sqlite-backup", "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
     (destination / "payload.json").write_text(json.dumps(metadata))
     run.step("hard-backup", **metadata)
