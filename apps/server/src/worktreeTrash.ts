@@ -102,6 +102,9 @@ export const makeWorktreeTrash = Effect.gen(function* () {
               .join("\n");
             for (const entry of entries)
               yield* fs.writeFileString(path.join(entry, RECOVERY_FAILED), `${pending}\n`);
+            if (yield* fs.exists(path.join(input.adminDir, "locked"))) return "worktree is locked";
+            const personal = yield* personalStateReason(input.worktreePath);
+            if (personal !== null) return personal;
             const reason = yield* input.blocked();
             if (reason !== null) return reason;
             for (const part of parts) {
@@ -209,7 +212,8 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     cwd: string,
     submodules: ReadonlySet<string>,
   ) {
-    const pending = [cwd];
+    const root = yield* fs.realPath(cwd);
+    const pending = [root];
     while (pending.length > 0) {
       const directory = pending.pop()!;
       for (const name of yield* fs.readDirectory(directory)) {
@@ -217,7 +221,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
         const child = path.join(directory, name);
         if (submodules.has(child) || (yield* isLink(child))) continue;
         if ((yield* fs.stat(child)).type !== "Directory") continue;
-        if (yield* isRepository(child)) return `${path.relative(cwd, child)}/`;
+        if (yield* isRepository(child)) return `${path.relative(root, child)}/`;
         pending.push(child);
       }
     }
@@ -281,7 +285,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       });
       if (populated.stdoutTruncated) return "submodule inspection exceeded the limit";
       for (const submodule of populated.stdout.split("\0").filter(Boolean))
-        submodules.add(path.resolve(submodule));
+        submodules.add(yield* fs.realPath(submodule));
     }
     const own = yield* checkoutStateReason(cwd, submodules);
     if (own !== null) return own;
@@ -295,6 +299,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
   const remove = Effect.fn("WorktreeTrash.remove")(function* <E, R>(
     root: string,
     worktreePath: string,
+    repository: string,
     blocked: () => Effect.Effect<string | null, E, R>,
   ) {
     const git = yield* GitVcsDriver.GitVcsDriver;
@@ -303,9 +308,17 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       cwd: worktreePath,
       args: ["rev-parse", "--absolute-git-dir"],
     })).stdout.trim();
+    const commonDir = (cwd: string) =>
+      git
+        .execute({
+          operation: "StorageCleanup.repository",
+          cwd,
+          args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        })
+        .pipe(Effect.flatMap((result) => fs.realPath(result.stdout.trim())));
+    if ((yield* commonDir(worktreePath)) !== (yield* commonDir(repository)))
+      return "worktree belongs to another repository";
     if (yield* fs.exists(path.join(adminDir, "locked"))) return "worktree is locked";
-    const personal = yield* personalStateReason(worktreePath);
-    if (personal !== null) return personal;
     const entry = yield* prepare(root, worktreePath);
     return yield* move({ blocked, root, entry, worktreePath, adminDir });
   });

@@ -972,11 +972,19 @@ const make = Effect.gen(function* () {
           return keep("settings changed since check");
         const submodules = yield* submoduleKeepReason(worktreePath, settings);
         if (submodules !== null) return keep(submodules);
-        // Last, after every slow inspection: an edit, snooze or unarchive here still cancels removal.
-        const removal = yield* trash.remove(managedRoot, worktreePath, () =>
+        // Runs right before the move; the status check goes last so it sees edits made meanwhile.
+        const removal = yield* trash.remove(managedRoot, worktreePath, project.workspaceRoot, () =>
           Effect.gen(function* () {
-            const changed = yield* localChangesReason(worktreePath, settings);
-            return changed ?? (yield* blockedSinceCheck());
+            const blocked = yield* blockedSinceCheck();
+            if (blocked !== null) return blocked;
+            if (yield* branchChanged(worktreePath, thread.branch))
+              return "repository or branch changed since check";
+            if (
+              (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
+              head.commitSha
+            )
+              return "commit changed since check";
+            return yield* localChangesReason(worktreePath, settings);
           }),
         );
         if (removal !== null) return keep(removal);
