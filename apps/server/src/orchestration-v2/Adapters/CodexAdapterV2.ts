@@ -637,8 +637,7 @@ function toCodexUserInputAnswers(
 ): CodexSchema.ToolRequestUserInputResponse["answers"] {
   return Object.fromEntries(
     Object.entries(answers).flatMap(([questionId, value]) =>
-      allowedQuestionIds.has(questionId) ||
-      (allowedQuestionIds.size === 0 && questionId === "answer")
+      allowedQuestionIds.has(questionId)
         ? [[questionId, { answers: [...answerValueToStrings(value)] }]]
         : [],
     ),

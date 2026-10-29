@@ -1,4 +1,4 @@
-import { watchPendingInputQueueRelease, isQueuedInputRelease } from "./PendingInputQueueRelease.ts";
+import { makePendingInputQueueRelease, isQueuedInputRelease } from "./PendingInputQueueRelease.ts";
 import {
   completionDeliveryRun,
   completionDeliveryMessage,
@@ -920,6 +920,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerSessions = yield* ProviderSessionManagerV2;
   const providerSwitchService = yield* ProviderSwitchServiceV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const queuedInputRelease = yield* makePendingInputQueueRelease();
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -12765,9 +12766,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     if (
       isQueuedInputRelease(command) &&
-      ((yield* effectOutbox.restartPrepared) !== undefined ||
-        !(yield* serverSettings.getSettings.pipe(mapDispatchError(command)))
-          .queuedMessagesAnswerPendingInput)
+      !(yield* queuedInputRelease.isDue(command).pipe(mapDispatchError(command)))
     )
       return {
         sequence: yield* eventSink.latestSequence().pipe(mapDispatchError(command)),
@@ -13083,7 +13082,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.forkDetach,
     );
 
-  yield* watchPendingInputQueueRelease(dispatchWithReceipt);
+  yield* queuedInputRelease.watch(dispatchWithReceipt);
 
   // A child whose run ends while its background tasks or its own subagents still run has no
   // result yet. When that work settles there is no run update to finalize it, so these events
