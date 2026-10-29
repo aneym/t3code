@@ -17,15 +17,19 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 const executing = (status: OrchestrationV2Run["status"]) =>
   status === "running" || status === "preparing";
 
+const pending = (status: OrchestrationV2Run["status"]) =>
+  status === "starting" || status === "queued";
+
 const activeRuns = Effect.gen(function* () {
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const startsInFlight = new Set(
-    (yield* outbox.runningEffects).flatMap((effect) =>
-      effect.request.type === "provider-turn.start" ||
-      effect.request.type === "provider-turn.restart"
-        ? [effect.request.runId]
-        : [],
+    (yield* outbox.unsettledEffects(["provider-turn.start", "provider-turn.restart"])).flatMap(
+      (effect) =>
+        effect.request.type === "provider-turn.restart" ||
+        (effect.request.type === "provider-turn.start" && effect.status === "running")
+          ? [effect.request.runId]
+          : [],
     ),
   );
   const active = new Set<RunId>();
@@ -45,13 +49,9 @@ export const drainBeforeRestart = Effect.fn("RestartDrain.drainBeforeRestart")(f
 ) {
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const sink = yield* EventSink.EventSinkV2;
-  const draining = yield* outbox.restartDraining;
-  if (draining !== undefined && draining !== epoch)
-    return yield* new ServerPrepareRestartError({
-      cause: "A different restart epoch is already draining.",
-    });
   const startedAt = yield* Clock.currentTimeMillis;
-  yield* outbox.drainForRestart(epoch);
+  if (!(yield* outbox.drainForRestart(epoch)))
+    return yield* new ServerPrepareRestartError({ cause: "A restart drain is already running." });
   const afterSequence = yield* sink.latestSequence();
   const initial = yield* activeRuns;
   const settled =
@@ -63,8 +63,9 @@ export const drainBeforeRestart = Effect.fn("RestartDrain.drainBeforeRestart")(f
             (active: ReadonlySet<RunId>, stored) => {
               if (stored.event.type !== "run.updated") return active;
               const next = new Set(active);
-              if (executing(stored.event.payload.status)) next.add(stored.event.payload.id);
-              else next.delete(stored.event.payload.id);
+              const { id, status } = stored.event.payload;
+              if (executing(status)) next.add(id);
+              else if (!pending(status)) next.delete(id);
               return next;
             },
           ),
@@ -79,11 +80,4 @@ export const drainBeforeRestart = Effect.fn("RestartDrain.drainBeforeRestart")(f
     waitedMs: (yield* Clock.currentTimeMillis) - startedAt,
     activeRunIds: remaining,
   } satisfies ServerRestartDrain;
-});
-
-export const releaseRestartDrain = Effect.fn("RestartDrain.releaseRestartDrain")(function* (
-  epoch: string,
-) {
-  const outbox = yield* EffectOutbox.EffectOutboxV2;
-  if ((yield* outbox.restartDraining) === epoch) yield* outbox.drainForRestart(undefined);
 });

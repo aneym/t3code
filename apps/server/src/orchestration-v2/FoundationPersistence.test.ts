@@ -21,6 +21,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -32,6 +33,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -2908,6 +2910,102 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
+  it.effect("keeps draining a turn whose steer is restarting it", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const run = yield* seedRunningRun("restart-drain-steer");
+      const prepare = yield* RestartPreparation.prepareRestart("epoch:steer", 60_000).pipe(
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("1 second");
+      const commandId = CommandId.make("command:restart-drain:steer");
+      const steeredAt = yield* DateTime.now;
+      yield* eventSink.writeWithEffects({
+        commandId,
+        events: [
+          {
+            id: EventId.make("event:restart-drain:steer"),
+            type: "run.updated",
+            threadId: run.threadId,
+            runId: run.id,
+            providerInstanceId,
+            occurredAt: steeredAt,
+            payload: { ...run, status: "starting" },
+          },
+        ],
+        effects: [
+          {
+            id: "effect:restart-drain:steer",
+            commandId,
+            threadId: run.threadId,
+            request: {
+              type: "provider-turn.restart",
+              providerSessionId: ProviderSessionId.make("session:restart-drain:steer"),
+              providerThreadId: ProviderThreadId.make("provider-thread:restart-drain:steer"),
+              providerTurnId: ProviderTurnId.make("provider-turn:restart-drain:steer"),
+              interruptedAttemptId: RunAttemptId.make("attempt:restart-drain-steer"),
+              runId: run.id,
+            },
+          },
+        ],
+      });
+      const steer = yield* outbox.claimNext({ workerId: "drain-worker" });
+      assert.equal(Option.getOrUndefined(steer)?.id, "effect:restart-drain:steer");
+      yield* TestClock.adjust("1 second");
+      assert.equal(yield* outbox.restartDraining, "epoch:steer");
+      assert.isUndefined(yield* outbox.restartPrepared);
+      yield* outbox.succeed({ effectId: "effect:restart-drain:steer", workerId: "drain-worker" });
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:restart-drain:steer-completed"),
+            type: "run.updated",
+            threadId: run.threadId,
+            runId: run.id,
+            providerInstanceId,
+            occurredAt: yield* DateTime.now,
+            payload: { ...run, status: "completed" },
+          },
+        ],
+      });
+      const receipt = yield* Fiber.join(prepare);
+      assert.deepEqual(receipt.drain, { drained: true, waitedMs: 2_000, activeRunIds: [] });
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
+  it.effect("refuses a second drain while one is running and keeps holding starts", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      yield* seedRunningRun("restart-drain-concurrent");
+      yield* outbox.enqueue([
+        {
+          id: "effect:restart-drain-concurrent:start",
+          commandId: CommandId.make("command:restart-drain-concurrent"),
+          threadId: ThreadId.make("thread:restart-drain-concurrent:queued"),
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:restart-drain-concurrent:queued"),
+          },
+        },
+      ]);
+      const first = yield* RestartPreparation.prepareRestart("epoch:concurrent", 60_000).pipe(
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("1 second");
+      const second = yield* RestartPreparation.prepareRestart("epoch:concurrent", 60_000).pipe(
+        Effect.exit,
+      );
+      assert.isTrue(Exit.isFailure(second));
+      assert.equal(yield* outbox.restartDraining, "epoch:concurrent");
+      assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId: "drain-worker" })));
+      yield* Fiber.interrupt(first);
+      assert.isUndefined(yield* outbox.restartDraining);
+      const released = yield* outbox.claimNext({ workerId: "drain-worker" });
+      assert.equal(Option.getOrUndefined(released)?.id, "effect:restart-drain-concurrent:start");
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
   it.effect("spaces restart resumes so their sessions do not open together", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
@@ -2947,11 +3045,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           request: { type: "terminal.cleanup" },
         },
       ]);
-      const staggered = yield* outbox.staggerPending({
-        effectTypes: EffectOutboxModel.RESTART_RESUME_EFFECT_TYPES,
-        spacing: EffectOutboxModel.RESTART_RESUME_SPACING_MS,
-      });
-      assert.equal(staggered, 3);
       const claimNow = Effect.gen(function* () {
         const claimed: Array<string> = [];
         while (true) {

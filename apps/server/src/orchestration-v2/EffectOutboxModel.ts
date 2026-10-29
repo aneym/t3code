@@ -148,7 +148,6 @@ export const PROCESS_BOUND_EFFECT_TYPES = [
 
 export const RESTART_DRAIN_HELD_EFFECT_TYPES = [
   "provider-turn.start",
-  "provider-turn.restart",
   "provider-runtime.continue",
   "provider-runtime.restart-handoff",
   "provider-runtime.restart-reapproval",

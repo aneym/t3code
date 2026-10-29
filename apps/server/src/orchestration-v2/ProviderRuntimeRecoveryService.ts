@@ -780,16 +780,7 @@ export const make = Effect.gen(function* () {
     } satisfies ProviderRuntimeReconciliationSummary;
   });
 
-  const recover = reconcile("startup").pipe(
-    Effect.tap(() =>
-      outbox
-        .staggerPending({
-          effectTypes: EffectOutboxModel.RESTART_RESUME_EFFECT_TYPES,
-          spacing: EffectOutboxModel.RESTART_RESUME_SPACING_MS,
-        })
-        .pipe(Effect.ignoreCause({ log: true })),
-    ),
-  );
+  const recover = reconcile("startup");
 
   const restartContext = yield* Effect.context<
     | EffectOutbox.EffectOutboxV2

@@ -14,7 +14,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as EffectOutbox from "./EffectOutbox.ts";
-import { drainBeforeRestart, releaseRestartDrain } from "./RestartDrain.ts";
+import { drainBeforeRestart } from "./RestartDrain.ts";
 import { legacyRestartHandoffs } from "./RestartHandoffImport.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -114,9 +114,8 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
   },
   (effect, epoch, _drainTimeoutMs?: number) =>
     effect.pipe(
-      Effect.onError(() =>
-        abortRestart(epoch).pipe(Effect.ignore, Effect.andThen(releaseRestartDrain(epoch))),
-      ),
+      Effect.scoped,
+      Effect.onError(() => abortRestart(epoch).pipe(Effect.ignore)),
       Effect.mapError((cause) => new ServerPrepareRestartError({ cause })),
     ),
 );
