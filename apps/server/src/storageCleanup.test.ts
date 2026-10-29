@@ -1622,10 +1622,13 @@ describe("storage cleanup reports and local file policies", () => {
     () =>
       runCleanupTest(
         Effect.gen(function* () {
-          const { service, fs, repo, worktree, command } = yield* cleanupFixture({
+          const { service, fs, repo, worktree, command, setThreads } = yield* cleanupFixture({
             ...DEFAULT_SERVER_SETTINGS.storageCleanup,
             worktreeUnchanged: true,
           });
+          setThreads([
+            shell({ branch: "feature", worktreePath: worktree, settledAt: at(-DAY_MS) }),
+          ]);
           const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
           yield* command(remote, ["init", "--bare", "-b", "trunk"]);
           yield* command(repo, ["remote", "add", "origin", remote]);
@@ -1882,6 +1885,77 @@ it.live("keeps saved usage data when removing a settled checkout", () =>
       yield* fixture.fs.writeFileString(cachePath, savedUsage);
       expect((yield* fixture.service.runNow).counts.removed).toBe(1);
       expect(yield* fixture.fs.readFileString(cachePath)).toBe(savedUsage);
+    }),
+  ),
+);
+
+const landedRules = {
+  ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+  worktreeSettledAfterDays: 1,
+  worktreeOnMerge: true,
+  worktreeUnchanged: true,
+};
+
+const pushLandedFeature = (fixture: Effect.Success<ReturnType<typeof cleanupFixture>>) =>
+  Effect.gen(function* () {
+    const remote = yield* fixture.fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
+    yield* fixture.command(remote, ["init", "--bare", "-b", "main"]);
+    yield* fixture.command(fixture.repo, ["remote", "add", "origin", remote]);
+    yield* fixture.command(fixture.repo, ["push", "origin", "main"]);
+  });
+
+it.live.each([
+  { state: "excluded", policy: "uncommitted-changes", directory: "notes" },
+  { state: "lane", policy: "tracked-changes", directory: ".lane" },
+] as const)("keeps $state local state in a settled, landed checkout", ({ policy, directory }) =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const fixture = yield* cleanupFixture(landedRules);
+      yield* pushLandedFeature(fixture);
+      fixture.setPolicy(policy);
+      fixture.setThreads([
+        shell({ branch: "feature", worktreePath: fixture.worktree, settledAt: at(-2 * DAY_MS) }),
+      ]);
+      if (directory === "notes")
+        yield* fixture.fs.writeFileString(`${fixture.repo}/.git/info/exclude`, "notes/\n");
+      yield* fixture.fs.makeDirectory(`${fixture.worktree}/${directory}`);
+      yield* fixture.fs.writeFileString(`${fixture.worktree}/${directory}/ledger.md`, "state\n");
+
+      expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+        outcome: "kept",
+        reason: `Has excluded local state (${directory}/)`,
+      });
+      expect(yield* fixture.fs.readFileString(`${fixture.worktree}/${directory}/ledger.md`)).toBe(
+        "state\n",
+      );
+    }),
+  ),
+);
+
+it.live.each([
+  {
+    state: "settled but snoozed",
+    reason: "Thread is snoozed",
+    overrides: {
+      settledAt: at(-2 * DAY_MS),
+      snoozedUntil: DateTime.makeUnsafe(Date.parse("2999-01-01T00:00:00.000Z")),
+    },
+  },
+  { state: "unsettled", reason: "Thread is not settled or archived", overrides: {} },
+] as const)("keeps a $state thread's checkout after its branch lands", ({ reason, overrides }) =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const fixture = yield* cleanupFixture(landedRules);
+      yield* pushLandedFeature(fixture);
+      fixture.setThreads([
+        shell({ branch: "feature", worktreePath: fixture.worktree, ...overrides }),
+      ]);
+
+      expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+        outcome: "kept",
+        reason,
+      });
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
     }),
   ),
 );

@@ -132,6 +132,10 @@ export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now
   );
 }
 
+function storageCleanupThreadSnoozed(thread: OrchestrationV2ThreadShell, now: number): boolean {
+  return thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > now;
+}
+
 /** PR metadata refreshes must not reset the inactivity clock. */
 export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): number {
   return Math.max(
@@ -524,6 +528,36 @@ const make = Effect.gen(function* () {
     return (name?.startsWith("(") ? null : name) !== branch;
   });
 
+  // info/exclude and .lane hold per-checkout state (agent ledgers, local config), unlike regenerable .gitignore output.
+  const personalStateReason = Effect.fn("StorageCleanup.personalStateReason")(function* (
+    cwd: string,
+  ) {
+    const commonDir = yield* git.execute({
+      operation: "StorageCleanup.commonDir",
+      cwd,
+      args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    });
+    const excludeFile = path.join(commonDir.stdout.trim(), "info", "exclude");
+    const excluded = yield* git.execute({
+      operation: "StorageCleanup.excludedFiles",
+      cwd,
+      args: [
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--directory",
+        "--no-empty-directory",
+        "-z",
+        "--exclude=.lane",
+        ...((yield* fs.exists(excludeFile)) ? [`--exclude-from=${excludeFile}`] : []),
+      ],
+      maxOutputBytes: 64 * 1024,
+    });
+    if (excluded.stdoutTruncated) return "excluded files exceed the inspection limit";
+    const file = excluded.stdout.split("\0").find((entry) => entry !== "");
+    return file === undefined ? null : `has excluded local state (${file})`;
+  });
+
   const localChangesReason = Effect.fn("StorageCleanup.localChangesReason")(function* (
     cwd: string,
     rules: WorktreeCleanupRules,
@@ -550,6 +584,8 @@ const make = Effect.gen(function* () {
       if (/^[RC]|^.[RC]/.test(records[i]!)) i++;
     }
     if (count > 0) return `has uncommitted changes (${count} ${count === 1 ? "file" : "files"})`;
+    const personal = yield* personalStateReason(cwd);
+    if (personal !== null) return personal;
     if (rules.worktreeKeepWhen !== "any-local-files") return null;
     const ignored = yield* git.execute({
       operation: "StorageCleanup.ignoredFiles",
@@ -791,6 +827,8 @@ const make = Effect.gen(function* () {
           !group.every((member) => storageCleanupThreadIdle(member, now))
         )
           return keep("thread is running or has pending work");
+        if (group.some((member) => storageCleanupThreadSnoozed(member, now)))
+          return keep("thread is snoozed");
         if (group.some((member) => member.branch !== thread.branch))
           return keep("a subagent thread's branch differs from this worktree's branch");
         if (hasTerminal(worktreePath)) return keep("open terminal");
@@ -879,6 +917,15 @@ const make = Effect.gen(function* () {
           if (eligible && !landed.integrated && !merged)
             return keep("has commits that are not on the default branch");
         }
+        // Merge and unchanged rules act only once every thread on the checkout has let it go.
+        if (
+          eligible &&
+          !deleted &&
+          !old &&
+          !settled &&
+          group.some((member) => member.settledAt === null && member.archivedAt === null)
+        )
+          return keep("thread is not settled or archived");
         if (!eligible)
           return keep(
             !deleted && settings.worktreeAfterDays !== null
@@ -930,6 +977,8 @@ const make = Effect.gen(function* () {
                 !Equal.equals(shell.settledAt, previous.settledAt) ||
                 (shell.settledAt !== null && !Equal.equals(shell.updatedAt, previous.updatedAt)) ||
                 !storageCleanupThreadIdle(shell, now) ||
+                storageCleanupThreadSnoozed(shell, now) ||
+                !Equal.equals(shell.archivedAt, previous.archivedAt) ||
                 path.resolve(shell.worktreePath!) !== worktreePath ||
                 storageCleanupActivityAt(shell) !== storageCleanupActivityAt(previous)
               );
