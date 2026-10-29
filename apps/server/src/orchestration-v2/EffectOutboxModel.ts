@@ -19,6 +19,12 @@ import type * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 
+export const QueuedInputDelivery = Schema.Struct({
+  targetRunId: RunId,
+  queuedRunIds: Schema.Array(RunId),
+});
+export type QueuedInputDelivery = typeof QueuedInputDelivery.Type;
+
 export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("provider-runtime.restart-reapproval"),
@@ -78,6 +84,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),
+    queuedInputDelivery: Schema.optional(QueuedInputDelivery),
     providerSessionId: ProviderSessionId,
     requestId: RuntimeRequestId,
     decision: Schema.optional(ProviderApprovalDecision),

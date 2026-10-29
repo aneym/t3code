@@ -1,5 +1,8 @@
 import { commandThreadId } from "./CommandThread.ts";
-import { watchPendingInputQueueDelivery } from "./PendingInputQueueDelivery.ts";
+import {
+  watchPendingInputQueueDelivery,
+  makeQueuedInputCompletion,
+} from "./PendingInputQueueDelivery.ts";
 import {
   completionDeliveryRun,
   completionDeliveryMessage,
@@ -336,6 +339,9 @@ export interface OrchestratorV2DispatchResult {
 }
 
 export interface OrchestratorV2Shape {
+  readonly completeQueuedInputDelivery: Effect.Success<
+    ReturnType<typeof makeQueuedInputCompletion>
+  >;
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
   readonly recoverDelegatedTask: (threadId: ThreadId, sourceRunId: RunId) => Effect.Effect<void>;
@@ -13213,6 +13219,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     new OrchestratorProjectionError({ threadId: ThreadId.make("thread:shell"), cause });
 
   return OrchestratorV2.of({
+    completeQueuedInputDelivery: yield* makeQueuedInputCompletion(),
     resumeQueuedRuns,
     recoverDelegatedTasks,
     recoverDelegatedTask,

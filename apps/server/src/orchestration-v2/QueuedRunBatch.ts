@@ -91,6 +91,29 @@ export function queuedRunBatch(
   return members;
 }
 
+export function queuedPlainTextPrefix(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
+  target: OrchestrationV2Run,
+): ReadonlyArray<QueuedRunBatchMember> {
+  const members: Array<QueuedRunBatchMember> = [];
+  for (const run of queuedRunsInDeliveryOrder(projection)) {
+    if (members.length >= MAX_BATCH_SIZE) break;
+    const message = batchableMessage(projection, run);
+    if (
+      message === undefined ||
+      message.attachments.length > 0 ||
+      message.context?.guest !== undefined ||
+      run.providerInstanceId !== target.providerInstanceId ||
+      !modelSelectionsEqual(run.modelSelection, target.modelSelection) ||
+      (run.workspacePreparation !== undefined &&
+        run.workspacePreparation.type !== target.workspacePreparation?.type)
+    )
+      break;
+    members.push({ run, message });
+  }
+  return members;
+}
+
 export function foldedQueuedTurnItems(
   turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
   run: Pick<OrchestrationV2Run, "id" | "userMessageId">,

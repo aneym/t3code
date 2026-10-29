@@ -312,6 +312,14 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2GetTurnItemResult, Orchestrator.OrchestratorV2Error>;
+  readonly completeQueuedInputDelivery: <E, R>(
+    input: Parameters<Orchestrator.OrchestratorV2["Service"]["completeQueuedInputDelivery"]>[0],
+    response: Effect.Effect<void, E, R>,
+  ) => Effect.Effect<
+    void,
+    E | import("./PendingInputQueueDelivery.ts").QueuedInputDeliveryError,
+    R
+  >;
   readonly getThreadRecords: Orchestrator.OrchestratorV2["Service"]["getThreadRecords"];
   readonly getThreadProjection: (
     threadId: ThreadId,
@@ -1167,6 +1175,16 @@ const make = Effect.gen(function* () {
         Effect.map((item) => ({ item: item === null ? null : projectTurnItemForDetail(item) })),
       );
     }),
+    completeQueuedInputDelivery: Effect.fn("ThreadManagementService.completeQueuedInputDelivery")(
+      <E, R>(
+        input: Parameters<Orchestrator.OrchestratorV2["Service"]["completeQueuedInputDelivery"]>[0],
+        response: Effect.Effect<void, E, R>,
+      ) =>
+        threadDispatch.withLock(
+          input.threadId,
+          response.pipe(Effect.andThen(orchestrator.completeQueuedInputDelivery(input))),
+        ),
+    ),
     getThreadRecords: Effect.fn("ThreadManagementService.getThreadRecords")(
       function (threadId, fields, filter) {
         return ensureProjectionTranscript(threadId).pipe(

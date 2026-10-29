@@ -5,22 +5,26 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
-import type { PendingOrchestrationEffectV2 } from "./EffectOutboxModel.ts";
+import type { PendingOrchestrationEffectV2, QueuedInputDelivery } from "./EffectOutboxModel.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
-import { batchedProviderText, queuedRunBatchEvents } from "./QueuedRunBatch.ts";
-import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import {
+  batchedProviderText,
+  queuedRunBatchEvents,
+  queuedPlainTextPrefix,
+} from "./QueuedRunBatch.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 type DeliveryProjection = Pick<
@@ -46,35 +50,27 @@ function pendingInputQueueDelivery(projection: DeliveryProjection) {
     (request) => request.kind === "user_input" && request.responseCapability.type === "live",
   );
   if (requests.length === 0) return;
-  const members = queuedRunsInDeliveryOrder(projection)
-    .filter(
-      (run) =>
-        run.queueHeld !== true &&
-        run.providerInstanceId === active.providerInstanceId &&
-        modelSelectionsEqual(run.modelSelection, active.modelSelection),
-    )
-    .slice(0, 20)
-    .flatMap((run) => {
-      const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-      return message === undefined ? [] : [{ run, message }];
-    });
+  const members = queuedPlainTextPrefix(projection, active);
   if (members.length === 0) return;
-  const text = `No option chosen. New messages arrived while this question was open:\n\n${batchedProviderText(members.map(({ message }) => message))}\n\nHandle them. Ask the question again only if you still need the answer.`;
-  return {
-    active,
-    members,
-    responses: requests.map((request) => {
-      const item = projection.turnItems.find(
-        (candidate) =>
-          candidate.type === "user_input_request" && candidate.requestId === request.id,
-      );
-      const ids = item?.type === "user_input_request" ? item.questions.map((q) => q.id) : [];
-      return {
-        request,
-        answers: Object.fromEntries((ids.length > 0 ? ids : ["answer"]).map((id) => [id, text])),
-      };
-    }),
-  };
+  const text = `No option chosen. New messages arrived while this question was open:\n\n${batchedProviderText(members.map(({ message }) => ({ ...message, text: projectComposerContextForProvider({ text: message.text, records: message.context?.records ?? [] }) })))}\n\nHandle them. Ask the question again only if you still need the answer.`;
+  const responses = [];
+  for (const request of requests) {
+    const item = projection.turnItems.find(
+      (candidate) =>
+        candidate.type === "user_input_request" &&
+        candidate.requestId === request.id &&
+        candidate.nodeId === request.nodeId,
+    );
+    if (item?.type !== "user_input_request") return;
+    const questionIds = item.questions.map((question) => question.id);
+    responses.push({
+      request,
+      answers: Object.fromEntries(
+        (questionIds.length > 0 ? questionIds : ["answer"]).map((id) => [id, text]),
+      ),
+    });
+  }
+  return { active, members, responses };
 }
 
 export const watchPendingInputQueueDelivery = Effect.fn(
@@ -91,10 +87,10 @@ export const watchPendingInputQueueDelivery = Effect.fn(
   const settings = yield* ServerSettings.ServerSettingsService;
   const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
-  const ids = yield* IdAllocator.IdAllocatorV2;
   const deliver = Effect.fn("Orchestrator.deliverQueuedMessagesToPendingInput")(function* (
     threadId: ThreadId,
   ) {
+    if ((yield* outbox.restartPrepared) !== undefined) return;
     if (!(yield* settings.getSettings).queuedMessagesAnswerPendingInput) return;
     const pending = yield* projections.getThreadRecords(threadId, ["runtimeRequests"]);
     if (
@@ -126,45 +122,24 @@ export const watchPendingInputQueueDelivery = Effect.fn(
         effects,
       );
     }
-    const now = yield* DateTime.now;
-    const firstItem: Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> = {
-      id: TurnItemId.make(`pending-input-queue:${plan.members[0]!.message.id}`),
-      threadId,
-      runId: plan.active.id,
-      nodeId: plan.active.rootNodeId,
-      providerThreadId: plan.active.providerThreadId,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: (yield* projections.getNextTurnItemOrdinal(threadId)) - 1,
-      status: "completed",
-      title: null,
-      startedAt: now,
-      completedAt: now,
-      updatedAt: now,
-      type: "user_message",
-      messageId: plan.members[0]!.message.id,
-      inputIntent: "queued_turn",
-      text: "",
-      attachments: [],
-      createdBy: "agent",
-      creationSource: "server",
-    };
-    const folded = yield* Effect.forEach(
-      queuedRunBatchEvents({
-        members: plan.members,
-        projection,
-        target: plan.active,
-        rootNodeId: plan.active.rootNodeId!,
-        firstItem,
-        itemId: (messageId) => TurnItemId.make(`pending-input-queue:${messageId}`),
-        occurredAt: now,
-      }),
-      (event) =>
-        ids.allocate.event({ threadId, commandId }).pipe(Effect.map((id) => ({ ...event, id }))),
+    yield* Ref.update(effects, (pending) =>
+      pending.map((effect, index) =>
+        index !== 0 || effect.request.type !== "runtime-request.respond"
+          ? effect
+          : {
+              ...effect,
+              request: {
+                ...effect.request,
+                queuedInputDelivery: {
+                  targetRunId: plan.active.id,
+                  queuedRunIds: plan.members.map(({ run }) => run.id),
+                },
+              },
+            },
+      ),
     );
     yield* eventSink.writeWithEffects({
-      events: [...(yield* Ref.get(events)), ...folded],
+      events: yield* Ref.get(events),
       effects: yield* Ref.get(effects),
     });
   });
@@ -180,16 +155,29 @@ export const watchPendingInputQueueDelivery = Effect.fn(
           stored.event.payload.status === "queued",
       ),
     ),
-    eventSink
-      .stream({ afterSequence, eventType: "runtime-request.updated" })
-      .pipe(
-        Stream.filter(
-          (stored) =>
-            stored.event.type === "runtime-request.updated" &&
-            stored.event.payload.kind === "user_input" &&
-            stored.event.payload.status === "pending",
+    Stream.merge(
+      eventSink
+        .stream({ afterSequence, eventType: "runtime-request.updated" })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "runtime-request.updated" &&
+              stored.event.payload.kind === "user_input" &&
+              stored.event.payload.status === "pending",
+          ),
         ),
-      ),
+      eventSink
+        .stream({ afterSequence, eventType: "turn-item.updated" })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "turn-item.updated" &&
+              stored.event.payload.type === "user_input_request" &&
+              (stored.event.payload.status === "pending" ||
+                stored.event.payload.status === "waiting"),
+          ),
+        ),
+    ),
   ).pipe(
     Stream.runForEach((stored) =>
       locks
@@ -205,3 +193,87 @@ export const watchPendingInputQueueDelivery = Effect.fn(
     Effect.forkDetach,
   );
 });
+
+export class QueuedInputDeliveryError extends Schema.TaggedError<QueuedInputDeliveryError>()(
+  "QueuedInputDeliveryError",
+  { threadId: ThreadId, cause: Schema.optional(Schema.Defect()) },
+) {}
+
+export const makeQueuedInputCompletion = Effect.fn("Orchestrator.makeQueuedInputCompletion")(
+  function* () {
+    const projections = yield* ProjectionStoreV2;
+    const eventSink = yield* EventSinkV2;
+    const ids = yield* IdAllocator.IdAllocatorV2;
+    return Effect.fn("Orchestrator.completeQueuedInputDelivery")(
+      function* (input: {
+        readonly threadId: ThreadId;
+        readonly commandId: CommandId;
+        readonly delivery: QueuedInputDelivery;
+      }) {
+        const { threadId, commandId } = input;
+        const projection = yield* projections.getThreadRecords(threadId, [
+          "runs",
+          "messages",
+          "nodes",
+          "attempts",
+        ]);
+        const target = projection.runs.find((run) => run.id === input.delivery.targetRunId);
+        if (target?.rootNodeId == null || target.providerThreadId === null)
+          return yield* new QueuedInputDeliveryError({ threadId });
+        const members = input.delivery.queuedRunIds.flatMap((id) => {
+          const run = projection.runs.find((run) => run.id === id && run.status === "queued");
+          const message = projection.messages.find((message) => message.id === run?.userMessageId);
+          return run !== undefined && message !== undefined ? [{ run, message }] : [];
+        });
+        if (members.length === 0) return;
+        const now = yield* DateTime.now;
+        const firstItem: Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> = {
+          id: TurnItemId.make(`pending-input-queue:${members[0]!.message.id}`),
+          threadId,
+          runId: target.id,
+          nodeId: target.rootNodeId,
+          providerThreadId: target.providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: (yield* projections.getNextTurnItemOrdinal(threadId)) - 1,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "user_message",
+          messageId: members[0]!.message.id,
+          inputIntent: "queued_turn",
+          text: "",
+          attachments: [],
+          createdBy: "agent",
+          creationSource: "server",
+        };
+        const folded = yield* Effect.forEach(
+          queuedRunBatchEvents({
+            members,
+            projection,
+            target,
+            rootNodeId: target.rootNodeId!,
+            firstItem,
+            itemId: (messageId) => TurnItemId.make(`pending-input-queue:${messageId}`),
+            occurredAt: now,
+          }),
+          (event) =>
+            ids.allocate
+              .event({ threadId, commandId })
+              .pipe(Effect.map((id) => ({ ...event, id }))),
+        );
+
+        yield* eventSink.writeWithEffects({ events: folded, effects: [] });
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(
+            (cause) => new QueuedInputDeliveryError({ threadId: input.threadId, cause }),
+          ),
+        ),
+    );
+  },
+);
