@@ -1,6 +1,7 @@
 import {
   CommandId,
   type OrchestrationV2Run,
+  type RunId,
   ServerPrepareRestartError,
   type ServerRestartStatus,
 } from "@t3tools/contracts";
@@ -25,6 +26,13 @@ export const restartStatus = Effect.fn("RestartStatus.read")(
       if (effect.request.type !== "provider-runtime.restart-handoff") continue;
       const projection = yield* projections.getThreadProjection(effect.threadId);
       const handoff = effect.request.handoff;
+      const prepared = (id: RunId) =>
+        effects.some(
+          (other) =>
+            other.threadId === effect.threadId &&
+            other.request.type === "provider-runtime.restart-handoff" &&
+            other.request.handoff.runIds.includes(id),
+        );
       const sources: ServerRestartStatus["threads"][number]["sources"][number][] = (
         handoff.sourceRunIds ?? handoff.runIds
       ).map((sourceRunId) => {
@@ -67,6 +75,10 @@ export const restartStatus = Effect.fn("RestartStatus.read")(
               run.id !== source.id &&
               run.status !== "queued" &&
               !cancelledBeforeStart(run) &&
+              !(
+                prepared(source.id) &&
+                (run.restartContinuationOfRunId !== undefined || prepared(run.id))
+              ) &&
               runRanAfter(run, source),
           )
         )
