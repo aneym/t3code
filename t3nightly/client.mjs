@@ -9,6 +9,8 @@ const tree = realpathSync(opts.tree);
 const src = `${tree}/packages/client-runtime/src`;
 const effectRoot = realpathSync(`${tree}/apps/mobile/node_modules/effect`);
 const load = (path) => import(pathToFileURL(path).href);
+const owner = process.ppid;
+setInterval(() => process.ppid !== owner && process.exit(3), 1000).unref();
 
 const Effect = await load(`${effectRoot}/dist/Effect.js`);
 const Layer = await load(`${effectRoot}/dist/Layer.js`);
