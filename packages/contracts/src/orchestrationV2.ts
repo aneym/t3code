@@ -2934,6 +2934,9 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
+    whenQueueDrains: Schema.optional(
+      Schema.Struct({ afterSequence: NonNegativeInt, requestedAt: IsoDateTime }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),
@@ -3833,6 +3836,18 @@ export const OrchestrationV2ThreadStreamItem = withRecordIdTable(
 );
 export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStreamItem.Type;
 
+export const ThreadOrganizeRefusalReason = Schema.Literals([
+  "thread_has_pending_request",
+  "thread_has_queued_run",
+  "thread_queue_held",
+  "thread_running",
+  "snooze_time_not_future",
+  "snooze_superseded",
+  "thread_archived",
+  "thread_deleted",
+]);
+export type ThreadOrganizeRefusalReason = typeof ThreadOrganizeRefusalReason.Type;
+
 export class OrchestrationV2DispatchCommandError extends Schema.TaggedError<OrchestrationV2DispatchCommandError>()(
   "OrchestrationV2DispatchCommandError",
   {
@@ -3840,6 +3855,7 @@ export class OrchestrationV2DispatchCommandError extends Schema.TaggedError<Orch
     commandType: Schema.String,
     message: Schema.String,
     detail: Schema.optional(Schema.String),
+    reason: Schema.optional(ThreadOrganizeRefusalReason),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

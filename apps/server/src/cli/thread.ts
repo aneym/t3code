@@ -573,6 +573,7 @@ const threadRestartCommand = Command.make("restart", {
 const ThreadOrganizeResult = Schema.Union([
   OrchestrationV2DispatchCommandResult,
   Schema.Struct({ settlesWhenTurnEnds: Schema.Literal(true) }),
+  Schema.Struct({ snoozesWhenQueueDrains: Schema.Literal(true) }),
 ]);
 
 const threadOrganizeCommand = (
@@ -608,7 +609,15 @@ const threadOrganizeCommand = (
               },
               ThreadOrganizeResult,
             );
-            yield* flags.json ? printJson(result) : Console.log("Done.");
+            yield* flags.json
+              ? printJson(result)
+              : Console.log(
+                  "snoozesWhenQueueDrains" in result
+                    ? "Snooze accepted. It applies after the queued messages run."
+                    : "settlesWhenTurnEnds" in result
+                      ? "Settle accepted. It applies when the current turn ends."
+                      : "Done.",
+                );
           }),
         );
       }).pipe(reportThreadErrors),

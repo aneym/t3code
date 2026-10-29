@@ -74,7 +74,7 @@ const toolFailureDetail = (result: typeof ToolResult.Type) => {
   const text = result.content?.find((part) => part.text !== undefined)?.text ?? "";
   return Option.match(decodeFailureText(text), {
     onNone: () => text || "The tool call failed.",
-    onSome: (failure) => failure.message,
+    onSome: (failure) => `${failure.code}: ${failure.message}`,
   });
 };
 

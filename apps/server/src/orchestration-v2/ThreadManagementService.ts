@@ -443,6 +443,18 @@ export interface ThreadManagementServiceShape {
     { readonly sequence: number } | { readonly settlesWhenTurnEnds: true },
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
+  readonly snoozeThread: (input: {
+    readonly threadId: ThreadId;
+    readonly commandId: CommandId;
+    readonly snoozedUntil: string;
+  }) => Effect.Effect<
+    {
+      readonly sequence: number;
+      readonly replayed?: true;
+      readonly snoozesWhenQueueDrains?: true;
+    },
+    Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
+  >;
   readonly interruptThread: (
     input: ThreadManagementInterruptInput,
   ) => Effect.Effect<ThreadManagementInterruptResult, ThreadManagementFailure>;
@@ -548,6 +560,8 @@ const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const layerScope = yield* Effect.scope;
+  const latestDeferredSnooze = yield* Ref.make(new Map<ThreadId, CommandId>());
+  const deferredSnoozeCommands = yield* Ref.make(new Map<CommandId, ThreadId>());
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
@@ -1057,6 +1071,118 @@ const make = Effect.gen(function* () {
     return { sequence: result.sequence };
   });
 
+  const snoozeAfterQueue = Effect.fn("orchestrationV2.threadManagement.snoozeAfterQueue")(
+    function* (input: {
+      readonly projectId: ProjectId;
+      readonly threadId: ThreadId;
+      readonly afterSequence: number;
+      readonly requestedAt: string;
+      readonly commandId: CommandId;
+      readonly snoozedUntil: string;
+    }) {
+      for (let attempt = 1; ; attempt++) {
+        const remainingMs =
+          Date.parse(input.snoozedUntil) - DateTime.toEpochMillis(yield* DateTime.now);
+        if (!(remainingMs > 0)) return;
+        const { runs } = yield* orchestrator.getThreadRecords(input.threadId, ["runs"]);
+        const pending =
+          runs.find((run) => !isTerminalRunStatus(run.status) && run.status !== "queued") ??
+          runs.find((run) => !isTerminalRunStatus(run.status));
+        if (pending !== undefined) {
+          const waited = yield* waitForThread({
+            ...input,
+            runId: pending.id,
+            timeoutMs: remainingMs,
+          });
+          if (waited.timedOut) return;
+          continue;
+        }
+        if ((yield* Ref.get(latestDeferredSnooze)).get(input.threadId) !== input.commandId) return;
+        const applied = yield* dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make(`server:snooze-after-queue:${input.commandId}:${attempt}`),
+          threadId: input.threadId,
+          snoozedUntil: input.snoozedUntil,
+          whenQueueDrains: { afterSequence: input.afterSequence, requestedAt: input.requestedAt },
+        }).pipe(
+          Effect.as(true),
+          Effect.catchIf(
+            (error) =>
+              error._tag === "OrchestratorDispatchError" &&
+              error.reason === "thread_has_queued_run",
+            () => Effect.succeed(false),
+          ),
+        );
+        if (applied) return;
+      }
+    },
+  );
+
+  const snoozeThread: ThreadManagementServiceShape["snoozeThread"] = Effect.fn(
+    "orchestrationV2.threadManagement.snoozeThread",
+  )(function* (input) {
+    const afterSequence = yield* orchestrator.getThreadEventSequence(input.threadId);
+    const requestedAt = DateTime.formatIso(yield* DateTime.now);
+    if ((yield* Ref.get(deferredSnoozeCommands)).get(input.commandId) === input.threadId) {
+      return { sequence: afterSequence, snoozesWhenQueueDrains: true } as const;
+    }
+    const result = yield* dispatch({
+      type: "thread.snooze",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      snoozedUntil: input.snoozedUntil,
+    }).pipe(
+      Effect.catchIf(
+        (error) =>
+          error._tag === "OrchestratorDispatchError" && error.reason === "thread_has_queued_run",
+        () => Effect.succeed(null),
+      ),
+    );
+    if (result !== null) {
+      return { sequence: result.sequence, ...(result.replayed ? { replayed: true as const } : {}) };
+    }
+    const shell = yield* orchestrator.getThreadShell(input.threadId);
+    if (shell === null) {
+      return yield* new Orchestrator.OrchestratorDispatchError({
+        commandId: input.commandId,
+        commandType: "thread.snooze",
+        cause: `Thread ${input.threadId} is deleted.`,
+        reason: "thread_deleted",
+      });
+    }
+    yield* Ref.update(latestDeferredSnooze, (latest) =>
+      new Map(latest).set(shell.id, input.commandId),
+    );
+    yield* Ref.update(deferredSnoozeCommands, (commands) => {
+      const next = new Map(commands).set(input.commandId, input.threadId);
+      for (const [oldest] of next) {
+        if (next.size <= 1000) break;
+        next.delete(oldest);
+      }
+      return next;
+    });
+    yield* snoozeAfterQueue({
+      projectId: shell.projectId,
+      threadId: shell.id,
+      afterSequence,
+      requestedAt,
+      commandId: input.commandId,
+      snoozedUntil: input.snoozedUntil,
+    }).pipe(
+      Effect.ensuring(
+        Ref.update(latestDeferredSnooze, (latest) => {
+          if (latest.get(shell.id) !== input.commandId) return latest;
+          const next = new Map(latest);
+          next.delete(shell.id);
+          return next;
+        }),
+      ),
+      Effect.ignoreCause({ log: true }),
+      Effect.forkIn(layerScope),
+    );
+    return { sequence: afterSequence, snoozesWhenQueueDrains: true } as const;
+  });
+
   const interruptThread: ThreadManagementServiceShape["interruptThread"] = Effect.fn(
     "ThreadManagementService.interruptThread",
   )(function* (input) {
@@ -1382,6 +1508,7 @@ const make = Effect.gen(function* () {
     waitForThread,
     settleAfterRun,
     settleThread,
+    snoozeThread,
     interruptThread,
     stopDelegatedTasks,
     stopWorkflow,

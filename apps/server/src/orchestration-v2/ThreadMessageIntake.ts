@@ -87,6 +87,14 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   const command =
     incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  if (command.type === "thread.snooze" && command.whenQueueDrains === undefined) {
+    const result = yield* threads.snoozeThread(command);
+    return {
+      sequence: result.sequence,
+      storedEvents: [],
+      ...(result.replayed ? { replayed: true as const } : {}),
+    };
+  }
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
     const incomingByQuestionId = command.attachmentsByQuestionId;
