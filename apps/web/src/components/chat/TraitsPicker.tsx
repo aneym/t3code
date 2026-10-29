@@ -41,6 +41,7 @@ import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
+import { EffortWord, SecondaryTraitWords } from "./TraitWords";
 import { focusRequestedPermission, useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
 import { EffortGlyph, resolveEffortGlyph } from "./EffortGlyph";
@@ -321,6 +322,7 @@ interface TraitsMenuContentProps {
   isComposerOwned?: boolean;
   /** Composer chips name the effort level unless the user picked bars. */
   effortDisplay?: EffortDisplay;
+  rainbow?: boolean;
   /** Extra section shown below the traits in the picker popup (Permissions). */
   extraMenuContent?: ReactNode;
   /** This trigger also answers composer.mode (while the permissions chip is hidden). */
@@ -548,6 +550,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   triggerClassName,
   isComposerOwned,
   effortDisplay = "label",
+  rainbow,
   extraMenuContent,
   extraMenuOwnsModeShortcut,
   extraMenuHint,
@@ -674,7 +677,7 @@ export const TraitsPicker = memo(function TraitsPicker({
               ) : null}
               {effortWord !== null ? (
                 <>
-                  <span data-composer-control-label>{effortWord}</span>
+                  <EffortWord label={effortWord} descriptors={descriptors} rainbow={rainbow} />
                   {/* Icon-only footers hide labels and reveal this instead. */}
                   <GaugeIcon
                     aria-hidden="true"
@@ -691,15 +694,12 @@ export const TraitsPicker = memo(function TraitsPicker({
                 <FastBolt ultra={speedLabel === "Ultrafast"} />
               ) : null}
               {otherLabels.length > 0 ? (
-                <span
-                  aria-hidden="true"
-                  // A label, so icon-only footers drop it; compacted rows drop it before the model.
-                  data-composer-control-label
-                  data-composer-secondary-trait
-                  className="max-w-24 truncate text-xs"
-                >
-                  {otherLabels.join(" · ")}
-                </span>
+                // A label, so icon-only footers drop it; compacted rows drop it before the model.
+                <SecondaryTraitWords
+                  labels={otherLabels}
+                  descriptors={descriptors}
+                  rainbow={rainbow}
+                />
               ) : null}
             </span>
           ) : isCodexStyle ? (

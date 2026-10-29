@@ -329,6 +329,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["reasoning effort thinking bars graph word label level composer"],
   },
   {
+    id: "ultracode-rainbow",
+    title: "Ultracode colors",
+    to: "/settings/appearance",
+    searchTerms: ["ultracode rainbow ultrathink colors claude composer mode"],
+  },
+  {
     id: "math-rendering",
     title: "Render math",
     to: "/settings/appearance",

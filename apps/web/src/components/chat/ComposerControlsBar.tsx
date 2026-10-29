@@ -22,6 +22,7 @@ import {
 } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { cn } from "~/lib/utils";
+import { useClientSettings } from "../../hooks/useSettings";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
   renderProviderTraitsMenuContent,
@@ -150,6 +151,7 @@ export function ComposerControlsBar(props: {
     onPromptEdit,
     planModeEnabled,
   });
+  const ultracodeRainbow = useClientSettings((settings) => settings.ultracodeRainbow);
   const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
   const permissionsChipHidden = accessMatchesDefault || props.permissionsShownInStrip;
   const providerTraitsPickerInput = {
@@ -166,6 +168,7 @@ export function ComposerControlsBar(props: {
     planModeEnabled,
     isComposerOwned: true,
     effortDisplay: props.effortDisplay,
+    ultracodeRainbow,
     triggerClassName: cn("ps-1.5 pe-1", TEXT_CONTROL_STATES),
     // Permissions always live in the effort menu, so the section never unmounts while open.
     extraMenuContent: (
