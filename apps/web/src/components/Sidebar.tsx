@@ -136,20 +136,7 @@ import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useAutomationThreadKeys } from "../hooks/useAutomations";
 import { SidebarAutomationJobs } from "./automations/SidebarAutomationJobs";
-import { SidebarAgents } from "./agents/SidebarAgents";
-import {
-  openSidebarJumpAgent,
-  sidebarJumpKeys,
-  sidebarJumpLabels,
-  useSidebarAgentLists,
-} from "./agents/sidebarAgentLists";
-import {
-  agentScopeProjectKeys,
-  useAgentFocusHandle,
-  useSidebarAgentThreads,
-  withoutAgentHomes,
-} from "./agents/agentFocus";
-import { useAgentMainThreadMenu } from "./agents/agentMainThreadMenu";
+import { useSidebarAgentsLayer } from "./agents/useSidebarAgentsLayer";
 import { SHELF_MORE_ROW_CLASS_NAME } from "./sidebar/shelfMoreRow";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
@@ -1016,21 +1003,24 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
 
-  const [, setAgentFocus] = useAgentFocusHandle();
+  const threads = useQuietThreadShells();
+  const agentsLayer = useSidebarAgentsLayer({
+    threads,
+    projectGroups,
+    keybindings,
+    onNavigate: closeMobileSidebar,
+  });
   // A selection made under one scope can hold threads the next scope hides.
   const setProjectScopeKeys = (keys: readonly string[]) => {
     clearSelection();
     completeSidebarRouteReveal(routeReveal);
-    setAgentFocus(null);
+    agentsLayer.clearFocus();
     setPersistedProjectScopeKeys(keys);
   };
   // A scope whose project is gone reads as all projects once every snapshot has
   // loaded. The stored keys are left alone, so the scope returns with its project.
-  const threads = useQuietThreadShells();
-  const agentWork = useSidebarAgentThreads(threads, projectGroups);
-  const agentFocused = agentWork.projectKeys !== null;
   const chosenProjectScopeKeys =
-    agentWork.scopeKeys ??
+    agentsLayer.scopeKeys ??
     resolveSidebarProjectScopeKeys({
       groups: projectGroups,
       keys: persistedProjectScopeKeys,
@@ -1040,7 +1030,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const chosenProjectGroups = projectGroups.filter((project) =>
     chosenProjectScopeKeys.includes(project.projectKey),
   );
-  const chosenScopeProjectKeys = agentScopeProjectKeys(chosenProjectGroups);
+  const chosenScopeProjectKeys = agentsLayer.scopeProjectKeys(chosenProjectGroups);
   const routeRowThreadKey =
     routeThreadRef === null
       ? null
@@ -1064,9 +1054,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     reveal: routeReveal,
     routeKey: routeRowThreadKey,
     isSearching: isSearchingThreads,
-    scopedProjectKeys: agentFocused ? null : chosenScopeProjectKeys,
+    scopedProjectKeys: agentsLayer.scopedProjectKeys(chosenScopeProjectKeys),
     delegatedUnderParent,
-    findThread: (key) => agentWork.threads.find((candidate) => threadShellKey(candidate) === key),
+    findThread: (key) => agentsLayer.threads.find((candidate) => threadShellKey(candidate) === key),
   });
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
@@ -1215,22 +1205,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     activeKeysById,
   } = useSidebarThreads({
     projectScopeKey,
-    scopedProjectKeys: agentFocused ? null : scopedProjectKeys,
+    scopedProjectKeys: agentsLayer.scopedProjectKeys(scopedProjectKeys),
     serverConfigs,
     optimisticDrop,
-    threads: agentWork.threads,
-    settledScopeKeys: agentWork.projectKeys ?? scopedProjectKeys,
+    threads: agentsLayer.threads,
+    settledScopeKeys: agentsLayer.settledScopeKeys(scopedProjectKeys),
     delegatedUnderParent,
     routeRowThreadKey,
-    folderGroups: boringSidebarEnabled
-      ? scopedProjectGroups.length === 0 || agentFocused
-        ? projectGroups
-        : scopedProjectGroups
-      : null,
-    keepEmptyFolders: scopedProjectGroups.length > 0 && !agentFocused,
+    ...agentsLayer.folders(scopedProjectGroups, boringSidebarEnabled),
   });
-  const sidebarAgents = useSidebarAgentLists(scopedProjectKeys);
-  const jumpKeys = sidebarJumpKeys(sidebarAgents.jumpable, orderedThreadKeys);
+  const jumpKeys = agentsLayer.jumpKeys(orderedThreadKeys);
 
   const threadByMatchKey =
     threadSearch.matches.length === 0
@@ -1308,7 +1292,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const settledThreadKeysRef = useRef(settledThreadKeys);
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
 
-  const jumpLabelByKey = sidebarJumpLabels(jumpKeys, keybindings);
+  const jumpLabelByKey = agentsLayer.jumpLabels(jumpKeys);
 
   const navigateToThread = (threadRef: ScopedThreadRef) => {
     if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
@@ -1321,8 +1305,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       params: buildThreadRouteParams(threadRef),
     });
   };
-  const openJumpAgent = (jumpKey: string | null) =>
-    openSidebarJumpAgent(sidebarAgents.jumpable, jumpKey, navigateToThread, handleNewThread);
 
   const handleThreadFileDrop = async (threadRef: ScopedThreadRef, files: File[]) => {
     const dropId = queuePendingFileDrop({ threadRef, files });
@@ -2427,7 +2409,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
 
-  const agentMainThreadMenu = useAgentMainThreadMenu();
   const handleThreadContextMenu = useStableCallback(
     (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
       void (async () => {
@@ -2498,7 +2479,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 titleRegeneration: configLoaded,
               },
               snoozePresets,
-              agentMainThreads: agentMainThreadMenu.options(thread),
+              agentMainThreads: agentsLayer.contextMenu.options(thread),
             }),
             position,
           ),
@@ -2518,9 +2499,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           if (preset) attemptSnooze(threadRef, preset);
           return;
         }
-        if (clicked.value.startsWith("agent-main:")) {
-          return agentMainThreadMenu.assign(clicked.value.slice("agent-main:".length), thread);
-        }
+        if (agentsLayer.contextMenu.handle(clicked.value, thread)) return;
         switch (clicked.value) {
           case "filter-by-project":
             if (threadProjectGroup) {
@@ -2760,7 +2739,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const jumpIndex = threadJumpIndexFromCommand(command ?? "");
       if (jumpIndex === null) return;
       const jumpKey = jumpKeys[jumpIndex] ?? null;
-      if (navigateToThreadKey(jumpKey) || !openJumpAgent(jumpKey)) return;
+      if (
+        navigateToThreadKey(jumpKey) ||
+        !agentsLayer.openJump(jumpKey, navigateToThread, handleNewThread)
+      )
+        return;
       event.preventDefault();
       event.stopPropagation();
     };
@@ -2770,7 +2753,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     jumpKeys,
     keybindings,
     navigateToThread,
-    openJumpAgent,
+    agentsLayer,
+    handleNewThread,
     orderedThreadKeys,
     routeRowThreadKey,
     routeTerminalOpen,
@@ -2828,9 +2812,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               hasProjects={projectGroups.length > 0}
               projectScope={
                 <SidebarProjectScopePicker
-                  groups={withoutAgentHomes(projectGroups)}
+                  groups={agentsLayer.projectGroups}
                   scopeKeys={projectScopeKeys}
-                  allSelected={projectScopeKeys.length === 0 && !agentFocused}
+                  allSelected={projectScopeKeys.length === 0 && !agentsLayer.focused}
                   scopedProjects={scopedProjectGroups}
                   setScopeKey={(key) => setProjectScopeKeys(key === null ? [] : [key])}
                   openSettings={openProjectSettings}
@@ -2857,13 +2841,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
-            <SidebarAgents
-              onNavigate={closeMobileSidebar}
-              pinned={sidebarAgents.pinned}
-              hidden={sidebarAgents.hidden}
-              jumpLabelByKey={showJumpHints ? jumpLabelByKey : null}
-              setProjectScope={setProjectScopeKeys}
-            />
+            {agentsLayer.element({
+              projectKeys: scopedProjectKeys,
+              jumpLabelByKey: showJumpHints ? jumpLabelByKey : null,
+              setProjectScope: setProjectScopeKeys,
+            })}
           </SidebarGroup>
         }
       >

@@ -1,3 +1,13 @@
+import { DndContext, KeyboardSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
@@ -17,7 +27,12 @@ import { useThreadActionMenu } from "../../hooks/useThreadActionMenu";
 import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
 import { useEnvironmentIdentities } from "../../state/environments";
 import { cn } from "~/lib/utils";
-import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
+import {
+  animateSidebarLayoutChanges,
+  resolveSidebarThreadStatus,
+  type SidebarThreadStatus,
+} from "../Sidebar.logic";
+import { SidebarPointerSensor } from "../Sidebar.pointer";
 import { SidebarSection } from "../sidebar/SidebarSection";
 import { JumpHintBadge } from "../sidebar/SidebarThreadRow";
 import { toastManager } from "../ui/toast";
@@ -27,6 +42,12 @@ import type { RailsAgent } from "./railsAgents";
 import { useAgentFocusAction } from "./agentFocus";
 import { AGENTS_SECTION_STORAGE_KEY, sidebarAgentJumpKey } from "./sidebarAgentLists";
 import { useSidebarPins } from "./sidebarPins";
+import { useAgentDragSensor } from "./useAgentDragSensor";
+
+const keyboardSensorOptions = {
+  coordinateGetter: sortableKeyboardCoordinates,
+  keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space"] },
+};
 
 export function SidebarAgents({
   onNavigate,
@@ -41,7 +62,15 @@ export function SidebarAgents({
   readonly jumpLabelByKey: ReadonlyMap<string, string> | null;
   readonly setProjectScope: (keys: readonly string[]) => void;
 }) {
-  const { toggle, showMenu } = useSidebarPins();
+  const { toggle, setOrder, showMenu } = useSidebarPins();
+  const { containerRef, pointerSensorOptions } = useAgentDragSensor();
+  const sensors = useSensors(
+    useSensor(SidebarPointerSensor, pointerSensorOptions),
+    useSensor(KeyboardSensor, keyboardSensorOptions),
+  );
+  const handles = pinned.map((agent) => agent.handle);
+  const name = (id: string | number) =>
+    pinned.find((agent) => agent.handle === id)?.name ?? String(id);
   const focusAction = useAgentFocusAction(setProjectScope);
   const routeTarget = useThreadRouteTarget();
   const environmentLabelById = new Map(
@@ -70,22 +99,55 @@ export function SidebarAgents({
   });
 
   return (
-    <div className="mt-2">
+    <div ref={containerRef} className="mt-2">
       <SidebarSection label="Agents" storageKey={AGENTS_SECTION_STORAGE_KEY}>
-        <ul aria-label="Agents" className="flex flex-col">
-          {pinned.map((agent) => (
-            <AgentRow
-              key={agent.handle}
-              {...rowProps(agent)}
-              jumpLabel={jumpLabelByKey?.get(sidebarAgentJumpKey(agent)) ?? null}
-              toggle={{
-                label: `Unpin ${agent.name}`,
-                icon: PinOffIcon,
-                onClick: () => toggle(agent.handle),
-              }}
-            />
-          ))}
-        </ul>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          modifiers={[restrictToVerticalAxis]}
+          accessibility={{
+            screenReaderInstructions: {
+              draggable:
+                "Press Space to pick up an agent. Use the arrow keys to move it, Space to drop, or Escape to cancel.",
+            },
+            announcements: {
+              onDragStart: ({ active }) => `Picked up ${name(active.id)}.`,
+              onDragOver: ({ active, over }) =>
+                over
+                  ? `${name(active.id)} is at position ${handles.indexOf(String(over.id)) + 1} of ${handles.length}, over ${name(over.id)}.`
+                  : `${name(active.id)} is outside the list.`,
+              onDragEnd: ({ active, over }) =>
+                over
+                  ? `Dropped ${name(active.id)} at position ${handles.indexOf(String(over.id)) + 1} of ${handles.length}.`
+                  : `Dropped ${name(active.id)} without moving.`,
+              onDragCancel: ({ active }) => `Reordering ${name(active.id)} cancelled.`,
+            },
+          }}
+          onDragEnd={({ active, over }) => {
+            if (over === null || active.id === over.id) return;
+            const from = handles.indexOf(String(active.id));
+            const to = handles.indexOf(String(over.id));
+            if (from < 0 || to < 0) return;
+            setOrder(arrayMove(handles, from, to));
+          }}
+        >
+          <SortableContext items={handles} strategy={verticalListSortingStrategy}>
+            <ul aria-label="Agents" className="flex flex-col">
+              {pinned.map((agent) => (
+                <AgentRow
+                  key={agent.handle}
+                  {...rowProps(agent)}
+                  jumpLabel={jumpLabelByKey?.get(sidebarAgentJumpKey(agent)) ?? null}
+                  toggle={{
+                    label: `Unpin ${agent.name}`,
+                    icon: PinOffIcon,
+                    onClick: () => toggle(agent.handle),
+                  }}
+                />
+              ))}
+            </ul>
+          </SortableContext>
+        </DndContext>
         {hidden.length > 0 ? (
           <SidebarSection
             label="Hidden"
@@ -126,6 +188,19 @@ function AgentRow(props: {
   readonly toggle: AgentRowAction;
 }) {
   const { agent } = props;
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: agent.handle,
+    disabled: props.muted === true,
+    animateLayoutChanges: animateSidebarLayoutChanges,
+  });
   const handleNewThread = useNewThreadHandler();
   const navigate = useNavigate();
   const { openMenu } = useThreadActionMenu({
@@ -156,8 +231,8 @@ function AgentRow(props: {
   const content = (
     <>
       <AgentFace agent={agent} />
-      <span className="min-w-0 flex-1 truncate">{agent.name}</span>
-      <span className="flex shrink-0 text-xs text-sidebar-muted-foreground group-focus-within/agent-row:hidden group-hover/agent-row:hidden">
+      <span className="min-w-[min(8ch,100%)] truncate">{agent.name}</span>
+      <span className="ml-auto flex shrink-0 text-xs text-sidebar-muted-foreground group-focus-within/agent-row:hidden group-hover/agent-row:hidden">
         {agent.thread !== null ? (
           <AgentStatus thread={agent.thread} />
         ) : agent.target ? (
@@ -167,7 +242,7 @@ function AgentRow(props: {
         ) : null}
       </span>
       {props.machines === "" ? null : (
-        <span className="hidden shrink-0 text-xs text-sidebar-muted-foreground group-focus-within/agent-row:inline group-hover/agent-row:inline">
+        <span className="hidden min-w-0 flex-1 truncate text-right text-xs text-sidebar-muted-foreground group-focus-within/agent-row:block group-hover/agent-row:block">
           {props.machines}
         </span>
       )}
@@ -175,15 +250,21 @@ function AgentRow(props: {
   );
   return (
     <li
+      ref={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "group/agent-row relative flex h-8 items-center rounded-md",
+        "group/agent-row relative flex h-8 cursor-pointer items-center rounded-md select-none",
         props.active ? "bg-sidebar-row-active" : "hover:bg-sidebar-row-hover",
+        isDragging &&
+          "z-20 bg-sidebar bg-linear-to-b from-sidebar-row-active to-sidebar-row-active text-sidebar-foreground opacity-100 shadow-lg",
       )}
+      onPointerDown={(event) => listeners?.onPointerDown?.(event)}
       onContextMenu={(event) => {
         event.preventDefault();
         showMenu({ x: event.clientX, y: event.clientY });
       }}
       onKeyDown={(event) => {
+        listeners?.onKeyDown?.(event);
         if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
         event.preventDefault();
         const rect = event.currentTarget.getBoundingClientRect();
@@ -193,6 +274,9 @@ function AgentRow(props: {
       {agent.target === null ? (
         <button
           type="button"
+          ref={setActivatorNodeRef}
+          aria-describedby={props.muted ? undefined : attributes["aria-describedby"]}
+          aria-roledescription={props.muted ? undefined : attributes["aria-roledescription"]}
           className={rowClassName}
           onClick={() => {
             if (agent.remoteHost) {
@@ -212,6 +296,10 @@ function AgentRow(props: {
         </button>
       ) : (
         <Link
+          ref={setActivatorNodeRef}
+          draggable={false}
+          aria-describedby={props.muted ? undefined : attributes["aria-describedby"]}
+          aria-roledescription={props.muted ? undefined : attributes["aria-roledescription"]}
           to="/$environmentId/$threadId"
           params={{ environmentId: agent.target.environmentId, threadId: agent.target.threadId }}
           aria-current={props.active ? "page" : undefined}
@@ -221,7 +309,7 @@ function AgentRow(props: {
           {content}
         </Link>
       )}
-      <span className="mr-1 flex shrink-0">
+      <span className="mr-1 flex shrink-0" onPointerDown={(event) => event.stopPropagation()}>
         {props.focus ? <AgentRowButton action={props.focus} /> : null}
         <AgentRowButton action={props.toggle} />
       </span>
