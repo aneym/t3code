@@ -3012,6 +3012,41 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
+  it.effect("keeps a ready restart when a later prepare of the same epoch fails", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const sql = yield* SqlClient.SqlClient;
+      const run = yield* seedRunningRun("restart-reprepare");
+      const ready = yield* RestartPreparation.prepareRestart("epoch:reprepare");
+      assert.deepEqual(
+        ready.threads.map((thread) => thread.runIds),
+        [[run.id]],
+      );
+      yield* outbox.enqueue([
+        {
+          id: "effect:restart-reprepare:busy",
+          commandId: CommandId.make("command:restart-reprepare"),
+          threadId: ThreadId.make("thread:restart-reprepare:busy"),
+          request: { type: "terminal.cleanup" },
+        },
+      ]);
+      yield* sql`
+        UPDATE orchestration_v2_effect_outbox SET status = 'running'
+        WHERE effect_id = 'effect:restart-reprepare:busy'
+      `;
+      const again = yield* RestartPreparation.prepareRestart("epoch:reprepare").pipe(
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.interrupt(again);
+      assert.equal(yield* outbox.restartPrepared, "epoch:reprepare");
+      assert.deepEqual(
+        (yield* outbox.restartHandoffs).map((effect) => effect.status),
+        ["pending"],
+      );
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
   it.effect("spaces restart resumes so their sessions do not open together", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;

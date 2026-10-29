@@ -106,7 +106,11 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
           return handoffs;
         }),
       );
-    }).pipe(Effect.onError(() => abortRestart(epoch).pipe(Effect.ignore)));
+    }).pipe(
+      Effect.onError(() =>
+        preparedEpoch === undefined ? abortRestart(epoch).pipe(Effect.ignore) : Effect.void,
+      ),
+    );
     return {
       epoch,
       ready: true as const,
