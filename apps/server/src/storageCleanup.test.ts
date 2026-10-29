@@ -280,10 +280,8 @@ const cleanupFixture = (
         ...fs,
         rename: (from, to) =>
           Effect.gen(function* () {
-            // A real refusal for the move back out of the trash.
             if (failRestore && to === worktree) return yield* fs.rename(`${repo}/missing`, to);
             yield* fs.rename(from, to);
-            // Another writer recreates the checkout at the original path right after the move.
             if (recreateAfterMove && from === worktree) {
               const gitFile = yield* fs.readFileString(`${to}/.git`);
               yield* fs.makeDirectory(worktree);
@@ -1871,7 +1869,11 @@ describe("storage cleanup reports and local file policies", () => {
         expect(yield* fixture.fs.readFileString(`${entry}/checkout/tracked.txt`)).toBe(
           "original\n",
         );
-        expect(yield* fixture.fs.exists(`${entry}/git/gitdir`)).toBe(true);
+        expect(
+          yield* fixture.fs.exists(
+            `${fixture.repo}/.git/t3-worktree-trash/${entry?.split("/").at(-1)}/git/gitdir`,
+          ),
+        ).toBe(true);
         expect(
           (yield* fixture.command(fixture.repo, ["worktree", "list", "--porcelain"])).stdout,
         ).not.toContain(`branch refs/heads/feature`);

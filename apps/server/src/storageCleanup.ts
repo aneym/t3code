@@ -68,7 +68,6 @@ const decodePnpmModulesManifest = Schema.decodeUnknownEffect(
 );
 
 const DAY_MS = 86_400_000;
-// Give settle scripts time to open terminals that protect the worktree.
 const SETTLE_SCRIPT_GRACE_MS = 60_000;
 // Worktree creation can precede its thread row, including review-guide checkouts.
 const ORPHAN_WORKTREE_GRACE_MS = 60 * 60 * 1_000;
@@ -332,7 +331,6 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => null),
   );
 
-  // Large snapshots take seconds; use the reader worker instead of blocking the event loop.
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
     const snapshot = yield* projections.getShellSnapshot().pipe(NodeSqliteClient.readOnly);
     const projects = yield* projectStore.listShells();
@@ -1080,7 +1078,6 @@ const make = Effect.gen(function* () {
         yield* trash.move({ root: managedRoot, entry: trashEntry, worktreePath, adminDir });
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
-        // Preserve branch/path so ProviderTurnStartService can recreate the checkout on resume.
         yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
       }).pipe(
         (effect) => withWorkspaceLease(worktreePath, effect),
@@ -1151,7 +1148,15 @@ const make = Effect.gen(function* () {
     const settings = serverSettings.storageCleanup;
     const entries: StorageCleanupReportEntry[] = [];
     yield* managedRoots(serverSettings).pipe(
-      Effect.flatMap((roots) => trash.purge(roots, now)),
+      Effect.flatMap((roots) =>
+        Effect.flatMap(projectStore.listShells(), (projects) =>
+          trash.purge(
+            roots,
+            now,
+            projects.map((project) => project.workspaceRoot),
+          ),
+        ),
+      ),
       Effect.catch((error) => Effect.logWarning("worktree trash purge failed", { error })),
     );
     yield* cleanWorktrees(serverSettings, now, entries).pipe(
