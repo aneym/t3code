@@ -14,7 +14,7 @@ from .install_chat import candidate_writes, identities, prove, retained
 from .install_process import service_binary, serving_process
 from .install_strays import managed_strays, reap_strays
 from .install_provenance import file_digest, migration_history, validate
-from .install_runtime import pin_runtime, stage_runtime
+from .install_runtime import pin_runtime, restore_runtime, retain_runtime, stage_runtime
 from .release_receipts import INSTALL_SCHEMA, write
 from .release_signatures import cli_binary
 
@@ -155,6 +155,7 @@ def install(run):
             staged = stage_runtime(run.home, args.version, args.assets)
             if file_digest(staged) != observed["candidateRuntime.digest"]:
                 raise ValueError("staged candidate runtime changed after provenance check")
+            run.step("hard-retain-runtime", version=previous, path=str(retain_runtime(run.home, previous, run.state / "rollback-runtime")))
             backup = capture(run, previous, stop, rollback_gate)
             activate(run, args.version)
             stopped = False
@@ -180,6 +181,8 @@ def install(run):
                         if not stopped:
                             raise
                         run.step("hard-rollback-stop", error=str(reaping))
+                if restore_runtime(run.home, previous, run.state / "rollback-runtime"):
+                    run.step("hard-restore-runtime", version=previous)
                 activate(run, previous)
                 stopped = False
                 serving(run, previous, observed["oldRuntime.digest"])

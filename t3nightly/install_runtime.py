@@ -79,3 +79,34 @@ def pin_runtime(home, version):
             shutil.copytree(source, staged, symlinks=True)
         backup = activate(staged, runtime / "launcher")
     return runtime / "launcher" / "t3", backup
+
+
+def link_tree(source, destination):
+    if sys.platform == "darwin":
+        subprocess.run(["cp", "-c", "-R", str(source), str(destination)], check=True, timeout=240)
+    else:
+        shutil.copytree(source, destination, symlinks=True, copy_function=os.link)
+
+
+def retain_runtime(home, version, store):
+    source = Path(home) / "runtime" / "versions" / version
+    verify_cli(source / "t3")
+    store.mkdir(parents=True, exist_ok=True)
+    retained = store / version
+    if retained.exists():
+        shutil.rmtree(retained)
+    link_tree(source, retained)
+    return retained
+
+
+def restore_runtime(home, version, store):
+    target = Path(home) / "runtime" / "versions" / version
+    if (target / "t3").exists():
+        return False
+    retained = store / version
+    verify_cli(retained / "t3")
+    with tempfile.TemporaryDirectory(prefix=".restore-", dir=target.parent) as raw:
+        staged = Path(raw) / version
+        link_tree(retained, staged)
+        os.replace(staged, target)
+    return True
