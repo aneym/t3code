@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import { OrchestratorProjectionError } from "./OrchestratorErrors.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { foldedQueuedTurnItems } from "./QueuedRunBatch.ts";
+import { clearQueueHold } from "./QueueHoldPolicy.ts";
 
 type UserItem = Extract<OrchestrationV2TurnItem, { type: "user_message" }>;
 
@@ -76,13 +77,16 @@ export const makeQueuedSteerRecovery = Effect.gen(function* () {
       targetEvent?.type === "run.updated" || targetEvent?.type === "run.created"
         ? targetEvent.payload
         : projection.runs.find((run) => run.id === first.runId);
-    if (retain && target !== undefined)
+    if (target !== undefined)
       carried.push({
         type: "run.updated",
         threadId: command.threadId,
         runId: target.id,
         occurredAt: first.updatedAt,
-        payload: { ...target, retainBlockedCompletionHolds: true },
+        payload: {
+          ...clearQueueHold(target),
+          ...(retain ? { retainBlockedCompletionHolds: true } : {}),
+        },
       });
     return carried;
   });
