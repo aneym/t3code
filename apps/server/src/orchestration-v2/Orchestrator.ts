@@ -1,7 +1,7 @@
 import {
   completionDeliveryRun,
   completionDeliveryMessage,
-  completionDeliveryOutcome,
+  readCompletionDeliveries,
   completionQueueBlocked,
   completionBlockedBy,
 } from "./CompletionDeliveryPolicy.ts";
@@ -5480,7 +5480,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
-    const queueBehindRun = activeRun ?? worktreeMissingRun;
+    const queueBehindRun =
+      activeRun ??
+      worktreeMissingRun ??
+      (dispatchMode.type === "queue_after_active"
+        ? projection.runs.find((run) => run.status === "queued")
+        : undefined);
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
@@ -12297,11 +12302,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const finalizeDelegatedCompletionDelivery = Effect.fn(
     "Orchestrator.finalizeDelegatedCompletionDelivery",
   )(function* (threadId: ThreadId, run: Pick<OrchestrationV2Run, "id" | "status">) {
-    const { messages, providerAccepted } = yield* projectionStore.getRunCompletionDeliveries(
-      threadId,
-      run.id,
-    );
-    const outcome = completionDeliveryOutcome(run.status, providerAccepted);
+    const { messages, outcome } = yield* readCompletionDeliveries(projectionStore, threadId, run);
     for (const message of messages) {
       yield* settleDelegatedCompletionDelivery(threadId, message, outcome);
     }

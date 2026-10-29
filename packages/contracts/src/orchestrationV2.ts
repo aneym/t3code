@@ -609,11 +609,6 @@ export const OrchestrationV2DelegatedCompletionTaskDelivery = Schema.Struct({
 export type OrchestrationV2DelegatedCompletionTaskDelivery =
   typeof OrchestrationV2DelegatedCompletionTaskDelivery.Type;
 
-export {
-  OrchestrationV2DelegatedCompletionDelivery,
-  OrchestrationV2DelegatedCompletionCohort,
-} from "./delegatedCompletionDelivery.ts";
-
 export const OrchestrationV2RestartCancelledBackgroundWork = Schema.Struct({
   kind: Schema.Literals(["subagent", "shell", "monitor", "task"]),
   label: TrimmedNonEmptyString,

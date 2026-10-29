@@ -45,17 +45,11 @@ function releasesStopHold(
   ended: OrchestrationV2Run,
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "turnItems">,
 ): boolean {
-  if (
-    projection.thread.createdBy !== "agent" ||
-    ended.status !== "completed" ||
-    ended.startedAt === null
-  )
-    return false;
+  if (projection.thread.createdBy !== "agent" || ended.completedAt === null) return false;
   let heldAt = run.queueHeldAt;
   for (const item of projection.turnItems) {
-    if (item.type !== "run_interrupt_request") continue;
-    if (item.runId === ended.id) return false;
     if (
+      item.type === "run_interrupt_request" &&
       item.startedAt !== null &&
       run.queueHeldAt === undefined &&
       (heldAt === undefined || DateTime.isGreaterThan(item.startedAt, heldAt))
@@ -63,7 +57,7 @@ function releasesStopHold(
       heldAt = item.startedAt;
     }
   }
-  return heldAt !== undefined && DateTime.isGreaterThan(ended.startedAt, heldAt);
+  return heldAt !== undefined && DateTime.isGreaterThanOrEqualTo(ended.completedAt, heldAt);
 }
 
 export function stoppedQueueHold(run: OrchestrationV2Run, now: DateTime.Utc): Hold | undefined {

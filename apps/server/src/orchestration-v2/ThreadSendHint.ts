@@ -7,7 +7,7 @@ export function threadSendHint(
   switch (reason) {
     case "stop":
       return thread.createdBy === "agent"
-        ? "Releases after the next completed run on this thread; send with mode auto to start now."
+        ? "Releases when the stopped run ends; mode auto starts now."
         : "Waits for the user to resume; mode auto starts now.";
     case "restart":
       return "Waits for server restart recovery; mode auto starts now.";
