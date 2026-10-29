@@ -7,6 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { restartNoteOwed } from "./RestartBackgroundNote.ts";
 import { restartDispatchRefusal } from "./RestartDispatchPolicy.ts";
 
 const endedOnItsOwn = (status: OrchestrationV2Run["status"]) =>
@@ -70,10 +71,11 @@ export const restartStatus = Effect.fn("RestartStatus.read")(
           return { sourceRunId, state: "stopped", intentPreserved: true, reason: intent };
         if (requestIds.length > 0)
           return { sourceRunId, state: "paused", requestIds, reason: "human_review_required" };
-        if (source?.status === "completed") return { sourceRunId, state: "completed" };
+        const owed = source !== undefined && restartNoteOwed(source, projection.providerTurns);
+        if (source?.status === "completed" && !owed) return { sourceRunId, state: "completed" };
         if (source !== undefined && endedOnItsOwn(source.status))
           return { sourceRunId, state: "completed", reason: source.status };
-        if (source !== undefined && source.status !== "cancelled")
+        if (source !== undefined && source.status !== "cancelled" && !owed)
           return { sourceRunId, state: "pending" };
         const refusal = restartDispatchRefusal(projection, sourceRunId, preparedHandoffs);
         return refusal === undefined

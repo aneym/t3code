@@ -4,7 +4,11 @@ import {
   type RunId,
 } from "@t3tools/contracts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
-import { cancelledBeforeStart, isRestartContinuationSource } from "./RestartBackgroundNote.ts";
+import {
+  cancelledBeforeStart,
+  isRestartContinuationSource,
+  restartNoteOwed,
+} from "./RestartBackgroundNote.ts";
 import type { OrchestrationEffectV2 } from "./EffectOutboxModel.ts";
 
 export function restartSourceSuperseded(
@@ -90,7 +94,7 @@ export function restartDispatchRefusal(
     return "continued";
   if (
     !(prepared
-      ? source.status === "cancelled"
+      ? source.status === "cancelled" || restartNoteOwed(source, projection.providerTurns)
       : isRestartContinuationSource(source, projection.providerTurns))
   )
     return "not_restartable";

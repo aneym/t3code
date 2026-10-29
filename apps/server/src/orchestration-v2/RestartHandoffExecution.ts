@@ -2,6 +2,7 @@ import { type ServerRestartHandoff, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import { restartNoteOwed } from "./RestartBackgroundNote.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
 export class RestartHandoffExecutionError extends Schema.TaggedError<RestartHandoffExecutionError>()(
@@ -24,7 +25,7 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
         return yield* new RestartHandoffExecutionError({ threadId: input.threadId, sourceRunId });
       if (projection.runs.some((run) => run.restartContinuationOfRunId === sourceRunId)) continue;
       if (
-        source.status === "completed" ||
+        (source.status === "completed" && !restartNoteOwed(source, projection.providerTurns)) ||
         source.status === "failed" ||
         source.status === "interrupted" ||
         source.status === "rolled_back"

@@ -25,6 +25,7 @@ import {
   neverStarted,
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
+  restartNoteOwed,
 } from "./RestartBackgroundNote.ts";
 import { restartSourceSuperseded } from "./RestartDispatchPolicy.ts";
 
@@ -217,7 +218,9 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     if (
       !source ||
       (!input.prepared && !isRestartContinuationSource(source, projection.providerTurns)) ||
-      (input.prepared && source.status !== "cancelled") ||
+      (input.prepared &&
+        source.status !== "cancelled" &&
+        !restartNoteOwed(source, projection.providerTurns)) ||
       restartContinuationBlocked(
         input.humanReply === undefined
           ? projection
