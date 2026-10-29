@@ -73,9 +73,20 @@ def drive_fast(args):
                                            "seconds": 0, "start": utc_now(), "end": utc_now()})
             elif set(node.needs) <= done:
                 spec = stage_spec(node, args)
-                row = jobs.request(node, "submit", spec)
-                running[key] = (node, row, time.monotonic())
                 del pending[key]
+                try:
+                    row = jobs.request(node, "submit", spec)
+                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+                    if node.gating:
+                        raise
+                    failed.add(key)
+                    now = time.monotonic()
+                    timeline.record_fast(node, {"outcome": "failed", "reason": "submit-failed", "error": f"{type(error).__name__}: {error}",
+                                               "evidence": [], "resourceWaitSeconds": 0, "monotonicStart": now, "monotonicEnd": now,
+                                               "seconds": 0, "start": utc_now(), "end": utc_now()})
+                    recorded.add(key)
+                    continue
+                running[key] = (node, row, time.monotonic())
         for key, (node, row, submitted_at) in list(running.items()):
             if row["outcome"] not in TERMINAL:
                 try:
