@@ -145,10 +145,18 @@ const make = Effect.gen(function* () {
         "Unable to count commits",
       ).pipe(Effect.map((count) => ({ fork, count: Number(count) }))),
     );
-    const { fork: baseCommit, count: commitCount } = counted.reduce((best, next) =>
-      next.count < best.count ? next : best,
-    );
+    const { fork: baseCommit, count: commitCount } = counted
+      .filter(({ fork, count }) => count > 0 || had.includes(fork))
+      .reduce((best, next) => (next.count < best.count ? next : best));
     const exclude = had.map((fork) => `^${fork}`);
+    const missing = Number(
+      yield* required(
+        "export.missing",
+        cwd,
+        ["rev-list", "--count", headCommit, ...exclude],
+        "Unable to count commits",
+      ),
+    );
     const uncommitted =
       ((yield* run("export.status", cwd, ["status", "--porcelain"]).pipe(
         Effect.orElseSucceed(() => null),
@@ -167,7 +175,7 @@ const make = Effect.gen(function* () {
       uncommitted,
       diffStat,
     };
-    if (commitCount === 0) return { ...summary, bundle: null };
+    if (missing === 0) return { ...summary, bundle: null };
     const bundle = yield* Effect.scoped(
       Effect.gen(function* () {
         const file = yield* fs.makeTempFileScoped({ prefix: "t3-worktree-export-" });

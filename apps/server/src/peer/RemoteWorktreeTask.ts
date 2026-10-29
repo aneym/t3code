@@ -122,9 +122,15 @@ const make = Effect.gen(function* () {
     const branches =
       cwd === undefined
         ? []
-        : yield* transfer
-            .remoteBranchesContaining(cwd, remote.worktreeBase)
-            .pipe(Effect.orElseSucceed(() => []));
+        : yield* transfer.remoteBranchesContaining(cwd, remote.worktreeBase).pipe(
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({
+                  code: "orchestration_error",
+                  message: error.message,
+                }),
+            ),
+          );
     const exported = yield* forwarding
       .call(scope, WorktreeToolkit.tools.t3_worktree_export, remote.environmentId, {
         threadId: remote.threadId,
