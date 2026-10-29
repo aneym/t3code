@@ -1,11 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import {
-  AuthEnvironmentMaintainScope,
-  type AuthSessionState,
-  sessionGrantsScope,
-} from "@t3tools/contracts";
-import type { AsyncResult } from "effect/reactivity";
-import { environmentSession } from "~/state/session";
 import type {
   EnvironmentId,
   ServerInstallation,
@@ -76,7 +69,7 @@ export function useServerUpdate() {
   ): Promise<ServerUpdateOutcome> => {
     const { environmentId, serverLabel, selfUpdate, targetVersion } = target;
     if (
-      !canUpdateServer(appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId))) ||
+      !appAtomRegistry.get(serverEnvironment.updateServer.permissionAtom(environmentId)) ||
       pendingUpdateEnvironmentIds.has(environmentId)
     )
       return { status: "skipped" };
@@ -169,13 +162,6 @@ export function ServerUpdatesAction({
   );
 }
 
-export function canUpdateServer(
-  result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
-): boolean {
-  if (result._tag !== "Success" || !result.value.authenticated) return false;
-  return sessionGrantsScope(result.value, AuthEnvironmentMaintainScope);
-}
-
 export function ServerUpdateProgress({
   state,
 }: {
@@ -216,8 +202,8 @@ export function ServerUpdateAction({
   appearance = "button",
 }: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate"> & UpdateButtonProps) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
-  const sessionStateAtom = environmentSession.sessionStateAtom(environmentId);
-  const canUpdate = canUpdateServer(useAtomValue(sessionStateAtom));
+  const permissionAtom = serverEnvironment.updateServer.permissionAtom(environmentId);
+  const canUpdate = useAtomValue(permissionAtom);
   const continueThreadsAfterServerUpdate = useEnvironmentSettings(
     environmentId,
     (settings) => settings.continueThreadsAfterServerUpdate,
@@ -246,10 +232,7 @@ export function ServerUpdateAction({
   });
 
   const handleUpdate = async () => {
-    if (
-      !canUpdateServer(appAtomRegistry.get(sessionStateAtom)) ||
-      pendingUpdateEnvironmentIds.has(environmentId)
-    ) {
+    if (!appAtomRegistry.get(permissionAtom) || pendingUpdateEnvironmentIds.has(environmentId)) {
       return;
     }
     if (isDesktopAppUpdate) {
@@ -261,7 +244,7 @@ export function ServerUpdateAction({
         return;
       }
     }
-    if (!canUpdateServer(appAtomRegistry.get(sessionStateAtom))) return;
+    if (!appAtomRegistry.get(permissionAtom)) return;
     await update({
       environmentId,
       serverLabel,

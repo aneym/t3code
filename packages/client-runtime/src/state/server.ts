@@ -37,7 +37,7 @@ import {
   createRuntimeCommand,
   scheduleAtomCommandEffect,
 } from "./runtime.ts";
-import { provideCommandPermissions } from "./commandPermissions.ts";
+import { createCommandPermissions, provideCommandPermissions } from "./commandPermissions.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
@@ -823,7 +823,8 @@ export function createServerEnvironmentAtoms<R, E>(
   );
   const updateStateAtom = (environmentId: EnvironmentId | null) =>
     environmentId === null ? EMPTY_SERVER_UPDATE_STATE_ATOM : updateStateValueAtom(environmentId);
-  const updateServer = createRuntimeCommand<
+  const updateServerPermissions = createCommandPermissions(runtime, WS_METHODS.serverUpdateServer);
+  const updateServerCommand = createRuntimeCommand<
     EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
     E,
     ServerUpdateTarget,
@@ -849,6 +850,7 @@ export function createServerEnvironmentAtoms<R, E>(
       });
 
       return Effect.gen(function* () {
+        yield* updateServerPermissions.authorize(atomRegistry, target.environmentId, target.input);
         const environmentRegistry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const desktopCommitStarting = yield* Deferred.make<void>();
         const desktopReconnectObserverArmed = yield* Deferred.make<void>();
@@ -933,7 +935,9 @@ export function createServerEnvironmentAtoms<R, E>(
                     (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn") &&
                     isLegacyUpdateHandoffLoss(exit.cause)
                   ) {
-                    // Older servers drop the transport before acking; only that loss is a handoff.
+                    // Older servers can tear down the transport before their
+                    // unary acknowledgement arrives. Treat only that transport
+                    // loss as a handoff, then prove it by waiting for target ready.
                     return { targetVersion, method: selfUpdateMethod };
                   }
                   return yield* Effect.failCause(exit.cause);
@@ -1052,6 +1056,11 @@ export function createServerEnvironmentAtoms<R, E>(
       );
     }),
   });
+  const updateServer = {
+    ...updateServerCommand,
+    requiredScopes: updateServerPermissions.requiredScopes,
+    permissionAtom: updateServerPermissions.permissionAtom,
+  };
   const settingsValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(configValueAtom(environmentId))?.settings ?? null).pipe(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),

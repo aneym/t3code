@@ -26,14 +26,14 @@ vi.mock(import("~/hooks/useCopyToClipboard"), async (original) => ({
     isCopied: false,
   })) as never,
 }));
-vi.mock(import("~/state/session"), async (original) => {
+vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
   const actual = await original();
   return {
     ...actual,
-    environmentSession: {
-      ...actual.environmentSession,
-      sessionStateAtom: (() => testState.sessionAtom) as never,
-    },
+    createEnvironmentSessionAtoms: ((runtime: never) => ({
+      ...actual.createEnvironmentSessionAtoms(runtime),
+      sessionStateAtom: () => testState.sessionAtom,
+    })) as never,
   };
 });
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
