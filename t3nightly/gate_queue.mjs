@@ -109,6 +109,23 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
       if (final.runs.some((run) => run.queueHeld || !terminal.has(run.status))) throw fail("restart left held or pending work");
       return { ...evidence(), threadId, exactlyOnceReplies: 2 };
     }
+    if (opts.scenario === "starting-send") {
+      const first = yield* cli("start", "--provider", "claudeAgent", "--model", opts.model, opts.project, `Reply with exactly ${markers[0]} and nothing else. Do not use tools.`);
+      const sent = yield* cli("send", "--mode", "auto", first.threadId, `Reply with exactly ${markers[1]} and nothing else. Do not use tools.`);
+      receipts.push(first, sent);
+      if (!first.threadId || !first.runId || !sent.runId || sent.runId === first.runId) throw fail("start and send did not return two distinct runs");
+      yield* subscribe(first.threadId);
+      const final = yield* waitFor("both runs to settle", (p) =>
+        [first.runId, sent.runId].every((id) => p.runs.some((run) => run.id === id && terminal.has(run.status))) && p.runs.every((run) => terminal.has(run.status)),
+      );
+      for (const [id, marker] of [[first.runId, markers[0]], [sent.runId, markers[1]]]) {
+        const status = final.runs.find((run) => run.id === id)?.status;
+        const replies = final.messages.filter((message) => message.runId === id && message.role === "assistant" && message.text.trim());
+        if (status !== "completed" || replies.length !== 1 || replies[0].text.trim() !== marker) throw fail(`run ${id} ended ${status} with ${replies.length} replies instead of one ${marker}`);
+      }
+      if (final.runs.length !== 2 || final.runs.some((run) => run.queueHeld)) throw fail("unexpected runs or held work remain");
+      return { ...evidence(), threadId: first.threadId, firstRun: first.runId, sentDelivery: sent.delivery, exactlyOnceReplies: 2 };
+    }
     const started = yield* cli(
       "start", "--provider", "claudeAgent", "--model", opts.model, opts.project,
       `Run this exact bounded CPU checksum command with the Bash tool in the foreground, not as a background task: python3 -c "import hashlib; print(hashlib.pbkdf2_hmac('sha256', b'gate', b'gate', 120000000).hex()); print('${markers[0]}')". After it finishes reply with only ${markers[0]}. Do not run any other tools.`,

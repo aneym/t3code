@@ -353,6 +353,15 @@ def queue_interrupt(ctx, deadline):
     return queue_drain(ctx, deadline, "interrupt")
 
 
+def starting_send(ctx, deadline):
+    name = "starting-send"
+    result = client(ctx, name, deadline, "queue-drain", "--pairing-file", str(pairing(ctx, name, deadline)), "--cli", ctx.t3,
+                    "--home", str(ctx.home), "--project", str(ctx.project), "--model", CLAUDE_MODEL, "--scenario", "starting-send",
+                    "--timeout", str(min(180, int(deadline.left()) - 15)))
+    return "auto send into a starting run was delivered %s; both runs completed with %d exactly-once replies; thread %s" % (
+        result["sentDelivery"], result["exactlyOnceReplies"], result["threadId"])
+
+
 def queue_restart(ctx, deadline):
     name = "queue-restart"
     args = [
@@ -419,5 +428,6 @@ CHECKS = [
     ("background-wait", 300, background_wait),
     ("queue-drain", 300, queue_complete),
     ("queue-interrupt", 300, queue_interrupt),
+    ("starting-send", 240, starting_send),
     ("queue-restart", 420, queue_restart),
 ]
