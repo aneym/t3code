@@ -30,7 +30,7 @@ export function releasesQueueHoldAtRunEnd(
   if (run.status !== "queued" || run.queueHeld !== true || ended == null) return false;
   switch (run.queueHoldReason) {
     case "stop":
-      return false;
+      return agentThread && ended.status === "completed";
     case "restart":
       return true;
     case "blocked":

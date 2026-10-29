@@ -98,6 +98,8 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
     ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
     status: result.run.status,
     delivery: result.delivery,
+    ...(result.holdReason === undefined ? {} : { holdReason: result.holdReason }),
+    ...(result.next === undefined ? {} : { next: result.next }),
     clientRequestId: requestKey,
     receipt: {
       commandId,

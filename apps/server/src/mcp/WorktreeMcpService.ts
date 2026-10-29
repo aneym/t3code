@@ -324,6 +324,10 @@ const make = Effect.gen(function* () {
                     Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
                       status: "scheduled",
                       delivery: sendResult.delivery,
+                      ...(sendResult.holdReason === undefined
+                        ? {}
+                        : { holdReason: sendResult.holdReason }),
+                      ...(sendResult.next === undefined ? {} : { next: sendResult.next }),
                     })),
                     reportFailed("worktree handoff continuation failed to queue"),
                   ),

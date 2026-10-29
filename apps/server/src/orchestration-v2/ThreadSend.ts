@@ -14,6 +14,7 @@ import {
   type ProjectId,
   type ProviderSessionId,
   type ScheduledTaskId,
+  type ThreadSendDelivery,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -43,7 +44,7 @@ export interface ThreadSendInput {
   readonly creationSource: OrchestrationV2CreationSource;
 }
 
-export interface ThreadSendResult {
+export interface ThreadSendResult extends ThreadSendDelivery {
   readonly dispatch: Orchestrator.OrchestratorV2DispatchResult;
   readonly projection: Pick<
     OrchestrationV2ThreadProjection,
@@ -52,7 +53,6 @@ export interface ThreadSendResult {
   readonly message: OrchestrationV2ConversationMessage;
   readonly run: OrchestrationV2Run;
   readonly turnItem: Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> | null;
-  readonly delivery: "started" | "queued" | "steered" | "restarted";
 }
 
 export class ThreadManagementThreadArchivedError extends Schema.TaggedError<ThreadManagementThreadArchivedError>()(
@@ -288,13 +288,28 @@ export const makeSendToThread = <LoadError, DispatchError>(
       });
     }
     const delivery: ThreadSendResult["delivery"] =
-      turnItem === null || turnItem.inputIntent === "queued_turn"
-        ? "queued"
-        : turnItem.inputIntent === "turn_start"
-          ? "started"
-          : input.mode === "restart"
-            ? "restarted"
-            : "steered";
-    return { dispatch: dispatched, projection, message, run, turnItem, delivery };
+      run.status === "queued" && run.queueHeld === true
+        ? "held"
+        : turnItem === null || turnItem.inputIntent === "queued_turn"
+          ? "queued"
+          : turnItem.inputIntent === "turn_start"
+            ? "started"
+            : input.mode === "restart"
+              ? "restarted"
+              : "steered";
+    return {
+      dispatch: dispatched,
+      projection,
+      message,
+      run,
+      turnItem,
+      delivery,
+      ...(delivery === "held"
+        ? {
+            holdReason: run.queueHoldReason ?? null,
+            next: 'Use mode "auto" to run a message without waiting on the held queue, or explicitly resume the queue.',
+          }
+        : {}),
+    };
   });
 };

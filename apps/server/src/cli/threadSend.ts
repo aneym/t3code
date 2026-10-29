@@ -48,6 +48,11 @@ const receiptText = (sent: OrchestratorMcpThreadSendResult) =>
         sent.receipt.replayed ? ", already delivered" : ""
       }.`;
 
+const deliveryText = (sent: OrchestratorMcpThreadSendResult) =>
+  sent.delivery === "held"
+    ? `Held (${sent.holdReason ?? "manual"}).${receiptText(sent)} ${sent.next ?? "Resume the queue to deliver this message."}`
+    : `${sent.delivery === "queued" ? "Queued" : "Sent"}.${receiptText(sent)}`;
+
 export const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
   thread: threadArgument,
@@ -82,6 +87,10 @@ export const threadSendCommand = Command.make("send", {
             { threadId, message, mode: flags.mode, clientRequestId },
             OrchestratorMcpThreadSendResult,
           );
+          if (sent.delivery === "held") {
+            yield* flags.json ? printJson(sent) : Console.log(deliveryText(sent));
+            return;
+          }
           if (flags.wait) {
             yield* flags.json
               ? printJsonToStderr({
@@ -90,7 +99,7 @@ export const threadSendCommand = Command.make("send", {
                   clientRequestId,
                   receipt: sent.receipt,
                 })
-              : Console.error(`Sent.${receiptText(sent)}`);
+              : Console.error(deliveryText(sent));
             return yield* finishRun(tools, {
               threadId,
               runId: sent.runId,
@@ -98,9 +107,7 @@ export const threadSendCommand = Command.make("send", {
               extra: { clientRequestId, receipt: sent.receipt },
             });
           }
-          yield* flags.json
-            ? printJson(sent)
-            : Console.log(`${sent.delivery === "queued" ? "Queued" : "Sent"}.${receiptText(sent)}`);
+          yield* flags.json ? printJson(sent) : Console.log(deliveryText(sent));
         }),
       );
     }).pipe(reportThreadErrors),

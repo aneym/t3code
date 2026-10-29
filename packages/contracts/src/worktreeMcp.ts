@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ThreadSendDelivery } from "./threadSendDelivery.ts";
 
 /** Uses the managed worktree folder; handoff detaches the provider, ending this turn and resuming there next run. */
 export const WorktreeMcpHandoffInput = Schema.Struct({
@@ -51,7 +52,7 @@ export type WorktreeMcpSetupScriptStatus = typeof WorktreeMcpSetupScriptStatus.T
 export const WorktreeMcpContinuationStatus = Schema.Union([
   Schema.Struct({
     status: Schema.Literal("scheduled"),
-    delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
+    ...ThreadSendDelivery.fields,
   }),
   Schema.Struct({
     status: Schema.Literal("skipped"),
