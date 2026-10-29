@@ -26,7 +26,7 @@ import {
   watchHomes,
   writeBinding,
 } from "./AgentHomeFiles.ts";
-import { createLaneReader } from "./AgentLaneFiles.ts";
+import { createLaneReader, localHostMatcher } from "./AgentLaneFiles.ts";
 
 export class AgentHomeService extends Context.Service<
   AgentHomeService,
@@ -48,12 +48,13 @@ export const layer = Layer.effect(
     const threads = yield* ThreadManagementService;
     const scheduledTasks = yield* ScheduledTaskService;
     const readLanes = createLaneReader(path.join(root, "..", "lanes"));
+    const isLocalHost = localHostMatcher(NodeOS.hostname());
     const snapshots = yield* SubscriptionRef.make<AgentHomesSnapshot>({ homes: [] });
     const refreshLock = yield* Semaphore.make(1);
     const locks = new Map<string, Semaphore.Semaphore>();
     const refresh = Effect.fn("AgentHomeService.refresh")(function* () {
       const snapshot = yield* Effect.tryPromise({
-        try: () => readHomes(root, readLanes),
+        try: () => readHomes(root, readLanes, isLocalHost),
         catch: (cause) => new AgentHomeError({ message: "Unable to read agent homes", cause }),
       });
       const current = yield* SubscriptionRef.get(snapshots);
