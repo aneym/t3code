@@ -20,7 +20,7 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 import { ChildProcess } from "effect/process";
 
-import { watchDevRunnerParent } from "./lib/dev-runner-parent.ts";
+import { devParentWatchEnabled, withDevRunnerLifecycle } from "./lib/dev-runner-parent.ts";
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 
@@ -849,7 +849,6 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     }
   }
 
-  // After sharing, so the warm step sees the same bundled-dev env as Vite.
   yield* prepareFirstStart({
     mode: input.mode,
     seed: input.seed !== false,
@@ -872,7 +871,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     env,
     extendEnv: false,
     shell: spawnCommand.shell,
-    detached: (yield* HostProcess.Platform) !== "win32",
+    detached: (yield* devParentWatchEnabled) && (yield* HostProcess.Platform) !== "win32",
     forceKillAfter: "1500 millis",
   }).pipe(
     Effect.mapError(
@@ -986,7 +985,7 @@ const cliRuntimeLayer = Layer.mergeAll(
 if (import.meta.main) {
   Command.run(devRunnerCli, { version: "0.0.0" }).pipe(
     Effect.scoped,
-    Effect.raceFirst(watchDevRunnerParent()),
+    withDevRunnerLifecycle,
     Effect.provide(cliRuntimeLayer),
     NodeRuntime.runMain,
   );

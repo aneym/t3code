@@ -56,6 +56,7 @@ See the [mobile README](../../apps/mobile/README.md) for native builds and Metro
 
 Flags go directly after the task name, for example `vp run dev --home-dir /tmp/t3code-dev`.
 Add `--browser` to open a browser automatically.
+Set `T3CODE_DEV_PARENT_WATCH=0` to keep dev running after its launcher exits (stock behavior).
 
 ### State and ports
 
