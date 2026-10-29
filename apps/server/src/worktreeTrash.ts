@@ -234,6 +234,9 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     const git = yield* GitVcsDriver.GitVcsDriver;
     const inspect = (operation: string, args: string[]) =>
       git.execute({ operation, cwd, args, maxOutputBytes: 64 * 1024 });
+    const topLevel = yield* inspect("StorageCleanup.topLevel", ["rev-parse", "--show-toplevel"]);
+    if ((yield* fs.realPath(topLevel.stdout.trim())) !== (yield* fs.realPath(cwd)))
+      return "Git work tree points elsewhere";
     const commonDir = yield* inspect("StorageCleanup.commonDir", [
       "rev-parse",
       "--path-format=absolute",

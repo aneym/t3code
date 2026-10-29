@@ -1648,6 +1648,24 @@ describe("storage cleanup reports and local file policies", () => {
         }),
       ),
   );
+  it.live("keeps an edited checkout whose Git work tree points elsewhere", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command } = yield* cleanupFixture();
+        yield* command(repo, ["merge", "--ff-only", "feature"]);
+        const clean = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-clean-" }),
+        );
+        yield* fs.writeFileString(`${clean}/tracked.txt`, "original\n");
+        yield* fs.writeFileString(`${clean}/.gitignore`, ".env\ndist/\nnode_modules/\n");
+        yield* command(repo, ["config", "extensions.worktreeConfig", "true"]);
+        yield* command(worktree, ["config", "--worktree", "core.worktree", clean]);
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "edited\n");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+      }),
+    ),
+  );
   it.live("keeps a worktree another repository checked out at the same path", () =>
     runCleanupTest(
       Effect.gen(function* () {
