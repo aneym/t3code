@@ -128,6 +128,7 @@ export const layerExecutor: Layer.Layer<
               ...(request.type === "provider-runtime.restart-reapproval"
                 ? { humanReply: request.text }
                 : {}),
+              willRetry,
             }).pipe(Effect.provideContext(restartContext), Effect.mapError(restartFailed));
           }
           case "provider-runtime.continue": {

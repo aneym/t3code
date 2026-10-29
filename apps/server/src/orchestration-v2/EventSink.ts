@@ -84,6 +84,7 @@ export interface EventSinkV2Shape {
      * The batch must not also change that run's lifecycle.
      */
     readonly updateDelegatedCompletionOnly?: boolean;
+    readonly updateRestartDeclinedOnly?: boolean;
     readonly unlessNativeThreadOwned?: Pick<
       OrchestrationV2ProviderThread,
       "driver" | "providerInstanceId" | "appThreadId" | "nativeThreadRef"
@@ -391,9 +392,10 @@ const layerBase: Layer.Layer<
       });
 
     // The enclosing write or commit span already traces this per-event projection merge.
-    const updateDelegatedCompletionOnly = Effect.fnUntraced(function* (
+    const updateRunFieldOnly = Effect.fnUntraced(function* (
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
       includesRun: (runId: RunId) => boolean,
+      field: "delegatedCompletion" | "restartDeclined" = "delegatedCompletion",
     ) {
       return yield* Effect.forEach(events, (event) =>
         Effect.gen(function* () {
@@ -406,7 +408,10 @@ const layerBase: Layer.Layer<
             ? event
             : {
                 ...event,
-                payload: { ...current, delegatedCompletion: event.payload.delegatedCompletion },
+                payload:
+                  field === "restartDeclined"
+                    ? { ...current, restartDeclined: event.payload.restartDeclined }
+                    : { ...current, delegatedCompletion: event.payload.delegatedCompletion },
               };
         }),
       );
@@ -440,8 +445,10 @@ const layerBase: Layer.Layer<
           // Checkpoint capture can finish after a cohort writer reads its parent run.
           // Merge in this transaction so the event log and projection keep that completion.
           const events = input.updateDelegatedCompletionOnly
-            ? yield* updateDelegatedCompletionOnly(input.events, () => true)
-            : input.events;
+            ? yield* updateRunFieldOnly(input.events, () => true)
+            : input.updateRestartDeclinedOnly
+              ? yield* updateRunFieldOnly(input.events, () => true, "restartDeclined")
+              : input.events;
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(events)
@@ -660,7 +667,7 @@ const layerBase: Layer.Layer<
           const normalized = yield* normalizeEvents(
             runId === undefined
               ? input.events
-              : yield* updateDelegatedCompletionOnly(input.events, (id) => id === runId),
+              : yield* updateRunFieldOnly(input.events, (id) => id === runId),
           );
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,

@@ -278,7 +278,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const sourceMessage = sourceRecords.messages.find(
       (message) => message.id === source.userMessageId,
     );
-    if (sourceMessage !== undefined && isNativeMaintenanceCommand(sourceMessage)) return;
+    if (sourceMessage !== undefined && isNativeMaintenanceCommand(sourceMessage))
+      return "native_maintenance" as const;
     const note = restartContinuationNote(
       source,
       projection.runs,
