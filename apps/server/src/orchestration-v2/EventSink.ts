@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { mergeRunField } from "./EventSinkRunFieldMerge.ts";
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
@@ -84,6 +85,7 @@ export interface EventSinkV2Shape {
      * The batch must not also change that run's lifecycle.
      */
     readonly updateDelegatedCompletionOnly?: boolean;
+    readonly updateRestartDeclinedOnly?: boolean;
     readonly unlessNativeThreadOwned?: Pick<
       OrchestrationV2ProviderThread,
       "driver" | "providerInstanceId" | "appThreadId" | "nativeThreadRef"
@@ -393,28 +395,6 @@ const layerBase: Layer.Layer<
         return yield* runOutcomes.prepare(storedEvents);
       });
 
-    // The enclosing write or commit span already traces this per-event projection merge.
-    const updateDelegatedCompletionOnly = Effect.fnUntraced(function* (
-      events: ReadonlyArray<OrchestrationV2DomainEvent>,
-      includesRun: (runId: RunId) => boolean,
-    ) {
-      return yield* Effect.forEach(events, (event) =>
-        Effect.gen(function* () {
-          if (event.type !== "run.updated" || !includesRun(event.payload.id)) return event;
-          const { runs } = yield* projectionStore.getThreadRecords(event.threadId, ["runs"], {
-            runIds: [event.payload.id],
-          });
-          const current = runs[0];
-          return current === undefined
-            ? event
-            : {
-                ...event,
-                payload: { ...current, delegatedCompletion: event.payload.delegatedCompletion },
-              };
-        }),
-      );
-    });
-
     const writeEffect = Effect.fn("orchestrationV2.EventSink.write")(function* (
       input: Parameters<EventSinkV2Shape["writeWithEffects"]>[0],
     ) {
@@ -443,8 +423,10 @@ const layerBase: Layer.Layer<
           // Checkpoint capture can finish after a cohort writer reads its parent run.
           // Merge in this transaction so the event log and projection keep that completion.
           const events = input.updateDelegatedCompletionOnly
-            ? yield* updateDelegatedCompletionOnly(input.events, () => true)
-            : input.events;
+            ? yield* mergeRunField(projectionStore, input.events, "delegatedCompletion")
+            : input.updateRestartDeclinedOnly
+              ? yield* mergeRunField(projectionStore, input.events, "restartDeclined")
+              : input.events;
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(events)
@@ -663,7 +645,12 @@ const layerBase: Layer.Layer<
           const normalized = yield* normalizeEvents(
             runId === undefined
               ? input.events
-              : yield* updateDelegatedCompletionOnly(input.events, (id) => id === runId),
+              : yield* mergeRunField(
+                  projectionStore,
+                  input.events,
+                  "delegatedCompletion",
+                  (id) => id === runId,
+                ),
           );
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,

@@ -289,6 +289,7 @@ export const legacyRestartHandoffs = Effect.fn("RestartHandoffImport.legacyResta
             sourceIds.has(run.id) &&
             !projection.runs.some((candidate) => candidate.restartContinuationOfRunId === run.id) &&
             ((run.status === "cancelled" && discovered.get(threadId)?.has(run.id)) ||
+              (run.status === "completed" && old?.runIds.includes(run.id) === true) ||
               ["preparing", "starting", "running", "waiting"].includes(run.status)) &&
             !projection.turnItems.some(
               (item) => item.type === "run_interrupt_request" && item.runId === run.id,

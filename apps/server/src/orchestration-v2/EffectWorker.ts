@@ -28,6 +28,8 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as EventSink from "./EventSink.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { executeRestartHandoff } from "./RestartHandoffExecution.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as ThreadSessionRestarts from "./ThreadSessionRestarts.ts";
@@ -83,6 +85,8 @@ export const layerExecutor: Layer.Layer<
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
   | ServerSettings.ServerSettingsService
+  | EventSink.EventSinkV2
+  | IdAllocator.IdAllocatorV2
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
@@ -96,10 +100,21 @@ export const layerExecutor: Layer.Layer<
     const threadTitleRegeneration =
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
-    const settings = yield* ServerSettings.ServerSettingsService;
+    const restartContext = yield* Effect.context<
+      | ThreadManagementService.ThreadManagementService
+      | ServerSettings.ServerSettingsService
+      | EventSink.EventSinkV2
+      | IdAllocator.IdAllocatorV2
+    >();
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
+        const restartFailed = (cause: unknown) =>
+          new OrchestrationEffectExecutionError({
+            effectId: effect.id,
+            effectType: effect.request.type,
+            cause,
+          });
         switch (effect.request.type) {
           case "provider-runtime.restart-handoff":
           case "provider-runtime.restart-reapproval": {
@@ -114,37 +129,24 @@ export const layerExecutor: Layer.Layer<
               ...(request.type === "provider-runtime.restart-reapproval"
                 ? { humanReply: request.text }
                 : {}),
-            }).pipe(
-              Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
-              Effect.provideService(ServerSettings.ServerSettingsService, settings),
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
-            );
+              willRetry,
+              attempt: effect.attemptCount,
+            }).pipe(Effect.provideContext(restartContext), Effect.mapError(restartFailed));
           }
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
-            return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
-              Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
-              Effect.provideService(ServerSettings.ServerSettingsService, settings),
+            return continueRestartedRun({
+              threadId: effect.threadId,
+              sourceRunId,
+              attempt: effect.attemptCount,
+            }).pipe(
+              Effect.provideContext(restartContext),
               Effect.tapError(() =>
                 willRetry
                   ? Effect.void
                   : threads.recoverDelegatedTask(effect.threadId, sourceRunId),
               ),
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
+              Effect.mapError(restartFailed),
             );
           }
           case "provider-session.detach":

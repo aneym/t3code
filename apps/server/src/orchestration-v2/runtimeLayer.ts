@@ -314,6 +314,8 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
       layerRuntimeRequestServiceProvided,
       layerThreadTitleRegenerationProvided,
       layerThreadManagementProvided,
+      layerEventSinkProvided,
+      IdAllocator.layer,
     ),
   ),
 );
