@@ -404,39 +404,35 @@ export const layerExecutor: Layer.Layer<
               );
           case "runtime-request.respond": {
             const requestId = effect.request.requestId;
-            const response = runtimeRequests.respond({
-              threadId: effect.threadId,
-              providerSessionId: effect.request.providerSessionId,
-              requestId: effect.request.requestId,
-              ...(effect.request.decision === undefined
-                ? {}
-                : { decision: effect.request.decision }),
-              ...(effect.request.feedback === undefined
-                ? {}
-                : { feedback: effect.request.feedback }),
-              ...(effect.request.answers === undefined ? {} : { answers: effect.request.answers }),
-            });
-            const delivery = effect.request.queuedInputDelivery;
-            const mapFailure = (
-              cause:
-                | RuntimeRequestService.RuntimeRequestResponseExecutionError
-                | import("./PendingInputQueueDelivery.ts").QueuedInputDeliveryError,
-            ) =>
-              new OrchestrationEffectExecutionError({
-                effectId: effect.id,
-                effectType: effect.request.type,
-                cause,
-              });
             return (
-              delivery === undefined
-                ? response.pipe(Effect.mapError(mapFailure))
-                : threads
-                    .completeQueuedInputDelivery(
-                      { threadId: effect.threadId, commandId: effect.commandId, delivery },
-                      response,
-                    )
-                    .pipe(Effect.mapError(mapFailure))
+              effect.request.queuedInputDelivery === true
+                ? threads.completeQueuedInputDelivery(
+                    { threadId: effect.threadId, commandId: effect.commandId, requestId },
+                    runtimeRequests.respond,
+                  )
+                : runtimeRequests.respond({
+                    threadId: effect.threadId,
+                    providerSessionId: effect.request.providerSessionId,
+                    requestId,
+                    ...(effect.request.decision === undefined
+                      ? {}
+                      : { decision: effect.request.decision }),
+                    ...(effect.request.feedback === undefined
+                      ? {}
+                      : { feedback: effect.request.feedback }),
+                    ...(effect.request.answers === undefined
+                      ? {}
+                      : { answers: effect.request.answers }),
+                  })
             ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
               Effect.tapCause((cause) =>
                 willRetry || Cause.hasInterruptsOnly(cause)
                   ? Effect.void

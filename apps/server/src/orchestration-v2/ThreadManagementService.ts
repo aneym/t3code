@@ -61,6 +61,7 @@ import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimi
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import type { RuntimeRequestServiceV2Shape } from "./RuntimeRequestService.ts";
 
 export interface ThreadManagementProvenance {
   readonly createdBy: OrchestrationV2Actor;
@@ -313,8 +314,10 @@ export interface ThreadManagementServiceShape {
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2GetTurnItemResult, Orchestrator.OrchestratorV2Error>;
   readonly completeQueuedInputDelivery: <E, R>(
-    input: Parameters<Orchestrator.OrchestratorV2["Service"]["completeQueuedInputDelivery"]>[0],
-    response: Effect.Effect<void, E, R>,
+    input: Parameters<Orchestrator.OrchestratorV2["Service"]["prepareQueuedInputDelivery"]>[0],
+    respond: (
+      input: Parameters<RuntimeRequestServiceV2Shape["respond"]>[0],
+    ) => Effect.Effect<void, E, R>,
   ) => Effect.Effect<
     void,
     E | import("./PendingInputQueueDelivery.ts").QueuedInputDeliveryError,
@@ -1177,12 +1180,26 @@ const make = Effect.gen(function* () {
     }),
     completeQueuedInputDelivery: Effect.fn("ThreadManagementService.completeQueuedInputDelivery")(
       <E, R>(
-        input: Parameters<Orchestrator.OrchestratorV2["Service"]["completeQueuedInputDelivery"]>[0],
-        response: Effect.Effect<void, E, R>,
+        input: Parameters<Orchestrator.OrchestratorV2["Service"]["prepareQueuedInputDelivery"]>[0],
+        respond: (
+          input: Parameters<RuntimeRequestServiceV2Shape["respond"]>[0],
+        ) => Effect.Effect<void, E, R>,
       ) =>
         threadDispatch.withLock(
           input.threadId,
-          response.pipe(Effect.andThen(orchestrator.completeQueuedInputDelivery(input))),
+          Effect.gen(function* () {
+            const prepared = yield* orchestrator.prepareQueuedInputDelivery(input);
+            if (prepared === undefined) return;
+            for (const response of prepared.responses) {
+              yield* respond({
+                threadId: input.threadId,
+                requestId: response.requestId,
+                providerSessionId: response.providerSessionId,
+                ...(response.answers === undefined ? {} : { answers: response.answers }),
+              });
+            }
+            yield* orchestrator.completeQueuedInputDelivery({ ...input, prepared });
+          }),
         ),
     ),
     getThreadRecords: Effect.fn("ThreadManagementService.getThreadRecords")(

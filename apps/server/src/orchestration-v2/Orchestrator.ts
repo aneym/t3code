@@ -339,9 +339,12 @@ export interface OrchestratorV2DispatchResult {
 }
 
 export interface OrchestratorV2Shape {
+  readonly prepareQueuedInputDelivery: Effect.Success<
+    ReturnType<typeof makeQueuedInputCompletion>
+  >["prepare"];
   readonly completeQueuedInputDelivery: Effect.Success<
     ReturnType<typeof makeQueuedInputCompletion>
-  >;
+  >["complete"];
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
   readonly recoverDelegatedTask: (threadId: ThreadId, sourceRunId: RunId) => Effect.Effect<void>;
@@ -13029,7 +13032,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.forkDetach,
     );
 
-  yield* watchPendingInputQueueDelivery(dispatchRuntimeRequestRespond);
+  yield* watchPendingInputQueueDelivery();
 
   // A child whose run ends while its background tasks or its own subagents still run has no
   // result yet. When that work settles there is no run update to finalize it, so these events
@@ -13218,8 +13221,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const shellProjectionError = (cause: unknown) =>
     new OrchestratorProjectionError({ threadId: ThreadId.make("thread:shell"), cause });
 
+  const queuedInputDelivery = yield* makeQueuedInputCompletion(dispatchRuntimeRequestRespond);
   return OrchestratorV2.of({
-    completeQueuedInputDelivery: yield* makeQueuedInputCompletion(),
+    prepareQueuedInputDelivery: queuedInputDelivery.prepare,
+    completeQueuedInputDelivery: queuedInputDelivery.complete,
     resumeQueuedRuns,
     recoverDelegatedTasks,
     recoverDelegatedTask,
