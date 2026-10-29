@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Uses the managed worktree folder; handoff detaches the provider, ending this turn and resuming there next run. */
 export const WorktreeMcpHandoffInput = Schema.Struct({
@@ -101,3 +101,29 @@ export class WorktreeMcpFailure extends Schema.TaggedError<WorktreeMcpFailure>()
     message: Schema.String,
   },
 ) {}
+
+export const WorktreeMcpExportInput = Schema.Struct({
+  threadId: ThreadId,
+  bases: Schema.NonEmptyArray(TrimmedNonEmptyString).annotate({
+    description: "Commits the receiver already has; only commits after them are bundled.",
+  }),
+  branches: Schema.Array(TrimmedNonEmptyString).annotate({
+    description:
+      "Remote branches the worktree may have started from; they only bound the commits counted as its work.",
+  }),
+});
+export type WorktreeMcpExportInput = typeof WorktreeMcpExportInput.Type;
+
+export const WorktreeMcpExportResult = Schema.Struct({
+  worktreePath: TrimmedNonEmptyString,
+  branch: TrimmedNonEmptyString,
+  baseCommit: TrimmedNonEmptyString,
+  headCommit: TrimmedNonEmptyString,
+  commitCount: Schema.Number,
+  uncommitted: Schema.Boolean,
+  diffStat: Schema.String,
+  bundle: Schema.NullOr(
+    Schema.String.annotate({ description: "Base64 git bundle of `branch`; null when too large." }),
+  ),
+});
+export type WorktreeMcpExportResult = typeof WorktreeMcpExportResult.Type;

@@ -847,11 +847,9 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
    * restarts. `false`: a Stop here owes one to a task that already had its result.
    */
   stoppedThere: Schema.optional(Schema.Boolean),
-  /**
-   * Stops asked for here once the task had its result. The count names the
-   * one owed, so each reaches the thread there once however often it is sent.
-   */
+  /** Stops owed once the task had its result; the count lands each there once. */
   stopCount: Schema.optional(NonNegativeInt),
+  worktreeBase: Schema.optional(TrimmedNonEmptyString),
 });
 export type OrchestrationV2RemoteTaskChild = typeof OrchestrationV2RemoteTaskChild.Type;
 
