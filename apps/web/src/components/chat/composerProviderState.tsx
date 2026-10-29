@@ -283,7 +283,7 @@ function renderTraitsControl(
       {...(triggerClassName !== undefined ? { triggerClassName } : {})}
       {...(isComposerOwned ? { isComposerOwned } : {})}
       {...(effortDisplay ? { effortDisplay } : {})}
-      {...(ultracodeRainbow ? { ultracodeRainbow } : {})}
+      {...(ultracodeRainbow ? { rainbow: ultracodeRainbow } : {})}
       {...(extraMenuContent ? { extraMenuContent } : {})}
       {...(extraMenuOwnsModeShortcut ? { extraMenuOwnsModeShortcut } : {})}
       {...(extraMenuHint ? { extraMenuHint } : {})}
