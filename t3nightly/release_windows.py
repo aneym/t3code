@@ -190,6 +190,10 @@ def publish_windows(directory, version, feed):
 def run_windows(stage, config, head, log):
     if stage == "W":
         return windows_build(config, head, log)
+    from .install_policy import window
+
+    policy = window(config.version, reason=config.override_reason, host=HOST)
+    (config.run / "windows-install-window.json").write_text(json.dumps(policy) + "\n")
     try:
         log.write(json.dumps(publish_windows(config.run / "desktop-win/publish", config.version, FEED)) + "\n")
     except (OSError, ValueError, KeyError) as error:

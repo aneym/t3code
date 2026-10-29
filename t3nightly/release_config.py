@@ -30,6 +30,7 @@ class Config:
     tools: Path
     feed: Path
     approval: Path | None
+    override_reason: str = ""
     owned_trees: dict[Path, str] = field(default_factory=dict, compare=False)
 
     @property
@@ -81,6 +82,7 @@ class FastConfig:
     remote_run: str
     remote_tools: str
     base: str = ""
+    override_reason: str = ""
 
     @property
     def number(self):
@@ -116,7 +118,7 @@ class FastConfig:
 
     def on(self, host):
         run = Path(self.remote_run) if host == "ax42" and self.host == "studio" else self.run
-        return FastConfig(self.version, self.topic, run, host, self.remote_run, self.remote_tools, self.base)
+        return FastConfig(self.version, self.topic, run, host, self.remote_run, self.remote_tools, self.base, self.override_reason)
 
     def tree(self, stage):
         return HOSTS[self.host]["trees"] / f"aneym-fast-{stage}"
@@ -167,6 +169,7 @@ def parse():
     parser.add_argument("--plan", action="store_true")
     parser.add_argument("--studio-first", action="store_true")
     parser.add_argument("--verdict", type=Path)
+    parser.add_argument("--override-reason", default="")
     parser.add_argument("--until", choices=[stage.name for stage in GRAPH] + ["studio-continuation-proof"])
     args = parser.parse_args()
     if not re.fullmatch(r"\d+\.\d+\.\d+-nightly\.\d+\.\d+\.aneym\.\d+", args.version):
@@ -177,6 +180,6 @@ def parse():
         args.version, args.base, args.topics.expanduser().resolve(), args.repo.expanduser().resolve(),
         candidate.expanduser().resolve(), Path.home() / ".t3nightly/runs" / args.version,
         args.lane.expanduser().resolve(), args.remote_repo, args.remote_root,
-        Path(__file__).resolve().parent, args.feed.expanduser().resolve(), args.verdict.expanduser().resolve() if args.verdict else None,
+        Path(__file__).resolve().parent, args.feed.expanduser().resolve(), args.verdict.expanduser().resolve() if args.verdict else None, args.override_reason,
     )
     return config, args

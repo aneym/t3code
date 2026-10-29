@@ -39,13 +39,13 @@ def wait_for(fn, seconds, what):
 
 
 def provider_wrapper(binary, evidence, destination):
-    lines = ["#!/bin/sh", f"export HOME={shlex.quote(str(Path.home()))}",
+    lines = ["#!/bin/sh", "export ENABLE_TOOL_SEARCH=false", f"export HOME={shlex.quote(str(Path.home()))}",
              f"export CLAUDE_CODE_TMPDIR={shlex.quote(str(destination.parent / 'tmp'))}"]
     if sys.platform == "darwin":
         lines.extend(claude_lb_lines(headless_bin(destination.parent / "headless-bin", evidence / "security-refusals.log")))
     else:
         lines.append(f"export ANTHROPIC_BASE_URL={AGENT_LB_URL}")
-    lines.append(f'exec {shlex.quote(str(binary))} "$@" 2>>{shlex.quote(str(evidence / "provider-stderr.log"))}')
+    lines.append(f'exec {shlex.quote(str(binary))} --setting-sources "" --tools Bash,Read,Write,Edit,Glob,Grep "$@" 2>>{shlex.quote(str(evidence / "provider-stderr.log"))}')
     destination.write_text("\n".join(lines) + "\n")
     destination.chmod(0o700)
     return destination
@@ -72,6 +72,9 @@ class Sandbox:
     def validate(self):
         if not re.fullmatch(r"(?:com\.)?t3-rehearsal[.-][A-Za-z0-9_.-]+", self.label):
             raise ValueError("label must have a unique t3-rehearsal- or com.t3-rehearsal. prefix")
+        from .install_policy import refuse_probe
+
+        refuse_probe(self.home, self.port, self.label, getattr(self.args, "live_home", []))
         live = [Path.home() / ".t3", Path.home() / ".t3nightly"]
         if self.home.is_relative_to(live[0]) or self.evidence.is_relative_to(live[0]):
             raise ValueError("sandbox cannot be inside the live T3 home")
@@ -114,6 +117,11 @@ class Sandbox:
             return None
 
     def published(self):
+        if getattr(self.args, "hot_swap", False):
+            try:
+                return bool(self.version() and self.serving_digest())
+            except (OSError, ValueError, subprocess.SubprocessError):
+                return False
         try:
             state = json.loads((self.home / "userdata/server-runtime.json").read_text())
         except (OSError, ValueError):
@@ -159,6 +167,10 @@ class Sandbox:
                 subprocess.run(["cp", "-c", "-R", str(self.old), str(destination)], check=True, timeout=120)
             else:
                 subprocess.run(["cp", "--reflink=auto", "-a", str(self.old), str(destination)], check=True, timeout=120)
+        if getattr(self.args, "hot_swap", False) and self.args.launcher_artifact:
+            from .rehearsal_service import pin_artifacts
+
+            pin_artifacts(self)
         with closing(sqlite3.connect(f"file:{self.args.seed.resolve()}?mode=ro", uri=True)) as source, closing(sqlite3.connect(self.db)) as target:
             source.backup(target)
         self.check_seed()
@@ -182,7 +194,16 @@ class Sandbox:
 
     def boot(self):
         argv = [str(self.cli), "serve", "--base-dir", str(self.home), "--host", "127.0.0.1", "--port", str(self.port), "--no-browser"]
+        if getattr(self.args, "hot_swap", False):
+            state = {"protocol": 3, "activeVersion": self.old.name}
+            (self.home / "runtime/service-state.json").write_text(json.dumps(state) + "\n")
+            argv = [str(self.cli), "__service-launcher"]
         log = self.home / "userdata/logs/service.log"
+        if getattr(self.args, "hot_swap", False):
+            from .rehearsal_service import boot
+
+            boot(self, argv, log)
+            return
         if sys.platform == "darwin":
             unit = {"Label": self.label, "ProgramArguments": argv, "EnvironmentVariables": self.service_environment(), "WorkingDirectory": str(self.home), "StandardOutPath": str(log), "StandardErrorPath": str(log), "RunAtLoad": True, "KeepAlive": True, "ExitTimeOut": 30}
             self.unit.write_bytes(plistlib.dumps(unit))
@@ -201,6 +222,10 @@ class Sandbox:
             self.started = True
 
     def serving_digest(self):
+        if getattr(self.args, "hot_swap", False):
+            from .rehearsal_service import serving_digest
+
+            return serving_digest(self)
         if sys.platform == "darwin":
             result = subprocess.run(["launchctl", "print", f"{self.domain}/{self.label}"], capture_output=True, text=True, check=True, timeout=10)
             match = re.search(r"\bpid = (\d+)", result.stdout)
@@ -218,6 +243,11 @@ class Sandbox:
     def close(self):
         if not self.started:
             return
+        if (self.home / "runtime/connector-pin.json").is_file():
+            from .rehearsal_service import connector_run
+            from .connector_artifact import uninstall
+
+            uninstall(connector_run(self))
         if sys.platform == "darwin":
             subprocess.run(["launchctl", "bootout", "--wait", f"{self.domain}/{self.label}"], capture_output=True, check=True, timeout=120)
         else:

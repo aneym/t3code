@@ -52,7 +52,7 @@ def remote_worker(config, action, log):
     return ssh(prefix + [
         "python3", f"{config.remote_root}/tools/release-worker", action,
         "--repo", config.remote_repo, "--tree", config.remote_tree,
-        "--run", config.remote_run, "--version", config.version,
+        "--run", config.remote_run, "--version", config.version, "--override-reason", config.override_reason,
     ], log)
 
 

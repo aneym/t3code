@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import os
 import plistlib
 import shutil
@@ -21,6 +22,7 @@ def main():
     parser.add_argument("--verdict", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--fast-evidence", type=Path, help="fast-release run whose Studio rehearsal and install receipts replace the visual verdict")
+    parser.add_argument("--override-reason", default="")
     args = parser.parse_args()
     dest = Path("/Applications/T3 Dev.app")
     try:
@@ -38,6 +40,12 @@ def main():
             if args.dry_run:
                 print(f"desktop-swap: accepted {version}; no app writes")
                 return
+            from t3nightly.install_policy import window
+
+            policy = window(version, reason=args.override_reason)
+            receipt = Path.home() / ".t3nightly" / f"desktop-window-{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}.json"
+            receipt.parent.mkdir(parents=True, exist_ok=True)
+            receipt.write_text(json.dumps(policy) + "\n")
             backups = Path.home() / "Applications-backup"
             backups.mkdir(exist_ok=True)
             if backups.stat().st_dev != dest.parent.stat().st_dev:

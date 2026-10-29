@@ -61,7 +61,7 @@ def receipt_digest(receipt):
 def validate(receipt):
     schema = receipt.get("schema") if isinstance(receipt, dict) else None
     if schema == REHEARSAL_SCHEMA:
-        shape(receipt, REHEARSAL_FIELDS, "receipt")
+        shape(receipt, {**REHEARSAL_FIELDS, **({"hotSwap": dict} if "hotSwap" in receipt else {})}, "receipt")
         for name in ("baselineChat", "postCutoverChat"):
             shape(receipt[name], CHAT_FIELDS, f"receipt.{name}")
         if not receipt["workload"]:
@@ -71,7 +71,8 @@ def validate(receipt):
         if timestamp(receipt["expiresAt"]) != timestamp(receipt["finishedAt"]) + EXPIRY:
             raise ValueError("receipt.expiresAt must be two hours after finishedAt")
     elif schema == INSTALL_SCHEMA:
-        shape(receipt, INSTALL_FIELDS, "receipt")
+        optional = {key: dict for key in ("installWindow", "hotSwap") if key in receipt and receipt[key] is not None}
+        shape({key: value for key, value in receipt.items() if value is not None or key not in ("installWindow", "hotSwap")}, {**INSTALL_FIELDS, **optional}, "receipt")
         shape(receipt["chat"], CHAT_FIELDS, "receipt.chat")
         if receipt["outcome"] not in INSTALL_OUTCOMES:
             raise ValueError(f"receipt.outcome must be one of {INSTALL_OUTCOMES}")
