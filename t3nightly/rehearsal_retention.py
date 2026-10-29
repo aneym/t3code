@@ -79,7 +79,7 @@ def live_references():
         except FileNotFoundError:
             continue
         except PermissionError:
-            if mine:
+            if mine and os.lstat(proc / "cwd").st_uid == os.getuid():
                 protected.append(process_start(proc))
         except OSError:
             if mine:
