@@ -3,7 +3,6 @@ import type * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { SERVER_EXIT_CODE_STATE_DIR_OWNED } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -223,7 +222,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         fs,
         path,
         path.join(root, "runtime", "versions", "1.0.0"),
-        `process.exit(${SERVER_EXIT_CODE_STATE_DIR_OWNED});\n`,
+        `process.send({type:"state-dir-owned"},()=>process.exit(78));\n`,
       );
       yield* Effect.promise(() =>
         writeServiceState(statePath, {

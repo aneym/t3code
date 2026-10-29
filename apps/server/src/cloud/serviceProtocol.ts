@@ -33,6 +33,7 @@ export interface ServiceLauncherContext {
 }
 
 export type ServiceLauncherChildMessage =
+  | { readonly type: "state-dir-owned" }
   | {
       readonly type: "request-update";
       readonly targetVersion: string;
@@ -231,6 +232,7 @@ export function decodeServiceLauncherChildMessage(
   value: unknown,
 ): ServiceLauncherChildMessage | undefined {
   if (!isRecord(value)) return undefined;
+  if (value.type === "state-dir-owned") return { type: value.type };
   if (
     value.type === "request-update" &&
     typeof value.targetVersion === "string" &&

@@ -185,6 +185,7 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
 ) {
   const stateDir = NodePath.dirname(statePath);
   const crypto = yield* Crypto.Crypto;
+  const launcher = yield* ServiceLauncherHostProcess;
   const ownerId = yield* crypto
     .randomUUIDv4()
     .pipe(Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })));
@@ -205,7 +206,19 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
         isSqliteBusy(cause)
           ? new ServerAlreadyRunningError({ stateDir })
           : new ServerOwnershipError({ stateDir, cause }),
-    }),
+    }).pipe(
+      Effect.tapError((error) =>
+        error._tag === "ServerAlreadyRunningError" && launcher.connected
+          ? Effect.callback<void>((resume) => {
+              try {
+                launcher.send({ type: "state-dir-owned" }, () => resume(Effect.void));
+              } catch {
+                resume(Effect.void);
+              }
+            })
+          : Effect.void,
+      ),
+    ),
     (db) =>
       readPersistedServerRuntimeState(statePath).pipe(
         Effect.flatMap((state) =>

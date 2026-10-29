@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalTimers:off
-// The launcher must survive unloadable server versions; use Node built-ins without Effect.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -34,13 +33,8 @@ import {
 } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
-/**
- * Migrations count toward it and can scale with the database: tens of GB on a cold page cache
- * take minutes. A missed window rolls back the database, so the next attempt pays the same cost.
- */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const OWNED_RETRY_MAX_MS = 30_000;
-// Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
@@ -49,6 +43,7 @@ type ChildRole = "active" | "trial";
 interface ManagedChild {
   readonly version: string;
   role: ChildRole;
+  stateDirOwned: boolean;
   readonly process: NodeChildProcess.ChildProcess;
 }
 
@@ -70,6 +65,7 @@ const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
 
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
 const RESTORE_MARKER = ".restore-pending";
+const UNSAFE_RESTORE_MARKER = ".restore-unsafe";
 
 const databaseBackupDir = (baseDir: string, updateId: string) =>
   NodePath.join(baseDir, "runtime", "db-backup", updateId);
@@ -117,7 +113,6 @@ export async function readServiceEnvironment(
   return environment;
 }
 
-// Opened read-write: Windows refuses to flush a handle without write access.
 async function syncFile(filePath: string): Promise<void> {
   const handle = await NodeFSP.open(filePath, "r+");
   try {
@@ -127,7 +122,6 @@ async function syncFile(filePath: string): Promise<void> {
   }
 }
 
-// Fsync makes renames durable; Windows returns EPERM and NTFS journals them itself.
 async function syncDirectory(directory: string): Promise<void> {
   const handle = await NodeFSP.open(directory, "r");
   try {
@@ -140,7 +134,6 @@ async function syncDirectory(directory: string): Promise<void> {
 }
 
 const GIB = 1024 ** 3;
-// Cloned backups still need headroom for trial writes and migrations to diverge.
 const CLONED_BACKUP_MIN_HEADROOM_BYTES = GIB;
 const CLONED_BACKUP_HEADROOM_FRACTION = 0.1;
 
@@ -156,7 +149,6 @@ async function statDatabaseFiles(dbPath: string): Promise<ReadonlyArray<NodeFS.S
   return stats;
 }
 
-// cp -c silently copies across volumes; require one device matching the APFS system volume's filesystem type.
 async function backupCanClone(dbPath: string, backupRoot: string): Promise<boolean> {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const platform = process.platform;
@@ -200,7 +192,6 @@ const filesystemBackupSpaceProbe: BackupSpaceProbe = {
   canClone: backupCanClone,
 };
 
-/** Check before stopping the server so full disks refuse updates without an outage. */
 export async function databaseBackupBlocker(
   baseDir: string,
   dbPath: string,
@@ -223,7 +214,6 @@ export async function databaseBackupBlocker(
   return `Not enough free disk space to back up the database before updating: ${gb(needed)} GB needed, ${gb(free)} GB free. Free up disk space and try again. The server was not stopped.`;
 }
 
-// Preserve completed backups; restarted trials may already have changed the live database.
 async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (await pathExists(backupDir)) return;
@@ -253,9 +243,8 @@ const restoreMarkerPath = (baseDir: string, updateId: string) =>
 const databaseRestorePending = (baseDir: string, pending: PendingServiceUpdate) =>
   pathExists(restoreMarkerPath(baseDir, pending.id));
 
-// Mark before live writes so recovery cannot boot a partial restore.
-async function markDatabaseRestorePending(backupDir: string): Promise<void> {
-  const markerPath = NodePath.join(backupDir, RESTORE_MARKER);
+async function markDatabaseBackup(backupDir: string, marker: string): Promise<void> {
+  const markerPath = NodePath.join(backupDir, marker);
   if (!(await pathExists(markerPath))) {
     const handle = await NodeFSP.open(markerPath, "wx", 0o600);
     try {
@@ -267,7 +256,6 @@ async function markDatabaseRestorePending(backupDir: string): Promise<void> {
   }
 }
 
-// Resolve symlink targets even if a crashed cp -c left the final target missing.
 async function restoreTarget(path: string): Promise<string> {
   let current = path;
   for (let hops = 0; hops < 40; hops++) {
@@ -282,7 +270,6 @@ async function restoreTarget(path: string): Promise<string> {
       throw cause;
     });
     if (link === undefined) return current;
-    // Do not normalize .. before following directory symlinks; match filesystem resolution.
     current = NodePath.isAbsolute(link)
       ? link
       : `${await NodeFSP.realpath(NodePath.dirname(current))}${NodePath.sep}${link}`;
@@ -296,14 +283,19 @@ async function restoreDatabaseBackup(
 ): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (!(await pathExists(backupDir))) return;
+  if (await pathExists(NodePath.join(backupDir, UNSAFE_RESTORE_MARKER))) {
+    process.stderr.write(
+      `[service-launcher] Automatic restore refused; backup retained at ${backupDir}.\n`,
+    );
+    return;
+  }
 
-  await markDatabaseRestorePending(backupDir);
+  await markDatabaseBackup(backupDir, RESTORE_MARKER);
   const directories = new Set([NodePath.dirname(pending.dbPath)]);
   for (const suffix of DB_FILE_SUFFIXES) {
     const livePath = `${pending.dbPath}${suffix}`;
     const source = databaseBackupFile(backupDir, suffix);
     if (await pathExists(source)) {
-      // Restore into the symlink target; cloning would replace the link.
       const target = await restoreTarget(livePath);
       await copyDatabaseFile(source, target);
       await syncFile(target);
@@ -318,6 +310,7 @@ async function restoreDatabaseBackup(
 async function discardDatabaseBackup(baseDir: string, updateId: string): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, updateId);
   if (!(await pathExists(backupDir))) return;
+  if (await pathExists(NodePath.join(backupDir, UNSAFE_RESTORE_MARKER))) return;
   await NodeFSP.rm(backupDir, { recursive: true, force: true });
   await syncDirectory(NodePath.dirname(backupDir));
 }
@@ -410,6 +403,7 @@ export class Launcher {
   #done = false;
   #failure: Error | undefined;
   #ownedRetries = 0;
+  #unclassifiedRetries = 0;
   readonly #terminator = new ChildTerminator();
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
@@ -454,7 +448,6 @@ export class Launcher {
 
   #startStopDeadline(): void {
     this.#terminator.startStopDeadline(() => {
-      if (this.#done) return;
       this.#done = true;
       this.#stopping = true;
       this.#child?.process.kill("SIGKILL");
@@ -489,7 +482,6 @@ export class Launcher {
       this.#startStopDeadline();
       const marker = this.#terminator.holdSignalsUntil(writeStopMarker(this.#baseDir));
       this.#clearTimer();
-      // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
       this.#enqueue(async () => {
         this.#stopping = true;
         this.#clearTimer();
@@ -510,7 +502,6 @@ export class Launcher {
   }
 
   async #recover(): Promise<void> {
-    // Clear old stop markers to preserve future tunnels; clear restart-pending only for the awaited version to avoid CLI races.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     const restartPending = restartPendingPath(this.#baseDir);
     const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
@@ -584,6 +575,7 @@ export class Launcher {
     const managed: ManagedChild = {
       version,
       role,
+      stateDirOwned: false,
       process: child,
     };
     this.#child = managed;
@@ -605,6 +597,10 @@ export class Launcher {
 
   async #handleMessage(child: ManagedChild, message: ServiceLauncherChildMessage): Promise<void> {
     if (this.#child !== child || this.#stopping) return;
+    if (message.type === "state-dir-owned") {
+      child.stateDirOwned = true;
+      return;
+    }
     if (message.type === "request-update") {
       await this.#handleUpdateRequest(child, message);
       return;
@@ -651,7 +647,6 @@ export class Launcher {
       await reject("The requested target runtime is missing or incomplete.");
       return;
     }
-    // Failed checks must refuse updates rather than stop the server with unknown backup capacity.
     const backupBlocker = await databaseBackupBlocker(
       this.#baseDir,
       message.dbPath,
@@ -676,6 +671,7 @@ export class Launcher {
     const next: ServiceState = { ...this.#state, update: pending };
     await writeServiceState(this.#statePath, next);
     this.#state = next;
+    this.#ownedRetries = this.#unclassifiedRetries = 0;
     await sendMessage(child.process, { type: "update-accepted", updateId: pending.id });
     this.#timer = setTimeout(() => this.#enqueue(() => this.#beginTrial(child)), HANDOFF_DELAY_MS);
   }
@@ -715,6 +711,7 @@ export class Launcher {
     await writeServiceState(this.#statePath, next);
     this.#state = next;
     child.role = "active";
+    this.#ownedRetries = this.#unclassifiedRetries = 0;
     await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
     await sendMessage(child.process, { type: "committed", updateId: committed.id });
   }
@@ -736,10 +733,26 @@ export class Launcher {
     if (this.#child !== child || this.#stopping) return;
     this.#child = null;
     if (code === STATE_DIR_OWNED_EXIT_CODE) {
+      const pending = this.#state.update;
+      if (pending?.status === "pending") {
+        const backup = databaseBackupDir(this.#baseDir, pending.id);
+        if (await pathExists(backup)) await markDatabaseBackup(backup, UNSAFE_RESTORE_MARKER);
+      }
+      if (!child.stateDirOwned && this.#unclassifiedRetries++ >= 5) {
+        this.#clearTimer();
+        this.#ownedRetries = 0;
+        this.#unclassifiedRetries = 0;
+        if (pending?.status !== "pending")
+          throw new Error("Unclassified exit 78 exhausted retries.");
+        await this.#returnToPrevious(pending, "failed", "unclassified-exit:78");
+        return;
+      }
+      if (child.stateDirOwned) this.#unclassifiedRetries = 0;
       this.#retryWhileStateDirOwned(child);
       return;
     }
     this.#ownedRetries = 0;
+    this.#unclassifiedRetries = 0;
     if (child.role === "trial") {
       this.#clearTimer();
       const pending = this.#state.update;
@@ -767,7 +780,9 @@ export class Launcher {
     this.#clearTimer();
     if (this.#ownedRetries === 0) {
       process.stderr.write(
-        "[service-launcher] Another T3 Code server owns this T3 home. Retrying until it stops.\n",
+        child.stateDirOwned
+          ? "[service-launcher] Another T3 Code server owns this T3 home. Retrying until it stops.\n"
+          : "[service-launcher] Unclassified exit 78; retrying up to 5 times.\n",
       );
     }
     const delay = Math.min(1_000 * 2 ** this.#ownedRetries++, OWNED_RETRY_MAX_MS);
