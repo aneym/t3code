@@ -37,6 +37,7 @@ import {
   createRuntimeCommand,
   scheduleAtomCommandEffect,
 } from "./runtime.ts";
+import { provideCommandPermissions } from "./commandPermissions.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
@@ -932,9 +933,7 @@ export function createServerEnvironmentAtoms<R, E>(
                     (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn") &&
                     isLegacyUpdateHandoffLoss(exit.cause)
                   ) {
-                    // Older servers can tear down the transport before their
-                    // unary acknowledgement arrives. Treat only that transport
-                    // loss as a handoff, then prove it by waiting for target ready.
+                    // Older servers drop the transport before acking; only that loss is a handoff.
                     return { targetVersion, method: selfUpdateMethod };
                   }
                   return yield* Effect.failCause(exit.cause);
@@ -1042,6 +1041,7 @@ export function createServerEnvironmentAtoms<R, E>(
         atomRegistry.set(stateAtom, IDLE_SERVER_UPDATE_STATE);
         return result;
       }).pipe(
+        provideCommandPermissions(runtime, atomRegistry),
         Effect.onExit((exit) =>
           Effect.sync(() => {
             if (Exit.isSuccess(exit)) {
