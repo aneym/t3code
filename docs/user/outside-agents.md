@@ -101,6 +101,7 @@ without a sign-in:
 id=$(t3 thread start . "Find why the tests are slow")
 t3 thread send "$id" "Now fix it" --wait
 t3 thread show "$id"
+t3 thread update "$id" --title "Investigate slow tests"
 t3 thread list
 ```
 
