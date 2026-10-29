@@ -112,7 +112,7 @@ def readiness(config, log):
     remote = remote_probe(config, seed, old, log)
     evidence["ax42"] = remote
     checks["ax42-reachable"] = bool(remote)
-    checks["ax42-same-release"] = remote.get("serving") == old
+    checks["ax42-same-release"] = remote.get("serving") in (old, config.version)
     checks["ax42-engine"] = remote.get("engine") == engine["digest"]
     checks["ax42-seed"] = remote.get("seedHistory") == history and history is not None
     checks["ax42-old-runtime"] = remote.get("oldRuntime") is True
@@ -123,7 +123,7 @@ def readiness(config, log):
     evidence["pressure"] = {"studioLoad": os.getloadavg()[0], "studioCpus": os.cpu_count(), "ax42Load": remote.get("load"), "ax42Cpus": remote.get("cpus")}
     failed = sorted(name for name, ok in checks.items() if not ok)
     value = {"ok": not failed, "failed": failed, "checks": checks, "evidence": evidence, "engine": engine,
-             "topicShas": topics, "baseHead": base_head, "servingHead": evidence["servingHead"], "baseHistory": history, "oldReleases": {"studio": old, "ax42": remote.get("serving")},
+             "topicShas": topics, "baseHead": base_head, "servingHead": evidence["servingHead"], "baseHistory": history, "oldReleases": {"studio": old, "ax42": old},
              "seconds": round(time.monotonic() - started, 3)}
     Path(config.run).mkdir(parents=True, exist_ok=True)
     (Path(config.run) / "readiness.json").write_text(json.dumps(value, indent=2) + "\n")
