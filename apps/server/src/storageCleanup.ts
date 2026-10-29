@@ -846,11 +846,14 @@ const make = Effect.gen(function* () {
             repositoryCwd: path.resolve(project.workspaceRoot),
             worktreePath,
             headSha: head.commitSha,
+            matchContent: settings.worktreeContentIntegration,
           });
           if (landed === null) return keep("default branch is unavailable");
           if (!eligible && landed.integrated && settings.worktreeUnchanged) {
             eligible = true;
-            removalReason = "no commits beyond the default branch";
+            removalReason = landed.byContent
+              ? "branch changes are already in the default branch"
+              : "no commits beyond the default branch";
           }
           let merged = false;
           if (

@@ -51,6 +51,27 @@ export function WorktreeIntegrationRows({
             }
           />
         )}
+      {connectedEnvironments.length > 0 &&
+        connectedEnvironments.every(
+          (environment) =>
+            environment.serverConfig?.environment.capabilities.worktreeContentIntegration === true,
+        ) && (
+          <SettingsRow
+            title="Count squashed and rebased branches as landed"
+            status={ruleStatus("worktreeContentIntegration")}
+            description="A branch counts as landed when merging it into the default branch changes nothing, even if its commits were squashed, rebased or cherry-picked."
+            serverScoped={serverScoped}
+            control={
+              <Switch
+                aria-label="Count squashed and rebased branches as landed"
+                checked={settings.worktreeContentIntegration}
+                onCheckedChange={(worktreeContentIntegration) =>
+                  updateWorktree({ worktreeContentIntegration })
+                }
+              />
+            }
+          />
+        )}
     </>
   );
 }

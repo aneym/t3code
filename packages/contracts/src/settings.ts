@@ -987,6 +987,9 @@ export const WorktreeCleanupRules = Schema.Struct({
   worktreeOnDelete: Schema.Boolean,
   worktreeUnchanged: Schema.Boolean,
   worktreeRequireIntegrated: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  worktreeContentIntegration: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
 });
 export type WorktreeCleanupRules = typeof WorktreeCleanupRules.Type;
 const WorktreeCleanupRulesPatchFields = {
@@ -997,6 +1000,7 @@ const WorktreeCleanupRulesPatchFields = {
   worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
   worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
   worktreeRequireIntegrated: Schema.optionalKey(Schema.Boolean),
+  worktreeContentIntegration: Schema.optionalKey(Schema.Boolean),
 };
 
 export const WorktreeCleanup = Schema.NullOr(
@@ -1149,6 +1153,9 @@ export const StorageCleanupSettings = Schema.Struct({
   worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeUnchanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeRequireIntegrated: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  worktreeContentIntegration: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   browserArtifactsAfterDays: StorageRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),

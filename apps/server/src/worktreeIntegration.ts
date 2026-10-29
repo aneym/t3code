@@ -5,10 +5,35 @@ import type * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 export function makeWorktreeIntegrationCheck(git: GitVcsDriver.GitVcsDriver["Service"]) {
   const refreshedDefaultRefs = new Map<string, Set<string>>();
   const defaultBranches = new Map<string, string | null>();
+  const contentInDefaultBranch = Effect.fn("StorageCleanup.contentIntegration")(function* (
+    cwd: string,
+    baseSha: string,
+    headSha: string,
+  ) {
+    const run = (operation: string, args: ReadonlyArray<string>) =>
+      git.execute({ operation, cwd, args: [...args], allowNonZeroExit: true }).pipe(
+        Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : null)),
+        Effect.orElseSucceed(() => null),
+      );
+    const merged = yield* run("StorageCleanup.contentMergeTree", [
+      "merge-tree",
+      "--write-tree",
+      baseSha,
+      headSha,
+    ]);
+    const baseTree = yield* run("StorageCleanup.contentBaseTree", [
+      "rev-parse",
+      "--verify",
+      `${baseSha}^{tree}`,
+    ]);
+    const mergedTree = merged?.split(/\r?\n/)[0]?.trim();
+    return /^[0-9a-f]{40,64}$/.test(mergedTree ?? "") && mergedTree === baseTree;
+  });
   return Effect.fn("StorageCleanup.worktreeIntegration")(function* (input: {
     readonly repositoryCwd: string;
     readonly worktreePath: string;
     readonly headSha: string;
+    readonly matchContent: boolean;
   }) {
     const { repositoryCwd, worktreePath } = input;
     const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
@@ -54,6 +79,9 @@ export function makeWorktreeIntegrationCheck(git: GitVcsDriver.GitVcsDriver["Ser
       args: ["merge-base", "--is-ancestor", input.headSha, base.commitSha],
       allowNonZeroExit: true,
     });
-    return { defaultBranch: branch, integrated: ancestor.exitCode === 0 };
+    if (ancestor.exitCode === 0 || !input.matchContent)
+      return { defaultBranch: branch, integrated: ancestor.exitCode === 0, byContent: false };
+    const byContent = yield* contentInDefaultBranch(worktreePath, base.commitSha, input.headSha);
+    return { defaultBranch: branch, integrated: byContent, byContent };
   });
 }

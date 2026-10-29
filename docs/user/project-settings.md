@@ -202,6 +202,9 @@ Each rule works on its own, so inactive, settled and deleted-thread cleanup can 
 worktree whose commits never reached the default branch. Turn on **Only delete landed worktrees**
 under Advanced to make every rule also require the branch to be in the remote default branch, or
 its pull request to be merged at the worktree's current commit.
+Turn on **Count squashed and rebased branches as landed** to also treat a branch as landed when
+merging it into the remote default branch would change nothing, which covers squash, rebase and
+cherry-pick landings without a pull request.
 
 Enable **Delete worktrees with deleted threads** to remove safe worktrees after their last
 thread is deleted, including archived threads and worktrees left by earlier deletions. The
