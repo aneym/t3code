@@ -41,6 +41,10 @@ export const environmentUpdateStatesAtom = environmentAtomList(
   "web-environment-update-states",
   serverEnvironment.updateStateAtom,
 );
+export const environmentUpdatePermissionsAtom = environmentAtomList(
+  "web-environment-update-permissions",
+  (environmentId) => serverEnvironment.updateServer.permissionAtom(environmentId),
+);
 export const updateOutdatedServer = createOutdatedServerUpdateCommand(connectionAtomRuntime);
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,

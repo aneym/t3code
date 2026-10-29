@@ -37,7 +37,7 @@ import {
   createRuntimeCommand,
   scheduleAtomCommandEffect,
 } from "./runtime.ts";
-import { provideCommandPermissions } from "./commandPermissions.ts";
+import { createCommandPermissions, provideCommandPermissions } from "./commandPermissions.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
@@ -181,13 +181,6 @@ export function validateServerUpdateReadyEvent(
   );
 }
 
-/**
- * The sleep before each nudge is the pacer: a connection that fails instantly
- * re-enters backoff immediately and would otherwise spin a tight retry loop.
- *
- * Callers fork this as a child of the update command so it is interrupted as
- * soon as the update settles, whether it succeeds, fails, or times out.
- */
 export function nudgeReconnectDuringUpdateRestart(input: {
   readonly stateChanges: Stream.Stream<
     {
@@ -823,7 +816,8 @@ export function createServerEnvironmentAtoms<R, E>(
   );
   const updateStateAtom = (environmentId: EnvironmentId | null) =>
     environmentId === null ? EMPTY_SERVER_UPDATE_STATE_ATOM : updateStateValueAtom(environmentId);
-  const updateServer = createRuntimeCommand<
+  const updateServerPermissions = createCommandPermissions(runtime, WS_METHODS.serverUpdateServer);
+  const updateServerCommand = createRuntimeCommand<
     EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
     E,
     ServerUpdateTarget,
@@ -849,6 +843,7 @@ export function createServerEnvironmentAtoms<R, E>(
       });
 
       return Effect.gen(function* () {
+        yield* updateServerPermissions.authorize(atomRegistry, target.environmentId, target.input);
         const environmentRegistry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const desktopCommitStarting = yield* Deferred.make<void>();
         const desktopReconnectObserverArmed = yield* Deferred.make<void>();
@@ -972,8 +967,6 @@ export function createServerEnvironmentAtoms<R, E>(
           }),
         );
 
-        // A track switch's desktop host already on its track's newest build only saved the
-        // track; nothing restarts.
         if (
           result.method === "desktop-app" &&
           result.desktopUpdateToken === undefined &&
@@ -1063,6 +1056,11 @@ export function createServerEnvironmentAtoms<R, E>(
       );
     }),
   });
+  const updateServer = {
+    ...updateServerCommand,
+    requiredScopes: updateServerPermissions.requiredScopes,
+    permissionAtom: updateServerPermissions.permissionAtom,
+  };
   const settingsValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(configValueAtom(environmentId))?.settings ?? null).pipe(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
