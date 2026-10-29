@@ -1,14 +1,14 @@
 import {
   CommandId,
   type OrchestrationV2Run,
+  type RunId,
   ServerPrepareRestartError,
   type ServerRestartStatus,
 } from "@t3tools/contracts";
-import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Effect from "effect/Effect";
-import { cancelledBeforeStart } from "./RestartBackgroundNote.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { restartSourceSuperseded } from "./RestartDispatchPolicy.ts";
 
 const endedOnItsOwn = (status: OrchestrationV2Run["status"]) =>
   status === "failed" || status === "interrupted" || status === "rolled_back";
@@ -25,6 +25,13 @@ export const restartStatus = Effect.fn("RestartStatus.read")(
       if (effect.request.type !== "provider-runtime.restart-handoff") continue;
       const projection = yield* projections.getThreadProjection(effect.threadId);
       const handoff = effect.request.handoff;
+      const prepared = (id: RunId) =>
+        effects.some(
+          (other) =>
+            other.threadId === effect.threadId &&
+            other.request.type === "provider-runtime.restart-handoff" &&
+            other.request.handoff.runIds.includes(id),
+        );
       const sources: ServerRestartStatus["threads"][number]["sources"][number][] = (
         handoff.sourceRunIds ?? handoff.runIds
       ).map((sourceRunId) => {
@@ -62,12 +69,10 @@ export const restartStatus = Effect.fn("RestartStatus.read")(
           return { sourceRunId, state: "completed", reason: source.status };
         if (
           source?.status === "cancelled" &&
-          projection.runs.some(
-            (run) =>
-              run.id !== source.id &&
-              run.status !== "queued" &&
-              !cancelledBeforeStart(run) &&
-              runRanAfter(run, source),
+          restartSourceSuperseded(
+            projection.runs,
+            source,
+            prepared(source.id) ? prepared : undefined,
           )
         )
           return { sourceRunId, state: "completed", reason: "superseded" };

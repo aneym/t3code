@@ -1,7 +1,29 @@
-import { type OrchestrationV2ThreadProjection, type RunId } from "@t3tools/contracts";
+import {
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
+  type RunId,
+} from "@t3tools/contracts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { cancelledBeforeStart, isRestartContinuationSource } from "./RestartBackgroundNote.ts";
 import type { OrchestrationEffectV2 } from "./EffectOutboxModel.ts";
+
+export function restartSourceSuperseded(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  source: OrchestrationV2Run,
+  preparedSource?: (id: RunId) => boolean,
+) {
+  return runs.some(
+    (run) =>
+      run.id !== source.id &&
+      run.status !== "queued" &&
+      !cancelledBeforeStart(run) &&
+      !(
+        preparedSource !== undefined &&
+        (run.restartContinuationOfRunId !== undefined || preparedSource(run.id))
+      ) &&
+      runRanAfter(run, source),
+  );
+}
 
 export function restartDispatchAllowed(
   projection: Pick<
@@ -44,13 +66,6 @@ export function restartDispatchAllowed(
     projection.thread.archivedAt === null &&
     projection.thread.deletedAt === null &&
     projection.thread.providerInstanceId === source.providerInstanceId &&
-    !projection.runs.some(
-      (run) =>
-        run.id !== source.id &&
-        run.status !== "queued" &&
-        !cancelledBeforeStart(run) &&
-        !(prepared && (run.restartContinuationOfRunId !== undefined || covered(run.id))) &&
-        runRanAfter(run, source),
-    )
+    !restartSourceSuperseded(projection.runs, source, prepared ? covered : undefined)
   );
 }

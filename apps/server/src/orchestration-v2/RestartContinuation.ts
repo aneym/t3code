@@ -21,12 +21,12 @@ import {
   cancelledTurnItemWork,
   isAwaitedWork,
   isRestartContinuationSource,
-  cancelledBeforeStart,
   isRestartNoteSource,
   neverStarted,
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
 } from "./RestartBackgroundNote.ts";
+import { restartSourceSuperseded } from "./RestartDispatchPolicy.ts";
 
 const CONTINUE_PROMPT = "Continue where you left off.";
 
@@ -235,17 +235,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       )
     )
       return;
-    if (
-      !input.prepared &&
-      projection.runs.some(
-        (run) =>
-          run.id !== source.id &&
-          run.status !== "queued" &&
-          !cancelledBeforeStart(run) &&
-          runRanAfter(run, source),
-      )
-    )
-      return;
+    if (!input.prepared && restartSourceSuperseded(projection.runs, source)) return;
     if (projection.thread.providerInstanceId !== source.providerInstanceId) return;
     // A turn that keeps crashing the server would otherwise restart it forever.
     let chainLength = 0;
