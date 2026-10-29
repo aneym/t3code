@@ -1666,6 +1666,26 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("keeps the original checkout when a copy of it sits at the thread path", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command } = yield* cleanupFixture();
+        yield* command(repo, ["merge", "--ff-only", "feature"]);
+        const original = `${worktree}-original`;
+        yield* fs.remove(worktree, { recursive: true });
+        yield* command(repo, ["worktree", "prune"]);
+        yield* command(repo, ["worktree", "add", original, "feature"]);
+        yield* fs.makeDirectory(worktree);
+        for (const name of ["tracked.txt", ".gitignore", ".git"])
+          yield* fs.copyFile(`${original}/${name}`, `${worktree}/${name}`);
+        yield* fs.writeFileString(`${original}/tracked.txt`, "edited\n");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect((yield* command(original, ["status", "--porcelain"])).stdout).toContain(
+          "tracked.txt",
+        );
+      }),
+    ),
+  );
   it.live("keeps a worktree another repository checked out at the same path", () =>
     runCleanupTest(
       Effect.gen(function* () {
