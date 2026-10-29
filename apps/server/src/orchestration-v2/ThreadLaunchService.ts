@@ -1,4 +1,5 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
+import { completeSetupScript } from "../project/WorktreeSetupCompletion.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -607,17 +608,9 @@ const make = Effect.gen(function* () {
         }));
         if (setup.completion) {
           const awaitCompletion = Effect.gen(function* () {
-            const completion = yield* setup.completion!;
-            yield* setupTracker.stage(threadId, "setup-script", {
-              status: completion.exitCode === 0 ? "done" : "failed",
-              detail: `exited with ${completion.exitCode ?? "no exit code"}`,
-            });
-            if (completion.exitCode !== 0 && !setup.async)
-              return yield* mapError(
-                input,
-                "run-setup-script",
-                threadId,
-              )(`Setup script exited with ${completion.exitCode ?? "no exit code"}.`);
+            const failure = yield* completeSetupScript(threadId, setup.completion!, setupTracker);
+            if (failure && !setup.async)
+              return yield* mapError(input, "run-setup-script", threadId)(failure);
           });
           if (setup.async) {
             awaitAsyncSetup = awaitCompletion.pipe(
