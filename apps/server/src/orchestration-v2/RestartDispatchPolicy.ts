@@ -69,7 +69,8 @@ export type RestartDispatchRefusal =
   | "archived"
   | "deleted"
   | "provider_changed"
-  | "superseded";
+  | "superseded"
+  | NonNullable<OrchestrationV2Run["restartDeclined"]>;
 
 export function restartDispatchRefusal(
   projection: DispatchProjection,
@@ -92,6 +93,7 @@ export function restartDispatchRefusal(
     return "human_review_required";
   if (projection.runs.some((run) => run.restartContinuationOfRunId === source.id))
     return "continued";
+  if (source.restartDeclined !== undefined) return source.restartDeclined;
   if (
     !(prepared
       ? source.status === "cancelled" || restartNoteOwed(source, projection.providerTurns)

@@ -649,6 +649,7 @@ export const OrchestrationV2Run = Schema.Struct({
   restartCancelledBackgroundWork: Schema.optional(
     Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
   ),
+  restartDeclined: Schema.optional(Schema.Literals(["chain_limit", "provider_disabled"])),
   sourcePlanRef: Schema.optional(
     Schema.Struct({
       threadId: ThreadId,

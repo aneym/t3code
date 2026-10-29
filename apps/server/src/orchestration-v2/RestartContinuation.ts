@@ -258,7 +258,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         threadId: input.threadId,
         sourceRunId: input.sourceRunId,
       });
-      return;
+      return "chain_limit" as const;
     }
     const sourceRecords = yield* threads.getThreadRecords(
       input.threadId,
@@ -298,7 +298,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
           : note.settled
             ? noteText
             : `${noteText}\n\n${CONTINUE_PROMPT}`;
-    yield* threads
+    return yield* threads
       .dispatch({
         type: "message.dispatch",
         commandId: CommandId.make(
@@ -339,14 +339,15 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
               sourceRunId: input.sourceRunId,
               projectId: error.projectId,
               instanceId: error.instanceId,
-            }),
+            }).pipe(Effect.as("provider_disabled" as const)),
         }),
+        Effect.map((declined) => (declined === "provider_disabled" ? declined : undefined)),
       );
   },
   // Declined child continuations still owe parent results; existing continuation runs settle them instead.
   (effect, input) =>
     effect.pipe(
-      Effect.andThen(
+      Effect.tap(
         Effect.gen(function* () {
           const threads = yield* ThreadManagementService.ThreadManagementService;
           yield* threads.recoverDelegatedTask(input.threadId, input.sourceRunId);

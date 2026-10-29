@@ -1,6 +1,13 @@
-import { type ServerRestartHandoff, type ThreadId } from "@t3tools/contracts";
+import {
+  type OrchestrationV2DomainEvent,
+  type ServerRestartHandoff,
+  type ThreadId,
+} from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as EventSink from "./EventSink.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { restartNoteOwed } from "./RestartBackgroundNote.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
@@ -23,7 +30,11 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
       const source = projection.runs.find((run) => run.id === sourceRunId);
       if (source === undefined)
         return yield* new RestartHandoffExecutionError({ threadId: input.threadId, sourceRunId });
-      if (projection.runs.some((run) => run.restartContinuationOfRunId === sourceRunId)) continue;
+      if (
+        projection.runs.some((run) => run.restartContinuationOfRunId === sourceRunId) ||
+        source.restartDeclined !== undefined
+      )
+        continue;
       if (
         (source.status === "completed" && !restartNoteOwed(source, projection.providerTurns)) ||
         source.status === "failed" ||
@@ -66,7 +77,7 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
         )
       )
         return yield* new RestartHandoffExecutionError({ threadId: input.threadId, sourceRunId });
-      yield* continueRestartedRun({
+      const declined = yield* continueRestartedRun({
         threadId: input.threadId,
         sourceRunId,
         prepared: true,
@@ -74,9 +85,32 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
         ...(input.humanReply === undefined ? {} : { humanReply: input.humanReply }),
       });
       const after = yield* threads.getThreadRecords(input.threadId, ["runs"]);
-      if (!after.runs.some((run) => run.restartContinuationOfRunId === sourceRunId)) {
+      if (after.runs.some((run) => run.restartContinuationOfRunId === sourceRunId)) continue;
+      const current = after.runs.find((run) => run.id === sourceRunId);
+      if (declined === undefined || current === undefined)
         return yield* new RestartHandoffExecutionError({ threadId: input.threadId, sourceRunId });
-      }
+      const eventSink = yield* EventSink.EventSinkV2;
+      const event: OrchestrationV2DomainEvent = {
+        id: yield* (yield* IdAllocator.IdAllocatorV2).allocate.event({ threadId: input.threadId }),
+        type: "run.updated",
+        threadId: input.threadId,
+        runId: current.id,
+        providerInstanceId: current.providerInstanceId,
+        occurredAt: yield* DateTime.now,
+        payload: { ...current, restartDeclined: declined },
+      };
+      const recorded =
+        current.activeAttemptId === null
+          ? yield* eventSink.write({ events: [event] }).pipe(Effect.as(true))
+          : (yield* eventSink.writeIfRunCurrent({
+              threadId: input.threadId,
+              runId: current.id,
+              activeAttemptId: current.activeAttemptId,
+              expectedStatus: current.status,
+              events: [event],
+            })).committed;
+      if (!recorded)
+        return yield* new RestartHandoffExecutionError({ threadId: input.threadId, sourceRunId });
     }
   },
 );
