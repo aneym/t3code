@@ -64,8 +64,10 @@ The main checkout defaults to `~/.t3/dev`. An explicit `--home-dir` wins in both
 The first start in a worktree seeds its empty database from a read-only copy of
 `~/.t3/userdata/statev2.sqlite` if the source is at most 500 MiB. Larger sources warn
 and dev starts with an empty database. `--no-seed` or `T3CODE_DEV_SEED=0` skips seeding.
-To copy a larger source, run `vp run migrate-dev-db` with dev stopped. It may use
-substantial disk space before pruning.
+To copy a larger source, run `vp run migrate-dev-db` with dev stopped. It briefly
+holds a read transaction to reflink the source and WAL, then copies from the clone.
+Live sources require reflink support; otherwise stop the source server or pass
+`--source <a snapshot>`. Copying may use substantial disk space before pruning.
 Never run a development server against the live `~/.t3/userdata`.
 See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
 
