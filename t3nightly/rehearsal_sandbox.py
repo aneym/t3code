@@ -4,6 +4,7 @@ import os
 import plistlib
 import re
 import shlex
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -65,6 +66,7 @@ class Sandbox:
         self.project = self.home / "project"
         self.os_home = self.home / "installer-home"
         self.systemd_unit = Path.home() / ".config/systemd/user" / f"{self.label}.service"
+        self.systemd_dropin = self.systemd_unit.with_suffix(".service.d")
 
     def validate(self):
         if not re.fullmatch(r"(?:com\.)?t3-rehearsal[.-][A-Za-z0-9_.-]+", self.label):
@@ -93,8 +95,8 @@ class Sandbox:
         if sys.platform == "darwin":
             if subprocess.run(["launchctl", "print", f"{self.domain}/{self.label}"], capture_output=True, timeout=10, check=False).returncode == 0:
                 raise ValueError("service label is already loaded")
-        elif self.systemd_unit.exists():
-            raise ValueError("systemd rehearsal unit already exists")
+        elif self.systemd_unit.exists() or self.systemd_dropin.exists():
+            raise ValueError("systemd rehearsal unit or drop-in already exists")
 
     def query(self, sql, params=()):
         with closing(sqlite3.connect(f"file:{self.db}?mode=ro", uri=True, timeout=10)) as connection:
@@ -217,5 +219,7 @@ class Sandbox:
         else:
             subprocess.run(["systemctl", "--user", "stop", f"{self.label}.service"], check=True, timeout=60)
             self.systemd_unit.unlink()
+            if self.systemd_dropin.exists():
+                shutil.rmtree(self.systemd_dropin)
             subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=30)
         self.started = False

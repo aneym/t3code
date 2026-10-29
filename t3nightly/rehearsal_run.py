@@ -67,7 +67,7 @@ class Rehearsal:
     def install(self):
         sandbox = self.sandbox
         service_label = sandbox.label if sys.platform == "darwin" else f"{sandbox.label}.service"
-        command = [sys.executable, str(self.engine / "install"), "--hard", "--version", self.version, "--home", str(sandbox.home), "--port", str(sandbox.port), "--service-label", service_label, "--service-plist", str(sandbox.unit), "--service-env", str(sandbox.home / "service.env"), "--systemd-dropin", str(sandbox.systemd_unit.with_suffix(".service.d")), "--assets", str(self.args.assets.resolve()), "--state-dir", str(sandbox.evidence / "installer-state"), "--health-s", str(self.args.health_s), "--settle-s", "1", "--load-max", "24"]
+        command = [sys.executable, str(self.engine / "install"), "--hard", "--version", self.version, "--home", str(sandbox.home), "--port", str(sandbox.port), "--service-label", service_label, "--service-plist", str(sandbox.unit), "--service-env", str(sandbox.home / "service.env"), "--systemd-dropin", str(sandbox.systemd_dropin), "--assets", str(self.args.assets.resolve()), "--state-dir", str(sandbox.evidence / "installer-state"), "--health-s", str(self.args.health_s), "--settle-s", "1", "--load-max", "24"]
         if sys.platform != "darwin":
             command += ["--backups", str(sandbox.evidence / "backups")]
         if (self.engine / "install_hard.py").is_file():
