@@ -237,6 +237,20 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     const topLevel = yield* inspect("StorageCleanup.topLevel", ["rev-parse", "--show-toplevel"]);
     if ((yield* fs.realPath(topLevel.stdout.trim())) !== (yield* fs.realPath(cwd)))
       return "Git work tree points elsewhere";
+    const index = yield* git.execute({
+      operation: "StorageCleanup.indexFlags",
+      cwd,
+      args: ["ls-files", "-v", "-z"],
+      maxOutputBytes: 16 * 1024 * 1024,
+    });
+    if (index.stdoutTruncated) return "index exceeds the inspection limit";
+    for (const line of index.stdout.split("\0")) {
+      const tag = line.slice(0, 1);
+      const file = line.slice(2);
+      if (tag !== "" && tag === tag.toLowerCase()) return `has a file marked unchanged (${file})`;
+      if (tag === "S" && (yield* fs.exists(path.join(cwd, file))))
+        return `has a skip-worktree file on disk (${file})`;
+    }
     const commonDir = yield* inspect("StorageCleanup.commonDir", [
       "rev-parse",
       "--path-format=absolute",

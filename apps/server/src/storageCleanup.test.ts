@@ -1716,6 +1716,29 @@ describe("storage cleanup reports and local file policies", () => {
         }),
       ),
   );
+  it.live.each(["--assume-unchanged", "--skip-worktree"])(
+    "keeps a tracked edit hidden with %s",
+    (flag) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, command } = yield* cleanupFixture();
+          yield* command(worktree, ["update-index", flag, "tracked.txt"]);
+          yield* fs.writeFileString(`${worktree}/tracked.txt`, "edited\n");
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+          expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+        }),
+      ),
+  );
+  it.live("still removes a sparse checkout whose skipped files are absent", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        yield* command(worktree, ["update-index", "--skip-worktree", "tracked.txt"]);
+        yield* fs.remove(`${worktree}/tracked.txt`);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+      }),
+    ),
+  );
   it.live("keeps a worktree another repository checked out at the same path", () =>
     runCleanupTest(
       Effect.gen(function* () {
