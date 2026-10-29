@@ -1,4 +1,5 @@
 import ctypes
+import errno
 import os
 import shutil
 import subprocess
@@ -81,11 +82,17 @@ def pin_runtime(home, version):
     return runtime / "launcher" / "t3", backup
 
 
+def link_or_copy(source, destination):
+    try:
+        os.link(source, destination)
+    except OSError as error:
+        if error.errno != errno.EXDEV:
+            raise
+        shutil.copy2(source, destination)
+
+
 def link_tree(source, destination):
-    if sys.platform == "darwin":
-        subprocess.run(["cp", "-c", "-R", str(source), str(destination)], check=True, timeout=240)
-    else:
-        shutil.copytree(source, destination, symlinks=True, copy_function=os.link)
+    shutil.copytree(source, destination, symlinks=True, copy_function=link_or_copy)
 
 
 def retain_runtime(home, version, store):
