@@ -1,0 +1,9 @@
+# Hard installer: ssh-launch strays
+
+A desktop client's ssh launcher (`packages/ssh/src/tunnel.ts`) starts its own `t3 serve` when it finds no server answering. If that happens while the installer has the service stopped, the launcher's server takes the T3 home lock, and neither the candidate nor the rollback can start. The installer reaps such a server inside the cutover window only (`install_strays.py`).
+
+A process is reaped only when all of these hold: its pid comes from `<home>/ssh-launch/*/pid`, the marker says `managed`, it runs as the installer's uid, its argv names the target home, it started within 10 s of its pid file, and it listens on the service port (or listens on its own recorded port while holding `server-owner.sqlite`). Each reap is recorded in the install receipt's `reapedSshLaunch`, at most three times per health phase.
+
+Signals are bound to the checked process on Linux through a pidfd (`platformBinding: "pidfd"`). macOS has no process-bound signal. There the reaper registers a kqueue `EVFILT_PROC NOTE_EXIT` watch before checking identity, and skips the signal once that process has exited (`platformBinding: "kqueue-checked"`, with a `hard-reap-skip-exited` step whenever a skip happens). The remaining window lies between that poll and `kill(2)`: the process would have to exit, be reaped, and have its pid reassigned through a full wrap of Darwin's sequential pid space. The t3-nightly orchestrator accepted this as the macOS floor on 2026-10-29.
+
+Rollback by binary swap, without a downtime database copy, happens only when the verified manifest says `binaryRollback`, `persistedState` is `compatible`, `migrationFiles` is empty, and the live migration history, read just before the stop, equals the manifest's base history. Otherwise the copy deadline scales with the database size and the disk's rotational flag.

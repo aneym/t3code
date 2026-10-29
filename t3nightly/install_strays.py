@@ -151,13 +151,15 @@ def bound(pid):
         return -1
 
 
-def send(pid, handle, stray, sig):
+def send(run, pid, handle, stray, sig):
     if process_started(pid) != stray["started"] or process_argv(pid) != stray["argv"]:
         raise ValueError("managed ssh-launch server identity changed before signal")
     try:
         if isinstance(handle, ProcessWatch):
-            if not handle.gone():
-                os.kill(int(pid), sig)
+            if handle.gone():
+                run.step("hard-reap-skip-exited", pid=pid, signal=sig.name, launchDir=stray["launchDir"])
+                return
+            os.kill(int(pid), sig)
         else:
             signal.pidfd_send_signal(handle, sig)
     except ProcessLookupError:
@@ -172,10 +174,10 @@ def reap(run, stray):
     try:
         if not same(run, stray):
             return False
-        send(pid, handle, stray, signal.SIGTERM)
+        send(run, pid, handle, stray, signal.SIGTERM)
         signalled = "SIGTERM"
         if not gone(pid, stray, TERM_WAIT_S):
-            send(pid, handle, stray, signal.SIGKILL)
+            send(run, pid, handle, stray, signal.SIGKILL)
             signalled = "SIGKILL"
             if not gone(pid, stray, KILL_WAIT_S):
                 raise ValueError("managed ssh-launch server did not exit")
@@ -184,7 +186,7 @@ def reap(run, stray):
             handle.close()
         else:
             os.close(handle)
-    entry = {key: stray[key] for key in ("pid", "argv", "launchDir")} | {"signal": signalled, "at": time.time()}
+    entry = {key: stray[key] for key in ("pid", "argv", "launchDir")} | {"signal": signalled, "platformBinding": "kqueue-checked" if sys.platform == "darwin" else "pidfd", "at": time.time()}
     run.reaped.append(entry)
     run.step("hard-reap-ssh-launch", **entry)
     return True
