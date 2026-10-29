@@ -1627,10 +1627,14 @@ describe("storage cleanup reports and local file policies", () => {
             "info/exclude",
           ]);
           yield* fs.writeFileString(exclude.stdout.trim(), ".lane/\n");
+          const adminDir = (yield* command(worktree, [
+            "rev-parse",
+            "--absolute-git-dir",
+          ])).stdout.trim();
           worktreePath = worktree;
           const add =
             state === "a worktree lock"
-              ? command(worktree, ["worktree", "lock", worktree])
+              ? fs.writeFileString(`${adminDir}/locked`, "")
               : fs
                   .makeDirectory(`${worktree}/.lane`, { recursive: true })
                   .pipe(Effect.andThen(fs.writeFileString(`${worktree}/.lane/notes`, "x")));
