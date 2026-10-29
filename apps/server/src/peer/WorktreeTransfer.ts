@@ -22,7 +22,7 @@ export class WorktreeTransfer extends Context.Service<
     readonly exportBranch: (input: {
       readonly worktreePath: string;
       readonly branch: string;
-      readonly baseCommit: string;
+      readonly base: string;
     }) => Effect.Effect<WorktreeMcpExportResult, WorktreeTransferError>;
     readonly importBranch: (input: {
       readonly cwd: string;
@@ -92,15 +92,21 @@ const make = Effect.gen(function* () {
 
   const exportBranch: WorktreeTransfer["Service"]["exportBranch"] = Effect.fn(
     "WorktreeTransfer.exportBranch",
-  )(function* ({ worktreePath, branch, baseCommit }) {
+  )(function* ({ worktreePath, branch, base }) {
     const cwd = worktreePath;
     const headCommit = yield* required("export.head", cwd, ["rev-parse", "HEAD"], "No commit");
+    const baseCommit = yield* required(
+      "export.base",
+      cwd,
+      ["merge-base", base, headCommit],
+      `The base ${base} is not in this repository`,
+    );
     const commitCount = Number(
       yield* required(
         "export.count",
         cwd,
         ["rev-list", "--count", `${baseCommit}..${headCommit}`],
-        `The base commit ${baseCommit} is not in this repository`,
+        `The base ${base} is not in this repository`,
       ),
     );
     const uncommitted =
@@ -112,7 +118,15 @@ const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => null),
       )) ?? ""
     ).slice(-MAX_DIFF_STAT_BYTES);
-    const summary = { worktreePath, branch, headCommit, commitCount, uncommitted, diffStat };
+    const summary = {
+      worktreePath,
+      branch,
+      baseCommit,
+      headCommit,
+      commitCount,
+      uncommitted,
+      diffStat,
+    };
     if (commitCount === 0) return { ...summary, bundle: null };
     const bundle = yield* Effect.scoped(
       Effect.gen(function* () {

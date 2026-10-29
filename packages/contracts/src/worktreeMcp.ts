@@ -104,8 +104,9 @@ export class WorktreeMcpFailure extends Schema.TaggedError<WorktreeMcpFailure>()
 
 export const WorktreeMcpExportInput = Schema.Struct({
   threadId: ThreadId,
-  baseCommit: TrimmedNonEmptyString.annotate({
-    description: "Commit the receiver already has; only commits after it are bundled.",
+  base: TrimmedNonEmptyString.annotate({
+    description:
+      "Commit or remote branch the worktree started from; only commits after its fork point are bundled.",
   }),
 });
 export type WorktreeMcpExportInput = typeof WorktreeMcpExportInput.Type;
@@ -113,6 +114,7 @@ export type WorktreeMcpExportInput = typeof WorktreeMcpExportInput.Type;
 export const WorktreeMcpExportResult = Schema.Struct({
   worktreePath: TrimmedNonEmptyString,
   branch: TrimmedNonEmptyString,
+  baseCommit: TrimmedNonEmptyString,
   headCommit: TrimmedNonEmptyString,
   commitCount: Schema.Number,
   uncommitted: Schema.Boolean,
