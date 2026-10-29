@@ -16,6 +16,7 @@ import type {
   ServiceState,
   ServiceUpdateRecord,
 } from "./cloud/serviceProtocol.ts";
+import { ChildTerminator } from "./serviceChildTerminator.ts";
 import { isCliForkVersion } from "@t3tools/shared/cliRelease";
 
 import {
@@ -37,7 +38,6 @@ const HANDOFF_DELAY_MS = 2_000;
  * take minutes. A missed window rolls back the database, so the next attempt pays the same cost.
  */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
-const STOP_GRACE_MS = 75_000;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
 
@@ -412,25 +412,6 @@ function sendMessage(
   });
 }
 
-function waitForExit(child: NodeChildProcess.ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-  return new Promise((resolve) => child.once("exit", () => resolve()));
-}
-
-async function terminateChild(
-  child: NodeChildProcess.ChildProcess,
-  signal: NodeJS.Signals = "SIGTERM",
-): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill(signal);
-  const force = setTimeout(() => child.kill("SIGKILL"), STOP_GRACE_MS);
-  try {
-    await waitForExit(child);
-  } finally {
-    clearTimeout(force);
-  }
-}
-
 const stopMarkerPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
 const restartPendingPath = (baseDir: string) =>
@@ -446,6 +427,7 @@ export class Launcher {
   #stopRequested = false;
   #stopping = false;
   #done = false;
+  readonly #terminator = new ChildTerminator();
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
@@ -494,7 +476,7 @@ export class Launcher {
     this.#clearTimer();
     const child = this.#child?.process;
     this.#child = null;
-    if (child !== undefined) await terminateChild(child);
+    if (child !== undefined) await this.#terminator.terminate(child);
     this.#completion.reject(error);
   }
 
@@ -508,13 +490,15 @@ export class Launcher {
       return;
     }
     this.#stopRequested = true;
+    this.#terminator.startStopDeadline();
     this.#clearTimer();
     this.#enqueue(async () => {
       // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
       this.#stopping = true;
+      this.#clearTimer();
       const child = this.#child?.process;
       this.#child = null;
-      if (child !== undefined) await terminateChild(child, signal);
+      if (child !== undefined) await this.#terminator.terminate(child, signal);
       this.#done = true;
       this.#completion.resolve();
     });
@@ -568,7 +552,7 @@ export class Launcher {
   }
 
   async #startChild(version: string, role: ChildRole, update?: ServiceUpdateRecord): Promise<void> {
-    if (this.#stopping) return;
+    if (this.#stopping || this.#terminator.stopDeadlinePassed) return;
     if (!(await runtimeExists(this.#baseDir, version))) {
       throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
     }
@@ -594,7 +578,7 @@ export class Launcher {
       });
     });
     if (this.#stopping) {
-      await terminateChild(child);
+      await this.#terminator.terminate(child);
       return;
     }
 
@@ -704,7 +688,7 @@ export class Launcher {
     }
     this.#timer = undefined;
     this.#child = null;
-    await terminateChild(child.process);
+    await this.#terminator.terminate(child.process);
     await this.#startTrial(pending);
   }
 
@@ -808,7 +792,7 @@ export class Launcher {
   ): Promise<void> {
     if (child !== undefined) {
       this.#child = null;
-      await terminateChild(child.process);
+      await this.#terminator.terminate(child.process);
     }
     await restoreDatabaseBackup(this.#baseDir, pending);
     const outcome = terminalUpdate({ pending, status, reason });

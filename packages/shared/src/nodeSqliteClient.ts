@@ -203,8 +203,8 @@ try {
   const next = new DatabaseSync(workerData.filename, {
     readOnly: true,
     allowExtension: workerData.allowExtension,
-    timeout: 5000,
   });
+  next.exec("PRAGMA busy_timeout = 5000;");
   // Without WAL a reader's shared lock blocks the writer's commits, so refuse.
   const mode = String(next.prepare("PRAGMA journal_mode").get().journal_mode).toLowerCase();
   if (mode !== "wal") throw new Error("database uses journal_mode " + mode + ", not wal");
@@ -509,7 +509,8 @@ let idle;
 const initialize = () => {
   if (db !== undefined) return;
   // The writer switches to WAL after constructing the client.
-  db = new DatabaseSync(workerData.filename, { timeout: 5000 });
+  db = new DatabaseSync(workerData.filename);
+  db.exec("PRAGMA busy_timeout = 5000;");
   const mode = String(db.prepare("PRAGMA journal_mode").get().journal_mode).toLowerCase();
   if (mode !== "wal") throw new Error("database uses journal_mode " + mode + ", not wal");
   // macOS requires F_FULLFSYNC to flush the drive cache.
@@ -859,23 +860,19 @@ const make = Effect.fn("makeWithDatabase")(function* (
         new NodeSqlite.DatabaseSync(options.filename, {
           readOnly: options.readonly ?? false,
           allowExtension: false,
-          timeout: 5000,
         }),
       catch: (cause) =>
-        new SqlError({
-          reason: classifyError(cause, "Failed to open database", "open"),
-        }),
+        new SqlError({ reason: classifyError(cause, "Failed to open database", "open") }),
     });
     yield* Scope.addFinalizer(
       scope,
       Effect.try({
         try: () => db.close(),
         catch: (cause) =>
-          new SqlError({
-            reason: classifyError(cause, "Failed to close database", "close"),
-          }),
+          new SqlError({ reason: classifyError(cause, "Failed to close database", "close") }),
       }).pipe(Effect.orDie),
     );
+    db.exec("PRAGMA busy_timeout = 5000");
     // Started after the close finalizer, so the worker stops before the writer closes.
     const checkpoint =
       options.checkpointWorker && isFileDatabase
@@ -967,9 +964,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
           return statement;
         },
         catch: (cause) =>
-          new SqlError({
-            reason: classifyError(cause, "Failed to prepare statement", "prepare"),
-          }),
+          new SqlError({ reason: classifyError(cause, "Failed to prepare statement", "prepare") }),
       });
 
     const prepareCache = yield* Cache.makeWith(prepare, {
