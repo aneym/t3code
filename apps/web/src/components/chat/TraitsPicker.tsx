@@ -44,6 +44,7 @@ import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "
 import { focusRequestedPermission, useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
 import { EffortGlyph, resolveEffortGlyph } from "./EffortGlyph";
+import { TraitWords } from "./TraitWords";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -321,6 +322,7 @@ interface TraitsMenuContentProps {
   isComposerOwned?: boolean;
   /** Composer chips name the effort level unless the user picked bars. */
   effortDisplay?: EffortDisplay;
+  ultracodeRainbow?: boolean;
   /** Extra section shown below the traits in the picker popup (Permissions). */
   extraMenuContent?: ReactNode;
   /** This trigger also answers composer.mode (while the permissions chip is hidden). */
@@ -548,6 +550,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   triggerClassName,
   isComposerOwned,
   effortDisplay = "label",
+  ultracodeRainbow = false,
   extraMenuContent,
   extraMenuOwnsModeShortcut,
   extraMenuHint,
@@ -674,7 +677,13 @@ export const TraitsPicker = memo(function TraitsPicker({
               ) : null}
               {effortWord !== null ? (
                 <>
-                  <span data-composer-control-label>{effortWord}</span>
+                  <span data-composer-control-label>
+                    <TraitWords
+                      labels={[effortWord]}
+                      descriptors={descriptors}
+                      rainbow={ultracodeRainbow}
+                    />
+                  </span>
                   {/* Icon-only footers hide labels and reveal this instead. */}
                   <GaugeIcon
                     aria-hidden="true"
@@ -696,9 +705,13 @@ export const TraitsPicker = memo(function TraitsPicker({
                   // A label, so icon-only footers drop it; compacted rows drop it before the model.
                   data-composer-control-label
                   data-composer-secondary-trait
-                  className="max-w-24 truncate text-xs"
+                  className="max-w-28 truncate"
                 >
-                  {otherLabels.join(" · ")}
+                  <TraitWords
+                    labels={otherLabels}
+                    descriptors={descriptors}
+                    rainbow={ultracodeRainbow}
+                  />
                 </span>
               ) : null}
             </span>
