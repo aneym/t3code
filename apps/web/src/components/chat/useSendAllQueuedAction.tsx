@@ -1,6 +1,9 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  deriveThreadQueueWorkflowState,
+  describeSendAllQueued,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import { SendIcon } from "lucide-react";
 import { useThreadProjection, useServerConfigs } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
@@ -27,9 +30,7 @@ export function useQueueActions(
       kind: "action",
       value: "thread.sendAllQueued",
       title: "Send all queued messages",
-      description: workflow.canSendNow
-        ? "Start one turn with queued messages"
-        : "Send queued messages into the current turn",
+      description: describeSendAllQueued(workflow),
       searchTerms: ["send all queued messages bulk queue steer"],
       icon: <SendIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "thread.sendAllQueued",

@@ -188,7 +188,8 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       (capabilities?.supportsActiveSteering === true ||
         capabilities?.supportsSteeringByInterruptRestart === true));
   const eligible = queuedRuns.filter(
-    ({ run, message }) =>
+    ({ run, message, isBackgroundResult }) =>
+      !isBackgroundResult &&
       message !== undefined &&
       run.restartContinuationOfRunId === undefined &&
       run.delegatedTaskId === undefined &&
@@ -215,6 +216,16 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     canPromoteToSteer,
     promoteSkipsCompaction,
   };
+}
+
+export function describeSendAllQueued(workflow: ThreadQueueWorkflowState): string {
+  const waiting = workflow.queuedRuns.filter((entry) => entry.isBackgroundResult).length;
+  const action = workflow.canSendNow
+    ? "Start one turn with queued messages"
+    : "Send queued messages into the current turn";
+  return waiting === 0
+    ? action
+    : `${action}. ${waiting} background ${waiting === 1 ? "result stays" : "results stay"} waiting`;
 }
 
 export function canForkProjectedAssistantItem(input: {

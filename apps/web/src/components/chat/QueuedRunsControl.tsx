@@ -1,6 +1,9 @@
 import { queuedRunRows, type QueuedRowThumbnail } from "./queuedRunRows";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  deriveThreadQueueWorkflowState,
+  describeSendAllQueued,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import type {
@@ -225,13 +228,7 @@ export function QueuedRunsControl({
                 </Button>
               }
             />
-            <TooltipPopup>
-              {workflow.canSendNow
-                ? "Start one turn with all queued messages"
-                : workflow.promoteSkipsCompaction
-                  ? "Skip compaction and send all queued messages"
-                  : "Send all queued messages into the current turn"}
-            </TooltipPopup>
+            <TooltipPopup>{describeSendAllQueued(workflow)}</TooltipPopup>
           </Tooltip>
         </div>
       ) : null}
