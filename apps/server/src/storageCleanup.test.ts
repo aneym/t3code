@@ -1653,7 +1653,8 @@ describe("storage cleanup reports and local file policies", () => {
       Effect.gen(function* () {
         const { service, fs, repo, worktree, command } = yield* cleanupFixture();
         yield* command(repo, ["merge", "--ff-only", "feature"]);
-        yield* command(repo, ["worktree", "remove", worktree]);
+        yield* fs.remove(worktree, { recursive: true });
+        yield* command(repo, ["worktree", "prune"]);
         const other = yield* fs.realPath(
           yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-other-" }),
         );
