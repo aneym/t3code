@@ -1,19 +1,18 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
 
 const AGENT_DRAG_DISTANCE = 6;
 
 export function useAgentDragSensor() {
   const suppressClick = useRef(false);
-  const pointerSensorOptions = {
+  const [pointerSensorOptions] = useState(() => ({
     distance: AGENT_DRAG_DISTANCE,
-    onAttach: () => {
-      suppressClick.current = false;
-    },
+    onAttach: () => {},
     onFinish: (started: boolean) => {
-      suppressClick.current = started;
+      if (started) suppressClick.current = true;
     },
-  };
-  const containerRef = (node: HTMLDivElement | null) => {
+  }));
+  const containerRef = useStableCallback((node: HTMLDivElement | null) => {
     const window = node?.ownerDocument.defaultView;
     if (!node || !window) return;
     const clear = () => {
@@ -35,8 +34,7 @@ export function useAgentDragSensor() {
     return () => {
       window.removeEventListener("click", preventDragClick, true);
       window.removeEventListener("pointerdown", clear, true);
-      clear();
     };
-  };
+  });
   return { containerRef, pointerSensorOptions };
 }

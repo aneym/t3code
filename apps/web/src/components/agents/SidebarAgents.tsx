@@ -44,6 +44,11 @@ import { AGENTS_SECTION_STORAGE_KEY, sidebarAgentJumpKey } from "./sidebarAgentL
 import { useSidebarPins } from "./sidebarPins";
 import { useAgentDragSensor } from "./useAgentDragSensor";
 
+const keyboardSensorOptions = {
+  coordinateGetter: sortableKeyboardCoordinates,
+  keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space"] },
+};
+
 export function SidebarAgents({
   onNavigate,
   pinned,
@@ -61,10 +66,7 @@ export function SidebarAgents({
   const { containerRef, pointerSensorOptions } = useAgentDragSensor();
   const sensors = useSensors(
     useSensor(SidebarPointerSensor, pointerSensorOptions),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-      keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space"] },
-    }),
+    useSensor(KeyboardSensor, keyboardSensorOptions),
   );
   const handles = pinned.map((agent) => agent.handle);
   const name = (id: string | number) =>
