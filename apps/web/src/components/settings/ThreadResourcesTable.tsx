@@ -25,7 +25,7 @@ export function ThreadResourcesTable({
   const ranked = rows.toSorted((a, b) => value(b) - value(a) || a.key.localeCompare(b.key));
   const total = rows.reduce((sum, row) => sum + value(row), 0);
   return (
-    <section className="space-y-3" aria-label="Threads">
+    <section className="space-y-3 border-b border-border/70 px-5 py-4" aria-label="Threads">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-sm font-medium">Threads</h3>
         <ToggleGroup
@@ -76,8 +76,9 @@ export function ThreadResourcesTable({
                       <span className="block truncate">{row.threadId ?? row.label}</span>
                     )}
                     <span className="block truncate text-xs text-muted-foreground">
-                      {project?.title ?? (row.threadId ? "Thread" : "T3 processes")} ·{" "}
-                      {row.terminalCount} terminals
+                      {project?.title ?? (row.threadId ? "Thread" : "T3 processes")}
+                      {row.terminalCount > 0 &&
+                        ` · ${row.terminalCount} ${row.terminalCount === 1 ? "terminal" : "terminals"}`}
                     </span>
                   </td>
                   <td className="px-3 text-right">{row.cpuPercent.toFixed(1)}%</td>
@@ -85,7 +86,7 @@ export function ThreadResourcesTable({
                     {formatBytes(row.residentBytes)}
                   </td>
                   <td className="px-3 text-right">{row.processCount}</td>
-                  <td>
+                  <td className="pl-3">
                     <div
                       className="h-1.5 overflow-hidden rounded-full bg-muted"
                       role="img"
