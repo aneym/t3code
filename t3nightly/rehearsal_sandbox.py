@@ -105,10 +105,20 @@ class Sandbox:
         except (OSError, ValueError):
             return None
 
+    def published(self):
+        try:
+            state = json.loads((self.home / "userdata/server-runtime.json").read_text())
+        except (OSError, ValueError):
+            return False
+        return state.get("port") == self.port
+
+    def wait_ready(self, version, seconds):
+        wait_for(lambda: self.version() == version and self.published(), seconds, f"sandbox runtime {version} to publish its runtime state")
+
     def t3(self, *args):
         result = subprocess.run([str(self.cli), *args, "--base-dir", str(self.home)], capture_output=True, text=True, timeout=120, cwd=self.project, check=False)
         if result.returncode:
-            raise RuntimeError(f"sandbox CLI {args[0]} {args[1]} failed (exit {result.returncode}): {result.stderr[-500:]}")
+            raise RuntimeError(f"sandbox CLI {args[0]} {args[1]} failed (exit {result.returncode}): {result.stderr[-500:]} {result.stdout[-500:]}")
         return json.loads(result.stdout) if "--json" in args else result.stdout
 
     def service_environment(self):
@@ -142,7 +152,7 @@ class Sandbox:
         subprocess.run(["git", "init", "-q", str(self.project)], check=True, timeout=10)
         subprocess.run(["git", "-C", str(self.project), "-c", "user.name=Rehearsal", "-c", "user.email=rehearsal@local", "commit", "--allow-empty", "-qm", "Initialize sandbox"], check=True, timeout=10)
         self.boot()
-        wait_for(lambda: self.version() == old_version, health_seconds, "old sandbox runtime")
+        self.wait_ready(old_version, health_seconds)
         self.t3("project", "add", str(self.project))
 
     def check_seed(self):

@@ -73,6 +73,19 @@ def holds(pid, path):
     return False
 
 
+def owns_lock(pid, path):
+    if sys.platform == "darwin":
+        result = subprocess.run(["/usr/sbin/lsof", "-t", str(path)], capture_output=True, text=True, check=False, timeout=15)
+        return set(result.stdout.split()) == {pid}
+    try:
+        info = os.stat(path)
+        locks = Path("/proc/locks").read_text().splitlines()
+    except FileNotFoundError:
+        return False
+    device = f"{os.major(info.st_dev):02x}:{os.minor(info.st_dev):02x}:{info.st_ino}"
+    return any(fields[2] == "WRITE" and fields[3] == pid and fields[4] == device for fields in (line.split()[1:] for line in locks) if len(fields) > 4)
+
+
 def serves_home(argv, home):
     if "serve" not in argv or "--base-dir" not in argv:
         return False
@@ -86,7 +99,6 @@ def identify(run, launch):
         pid_file = launch / "pid"
         pid = pid_file.read_text().strip()
         launched = pid_file.stat().st_mtime
-        own_port = (launch / "port").read_text().strip()
     except (FileNotFoundError, NotADirectoryError):
         return None
     if marker != "managed" or not pid.isdigit() or int(pid) <= 1:
@@ -98,7 +110,8 @@ def identify(run, launch):
     if process_uid(pid) != os.getuid() or not serves_home(argv, run.home):
         return None
     on_service_port = pid in port_listeners(run.args.port)
-    lock_owner = own_port.isdigit() and pid in port_listeners(own_port) and holds(pid, run.db.parent / "server-owner.sqlite")
+    lock = run.db.parent / "server-owner.sqlite"
+    lock_owner = holds(pid, lock) and owns_lock(pid, lock)
     if not (on_service_port or lock_owner):
         return None
     return {"pid": pid, "argv": argv, "launchDir": str(launch), "started": started}

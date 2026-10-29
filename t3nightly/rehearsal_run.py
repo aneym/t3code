@@ -92,11 +92,13 @@ class Rehearsal:
         if self.args.force_rollback:
             if report["outcome"] != "rolled-back":
                 raise RuntimeError(f"forced rollback did not roll back: {report['outcome']}; see installer.log")
+            sandbox.wait_ready(sandbox.old.name, 30)
             if sandbox.version() != sandbox.old.name or sandbox.serving_digest() != sha256(sandbox.old / "t3"):
                 raise ValueError("old runtime is not serving after forced rollback")
             return
         if result.returncode or report["outcome"] not in ("installed", "current"):
             raise RuntimeError(f"hard installer failed: {report['outcome']}; see installer.log")
+        sandbox.wait_ready(self.version, 30)
         if sandbox.version() != self.version or sandbox.serving_digest() != self.candidate_digest:
             raise ValueError("serving version or service-owned executable digest mismatch")
 
