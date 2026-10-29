@@ -116,7 +116,9 @@ export const layer = Layer.effect(
               (home.binding.environmentId === null || home.binding.environmentId === environmentId)
             );
           const setProjects =
-            projects !== undefined && projects.join("\n") !== home.projects.join("\n");
+            projects !== undefined &&
+            (projects.length !== home.projects.length ||
+              projects.some((name, index) => name !== home.projects[index]));
           if (!bindThread && !setProjects) return { home, changed: false };
           if (bindThread && (yield* Effect.promise(() => isLaneThread(root, threadId))))
             return yield* new AgentHomeError({

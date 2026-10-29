@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
@@ -20,7 +21,7 @@ export const AgentHome = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   displayName: Schema.NullOr(Schema.String),
   role: Schema.NullOr(Schema.String),
-  projects: Schema.Array(Schema.String),
+  projects: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   binding: Schema.NullOr(AgentHomeBinding),
   previous: Schema.NullOr(AgentHomeBinding),
 });
