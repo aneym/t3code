@@ -19,6 +19,10 @@ from .release_manifest import history_digest
 AGENT_LB_URL = "http://127.0.0.1:2455"
 
 
+SERVER_OWNED_EXIT = 78
+OWNED_RETRIES = 3
+
+
 def sha256(path):
     with Path(path).open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
@@ -117,7 +121,14 @@ class Sandbox:
         wait_for(lambda: self.version() == version and self.published(), seconds, f"sandbox runtime {version} to publish its runtime state")
 
     def t3(self, *args):
-        result = subprocess.run([str(self.cli), *args, "--base-dir", str(self.home)], capture_output=True, text=True, timeout=120, cwd=self.project, check=False)
+        for attempt in range(OWNED_RETRIES + 1):
+            debug = ["--log-level", "debug"] if attempt == OWNED_RETRIES else []
+            result = subprocess.run([str(self.cli), *args, *debug, "--base-dir", str(self.home)], capture_output=True, text=True, timeout=120, cwd=self.project, check=False)
+            if result.returncode != SERVER_OWNED_EXIT:
+                break
+            with (self.evidence / "cli-owned-refusals.log").open("a") as log:
+                log.write(f"{args[0]} {args[1]} attempt {attempt}: {result.stderr[-2000:]}\n")
+            time.sleep(2)
         if result.returncode:
             raise RuntimeError(f"sandbox CLI {args[0]} {args[1]} failed (exit {result.returncode}): {result.stderr[-500:]} {result.stdout[-500:]}")
         return json.loads(result.stdout) if "--json" in args else result.stdout
