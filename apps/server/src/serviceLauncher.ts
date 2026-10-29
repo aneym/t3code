@@ -17,6 +17,7 @@ import type {
   ServiceUpdateRecord,
 } from "./cloud/serviceProtocol.ts";
 import { ChildTerminator } from "./serviceChildTerminator.ts";
+import { copyDatabaseFile, killCopyHelpers, runCp } from "./serviceDatabaseCopy.ts";
 import { isCliForkVersion } from "@t3tools/shared/cliRelease";
 
 import {
@@ -135,29 +136,6 @@ async function syncDirectory(directory: string): Promise<void> {
   } finally {
     await handle.close();
   }
-}
-
-function runCp(args: ReadonlyArray<string>): Promise<boolean> {
-  return new Promise((resolve) => {
-    NodeChildProcess.execFile("cp", args, (error) => resolve(error === null));
-  });
-}
-
-// macOS fs.copyFile clone flags fall back to full copies.
-async function copyDatabaseFile(source: string, destination: string): Promise<void> {
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
-  const platform = process.platform;
-  // cp -c replaces files and breaks hard links; copy into hard-linked destinations instead.
-  const hardLinked =
-    platform === "darwin" &&
-    ((await NodeFSP.stat(destination).catch(() => undefined))?.nlink ?? 1) > 1;
-  const args =
-    platform === "darwin" && !hardLinked
-      ? ["-c", source, destination]
-      : platform === "linux"
-        ? ["--reflink=auto", source, destination]
-        : undefined;
-  if (args === undefined || !(await runCp(args))) await NodeFSP.copyFile(source, destination);
 }
 
 const GIB = 1024 ** 3;
@@ -490,18 +468,28 @@ export class Launcher {
       return;
     }
     this.#stopRequested = true;
-    this.#terminator.startStopDeadline();
     this.#clearTimer();
-    this.#enqueue(async () => {
-      // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
-      this.#stopping = true;
-      this.#clearTimer();
-      const child = this.#child?.process;
-      this.#child = null;
-      if (child !== undefined) await this.#terminator.terminate(child, signal);
-      this.#done = true;
-      this.#completion.resolve();
+    let stopped: Promise<void> | undefined;
+    const finish = () =>
+      (stopped ??= (async () => {
+        this.#stopping = true;
+        this.#clearTimer();
+        const child = this.#child?.process;
+        this.#child = null;
+        if (child !== undefined) await this.#terminator.terminate(child, signal);
+        this.#done = true;
+        this.#completion.resolve();
+      })());
+    this.#terminator.startStopDeadline(() => {
+      if (this.#done) return;
+      killCopyHelpers();
+      void finish().then(() => {
+        process.removeAllListeners("SIGTERM");
+        process.kill(process.pid, "SIGTERM");
+      });
     });
+    // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
+    this.#enqueue(finish);
     await this.#completion.promise.catch(() => undefined);
   }
 
@@ -552,7 +540,7 @@ export class Launcher {
   }
 
   async #startChild(version: string, role: ChildRole, update?: ServiceUpdateRecord): Promise<void> {
-    if (this.#stopping || this.#terminator.stopDeadlinePassed) return;
+    if (this.#stopping) return;
     if (!(await runtimeExists(this.#baseDir, version))) {
       throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
     }

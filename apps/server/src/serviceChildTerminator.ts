@@ -12,12 +12,9 @@ function waitForExit(child: NodeChildProcess.ChildProcess): Promise<void> {
 export class ChildTerminator {
   readonly #stopDeadline = new AbortController();
 
-  startStopDeadline(): void {
+  startStopDeadline(onDeadline: () => void): void {
+    this.#stopDeadline.signal.addEventListener("abort", onDeadline, { once: true });
     setTimeout(() => this.#stopDeadline.abort(), STOP_GRACE_MS).unref();
-  }
-
-  get stopDeadlinePassed(): boolean {
-    return this.#stopDeadline.signal.aborted;
   }
 
   async terminate(
