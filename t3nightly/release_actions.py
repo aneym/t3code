@@ -211,7 +211,8 @@ def fast_rehearse(config, log):
 def fast_e2e(config, log):
     tree = config.tree("mac-cli" if config.host == "studio" else "linux-cli")
     return command([sys.executable, str(config.tools / "smoke"), "--archive", str(config.build_out() / config.archive()),
-                    "--version", config.version, "--out", str(config.run / f"e2e-{config.host}"), "--tree", str(tree)], log)
+                    "--version", config.version, "--out", str(config.run / f"e2e-{config.host}"), "--tree", str(tree)], log,
+                   env={**os.environ, "T3NIGHTLY_GATE_SEED": "latest"})
 
 
 def fast_install(config, log):
