@@ -1,3 +1,4 @@
+import { threadSendAllCommand } from "./threadSendAll.ts";
 import {
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListResult,
@@ -555,6 +556,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadSendCommand,
     threadRestartCommand,
     threadPromoteCommand,
+    threadSendAllCommand,
     threadUnqueueCommand,
     threadInterruptCommand,
     threadShowCommand,

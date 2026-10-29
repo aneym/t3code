@@ -13,7 +13,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 
-const MAX_BATCH_SIZE = 20;
+export const MAX_BATCH_SIZE = 20;
 
 export interface QueuedRunBatchMember {
   readonly run: OrchestrationV2Run;
@@ -27,7 +27,7 @@ type DraftEvent = OrchestrationV2DomainEvent extends infer Event
     : never
   : never;
 
-function batchableMessage(
+export function batchableMessage(
   projection: Pick<OrchestrationV2ThreadProjection, "messages">,
   run: OrchestrationV2Run,
 ): OrchestrationV2ConversationMessage | undefined {
@@ -59,6 +59,7 @@ function batchableMessage(
 export function queuedRunBatch(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
   first: OrchestrationV2Run,
+  explicitRelease = false,
 ): ReadonlyArray<QueuedRunBatchMember> {
   if (batchableMessage(projection, first) === undefined) return [];
   const members: Array<QueuedRunBatchMember> = [];
@@ -93,7 +94,8 @@ function foldedQueuedTurnItems(
         item.runId === run.id &&
         firstItem !== undefined &&
         item.nodeId === firstItem.nodeId &&
-        item.inputIntent === "queued_turn" &&
+        (item.parentItemId === firstItem?.id ||
+          (item.parentItemId === null && item.inputIntent === "queued_turn")) &&
         item.messageId !== run.userMessageId,
     )
     .toSorted((left, right) => left.ordinal - right.ordinal);
@@ -107,6 +109,7 @@ export function queuedRunBatchEvents(input: {
   readonly firstItem: UserTurnItem;
   readonly itemId: (messageId: OrchestrationV2ConversationMessage["id"]) => UserTurnItem["id"];
   readonly occurredAt: UserTurnItem["updatedAt"];
+  readonly groupUnderFirst?: boolean;
 }): ReadonlyArray<DraftEvent> {
   const { target, rootNodeId, firstItem, occurredAt } = input;
   const into = {
@@ -131,6 +134,7 @@ export function queuedRunBatchEvents(input: {
       ...firstItem,
       id: input.itemId(message.id),
       ordinal: firstItem.ordinal + index + 1,
+      ...(input.groupUnderFirst ? { parentItemId: firstItem.id } : {}),
       messageId: message.id,
       text: message.text,
       attachments: message.attachments,

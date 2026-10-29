@@ -50,6 +50,8 @@ import {
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
+const DefaultTrue = Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true)));
+
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
 const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
@@ -417,11 +419,11 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_QUIT_CONFIRMATION_MODE)),
   ),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  confirmThreadDelete: DefaultTrue,
   confirmThreadUnpin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  diffFilesCollapsed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  showChatChangedFiles: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  diffFilesCollapsed: DefaultTrue,
+  showChatChangedFiles: DefaultTrue,
+  diffIgnoreWhitespace: DefaultTrue,
   diffLayout: DiffLayout.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_DIFF_LAYOUT))),
   environmentIdentificationMode: EnvironmentIdentificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
@@ -446,7 +448,7 @@ export const ClientSettingsSchema = Schema.Struct({
   fontFamilySans: FontFamilyPreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   fontFamilyTerminal: FontFamilyPreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 
-  fontSmoothing: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  fontSmoothing: DefaultTrue,
   // Older installs also decode to null; onboarding must additionally require an empty workspace.
   onboardingCompletedAt: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -464,11 +466,11 @@ export const ClientSettingsSchema = Schema.Struct({
     PullRequestMergeMethod,
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 
-  pullRequestLinksOpenInApp: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  pullRequestLinksOpenInApp: DefaultTrue,
 
   planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   contextWindowMeterEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  composerRichTextEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  composerRichTextEnabled: DefaultTrue,
   sendShortcut: Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("enter")),
   ),
@@ -476,7 +478,7 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("steer")),
   ),
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  showSkillsInSlashMenu: DefaultTrue,
   boringSidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   boringSidebarMultilineRows: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
@@ -484,9 +486,9 @@ export const ClientSettingsSchema = Schema.Struct({
   // Opt-in for the removed legacy sidebar. Still read so those users land in
   // the boring sidebar; the boring sidebar toggle clears it.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  sidebarThreadShowMachine: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  sidebarThreadShowAgent: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarWorkingShelfEnabled: DefaultTrue,
+  sidebarThreadShowMachine: DefaultTrue,
+  sidebarThreadShowAgent: DefaultTrue,
   sidebarThreadShowStatusText: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -513,13 +515,13 @@ export const ClientSettingsSchema = Schema.Struct({
   snapShotShortcut: SnapShotShortcut.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNAP_SHOT_SHORTCUT)),
   ),
-  snapShotPlaySound: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  snapShotPlaySound: DefaultTrue,
   snapShotSound: SnapShotSound.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNAP_SHOT_SOUND)),
   ),
-  snapShotFlash: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  snapShotAnimations: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  snapShotFlash: DefaultTrue,
+  snapShotAnimations: DefaultTrue,
+  wordWrap: DefaultTrue,
   // Opt-in TeX typesetting in rendered Markdown. Off keeps math parsing and
   // KaTeX out of the render path entirely.
   mathRenderingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -857,7 +859,7 @@ export const UsageLimitSourceConfig = Schema.Struct({
   label: Schema.optional(TrimmedNonEmptyString),
   url: TrimmedNonEmptyString,
   managementKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("")), secretSetting),
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  enabled: DefaultTrue,
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 
@@ -1184,17 +1186,16 @@ export const ServerSettings = Schema.Struct({
   responseStreamingMode: ResponseStreamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
   ),
-  enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  enableProviderUpdateChecks: DefaultTrue,
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
-  retainAutomationPlacement: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  queuedMessagesAnswerPendingInput: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(true)),
-  ),
-  batchQueuedMessages: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  retainAutomationPlacement: DefaultTrue,
+  queuedMessagesAnswerPendingInput: DefaultTrue,
+  batchQueuedMessages: DefaultTrue,
+  queueSendAll: DefaultTrue,
 
-  enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  enableAgentBrowserAccess: DefaultTrue,
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1258,7 +1259,7 @@ export const ServerSettings = Schema.Struct({
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
-  sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarAutoSettleOnMerge: DefaultTrue,
   backgroundActivity: BackgroundActivitySettings,
 
   automaticGitFetchInterval: Schema.DurationFromMillis.pipe(
@@ -1552,6 +1553,7 @@ export const ServerSettingsPatch = Schema.Struct({
   retainAutomationPlacement: Schema.optionalKey(Schema.Boolean),
   queuedMessagesAnswerPendingInput: Schema.optionalKey(Schema.Boolean),
   batchQueuedMessages: Schema.optionalKey(Schema.Boolean),
+  queueSendAll: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
