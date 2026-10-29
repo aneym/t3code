@@ -237,6 +237,7 @@ export class OrchestratorProjectionError extends Schema.TaggedError<Orchestrator
 }
 
 const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
+const isOrchestratorProviderAdapterError = Schema.is(OrchestratorProviderAdapterError);
 
 export class OrchestratorDomainEventStreamError extends Schema.TaggedError<OrchestratorDomainEventStreamError>()(
   "OrchestratorDomainEventStreamError",
@@ -3164,7 +3165,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandId: command.commandId,
             projection: providerContext!,
             targetModelSelection: command.modelSelection,
-          }).pipe(mapDispatchError(command))
+          }).pipe(
+            Effect.mapError((cause) =>
+              isOrchestratorProviderAdapterError(cause)
+                ? cause
+                : new OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause,
+                  }),
+            ),
+          )
         : null;
 
     const now = yield* DateTime.now;

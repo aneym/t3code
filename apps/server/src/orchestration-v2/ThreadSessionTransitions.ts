@@ -92,9 +92,15 @@ export const makeThreadSessionPreparation = Effect.gen(function* () {
         session.status !== "stopped" &&
         session.status !== "error",
     );
+    const replacedSessionBusy = projection.providerThreads.some(
+      (candidate) =>
+        candidate.providerSessionId === replacedSession?.id &&
+        (candidate.ownerNodeId !== null || (candidate.pendingBackgroundTasks?.length ?? 0) > 0),
+    );
     if (
       providerThread.ownerNodeId === null &&
       replacedSession !== undefined &&
+      !replacedSessionBusy &&
       run.activeAttemptId !== null
     ) {
       const now = yield* DateTime.now;
