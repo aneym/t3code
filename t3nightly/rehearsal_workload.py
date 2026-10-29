@@ -47,7 +47,7 @@ class Workload:
 
     def prepare(self):
         gate = self.sandbox.home / "release-gate"
-        prompt = f"Use Bash in the foreground to run exactly: timeout 260 sh -c \"while [ ! -f '{gate}' ]; do sleep 1; done\"\nDo not background it. Do no other work. After it completes reply RELEASED."
+        prompt = f"Use Bash in the foreground with a 600000 ms timeout to run exactly: python3 -c \"import os,time; [time.sleep(1) for _ in iter(lambda: os.path.exists('{gate}'), True)]\"\nDo not background it. Do no other work. After it completes reply RELEASED."
         for name in ("active-turn", "snoozed-thread"):
             item = self.start(name, prompt)
             wait_for(lambda: self.running(item), self.sandbox.args.chat_timeout, "running provider milestone")

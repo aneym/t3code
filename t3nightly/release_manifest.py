@@ -49,8 +49,27 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def archive_identity(engine):
+    root = engine.parent
+    files = sorted(
+        path.relative_to(root).as_posix() for path in engine.rglob("*")
+        if path.is_file() and not any(part in path.as_posix() for part in UNHASHED)
+    )
+    entries = [[path, hashlib.sha256((root / path).read_bytes()).hexdigest()] for path in files]
+    stamp = root / ".engine-commit"
+    return {
+        "commit": stamp.read_text().strip() if stamp.is_file() else "",
+        "dirty": False,
+        "path": engine.relative_to(root).as_posix(),
+        "files": len(entries),
+        "digest": digest(entries),
+    }
+
+
 def engine_identity(engine=Path(__file__).resolve().parent):
     engine = Path(engine).resolve()
+    if not (engine.parent / ".git").exists():
+        return archive_identity(engine)
     root = Path(git(engine, "rev-parse", "--show-toplevel").strip())
     prefix = engine.relative_to(root).as_posix()
     files = sorted(
