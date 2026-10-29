@@ -157,7 +157,13 @@ it("takes the T3 home once a legacy SSH-launched server holding it dies, even af
   const versionDir = NodePath.join(home, "runtime", "versions", "1.0.0");
   const statePath = NodePath.join(home, "runtime", "service-state.json");
   const served = Promise.withResolvers<void>();
-  const listener = NodeNet.createServer(() => served.resolve());
+  const refused = Promise.withResolvers<void>();
+  const listener = NodeNet.createServer((socket) => {
+    socket.once("data", (data) => {
+      if (data.toString() === "owned") refused.resolve();
+      else served.resolve();
+    });
+  });
   await NodeFSP.mkdir(NodePath.dirname(lockPath), { recursive: true });
   await NodeFSP.mkdir(versionDir, { recursive: true });
   const owner = NodeChildProcess.spawn(
@@ -181,11 +187,6 @@ process.stdin.on("end", () => process.exit()).resume();`,
       reject(new Error(`Owner exited before readiness: ${String(code ?? signal)}`)),
     );
   });
-  const refused = Promise.withResolvers<void>();
-  const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
-    if (String(chunk).includes("owns this T3 home")) refused.resolve();
-    return true;
-  });
   try {
     await held;
     await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
@@ -195,8 +196,12 @@ process.stdin.on("end", () => process.exit()).resume();`,
       NodePath.join(versionDir, "t3"),
       `#!${process.execPath}
 const lock = new (require("node:sqlite").DatabaseSync)(${JSON.stringify(lockPath)});
-try { lock.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;"); } catch { process.exit(78); }
-require("node:net").connect(${port}, "127.0.0.1");
+try { lock.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;"); } catch {
+  const refused = require("node:net").connect(${port}, "127.0.0.1", () => refused.end("owned"));
+  refused.on("close", () => process.exit(78));
+  return;
+}
+const served = require("node:net").connect(${port}, "127.0.0.1", () => served.end("served"));
 setInterval(() => {}, 1 << 30);
 `,
       { mode: 0o755 },
@@ -240,7 +245,6 @@ setInterval(() => {}, 1 << 30);
     await running;
   } finally {
     vi.useRealTimers();
-    stderr.mockRestore();
     for (const child of [owner, successor]) {
       if (child !== undefined && isRunning(child)) child.kill("SIGKILL");
     }

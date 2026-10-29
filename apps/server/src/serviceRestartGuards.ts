@@ -1,7 +1,11 @@
+// @effect-diagnostics globalTimers:off
 // @effect-diagnostics nodeBuiltinImport:off
 import type * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+
+import { freeOwnedHome, homeStarted } from "./serviceHomeReclaim.ts";
+import * as NodeTimers from "node:timers";
 
 import { ChildTerminator } from "./serviceChildTerminator.ts";
 import { killCopyHelpers } from "./serviceDatabaseCopy.ts";
@@ -60,6 +64,7 @@ export class ServiceRestartGuards {
   failure: Error | undefined;
   #ownedRetries = 0;
   #unclassifiedRetries = 0;
+  #waiting = false;
 
   startStopDeadline(onDeadline: () => NodeChildProcess.ChildProcess | undefined): void {
     this.terminator.startStopDeadline(() => {
@@ -84,6 +89,7 @@ export class ServiceRestartGuards {
     code: number | null,
     confirmed: boolean,
     backupDir?: string,
+    baseDir?: string,
   ): Promise<number | "exhausted" | undefined> {
     if (code !== STATE_DIR_OWNED_EXIT_CODE) {
       this.resetRetries();
@@ -91,6 +97,14 @@ export class ServiceRestartGuards {
     }
     if (backupDir !== undefined && (await pathExists(backupDir))) {
       await markDatabaseBackup(backupDir, UNSAFE_RESTORE_MARKER);
+    }
+    if (baseDir !== undefined) {
+      const home = await freeOwnedHome(baseDir);
+      this.#waiting = home === "owned";
+      if (home !== "free") {
+        this.resetRetries();
+        return home === "reclaimed" ? 0 : 5_000;
+      }
     }
     if (!confirmed && this.#unclassifiedRetries++ >= 5) {
       this.resetRetries();
@@ -104,6 +118,30 @@ export class ServiceRestartGuards {
           : "[service-launcher] Unclassified exit 78; retrying up to 5 times.\n",
       );
     }
-    return Math.min(1_000 * 2 ** this.#ownedRetries++, OWNED_RETRY_MAX_MS);
+    return Math.min(
+      (confirmed ? 5_000 : 1_000) * 2 ** this.#ownedRetries++,
+      confirmed ? 300_000 : OWNED_RETRY_MAX_MS,
+    );
+  }
+
+  async homeAvailable(baseDir: string): Promise<boolean> {
+    if (!this.#waiting) return true;
+    const home = await freeOwnedHome(baseDir);
+    if (home === "owned") return false;
+    this.#waiting = false;
+    this.resetRetries();
+    return true;
+  }
+
+  watch(baseDir: string, child: NodeChildProcess.ChildProcess, current: () => boolean): void {
+    if (this.#ownedRetries === 0) return;
+    const ready = NodeTimers.setInterval(() => {
+      void homeStarted(baseDir, child.pid ?? 0).then((started) => {
+        if (!current() || !started) return;
+        this.resetRetries();
+        NodeTimers.clearInterval(ready);
+      });
+    }, 5_000);
+    child.once("exit", () => NodeTimers.clearInterval(ready));
   }
 }

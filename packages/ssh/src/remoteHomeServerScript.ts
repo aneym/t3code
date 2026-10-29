@@ -12,12 +12,37 @@ export const RECORD_START_SCRIPT = `record_start() {
 
 export const REMOTE_HOME_SERVER_SCRIPT = `${RECORD_START_SCRIPT}
 start_managed_server() {
+  ATTEMPT_DIR="$(mktemp -d "$DEFAULT_SERVER_HOME/ssh-launch/.attempt.XXXXXXXX")"
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
-  record_start "$REMOTE_PID" >"$STATE_DIR/start" || :
-  printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
-  printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-  printf 'managed\\n' >"$MANAGED_FILE"
+  record_start "$REMOTE_PID" >"$ATTEMPT_DIR/start" || :
+  printf '%s\\n' "$REMOTE_PID" >"$ATTEMPT_DIR/pid"
+  printf 'managed\\n' >"$ATTEMPT_DIR/managed"
+  if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
+    printf 'Remote T3 server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
+    if [ -s "$LOG_FILE" ]; then
+      tail -n 80 "$LOG_FILE" >&2 2>/dev/null || true
+    else
+      printf 'It wrote nothing to %s, so it exited before producing any output.\\n' "$LOG_FILE" >&2
+    fi
+    kill "$REMOTE_PID" 2>/dev/null || true
+    wait_for_pid_exit "$REMOTE_PID"
+    if [ "$(cat "$PID_FILE" 2>/dev/null || true)" = "$REMOTE_PID" ]; then
+      rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    fi
+    exit 1
+  fi
+  STARTED_RUNTIME="$(resolve_default_runtime_port 2>/dev/null || true)"
+  if [ "\${STARTED_RUNTIME%% *}" = "$REMOTE_PID" ]; then
+    cp "$ATTEMPT_DIR/start" "$STATE_DIR/start"
+    printf '%s\\n' "$REMOTE_PID" >"$PID_FILE.next.$$"
+    mv "$PID_FILE.next.$$" "$PID_FILE"
+    printf '%s\\n' "\${STARTED_RUNTIME#* }" >"$PORT_FILE"
+    printf 'managed\\n' >"$MANAGED_FILE"
+  else
+    REMOTE_PID=""
+    REMOTE_MANAGED="external"
+  fi
 }
 resolve_default_runtime_port() {
   if [ "$T3_ARCHIVE_MODE" = "1" ]; then

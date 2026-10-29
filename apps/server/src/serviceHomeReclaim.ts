@@ -207,9 +207,29 @@ async function linuxLegacyOwnerIsLive(baseDir: string, pid: number): Promise<boo
   }
   const observed = await observe(pid, []);
   if (observed.start !== start || observed.argv.length === 0) return true;
-  const home = await canonical(baseDir);
-  const served = servedBaseDir(observed.argv.slice(2));
-  return observed.argv[1] === "serve" && served !== undefined && (await canonical(served)) === home;
+  const command = observed.argv.indexOf("serve");
+  if (command < 0) return false;
+  const args = observed.argv.slice(command + 1);
+  const flags = args.filter((arg) => arg === BASE_DIR_FLAG || arg.startsWith(`${BASE_DIR_FLAG}=`));
+  if (flags.length > 1) return true;
+  const cwd = await NodeFSP.readlink(`/proc/${pid}/cwd`).catch(() => undefined);
+  let served: string | undefined;
+  if (flags.length === 1) {
+    served = servedBaseDir(args);
+  } else {
+    const env = await NodeFSP.readFile(`/proc/${pid}/environ`, "utf8").catch(() => undefined);
+    if (env === undefined) return true;
+    const values = env.split("\0");
+    served = values.find((value) => value.startsWith("T3CODE_HOME="))?.slice(12);
+    if (!served) {
+      const home = values.find((value) => value.startsWith("HOME="))?.slice(5);
+      served = home ? NodePath.join(home, ".t3") : undefined;
+    }
+  }
+  if (!served || (!NodePath.isAbsolute(served) && cwd === undefined)) return true;
+  const home = await canonical(NodePath.resolve(cwd ?? "/", served));
+  if (home === undefined || (await startOf(pid)) !== start) return true;
+  return home === (await canonical(baseDir));
 }
 
 async function homeOwned(baseDir: string): Promise<boolean> {

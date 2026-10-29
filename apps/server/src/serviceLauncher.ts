@@ -6,7 +6,6 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeUtil from "node:util";
 
 import type {
   PendingServiceUpdate,
@@ -22,6 +21,7 @@ import {
   markDatabaseBackup,
 } from "./serviceRestartGuards.ts";
 import { copyDatabaseFile, runCp } from "./serviceDatabaseCopy.ts";
+import { readServiceEnvironment } from "./serviceEnvironment.ts";
 import { isCliForkVersion } from "@t3tools/shared/cliRelease";
 
 import {
@@ -29,7 +29,6 @@ import {
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
   parseServiceState,
-  SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
@@ -87,36 +86,6 @@ async function pathExists(target: string): Promise<boolean> {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return false;
     throw cause;
   }
-}
-
-const MANAGED_SERVICE_ENV_NAMES = new Set([
-  "PATH",
-  "T3CODE_HOME",
-  "T3_BOOT_SERVICE_UNIT",
-  SERVICE_LAUNCHER_CONTEXT_ENV,
-]);
-
-export async function readServiceEnvironment(
-  baseDir: string,
-  inherited: NodeJS.ProcessEnv = process.env,
-): Promise<NodeJS.ProcessEnv> {
-  const environment = { ...inherited };
-  let contents: string;
-  try {
-    contents = await NodeFSP.readFile(NodePath.join(baseDir, SERVICE_ENV_FILE), "utf8");
-  } catch (cause) {
-    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return environment;
-    throw cause;
-  }
-  for (const [name, value] of Object.entries(NodeUtil.parseEnv(contents))) {
-    if (
-      /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) &&
-      !MANAGED_SERVICE_ENV_NAMES.has(name.toUpperCase())
-    ) {
-      environment[name] = value;
-    }
-  }
-  return environment;
 }
 
 // Opened read-write: Windows refuses to flush a handle without write access.
@@ -574,6 +543,7 @@ export class Launcher {
       this.#enqueue(() => this.#handleExit(managed, code, signal)),
     );
 
+    this.#guards.watch(this.#baseDir, child, () => this.#child === managed);
     if (role === "trial") {
       this.#timer = setTimeout(
         () => this.#enqueue(() => this.#handlePreparedTimeout(managed)),
@@ -725,6 +695,7 @@ export class Launcher {
       code,
       child.stateDirOwned,
       pending?.status === "pending" ? databaseBackupDir(this.#baseDir, pending.id) : undefined,
+      this.#baseDir,
     );
     if (retry === "exhausted") {
       this.#clearTimer();
@@ -761,6 +732,10 @@ export class Launcher {
 
   async #restartOwned(child: ManagedChild): Promise<void> {
     this.#timer = undefined;
+    if (!(await this.#guards.homeAvailable(this.#baseDir))) {
+      this.#timer = setTimeout(() => this.#enqueue(() => this.#restartOwned(child)), 5_000);
+      return;
+    }
     const pending = this.#state.update;
     if (child.role === "trial" && pending?.status === "pending") {
       await this.#startTrial(pending);
