@@ -8,7 +8,6 @@ import * as NodeUtil from "node:util";
 
 import { assert, describe, it } from "@effect/vitest";
 import { RECORD_START_SCRIPT } from "@t3tools/ssh/remoteHomeServerScript";
-import { vi } from "vite-plus/test";
 
 import { SERVER_OWNER_LOCK_FILE, SERVICE_LAUNCHER_PROTOCOL } from "./cloud/serviceProtocol.ts";
 import { stopSshLaunchedServers } from "./serviceHomeReclaim.ts";
@@ -216,11 +215,9 @@ setInterval(() => {}, 1 << 30);
     await NodeFSP.writeFile(NodePath.join(legacyRecord, "pid"), `${String(owner.pid)}\n`);
     await NodeFSP.writeFile(NodePath.join(legacyRecord, "managed"), "managed\n");
 
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
     const launcher = new Launcher(home, await readServiceState(statePath));
     const running = launcher.run();
     await refused.promise;
-    await vi.advanceTimersByTimeAsync(30 * 5_000);
     assert.isTrue(isRunning(owner));
 
     successor = NodeChildProcess.spawn(
@@ -238,13 +235,11 @@ setInterval(() => {}, 1 << 30);
     const ownerExited = next(owner, "exit");
     owner.kill("SIGKILL");
     await ownerExited;
-    await vi.advanceTimersByTimeAsync(5_000);
     await served.promise;
 
     await launcher.stop("SIGTERM");
     await running;
   } finally {
-    vi.useRealTimers();
     for (const child of [owner, successor]) {
       if (child !== undefined && isRunning(child)) child.kill("SIGKILL");
     }
