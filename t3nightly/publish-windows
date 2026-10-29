@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from t3nightly.release_windows import publish_windows
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Publish the Windows NSIS installer of an already published fork nightly to the Studio feed.")
+    parser.add_argument("version")
+    parser.add_argument("--windows-dir", type=Path, required=True, help="Directory holding nightly.yml, the exe and its blockmap")
+    parser.add_argument("--feed-dir", type=Path, default=Path("/Volumes/StudioExt/t3nightly-feed"))
+    args = parser.parse_args()
+    try:
+        print(json.dumps(publish_windows(args.windows_dir.expanduser(), args.version, args.feed_dir.expanduser().resolve())))
+    except (OSError, ValueError, KeyError) as error:
+        parser.exit(1, f"publish-windows: {error}\n")
+
+
+if __name__ == "__main__":
+    main()
