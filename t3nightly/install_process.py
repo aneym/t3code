@@ -1,4 +1,5 @@
 import os
+import json
 import plistlib
 import re
 import subprocess
@@ -48,6 +49,12 @@ def serving_process(run, version, expected):
     if len(owned) != 1:
         raise ValueError("endpoint listener does not belong to intended service" if not owned else "intended service has more than one listener PID")
     pid = next(iter(owned))
+    if pid == root:
+        state = json.loads((run.home / "userdata/server-runtime.json").read_text())
+        child_pid = str(state["pid"])
+        if child_pid == root or not descends(child_pid, root, parents):
+            raise ValueError("public launcher runtime identity is not its serving child")
+        pid = child_pid
     allowed = {run.runtime(version).resolve(), service_binary(run).resolve()}
     if sys.platform == "darwin":
         files = subprocess.run(["/usr/sbin/lsof", "-a", "-p", pid, "-d", "txt", "-Fn"], capture_output=True, text=True, check=True, timeout=15)
@@ -64,3 +71,4 @@ def serving_process(run, version, expected):
     if file_digest(executable) != expected:
         raise ValueError("serving executable digest mismatch")
     run.step("hard-serving", pid=pid, servicePid=root, version=version, digest=expected)
+    return executable

@@ -22,7 +22,7 @@ def stage_spec(node, args):
     python = sys.executable if node.host == "studio" else "python3"
     command = [python, f"{tools}/release-fast-stage", "--stage", node.id, "--host", node.host,
                "--version", args.version, "--topic", args.topic, "--run", root,
-               "--remote-run", args.remote_run, "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base]
+               "--remote-run", args.remote_run, "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason]
     install = node.id in ("IM", "IL")
     return {"label": f"com.agent-rails.t3fast-{args.version}-{node.id}",
             "command": command, "host": node.host,
@@ -44,7 +44,7 @@ def drive_fast(args):
     timeline = Timeline(args.run / "timeline.jsonl")
     inputs = {"version": args.version, "topic": args.topic,
               "remoteRun": args.remote_run, "remoteTools": args.remote_tools, "dryRun": args.dry_run,
-              "rehearseOnly": args.rehearse_only,
+              "rehearseOnly": args.rehearse_only, "overrideReason": args.override_reason,
               **({"linuxHost": args.linux_host} if args.linux_host != "ax42" else {})}
     binding = args.run / "fast-inputs.json"
     try:
@@ -136,6 +136,7 @@ def main(argv):
     parser.add_argument("--plan", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--rehearse-only", action="store_true")
+    parser.add_argument("--override-reason", default="")
     parser.add_argument("--coordinator", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--run", type=Path)
     parser.add_argument("--remote-run")
@@ -171,7 +172,7 @@ def main(argv):
     command = [sys.executable, str(Path(__file__).resolve().with_name("release")),
                "--fast", "--version", args.version, "--topic", args.topic,
                "--run", str(args.run), "--remote-run", args.remote_run,
-               "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--coordinator", *(["--rehearse-only"] if args.rehearse_only else [])]
+               "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, "--coordinator", *(["--rehearse-only"] if args.rehearse_only else [])]
     spec = {"label": f"com.agent-rails.t3fast-{args.version}-coordinator-{coordinator.name}", "host": "studio",
             "command": command, "budget": sum(node.budget for node in FAST_GRAPH) * HANG_GUARD + 60,
             "resources": ["fast-release-run"], "lockRoot": str(Path.home() / ".t3nightly/resource-locks")}

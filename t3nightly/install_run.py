@@ -208,6 +208,13 @@ class Run:
         verify_cli(binary)
         return binary
 
+    def managed_connect(self, version):
+        result = subprocess.run([str(self.connect_binary(version)), "connect", "status", "--json", "--base-dir", str(self.home)], capture_output=True, text=True, timeout=120)
+        if result.returncode:
+            raise ValueError("cannot establish whether this home has a managed T3 Connect link")
+        status = json.loads(result.stdout)
+        return status.get("desired") is True and status.get("linkMode") == "managed"
+
     def connect_reachable(self, version, timeout=120, binary=None):
         binary = binary or self.connect_binary(version)
         out = subprocess.run(
@@ -220,6 +227,9 @@ class Run:
         return REACHABLE in out.stdout
 
     def update(self, from_version, to_version, downgrade):
+        from t3nightly.install_policy import recheck
+
+        recheck(self)
         binary = self.runtime(from_version)
         if not binary.exists():
             binary = Path(shutil.which("t3") or "t3")
@@ -273,8 +283,9 @@ class Run:
         return code == 0
 
     def pin_launcher(self, version):
-        launcher, backup = pin_runtime(self.home, version)
-        self.step("launcher-backup", path=str(backup) if backup else None)
+        from t3nightly.launcher_artifact import ensure_launcher
+
+        launcher = ensure_launcher(self, version)
         with self.service_plist.open("rb") as handle:
             unit = plistlib.load(handle)
         before = plistlib.dumps(unit)
@@ -326,15 +337,6 @@ class Run:
         if connect_before and not self.connect_reachable(version):
             return "T3 Connect not reachable after the switch"
         return None
-
-    def restore_db(self, backup, version):
-        self.step("restore-db", backup=str(backup))
-        self.service("stop")
-        for suffix in ("-wal", "-shm"):
-            Path(f"{self.db}{suffix}").unlink(missing_ok=True)
-        shutil.copy2(backup, self.db)
-        self.service("start")
-        return self.healthy(version, False)
 
     def link_cli(self, version):
         binary = self.runtime(version)
@@ -399,7 +401,7 @@ class Run:
                 flush=True,
             )
             return 0
-        connect_before = self.connect_reachable(previous)
+        connect_before = self.managed_connect(previous)
         backup = backup_database(self, previous)
         threads_before = self.thread_count()
         self.step(
@@ -428,14 +430,19 @@ class Run:
                 )
         except errors as error:
             problem = str(error)
+        from t3nightly.install_hot_swap import binary_compatible, supported, swap
+        from t3nightly.install_rpc import restart_session
+        from t3nightly.install_provenance import migration_history
+        from t3nightly.release_manifest import load
+
+        if not self.args.manifest or not binary_compatible(load(self.args.manifest), migration_history(self)) or not supported(self.environment(), self):
+            self.report["forwardRepairRequired"] = True
+            return self.finish("failed", f"{self.report['host']}: acceptance failed; current database preserved for forward repair")
         self.step("rollback", reason=problem)
         try:
-            updated = self.update(self.args.version, previous, True)
-            again = (
-                self.healthy(previous, connect_before)
-                if updated
-                else "rollback update failed"
-            )
+            with restart_session(self, self.args.version) as bearer:
+                swap(self, bearer, previous, True)
+            again = self.healthy(previous, connect_before)
             if again is None:
                 self.link_cli(previous)
                 return self.finish(
@@ -445,15 +452,6 @@ class Run:
         except errors as error:
             again = str(error)
             self.step("rollback-error", error=again)
-        try:
-            again = self.restore_db(backup, previous)
-        except errors as error:
-            again = str(error)
-        if again is None:
-            return self.finish(
-                "rolled-back-restored",
-                f"{self.report['host']}: {self.args.version} failed ({problem}); back on {previous} with the pre-install database",
-            )
         return self.finish(
             "broken",
             f"{self.report['host']}: {self.args.version} failed ({problem}); rollback to {previous} also failed ({again}); backup {backup}",

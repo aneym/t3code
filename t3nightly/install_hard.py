@@ -12,7 +12,7 @@ from pathlib import Path
 from .identity_snapshot import finish as finish_identities
 from .install_backup import capture
 from .install_chat import candidate_writes, identities, prove, retained
-from .install_process import service_binary, serving_process
+from .install_process import serving_process
 from .install_strays import managed_strays, reap_strays
 from .install_provenance import file_digest, migration_history, validate
 from .install_runtime import pin_runtime, restore_runtime, retain_runtime, stage_runtime
@@ -40,7 +40,9 @@ def service(run, action):
 
 
 def activate(run, version):
-    launcher, backup = pin_runtime(run.home, version)
+    from .launcher_artifact import ensure_launcher
+
+    launcher = ensure_launcher(run, version)
     if sys.platform == "darwin":
         with run.service_plist.open("rb") as handle:
             unit = plistlib.load(handle)
@@ -63,7 +65,13 @@ def activate(run, version):
     staged_state.write_text(json.dumps(selected) + "\n")
     os.chmod(staged_state, 0o600)
     os.replace(staged_state, state)
+    from .connector_artifact import ensure_connector
+
+    ensure_connector(run)
     service(run, "start")
+    from .launcher_artifact import watchdog
+
+    watchdog(run, version)
     return launcher
 
 
@@ -154,14 +162,22 @@ def install(run):
         run.step("hard-baseline", outcome="environment-blocked", error=str(error))
         return run.finish("failed", "baseline environment-blocked; nothing stopped")
     before = identities(run)
-    connect = run.connect_reachable(previous)
+    connect = run.managed_connect(previous)
     backup = {}
     outcome = "failed"
     stopped = False
+    routed = False
     post = baseline
 
     def stop():
         nonlocal stopped
+        from .install_policy import recheck
+
+        recheck(run)
+        drain = getattr(run, "drain_before_stop", None)
+        run.drain_before_stop = None
+        if drain:
+            drain()
         service(run, "stop")
         stopped = True
         attempts = 0
@@ -178,6 +194,7 @@ def install(run):
                 raise ValueError("staged candidate runtime changed after provenance check")
             run.step("hard-retain-runtime", version=previous, path=str(retain_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")))
             backup = capture(run, previous, stop, rollback_gate)
+            routed = True
             activate(run, args.version)
             stopped = False
             serving(run, args.version, observed["candidateRuntime.digest"])
@@ -195,7 +212,22 @@ def install(run):
             outcome = "installed"
     except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as error:
         run.step("hard-failure", error=str(error))
-        if backup:
+        if routed:
+            try:
+                from .install_hot_swap import binary_compatible, supported, swap
+                from .install_rpc import restart_session
+
+                if not binary_compatible(manifest, migration_history(run)) or not supported(run.environment(), run):
+                    raise ValueError("post-routing rollback requires a compatible hot swap; database preserved for forward repair")
+                restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")
+                with restart_session(run, args.version) as bearer:
+                    swap(run, bearer, previous, True)
+                serving(run, previous, observed["oldRuntime.digest"])
+                outcome = "rolled-back"
+            except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
+                run.report["forwardRepairRequired"] = True
+                run.step("forward-repair-required", error_type=type(rollback).__name__, database_preserved=True)
+        elif backup:
             try:
                 if not stopped:
                     try:
@@ -204,6 +236,9 @@ def install(run):
                         if not stopped:
                             raise
                         run.step("hard-rollback-stop", error=str(reaping))
+                from .launcher_artifact import rollback_launcher
+
+                rollback_launcher(run)
                 if restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime"):
                     run.step("hard-restore-runtime", version=previous)
                 activate(run, previous)
@@ -230,7 +265,8 @@ def install(run):
                 run.step("advisory-backup-check-failed", error=str(error))
     moment = datetime.now(timezone.utc).isoformat()
     serving_version = run.server_version() or previous
-    serving_binary = service_binary(run)
+    expected_digest = observed["candidateRuntime.digest"] if serving_version == args.version else observed["oldRuntime.digest"]
+    serving_binary = serving_process(run, serving_version, expected_digest)
     receipt = {
         "schema": INSTALL_SCHEMA, "release": args.version, "runId": uuid.uuid4().hex,
         "host": host, "platform": manifest["targets"][host]["platform"], "arch": manifest["targets"][host]["arch"],
@@ -238,6 +274,7 @@ def install(run):
         "artifactManifestDigest": observed["artifactManifestDigest"], "service": run.service_label,
         "oldRuntime": {"version": previous, "digest": observed["oldRuntime.digest"]},
         "servingRuntime": {"version": serving_version, "digest": file_digest(serving_binary)},
+        "installWindow": run.report.get("installWindow"), "hotSwap": {**(run.report.get("hotSwap") or {}), "forwardRepairRequired": run.report.get("forwardRepairRequired", False)},
         "backup": backup, "chat": post["proof"], "outcome": outcome, "reapedSshLaunch": run.reaped,
         "startedAt": run.report["started_at"], "finishedAt": moment,
     }

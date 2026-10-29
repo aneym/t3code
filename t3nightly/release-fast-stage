@@ -24,13 +24,19 @@ def main():
     parser.add_argument("--remote-tools", required=True)
     parser.add_argument("--linux-host", default="ax42")
     parser.add_argument("--base", default="")
+    parser.add_argument("--override-reason", default="")
     args = parser.parse_args()
     home = Path.home()
     os.environ["PATH"] = os.pathsep.join([str(home / ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", os.environ.get("PATH", "/usr/bin:/bin")])
-    config = FastConfig(args.version, args.topic, args.run.resolve(), args.host, args.remote_run, args.remote_tools, args.base, args.linux_host)
+    config = FastConfig(args.version, args.topic, args.run.resolve(), args.host, args.remote_run, args.remote_tools, args.base, linux_host=args.linux_host, override_reason=args.override_reason)
     config.run.mkdir(parents=True, exist_ok=True)
     print(json.dumps({"stage": args.stage, "host": args.host, "run": str(config.run)}), flush=True)
     try:
+        if args.stage in ("IM", "IL", "S", "FW"):
+            from t3nightly.install_policy import window
+
+            policy = window(args.version, reason=args.override_reason, host=args.host)
+            (config.run / f"install-window-{args.stage}.json").write_text(json.dumps(policy) + "\n")
         code = run_fast_action(args.stage, config, sys.stdout)
         sys.stdout.flush()
         if code == 0 and not fast_output(args.stage, config):

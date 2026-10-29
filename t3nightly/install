@@ -50,6 +50,12 @@ def parse():
     parser.add_argument("--snapshot-max-s", type=int, default=1200)
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--seamless", action="store_true")
+    parser.add_argument("--override-reason", default="")
+    parser.add_argument("--connector-artifact", default="")
+    parser.add_argument("--launcher-artifact", default="")
+    parser.add_argument("--live-home", action="append", default=[])
+    parser.add_argument("--restart-probe", action="store_true")
+    parser.add_argument("--drain-proof", action="store_true")
     parser.add_argument("--hard", action="store_true")
     parser.add_argument("--receipt", default="")
     parser.add_argument("--manifest", default="")
@@ -77,12 +83,14 @@ def parse():
         parser.error("--hard cannot be combined with --seamless, --wait, --check-only or --prepare-only")
     if args.hard and (not args.manifest or not args.artifact_manifest or not args.chat_project or (not args.receipt and not args.rehearsal)):
         parser.error("--hard requires --manifest, --artifact-manifest, --chat-project and --receipt (or isolated --rehearsal)")
-    if args.rehearsal and not args.hard:
-        parser.error("--rehearsal requires --hard")
+    if args.rehearsal and not (args.hard or args.seamless):
+        parser.error("--rehearsal requires --hard or --seamless")
     if args.force_rollback and not args.rehearsal:
         parser.error("--force-rollback requires isolated --rehearsal")
     if args.compatibility_probe and not args.rehearsal:
         parser.error("--compatibility-probe requires isolated --rehearsal")
+    if args.seamless and not all((args.manifest, args.artifact_manifest, args.chat_project, args.rpc_tree, args.receipt or args.rehearsal)):
+        parser.error("--seamless requires --manifest, --artifact-manifest, --chat-project, --rpc-tree and --receipt (or --rehearsal)")
     return args
 
 
@@ -94,6 +102,9 @@ if __name__ == "__main__":
                 (Path(args.state_dir).expanduser() / "last.json").read_text()
             )["previous"]
             args.allow_downgrade = True
+        from t3nightly.install_policy import enforce
+
+        policy = enforce(args)
         with checked_assets(args) as assets:
             args.assets = str(assets)
             args.base_url = serve_assets(assets, args.version)
@@ -106,6 +117,7 @@ if __name__ == "__main__":
                 )
                 sys.exit(0)
             run = Run(args)
+            run.report["installWindow"] = policy
             from t3nightly.install_resources import installer_owner
 
             with installer_owner(run), payload_lifecycle(run):
@@ -114,7 +126,7 @@ if __name__ == "__main__":
 
                     sys.exit(hard_install(run))
                 if args.seamless:
-                    from t3nightly.install_seamless import install
+                    from t3nightly.install_hot_swap import install
 
                     sys.exit(install(run))
                 if args.prepare_only:
