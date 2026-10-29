@@ -18,7 +18,7 @@ def require_smoke(args, name, digest):
         require_archive_smoke(args.version, verdict_path(args.version, args.verdict), name, digest)
         return
     smoke = json.loads(Path(args.smoke_verdict).read_text())
-    if (smoke.get("kind"), smoke.get("ok"), smoke.get("version"), smoke.get("archiveSha256")) != ("t3-smoke", True, args.version, digest):
+    if smoke.get("ok") is not True or (smoke.get("kind"), smoke.get("version"), smoke.get("archiveSha256")) != ("t3-smoke", args.version, digest):
         raise ValueError(f"e2e smoke verdict does not pass for {name}")
 
 

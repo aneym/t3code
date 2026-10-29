@@ -62,7 +62,7 @@ def validate(run, previous, candidate):
     if not args.smoke_verdict:
         raise ValueError("hard install requires a passing e2e smoke verdict")
     smoke = json.loads(Path(args.smoke_verdict).read_text())
-    if (smoke.get("kind"), smoke.get("ok"), smoke.get("version"), smoke.get("archiveSha256")) != ("t3-smoke", True, args.version, artifact["archive"]["sha256"]):
+    if smoke.get("ok") is not True or (smoke.get("kind"), smoke.get("version"), smoke.get("archiveSha256")) != ("t3-smoke", args.version, artifact["archive"]["sha256"]):
         raise ValueError("e2e smoke verdict does not pass for this archive")
     run.step("hard-smoke-accepted", archive=smoke["archiveSha256"])
     receipt = parse(args.receipt)
