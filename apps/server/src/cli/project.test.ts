@@ -218,13 +218,14 @@ const readNativeThreadState = Effect.fn("ProjectCliTest.readNativeThreadState")(
 
 it.layer(NodeServices.layer)("project deletion with native V2 threads", (it) => {
   it.effect.each([
-    { label: "an active thread", archived: false, missing: false },
+    { label: "an unarchived thread even with force", archived: false, missing: false, force: true },
     {
       label: "an archived thread after its workspace disappears",
       archived: true,
       missing: true,
+      force: false,
     },
-  ])("rejects unforced removal of a project with $label", ({ archived, missing }) =>
+  ])("rejects removal of a project with $label", ({ archived, missing, force }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
@@ -237,16 +238,21 @@ it.layer(NodeServices.layer)("project deletion with native V2 threads", (it) => 
         "project",
         "remove",
         missing ? workspaceRoot : project.id,
+        ...(force ? ["--force"] : []),
         "--base-dir",
         baseDir,
       ]).pipe(
         Effect.match({
           onFailure: (error) => error,
-          onSuccess: () => assert.fail("Removing a nonempty project must require --force."),
+          onSuccess: () => assert.fail("Removing this nonempty project must be refused."),
         }),
       );
 
       assert.include(error.message, "not empty");
+      if (!archived) {
+        assert.include(error.message, "unarchived");
+        assert.include(error.message, threadId);
+      }
       assert.deepEqual(
         (yield* readProjects(baseDir)).projects.map((entry) => entry.id),
         [project.id],
