@@ -38,7 +38,7 @@ def post(receipts, out):
 
 def from_manifest(manifest):
     data = json.loads(Path(manifest).read_text())
-    return data["source"]["commit"], [(topic["branch"], topic["sha"]) for topic in data["topics"]]
+    return data["source"]["commit"], [(topic["branch"], topic["sha"]) for topic in data["topics"] if topic.get("kind") == "merge" and topic.get("branch")]
 
 
 def publish(config, log):
@@ -46,7 +46,7 @@ def publish(config, log):
         main_sha, topics = from_manifest(config.manifest)
         delivered = post(build(config.tools.parent, main_sha, topics), config.run / "receipts" / "landing-receipts.json")
         log.write(json.dumps({"step": "landing-receipts", "delivered": delivered, "topics": len(topics)}) + "\n")
-    except (OSError, ValueError, KeyError, ImportError, subprocess.SubprocessError) as error:
+    except Exception as error:
         log.write(json.dumps({"step": "landing-receipts-failed", "error": f"{type(error).__name__}: {error}"}) + "\n")
 
 
