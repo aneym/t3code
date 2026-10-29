@@ -27,8 +27,6 @@ import {
   type OrchestratorMcpRequestSecretResult,
   type OrchestratorMcpDeleteScheduledTaskResult,
   type OrchestratorMcpListScheduledTasksResult,
-  type OrchestratorMcpRuntimeMode,
-  type OrchestratorMcpScheduledTask,
   type OrchestratorMcpScheduleTaskInput,
   type OrchestratorMcpScheduleTaskResult,
   type OrchestratorMcpTarget,
@@ -98,7 +96,6 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
-import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -120,6 +117,13 @@ import {
   taskPrompt,
 } from "./delegatedTaskModes.ts";
 import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
+import {
+  errorMessage,
+  failure,
+  isThreadManagementError,
+  threadManagementFailure,
+} from "./threadManagementFailure.ts";
+import * as ThreadSend from "./threadSend.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -218,40 +222,9 @@ export class OrchestratorMcpService extends Context.Service<
   OrchestratorMcpServiceShape
 >()("t3/mcp/OrchestratorMcpService") {}
 
-const isThreadManagementError = Schema.is(ThreadManagementService.ThreadManagementError);
-
-function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
-  return new OrchestratorMcpFailure({ code, message });
-}
-
-function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
-  if (!isThreadManagementError(error)) return failure("orchestration_error", errorMessage(error));
-  switch (error._tag) {
-    case "ThreadManagementThreadNotFoundError":
-      return failure("thread_not_found", error.message);
-    case "ThreadManagementRunNotFoundError":
-      return failure("run_not_found", error.message);
-    case "ThreadManagementThreadArchivedError":
-    case "ThreadManagementNoSteerableRunError":
-      return failure("thread_not_sendable", error.message);
-    case "ThreadManagementThreadNotInterruptibleError":
-      return failure("thread_not_interruptible", error.message);
-    case "ThreadManagementProjectionLoadError":
-    case "ThreadManagementProjectThreadsListError":
-    case "ThreadManagementDurableRunProjectionError":
-      return failure("orchestration_error", error.message);
-    case "ThreadManagementProviderInstanceDisabledError":
-      return failure("invalid_request", error.message);
-  }
-}
-
 // Without a reason, a Stop reads as the user's (see RunExecutionService.USER_STOP_REASON).
 function agentStopReason(reason: string | undefined): string {
   return reason === undefined ? "Stopped by an agent" : `Stopped by an agent: ${reason}`;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function scheduledTaskWorkspaceStrategy(
@@ -633,22 +606,6 @@ function stableMessageId(input: {
       stablePart(input.scope.requestNamespace),
       stablePart(input.requestKey),
       String(input.index),
-    ].join(":"),
-  );
-}
-
-function stableOperationMessageId(input: {
-  readonly scope: McpInvocationScope;
-  readonly requestKey: string;
-  readonly operation: string;
-}): MessageId {
-  return MessageId.make(
-    [
-      "message",
-      "mcp",
-      stablePart(input.scope.requestNamespace),
-      stablePart(input.operation),
-      stablePart(input.requestKey),
     ].join(":"),
   );
 }
@@ -2725,7 +2682,7 @@ const make = Effect.gen(function* () {
       const projectThreads = yield* threadManagement
         .listProjectThreads({
           projectId: projectId ?? undefined,
-          includeSubagents: input.includeSubagents !== false,
+          includeSubagents: input.includeSubagents === true || input.onlySubagents === true,
         })
         .pipe(
           Effect.mapError((error) =>
@@ -2749,6 +2706,10 @@ const make = Effect.gen(function* () {
         .filter(
           (thread) =>
             titleContains === undefined || thread.title.toLocaleLowerCase().includes(titleContains),
+        )
+        .filter(
+          (thread) =>
+            input.onlySubagents !== true || thread.lineage.relationshipToParent === "subagent",
         );
       const cursor = input.cursor ?? 0;
       const limit = input.limit ?? DEFAULT_THREAD_LIST_LIMIT;
@@ -2865,50 +2826,14 @@ const make = Effect.gen(function* () {
       yield* assertLiveCallerForOtherThread(scope, parent, target);
       yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
-
-      const mode = input.mode ?? "queue";
-      const key = yield* requestKey(input.clientRequestId);
-      const messageId = stableOperationMessageId({
+      return yield* ThreadSend.sendToThread({
+        threadManagement,
+        crypto,
         scope,
-        requestKey: key,
-        operation: "thread-send",
+        parent,
+        target,
+        request: input,
       });
-      const result = yield* threadManagement
-        .sendToThread({
-          projectId: target.thread.projectId,
-          commandId: stableCommandId({
-            scope,
-            requestKey: key,
-            operation: "thread-send",
-          }),
-          threadId: input.threadId,
-          ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
-          messageId,
-          text: input.message,
-          attachments: [],
-          mode,
-          createdBy: "agent",
-          creationSource: "mcp",
-        })
-        .pipe(
-          Effect.mapError((error) =>
-            isThreadManagementError(error)
-              ? threadManagementFailure(error)
-              : failure(
-                  "orchestration_error",
-                  `Unable to send to thread ${input.threadId}: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
-                ),
-          ),
-        );
-      return {
-        threadId: input.threadId,
-        link: threadLinkFor(scope, input.threadId),
-        messageId,
-        runId: result.run.id,
-        ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
-        status: result.run.status,
-        delivery: result.delivery,
-      } satisfies OrchestratorMcpThreadSendResult;
     }),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {
       const { parent, target } = yield* loadScopedThread(scope, input.threadId);

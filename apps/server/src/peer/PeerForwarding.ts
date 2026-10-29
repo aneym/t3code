@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import type * as Tool from "effect/ai/Tool";
 
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
+import { requestPrincipal } from "../mcp/ownerCliSession.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -143,16 +144,27 @@ const make = Effect.gen(function* () {
         message: "A launch in a linked environment cannot carry attachments yet.",
       });
     }
-    if (typeof args.clientRequestId === "string") {
-      args.clientRequestId = yield* scopedRequestId(scope.requestNamespace, args.clientRequestId);
-    }
-    return yield* peers.call({
+    const callerRequestId =
+      typeof args.clientRequestId === "string" ? args.clientRequestId : undefined;
+    const scopedId =
+      callerRequestId === undefined
+        ? undefined
+        : yield* scopedRequestId(requestPrincipal(scope), callerRequestId);
+    if (scopedId !== undefined) args.clientRequestId = scopedId;
+    const result = yield* peers.call({
       environmentId,
       tool: toolName,
       arguments: args,
       limits,
       success: success as Schema.Decoder<A>,
     });
+    return callerRequestId !== undefined &&
+      typeof result === "object" &&
+      result !== null &&
+      "clientRequestId" in result &&
+      result.clientRequestId === scopedId
+      ? { ...result, clientRequestId: callerRequestId }
+      : result;
   });
 
   const readThread: PeerForwarding["Service"]["readThread"] = (scope, environmentId, input) =>

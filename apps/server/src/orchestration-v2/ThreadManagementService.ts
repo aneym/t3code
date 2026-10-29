@@ -9,30 +9,24 @@ import type {
   ShellSnapshotOptions,
 } from "./ProjectionStore.ts";
 import {
-  type ChatAttachment,
   CommandId,
-  MessageId,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
-  type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2Command,
   type OrchestrationV2GetTurnItemResult,
   type OrchestrationV2ServerCommand,
-  type OrchestrationV2ConversationMessage,
   type OrchestrationV2CreationSource,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadTranscript,
   type OrchestrationV2ThreadShell,
-  type OrchestrationV2TurnItem,
   ProjectId,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
   RunId,
-  type ScheduledTaskId,
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -54,12 +48,19 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import {
+  ThreadManagementDurableRunProjectionError,
+  ThreadManagementNoSteerableRunError,
+  ThreadManagementSendConflictError,
+  ThreadManagementThreadArchivedError,
+  makeSendToThread,
+  type ThreadSendInput,
+  type ThreadSendResult,
+} from "./ThreadSend.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
-
-export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
 export interface ThreadManagementProvenance {
   readonly createdBy: OrchestrationV2Actor;
@@ -126,33 +127,6 @@ export type ThreadManagementTerminalRunStatus = Extract<
   OrchestrationV2Run["status"],
   "completed" | "failed" | "cancelled" | "interrupted" | "rolled_back"
 >;
-
-export interface ThreadManagementSendInput {
-  readonly projectId: ProjectId;
-  readonly commandId: CommandId;
-  readonly threadId: ThreadId;
-  readonly messageId: MessageId;
-  readonly scheduledTaskId?: ScheduledTaskId;
-  readonly senderThreadId?: ThreadId;
-  readonly text: string;
-  readonly attachments: ReadonlyArray<ChatAttachment>;
-  readonly modelSelection?: ModelSelection;
-  readonly mode: ThreadManagementSendMode;
-  readonly createdBy: OrchestrationV2Actor;
-  readonly creationSource: OrchestrationV2CreationSource;
-}
-
-export interface ThreadManagementSendResult {
-  readonly dispatch: Orchestrator.OrchestratorV2DispatchResult;
-  readonly projection: Pick<
-    OrchestrationV2ThreadProjection,
-    "thread" | "runs" | "messages" | "turnItems"
-  >;
-  readonly message: OrchestrationV2ConversationMessage;
-  readonly run: OrchestrationV2Run;
-  readonly turnItem: Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> | null;
-  readonly delivery: "started" | "queued" | "steered" | "restarted";
-}
 
 export interface ThreadManagementWaitInput {
   readonly projectId: ProjectId;
@@ -228,29 +202,6 @@ export class ThreadManagementRunNotFoundError extends Schema.TaggedError<ThreadM
   }
 }
 
-export class ThreadManagementThreadArchivedError extends Schema.TaggedError<ThreadManagementThreadArchivedError>()(
-  "ThreadManagementThreadArchivedError",
-  {
-    threadId: ThreadId,
-  },
-) {
-  override get message(): string {
-    return `Thread ${this.threadId} is archived and cannot receive messages.`;
-  }
-}
-
-export class ThreadManagementNoSteerableRunError extends Schema.TaggedError<ThreadManagementNoSteerableRunError>()(
-  "ThreadManagementNoSteerableRunError",
-  {
-    threadId: ThreadId,
-    mode: Schema.Literals(["steer", "restart"]),
-  },
-) {
-  override get message(): string {
-    return `Thread ${this.threadId} has no running turn that can be ${this.mode === "steer" ? "steered" : "restarted"}.`;
-  }
-}
-
 export class ThreadManagementThreadNotInterruptibleError extends Schema.TaggedError<ThreadManagementThreadNotInterruptibleError>()(
   "ThreadManagementThreadNotInterruptibleError",
   {
@@ -287,18 +238,6 @@ export class ThreadManagementProjectThreadsListError extends Schema.TaggedError<
     return this.projectId === undefined
       ? "Unable to list threads."
       : `Unable to list threads in project ${this.projectId}.`;
-  }
-}
-
-export class ThreadManagementDurableRunProjectionError extends Schema.TaggedError<ThreadManagementDurableRunProjectionError>()(
-  "ThreadManagementDurableRunProjectionError",
-  {
-    threadId: ThreadId,
-    messageId: MessageId,
-  },
-) {
-  override get message(): string {
-    return `Message ${this.messageId} was accepted on thread ${this.threadId} without a durable run projection.`;
   }
 }
 
@@ -343,6 +282,7 @@ export const ThreadManagementError = Schema.Union([
   ThreadManagementProjectionLoadError,
   ThreadManagementProjectThreadsListError,
   ThreadManagementDurableRunProjectionError,
+  ThreadManagementSendConflictError,
   ThreadManagementProviderInstanceDisabledError,
 ]);
 export type ThreadManagementError = typeof ThreadManagementError.Type;
@@ -412,8 +352,8 @@ export interface ThreadManagementServiceShape {
     readonly includeSubagents: boolean;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, ThreadManagementError>;
   readonly sendToThread: (
-    input: ThreadManagementSendInput,
-  ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
+    input: ThreadSendInput,
+  ) => Effect.Effect<ThreadSendResult, ThreadManagementFailure>;
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
     readonly commandId: CommandId;
@@ -523,21 +463,6 @@ export function latestActiveRun(
 ): OrchestrationV2Run | undefined {
   return projection.runs
     .filter(isActiveRun)
-    .toSorted((left, right) => right.ordinal - left.ordinal)[0];
-}
-
-function latestSteerableRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns">,
-): OrchestrationV2Run | undefined {
-  return projection.runs
-    .filter(
-      (run) =>
-        run.status === "running" &&
-        run.activeAttemptId !== null &&
-        projection.providerTurns.some(
-          (turn) => turn.runAttemptId === run.activeAttemptId && turn.status === "running",
-        ),
-    )
     .toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
@@ -766,126 +691,12 @@ const make = Effect.gen(function* () {
         ),
       );
 
-  const sendToThread: ThreadManagementServiceShape["sendToThread"] = Effect.fn(
-    "ThreadManagementService.sendToThread",
-  )(function* (input) {
-    let target = yield* getProjectThreadRecords(input, [
-      "runs",
-      "providerTurns",
-      "providerThreads",
-    ]);
-    if (target.thread.archivedAt !== null) {
-      return yield* new ThreadManagementThreadArchivedError({
-        threadId: input.threadId,
-      });
-    }
-    let recoveredUnacceptedRun = false;
-    if (input.mode !== "queue") {
-      const active = latestActiveRun(target);
-      const providerThread = target.providerThreads.find(
-        (thread) => thread.id === active?.providerThreadId,
-      );
-      const sessionLost =
-        active !== undefined &&
-        (providerThread?.providerSessionId == null ||
-          !(yield* sessions.isLive(providerThread.providerSessionId)));
-      if (
-        active !== undefined &&
-        (active.status === "running" ||
-          (active.status === "starting" && (input.mode === "restart" || input.mode === "steer"))) &&
-        (sessionLost ||
-          !target.providerTurns.some(
-            (turn) => turn.runAttemptId === active.activeAttemptId && turn.status === "running",
-          ))
-      ) {
-        yield* dispatch({
-          type: "run.interrupt",
-          commandId: CommandId.make(`${input.commandId}:interrupt-unaccepted-run`),
-          threadId: input.threadId,
-          runId: active.id,
-          reason: "Replaced a run whose provider turn never started.",
-        });
-        recoveredUnacceptedRun = true;
-        target = yield* getProjectThreadRecords(input, [
-          "runs",
-          "providerTurns",
-          "providerThreads",
-        ]);
-      }
-    }
-    const steerableRun = latestSteerableRun(target);
-    let dispatchMode: Extract<
-      OrchestrationV2Command,
-      { readonly type: "message.dispatch" }
-    >["dispatchMode"];
-    if ((input.mode === "steer" || input.mode === "restart") && !recoveredUnacceptedRun) {
-      if (steerableRun === undefined) {
-        return yield* new ThreadManagementNoSteerableRunError({
-          threadId: input.threadId,
-          mode: input.mode,
-        });
-      }
-      dispatchMode = {
-        type: input.mode === "steer" ? "steer_active" : "restart_active",
-        targetRunId: steerableRun.id,
-      };
-    } else if (input.mode === "auto" && steerableRun !== undefined) {
-      dispatchMode = { type: "steer_active", targetRunId: steerableRun.id };
-    } else {
-      dispatchMode = {
-        type: input.mode === "queue" ? "queue_after_active" : "start_immediately",
-      };
-    }
-
-    const dispatched = yield* dispatch({
-      type: "message.dispatch",
-      commandId: input.commandId,
-      threadId: input.threadId,
-      messageId: input.messageId,
-      ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
-      ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
-      text: input.text,
-      attachments: input.attachments,
-      ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
-      dispatchMode,
-      createdBy: input.createdBy,
-      creationSource: input.creationSource,
-    });
-    const projection = yield* getProjectThreadRecords(input, ["runs", "messages", "turnItems"], {
-      messageIds: [input.messageId],
-      turnItemTypes: ["user_message"],
-    });
-    const message = projection.messages.find((candidate) => candidate.id === input.messageId);
-    const run =
-      message?.runId === null || message?.runId === undefined
-        ? undefined
-        : projection.runs.find((candidate) => candidate.id === message.runId);
-    const turnItem =
-      projection.turnItems.find(
-        (
-          candidate,
-        ): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> =>
-          candidate.type === "user_message" && candidate.messageId === input.messageId,
-      ) ?? null;
-    if (
-      message === undefined ||
-      run === undefined ||
-      (turnItem === null && run.status !== "queued")
-    ) {
-      return yield* new ThreadManagementDurableRunProjectionError({
-        threadId: input.threadId,
-        messageId: input.messageId,
-      });
-    }
-    const delivery: ThreadManagementSendResult["delivery"] =
-      turnItem === null || turnItem.inputIntent === "queued_turn"
-        ? "queued"
-        : turnItem.inputIntent === "turn_start"
-          ? "started"
-          : input.mode === "restart"
-            ? "restarted"
-            : "steered";
-    return { dispatch: dispatched, projection, message, run, turnItem, delivery };
+  const sendToThread: ThreadManagementServiceShape["sendToThread"] = makeSendToThread({
+    loadRecords: getProjectThreadRecords,
+    dispatch,
+    latestActiveRun,
+    sessionIsLive: sessions.isLive,
+    hasReceipt,
   });
 
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = Effect.fn(

@@ -237,7 +237,6 @@ const boxToolkitLayer = (thread: BoxThread) => {
         ? (null as never)
         : { ...idleThreadProjection(shell), runs: runless ? [] : [runOf(status)] };
     });
-  // One record per command id, as its receipt replays a repeat.
   const recordStop = (commandId: string, kind: "interrupt" | "thread.stop" | "delegated-tasks") =>
     Effect.gen(function* () {
       if (interrupts.has(`${kind}:${commandId}`)) return;
@@ -414,6 +413,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
         Effect.as({
           run: { id: boxLaterRunId, status: "running" },
           delivery: "started",
+          dispatch: { sequence: 1 },
         } as never),
       ),
   });
