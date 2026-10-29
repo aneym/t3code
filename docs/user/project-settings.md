@@ -199,7 +199,10 @@ at its top level, and the worktree of a snoozed thread. Merge and unchanged clea
 the thread is settled or archived. A removed worktree moves to a `.worktree-trash` folder inside
 its worktree folder for a day before it is deleted, so you can copy files back out of its
 `checkout` folder. If cleanup cannot put a worktree back after a failed removal, it leaves a
-`recovery-failed.txt` note in that entry and never deletes it. Branches and thread history stay;
+`recovery-failed.txt` note in that entry and never deletes it. A `recovery-required` folder also
+protects an interrupted move, even if its recovery note could not be written; restore the saved
+parts manually before removing that flag. Git metadata is kept in the repository’s
+`.git/t3-worktree-trash` under the same entry name and must be restored too. Branches and thread history stay;
 starting another turn recreates the checkout.
 Merge cleanup requires a merged pull request whose commits are included in the remote default
 branch. A squash or rebase merge on GitHub also counts when the pull request targeted the default

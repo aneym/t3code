@@ -1,15 +1,19 @@
-import { GitCommandError } from "@t3tools/contracts";
+import { GitCommandError, type ServerSettings } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
+
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 
 export const WORKTREE_TRASH_FOLDER = ".worktree-trash";
 const ADMIN_TRASH_FOLDER = "t3-worktree-trash";
 const ENTRY = /^(\d{13})-[^/\\]+\.worktree$/;
+const RECOVERY_REQUIRED = "recovery-required";
 const RECOVERY_FAILED = "recovery-failed.txt";
 const RETENTION_MS = 86_400_000;
 
@@ -64,12 +68,19 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     );
     const adminTrash = path.join(commonDir, ADMIN_TRASH_FOLDER);
     const adminEntry = path.join(adminTrash, path.basename(input.entry));
-    const checkout = path.join(input.entry, "checkout");
-    const savedAdmin = path.join(adminEntry, "git");
-    let stranded = false;
+    const parts = [
+      { moved: false, from: input.worktreePath, to: path.join(input.entry, "checkout") },
+      { moved: false, from: input.adminDir, to: path.join(adminEntry, "git") },
+    ];
+    const entries = [input.entry, adminEntry];
+    const instructions = () =>
+      parts
+        .filter((part) => part.moved)
+        .map((part) => `Move ${part.to} back to ${part.from}`)
+        .join("\n");
     yield* Effect.acquireUseRelease(
-      Effect.succeed({ checkoutMoved: false, adminMoved: false }),
-      (state) =>
+      Effect.succeed(parts),
+      () =>
         Effect.uninterruptible(
           Effect.gen(function* () {
             const trash = path.join(input.root, WORKTREE_TRASH_FOLDER);
@@ -81,56 +92,188 @@ export const makeWorktreeTrash = Effect.gen(function* () {
             if (!(yield* fenced(adminTrash)))
               return yield* failure(input.worktreePath, `worktree trash is a link: ${adminTrash}`);
             yield* fs.makeDirectory(adminEntry);
-            yield* fs.rename(input.worktreePath, checkout);
-            state.checkoutMoved = true;
-            yield* fs.rename(input.adminDir, savedAdmin);
-            state.adminMoved = true;
+            for (const entry of entries)
+              yield* fs.makeDirectory(path.join(entry, RECOVERY_REQUIRED));
+            const pending = parts
+              .map((part) => `If present, move ${part.to} back to ${part.from}`)
+              .join("\n");
+            for (const entry of entries)
+              yield* fs.writeFileString(path.join(entry, RECOVERY_FAILED), `${pending}\n`);
+            for (const part of parts) {
+              yield* fs.rename(part.from, part.to);
+              part.moved = true;
+            }
             const movedAtSeconds = (yield* Clock.currentTimeMillis) / 1000;
-            for (const entry of [input.entry, adminEntry])
-              yield* fs.utimes(entry, movedAtSeconds, movedAtSeconds);
+            for (const entry of entries) yield* fs.utimes(entry, movedAtSeconds, movedAtSeconds);
           }),
         ),
-      (state, exit) =>
+      (_, exit) =>
         exit._tag === "Success"
           ? Effect.void
           : Effect.gen(function* () {
-              for (const [moved, from, to] of [
-                [state.adminMoved, savedAdmin, input.adminDir],
-                [state.checkoutMoved, checkout, input.worktreePath],
-              ] as const) {
-                if (!moved) continue;
-                yield* fs.rename(from, to).pipe(
+              for (const part of [...parts].reverse()) {
+                if (!part.moved) continue;
+                yield* fs.rename(part.to, part.from).pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      part.moved = false;
+                    }),
+                  ),
                   Effect.catch((error) =>
-                    Effect.gen(function* () {
-                      stranded = true;
-                      for (const entry of [input.entry, adminEntry])
-                        yield* fs
-                          .writeFileString(
-                            path.join(entry, RECOVERY_FAILED),
-                            `Move ${savedAdmin} back to ${input.adminDir}\nMove ${checkout} back to ${input.worktreePath}\n`,
-                          )
-                          .pipe(Effect.ignore);
-                      yield* Effect.logError(
-                        "storage cleanup could not restore a trashed worktree",
-                        {
-                          from,
-                          to,
-                          error,
-                        },
-                      );
+                    Effect.logError("storage cleanup could not restore a trashed worktree", {
+                      from: part.to,
+                      to: part.from,
+                      error,
                     }),
                   ),
                 );
               }
+              const text = instructions();
+              if (text === "") return;
+              for (const entry of entries)
+                yield* fs
+                  .writeFileString(path.join(entry, RECOVERY_FAILED), `${text}\n`)
+                  .pipe(
+                    Effect.catch((error) =>
+                      Effect.logError(
+                        "worktree recovery note failed; recovery-required flag retained",
+                        { entry, error },
+                      ),
+                    ),
+                  );
             }),
     ).pipe(
-      Effect.tapError(() => Effect.all([discard(input.entry), discard(adminEntry)])),
+      Effect.tapError(() => Effect.forEach(entries, discard, { discard: true })),
       Effect.mapError((error) =>
-        stranded
-          ? failure(input.worktreePath, `removal failed and the worktree is in ${checkout}`)
-          : error,
+        instructions() === ""
+          ? error
+          : failure(input.worktreePath, `removal failed; ${instructions().replaceAll("\n", "; ")}`),
       ),
     );
+    for (const entry of entries)
+      yield* fs.remove(path.join(entry, RECOVERY_FAILED)).pipe(
+        Effect.andThen(fs.remove(path.join(entry, RECOVERY_REQUIRED), { recursive: true })),
+        Effect.catch((error) =>
+          Effect.logWarning("worktree recovery flag retained after successful move", {
+            entry,
+            error,
+          }),
+        ),
+      );
+  });
+
+  const checkoutStateReason = Effect.fnUntraced(function* (cwd: string) {
+    if (yield* fs.exists(path.join(cwd, ".lane"))) return "has excluded local state (.lane/)";
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const inspect = (operation: string, args: string[]) =>
+      git.execute({ operation, cwd, args, maxOutputBytes: 64 * 1024 });
+    const commonDir = yield* inspect("StorageCleanup.commonDir", [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]);
+    const excludeFile = path.join(commonDir.stdout.trim(), "info", "exclude");
+    const patterns = (yield* fs.exists(excludeFile))
+      ? (yield* fs.readFileString(excludeFile))
+          .split(/\r?\n/)
+          .some((line) => line.trim() !== "" && !line.startsWith("#"))
+      : false;
+    if (patterns) {
+      const excluded = yield* inspect("StorageCleanup.excludedFiles", [
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--directory",
+        "--no-empty-directory",
+        "-z",
+        `--exclude-from=${excludeFile}`,
+      ]);
+      if (excluded.stdoutTruncated) return "excluded files exceed the inspection limit";
+      const file = excluded.stdout.split("\0").find((entry) => entry !== "");
+      if (file !== undefined) return `has excluded local state (${file})`;
+    }
+    const untracked = yield* inspect("StorageCleanup.untrackedDirectories", [
+      "ls-files",
+      "--others",
+      "--directory",
+      "-z",
+    ]);
+    if (untracked.stdoutTruncated) return "untracked files exceed the inspection limit";
+    for (const entry of untracked.stdout.split("\0")) {
+      if (entry.endsWith("/") && (yield* fs.exists(path.join(cwd, entry, ".git"))))
+        return `has a nested repository (${entry})`;
+    }
+    return null;
+  });
+
+  const personalStateReason = Effect.fn("StorageCleanup.personalStateReason")(function* (
+    cwd: string,
+  ) {
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const own = yield* checkoutStateReason(cwd);
+    if (own !== null || !(yield* fs.exists(path.join(cwd, ".gitmodules")))) return own;
+    const populated = yield* git.execute({
+      operation: "StorageCleanup.submodules",
+      cwd,
+      args: [
+        "submodule",
+        "foreach",
+        "--recursive",
+        "--quiet",
+        'printf "%s\\0" "$toplevel/$sm_path"',
+      ],
+      maxOutputBytes: 64 * 1024,
+    });
+    if (populated.stdoutTruncated) return "submodule inspection exceeded the limit";
+    for (const submodule of populated.stdout.split("\0").filter(Boolean)) {
+      const reason = yield* checkoutStateReason(submodule);
+      if (reason !== null) return `submodule ${reason}`;
+    }
+    return null;
+  });
+
+  const remove = Effect.fn("WorktreeTrash.remove")(function* <E, R>(
+    root: string,
+    worktreePath: string,
+    blocked: () => Effect.Effect<string | null, E, R>,
+  ) {
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const adminDir = (yield* git.execute({
+      operation: "StorageCleanup.adminDir",
+      cwd: worktreePath,
+      args: ["rev-parse", "--absolute-git-dir"],
+    })).stdout.trim();
+    if (yield* fs.exists(path.join(adminDir, "locked"))) return "worktree is locked";
+    const personal = yield* personalStateReason(worktreePath);
+    if (personal !== null) return personal;
+    const entry = yield* prepare(root, worktreePath);
+    const reason = yield* blocked();
+    if (reason !== null) {
+      yield* discard(entry);
+      return reason;
+    }
+    yield* move({ root, entry, worktreePath, adminDir });
+    return null;
+  });
+
+  const managedRoots = Effect.fn("StorageCleanup.managedRoots")(function* (
+    serverSettings: ServerSettings,
+    defaultDirectory: string,
+  ) {
+    const roots: Array<string> = [];
+    for (const directory of managedWorktreesDirectories(
+      serverSettings,
+      defaultDirectory,
+      path,
+      yield* HostProcess.HomeDirectory,
+    )) {
+      const root = yield* fs.exists(directory).pipe(
+        Effect.flatMap((exists) => (exists ? fs.realPath(directory) : Effect.succeed(null))),
+        Effect.orElseSucceed(() => null),
+      );
+      if (root !== null && !isFilesystemRoot(root, path) && !roots.includes(root)) roots.push(root);
+    }
+    return roots;
   });
 
   const purge = Effect.fn("WorktreeTrash.purge")(function* (
@@ -168,12 +311,16 @@ export const makeWorktreeTrash = Effect.gen(function* () {
         const modified = Option.getOrNull(info.mtime)?.getTime();
         if (info.type !== "Directory" || modified === undefined || modified >= now - RETENTION_MS)
           continue;
-        if (yield* fs.exists(path.join(entry, RECOVERY_FAILED))) continue;
+        if (
+          (yield* fs.exists(path.join(entry, RECOVERY_FAILED))) ||
+          (yield* fs.exists(path.join(entry, RECOVERY_REQUIRED)))
+        )
+          continue;
         if (!(yield* fenced(trash))) break;
         yield* fs.remove(entry, { recursive: true });
       }
     }
   });
 
-  return { prepare, discard, move, purge };
+  return { prepare, discard, move, purge, personalStateReason, remove, managedRoots };
 });

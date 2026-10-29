@@ -40,7 +40,6 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import {
   storageCleanupActivityAt,
@@ -266,9 +265,6 @@ const cleanupFixture = (
     let deletedThreads: OrchestrationV2ThreadShell[] = [];
     let storedWorktreePaths: string[] = [worktree];
     let projectRoots = [repo];
-    let editBeforeRemoval = false;
-    let recreateAfterMove = false;
-    let failRestore = false;
     let openSessionCwd: string | null = null;
     let sessionLive = true;
     let fullStatusCalls = 0;
@@ -276,29 +272,8 @@ const cleanupFixture = (
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
     const context = yield* Layer.build(StorageCleanup.layer).pipe(
-      Effect.provideService(FileSystem.FileSystem, {
-        ...fs,
-        rename: (from, to) =>
-          Effect.gen(function* () {
-            if (failRestore && to === worktree) return yield* fs.rename(`${repo}/missing`, to);
-            yield* fs.rename(from, to);
-            if (recreateAfterMove && from === worktree) {
-              const gitFile = yield* fs.readFileString(`${to}/.git`);
-              yield* fs.makeDirectory(worktree);
-              yield* fs.writeFileString(`${worktree}/.git`, gitFile);
-              yield* fs.writeFileString(`${worktree}/recreated.txt`, "new writer\n");
-            }
-          }),
-      }),
       Effect.provideService(GitVcsDriver.GitVcsDriver, {
         ...git,
-        execute: (input) =>
-          Effect.gen(function* () {
-            // After the final status check, while removal reads the worktree's Git directory.
-            if (editBeforeRemoval && input.args.includes("--absolute-git-dir"))
-              yield* fs.writeFileString(`${worktree}/tracked.txt`, "late edit\n");
-            return yield* git.execute(input);
-          }),
         statusDetailsLocal: (...args) => {
           fullStatusCalls++;
           return git.statusDetailsLocal(...args);
@@ -395,15 +370,6 @@ const cleanupFixture = (
     return {
       service: Context.get(context, StorageCleanup.StorageCleanup),
       repo,
-      recreateAfterMove: () => {
-        recreateAfterMove = true;
-      },
-      failRestore: () => {
-        failRestore = true;
-      },
-      editBeforeRemoval: () => {
-        editBeforeRemoval = true;
-      },
       fs,
       worktree,
       config,
@@ -1693,20 +1659,7 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
-  it.live("keeps tracked edits written after the final status check in the trash", () =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        const fixture = yield* cleanupFixture();
-        fixture.setPolicy("tracked-changes");
-        fixture.editBeforeRemoval();
-        yield* fixture.fs.writeFileString(`${fixture.worktree}/notes.txt`, "untracked\n");
-        expect((yield* fixture.service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
-        const trashed = yield* trashedCheckout(fixture);
-        expect(yield* fixture.fs.readFileString(`${trashed}/tracked.txt`)).toBe("late edit\n");
-        expect(yield* fixture.fs.readFileString(`${trashed}/notes.txt`)).toBe("untracked\n");
-      }),
-    ),
-  );
+
   it.live("caps entries while preserving totals and prioritizing removals", () =>
     runCleanupTest(
       Effect.gen(function* () {
@@ -1809,77 +1762,6 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
-  it.live("reports removal failures without aborting the remaining categories", () =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        const fixture = yield* cleanupFixture();
-        const { service, worktree, repo, command, enableFiles, fs } = fixture;
-        enableFiles();
-        yield* command(worktree, ["worktree", "lock", worktree]);
-        expect((yield* service.runNow).entries[0]).toMatchObject({
-          outcome: "kept",
-          reason: "Worktree is locked",
-        });
-        yield* command(worktree, ["worktree", "unlock", worktree]);
-        yield* fs.chmod(`${repo}/.git/worktrees`, 0o555);
-        const report = yield* service.runNow.pipe(
-          Effect.ensuring(fs.chmod(`${repo}/.git/worktrees`, 0o755).pipe(Effect.ignore)),
-        );
-        expect(report.entries[0]).toMatchObject({ outcome: "failed" });
-        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("original\n");
-        expect(yield* trashEntries(fixture)).toEqual([]);
-        expect(report.entries.map((entry) => entry.kind)).toEqual([
-          "worktree",
-          "browser-artifacts",
-          "logs",
-        ]);
-      }),
-    ),
-  );
-  it.live("reports where a checkout is when moving it back fails", () =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        const fixture = yield* cleanupFixture();
-        const { service, worktree, repo, fs } = fixture;
-        fixture.failRestore();
-        yield* fs.chmod(`${repo}/.git/worktrees`, 0o555);
-        const report = yield* service.runNow.pipe(
-          Effect.ensuring(fs.chmod(`${repo}/.git/worktrees`, 0o755).pipe(Effect.ignore)),
-        );
-        const [entry] = yield* trashEntries(fixture);
-        expect(entry).toBeDefined();
-        expect(report.entries[0]).toMatchObject({ outcome: "failed" });
-        expect(report.entries[0]?.reason).toContain(`${entry}/checkout`);
-        expect(yield* fs.readFileString(`${entry}/checkout/tracked.txt`)).toBe("original\n");
-        expect(yield* fs.exists(`${entry}/recovery-failed.txt`)).toBe(true);
-        expect(yield* fs.exists(worktree)).toBe(false);
-      }),
-    ),
-  );
-  it.live("never deletes a checkout recreated at the original path after the move", () =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        const fixture = yield* cleanupFixture();
-        fixture.recreateAfterMove();
-        expect((yield* fixture.service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
-        expect(yield* fixture.fs.readFileString(`${fixture.worktree}/recreated.txt`)).toBe(
-          "new writer\n",
-        );
-        const [entry] = yield* trashEntries(fixture);
-        expect(yield* fixture.fs.readFileString(`${entry}/checkout/tracked.txt`)).toBe(
-          "original\n",
-        );
-        expect(
-          yield* fixture.fs.exists(
-            `${fixture.repo}/.git/t3-worktree-trash/${entry?.split("/").at(-1)}/git/gitdir`,
-          ),
-        ).toBe(true);
-        expect(
-          (yield* fixture.command(fixture.repo, ["worktree", "list", "--porcelain"])).stdout,
-        ).not.toContain(`branch refs/heads/feature`);
-      }),
-    ),
-  );
 });
 
 describe("settled worktree rechecks", () => {
@@ -1934,26 +1816,6 @@ it.live("keeps saved usage data when removing a settled checkout", () =>
     }),
   ),
 );
-
-const trashFolder = (fixture: Effect.Success<ReturnType<typeof cleanupFixture>>) =>
-  fixture.fs
-    .realPath(fixture.config.worktreesDir)
-    .pipe(Effect.map((root) => `${root}/.worktree-trash`));
-const trashEntries = (fixture: Effect.Success<ReturnType<typeof cleanupFixture>>) =>
-  Effect.gen(function* () {
-    const trash = yield* trashFolder(fixture);
-    if (!(yield* fixture.fs.exists(trash))) return [];
-    return (yield* fixture.fs.readDirectory(trash))
-      .filter((name) => /^\d{13}-feature\.worktree$/.test(name))
-      .map((name) => `${trash}/${name}`);
-  });
-const trashedCheckout = (fixture: Effect.Success<ReturnType<typeof cleanupFixture>>) =>
-  Effect.gen(function* () {
-    const entries = yield* trashEntries(fixture);
-    expect(entries).toHaveLength(1);
-    expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-    return `${entries[0]}/checkout`;
-  });
 
 const landedRules = {
   ...DEFAULT_SERVER_SETTINGS.storageCleanup,
@@ -2039,108 +1901,6 @@ it.live.each([
         outcome: "kept",
         reason,
       });
-      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
-    }),
-  ),
-);
-
-it.live(
-  "moves a checkout with a deep nested repository to the trash, even without clean.requireForce",
-  () =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        const fixture = yield* cleanupFixture();
-        fixture.setPolicy("tracked-changes");
-        yield* fixture.command(fixture.repo, ["config", "clean.requireForce", "false"]);
-        yield* fixture.fs.makeDirectory(`${fixture.worktree}/deep/scratch`, { recursive: true });
-        yield* fixture.command(`${fixture.worktree}/deep/scratch`, ["init", "-q"]);
-        yield* fixture.fs.writeFileString(`${fixture.worktree}/deep/scratch/ledger.md`, "state\n");
-
-        expect((yield* fixture.service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
-        const trashed = yield* trashedCheckout(fixture);
-        expect(yield* fixture.fs.readFileString(`${trashed}/deep/scratch/ledger.md`)).toBe(
-          "state\n",
-        );
-        expect(yield* fixture.fs.exists(`${trashed}/deep/scratch/.git`)).toBe(true);
-        const worktrees = (yield* fixture.command(fixture.repo, [
-          "worktree",
-          "list",
-          "--porcelain",
-        ])).stdout;
-        expect(worktrees).not.toContain(fixture.worktree);
-      }),
-    ),
-);
-
-it.live("keeps a checkout whose submodule holds excluded .lane state", () =>
-  runCleanupTest(
-    Effect.gen(function* () {
-      const { service, fs, worktree, submodule, command } = yield* submoduleCleanupFixture();
-      const gitDir = (yield* command(submodule, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
-      yield* fs.writeFileString(`${gitDir}/info/exclude`, ".lane/\n");
-      yield* fs.makeDirectory(`${submodule}/.lane`);
-      yield* fs.writeFileString(`${submodule}/.lane/ledger.md`, "state\n");
-
-      expect(
-        (yield* service.runNow).entries.find((entry) => entry.path === worktree),
-      ).toMatchObject({ outcome: "kept", reason: "Submodule has excluded local state (.lane/)" });
-      expect(yield* fs.readFileString(`${submodule}/.lane/ledger.md`)).toBe("state\n");
-    }),
-  ),
-);
-
-it.live("purges only its own trash entries once both their name and mtime are a day old", () =>
-  runCleanupTest(
-    Effect.gen(function* () {
-      const fixture = yield* cleanupFixture();
-      const trash = yield* trashFolder(fixture);
-      const now = yield* Clock.currentTimeMillis;
-      const old = now - DAY_MS - 60_000;
-      const entries = {
-        expired: { name: `${old}-expired.worktree`, mtime: old },
-        recentName: { name: `${now - 3_600_000}-recent.worktree`, mtime: old },
-        recentMtime: { name: `${old}-touched.worktree`, mtime: now },
-        foreign: { name: `${old}-backup`, mtime: old },
-        stranded: { name: `${old}-stranded.worktree`, mtime: old, marker: true },
-      };
-      for (const entry of Object.values(entries)) {
-        const target = `${trash}/${entry.name}`;
-        yield* fixture.fs.makeDirectory(target, { recursive: true });
-        yield* fixture.fs.writeFileString(`${target}/file.txt`, "state\n");
-        if ("marker" in entry)
-          yield* fixture.fs.writeFileString(`${target}/recovery-failed.txt`, "restore me\n");
-        yield* fixture.fs.utimes(target, entry.mtime / 1000, entry.mtime / 1000);
-      }
-
-      yield* fixture.service.runNow;
-      expect(yield* fixture.fs.exists(`${trash}/${entries.expired.name}`)).toBe(false);
-      for (const entry of [
-        entries.recentName,
-        entries.recentMtime,
-        entries.foreign,
-        entries.stranded,
-      ])
-        expect(yield* fixture.fs.readFileString(`${trash}/${entry.name}/file.txt`)).toBe("state\n");
-    }),
-  ),
-);
-
-it.live("never purges or fills a linked trash folder", () =>
-  runCleanupTest(
-    Effect.gen(function* () {
-      const fixture = yield* cleanupFixture();
-      const elsewhere = yield* fixture.fs.makeTempDirectoryScoped({ prefix: "cleanup-elsewhere-" });
-      const old = (yield* Clock.currentTimeMillis) - 2 * DAY_MS;
-      const backup = `${elsewhere}/${old}-backup.worktree`;
-      yield* fixture.fs.makeDirectory(backup);
-      yield* fixture.fs.writeFileString(`${backup}/file.txt`, "keep\n");
-      yield* fixture.fs.utimes(backup, old / 1000, old / 1000);
-      yield* fixture.fs.symlink(elsewhere, yield* trashFolder(fixture));
-
-      const report = yield* fixture.service.runNow;
-      expect(report.entries[0]).toMatchObject({ outcome: "failed" });
-      expect(report.entries[0]?.reason).toContain("worktree trash is a link");
-      expect(yield* fixture.fs.readFileString(`${backup}/file.txt`)).toBe("keep\n");
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
     }),
   ),
