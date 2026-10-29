@@ -589,10 +589,6 @@ export interface ProjectionStoreV2Shape {
       readonly scopeId: CheckpointScopeId;
     },
   ) => Effect.Effect<ProjectionCheckpointRollbackContext, ProjectionStoreV2Error>;
-  readonly getRunMessage: (
-    threadId: ThreadId,
-    runId: RunId,
-  ) => Effect.Effect<OrchestrationV2ConversationMessage | undefined, ProjectionStoreV2Error>;
   readonly canStartQueuedRun: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
@@ -5142,24 +5138,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
-    const getRunMessage: ProjectionStoreV2Shape["getRunMessage"] = (threadId, runId) =>
-      sql
-        .withTransaction(
-          Effect.gen(function* () {
-            yield* requireThread(threadId);
-            const rows = yield* sql<PayloadRow>`
-          SELECT message.payload_json FROM orchestration_v2_projection_messages AS message
-          JOIN orchestration_v2_projection_runs AS run
-            ON message.message_id = json_extract(run.payload_json, '$.userMessageId')
-          WHERE run.thread_id = ${threadId} AND run.run_id = ${runId}
-            AND message.thread_id = ${threadId}`;
-            return rows[0] === undefined
-              ? undefined
-              : yield* decodeMessagePayload(rows[0].payload_json);
-          }),
-        )
-        .pipe(Effect.mapError(controlReadError(threadId)));
-
     const canStartQueuedRun: ProjectionStoreV2Shape["canStartQueuedRun"] = (threadId) =>
       sql
         .withTransaction(
@@ -6803,7 +6781,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointContext: readOnReader(getCheckpointContext),
       getCheckpointCaptureContext: readOnReader(getCheckpointCaptureContext),
       getCheckpointRollbackContext: readOnReader(getCheckpointRollbackContext),
-      getRunMessage: readOnReader(getRunMessage),
       canStartQueuedRun: readOnReader(canStartQueuedRun),
       getPendingNativeUserInputs: readOnReader(getPendingNativeUserInputs),
       hasUnpairedRunInterruptRequest: readOnReader(hasUnpairedRunInterruptRequest),

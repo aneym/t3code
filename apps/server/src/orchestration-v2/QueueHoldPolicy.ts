@@ -22,6 +22,21 @@ export function canReleaseQueueHold(run: OrchestrationV2Run, release: Release): 
   }
 }
 
+export function releasesQueueHoldAtRunEnd(
+  run: OrchestrationV2Run,
+  ended: OrchestrationV2Run | undefined,
+  agentThread: boolean,
+): boolean {
+  if (run.status !== "queued" || run.queueHeld !== true || run.queueHoldReason === "stop") {
+    return false;
+  }
+  return (
+    agentThread ||
+    run.queueHoldReason === "restart" ||
+    (run.queueHoldReason === "blocked" && ended?.status === "completed")
+  );
+}
+
 export function stoppedQueueHold(run: OrchestrationV2Run): Hold | undefined {
   if (run.queueHeld === true && run.queueHoldReason !== "restart") return undefined;
   return { queueHeld: true, queueHoldReason: "stop" };
