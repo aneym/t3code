@@ -1,6 +1,6 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { useLocation } from "@tanstack/react-router";
-import { useContext } from "react";
+import { useContext, useEffect } from "react";
 import { Atom } from "effect/reactivity";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
@@ -61,31 +61,47 @@ function LoadBar({
   );
 }
 
-function MachineCard({ environment, now }: { environment: EnvironmentPresentation; now: number }) {
-  const scope = useOptionalSettingsScope();
+function MachineLoad({ environment, now }: { environment: EnvironmentPresentation; now: number }) {
   const registry = useContext(RegistryContext);
-  const online = environment.connection.phase === "connected";
   const query = serverEnvironment.hostResources({
     environmentId: environment.environmentId,
     input: {},
   });
   const result = useAtomValue(query);
-  const poll = () => {
-    const timer = setInterval(() => {
-      const current = registry.get(query);
-      if (online && document.visibilityState === "visible" && !current.waiting)
-        registry.refresh(query);
-    }, 5_000);
-    return () => clearInterval(timer);
-  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the host on the shared visible clock
+  useEffect(() => {
+    const current = registry.get(query);
+    if (current.waiting) return;
+    if (current._tag !== "Success" || now - current.timestamp >= 4_000) registry.refresh(query);
+  }, [now, registry, query]);
   const resources =
-    online && result._tag === "Success" && now - result.timestamp <= 15_000 ? result.value : null;
-  const selected =
-    scope?.search.machine === environment.environmentId ||
-    (scope?.singleEnvironment && !scope.search.machine);
+    result._tag === "Success" && now - result.timestamp <= 15_000 ? result.value : null;
+  return (
+    <>
+      <LoadBar
+        label="CPU"
+        value={resources?.cpuUtilization == null ? null : resources.cpuUtilization * 100}
+        warning={70}
+      />
+      <LoadBar
+        label="Memory"
+        value={
+          resources && resources.totalMemoryBytes > 0
+            ? (1 - resources.availableMemoryBytes / resources.totalMemoryBytes) * 100
+            : null
+        }
+        warning={85}
+      />
+    </>
+  );
+}
+
+function MachineCard({ environment, now }: { environment: EnvironmentPresentation; now: number }) {
+  const scope = useOptionalSettingsScope();
+  const online = environment.connection.phase === "connected";
+  const selected = scope?.environment?.environmentId === environment.environmentId;
   return (
     <button
-      ref={poll}
       type="button"
       aria-pressed={selected}
       aria-label={`Diagnostics for ${environment.label}`}
@@ -106,20 +122,14 @@ function MachineCard({ environment, now }: { environment: EnvironmentPresentatio
         <span className="truncate">{environment.label}</span>
         {!online && <span className="text-xs text-muted-foreground">offline</span>}
       </div>
-      <LoadBar
-        label="CPU"
-        value={resources?.cpuUtilization == null ? null : resources.cpuUtilization * 100}
-        warning={70}
-      />
-      <LoadBar
-        label="Memory"
-        value={
-          resources && resources.totalMemoryBytes > 0
-            ? (1 - resources.availableMemoryBytes / resources.totalMemoryBytes) * 100
-            : null
-        }
-        warning={85}
-      />
+      {online ? (
+        <MachineLoad environment={environment} now={now} />
+      ) : (
+        <>
+          <LoadBar label="CPU" value={null} warning={70} />
+          <LoadBar label="Memory" value={null} warning={85} />
+        </>
+      )}
     </button>
   );
 }
