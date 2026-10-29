@@ -12,7 +12,7 @@ from pathlib import Path
 from .install_backup import capture
 from .install_chat import identities, prove, retained
 from .install_process import serving_process
-from .install_strays import reap_strays
+from .install_strays import managed_strays, reap_strays
 from .install_provenance import file_digest, validate
 from .install_runtime import pin_runtime, stage_runtime
 from .release_receipts import INSTALL_SCHEMA, write
@@ -64,11 +64,27 @@ def activate(run, version):
     return launcher
 
 
-def serving(run, version, expected):
-    deadline = time.monotonic() + run.args.health_s
+def stray_serving(run, version, expected):
+    strays = managed_strays(run)
+    if len(strays) != 1 or Path(strays[0]["argv"][0]).resolve() != run.runtime(version).resolve() or file_digest(run.runtime(version)) != expected:
+        return False
+    run.step("hard-serving-ssh-launch", pid=strays[0]["pid"], launchDir=strays[0]["launchDir"], version=version, digest=expected)
+    return True
+
+
+def precheck(run, version, expected):
+    try:
+        serving(run, version, expected, reap=False)
+    except ValueError as error:
+        if str(error) != "candidate serving version did not become healthy" or run.server_version() != version or not stray_serving(run, version, expected):
+            raise
+
+
+def serving(run, version, expected, reap=True):
+    deadline = time.monotonic() + (run.args.health_s if reap else 10)
     attempts = 0
     while time.monotonic() < deadline:
-        if reap_strays(run, attempts):
+        if reap and reap_strays(run, attempts):
             attempts += 1
             service(run, "restart")
             deadline = time.monotonic() + run.args.health_s
@@ -105,7 +121,7 @@ def install(run):
         manifest, rehearsal, host, observed = validate(run, previous, candidate)
     compatibility = manifest.get("compatibility", {})
     binary_rollback = compatibility.get("binaryRollback") is True and observed["oldMigrationHistory"] == compatibility.get("candidateMigrations", {}).get("history")
-    serving(run, previous, observed["oldRuntime.digest"])
+    precheck(run, previous, observed["oldRuntime.digest"])
     try:
         baseline = prove(run, previous)
     except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as error:
@@ -122,6 +138,9 @@ def install(run):
         nonlocal stopped
         service(run, "stop")
         stopped = True
+        attempts = 0
+        while reap_strays(run, attempts):
+            attempts += 1
 
     try:
         if previous == args.version:

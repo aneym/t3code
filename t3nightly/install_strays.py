@@ -9,6 +9,7 @@ from pathlib import Path
 MAX_REAPS = 3
 TERM_WAIT_S = 30
 KILL_WAIT_S = 5
+LAUNCH_SKEW_S = 10
 
 
 def port_listeners(port):
@@ -40,6 +41,19 @@ def process_argv(pid):
         return []
 
 
+def process_started(pid):
+    if sys.platform == "darwin":
+        result = subprocess.run(["ps", "-o", "lstart=", "-p", pid], capture_output=True, text=True, check=False, timeout=15, env={**os.environ, "LC_ALL": "C"})
+        value = " ".join(result.stdout.split())
+        return time.mktime(time.strptime(value, "%a %b %d %H:%M:%S %Y")) if value else None
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    except FileNotFoundError:
+        return None
+    boot = next(int(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines() if line.startswith("btime "))
+    return boot + int(fields[19]) / os.sysconf("SC_CLK_TCK")
+
+
 def holds(pid, path):
     target = str(path.resolve())
     if sys.platform == "darwin":
@@ -65,66 +79,73 @@ def serves_home(argv, home):
     return index + 1 < len(argv) and Path(argv[index + 1]).resolve() == home.resolve()
 
 
+def identify(run, launch):
+    try:
+        marker = (launch / "managed").read_text().strip()
+        pid_file = launch / "pid"
+        pid = pid_file.read_text().strip()
+        launched = pid_file.stat().st_mtime
+        own_port = (launch / "port").read_text().strip()
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    if marker != "managed" or not pid.isdigit() or int(pid) <= 1:
+        return None
+    started = process_started(pid)
+    if started is None or abs(started - launched) > LAUNCH_SKEW_S:
+        return None
+    argv = process_argv(pid)
+    if process_uid(pid) != os.getuid() or not serves_home(argv, run.home):
+        return None
+    on_service_port = pid in port_listeners(run.args.port)
+    lock_owner = own_port.isdigit() and pid in port_listeners(own_port) and holds(pid, run.db.parent / "server-owner.sqlite")
+    if not (on_service_port or lock_owner):
+        return None
+    return {"pid": pid, "argv": argv, "launchDir": str(launch), "started": started}
+
+
 def managed_strays(run):
     root = run.home / "ssh-launch"
     if not root.is_dir():
         return []
-    lock = run.db.parent / "server-owner.sqlite"
-    listeners = port_listeners(run.args.port)
-    strays = []
-    for launch in sorted(root.iterdir()):
-        try:
-            marker = (launch / "managed").read_text().strip()
-            pid = (launch / "pid").read_text().strip()
-        except (FileNotFoundError, NotADirectoryError):
-            continue
-        if marker != "managed" or not pid.isdigit() or int(pid) <= 1:
-            continue
-        argv = process_argv(pid)
-        if process_uid(pid) != os.getuid() or not serves_home(argv, run.home):
-            continue
-        if pid in listeners or holds(pid, lock):
-            strays.append({"pid": pid, "argv": argv, "launchDir": str(launch)})
-    return strays
+    return [stray for stray in (identify(run, launch) for launch in sorted(root.iterdir())) if stray]
 
 
-def alive(pid):
-    try:
-        os.kill(int(pid), 0)
-    except ProcessLookupError:
-        return False
-    return True
+def same(run, stray):
+    current = identify(run, Path(stray["launchDir"]))
+    return current is not None and current["pid"] == stray["pid"] and current["argv"] == stray["argv"] and current["started"] == stray["started"]
 
 
-def wait_exit(pid, seconds):
+def gone(pid, stray, seconds):
     end = time.monotonic() + seconds
-    while time.monotonic() < end:
-        if not alive(pid):
+    while True:
+        if process_started(pid) != stray["started"]:
             return True
+        if time.monotonic() >= end:
+            return False
         time.sleep(0.5)
-    return not alive(pid)
 
 
 def reap(run, stray):
     pid = stray["pid"]
+    if not same(run, stray):
+        return False
     os.kill(int(pid), signal.SIGTERM)
     signalled = "SIGTERM"
-    if not wait_exit(pid, TERM_WAIT_S):
-        if process_argv(pid) != stray["argv"]:
+    if not gone(pid, stray, TERM_WAIT_S):
+        if process_started(pid) != stray["started"] or process_argv(pid) != stray["argv"]:
             raise ValueError("managed ssh-launch server identity changed before SIGKILL")
         os.kill(int(pid), signal.SIGKILL)
         signalled = "SIGKILL"
-        if not wait_exit(pid, KILL_WAIT_S):
+        if not gone(pid, stray, KILL_WAIT_S):
             raise ValueError("managed ssh-launch server did not exit")
-    entry = {**stray, "signal": signalled, "at": time.time()}
+    entry = {key: stray[key] for key in ("pid", "argv", "launchDir")} | {"signal": signalled, "at": time.time()}
     run.reaped.append(entry)
     run.step("hard-reap-ssh-launch", **entry)
+    return True
 
 
 def reap_strays(run, attempt):
     strays = managed_strays(run)
     if strays and attempt >= MAX_REAPS:
         raise ValueError("managed ssh-launch server kept taking the T3 home")
-    for stray in strays:
-        reap(run, stray)
-    return bool(strays)
+    return any([reap(run, stray) for stray in strays])

@@ -23,7 +23,7 @@ INSTALL_FIELDS = {
     "schema": str, "release": str, "runId": str, "host": str, "platform": str, "arch": str,
     "candidateDigest": str, "rehearsalDigest": str, "artifactManifestDigest": str,
     "service": str, "oldRuntime": RUNTIME, "servingRuntime": RUNTIME, "backup": dict,
-    "chat": dict, "outcome": str, "startedAt": str, "finishedAt": str, "digest": str,
+    "chat": dict, "outcome": str, "reapedSshLaunch": list, "startedAt": str, "finishedAt": str, "digest": str,
 }
 OBSERVED = (
     "oldRuntime.digest", "oldMigrationHistory", "artifactManifestDigest",
