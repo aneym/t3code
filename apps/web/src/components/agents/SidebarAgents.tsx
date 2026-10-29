@@ -1,11 +1,4 @@
-import {
-  DndContext,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
+import { DndContext, KeyboardSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   SortableContext,
@@ -18,7 +11,6 @@ import { CSS } from "@dnd-kit/utilities";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
-  GripVerticalIcon,
   CircleAlertIcon,
   CircleDashedIcon,
   CircleDotDashedIcon,
@@ -35,7 +27,12 @@ import { useThreadActionMenu } from "../../hooks/useThreadActionMenu";
 import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
 import { useEnvironmentIdentities } from "../../state/environments";
 import { cn } from "~/lib/utils";
-import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
+import {
+  animateSidebarLayoutChanges,
+  resolveSidebarThreadStatus,
+  type SidebarThreadStatus,
+} from "../Sidebar.logic";
+import { SIDEBAR_DRAG_DISTANCE, SidebarPointerSensor } from "../Sidebar.pointer";
 import { SidebarSection } from "../sidebar/SidebarSection";
 import { JumpHintBadge } from "../sidebar/SidebarThreadRow";
 import { toastManager } from "../ui/toast";
@@ -45,6 +42,12 @@ import type { RailsAgent } from "./railsAgents";
 import { useAgentFocusAction } from "./agentFocus";
 import { AGENTS_SECTION_STORAGE_KEY, sidebarAgentJumpKey } from "./sidebarAgentLists";
 import { useSidebarPins } from "./sidebarPins";
+
+const pointerSensorOptions = {
+  distance: SIDEBAR_DRAG_DISTANCE,
+  onAttach: () => {},
+  onFinish: () => {},
+};
 
 export function SidebarAgents({
   onNavigate,
@@ -61,8 +64,11 @@ export function SidebarAgents({
 }) {
   const { toggle, setOrder, showMenu } = useSidebarPins();
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(SidebarPointerSensor, pointerSensorOptions),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+      keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space"] },
+    }),
   );
   const handles = pinned.map((agent) => agent.handle);
   const name = (id: string | number) =>
@@ -192,7 +198,11 @@ function AgentRow(props: {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: agent.handle, disabled: props.muted === true });
+  } = useSortable({
+    id: agent.handle,
+    disabled: props.muted === true,
+    animateLayoutChanges: animateSidebarLayoutChanges,
+  });
   const handleNewThread = useNewThreadHandler();
   const navigate = useNavigate();
   const { openMenu } = useThreadActionMenu({
@@ -245,15 +255,18 @@ function AgentRow(props: {
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "group/agent-row relative flex h-8 items-center rounded-md",
+        "group/agent-row relative flex h-8 cursor-pointer items-center rounded-md select-none",
         props.active ? "bg-sidebar-row-active" : "hover:bg-sidebar-row-hover",
-        isDragging && "z-10 bg-sidebar-row-active",
+        isDragging &&
+          "z-20 bg-sidebar bg-linear-to-b from-sidebar-row-active to-sidebar-row-active text-sidebar-foreground opacity-100 shadow-lg",
       )}
+      onPointerDown={(event) => listeners?.onPointerDown?.(event)}
       onContextMenu={(event) => {
         event.preventDefault();
         showMenu({ x: event.clientX, y: event.clientY });
       }}
       onKeyDown={(event) => {
+        listeners?.onKeyDown?.(event);
         if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
         event.preventDefault();
         const rect = event.currentTarget.getBoundingClientRect();
@@ -263,6 +276,9 @@ function AgentRow(props: {
       {agent.target === null ? (
         <button
           type="button"
+          ref={setActivatorNodeRef}
+          aria-describedby={props.muted ? undefined : attributes["aria-describedby"]}
+          aria-roledescription={props.muted ? undefined : attributes["aria-roledescription"]}
           className={rowClassName}
           onClick={() => {
             if (agent.remoteHost) {
@@ -282,6 +298,10 @@ function AgentRow(props: {
         </button>
       ) : (
         <Link
+          ref={setActivatorNodeRef}
+          draggable={false}
+          aria-describedby={props.muted ? undefined : attributes["aria-describedby"]}
+          aria-roledescription={props.muted ? undefined : attributes["aria-roledescription"]}
           to="/$environmentId/$threadId"
           params={{ environmentId: agent.target.environmentId, threadId: agent.target.threadId }}
           aria-current={props.active ? "page" : undefined}
@@ -291,19 +311,7 @@ function AgentRow(props: {
           {content}
         </Link>
       )}
-      <span className="mr-1 flex shrink-0">
-        {props.muted ? null : (
-          <button
-            type="button"
-            ref={setActivatorNodeRef}
-            {...attributes}
-            {...listeners}
-            aria-label={`Reorder ${agent.name}`}
-            className="inline-flex h-6 w-5 shrink-0 touch-none cursor-grab items-center justify-center overflow-hidden rounded-md text-sidebar-muted-foreground opacity-0 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-focus-within/agent-row:opacity-100 group-hover/agent-row:opacity-100 active:cursor-grabbing"
-          >
-            <GripVerticalIcon aria-hidden className="size-3.5" />
-          </button>
-        )}
+      <span className="mr-1 flex shrink-0" onPointerDown={(event) => event.stopPropagation()}>
         {props.focus ? <AgentRowButton action={props.focus} /> : null}
         <AgentRowButton action={props.toggle} />
       </span>
