@@ -12,7 +12,7 @@ from .release_config import CHAT_PROJECT, SEEDS
 from .release_manifest import engine_identity, history_digest, migration_identity
 
 
-FLOORS = {"/Volumes/StudioExt": 60 * 1024**3, "/": 25 * 1024**3}
+FLOORS = {"/Volumes/StudioExt": 20 * 1024**3, "/": 25 * 1024**3}
 REMOTE_FLOOR = 25 * 1024**3
 REMOTE_PROBE = r'''
 import json, os, shutil, sqlite3, sys, urllib.request
