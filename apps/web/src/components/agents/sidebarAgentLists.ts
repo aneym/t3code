@@ -102,6 +102,7 @@ export function agentFocusAction(
   scope: AgentProjectScope,
   projects: ReadonlyArray<EnvironmentProject>,
 ) {
+  if (agent.homeProjectRefs.length === 0) return null;
   const declared = new Set(agent.projects.map((name) => name.toLowerCase()));
   const projectKeys = new Set([
     ...agent.homeProjectRefs.map(scopedProjectKey),

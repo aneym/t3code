@@ -35,11 +35,21 @@ export function railsAgentThreadKey(thread: EnvironmentThreadShell): string {
   return `${thread.environmentId}:${thread.id}`;
 }
 
-function labelNamesHost(label: string, host: string | null): boolean {
-  if (host === null) return false;
+function environmentForHost(
+  environments: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>,
+  host: string | null,
+): EnvironmentId | undefined {
+  if (host === null) return undefined;
   const wanted = host.toLowerCase();
-  const name = label.toLowerCase();
-  return name === wanted || name.split(/[^a-z0-9-]+/).includes(wanted);
+  const exact = environments.find((env) => env.label.toLowerCase() === wanted);
+  if (exact) return exact.environmentId;
+  const named = environments.filter((env) =>
+    env.label
+      .toLowerCase()
+      .split(/[^a-z0-9-]+/)
+      .includes(wanted),
+  );
+  return named.length === 1 ? named[0]?.environmentId : undefined;
 }
 
 function bindingTime(home: EnvironmentAgentHome): number {
@@ -68,7 +78,7 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
     const binding = winner?.binding;
     const targetEnvironmentId = binding
       ? (environments.find((env) => env.environmentId === binding.environmentId)?.environmentId ??
-        environments.find((env) => labelNamesHost(env.label, binding.host))?.environmentId ??
+        environmentForHost(environments, binding.host) ??
         (binding.environmentId === null && binding.host === null ? winner?.environmentId : null))
       : null;
     const target =
