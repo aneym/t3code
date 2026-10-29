@@ -15,9 +15,8 @@ cleanup_lock() {
   fi
 }
 trap cleanup_lock EXIT
+"$(cd "$(dirname "$0")" && pwd)/keychain-search" remove "$keychain"
 if [ -f "$keychain" ]; then
-  remaining="$(security list-keychains -d user | tr -d '"' | { grep -v -F "$keychain" || [ "$?" = 1 ]; } | tr '\n' ' ')"
-  security list-keychains -d user -s $remaining
   security delete-keychain "$keychain"
 fi
 rm -rf "$dir"

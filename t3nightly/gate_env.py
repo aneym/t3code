@@ -9,9 +9,9 @@ import time
 import urllib.request
 from pathlib import Path
 
-from .codex_isolation import isolated_codex_home
 from .gate_proc import CheckFailed, Deadline, clean_env, run, spawn, stop_group
 from .gate_seed import CACHE_ROOT, populate_home
+from .headless_env import pin_settings, provider_env
 from .io_priority import background_command
 from .live_snapshot import for_run
 
@@ -118,6 +118,7 @@ def start_server(ctx, deadline):
     guard_isolated(ctx.home)
     ctx.port = free_port()
     ctx.origin = "http://127.0.0.1:%d" % ctx.port
+    pin_settings(Path(ctx.home) / "userdata" / "settings.json", ctx.work, ctx.log("security-refusals"))
     ctx.server = spawn(
         [
             ctx.t3,
@@ -133,7 +134,7 @@ def start_server(ctx, deadline):
         ],
         ctx.log("server"),
         cwd=str(ctx.project),
-        env=clean_env({"CODEX_HOME": str(isolated_codex_home(Path(ctx.work) / "codex-home"))}),
+        env=clean_env(provider_env(ctx.work)),
     )
     while True:
         if ctx.server.poll() is not None:

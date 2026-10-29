@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage="usage: keychain-search add|remove KEYCHAIN (edit the user keychain search list and drop engine signing keychains whose file is gone)"
+if [ "${1:-}" = --help ]; then
+  echo "$usage"
+  exit 0
+fi
+[ $# -eq 2 ] && { [ "$1" = add ] || [ "$1" = remove ]; } || { echo "$usage" >&2; exit 2; }
+action="$1"
+keychain="$2"
+listing="$(security list-keychains -d user)"
+[ -n "$listing" ] || { echo "keychain-search: empty user search list; not editing it" >&2; exit 3; }
+kept=()
+while IFS= read -r entry; do
+  entry="${entry#"${entry%%[![:space:]]*}"}"
+  entry="${entry#\"}"
+  entry="${entry%\"}"
+  [ -n "$entry" ] && [ "$entry" != "$keychain" ] || continue
+  case "$entry" in
+    */t3nightly-signing.keychain-db) [ -e "$entry" ] || continue ;;
+  esac
+  kept+=("$entry")
+done <<< "$listing"
+if [ "$action" = add ]; then
+  security list-keychains -d user -s "$keychain" ${kept[@]+"${kept[@]}"}
+else
+  security list-keychains -d user -s ${kept[@]+"${kept[@]}"}
+fi
