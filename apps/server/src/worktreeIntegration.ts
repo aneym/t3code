@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import * as Effect from "effect/Effect";
 
 import type * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -15,19 +17,42 @@ export function makeWorktreeIntegrationCheck(git: GitVcsDriver.GitVcsDriver["Ser
         Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : null)),
         Effect.orElseSucceed(() => null),
       );
-    const merged = yield* run("StorageCleanup.contentMergeTree", [
-      "merge-tree",
-      "--write-tree",
+    const bases = yield* run("StorageCleanup.contentMergeBases", [
+      "merge-base",
+      "--all",
       baseSha,
       headSha,
+    ]);
+    if (bases === null || bases.split(/\r?\n/).length !== 1) return false;
+    const emptyTree = yield* run("StorageCleanup.contentEmptyTree", [
+      "hash-object",
+      "-t",
+      "tree",
+      NodeOS.devNull,
     ]);
     const baseTree = yield* run("StorageCleanup.contentBaseTree", [
       "rev-parse",
       "--verify",
       `${baseSha}^{tree}`,
     ]);
-    const mergedTree = merged?.split(/\r?\n/)[0]?.trim();
-    return /^[0-9a-f]{40,64}$/.test(mergedTree ?? "") && mergedTree === baseTree;
+    if (emptyTree === null || baseTree === null) return false;
+    for (const [ours, theirs] of [
+      [baseSha, headSha],
+      [headSha, baseSha],
+    ] as const) {
+      const merged = yield* run("StorageCleanup.contentMergeTree", [
+        "-c",
+        `core.attributesFile=${NodeOS.devNull}`,
+        `--attr-source=${emptyTree}`,
+        "merge-tree",
+        "--write-tree",
+        "--no-messages",
+        ours,
+        theirs,
+      ]);
+      if (merged?.split(/\r?\n/)[0]?.trim() !== baseTree) return false;
+    }
+    return /^[0-9a-f]{40,64}$/.test(baseTree);
   });
   return Effect.fn("StorageCleanup.worktreeIntegration")(function* (input: {
     readonly repositoryCwd: string;
