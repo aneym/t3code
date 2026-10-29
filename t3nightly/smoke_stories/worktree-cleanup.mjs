@@ -12,9 +12,9 @@ const tree = process.argv[2];
 const home = process.argv[3];
 const out = process.argv[4];
 assert(tree && home && out);
-const build = Number(process.env.T3_SMOKE_VERSION?.match(/\.aneym\.(\d+)$/)?.[1]);
-if (build < 27) {
-  console.log('SKIP: worktree content integration ships in aneym.27');
+const server = process.env.T3_SMOKE_CLI ? await realpath(process.env.T3_SMOKE_CLI) : `${tree}/packages/contracts/src/settings.ts`;
+if (!(await readFile(server)).includes('worktreeContentIntegration')) {
+  console.log(`SKIP: ${server} has no worktreeContentIntegration setting`);
   process.exit(0);
 }
 assert.notEqual(await realpath(home), await realpath(join(homedir(), '.t3')).catch(() => join(homedir(), '.t3')));
