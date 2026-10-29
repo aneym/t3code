@@ -1,4 +1,5 @@
 import json
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -9,11 +10,15 @@ from .rehearsal_sandbox import wait_for
 TERMINAL = ("completed", "failed", "cancelled", "interrupted", "rolled_back")
 
 
+HOLD_S = 600
+
+
 class Workload:
     def __init__(self, sandbox):
         self.sandbox = sandbox
         self.work = {}
         self.before = {}
+        self.held = None
 
     def start(self, name, prompt):
         result = self.sandbox.t3("thread", "start", "--provider", self.sandbox.args.provider, "--model", self.sandbox.args.model, "--title", f"rehearsal {name}", str(self.sandbox.project), prompt, "--json")
@@ -47,8 +52,10 @@ class Workload:
 
     def prepare(self):
         gate = self.sandbox.home / "release-gate"
-        prompt = f"Use Bash in the foreground with a 600000 ms timeout to run exactly: python3 -c \"import os,time; [time.sleep(1) for _ in iter(lambda: os.path.exists('{gate}'), True)]\"\nDo not background it. Do no other work. After it completes reply RELEASED."
+        prompt = f"Use Bash in the foreground with a {HOLD_S * 1000} ms timeout to run exactly: python3 -c \"import os,time; [time.sleep(1) for _ in iter(lambda: os.path.exists('{gate}'), True)]\"\nDo not background it. Do no other work. After it completes reply RELEASED."
         for name in ("active-turn", "snoozed-thread"):
+            if name == "active-turn":
+                self.held = time.monotonic()
             item = self.start(name, prompt)
             wait_for(lambda: self.running(item), self.sandbox.args.chat_timeout, "running provider milestone")
         active = self.work["active-turn"]
@@ -76,6 +83,8 @@ class Workload:
         }
 
     def verify(self):
+        if self.held is None or time.monotonic() - self.held > HOLD_S - 10:
+            raise RuntimeError("active rehearsal hold may have expired before cutover")
         after = self.snapshot()
         if not set(self.before["threads"]).issubset(set(after["threads"])):
             raise ValueError("historical thread identity lost")
