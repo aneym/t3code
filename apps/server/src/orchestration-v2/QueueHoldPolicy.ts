@@ -92,3 +92,28 @@ export function usageLimitHoldsQueue(
       ?.providerInstanceId === providerInstanceId
   );
 }
+
+export function queueReleaseEvents(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  now: DateTime.Utc,
+  release: (run: OrchestrationV2Run) => boolean = () => true,
+) {
+  const queued = projection.runs.filter((run) => run.status === "queued");
+  return queued.length === 0
+    ? [
+        {
+          type: "thread.metadata-updated" as const,
+          threadId: projection.thread.id,
+          occurredAt: now,
+          payload: projection.thread,
+        },
+      ]
+    : queued.filter(release).map((run) => ({
+        type: "run.updated" as const,
+        threadId: projection.thread.id,
+        runId: run.id,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: clearQueueHold(run),
+      }));
+}

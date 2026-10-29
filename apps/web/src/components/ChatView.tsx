@@ -46,7 +46,6 @@ import {
   latestExecutedRun,
   latestRootProviderFailure,
 } from "@t3tools/shared/orchestrationV2ThreadError";
-import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
 import { useWorktreeSetup } from "./chat/useWorktreeSetup";
@@ -235,7 +234,6 @@ import { threadEnvironment, useThreadFamily } from "../state/threads";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
 import {
-  type EnvironmentPresentation,
   useEnvironment,
   useEnvironmentProviders,
   useEnvironments,
@@ -355,7 +353,6 @@ import { ChatRightPanel } from "./chat/ChatRightPanel";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { branchMismatchBannerItem } from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
-import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { useDelayedStatus } from "../hooks/useDelayedStatus";
 import { useTimelineFollow } from "./chat/useTimelineFollow";
 import {
@@ -371,17 +368,17 @@ import {
   makeThreadErrorSetter,
 } from "./ChatView.logic";
 
-const EMPTY_PROVIDERS: ServerProvider[] = [];
-const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
-const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
+import {
+  EMPTY_PROVIDERS,
+  EMPTY_PROVIDER_MODELS,
+  EMPTY_USAGE_LIMIT_SOURCES,
+  EMPTY_FEEDBACK_SUBMISSIONS,
+  EMPTY_PROVIDER_SKILLS,
+  EMPTY_TURN_ITEMS,
+  EMPTY_AUTO_UPDATE_ENVIRONMENTS,
+  EMPTY_PENDING_FILE_SURFACE_IDS,
+} from "./chat/chatViewDefaults";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
-
-const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
-const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
-const EMPTY_TURN_ITEMS: ThreadStructure["turnItems"] = [];
-const EMPTY_AUTO_UPDATE_ENVIRONMENTS: ReadonlyArray<EnvironmentPresentation> = [];
-
-const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 
 type ChatViewProps =
   | {
@@ -2671,6 +2668,8 @@ export default function ChatView(props: ChatViewProps) {
         const next = logicalProjectEnvironments[(index + 1) % logicalProjectEnvironments.length];
         if (next) onEnvironmentChangeStable(next.environmentId);
       },
+      "thread.sendAllQueued": ({ event }) =>
+        queuedRunsControlRef.current?.sendAll(event.repeat) === true,
       "thread.steerQueuedMessage": ({ event }) =>
         routeKind !== "draft" && queuedRunsControlRef.current?.steerNext(event.repeat) === true,
       "thread.editQueuedMessage": ({ event }) =>

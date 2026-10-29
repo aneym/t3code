@@ -1,6 +1,7 @@
 import {
   type ChatAttachment,
   isCompactionCommandMessage,
+  parseGoalCommand,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
@@ -40,6 +41,7 @@ export interface ThreadQueueWorkflowState {
   /** The active run is a compaction, so promoting a queued message stops it instead of steering. */
   readonly promoteSkipsCompaction: boolean;
   readonly canSendNow: boolean;
+  readonly canSendAll?: boolean;
 }
 
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
@@ -176,19 +178,34 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     };
   });
 
+  const canSendNow =
+    activeRun === null &&
+    projection.thread.archivedAt == null &&
+    projection.thread.deletedAt == null;
+  const canPromoteToSteer =
+    promoteSkipsCompaction ||
+    (hasSteerableProviderTurn &&
+      (capabilities?.supportsActiveSteering === true ||
+        capabilities?.supportsSteeringByInterruptRestart === true));
+  const eligible = queuedRuns.filter(
+    ({ run, message }) =>
+      message !== undefined &&
+      run.restartContinuationOfRunId === undefined &&
+      run.delegatedTaskId === undefined &&
+      run.sourcePlanRef === undefined &&
+      !message.workflowScript &&
+      message.scheduledTaskId === undefined &&
+      message.idleCompaction === undefined &&
+      !message.text.trimStart().startsWith("/") &&
+      parseGoalCommand(message) === null,
+  );
   return {
     activeRun,
     queuedRuns,
+    canSendAll: eligible.length >= 2 && (canSendNow || canPromoteToSteer),
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
-    canSendNow:
-      activeRun === null &&
-      projection.thread.archivedAt == null &&
-      projection.thread.deletedAt == null,
-    canPromoteToSteer:
-      promoteSkipsCompaction ||
-      (hasSteerableProviderTurn &&
-        (capabilities?.supportsActiveSteering === true ||
-          capabilities?.supportsSteeringByInterruptRestart === true)),
+    canSendNow,
+    canPromoteToSteer,
     promoteSkipsCompaction,
   };
 }

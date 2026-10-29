@@ -1,3 +1,4 @@
+import { queueSettingsSearch } from "./queueSettingsSearch";
 import { HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
@@ -617,13 +618,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
     searchTerms: ["automation sidebar placement webhook scheduled event"],
   },
-  {
-    id: "batch-queued-messages",
-    title: "Send queued messages together",
-    to: "/settings/chat",
-    scope: "environment-defaults",
-    searchTerms: ["queue queued messages batch combine together one turn release drain follow up"],
-  },
+  ...queueSettingsSearch,
   {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
