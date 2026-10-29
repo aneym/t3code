@@ -3724,30 +3724,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
-  const removeCreatedBranch = Effect.fn("removeCreatedBranch")(function* (
-    cwd: string,
-    branch: string,
-    commit: string,
-  ) {
-    const checkout = yield* executeGit("GitVcsDriver.createWorktree.inspectCreatedBranch", cwd, [
-      "for-each-ref",
-      "--format=%(worktreepath)",
-      `refs/heads/${branch}`,
-    ]);
-    if (checkout.stdout.trim() !== "") return;
-    yield* executeGit("GitVcsDriver.createWorktree.removeCreatedBranch", cwd, [
-      "update-ref",
-      "-d",
-      `refs/heads/${branch}`,
-      commit,
-    ]);
-    yield* executeGit(
-      "GitVcsDriver.createWorktree.removeCreatedBranchConfig",
-      cwd,
-      ["config", "--remove-section", `branch.${branch}`],
-      { allowNonZeroExit: true, writesSharedConfig: true },
-    );
-  }, Effect.ignore);
+  const removeCreatedBranch = Effect.fn("removeCreatedBranch")(
+    function* (cwd: string, branch: string, commit: string) {
+      const checkout = yield* executeGit("GitVcsDriver.createWorktree.inspectCreatedBranch", cwd, [
+        "for-each-ref",
+        "--format=%(worktreepath)",
+        `refs/heads/${branch}`,
+      ]);
+      if (checkout.stdout.trim() !== "") return;
+      yield* executeGit("GitVcsDriver.createWorktree.removeCreatedBranch", cwd, [
+        "update-ref",
+        "-d",
+        `refs/heads/${branch}`,
+        commit,
+      ]);
+      yield* executeGit(
+        "GitVcsDriver.createWorktree.removeCreatedBranchConfig",
+        cwd,
+        ["config", "--remove-section", `branch.${branch}`],
+        { allowNonZeroExit: true, writesSharedConfig: true },
+      );
+    },
+    (effect) => Effect.ignore(effect),
+  );
 
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
