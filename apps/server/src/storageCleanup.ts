@@ -984,6 +984,8 @@ const make = Effect.gen(function* () {
               head.commitSha
             )
               return "commit changed since check";
+            const personal = yield* trash.personalStateReason(worktreePath);
+            if (personal !== null) return personal;
             return yield* localChangesReason(worktreePath, settings);
           }),
         );

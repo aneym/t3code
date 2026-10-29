@@ -102,11 +102,9 @@ export const makeWorktreeTrash = Effect.gen(function* () {
               .join("\n");
             for (const entry of entries)
               yield* fs.writeFileString(path.join(entry, RECOVERY_FAILED), `${pending}\n`);
-            if (yield* fs.exists(path.join(input.adminDir, "locked"))) return "worktree is locked";
-            const personal = yield* personalStateReason(input.worktreePath);
-            if (personal !== null) return personal;
             const reason = yield* input.blocked();
             if (reason !== null) return reason;
+            if (yield* fs.exists(path.join(input.adminDir, "locked"))) return "worktree is locked";
             for (const part of parts) {
               yield* fs.rename(part.from, part.to);
               part.moved = true;

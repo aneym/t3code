@@ -1603,6 +1603,47 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live.each(["excluded local state", "a worktree lock"])(
+    "keeps %s added while the last thread checks run",
+    (state) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          let worktreePath = "";
+          let prepared = false;
+          const { service, worktree, command, setBeforeProjects } = yield* cleanupFixture().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              writeFileString: (target, data, options) => {
+                if (target.endsWith("recovery-failed.txt") && worktreePath !== "") prepared = true;
+                return fs.writeFileString(target, data, options);
+              },
+            }),
+          );
+          const exclude = yield* command(worktree, [
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "info/exclude",
+          ]);
+          yield* fs.writeFileString(exclude.stdout.trim(), ".lane/\n");
+          worktreePath = worktree;
+          const add =
+            state === "a worktree lock"
+              ? command(worktree, ["worktree", "lock", worktree])
+              : fs
+                  .makeDirectory(`${worktree}/.lane`, { recursive: true })
+                  .pipe(Effect.andThen(fs.writeFileString(`${worktree}/.lane/notes`, "x")));
+          setBeforeProjects(() => {
+            if (!prepared) return Effect.void;
+            prepared = false;
+            return add.pipe(Effect.asVoid, Effect.orDie);
+          });
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+          expect(yield* fs.exists(`${worktree}/tracked.txt`)).toBe(true);
+        }),
+      ),
+  );
   it.live("keeps a worktree another repository checked out at the same path", () =>
     runCleanupTest(
       Effect.gen(function* () {
