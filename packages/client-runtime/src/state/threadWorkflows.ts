@@ -1,7 +1,7 @@
+import { sendAllQueuedMembers } from "@t3tools/shared/queuedMessages";
 import {
   type ChatAttachment,
   isCompactionCommandMessage,
-  parseGoalCommand,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
@@ -187,19 +187,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     (hasSteerableProviderTurn &&
       (capabilities?.supportsActiveSteering === true ||
         capabilities?.supportsSteeringByInterruptRestart === true));
-  const eligible = queuedRuns.filter(
-    ({ run, message, isBackgroundResult }) =>
-      !isBackgroundResult &&
-      message !== undefined &&
-      run.restartContinuationOfRunId === undefined &&
-      run.delegatedTaskId === undefined &&
-      run.sourcePlanRef === undefined &&
-      !message.workflowScript &&
-      message.scheduledTaskId === undefined &&
-      message.idleCompaction === undefined &&
-      !message.text.trimStart().startsWith("/") &&
-      parseGoalCommand(message) === null,
-  );
+  const eligible = sendAllQueuedMembers(projection);
   return {
     activeRun,
     queuedRuns,
@@ -216,6 +204,13 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     canPromoteToSteer,
     promoteSkipsCompaction,
   };
+}
+
+export function canSendAllQueued(
+  workflow: ThreadQueueWorkflowState | null | undefined,
+  editing: boolean,
+): boolean {
+  return !editing && workflow?.canSendAll === true;
 }
 
 export function describeSendAllQueued(workflow: ThreadQueueWorkflowState): string {

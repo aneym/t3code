@@ -1,7 +1,9 @@
+import { useHasQueuedRunEdit } from "./useQueuedRunEdit";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   deriveThreadQueueWorkflowState,
+  canSendAllQueued,
   describeSendAllQueued,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import { SendIcon } from "lucide-react";
@@ -21,10 +23,13 @@ export function useQueueActions(
     thread === null ? null : scopeThreadRef(thread.environmentId, thread.id),
   )?.projection;
   const config = useServerConfigs().get(thread?.environmentId ?? ("" as EnvironmentId));
+  const editing = useHasQueuedRunEdit(
+    thread === null ? null : scopeThreadRef(thread.environmentId, thread.id),
+  );
   const sendAll = useAtomCommand(threadEnvironment.sendAllQueuedRuns);
   if (thread === null || !config?.settings.queueSendAll || !projection) return [];
   const workflow = deriveThreadQueueWorkflowState(projection);
-  if (!workflow.canSendAll) return [];
+  if (!canSendAllQueued(workflow, editing)) return [];
   return [
     {
       kind: "action",

@@ -1,5 +1,4 @@
 import {
-  parseGoalCommand,
   type NodeId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
@@ -7,12 +6,13 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import {
+  batchableQueuedMessage as batchableMessage,
+  compatibleQueuedRuns,
+  MAX_QUEUED_MESSAGE_BATCH_SIZE as MAX_BATCH_SIZE,
+} from "@t3tools/shared/queuedMessages";
 
-import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
-
-export const MAX_BATCH_SIZE = 20;
 
 export interface QueuedRunBatchMember {
   readonly run: OrchestrationV2Run;
@@ -25,35 +25,6 @@ type DraftEvent = OrchestrationV2DomainEvent extends infer Event
     ? Omit<Event, "id">
     : never
   : never;
-
-export function batchableMessage(
-  projection: Pick<OrchestrationV2ThreadProjection, "messages">,
-  run: OrchestrationV2Run,
-): OrchestrationV2ConversationMessage | undefined {
-  if (
-    run.status !== "queued" ||
-    run.queueHeld === true ||
-    run.restartContinuationOfRunId !== undefined ||
-    run.delegatedTaskId !== undefined ||
-    run.sourcePlanRef !== undefined
-  ) {
-    return undefined;
-  }
-  const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-  if (
-    message === undefined ||
-    message.notification !== undefined ||
-    message.workflowScript === true ||
-    message.scheduledTaskId !== undefined ||
-    message.idleCompaction !== undefined ||
-    message.text.trimStart().startsWith("/") ||
-    isNativeMaintenanceCommand(message) ||
-    parseGoalCommand(message) !== null
-  ) {
-    return undefined;
-  }
-  return message;
-}
 
 function changesConversation(
   projection: Pick<OrchestrationV2ThreadProjection, "messages">,
@@ -81,11 +52,7 @@ export function queuedRunBatch(
       if (!explicitRelease && changesConversation(projection, run)) break;
       continue;
     }
-    if (
-      run.providerInstanceId === first.providerInstanceId &&
-      modelSelectionsEqual(run.modelSelection, first.modelSelection) &&
-      run.workspacePreparation?.type === first.workspacePreparation?.type
-    ) {
+    if (compatibleQueuedRuns(first, run)) {
       members.push({ run, message });
     }
   }
@@ -104,6 +71,8 @@ export function foldedQueuedTurnItems(
       (item): item is UserTurnItem =>
         item.type === "user_message" &&
         item.runId === run.id &&
+        firstItem !== undefined &&
+        item.nodeId === firstItem.nodeId &&
         (item.parentItemId === firstItem?.id ||
           (item.parentItemId === null && item.inputIntent === "queued_turn")) &&
         item.messageId !== run.userMessageId,
