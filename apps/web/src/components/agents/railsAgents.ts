@@ -42,8 +42,8 @@ function environmentForHost(
 ): EnvironmentId | undefined {
   if (host === null) return undefined;
   const wanted = host.toLowerCase();
-  const exact = environments.find((env) => env.label.toLowerCase() === wanted);
-  if (exact) return exact.environmentId;
+  const exact = environments.filter((env) => env.label.toLowerCase() === wanted);
+  if (exact.length > 0) return exact.length === 1 ? exact[0]?.environmentId : undefined;
   const named = environments.filter((env) =>
     env.label
       .toLowerCase()
