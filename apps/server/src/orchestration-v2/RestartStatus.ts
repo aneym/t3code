@@ -7,7 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { restartSourceSupersededAtDispatch } from "./RestartDispatchPolicy.ts";
+import { restartDispatchRefusal } from "./RestartDispatchPolicy.ts";
 
 const endedOnItsOwn = (status: OrchestrationV2Run["status"]) =>
   status === "failed" || status === "interrupted" || status === "rolled_back";
@@ -16,14 +16,27 @@ export const restartStatus = Effect.fn("RestartStatus.read")(
   function* (epoch: string) {
     const outbox = yield* EffectOutbox.EffectOutboxV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const effects = yield* outbox.listByCommandId(
-      CommandId.make(`command:restart-handoff:${epoch}`),
+    const { effects, preparedHandoffs, projectionsByThread } = yield* outbox.withTransaction(
+      Effect.gen(function* () {
+        const effects = yield* outbox.listByCommandId(
+          CommandId.make(`command:restart-handoff:${epoch}`),
+        );
+        const preparedHandoffs = yield* outbox.restartHandoffs;
+        const projectionsByThread = new Map(
+          yield* Effect.forEach(new Set(effects.map((effect) => effect.threadId)), (threadId) =>
+            projections
+              .getThreadProjection(threadId)
+              .pipe(Effect.map((projection) => [threadId, projection] as const)),
+          ),
+        );
+        return { effects, preparedHandoffs, projectionsByThread };
+      }),
     );
-    const preparedHandoffs = yield* outbox.restartHandoffs;
     const threads: ServerRestartStatus["threads"][number][] = [];
     for (const effect of effects) {
       if (effect.request.type !== "provider-runtime.restart-handoff") continue;
-      const projection = yield* projections.getThreadProjection(effect.threadId);
+      const projection = projectionsByThread.get(effect.threadId);
+      if (projection === undefined) continue;
       const handoff = effect.request.handoff;
       const sources: ServerRestartStatus["threads"][number]["sources"][number][] = (
         handoff.sourceRunIds ?? handoff.runIds
@@ -60,12 +73,12 @@ export const restartStatus = Effect.fn("RestartStatus.read")(
         if (source?.status === "completed") return { sourceRunId, state: "completed" };
         if (source !== undefined && endedOnItsOwn(source.status))
           return { sourceRunId, state: "completed", reason: source.status };
-        if (
-          source?.status === "cancelled" &&
-          restartSourceSupersededAtDispatch(projection, source, preparedHandoffs)
-        )
-          return { sourceRunId, state: "completed", reason: "superseded" };
-        return { sourceRunId, state: "pending" };
+        if (source !== undefined && source.status !== "cancelled")
+          return { sourceRunId, state: "pending" };
+        const refusal = restartDispatchRefusal(projection, sourceRunId, preparedHandoffs);
+        return refusal === undefined
+          ? { sourceRunId, state: "pending" }
+          : { sourceRunId, state: "completed", reason: refusal };
       });
       const queueIds = new Set([
         ...handoff.queuedRunIds,

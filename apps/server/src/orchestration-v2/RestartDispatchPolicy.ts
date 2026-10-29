@@ -57,13 +57,49 @@ function restartDispatchPreparation(
   return { prepared, covered };
 }
 
-export function restartSourceSupersededAtDispatch(
+export type RestartDispatchRefusal =
+  | "source_missing"
+  | "human_review_required"
+  | "continued"
+  | "not_restartable"
+  | "archived"
+  | "deleted"
+  | "provider_changed"
+  | "superseded";
+
+export function restartDispatchRefusal(
   projection: DispatchProjection,
-  source: OrchestrationV2Run,
+  sourceRunId: RunId,
   preparedHandoffs: ReadonlyArray<OrchestrationEffectV2>,
-) {
-  const { prepared, covered } = restartDispatchPreparation(projection, source.id, preparedHandoffs);
-  return restartSourceSuperseded(projection.runs, source, prepared ? covered : undefined);
+): RestartDispatchRefusal | undefined {
+  const source = projection.runs.find((run) => run.id === sourceRunId);
+  if (source === undefined) return "source_missing";
+  const { prepared, covered } = restartDispatchPreparation(
+    projection,
+    sourceRunId,
+    preparedHandoffs,
+  );
+  if (
+    projection.runtimeRequests.some(
+      (request) =>
+        request.status === "pending" && request.restartContinuationRunIds?.includes(sourceRunId),
+    )
+  )
+    return "human_review_required";
+  if (projection.runs.some((run) => run.restartContinuationOfRunId === source.id))
+    return "continued";
+  if (
+    !(prepared
+      ? source.status === "cancelled"
+      : isRestartContinuationSource(source, projection.providerTurns))
+  )
+    return "not_restartable";
+  if (projection.thread.archivedAt !== null) return "archived";
+  if (projection.thread.deletedAt !== null) return "deleted";
+  if (projection.thread.providerInstanceId !== source.providerInstanceId) return "provider_changed";
+  if (restartSourceSuperseded(projection.runs, source, prepared ? covered : undefined))
+    return "superseded";
+  return undefined;
 }
 
 export function restartDispatchAllowed(
@@ -71,21 +107,5 @@ export function restartDispatchAllowed(
   sourceRunId: RunId,
   preparedHandoffs: ReadonlyArray<OrchestrationEffectV2>,
 ) {
-  const source = projection.runs.find((run) => run.id === sourceRunId);
-  const { prepared } = restartDispatchPreparation(projection, sourceRunId, preparedHandoffs);
-  return (
-    source !== undefined &&
-    !projection.runtimeRequests.some(
-      (request) =>
-        request.status === "pending" && request.restartContinuationRunIds?.includes(sourceRunId),
-    ) &&
-    !projection.runs.some((run) => run.restartContinuationOfRunId === source.id) &&
-    (prepared
-      ? source.status === "cancelled"
-      : isRestartContinuationSource(source, projection.providerTurns)) &&
-    projection.thread.archivedAt === null &&
-    projection.thread.deletedAt === null &&
-    projection.thread.providerInstanceId === source.providerInstanceId &&
-    !restartSourceSupersededAtDispatch(projection, source, preparedHandoffs)
-  );
+  return restartDispatchRefusal(projection, sourceRunId, preparedHandoffs) === undefined;
 }
