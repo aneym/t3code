@@ -1,4 +1,9 @@
-import type { OrchestrationV2Run, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import {
+  resolveProviderInstanceEnabled,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 
@@ -91,4 +96,18 @@ export function usageLimitHoldsQueue(
     usageLimitBlockedRun(projection.runs, projection.turnItems, latestSession?.lastError ?? null)
       ?.providerInstanceId === providerInstanceId
   );
+}
+
+export function providerInstanceDisabledForProject(
+  settings: Pick<ServerSettings, "projectSettingsOverrides" | "providerInstances">,
+  projectId: OrchestrationV2ThreadProjection["thread"]["projectId"],
+  providerInstanceId: OrchestrationV2Run["providerInstanceId"],
+): boolean {
+  const projectOverride =
+    settings.projectSettingsOverrides[projectId]?.providerInstances?.[providerInstanceId]?.enabled;
+  if (projectOverride !== undefined) return !projectOverride;
+  const machineInstance = Object.hasOwn(settings.providerInstances, providerInstanceId)
+    ? settings.providerInstances[providerInstanceId]
+    : undefined;
+  return machineInstance !== undefined && !resolveProviderInstanceEnabled(machineInstance);
 }

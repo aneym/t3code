@@ -19,6 +19,7 @@ import {
   releasesQueueHoldAtRunEnd,
   stoppedQueueHold,
   usageLimitHoldsQueue,
+  providerInstanceDisabledForProject,
 } from "./QueueHoldPolicy.ts";
 import type {
   GuestShareId,
@@ -80,7 +81,6 @@ import {
   parseGoalCommand,
   ProviderInstanceId,
   ProviderInteractionMode,
-  resolveProviderInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
   type ProviderSessionId,
   RunId,
@@ -1461,20 +1461,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         failedRun.status !== "completed" &&
         projection.thread.worktreePath === null;
       const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
-      const projectOverride =
-        settings.projectSettingsOverrides[projection.thread.projectId]?.providerInstances?.[
-          queuedRun.providerInstanceId
-        ]?.enabled;
-      const machineInstance = Object.hasOwn(
-        settings.providerInstances,
+      const instanceDisabledForProject = providerInstanceDisabledForProject(
+        settings,
+        projection.thread.projectId,
         queuedRun.providerInstanceId,
-      )
-        ? settings.providerInstances[queuedRun.providerInstanceId]
-        : undefined;
-      const instanceDisabledForProject =
-        projectOverride !== undefined
-          ? !projectOverride
-          : machineInstance !== undefined && !resolveProviderInstanceEnabled(machineInstance);
+      );
       if (
         worktreeMissing ||
         instanceDisabledForProject ||

@@ -10,6 +10,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import { providerInstanceDisabledForProject } from "./QueueHoldPolicy.ts";
 import { queuedMessageSender } from "./QueuedRunBatch.ts";
 import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 
@@ -23,7 +24,10 @@ export function isQueuedInputRelease(command: OrchestrationV2ServerCommand) {
   return command.type === "runtime-request.respond" && command.commandId.startsWith(commandPrefix);
 }
 
-function pendingInputQueueRelease(projection: Projection) {
+function pendingInputQueueRelease(
+  projection: Projection,
+  settings: Parameters<typeof providerInstanceDisabledForProject>[0],
+) {
   if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return [];
   const active = projection.runs.findLast(
     (run) => run.status === "running" || run.status === "waiting",
@@ -33,7 +37,12 @@ function pendingInputQueueRelease(projection: Projection) {
   if (
     queued.length === 0 ||
     queued.some((run) => run.queueHeld === true) ||
-    queued[0]?.providerInstanceId !== active.providerInstanceId
+    queued[0]?.providerInstanceId !== active.providerInstanceId ||
+    providerInstanceDisabledForProject(
+      settings,
+      projection.thread.projectId,
+      active.providerInstanceId,
+    )
   )
     return [];
   const senders = [
@@ -83,9 +92,10 @@ export const makePendingInputQueueRelease = Effect.fn("Orchestrator.makePendingI
     const releaseCommands = Effect.fn("Orchestrator.pendingInputQueueReleaseCommands")(function* (
       threadId: ThreadId,
     ) {
+      const current = yield* settings.getSettings;
       if (
         (yield* outbox.restartPrepared) !== undefined ||
-        !(yield* settings.getSettings).queuedMessagesAnswerPendingInput
+        !current.queuedMessagesAnswerPendingInput
       )
         return [];
       const pending = yield* projections.getThreadRecords(threadId, ["runtimeRequests"]);
@@ -103,7 +113,10 @@ export const makePendingInputQueueRelease = Effect.fn("Orchestrator.makePendingI
         ["runs", "messages", "nodes", "turnItems"],
         { messageRoles: ["user"], turnItemTypes: ["user_input_request"] },
       );
-      return pendingInputQueueRelease({ ...records, runtimeRequests: pending.runtimeRequests });
+      return pendingInputQueueRelease(
+        { ...records, runtimeRequests: pending.runtimeRequests },
+        current,
+      );
     });
     const isDue = Effect.fn("Orchestrator.isPendingInputQueueReleaseDue")(function* (
       command: OrchestrationV2ServerCommand,
