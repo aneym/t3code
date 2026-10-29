@@ -16,7 +16,10 @@ export class WorktreeTransfer extends Context.Service<
     readonly remoteBranchesContaining: (
       cwd: string,
       commit: string,
-    ) => Effect.Effect<ReadonlyArray<string>, GitCommandError>;
+    ) => Effect.Effect<
+      ReadonlyArray<{ readonly name: string; readonly commit: string }>,
+      GitCommandError
+    >;
     readonly resolveBase: (
       cwd: string,
     ) => Effect.Effect<
@@ -27,6 +30,7 @@ export class WorktreeTransfer extends Context.Service<
       readonly worktreePath: string;
       readonly branch: string;
       readonly bases: ReadonlyArray<string>;
+      readonly branches: ReadonlyArray<string>;
     }) => Effect.Effect<WorktreeMcpExportResult, WorktreeTransferError>;
     readonly importBranch: (input: {
       readonly cwd: string;
@@ -77,11 +81,17 @@ const make = Effect.gen(function* () {
       "for-each-ref",
       "--contains",
       commit,
-      "--format=%(refname:short)",
+      "--format=%(objectname) %(refname:short)",
       "refs/remotes",
     ]).pipe(
       Effect.map((stdout) =>
-        (stdout ?? "").split("\n").filter((ref) => ref.length > 0 && !ref.endsWith("/HEAD")),
+        (stdout ?? "")
+          .split("\n")
+          .map((line) => {
+            const [commit = "", name = ""] = line.split(" ");
+            return { commit, name };
+          })
+          .filter(({ name }) => name.length > 0 && !name.endsWith("/HEAD")),
       ),
     );
 
@@ -102,14 +112,14 @@ const make = Effect.gen(function* () {
       "@{upstream}",
     ]);
     const containing = yield* remoteBranchesContaining(cwd, commit);
-    const fetchable =
-      upstream !== null && containing.includes(upstream) ? upstream : (containing[0] ?? null);
+    const names = containing.map(({ name }) => name);
+    const fetchable = upstream !== null && names.includes(upstream) ? upstream : (names[0] ?? null);
     return { commit, fetchable };
   });
 
   const exportBranch: WorktreeTransfer["Service"]["exportBranch"] = Effect.fn(
     "WorktreeTransfer.exportBranch",
-  )(function* ({ worktreePath, branch, bases }) {
+  )(function* ({ worktreePath, branch, bases, branches }) {
     const cwd = worktreePath;
     const headCommit = yield* required(
       "export.head",
@@ -118,14 +128,16 @@ const make = Effect.gen(function* () {
       "No commit",
       false,
     );
-    const forks = (yield* Effect.forEach(bases, (base) =>
-      run("export.base", cwd, ["merge-base", base, headCommit]).pipe(
-        Effect.mapError((cause) => transferError(cause.message)),
-      ),
-    )).filter((fork): fork is string => fork !== null);
-    if (forks.length === 0)
+    const forksOf = (refs: ReadonlyArray<string>) =>
+      Effect.forEach(refs, (ref) =>
+        run("export.base", cwd, ["merge-base", ref, headCommit]).pipe(
+          Effect.mapError((cause) => transferError(cause.message)),
+        ),
+      ).pipe(Effect.map((forks) => forks.filter((fork): fork is string => fork !== null)));
+    const had = yield* forksOf(bases);
+    if (had.length === 0)
       return yield* transferError(`None of ${bases.join(", ")} is in this repository`, false);
-    const counted = yield* Effect.forEach(forks, (fork) =>
+    const counted = yield* Effect.forEach([...had, ...(yield* forksOf(branches))], (fork) =>
       required(
         "export.count",
         cwd,
@@ -136,7 +148,7 @@ const make = Effect.gen(function* () {
     const { fork: baseCommit, count: commitCount } = counted.reduce((best, next) =>
       next.count < best.count ? next : best,
     );
-    const exclude = forks.map((fork) => `^${fork}`);
+    const exclude = had.map((fork) => `^${fork}`);
     const uncommitted =
       ((yield* run("export.status", cwd, ["status", "--porcelain"]).pipe(
         Effect.orElseSucceed(() => null),
@@ -195,6 +207,13 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const file = yield* fs.makeTempFileScoped({ prefix: "t3-worktree-import-" });
         yield* fs.writeFile(file, Buffer.from(exported.bundle, "base64"));
+        yield* required(
+          "import.verify",
+          cwd,
+          ["bundle", "verify", "--quiet", file],
+          "This checkout lacks a commit the bundle builds on",
+          false,
+        );
         yield* required(
           "import.fetch",
           cwd,
