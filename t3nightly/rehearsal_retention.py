@@ -65,8 +65,7 @@ def live_references():
         except FileNotFoundError:
             continue
         except PermissionError:
-            if mine and os.lstat(proc / "cwd").st_uid == os.getuid():
-                raise
+            continue
         except OSError:
             if mine:
                 raise
