@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 
@@ -16,11 +17,7 @@ import { mcpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
 import * as CliAuthRuntime from "./cliAuthRuntime.ts";
 
 const CACHE_FILE_NAME = "thread-cli-session.json";
-const LOCK_FILE_NAME = "thread-cli-session.lock";
 const REFRESH_BEFORE_EXPIRY = Duration.minutes(5);
-const LOCK_WAIT = Duration.seconds(15);
-const LOCK_POLL = Duration.millis(100);
-const LOCK_STALE_AFTER = Duration.seconds(60);
 
 const CachedCredential = Schema.Struct({
   sessionId: AuthSessionId,
@@ -68,7 +65,7 @@ const writeCredential = Effect.fn("cli.thread.session.writeCache")(function* (
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const tempPath = `${cachePath}.${yield* randomId}.tmp`;
-  return yield* Effect.gen(function* () {
+  yield* Effect.gen(function* () {
     yield* Effect.scoped(
       Effect.gen(function* () {
         const file = yield* fileSystem.open(tempPath, { flag: "wx", mode: 0o600 });
@@ -77,91 +74,10 @@ const writeCredential = Effect.fn("cli.thread.session.writeCache")(function* (
     );
     yield* fileSystem.chmod(tempPath, 0o600);
     yield* fileSystem.rename(tempPath, cachePath);
-    return true;
   }).pipe(
     Effect.ensuring(fileSystem.remove(tempPath, { force: true }).pipe(Effect.ignore)),
-    Effect.tapError((cause) =>
-      Effect.logDebug("Could not cache the thread CLI session", { cause }),
-    ),
-    Effect.orElseSucceed(() => false),
+    Effect.ignore,
   );
-});
-
-type LockAttempt = "taken" | "busy" | "unavailable";
-
-const readLock = (lockPath: string) =>
-  FileSystem.FileSystem.pipe(
-    Effect.flatMap((fileSystem) => fileSystem.readFileString(lockPath)),
-    Effect.option,
-  );
-
-const takeOverStaleLock = Effect.fn("cli.thread.session.takeOverStaleLock")(function* (
-  lockPath: string,
-  staleOwner: string,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const asidePath = `${lockPath}.${yield* randomId}.stale`;
-  const moved = yield* fileSystem.rename(lockPath, asidePath).pipe(
-    Effect.as(true),
-    Effect.orElseSucceed(() => false),
-  );
-  if (!moved) return;
-  const movedOwner = yield* readLock(asidePath);
-  if (!Option.contains(movedOwner, staleOwner)) {
-    yield* fileSystem.link(asidePath, lockPath).pipe(Effect.ignore);
-  }
-  yield* fileSystem.remove(asidePath, { force: true }).pipe(Effect.ignore);
-});
-
-const tryTakeLock = Effect.fn("cli.thread.session.tryTakeLock")(function* (
-  lockPath: string,
-  owner: string,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const attempt: LockAttempt = yield* fileSystem
-    .writeFileString(lockPath, owner, { flag: "wx", mode: 0o600 })
-    .pipe(
-      Effect.as<LockAttempt>("taken"),
-      Effect.catchReason("PlatformError", "AlreadyExists", () =>
-        Effect.succeed<LockAttempt>("busy"),
-      ),
-      Effect.orElseSucceed((): LockAttempt => "unavailable"),
-    );
-  if (attempt !== "busy") return attempt;
-  const currentOwner = yield* readLock(lockPath);
-  const now = yield* Clock.currentTimeMillis;
-  const info = yield* fileSystem.stat(lockPath).pipe(Effect.option);
-  const stale = Option.exists(
-    Option.flatMap(info, (stat) => stat.mtime),
-    (mtime) => now - mtime.getTime() > Duration.toMillis(LOCK_STALE_AFTER),
-  );
-  if (stale && Option.isSome(currentOwner)) {
-    yield* takeOverStaleLock(lockPath, currentOwner.value);
-  }
-  return attempt;
-});
-
-const acquireLock = Effect.fn("cli.thread.session.acquireLock")(function* (
-  lockPath: string,
-  owner: string,
-) {
-  const deadline = (yield* Clock.currentTimeMillis) + Duration.toMillis(LOCK_WAIT);
-  while ((yield* Clock.currentTimeMillis) < deadline) {
-    const attempt = yield* tryTakeLock(lockPath, owner);
-    if (attempt !== "busy") return attempt === "taken";
-    yield* Effect.sleep(LOCK_POLL);
-  }
-  return false;
-});
-
-const releaseLock = Effect.fn("cli.thread.session.releaseLock")(function* (
-  lockPath: string,
-  owner: string,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  if (Option.contains(yield* readLock(lockPath), owner)) {
-    yield* fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore);
-  }
 });
 
 const mint = Effect.fn("cli.thread.session.mint")(function* (
@@ -184,25 +100,6 @@ const mint = Effect.fn("cli.thread.session.mint")(function* (
 const revoke = (config: ServerConfig.ServerConfig["Service"], sessionId: AuthSessionId) =>
   withAuth(config, (auth) => auth.revokeSession(sessionId)).pipe(Effect.ignore({ log: true }));
 
-const refreshCached = Effect.fn("cli.thread.session.refresh")(function* (
-  config: ServerConfig.ServerConfig["Service"],
-  cachePath: string,
-  replaced: Option.Option<AuthSessionId>,
-) {
-  const current = yield* readCredential(cachePath);
-  if (
-    Option.isSome(current) &&
-    !Option.contains(replaced, current.value.sessionId) &&
-    (yield* isUsable(current.value))
-  ) {
-    return { credential: current.value, cached: true };
-  }
-  const credential = yield* mint(config);
-  const cached = yield* writeCredential(cachePath, credential);
-  if (Option.isSome(replaced)) yield* revoke(config, replaced.value);
-  return { credential, cached };
-});
-
 const openSession = (endpoint: string, token: string) =>
   mcpToolSession({
     endpoint,
@@ -217,7 +114,6 @@ export const openThreadCliSession = Effect.fn("cli.thread.session.open")(functio
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cachePath = path.join(config.secretsDir, CACHE_FILE_NAME);
-  const lockPath = path.join(config.secretsDir, LOCK_FILE_NAME);
   const cached = yield* readCredential(cachePath);
   if (Option.isSome(cached) && (yield* isUsable(cached.value))) {
     const session = yield* openSession(endpoint, cached.value.token).pipe(
@@ -230,22 +126,22 @@ export const openThreadCliSession = Effect.fn("cli.thread.session.open")(functio
     if (Option.isSome(session)) return session.value;
   }
   const replaced = Option.map(cached, (credential) => credential.sessionId);
+  const keep = yield* Ref.make(false);
+  const credential = yield* Effect.acquireRelease(mint(config), (minted) =>
+    Ref.get(keep).pipe(
+      Effect.flatMap((kept) => (kept ? Effect.void : revoke(config, minted.sessionId))),
+    ),
+  );
   yield* fileSystem
     .makeDirectory(config.secretsDir, { recursive: true, mode: 0o700 })
     .pipe(Effect.ignore);
-  const owner = yield* randomId;
-  const refreshed = yield* Effect.scoped(
-    Effect.gen(function* () {
-      const held = yield* Effect.acquireRelease(acquireLock(lockPath, owner), (taken) =>
-        taken ? releaseLock(lockPath, owner) : Effect.void,
-      );
-      return held ? Option.some(yield* refreshCached(config, cachePath, replaced)) : Option.none();
-    }),
-  );
-  const outcome = Option.isSome(refreshed)
-    ? refreshed.value
-    : { credential: yield* mint(config), cached: false };
-  const credential = outcome.credential;
-  if (!outcome.cached) yield* Effect.addFinalizer(() => revoke(config, credential.sessionId));
+  yield* writeCredential(cachePath, credential);
+  const published = yield* readCredential(cachePath);
+  if (Option.exists(published, (current) => current.sessionId === credential.sessionId)) {
+    yield* Ref.set(keep, true);
+  }
+  if (Option.isSome(replaced) && replaced.value !== credential.sessionId) {
+    yield* revoke(config, replaced.value);
+  }
   return yield* openSession(endpoint, credential.token);
 });
