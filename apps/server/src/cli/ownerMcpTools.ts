@@ -59,6 +59,7 @@ export const reportCliErrors =
 const decodeFailureText = Schema.decodeUnknownOption(Schema.fromJsonString(OrchestratorMcpFailure));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 export const printJson = (value: unknown) => Console.log(encodeJson(value));
+export const printJsonToStderr = (value: unknown) => Console.error(encodeJson(value));
 
 const ToolResult = Schema.Struct({
   isError: Schema.optional(Schema.Boolean),
@@ -130,6 +131,7 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
         // the project's default mode, never at this ceiling by default.
         access: "full-access",
         peerLink: false,
+        ownerCli: true,
         client: { deviceType: "bot" },
       }),
       (session) =>
