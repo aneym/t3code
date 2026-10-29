@@ -1,5 +1,5 @@
 import * as NodeSqlite from "node:sqlite";
-import type * as NodeWorkerThreads from "node:worker_threads";
+import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -208,6 +208,46 @@ it.effect("reports a transaction blocked by another writer as a lock timeout", (
       assert.deepEqual(yield* read, [[0]]);
     }).pipe(Effect.provide(SqliteClient.layer({ filename })));
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const exclusiveLockHolderSource = `
+const { parentPort, workerData } = require("node:worker_threads");
+const { DatabaseSync } = require("node:sqlite");
+const db = new DatabaseSync(workerData);
+db.exec("PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE;");
+parentPort.postMessage("locked");
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+db.exec("COMMIT");
+db.close();
+`;
+
+it.live("starts once another connection releases a lock that blocks schema reads", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-startup-" });
+    const filename = path.join(directory, "state.sqlite");
+    yield* Effect.sync(() => {
+      const setup = new NodeSqlite.DatabaseSync(filename);
+      setup.exec("PRAGMA journal_mode = WAL; CREATE TABLE entries(name TEXT NOT NULL);");
+      setup.close();
+    });
+    const holder = yield* Effect.acquireRelease(
+      Effect.sync(
+        () =>
+          new NodeWorkerThreads.Worker(exclusiveLockHolderSource, {
+            eval: true,
+            workerData: filename,
+          }),
+      ),
+      (worker) => Effect.promise(() => worker.terminate()),
+    );
+    yield* Effect.promise(() => new Promise((resolve) => holder.once("message", resolve)));
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepEqual(yield* sql`SELECT COUNT(*) AS count FROM entries`.values, [[0]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("lets the writer commit while a read-only transaction is open", () =>

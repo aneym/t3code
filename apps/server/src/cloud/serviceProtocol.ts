@@ -9,6 +9,7 @@ export const SERVICE_STATE_FILE = "service-state.json";
 export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
 /** Marks a repointed unit whose service still runs the old version; launcher startup clears it. */
 export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
+export const SERVER_OWNER_LOCK_FILE = "server-owner.sqlite";
 
 export interface PendingServiceUpdate {
   readonly id: string;
@@ -33,6 +34,7 @@ export interface ServiceLauncherContext {
 }
 
 export type ServiceLauncherChildMessage =
+  | { readonly type: "state-dir-owned" }
   | {
       readonly type: "request-update";
       readonly targetVersion: string;
@@ -231,6 +233,7 @@ export function decodeServiceLauncherChildMessage(
   value: unknown,
 ): ServiceLauncherChildMessage | undefined {
   if (!isRecord(value)) return undefined;
+  if (value.type === "state-dir-owned") return { type: value.type };
   if (
     value.type === "request-update" &&
     typeof value.targetVersion === "string" &&

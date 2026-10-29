@@ -21,6 +21,7 @@ import {
 } from "./cloud/bootService.ts";
 import { ServiceLauncherHostProcess } from "./cloud/serviceLauncherClient.ts";
 import {
+  SERVER_OWNER_LOCK_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
@@ -185,6 +186,7 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
 ) {
   const stateDir = NodePath.dirname(statePath);
   const crypto = yield* Crypto.Crypto;
+  const launcher = yield* ServiceLauncherHostProcess;
   const ownerId = yield* crypto
     .randomUUIDv4()
     .pipe(Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })));
@@ -192,7 +194,7 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
     Effect.try({
       try: () => {
         NodeFS.mkdirSync(stateDir, { recursive: true });
-        const db = new NodeSqlite.DatabaseSync(NodePath.join(stateDir, "server-owner.sqlite"));
+        const db = new NodeSqlite.DatabaseSync(NodePath.join(stateDir, SERVER_OWNER_LOCK_FILE));
         try {
           db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
         } catch (cause) {
@@ -205,7 +207,19 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
         isSqliteBusy(cause)
           ? new ServerAlreadyRunningError({ stateDir })
           : new ServerOwnershipError({ stateDir, cause }),
-    }),
+    }).pipe(
+      Effect.tapError((error) =>
+        error._tag === "ServerAlreadyRunningError" && launcher.connected
+          ? Effect.callback<void>((resume) => {
+              try {
+                launcher.send({ type: "state-dir-owned" }, () => resume(Effect.void));
+              } catch {
+                resume(Effect.void);
+              }
+            })
+          : Effect.void,
+      ),
+    ),
     (db) =>
       readPersistedServerRuntimeState(statePath).pipe(
         Effect.flatMap((state) =>

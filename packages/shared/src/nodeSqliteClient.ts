@@ -862,20 +862,17 @@ const make = Effect.fn("makeWithDatabase")(function* (
           allowExtension: false,
         }),
       catch: (cause) =>
-        new SqlError({
-          reason: classifyError(cause, "Failed to open database", "open"),
-        }),
+        new SqlError({ reason: classifyError(cause, "Failed to open database", "open") }),
     });
     yield* Scope.addFinalizer(
       scope,
       Effect.try({
         try: () => db.close(),
         catch: (cause) =>
-          new SqlError({
-            reason: classifyError(cause, "Failed to close database", "close"),
-          }),
+          new SqlError({ reason: classifyError(cause, "Failed to close database", "close") }),
       }).pipe(Effect.orDie),
     );
+    db.exec("PRAGMA busy_timeout = 5000");
     // Started after the close finalizer, so the worker stops before the writer closes.
     const checkpoint =
       options.checkpointWorker && isFileDatabase
@@ -967,9 +964,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
           return statement;
         },
         catch: (cause) =>
-          new SqlError({
-            reason: classifyError(cause, "Failed to prepare statement", "prepare"),
-          }),
+          new SqlError({ reason: classifyError(cause, "Failed to prepare statement", "prepare") }),
       });
 
     const prepareCache = yield* Cache.makeWith(prepare, {

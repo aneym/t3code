@@ -103,9 +103,10 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
-    // Let the launcher mark an explicit stop before it signals the server.
-    // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
+    // Let the launcher mark the stop before it signals the server.
+    // Past TimeoutStopSec, systemd SIGKILLs the cgroup.
     "KillMode=mixed",
+    "TimeoutStopSec=90s",
     // Helpers share this cgroup; default OOMPolicy=stop would stop the unit if one is OOM-killed.
     "OOMPolicy=continue",
     "Restart=always",

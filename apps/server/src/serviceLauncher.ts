@@ -6,7 +6,6 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeUtil from "node:util";
 
 import type {
   PendingServiceUpdate,
@@ -16,6 +15,13 @@ import type {
   ServiceState,
   ServiceUpdateRecord,
 } from "./cloud/serviceProtocol.ts";
+import {
+  ServiceRestartGuards,
+  databaseBackupRestoreUnsafe,
+  markDatabaseBackup,
+} from "./serviceRestartGuards.ts";
+import { copyDatabaseFile, runCp } from "./serviceDatabaseCopy.ts";
+import { readServiceEnvironment } from "./serviceEnvironment.ts";
 import { isCliForkVersion } from "@t3tools/shared/cliRelease";
 
 import {
@@ -23,7 +29,6 @@ import {
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
   parseServiceState,
-  SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
@@ -37,9 +42,6 @@ const HANDOFF_DELAY_MS = 2_000;
  * take minutes. A missed window rolls back the database, so the next attempt pays the same cost.
  */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
-const TERMINATE_GRACE_MS = 5_000;
-// Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
-const STATE_DIR_OWNED_EXIT_CODE = 78;
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
@@ -47,6 +49,7 @@ type ChildRole = "active" | "trial";
 interface ManagedChild {
   readonly version: string;
   role: ChildRole;
+  stateDirOwned: boolean;
   readonly process: NodeChildProcess.ChildProcess;
 }
 
@@ -85,36 +88,6 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
-const MANAGED_SERVICE_ENV_NAMES = new Set([
-  "PATH",
-  "T3CODE_HOME",
-  "T3_BOOT_SERVICE_UNIT",
-  SERVICE_LAUNCHER_CONTEXT_ENV,
-]);
-
-export async function readServiceEnvironment(
-  baseDir: string,
-  inherited: NodeJS.ProcessEnv = process.env,
-): Promise<NodeJS.ProcessEnv> {
-  const environment = { ...inherited };
-  let contents: string;
-  try {
-    contents = await NodeFSP.readFile(NodePath.join(baseDir, SERVICE_ENV_FILE), "utf8");
-  } catch (cause) {
-    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return environment;
-    throw cause;
-  }
-  for (const [name, value] of Object.entries(NodeUtil.parseEnv(contents))) {
-    if (
-      /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) &&
-      !MANAGED_SERVICE_ENV_NAMES.has(name.toUpperCase())
-    ) {
-      environment[name] = value;
-    }
-  }
-  return environment;
-}
-
 // Opened read-write: Windows refuses to flush a handle without write access.
 async function syncFile(filePath: string): Promise<void> {
   const handle = await NodeFSP.open(filePath, "r+");
@@ -135,29 +108,6 @@ async function syncDirectory(directory: string): Promise<void> {
   } finally {
     await handle.close();
   }
-}
-
-function runCp(args: ReadonlyArray<string>): Promise<boolean> {
-  return new Promise((resolve) => {
-    NodeChildProcess.execFile("cp", args, (error) => resolve(error === null));
-  });
-}
-
-// macOS fs.copyFile clone flags fall back to full copies.
-async function copyDatabaseFile(source: string, destination: string): Promise<void> {
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
-  const platform = process.platform;
-  // cp -c replaces files and breaks hard links; copy into hard-linked destinations instead.
-  const hardLinked =
-    platform === "darwin" &&
-    ((await NodeFSP.stat(destination).catch(() => undefined))?.nlink ?? 1) > 1;
-  const args =
-    platform === "darwin" && !hardLinked
-      ? ["-c", source, destination]
-      : platform === "linux"
-        ? ["--reflink=auto", source, destination]
-        : undefined;
-  if (args === undefined || !(await runCp(args))) await NodeFSP.copyFile(source, destination);
 }
 
 const GIB = 1024 ** 3;
@@ -274,20 +224,6 @@ const restoreMarkerPath = (baseDir: string, updateId: string) =>
 const databaseRestorePending = (baseDir: string, pending: PendingServiceUpdate) =>
   pathExists(restoreMarkerPath(baseDir, pending.id));
 
-// Mark before live writes so recovery cannot boot a partial restore.
-async function markDatabaseRestorePending(backupDir: string): Promise<void> {
-  const markerPath = NodePath.join(backupDir, RESTORE_MARKER);
-  if (!(await pathExists(markerPath))) {
-    const handle = await NodeFSP.open(markerPath, "wx", 0o600);
-    try {
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await syncDirectory(backupDir);
-  }
-}
-
 // Resolve symlink targets even if a crashed cp -c left the final target missing.
 async function restoreTarget(path: string): Promise<string> {
   let current = path;
@@ -317,8 +253,9 @@ async function restoreDatabaseBackup(
 ): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (!(await pathExists(backupDir))) return;
+  if (await databaseBackupRestoreUnsafe(backupDir, true)) return;
 
-  await markDatabaseRestorePending(backupDir);
+  await markDatabaseBackup(backupDir, RESTORE_MARKER);
   const directories = new Set([NodePath.dirname(pending.dbPath)]);
   for (const suffix of DB_FILE_SUFFIXES) {
     const livePath = `${pending.dbPath}${suffix}`;
@@ -339,6 +276,7 @@ async function restoreDatabaseBackup(
 async function discardDatabaseBackup(baseDir: string, updateId: string): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, updateId);
   if (!(await pathExists(backupDir))) return;
+  if (await databaseBackupRestoreUnsafe(backupDir)) return;
   await NodeFSP.rm(backupDir, { recursive: true, force: true });
   await syncDirectory(NodePath.dirname(backupDir));
 }
@@ -412,27 +350,10 @@ function sendMessage(
   });
 }
 
-function waitForExit(child: NodeChildProcess.ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-  return new Promise((resolve) => child.once("exit", () => resolve()));
-}
-
-async function terminateChild(
-  child: NodeChildProcess.ChildProcess,
-  signal: NodeJS.Signals = "SIGTERM",
-): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill(signal);
-  const force = setTimeout(() => child.kill("SIGKILL"), TERMINATE_GRACE_MS);
-  try {
-    await waitForExit(child);
-  } finally {
-    clearTimeout(force);
-  }
-}
-
 const stopMarkerPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
+const writeStopMarker = (baseDir: string) =>
+  NodeFSP.writeFile(stopMarkerPath(baseDir), "", { mode: 0o600 }).catch(() => undefined);
 const restartPendingPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
 
@@ -446,6 +367,7 @@ export class Launcher {
   #stopRequested = false;
   #stopping = false;
   #done = false;
+  readonly #guards = new ServiceRestartGuards();
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
@@ -489,35 +411,43 @@ export class Launcher {
 
   async #fatal(error: Error): Promise<void> {
     if (this.#done) return;
-    this.#done = true;
+    this.#guards.failure = error;
+    this.#guards.startStopDeadline(() => {
+      this.#done = true;
+      this.#stopping = true;
+      return this.#child?.process;
+    });
     this.#stopping = true;
     this.#clearTimer();
     const child = this.#child?.process;
     this.#child = null;
-    if (child !== undefined) await terminateChild(child);
+    if (child !== undefined) await this.#guards.terminator.terminate(child);
+    this.#done = true;
     this.#completion.reject(error);
   }
 
   async stop(signal: NodeJS.Signals): Promise<void> {
-    // Write synchronously on signal receipt; a terminating child needs the marker in its finalizer.
-    try {
-      NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
-    } catch {}
-    if (this.#stopRequested || this.#stopping) {
-      await this.#completion.promise.catch(() => undefined);
-      return;
-    }
-    this.#stopRequested = true;
-    this.#clearTimer();
-    this.#enqueue(async () => {
+    if (!this.#stopRequested && !this.#done) {
+      this.#stopRequested = true;
+      this.#guards.startStopDeadline(() => {
+        this.#done = true;
+        this.#stopping = true;
+        return this.#child?.process;
+      });
+      const marker = this.#guards.terminator.holdSignalsUntil(writeStopMarker(this.#baseDir));
+      this.#clearTimer();
       // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
-      this.#stopping = true;
-      const child = this.#child?.process;
-      this.#child = null;
-      if (child !== undefined) await terminateChild(child, signal);
-      this.#done = true;
-      this.#completion.resolve();
-    });
+      this.#enqueue(async () => {
+        this.#stopping = true;
+        this.#clearTimer();
+        const child = this.#child?.process;
+        this.#child = null;
+        if (child !== undefined) await this.#guards.terminator.terminate(child, signal);
+        await marker;
+        this.#done = true;
+        this.#completion.resolve();
+      });
+    }
     await this.#completion.promise.catch(() => undefined);
   }
 
@@ -594,13 +524,14 @@ export class Launcher {
       });
     });
     if (this.#stopping) {
-      await terminateChild(child);
+      await this.#guards.terminator.terminate(child);
       return;
     }
 
     const managed: ManagedChild = {
       version,
       role,
+      stateDirOwned: false,
       process: child,
     };
     this.#child = managed;
@@ -612,6 +543,7 @@ export class Launcher {
       this.#enqueue(() => this.#handleExit(managed, code, signal)),
     );
 
+    this.#guards.watch(this.#baseDir, child, () => this.#child === managed);
     if (role === "trial") {
       this.#timer = setTimeout(
         () => this.#enqueue(() => this.#handlePreparedTimeout(managed)),
@@ -622,6 +554,10 @@ export class Launcher {
 
   async #handleMessage(child: ManagedChild, message: ServiceLauncherChildMessage): Promise<void> {
     if (this.#child !== child || this.#stopping) return;
+    if (message.type === "state-dir-owned") {
+      child.stateDirOwned = true;
+      return;
+    }
     if (message.type === "request-update") {
       await this.#handleUpdateRequest(child, message);
       return;
@@ -693,6 +629,7 @@ export class Launcher {
     const next: ServiceState = { ...this.#state, update: pending };
     await writeServiceState(this.#statePath, next);
     this.#state = next;
+    this.#guards.resetRetries();
     await sendMessage(child.process, { type: "update-accepted", updateId: pending.id });
     this.#timer = setTimeout(() => this.#enqueue(() => this.#beginTrial(child)), HANDOFF_DELAY_MS);
   }
@@ -704,7 +641,7 @@ export class Launcher {
     }
     this.#timer = undefined;
     this.#child = null;
-    await terminateChild(child.process);
+    await this.#guards.terminator.terminate(child.process);
     await this.#startTrial(pending);
   }
 
@@ -732,6 +669,7 @@ export class Launcher {
     await writeServiceState(this.#statePath, next);
     this.#state = next;
     child.role = "active";
+    this.#guards.resetRetries();
     await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
     await sendMessage(child.process, { type: "committed", updateId: committed.id });
   }
@@ -752,8 +690,22 @@ export class Launcher {
   ): Promise<void> {
     if (this.#child !== child || this.#stopping) return;
     this.#child = null;
-    if (code === STATE_DIR_OWNED_EXIT_CODE) {
-      await this.#idleWhileStateDirOwned();
+    const pending = this.#state.update;
+    const retry = await this.#guards.retryAfterExit(
+      code,
+      child.stateDirOwned,
+      pending?.status === "pending" ? databaseBackupDir(this.#baseDir, pending.id) : undefined,
+      this.#baseDir,
+    );
+    if (retry === "exhausted") {
+      this.#clearTimer();
+      if (pending?.status !== "pending") throw new Error("Unclassified exit 78 exhausted retries.");
+      await this.#returnToPrevious(pending, "failed", "unclassified-exit:78");
+      return;
+    }
+    if (retry !== undefined) {
+      this.#clearTimer();
+      this.#timer = setTimeout(() => this.#enqueue(() => this.#restartOwned(child)), retry);
       return;
     }
     if (child.role === "trial") {
@@ -771,7 +723,6 @@ export class Launcher {
     }
 
     this.#clearTimer();
-    const pending = this.#state.update;
     if (pending?.status === "pending") {
       await this.#startTrial(pending);
       return;
@@ -779,25 +730,18 @@ export class Launcher {
     throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);
   }
 
-  // Stay idle to avoid supervisor restart loops; never restore backups over another owner's possible writes.
-  async #idleWhileStateDirOwned(): Promise<void> {
-    this.#clearTimer();
-    const pending = this.#state.update;
-    if (pending?.status === "pending") {
-      const next: ServiceState = {
-        ...this.#state,
-        activeVersion: pending.fromVersion,
-        update: terminalUpdate({ pending, status: "failed", reason: "state-dir-owned" }),
-      };
-      await writeServiceState(this.#statePath, next);
-      this.#state = next;
-      await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
+  async #restartOwned(child: ManagedChild): Promise<void> {
+    this.#timer = undefined;
+    if (!(await this.#guards.homeAvailable(this.#baseDir))) {
+      this.#timer = setTimeout(() => this.#enqueue(() => this.#restartOwned(child)), 5_000);
+      return;
     }
-    // Signal listeners alone do not keep Node alive.
-    this.#timer = setInterval(() => {}, 2_147_483_647);
-    process.stderr.write(
-      "[service-launcher] Another T3 Code server owns this T3 home. Stop it, then restart this service.\n",
-    );
+    const pending = this.#state.update;
+    if (child.role === "trial" && pending?.status === "pending") {
+      await this.#startTrial(pending);
+      return;
+    }
+    await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
   }
 
   async #returnToPrevious(
@@ -808,7 +752,7 @@ export class Launcher {
   ): Promise<void> {
     if (child !== undefined) {
       this.#child = null;
-      await terminateChild(child.process);
+      await this.#guards.terminator.terminate(child.process);
     }
     await restoreDatabaseBackup(this.#baseDir, pending);
     const outcome = terminalUpdate({ pending, status, reason });
