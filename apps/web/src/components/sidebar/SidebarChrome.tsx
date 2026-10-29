@@ -1,8 +1,9 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import { ActivityIcon, ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import { APP_BRAND_SUFFIX } from "../../branding";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -166,6 +167,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
+  const showDiagnostics = useClientSettings((settings) => settings.showDiagnosticsInSidebar);
   const pullRequestsSupported = usePullRequestsSupported();
   const closeMobileSidebar = () => {
     if (isMobile) {
@@ -224,6 +226,16 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
+          {showDiagnostics ? (
+            <SidebarUtilityItem
+              icon={<ActivityIcon />}
+              label="Diagnostics"
+              onClick={() => {
+                closeMobileSidebar();
+                void navigate({ to: "/settings/diagnostics" });
+              }}
+            />
+          ) : null}
         </>
       )}
       <SidebarUpdatePill />

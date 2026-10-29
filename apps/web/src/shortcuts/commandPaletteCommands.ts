@@ -87,6 +87,11 @@ export function installCommandPaletteCommands(
         const { theme, themeHalves, resolvedTheme } = getThemeSnapshot();
         toggleThemeEditorForTheme({ theme, themeHalves, initialAppearance: resolvedTheme });
       },
+      "diagnostics.open": (event) => {
+        consume(event);
+        dispatchCommandPalette({ _tag: "SetOpen", open: false });
+        void router.navigate({ to: "/settings/diagnostics" });
+      },
       "usage.open": (event) => {
         consume(event);
         dispatchCommandPalette({ _tag: "SetOpen", open: false });

@@ -1,3 +1,4 @@
+import { DiagnosticsSidebarSetting } from "./DiagnosticsSidebarSetting";
 import type { CSSProperties } from "react";
 import { useState } from "react";
 import {
@@ -467,6 +468,7 @@ export function AppearanceSettingsPanel() {
         </AdvancedSettings>
       </SettingsSection>
 
+      <DiagnosticsSidebarSetting />
       <SettingsSection id="thread-rows" title="Thread rows">
         <SettingsRow
           {...searchableSetting("sidebar-thread-machine")}

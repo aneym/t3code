@@ -1,4 +1,5 @@
 import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts";
+import { HostResources } from "../../../resourceTelemetry/HostResources.ts";
 import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
@@ -50,6 +51,7 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         label: descriptor.label,
         serverVersion: descriptor.serverVersion,
         platform: descriptor.platform,
+        resources: yield* (yield* HostResources).read,
         preferences: preferences(current),
       };
     }),

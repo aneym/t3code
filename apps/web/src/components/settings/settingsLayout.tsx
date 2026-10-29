@@ -1,3 +1,4 @@
+import { DiagnosticsMachineStrip } from "./MachineLoadStrip";
 import { SettingsGroup } from "./SettingsGroup";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
@@ -581,6 +582,7 @@ export function SettingsPageContainer({
         data-settings-page-scroll
       >
         <WorkspacePageContainer width={width} className={cn("gap-8", className)}>
+          <DiagnosticsMachineStrip />
           <SettingsScopeSentence />
           {children}
         </WorkspacePageContainer>

@@ -2,6 +2,7 @@ import {
   BackgroundActivityProfile,
   BackgroundActivityProfileSelection,
   ExecutionEnvironmentDescriptor,
+  HostResourcesSnapshot,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   ServerSettings,
@@ -9,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
+import { HostResources } from "../../../resourceTelemetry/HostResources.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -31,6 +33,7 @@ const shared = {
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
   dependencies: [
+    HostResources,
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
     ServerEnvironment.ServerEnvironment,
@@ -41,13 +44,14 @@ const shared = {
 const EnvironmentReadTool = Tool.make("t3_environment_read", {
   ...shared,
   description:
-    "Read this server's identity and preferences. Providers and models: `orchestrator_capabilities`.",
+    "Read this server's identity, host CPU and memory resources, and preferences. Providers and models: `orchestrator_capabilities`.",
   parameters: Schema.Struct({ environmentId: OrchestratorMcpEnvironmentTarget }),
   success: Schema.Struct({
     environmentId: ExecutionEnvironmentDescriptor.fields.environmentId,
     label: Schema.String,
     serverVersion: Schema.String,
     platform: ExecutionEnvironmentDescriptor.fields.platform,
+    resources: HostResourcesSnapshot,
     preferences: Schema.Struct(PreferenceFields),
   }),
 })
