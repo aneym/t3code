@@ -18,6 +18,7 @@ export interface RailsAgent {
   readonly homeProjectRefs: ReadonlyArray<ScopedProjectRef>;
   readonly environmentIds: ReadonlyArray<EnvironmentId>;
   readonly target: ScopedThreadRef | null;
+  readonly remoteHost: string | null;
   readonly thread: EnvironmentThreadShell | null;
 }
 
@@ -57,18 +58,17 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
       .filter((home) => home.binding !== null)
       .toSorted((a, b) => bindingTime(b) - bindingTime(a))[0];
     const binding = winner?.binding;
+    const targetEnvironmentId = binding
+      ? (environments.find((env) => env.environmentId === binding.environmentId)?.environmentId ??
+        environments.find((env) => env.label.toLowerCase() === binding.host?.toLowerCase())
+          ?.environmentId ??
+        (binding.environmentId === null && binding.host === null ? winner?.environmentId : null))
+      : null;
     const target =
-      binding && winner
-        ? {
-            environmentId:
-              environments.find((env) => env.environmentId === binding.environmentId)
-                ?.environmentId ??
-              environments.find((env) => env.label.toLowerCase() === binding.host?.toLowerCase())
-                ?.environmentId ??
-              winner.environmentId,
-            threadId: binding.threadId,
-          }
+      binding && targetEnvironmentId
+        ? { environmentId: targetEnvironmentId, threadId: binding.threadId }
         : null;
+    const remoteHost = binding && !target ? (binding.host ?? "another host") : null;
     const homeProjectRefs = ordered.flatMap((home) => {
       const project = projects.find(
         (entry) =>
@@ -92,11 +92,15 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
         preferred?.displayName ??
         ordered.find((home) => home.displayName)?.displayName ??
         project?.title ??
-        handle,
+        handle.replace(
+          /(^|-)([a-z])/g,
+          (_, dash: string, letter: string) => `${dash ? " " : ""}${letter.toUpperCase()}`,
+        ),
       projectRef,
       homeProjectRefs,
       environmentIds: ordered.map((home) => home.environmentId),
       target,
+      remoteHost,
       thread: target
         ? (threads.find(
             (thread) =>
@@ -106,7 +110,7 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
     });
   }
   const targetKey = JSON.stringify(agents.flatMap((agent) => (agent.target ? [agent.target] : [])));
-  // oxlint-disable-next-line t3code/react-effect-budget -- bound threads outside the shell window need a live detail subscription
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds live detail subscriptions for bound threads outside the shell window until unmount
   useEffect(() => {
     const targets = JSON.parse(targetKey) as ScopedThreadRef[];
     const releases = targets.map((target) =>

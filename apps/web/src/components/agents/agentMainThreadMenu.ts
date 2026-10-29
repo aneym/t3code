@@ -26,7 +26,7 @@ export async function assignAgentHomes(input: {
   readonly handle: string;
   readonly target: ScopedThreadRef;
   readonly environmentIds: ReadonlyArray<EnvironmentId>;
-  readonly host: string;
+  readonly host?: string;
   readonly onlyIfUnbound?: boolean;
 }): Promise<ReadonlyArray<EnvironmentId>> {
   const failed: EnvironmentId[] = [];
@@ -37,7 +37,7 @@ export async function assignAgentHomes(input: {
         handle: input.handle,
         threadId: input.target.threadId,
         threadEnvironmentId: input.target.environmentId,
-        host: input.host,
+        ...(input.host ? { host: input.host } : {}),
         by: input.onlyIfUnbound ? "t3-first-open" : "t3-menu",
         ...(input.onlyIfUnbound ? { onlyIfUnbound: true } : {}),
       },

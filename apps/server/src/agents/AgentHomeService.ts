@@ -19,6 +19,7 @@ import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import {
   homeFromDocument,
+  isLaneThread,
   parseDocument,
   readDocumentText,
   readHomes,
@@ -105,6 +106,11 @@ export const layer = Layer.effect(
               (home.binding.environmentId === null || home.binding.environmentId === environmentId))
           )
             return { home, changed: false };
+          if (yield* Effect.promise(() => isLaneThread(root, input.threadId)))
+            return yield* new AgentHomeError({
+              handle: input.handle,
+              message: "Lane threads cannot be agent main threads",
+            });
           if (environmentId === descriptor.environmentId) {
             const projection = yield* threads.getThreadRecords(input.threadId, []).pipe(
               Effect.mapError(
