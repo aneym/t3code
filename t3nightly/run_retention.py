@@ -11,10 +11,10 @@ from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from t3nightly.rehearsal_retention import held, live_references
+    from t3nightly.rehearsal_retention import ancestors, held, ignorable, live_references
     from t3nightly.release_readiness import serving_version
 else:
-    from .rehearsal_retention import held, live_references
+    from .rehearsal_retention import ancestors, held, ignorable, live_references
     from .release_readiness import serving_version
 
 VERSION = re.compile(r"(\d+\.\d+\.\d+-nightly\.\d+\.\d+\.aneym\.\d+)(?:-attempt\d+)?")
@@ -51,6 +51,7 @@ def references():
             elif line.startswith("n") and pid != str(os.getpid()):
                 values.append(line[1:])
     else:
+        lineage = ancestors()
         for proc in Path("/proc").iterdir():
             if not proc.name.isdigit() or proc.name == str(os.getpid()):
                 continue
@@ -70,8 +71,12 @@ def references():
             except FileNotFoundError:
                 continue
             except PermissionError:
-                uncertain.append(proc.name)
+                if not ignorable(proc, lineage):
+                    uncertain.append(proc.name)
     return values, uncertain
+
+
+EVIDENCE = (".png", ".jpg", ".jpeg", ".webm", ".mp4", ".yml", ".yaml", ".txt", ".html")
 
 
 def bulk(parts):
@@ -79,7 +84,7 @@ def bulk(parts):
         parts[-1].endswith((".tar.gz", ".bundle"))
         or any(name.startswith("rehearsal-") and parts[index + 1:index + 2] == ("home",) for index, name in enumerate(parts[:-1]))
         or any(parts[index:index + 3] == ("evidence", "installer-state", "rollback-runtime") for index in range(len(parts)))
-        or any(name == "e2e" or name.startswith("e2e-") for name in parts[:-1])
+        or (any(name == "e2e" or name.startswith("e2e-") for name in parts[:-1]) and not parts[-1].endswith(EVIDENCE))
     )
 
 
@@ -123,13 +128,14 @@ def retain(root, active_run, *, dry_run=False):
                 report["skipped"] = "serving version unavailable or absent from runs"
             else:
                 previous = sorted({value for value in versions.values() if version_key(value) < version_key(serving)}, key=version_key)[-2:]
-                keep = {serving, *previous}
+                recent = sorted(versions, key=lambda name: os.stat(name, dir_fd=descriptor, follow_symlinks=False).st_mtime)[-3:]
+                keep = {serving, *previous, *(versions[name] for name in recent)}
                 report["protectedVersions"] = sorted(keep, key=version_key)
                 values, uncertain = references()
                 report["uncertainProcesses"] = len(uncertain)
                 for name in sorted(dirs):
                     version = versions.get(name)
-                    if name == active_name or version is None or version in keep or version_key(version) >= version_key(serving):
+                    if name == active_name or version is None or version in keep:
                         report["kept"].append(name)
                     elif uncertain or held({str(root / name), str(Path.home() / ".t3nightly/runs" / name)}, values):
                         report["held"].append(name)

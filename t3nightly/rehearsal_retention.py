@@ -43,6 +43,30 @@ def process_start(proc):
     return boot + ticks / os.sysconf("SC_CLK_TCK")
 
 
+DAEMONS = {"sshd", "sshd-session", "systemd", "(sd-pam)", "gpg-agent", "caddy"}
+
+
+def ancestors():
+    chain, pid = set(), os.getppid()
+    while pid > 1 and pid not in chain:
+        chain.add(pid)
+        try:
+            pid = int(Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+    return chain
+
+
+def ignorable(proc, lineage):
+    try:
+        if int(proc.name) in lineage or (proc / "comm").read_text().strip() in DAEMONS:
+            return True
+        command = (proc / "cmdline").read_bytes()
+        return bool(command) and b"t3nightly" not in command
+    except OSError:
+        return False
+
+
 def rehearsal_start(path):
     try:
         return datetime.fromisoformat(str((finished(path) or {}).get("startedAt"))).timestamp()
@@ -69,6 +93,7 @@ def live_references():
     references, protected = [], []
     if not Path("/proc/self/cwd").exists():
         raise RuntimeError("process inspection unavailable")
+    lineage = ancestors()
     for proc in Path("/proc").iterdir():
         if not proc.name.isdigit() or proc.name == str(own):
             continue
@@ -79,7 +104,7 @@ def live_references():
         except FileNotFoundError:
             continue
         except PermissionError:
-            if mine and os.lstat(proc / "cwd").st_uid == os.getuid():
+            if mine and not ignorable(proc, lineage) and os.lstat(proc / "cwd").st_uid == os.getuid():
                 protected.append(process_start(proc))
         except OSError:
             if mine:
