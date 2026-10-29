@@ -131,18 +131,18 @@ export function makeClaudeMcpApps<E>(
         return tools.flatMap((tool): ProviderAdapter.ProviderAdapterV2McpTool[] => {
           const name = field(tool, "name");
           if (typeof name !== "string") return [];
-          const annotations = field(tool, "annotations");
-          return [
-            {
-              name,
-              _meta: field(tool, "_meta"),
-              annotations: {
-                readOnlyHint: field(annotations, "readOnly"),
-                destructiveHint: field(annotations, "destructive"),
-                openWorldHint: field(annotations, "openWorld"),
-              },
-            },
-          ];
+          const rawAnnotations = field(tool, "annotations");
+          const annotations: Record<string, boolean> = {};
+          for (const [source, target] of [
+            ["readOnly", "readOnlyHint"],
+            ["destructive", "destructiveHint"],
+            ["openWorld", "openWorldHint"],
+          ]) {
+            const value = field(rawAnnotations, source!);
+            if (typeof value === "boolean") annotations[target!] = value;
+          }
+          const meta = field(tool, "_meta");
+          return [{ name, ...(meta === undefined ? {} : { _meta: meta }), annotations }];
         });
       },
       Effect.mapError(failure("Failed to list Claude MCP tools.")),
