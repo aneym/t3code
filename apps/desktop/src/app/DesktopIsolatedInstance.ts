@@ -1,8 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off -- Runs at module load, before ready and outside any Effect runtime.
-import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
+import * as DateTime from "effect/DateTime";
 
 import * as Electron from "electron";
+
+const NodeFS = process.getBuiltinModule("fs");
+const NodePath = process.getBuiltinModule("path");
 
 const isolatedUserData = process.env.T3CODE_DESKTOP_USER_DATA?.trim();
 
@@ -64,7 +65,7 @@ const hideWebContents = (contents: Electron.WebContents) => {
 };
 
 const captureWindows = async (directory: string) => {
-  const stamp = new Date().toISOString().replaceAll(":", "-");
+  const stamp = DateTime.formatIso(DateTime.nowUnsafe()).replaceAll(":", "-");
   await Promise.all(
     Electron.BrowserWindow.getAllWindows().map(async (window) => {
       const image = await window.webContents.capturePage();
@@ -99,6 +100,9 @@ if (isolatedUserData) {
   process.env.T3CODE_HOME = NodePath.join(isolatedUserData, "t3");
   process.env.T3CODE_AGENT_HOMES_DIR = NodePath.join(isolatedUserData, "agents");
   process.env.T3CODE_DISABLE_AUTO_UPDATE = "1";
+  process.env.T3CODE_TELEMETRY_ENABLED = "false";
+  process.env.T3CODE_OTEL_SDK_DISABLED = "true";
+  process.env.OTEL_SDK_DISABLED = "true";
   Electron.app.setName(`${Electron.app.getName()}-isolated`);
   Electron.app.commandLine.appendSwitch("use-mock-keychain");
   if (Electron.app.dock) {
