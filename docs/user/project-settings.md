@@ -195,8 +195,10 @@ files such as `.env` and build output. **Any local files** also protects ignored
 `node_modules`. **Edited tracked files** protects only tracked edits and allows untracked and
 ignored files to be deleted. Whatever that setting says, cleanup keeps a worktree that holds files
 excluded through the repository's `.git/info/exclude`, a `.lane` folder, or a nested Git repository
-of its own, and the worktree of a snoozed thread. Merge and unchanged cleanup also wait until the thread is settled or archived.
-Branches and thread history stay; starting another turn recreates the checkout.
+at its top level, and the worktree of a snoozed thread. Merge and unchanged cleanup also wait until
+the thread is settled or archived. A removed worktree moves to `worktree-trash` in the T3 home
+folder for a day before it is deleted, so you can copy files back out of it. Branches and thread
+history stay; starting another turn recreates the checkout.
 Merge cleanup requires a merged pull request whose commits are included in the remote default
 branch. A squash or rebase merge on GitHub also counts when the pull request targeted the default
 branch and the worktree is still at the pull request's last commit.
