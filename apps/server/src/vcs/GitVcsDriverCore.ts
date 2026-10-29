@@ -24,7 +24,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
-  type GitCommandFailureReason,
   T3_PROJECT_FILE_NAME,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
@@ -41,6 +40,11 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import {
+  classifyGitFailure,
+  gitFailureDetail,
+  isNonRepositoryGitStderr,
+} from "./GitFailureDetail.ts";
 import { removeEmptyDirectory } from "./removeEmptyDirectory.ts";
 import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
@@ -182,6 +186,7 @@ interface ExecuteGitOptions {
   forceKillAfterMs?: number | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorDetail?: string | undefined;
+  includeStderrExcerpt?: boolean | undefined;
   env?: NodeJS.ProcessEnv | undefined;
   maxOutputBytes?: number | undefined;
   appendTruncationMarker?: boolean | undefined;
@@ -432,88 +437,6 @@ function gitCommandContext(
   } as const;
 }
 
-// Stderr can echo credentials from argv/URLs; classify fixed patterns without exposing matched text.
-const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFailureReason]> = [
-  [/would clobber existing tag/i, "tag_would_be_clobbered"],
-  [/is already (?:used by worktree at|checked out at)/i, "branch_checked_out_in_worktree"],
-  [/a branch named .+ already exists/i, "branch_already_exists"],
-  // The same prefix also reports permission errors, which retrying cannot fix.
-  [/could not lock config file .+: File exists/i, "config_locked"],
-  [
-    /(?:authentication failed|could not read Username|could not read Password|permission denied \([a-z-]+(?:,[a-z-]+)*\)|permission denied, please try again)/i,
-    "authentication_failed",
-  ],
-  [/host key verification failed/i, "host_key_unverified"],
-  [
-    /(?:could not read from remote repository|does not appear to be a git repository|repository .+ not found)/i,
-    "remote_unreachable",
-  ],
-  // Unquoted already-exists errors also describe ref/tag collisions; require quoted paths.
-  [/fatal: '[^']+' already exists|destination path .+ already exists/i, "path_already_exists"],
-  // Ambiguous revision/path and pathspec failures can name files, so omit them.
-  // Anchor to a diagnostic line to avoid matching quoted paths in other errors.
-  [
-    /^fatal: (?:invalid reference: |not a valid object name|needed a single revision|bad revision |'.+' is not a commit and a branch '.+' cannot be created from it)/im,
-    "ref_not_found",
-  ],
-  // `[remote rejected]` is only printed for a push. The remote's explanation
-  // follows in parentheses; it is server text, so it is never quoted.
-  [/^[ \t]*![ \t]+\[remote rejected\]/im, "push_rejected_by_remote"],
-  // A fetch into a diverged local branch prints the same `[rejected]` line, but
-  // only a push goes on to report "failed to push some refs".
-  [
-    /^[ \t]*![ \t]+\[rejected\][^\n]*\((?:non-fast-forward|fetch first)\)[\s\S]*^error: failed to push some refs/im,
-    "push_rejected_non_fast_forward",
-  ],
-];
-
-// Reasons the user can act on get a sentence in place of the generic detail.
-const GIT_FAILURE_REASON_DETAILS: Partial<Record<GitCommandFailureReason, string>> = {
-  push_rejected_by_remote:
-    "The remote rejected the push. Push this branch from a terminal to see the server's message.",
-  push_rejected_non_fast_forward:
-    "The remote has commits this branch doesn't have. Pull or rebase, then push again.",
-  config_locked:
-    "Another Git process kept the repository's config locked. Wait for it to finish, then retry.",
-};
-
-function gitFailureDetail(reason: GitCommandFailureReason | null): string {
-  return (
-    (reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason]) ??
-    "Git command exited with a non-zero status."
-  );
-}
-
-// Existing non-commit objects share the missing-ref fatal diagnostic; Git
-// distinguishes them with a separate error line.
-const GIT_NOT_A_COMMIT_PATTERN = /^error: .+(?:, not a commit|expected commit type)/im;
-
-// Trust only Git's diagnostic prefixes: local hooks can write indistinguishable text.
-// Exclude `remote:` too, since it prefixes remote hook output as well as server diagnostics.
-const GIT_DIAGNOSTIC_LINE_PATTERN = /^(?:fatal|error):|^!\s|^\s+!\s/;
-// SSH credential refusals are unprefixed; Git's later generic error would otherwise misclassify them as unreachable.
-const SSH_TRANSPORT_REFUSAL_PATTERN =
-  /Permission denied \((?:publickey|password|keyboard-interactive)|Permission denied, please try again|Host key verification failed/i;
-
-function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
-  const diagnostics = stderr
-    .split(/\r?\n/)
-    .filter(
-      (line) =>
-        GIT_DIAGNOSTIC_LINE_PATTERN.test(line) ||
-        (!/^remote:/.test(line) && SSH_TRANSPORT_REFUSAL_PATTERN.test(line)),
-    )
-    .join("\n");
-  if (diagnostics.length === 0) return null;
-  if (isNonRepositoryGitStderr(diagnostics)) return "not_a_repository";
-  for (const [pattern, reason] of GIT_FAILURE_REASON_PATTERNS) {
-    if (!pattern.test(diagnostics)) continue;
-    if (reason === "ref_not_found" && GIT_NOT_A_COMMIT_PATTERN.test(diagnostics)) continue;
-    return reason;
-  }
-  return null;
-}
-
 function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string): string | null {
   const trimmed = value.trim();
   const prefix = `refs/remotes/${remoteName}/`;
@@ -544,9 +467,6 @@ function isMissingGitCwdError(error: GitCommandError): boolean {
   );
 }
 
-function isNonRepositoryGitStderr(stderr: string): boolean {
-  return stderr.toLowerCase().includes("not a git repository");
-}
 function isUnbornHeadStderr(stderr: string): boolean {
   const normalized = stderr.toLowerCase();
   return (
@@ -1041,7 +961,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           return yield* new GitCommandError({
             ...gitCommandContext(commandInput),
             ...(reason === null ? {} : { reason }),
-            detail: gitFailureDetail(reason),
+            detail: gitFailureDetail(reason, ""),
             exitCode,
             stdoutLength: stdout.text.length,
             stderrLength: stderr.text.length,
@@ -1152,7 +1072,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
             ...(reason === null ? {} : { reason }),
-            detail: options.fallbackErrorDetail ?? gitFailureDetail(reason),
+            detail: gitFailureDetail(
+              reason,
+              options.includeStderrExcerpt ? result.stderr : "",
+              options.fallbackErrorDetail,
+            ),
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
@@ -3425,6 +3349,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["branch", "--no-track", "--", input.branch, startPoint],
       { fallbackErrorDetail },
     );
+  });
+
+  const trackStartPoint = Effect.fn("trackStartPoint")(function* (
+    operation: string,
+    input: GitVcsDriver.GitCreateBranchInput,
+  ) {
+    const startPoint = input.startPoint === "-" ? "@{-1}" : input.startPoint;
     const startRef = yield* executeGit(
       `${operation}.resolveStartPoint`,
       input.cwd,
@@ -3450,6 +3381,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   )(function* (input) {
     yield* refuseOptionLikeRefName("GitVcsDriver.createBranch", input.cwd, input.startPoint);
     yield* createBranchAt("GitVcsDriver.createBranch", input, "git branch create failed");
+    yield* trackStartPoint("GitVcsDriver.createBranch", input);
   });
 
   const readBranchBase: GitVcsDriver.GitVcsDriver["Service"]["readBranchBase"] = Effect.fn(
@@ -3800,6 +3732,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const removeCreatedBranch = Effect.fn("removeCreatedBranch")(
+    function* (cwd: string, branch: string, commit: string) {
+      const ref = `refs/heads/${branch}`;
+      const current = yield* executeGit("GitVcsDriver.createWorktree.inspectCreatedBranch", cwd, [
+        "for-each-ref",
+        "--format=%(objectname) %(worktreepath)",
+        ref,
+      ]);
+      if (current.stdout.trim() !== commit) return;
+      yield* executeGit("GitVcsDriver.createWorktree.removeCreatedBranch", cwd, [
+        "update-ref",
+        "-d",
+        ref,
+        commit,
+      ]);
+    },
+    (effect) => Effect.ignore(effect),
+  );
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -3827,13 +3778,33 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       worktreePath = path.join(parentDir, repoName, sanitizedBranch);
     }
+    let createdBranchCommit: string | null = null;
     if (input.newRefName) {
+      const startCommit = yield* executeGit(
+        "GitVcsDriver.createWorktree.resolveStartCommit",
+        input.cwd,
+        [
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          "--end-of-options",
+          `${input.refName === "-" ? "@{-1}" : input.refName}^{commit}`,
+        ],
+        { allowNonZeroExit: true },
+      ).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : null)));
       // Kept apart from the checkout so the shared-config lock only covers the tracking write.
       yield* createBranchAt(
         "GitVcsDriver.createWorktree.createBranch",
         { cwd: input.cwd, branch: input.newRefName, startPoint: input.refName },
         "git worktree add failed",
       );
+      const createdAt = yield* executeGit(
+        "GitVcsDriver.createWorktree.readCreatedBranch",
+        input.cwd,
+        ["reflog", "show", "--format=%H", `refs/heads/${input.newRefName}`, "--"],
+        { allowNonZeroExit: true },
+      ).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")));
+      createdBranchCommit = createdAt.split("\n").at(-1) || startCommit;
     }
     const args = ["worktree", "add", "--", worktreePath, input.newRefName ?? input.refName];
     const progress = options?.progress;
@@ -3846,6 +3817,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
       {
         fallbackErrorDetail: "git worktree add failed",
+        includeStderrExcerpt: true,
         timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
         ...(onCheckoutProgress
           ? {
@@ -3861,7 +3833,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             }
           : {}),
       },
+    ).pipe(
+      Effect.tapError((error) =>
+        input.newRefName && createdBranchCommit !== null && error.exitCode !== undefined
+          ? removeCreatedBranch(input.cwd, input.newRefName, createdBranchCommit)
+          : Effect.void,
+      ),
     );
+    if (input.newRefName) {
+      yield* trackStartPoint("GitVcsDriver.createWorktree.createBranch", {
+        cwd: input.cwd,
+        branch: input.newRefName,
+        startPoint: input.refName,
+      });
+    }
 
     if (progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);
@@ -4246,11 +4231,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const localBranchAlreadyExists = yield* branchExists(input.cwd, input.localBranch);
     const targetRef = `${input.remoteName}/${input.remoteBranch}`;
     if (!localBranchAlreadyExists) {
-      return yield* createBranchAt(
+      const branchInput = { cwd: input.cwd, branch: input.localBranch, startPoint: targetRef };
+      yield* createBranchAt(
         "GitVcsDriver.fetchRemoteBranch.materialize",
-        { cwd: input.cwd, branch: input.localBranch, startPoint: targetRef },
+        branchInput,
         "git branch create failed",
       );
+      return yield* trackStartPoint("GitVcsDriver.fetchRemoteBranch.materialize", branchInput);
     }
     yield* runGit(
       "GitVcsDriver.fetchRemoteBranch.materialize",
