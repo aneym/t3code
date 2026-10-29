@@ -74,6 +74,10 @@ def held(spellings, references):
     return any(text + "/" in reference or reference.endswith(text) or f"{text} " in reference for text in spellings for reference in references)
 
 
+def listed(root):
+    return sorted(path for path in root.iterdir() if path.name.startswith(PREFIX) and path.is_dir() and not path.is_symlink())
+
+
 def newest_passing(dirs):
     passing = [(str(result.get("finishedAt") or ""), path) for path in dirs if (result := finished(path)) and result.get("result") == "PASS"]
     return max(passing)[1] if passing else None
@@ -87,13 +91,13 @@ def retain(sandbox_dir):
     alias = Path(os.path.abspath(Path.home() / ".t3nightly"))
     with (root / "rehearsal-retention.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        dirs = sorted(path for path in root.iterdir() if path.name.startswith(PREFIX) and path.is_dir() and not path.is_symlink())
+        dirs = listed(root)
         target = installer_target(root)
         references = live_references()
         report = {"kept": [], "dropped": [], "held": []}
         for path in dirs:
             home = path / "home"
-            newest = newest_passing(dirs)
+            newest = newest_passing(listed(root))
             keep = {newest, root / rollback_name(newest.name)} if newest and rollback_name(newest.name) else {newest}
             if path in keep:
                 report["kept"].append(path.name)
