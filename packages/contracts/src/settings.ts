@@ -113,6 +113,12 @@ export type SnoozePresetSetting = typeof SnoozePresetSetting.Type;
 export const SnoozePresetSettings = Schema.Array(SnoozePresetSetting).check(
   Schema.isMaxLength(MAX_SNOOZE_PRESETS),
 );
+export const SidebarAgentsSettings = Schema.Struct({
+  pinned: Schema.Array(Schema.String),
+  hidden: Schema.Array(Schema.String),
+  updatedAt: Schema.String,
+});
+export type SidebarAgentsSettings = typeof SidebarAgentsSettings.Type;
 export const DEFAULT_SNOOZE_PRESETS: ReadonlyArray<SnoozePresetSetting> = [
   { kind: "after", minutes: 60 },
   { kind: "after", minutes: 180 },
@@ -1222,6 +1228,9 @@ export const ServerSettings = Schema.Struct({
   snoozePresets: SnoozePresetSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNOOZE_PRESETS)),
   ),
+  sidebarAgents: Schema.NullOr(SidebarAgentsSettings).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Beta: guest links for this machine's threads. Off refuses new links and pauses existing ones. */
   guestSharingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
@@ -1579,6 +1588,7 @@ export const ServerSettingsPatch = Schema.Struct({
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozePresets: Schema.optionalKey(SnoozePresetSettings),
+  sidebarAgents: Schema.optionalKey(Schema.NullOr(SidebarAgentsSettings)),
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
