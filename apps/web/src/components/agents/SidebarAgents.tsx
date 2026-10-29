@@ -141,7 +141,7 @@ function AgentRow(props: {
   };
   const rowClassName = cn(
     "flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-sm outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset",
-    props.focus?.active && "pr-8",
+    props.focus?.active && "pr-14 group-focus-within/agent-row:pr-2 group-hover/agent-row:pr-2",
     props.active
       ? "bg-sidebar-row-active text-sidebar-foreground"
       : cn(
