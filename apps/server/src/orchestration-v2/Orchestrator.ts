@@ -1653,32 +1653,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         activeProviderThread.providerInstanceId !== queuedRun.providerInstanceId;
       const switchPlan =
         selectionChanged || switchFromActiveProvider
-          ? yield* providerSwitchService
-              .plan({
-                projection: switchFromActiveProvider
-                  ? {
-                      ...projection,
-                      thread: {
-                        ...projection.thread,
-                        modelSelection: {
-                          ...projection.thread.modelSelection,
-                          instanceId: activeProviderThread.providerInstanceId,
-                        },
+          ? yield* planThreadSelectionChange({
+              commandId,
+              startingRunId: queuedRun.id,
+              projection: switchFromActiveProvider
+                ? {
+                    ...projection,
+                    thread: {
+                      ...projection.thread,
+                      modelSelection: {
+                        ...projection.thread.modelSelection,
+                        instanceId: activeProviderThread.providerInstanceId,
                       },
-                    }
-                  : projection,
-                targetModelSelection: queuedRun.modelSelection,
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestratorDispatchError({
-                      commandId,
-                      commandType: "message.dispatch",
-                      cause,
-                    }),
-                ),
-              )
+                    },
+                  }
+                : projection,
+              targetModelSelection: queuedRun.modelSelection,
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorDispatchError({
+                    commandId,
+                    commandType: "message.dispatch",
+                    cause,
+                  }),
+              ),
+            )
           : null;
       const canResumeAcrossInstances =
         switchPlan?.instanceChanged === true &&
@@ -6011,13 +6011,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const isProviderSwitch =
       activeProviderThread !== undefined &&
       activeProviderThread.providerInstanceId !== modelSelection.instanceId;
-    // Account overlays share native history. Selection commands may already
-    // have updated the app thread, so classify against the native thread's owner.
-    const canResumeAcrossInstances =
-      isProviderSwitch &&
-      activeProviderThread.nativeThreadRef !== null &&
-      (yield* providerSwitchService
-        .plan({
+    const instanceSwitchPlan = isProviderSwitch
+      ? yield* planThreadSelectionChange({
+          commandId: command.commandId,
           projection: {
             ...projection,
             thread: {
@@ -6029,8 +6025,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             },
           },
           targetModelSelection: modelSelection,
-        })
-        .pipe(mapDispatchError(command))).transition.type === "restart_and_resume";
+        }).pipe(mapDispatchError(command))
+      : null;
+    const canResumeAcrossInstances =
+      instanceSwitchPlan?.transition.type === "restart_and_resume" &&
+      activeProviderThread?.nativeThreadRef != null;
 
     if (
       pendingForkTransfer === undefined &&
@@ -7258,7 +7257,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
-    if (canResumeAcrossInstances && activeProviderThread.providerSessionId !== null) {
+    if (
+      canResumeAcrossInstances &&
+      activeProviderThread.providerSessionId !== null &&
+      instanceSwitchPlan?.releaseProviderSessionIds.includes(activeProviderThread.providerSessionId)
+    ) {
       const previousProviderSessionId = activeProviderThread.providerSessionId;
       yield* emitEvent({
         type: "provider-session.detached",
@@ -8150,7 +8153,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       completionWake: command.completionWake,
       updatedAt: now,
     };
-    // Finalization already offered for ended parent runs; another offer would duplicate the wake.
     const parentRun =
       task.runId === null
         ? undefined

@@ -1,11 +1,13 @@
 import {
   CommandId,
   ProviderInstanceId,
+  type RunId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
   THREAD_SESSION_RESTART_REASON,
 } from "@t3tools/contracts";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -36,6 +38,7 @@ export const makeThreadSelectionPlanner = Effect.gen(function* () {
     readonly commandId: CommandId;
     readonly projection: ProjectionStore.ProjectionThreadProviderContext;
     readonly targetModelSelection: ModelSelection;
+    readonly startingRunId?: RunId;
   }) {
     yield* adapters.get(input.targetModelSelection.instanceId).pipe(
       Effect.mapError(
@@ -49,10 +52,35 @@ export const makeThreadSelectionPlanner = Effect.gen(function* () {
     );
     const plan = yield* switches.plan(input);
     if (plan.releaseProviderSessionIds.length === 0) return plan;
-    const { runs } = yield* store.getThreadRecords(input.projection.thread.id, ["runs"]);
-    return runs.some((run) =>
-      ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
-    )
+    const { runs, providerThreads, nodes, turnItems } = yield* store.getThreadRecords(
+      input.projection.thread.id,
+      ["runs", "providerThreads", "nodes", "turnItems"],
+    );
+    const sessionBusy =
+      runs.some(
+        (run) =>
+          run.id !== input.startingRunId &&
+          ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
+      ) ||
+      providerThreads.some(
+        (thread) =>
+          (thread.pendingBackgroundTasks?.length ?? 0) > 0 ||
+          (thread.ownerNodeId !== null &&
+            nodes.some(
+              (node) =>
+                node.id === thread.ownerNodeId &&
+                ["pending", "running", "waiting"].includes(node.status),
+            )),
+      );
+    return sessionBusy ||
+      derivePendingBackgroundWork({
+        runs,
+        hasActiveRun: false,
+        providerThreads,
+        turnItems,
+        latestRun: runs.findLast((run) => run.id !== input.startingRunId),
+        activeProviderThreadId: input.projection.thread.activeProviderThreadId,
+      }).length > 0
       ? { ...plan, releaseProviderSessionIds: [] }
       : plan;
   });
