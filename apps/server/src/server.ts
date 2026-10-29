@@ -250,7 +250,10 @@ const layerDesktopTelemetryReceiver = DesktopTelemetryReceiver.layer.pipe(
   Layer.provideMerge(layerServerSettings),
 );
 
+const layerPortScanner = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
+
 const layerResourceTelemetry = ResourceTelemetry.layer.pipe(
+  Layer.provide(layerPortScanner),
   Layer.provideMerge(layerNativeTelemetry),
   Layer.provideMerge(layerDesktopTelemetryReceiver),
 );
@@ -428,8 +431,6 @@ const layerVcs = Layer.empty.pipe(
 );
 
 const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDriverRegistry));
-
-const layerPortScanner = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
 
 const layerTerminal = TerminalManager.layer.pipe(
   Layer.provide(layerPtyAdapter),

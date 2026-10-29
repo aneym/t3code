@@ -29,6 +29,11 @@ import * as ProcessRunner from "../processRunner.ts";
 export class PortDiscovery extends Context.Service<
   PortDiscovery,
   {
+    readonly resourceOwners: (
+      processes: ReadonlyArray<{ readonly pid: number; readonly startTimeMs: number }>,
+    ) => Effect.Effect<
+      ReadonlyMap<number, { readonly threadId: ThreadId; readonly terminalId?: string }>
+    >;
     readonly scan: (
       configuredUrls?: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<DiscoveredLocalServer>>;
@@ -523,41 +528,46 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // servers it left may still run. So does startup, for agents that ran before a restart.
   let agentScanPending = true;
 
+  const readThreadEnvironments = Effect.fn("PortDiscovery.readThreadEnvironments")(function* (
+    unread: ReadonlyArray<number>,
+  ) {
+    return unread.length === 0
+      ? new Map()
+      : hostPlatform === "linux"
+        ? new Map(
+            yield* Effect.forEach(
+              unread,
+              (pid) =>
+                fileSystem.readFileString(`/proc/${pid}/environ`).pipe(
+                  Effect.map(parseProcEnvironThread),
+                  Effect.orElseSucceed(() => null),
+                  Effect.map((threadId) => [pid, threadId] as const),
+                ),
+              { concurrency: 16 },
+            ),
+          )
+        : yield* processRunner
+            .run({
+              command: "ps",
+              args: ["-E", "-ww", "-o", "pid=,command=", "-p", unread.join(",")],
+              timeout: Duration.millis(PS_TIMEOUT_MS),
+              maxOutputBytes: PS_MAX_OUTPUT_BYTES,
+            })
+            .pipe(
+              Effect.map((result) => parsePsEnvironmentThreads(result.stdout)),
+              Effect.orElseSucceed(() => {
+                agentScanPending = true;
+                return new Map();
+              }),
+            );
+  });
+
   const readAgentThreads = Effect.fn("PortDiscovery.readAgentThreads")(function* (
     pids: ReadonlyArray<number>,
   ) {
     const cached = yield* Ref.get(agentThreadsRef);
     const unread = pids.filter((pid) => !cached.has(pid));
-    const read: ReadonlyMap<number, ThreadId | null> =
-      unread.length === 0
-        ? new Map()
-        : hostPlatform === "linux"
-          ? new Map(
-              yield* Effect.forEach(
-                unread,
-                (pid) =>
-                  fileSystem.readFileString(`/proc/${pid}/environ`).pipe(
-                    Effect.map(parseProcEnvironThread),
-                    Effect.orElseSucceed(() => null),
-                    Effect.map((threadId) => [pid, threadId] as const),
-                  ),
-                { concurrency: 16 },
-              ),
-            )
-          : yield* processRunner
-              .run({
-                command: "ps",
-                args: ["-E", "-ww", "-o", "pid=,command=", "-p", unread.join(",")],
-                timeout: Duration.millis(PS_TIMEOUT_MS),
-                maxOutputBytes: PS_MAX_OUTPUT_BYTES,
-              })
-              .pipe(
-                Effect.map((result) => parsePsEnvironmentThreads(result.stdout)),
-                Effect.orElseSucceed(() => {
-                  agentScanPending = true;
-                  return new Map();
-                }),
-              );
+    const read = yield* readThreadEnvironments(unread);
     const next = new Map<number, ThreadId | null>();
     for (const pid of pids) {
       const threadId = cached.has(pid) ? cached.get(pid) : read.get(pid);
@@ -577,6 +587,32 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const owners = new Map(terminalOwners);
     for (const [pid, threadId] of threads) {
       if (threadId !== null) owners.set(pid, { terminal: null, agent: { threadId } });
+    }
+    return owners;
+  });
+
+  const resourceThreadsRef = yield* Ref.make<ReadonlyMap<string, ThreadId | null>>(new Map());
+  const resourceOwners = Effect.fn("PortDiscovery.resourceOwners")(function* (
+    processes: ReadonlyArray<{ readonly pid: number; readonly startTimeMs: number }>,
+  ) {
+    const owners = new Map<number, { threadId: ThreadId; terminalId?: string }>();
+    const cached = yield* Ref.get(resourceThreadsRef);
+    const key = (process: { readonly pid: number; readonly startTimeMs: number }) =>
+      `${process.pid}:${process.startTimeMs}`;
+    const unread = processes.filter((process) => !cached.has(key(process)));
+    const read =
+      hostPlatform === "win32"
+        ? new Map<number, ThreadId | null>()
+        : yield* readThreadEnvironments(unread.map((process) => process.pid));
+    const next = new Map<string, ThreadId | null>();
+    for (const process of processes) {
+      const threadId = cached.has(key(process)) ? cached.get(key(process)) : read.get(process.pid);
+      if (threadId !== undefined) next.set(key(process), threadId);
+      if (threadId) owners.set(process.pid, { threadId });
+    }
+    yield* Ref.set(resourceThreadsRef, next);
+    for (const registration of (yield* Ref.get(stateRef)).terminalProcesses.values()) {
+      for (const pid of registration.processIds) owners.set(pid, registration.owner);
     }
     return owners;
   });
@@ -1175,6 +1211,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     scan: scanOnce,
     subscribe,
     retain,
+    resourceOwners,
     registerTerminalProcesses,
     unregisterTerminal,
     trackAgent,

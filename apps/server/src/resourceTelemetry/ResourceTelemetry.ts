@@ -1,3 +1,5 @@
+import * as PortScanner from "../preview/PortScanner.ts";
+import { aggregateThreadResources } from "./ThreadResources.ts";
 import type {
   DesktopHostTelemetrySnapshot,
   HostPowerSnapshot,
@@ -7,6 +9,7 @@ import type {
   ResourceTelemetryRetryResult,
   ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -140,6 +143,8 @@ function buildHealth(input: {
 
 /** @public */
 export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(function* () {
+  const portDiscovery = yield* Effect.serviceOption(PortScanner.PortDiscovery);
+  const serverThreadId = yield* Config.String(PortScanner.AGENT_THREAD_ENV).pipe(Config.option);
   const nativeClient = yield* NativeTelemetryClient.NativeTelemetryClient;
   const desktopReceiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const attribution = yield* ResourceAttribution.ResourceAttribution;
@@ -295,6 +300,17 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
           sampleIntervalMs: nativeHealth.sampleIntervalMs,
           processes: merged.processes,
           groups: merged.groups,
+          ...(Option.isSome(portDiscovery) && (yield* Ref.get(liveState)).retainCount > 0
+            ? {
+                threads: aggregateThreadResources(
+                  merged.processes,
+                  yield* portDiscovery.value.resourceOwners(
+                    merged.processes.map((entry) => entry.identity),
+                  ),
+                  Option.getOrUndefined(serverThreadId),
+                ),
+              }
+            : {}),
           power: Option.match(desktopSnapshot, {
             onNone: () => unknownPower(readAt),
             onSome: (desktop) => desktop.power,
