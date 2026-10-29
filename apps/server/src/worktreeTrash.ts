@@ -69,10 +69,11 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     const adminTrash = path.join(commonDir, ADMIN_TRASH_FOLDER);
     const adminEntry = path.join(adminTrash, path.basename(input.entry));
     const parts = [
-      { moved: false, from: input.worktreePath, to: path.join(input.entry, "checkout") },
       { moved: false, from: input.adminDir, to: path.join(adminEntry, "git") },
+      { moved: false, from: input.worktreePath, to: path.join(input.entry, "checkout") },
     ];
     const entries = [input.entry, adminEntry];
+    const prepared = [input.entry];
     const instructions = () =>
       parts
         .filter((part) => part.moved)
@@ -92,6 +93,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
             if (!(yield* fenced(adminTrash)))
               return yield* failure(input.worktreePath, `worktree trash is a link: ${adminTrash}`);
             yield* fs.makeDirectory(adminEntry);
+            prepared.push(adminEntry);
             for (const entry of entries)
               yield* fs.makeDirectory(path.join(entry, RECOVERY_REQUIRED));
             const pending = parts
@@ -129,7 +131,23 @@ export const makeWorktreeTrash = Effect.gen(function* () {
                 );
               }
               const text = instructions();
-              if (text === "") return;
+              if (text === "") {
+                for (const entry of prepared) {
+                  yield* fs.remove(path.join(entry, RECOVERY_FAILED), { force: true }).pipe(
+                    Effect.andThen(
+                      fs.remove(path.join(entry, RECOVERY_REQUIRED), {
+                        recursive: true,
+                        force: true,
+                      }),
+                    ),
+                    Effect.andThen(discard(entry)),
+                    Effect.catch((error) =>
+                      Effect.logWarning("worktree rollback entry cleanup failed", { entry, error }),
+                    ),
+                  );
+                }
+                return;
+              }
               for (const entry of entries)
                 yield* fs
                   .writeFileString(path.join(entry, RECOVERY_FAILED), `${text}\n`)

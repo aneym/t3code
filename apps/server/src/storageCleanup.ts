@@ -637,6 +637,7 @@ const make = Effect.gen(function* () {
             pending.push(path.join(directory, name));
         }
       }
+      // Check files after walking stored history to shorten the gap before forced removal.
       for (const submodule of paths) {
         const changes = yield* localChangesReason(submodule, rules);
         if (changes !== null) return `submodule ${changes}`;
@@ -855,6 +856,7 @@ const make = Effect.gen(function* () {
           if (eligible && !landed.integrated && !merged)
             return keep("has commits that are not on the default branch");
         }
+        // Merge and unchanged rules act only once every thread on the checkout has let it go.
         if (
           eligible &&
           !deleted &&
@@ -970,7 +972,10 @@ const make = Effect.gen(function* () {
           return keep("settings changed since check");
         const submodules = yield* submoduleKeepReason(worktreePath, settings);
         if (submodules !== null) return keep(submodules);
-        const removal = yield* trash.remove(managedRoot, worktreePath, blockedSinceCheck);
+        const removal = yield* trash.remove(managedRoot, worktreePath, () => {
+          // Last, after every slow inspection: a snooze or unarchive here still cancels removal.
+          return blockedSinceCheck();
+        });
         if (removal !== null) return keep(removal);
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
