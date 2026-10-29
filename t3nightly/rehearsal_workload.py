@@ -108,9 +108,10 @@ class Workload:
         if queued["messageId"] not in current or current[queued["messageId"]][2] != queued["runId"]:
             raise ValueError("queued message identity changed")
         (self.sandbox.home / "release-gate").touch()
+        queued_reply = self.reply({"threadId": queued["threadId"], "runId": queued["runId"]}, queued["nonce"])
         nonce = f"RESUME_{uuid.uuid4().hex}"
         active = self.work["active-turn"]
         result = self.sandbox.t3("thread", "send", active["threadId"], f"Reply with exactly {nonce} and nothing else. Do not use tools.", "--mode", "queue", "--json")
         proof = self.reply({"threadId": active["threadId"], "runId": result["runId"]}, nonce)
-        evidence = {"before": self.before, "after": after, "dispositions": dispositions, "queued": queued, "snoozedUntil": json.loads(snoozed)["snoozedUntil"], "resume": proof}
+        evidence = {"before": self.before, "after": after, "dispositions": dispositions, "queued": queued, "queuedReply": queued_reply, "snoozedUntil": json.loads(snoozed)["snoozedUntil"], "resume": proof}
         return proof, evidence
