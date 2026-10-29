@@ -46,7 +46,7 @@ export class RemoteWorktreeTask extends Context.Service<
       parent: ParentCheckout,
       taskId: string,
       reply: string,
-    ) => Effect.Effect<string>;
+    ) => Effect.Effect<string, OrchestratorMcpFailure>;
   }
 >()("t3/peer/RemoteWorktreeTask") {}
 
@@ -91,21 +91,24 @@ const make = Effect.gen(function* () {
           message: `${params.message ?? ""}${COMMIT_ONLY}`,
           workspaceStrategy: { type: "worktree", baseRef, startFromOrigin },
         });
-      const launched = yield* launchFrom(base.commit, false).pipe(
+      const { commit, fetchable } = base;
+      return yield* launchFrom(commit, false).pipe(
+        Effect.map((launched) => ({ launched, worktreeBase: commit })),
         Effect.catchIf(
           (error) => error.code === "invalid_request",
           (error) =>
-            base.fetchable === null
+            fetchable === null
               ? Effect.fail(
                   new OrchestratorMcpFailure({
                     code: "invalid_request",
-                    message: `Commit ${base.commit} is not there and is on no remote branch it can fetch. Push it, or omit isolation. Uncommitted edits never go with the task. (${error.message})`,
+                    message: `Commit ${commit} is not there and is on no remote branch it can fetch. Push it, or omit isolation. Uncommitted edits never go with the task. (${error.message})`,
                   }),
                 )
-              : launchFrom(base.fetchable, true),
+              : launchFrom(fetchable, true).pipe(
+                  Effect.map((launched) => ({ launched, worktreeBase: fetchable })),
+                ),
         ),
       );
-      return { launched, worktreeBase: base.commit };
     },
   );
 
@@ -118,9 +121,18 @@ const make = Effect.gen(function* () {
     const exported = yield* forwarding
       .call(scope, WorktreeToolkit.tools.t3_worktree_export, remote.environmentId, {
         threadId: remote.threadId,
-        baseCommit: remote.worktreeBase,
+        base: remote.worktreeBase,
       })
-      .pipe(Effect.option);
+      .pipe(
+        Effect.asSome,
+        Effect.catchIf(
+          (error) =>
+            error.code === "invalid_request" ||
+            error.code === "thread_not_found" ||
+            error.code === "capability_denied",
+          () => Effect.succeedNone,
+        ),
+      );
     if (Option.isNone(exported))
       return `Its work stays in its worktree in ${remote.label}; it could not be brought back.`;
     const out = exported.value;
@@ -137,7 +149,7 @@ const make = Effect.gen(function* () {
             .pipe(Effect.orElseSucceed(() => undefined));
     if (local === undefined)
       return `Its ${out.commitCount} commit${out.commitCount === 1 ? "" : "s"} are on ${there}; they could not be brought back.${left}`;
-    return `Branch ${local} here has its ${out.commitCount} commit${out.commitCount === 1 ? "" : "s"} (head ${out.headCommit.slice(0, 12)}) on ${remote.worktreeBase.slice(0, 12)}, from ${there}.${left}\n${out.diffStat}`;
+    return `Branch ${local} here has its ${out.commitCount} commit${out.commitCount === 1 ? "" : "s"} (head ${out.headCommit.slice(0, 12)}) on ${out.baseCommit.slice(0, 12)}, from ${there}.${left}\n${out.diffStat}`;
   });
 
   const withWork: RemoteWorktreeTask["Service"]["withWork"] = (

@@ -28,6 +28,11 @@ const handlers = {
   t3_worktree_export: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       yield* requireWorktreeCapability;
+      if ((yield* McpInvocationContext.McpInvocationContext).client?.linked !== true)
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "Only a linked environment's delegate_task exports a worktree.",
+        });
       const {
         projection: { thread },
       } = yield* readThread(input.threadId);
@@ -39,7 +44,7 @@ const handlers = {
       const { worktreePath, branch } = thread;
       return yield* WorktreeTransfer.WorktreeTransfer.pipe(
         Effect.flatMap((transfer) =>
-          transfer.exportBranch({ worktreePath, branch, baseCommit: input.baseCommit }),
+          transfer.exportBranch({ worktreePath, branch, base: input.base }),
         ),
         Effect.provide(WorktreeTransfer.layer),
         Effect.mapError(
