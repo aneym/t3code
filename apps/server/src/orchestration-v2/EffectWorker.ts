@@ -1,4 +1,4 @@
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, THREAD_SESSION_RESTART_REASON } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -120,7 +120,7 @@ export const layerExecutor: Layer.Layer<
             );
           }
           case "provider-session.detach":
-            if (effect.request.detail === ThreadSessionRestarts.CLIENT_SESSION_RESTART_DETAIL) {
+            if (effect.request.detail === THREAD_SESSION_RESTART_REASON) {
               ThreadSessionRestarts.expectThreadSessionRestartReport(effect.threadId);
             }
             return providerSessions
