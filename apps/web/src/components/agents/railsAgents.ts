@@ -19,6 +19,7 @@ export interface RailsAgent {
   readonly environmentIds: ReadonlyArray<EnvironmentId>;
   readonly target: ScopedThreadRef | null;
   readonly remoteHost: string | null;
+  readonly projects: ReadonlyArray<string>;
   readonly thread: EnvironmentThreadShell | null;
 }
 
@@ -32,6 +33,13 @@ export function railsAgentFaceUrl(handle: string): string {
 
 export function railsAgentThreadKey(thread: EnvironmentThreadShell): string {
   return `${thread.environmentId}:${thread.id}`;
+}
+
+function labelNamesHost(label: string, host: string | null): boolean {
+  if (host === null) return false;
+  const wanted = host.toLowerCase();
+  const name = label.toLowerCase();
+  return name === wanted || name.split(/[^a-z0-9-]+/).includes(wanted);
 }
 
 function bindingTime(home: EnvironmentAgentHome): number {
@@ -60,8 +68,7 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
     const binding = winner?.binding;
     const targetEnvironmentId = binding
       ? (environments.find((env) => env.environmentId === binding.environmentId)?.environmentId ??
-        environments.find((env) => env.label.toLowerCase() === binding.host?.toLowerCase())
-          ?.environmentId ??
+        environments.find((env) => labelNamesHost(env.label, binding.host))?.environmentId ??
         (binding.environmentId === null && binding.host === null ? winner?.environmentId : null))
       : null;
     const target =
@@ -82,16 +89,11 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
       homeProjectRefs.find((ref) => ref.environmentId === preferred?.environmentId) ??
       homeProjectRefs[0] ??
       null;
-    const project = projects.find(
-      (entry) =>
-        entry.environmentId === projectRef?.environmentId && entry.id === projectRef.projectId,
-    );
     agents.push({
       handle,
       name:
         preferred?.displayName ??
         ordered.find((home) => home.displayName)?.displayName ??
-        project?.title ??
         handle.replace(
           /(^|-)([a-z])/g,
           (_, dash: string, letter: string) => `${dash ? " " : ""}${letter.toUpperCase()}`,
@@ -101,6 +103,7 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
       environmentIds: ordered.map((home) => home.environmentId),
       target,
       remoteHost,
+      projects: [...new Set(ordered.flatMap((home) => home.projects))],
       thread: target
         ? (threads.find(
             (thread) =>

@@ -23,7 +23,8 @@ export const AgentToolkit = Toolkit.make(
     .annotate(Tool.Destructive, false),
   Tool.make("t3_agent_bind", {
     ...shared,
-    description: "Bind an agent home to a main thread, preserving the previous binding.",
+    description:
+      "Bind an agent home to a main thread (the previous binding is kept) and/or set the projects it owns; zooming the agent in the sidebar shows those projects.",
     parameters: AgentBindInput,
     success: AgentBindResult,
   }).annotate(Tool.Destructive, true),

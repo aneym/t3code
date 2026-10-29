@@ -43,7 +43,8 @@ const list = Command.make("list", {
 const bind = Command.make("bind", {
   baseDir: baseDirFlag,
   agent: Argument.String("agent"),
-  thread: Argument.String("thread"),
+  thread: Argument.String("thread").pipe(Argument.optional),
+  projects: Flag.String("projects").pipe(Flag.optional),
   environment: Flag.String("environment").pipe(Flag.optional),
   host: Flag.String("host").pipe(Flag.optional),
   by: Flag.String("by").pipe(Flag.optional),
@@ -57,7 +58,19 @@ const bind = Command.make("bind", {
           "t3_agent_bind",
           {
             handle: flags.agent,
-            threadId: flags.thread,
+            ...Option.match(flags.thread, {
+              onNone: () => ({}),
+              onSome: (threadId) => ({ threadId }),
+            }),
+            ...Option.match(flags.projects, {
+              onNone: () => ({}),
+              onSome: (projects) => ({
+                projects: projects
+                  .split(",")
+                  .map((name) => name.trim())
+                  .filter(Boolean),
+              }),
+            }),
             onlyIfUnbound: flags.onlyIfUnbound,
             ...Option.match(flags.environment, {
               onNone: () => ({}),
@@ -71,7 +84,7 @@ const bind = Command.make("bind", {
         yield* flags.json
           ? printJson(result)
           : Console.log(
-              `${result.home.handle}: ${result.home.binding?.threadId} (${result.changed ? "bound" : "unchanged"})`,
+              `${result.home.handle}: ${result.home.binding?.threadId ?? "unbound"} projects=${result.home.projects.join(",") || "-"} (${result.changed ? "updated" : "unchanged"})`,
             );
       }),
     ).pipe(reportErrors),

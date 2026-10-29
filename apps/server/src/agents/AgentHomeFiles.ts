@@ -51,6 +51,9 @@ export const homeFromDocument = (
     workspaceRoot: NodePath.join(root, handle),
     displayName: text(doc.display_name),
     role: text(doc.role),
+    projects: Array.isArray(doc.projects)
+      ? doc.projects.filter((name): name is string => typeof name === "string")
+      : [],
     binding: binding(doc.t3),
     previous: binding(
       typeof doc.t3 === "object" && doc.t3 !== null
@@ -103,21 +106,30 @@ export const writeBinding = async (
   root: string,
   handle: string,
   doc: Record<string, unknown>,
-  next: Record<string, unknown>,
+  next: Record<string, unknown> | null,
   readText: string,
+  projects?: ReadonlyArray<string>,
 ) => {
   const old =
     typeof doc.t3 === "object" && doc.t3 !== null ? (doc.t3 as Record<string, unknown>) : null;
-  if (old) {
+  if (old && next) {
     const { previous: _previous, reason: _reason, ...previous } = old;
     next.previous = previous;
   }
   const target = await agentFile(root, handle);
   const temporary = `${target}.${crypto.randomUUID()}.tmp`;
   try {
-    await NodeFSP.writeFile(temporary, JSON.stringify({ ...doc, t3: next }, null, 2) + "\n", {
-      mode: (await NodeFSP.stat(target)).mode,
-    });
+    await NodeFSP.writeFile(
+      temporary,
+      JSON.stringify(
+        { ...doc, ...(next ? { t3: next } : {}), ...(projects ? { projects } : {}) },
+        null,
+        2,
+      ) + "\n",
+      {
+        mode: (await NodeFSP.stat(target)).mode,
+      },
+    );
     if ((await NodeFSP.readFile(target, "utf8")) !== readText)
       throw new Error("agent.json changed while binding; try again");
     await NodeFSP.rename(temporary, target);

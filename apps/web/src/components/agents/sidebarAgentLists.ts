@@ -1,10 +1,12 @@
 import * as Schema from "effect/Schema";
 import {
+  scopeProjectRef,
   scopeThreadRef,
   scopedProjectKey,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ResolvedKeybindingsConfig, ScopedProjectRef } from "@t3tools/contracts";
 import { FocusIcon } from "lucide-react";
 
@@ -44,6 +46,7 @@ export function useSidebarAgentLists(projectKeys: ReadonlySet<string> | null) {
           environmentIds: [project.environmentId],
           target: null,
           remoteHost: null,
+          projects: [],
           thread: null,
         },
       ];
@@ -83,26 +86,44 @@ export function sidebarJumpLabels(
 }
 
 export interface AgentProjectScope {
-  readonly key: string | null;
+  readonly keys: ReadonlyArray<string>;
   readonly groups: ReadonlyArray<{
     readonly projectKey: string;
     readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
   }>;
-  readonly set: (key: string | null) => void;
+  readonly set: (keys: ReadonlyArray<string>) => void;
 }
 
-export function agentFocusAction(agent: RailsAgent, scope: AgentProjectScope) {
-  if (agent.projectRef === null) return null;
-  const target = scopedProjectKey(agent.projectRef);
-  const group = scope.groups.find((entry) =>
-    entry.memberProjectRefs.some((ref) => scopedProjectKey(ref) === target),
-  );
-  if (group === undefined) return null;
-  const active = scope.key === group.projectKey;
+const folderName = (workspaceRoot: string) =>
+  workspaceRoot.replace(/\/+$/, "").split("/").at(-1)?.toLowerCase() ?? "";
+
+export function agentFocusAction(
+  agent: RailsAgent,
+  scope: AgentProjectScope,
+  projects: ReadonlyArray<EnvironmentProject>,
+) {
+  const declared = new Set(agent.projects.map((name) => name.toLowerCase()));
+  const projectKeys = new Set([
+    ...agent.homeProjectRefs.map(scopedProjectKey),
+    ...projects
+      .filter(
+        (project) =>
+          declared.has(project.title.toLowerCase()) ||
+          declared.has(folderName(project.workspaceRoot)),
+      )
+      .map((project) => scopedProjectKey(scopeProjectRef(project.environmentId, project.id))),
+  ]);
+  const keys = scope.groups
+    .filter((group) =>
+      group.memberProjectRefs.some((ref) => projectKeys.has(scopedProjectKey(ref))),
+    )
+    .map((group) => group.projectKey);
+  if (keys.length === 0) return null;
+  const active = keys.length === scope.keys.length && keys.every((key) => scope.keys.includes(key));
   return {
     label: active ? "Show all projects" : `Focus ${agent.name}`,
     icon: FocusIcon,
     active,
-    onClick: () => scope.set(active ? null : group.projectKey),
+    onClick: () => scope.set(active ? [] : keys),
   };
 }

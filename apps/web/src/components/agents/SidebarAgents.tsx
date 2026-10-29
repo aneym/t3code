@@ -5,6 +5,7 @@ import { CircleDashedIcon, PinOffIcon, PinIcon } from "lucide-react";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useThreadActionMenu } from "../../hooks/useThreadActionMenu";
 import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
+import { useProjects } from "../../state/entities";
 import { useEnvironmentIdentities } from "../../state/environments";
 import { cn } from "~/lib/utils";
 import { resolveSidebarThreadStatus } from "../Sidebar.logic";
@@ -36,6 +37,7 @@ export function SidebarAgents({
   readonly projectScope: AgentProjectScope;
 }) {
   const { toggle, showMenu } = useSidebarPins();
+  const projects = useProjects();
   const routeTarget = useThreadRouteTarget();
   const environmentLabelById = new Map(
     useEnvironmentIdentities().map((environment) => [environment.environmentId, environment.label]),
@@ -56,7 +58,7 @@ export function SidebarAgents({
       .filter((label, index, all) => all.indexOf(label) === index)
       .join(" · "),
     onNavigate,
-    focus: agentFocusAction(agent, projectScope),
+    focus: agentFocusAction(agent, projectScope, projects),
     onContextMenu: (position: { x: number; y: number }) => {
       void showMenu(agent.handle, agent.name, position);
     },

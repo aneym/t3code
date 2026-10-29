@@ -20,6 +20,7 @@ export const AgentHome = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   displayName: Schema.NullOr(Schema.String),
   role: Schema.NullOr(Schema.String),
+  projects: Schema.Array(Schema.String),
   binding: Schema.NullOr(AgentHomeBinding),
   previous: Schema.NullOr(AgentHomeBinding),
 });
@@ -32,7 +33,8 @@ export type AgentHomesSnapshot = typeof AgentHomesSnapshot.Type;
 
 export const AgentBindInput = Schema.Struct({
   handle: AgentHandle,
-  threadId: ThreadId,
+  threadId: Schema.optional(ThreadId),
+  projects: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   threadEnvironmentId: Schema.optional(EnvironmentId),
   host: Schema.optional(TrimmedNonEmptyString),
   by: Schema.optional(TrimmedNonEmptyString),
