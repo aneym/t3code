@@ -278,25 +278,32 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       "refs/replace/",
     ]);
     if (replaced.stdout.trim() !== "") return "repository has replace refs";
-    const excludeFile = path.join(commonDir.stdout.trim(), "info", "exclude");
-    const patterns = (yield* fs.exists(excludeFile))
-      ? (yield* fs.readFileString(excludeFile))
-          .split(/\r?\n/)
-          .some((line) => line.trim() !== "" && !line.startsWith("#"))
-      : false;
-    if (patterns) {
-      const excluded = yield* inspect("StorageCleanup.excludedFiles", [
-        "ls-files",
-        "--others",
-        "--ignored",
-        "--directory",
-        "--no-empty-directory",
-        "-z",
-        `--exclude-from=${excludeFile}`,
-      ]);
-      if (excluded.stdoutTruncated) return "excluded files exceed the inspection limit";
-      const file = excluded.stdout.split("\0").find((entry) => entry !== "");
-      if (file !== undefined) return `has excluded local state (${file})`;
+    const ignored = yield* inspect("StorageCleanup.ignoredFiles", [
+      "ls-files",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "--directory",
+      "--no-empty-directory",
+      "-z",
+    ]);
+    if (ignored.stdoutTruncated) return "ignored files exceed the inspection limit";
+    if (ignored.stdout !== "") {
+      const sources = yield* git.execute({
+        operation: "StorageCleanup.ignoreSources",
+        cwd,
+        args: ["check-ignore", "--verbose", "--non-matching", "-z", "--stdin"],
+        stdin: ignored.stdout,
+        allowNonZeroExit: true,
+        maxOutputBytes: 64 * 1024 * 1024,
+      });
+      if (sources.stdoutTruncated) return "ignored files exceed the inspection limit";
+      const fields = sources.stdout.split("\0");
+      for (let index = 0; index + 3 < fields.length; index += 4) {
+        const source = fields[index]!;
+        if (source === "" || path.basename(source) !== ".gitignore")
+          return `has excluded local state (${fields[index + 3]})`;
+      }
     }
     const nested = yield* nestedRepository(cwd, submodules);
     return nested === null ? null : `has a nested repository (${nested})`;
