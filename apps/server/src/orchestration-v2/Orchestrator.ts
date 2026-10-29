@@ -589,11 +589,19 @@ const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
 const RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE =
   "T3 Code could not confirm that your answer reached the agent. If the run stays stuck, stop it and try again.";
 
-function withoutPreparationResult(
+function restartedPreparationItem(
   item: Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>,
+  now: DateTime.Utc,
 ) {
   const { output: _output, exitCode: _exitCode, outputIndicatesFailure: _failure, ...rest } = item;
-  return rest;
+  return {
+    ...rest,
+    status: "running",
+    title: WORKSPACE_PREPARATION_INPUT,
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+  } as const;
 }
 
 /** Stop ended this task, so its result is not delivered to the parent agent. */
@@ -9632,31 +9640,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
-    yield* emitEvent({
-      type: "run-attempt.updated",
+    const scope = {
       threadId: command.threadId,
       runId: state.run.id,
       nodeId: state.rootNode.id,
       providerInstanceId: state.run.providerInstanceId,
       occurredAt: now,
+    };
+    yield* emitEvent({
+      type: "run-attempt.updated",
+      ...scope,
       payload: { ...state.attempt, status: "failed", completedAt: now },
     });
     yield* emitEvent({
       type: "node.updated",
-      threadId: command.threadId,
-      runId: state.run.id,
-      nodeId: state.rootNode.id,
-      providerInstanceId: state.run.providerInstanceId,
-      occurredAt: now,
+      ...scope,
       payload: { ...state.rootNode, status: "failed", completedAt: now },
     });
     yield* emitEvent({
       type: "turn-item.updated",
-      threadId: command.threadId,
-      runId: state.run.id,
-      nodeId: state.rootNode.id,
-      providerInstanceId: state.run.providerInstanceId,
-      occurredAt: now,
+      ...scope,
       payload: {
         ...state.preparationItem,
         status: "failed",
@@ -9669,11 +9672,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
     yield* emitEvent({
       type: "turn-item.updated",
-      threadId: command.threadId,
-      runId: state.run.id,
-      nodeId: state.rootNode.id,
-      providerInstanceId: state.run.providerInstanceId,
-      occurredAt: now,
+      ...scope,
       payload: {
         id: idAllocator.derive.turnItemFromProviderItem({
           driver: state.providerThread.driver,
@@ -9701,11 +9700,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
     yield* emitEvent({
       type: "run.updated",
-      threadId: command.threadId,
-      runId: state.run.id,
-      nodeId: state.rootNode.id,
-      providerInstanceId: state.run.providerInstanceId,
-      occurredAt: now,
+      ...scope,
       payload: { ...state.run, status: "failed", completedAt: now },
     });
   });
@@ -9763,13 +9758,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     yield* emitEvent({
       ...scope,
       type: "turn-item.updated",
-      payload: {
-        ...withoutPreparationResult(state.preparationItem),
-        status: "running",
-        title: WORKSPACE_PREPARATION_INPUT,
-        completedAt: null,
-        updatedAt: now,
-      },
+      payload: restartedPreparationItem(state.preparationItem, now),
     });
     yield* emitEvent({
       ...scope,
