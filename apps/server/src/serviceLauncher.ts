@@ -29,14 +29,17 @@ import {
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 import { readServiceEnvironment } from "./serviceEnvironment.ts";
-import { freeOwnedHome, homeStarted } from "./serviceHomeReclaim.ts";
+import { HomeRetry } from "./serviceHomeRetry.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
+/**
+ * Migrations count toward it and can scale with the database: tens of GB on a cold page cache
+ * take minutes. A missed window rolls back the database, so the next attempt pays the same cost.
+ */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
-const HOME_RETRY_INTERVAL_MS = 5_000;
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
@@ -82,6 +85,7 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
+// Opened read-write: Windows refuses to flush a handle without write access.
 async function syncFile(filePath: string): Promise<void> {
   const handle = await NodeFSP.open(filePath, "r+");
   try {
@@ -91,6 +95,7 @@ async function syncFile(filePath: string): Promise<void> {
   }
 }
 
+// Fsync makes renames durable; Windows returns EPERM and NTFS journals them itself.
 async function syncDirectory(directory: string): Promise<void> {
   const handle = await NodeFSP.open(directory, "r");
   try {
@@ -108,6 +113,7 @@ function runCp(args: ReadonlyArray<string>): Promise<boolean> {
   });
 }
 
+// macOS fs.copyFile clone flags fall back to full copies.
 async function copyDatabaseFile(source: string, destination: string): Promise<void> {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const platform = process.platform;
@@ -208,6 +214,7 @@ export async function databaseBackupBlocker(
   return `Not enough free disk space to back up the database before updating: ${gb(needed)} GB needed, ${gb(free)} GB free. Free up disk space and try again. The server was not stopped.`;
 }
 
+// Preserve completed backups; restarted trials may already have changed the live database.
 async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (await pathExists(backupDir)) return;
@@ -237,6 +244,7 @@ const restoreMarkerPath = (baseDir: string, updateId: string) =>
 const databaseRestorePending = (baseDir: string, pending: PendingServiceUpdate) =>
   pathExists(restoreMarkerPath(baseDir, pending.id));
 
+// Mark before live writes so recovery cannot boot a partial restore.
 async function markDatabaseRestorePending(backupDir: string): Promise<void> {
   const markerPath = NodePath.join(backupDir, RESTORE_MARKER);
   if (!(await pathExists(markerPath))) {
@@ -404,8 +412,7 @@ export class Launcher {
   #state: ServiceState;
   #child: ManagedChild | null = null;
   #timer: NodeJS.Timeout | undefined;
-  #homeRetryDelay = HOME_RETRY_INTERVAL_MS;
-  #homeRetryAt = 0;
+  readonly #home: HomeRetry;
   #transitions: Promise<void> = Promise.resolve();
   #stopRequested = false;
   #stopping = false;
@@ -423,6 +430,15 @@ export class Launcher {
     } = {},
   ) {
     this.#baseDir = baseDir;
+    this.#home = new HomeRetry(
+      baseDir,
+      async () => {
+        if (this.#child !== null || this.#stopping) return;
+        this.#clearTimer();
+        await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
+      },
+      (err) => this.#enqueue(() => Promise.reject(err)),
+    );
     this.#backupSpaceProbe = options.backupSpaceProbe;
     this.#environment = { ...(options.environment ?? process.env) };
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
@@ -463,6 +479,7 @@ export class Launcher {
   }
 
   async stop(signal: NodeJS.Signals): Promise<void> {
+    // Write synchronously on signal receipt; a terminating child needs the marker in its finalizer.
     try {
       NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
     } catch {}
@@ -473,6 +490,7 @@ export class Launcher {
     this.#stopRequested = true;
     this.#clearTimer();
     this.#enqueue(async () => {
+      // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
       this.#stopping = true;
       const child = this.#child?.process;
       this.#child = null;
@@ -484,11 +502,13 @@ export class Launcher {
   }
 
   #clearTimer(): void {
+    this.#home.clear();
     clearTimeout(this.#timer);
     this.#timer = undefined;
   }
 
   async #recover(): Promise<void> {
+    // Clear old stop markers to preserve future tunnels; clear restart-pending only for the awaited version to avoid CLI races.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     const restartPending = restartPendingPath(this.#baseDir);
     const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
@@ -550,7 +570,7 @@ export class Launcher {
       child.once("error", onError);
       child.once("spawn", () => {
         child.removeListener("error", onError);
-        child.on("error", (error) => this.#enqueue(() => Promise.reject(error)));
+        child.on("error", (err) => this.#enqueue(() => Promise.reject(err)));
         resolve();
       });
     });
@@ -573,16 +593,7 @@ export class Launcher {
       this.#enqueue(() => this.#handleExit(managed, code, signal)),
     );
 
-    if (role === "active" && this.#homeRetryDelay > HOME_RETRY_INTERVAL_MS) {
-      const ready = setInterval(() => {
-        void homeStarted(this.#baseDir, child.pid ?? 0).then((started) => {
-          if (this.#child !== managed || !started) return;
-          this.#homeRetryDelay = HOME_RETRY_INTERVAL_MS;
-          clearInterval(ready);
-        });
-      }, HOME_RETRY_INTERVAL_MS);
-      child.once("exit", () => clearInterval(ready));
-    }
+    if (role === "active") this.#home.watch(child, () => this.#child === managed);
     if (role === "trial") {
       this.#timer = setTimeout(
         () => this.#enqueue(() => this.#handlePreparedTimeout(managed)),
@@ -639,6 +650,7 @@ export class Launcher {
       await reject("The requested target runtime is missing or incomplete.");
       return;
     }
+    // Failed checks must refuse updates rather than stop the server with unknown backup capacity.
 
     const backupBlocker = await databaseBackupBlocker(
       this.#baseDir,
@@ -703,7 +715,7 @@ export class Launcher {
     await writeServiceState(this.#statePath, next);
     this.#state = next;
     child.role = "active";
-    this.#homeRetryDelay = HOME_RETRY_INTERVAL_MS;
+    this.#home.reset();
     await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
     await sendMessage(child.process, { type: "committed", updateId: committed.id });
   }
@@ -751,6 +763,7 @@ export class Launcher {
     throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);
   }
 
+  // Stay idle to avoid supervisor restart loops; never restore backups over another owner's possible writes.
   async #handleStateDirOwned(): Promise<void> {
     this.#clearTimer();
     const pending = this.#state.update;
@@ -764,34 +777,11 @@ export class Launcher {
       this.#state = next;
       await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
     }
-    if (await this.#retryOwnedHome(false)) return;
+    // Signal listeners alone do not keep Node alive.
+    if (await this.#home.run(false)) return;
     process.stderr.write(
       "[service-launcher] Another T3 Code server owns this T3 home. This service starts once it stops.\n",
     );
-  }
-
-  async #retryOwnedHome(acquire: boolean): Promise<boolean> {
-    if (this.#child !== null || this.#stopping) return false;
-    const home = await freeOwnedHome(this.#baseDir);
-    if (home === "owned") {
-      this.#homeRetryDelay = HOME_RETRY_INTERVAL_MS;
-      this.#homeRetryAt = 0;
-    } else if (home === "reclaimed" || (acquire && performance.now() >= this.#homeRetryAt)) {
-      if (home === "reclaimed") this.#homeRetryDelay = HOME_RETRY_INTERVAL_MS;
-      this.#clearTimer();
-      await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
-      return true;
-    } else if (!acquire) {
-      this.#homeRetryAt = performance.now() + this.#homeRetryDelay;
-      this.#homeRetryDelay = Math.min(this.#homeRetryDelay * 2, 300_000);
-    }
-    this.#timer = setTimeout(
-      () => this.#enqueue(() => this.#retryOwnedHome(true).then(() => undefined)),
-      home === "free"
-        ? Math.min(HOME_RETRY_INTERVAL_MS, Math.max(0, this.#homeRetryAt - performance.now()))
-        : HOME_RETRY_INTERVAL_MS,
-    );
-    return false;
   }
 
   async #returnToPrevious(
