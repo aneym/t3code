@@ -141,7 +141,7 @@ def main():
     args = parser().parse_args()
     repo = args.repo.resolve()
     if not args.no_fetch:
-        subprocess.run(["git", "-C", str(repo), "-c", "credential.helper=", "fetch", args.upstream, "--tags"], check=True, env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+        subprocess.run(["git", "-C", str(repo), "-c", "credential.helper=", "-c", "core.askPass=/usr/bin/false", "fetch", args.upstream, "--tags"], check=True, env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="/usr/bin/false", SSH_ASKPASS="/usr/bin/false", SSH_ASKPASS_REQUIRE="never", GIT_SSH_COMMAND="ssh -o BatchMode=yes"))
     tag = newest_tag(repo, args.tag_pattern)
     if not tag:
         raise SystemExit("no upstream nightly tag found")
