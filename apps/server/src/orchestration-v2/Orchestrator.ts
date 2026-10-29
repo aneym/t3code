@@ -5,7 +5,10 @@ import {
   lastDeliveredRunForProviderThread,
 } from "./ProviderThreadHistory.ts";
 import { restartDispatchAllowed } from "./RestartDispatchPolicy.ts";
-import { makeThreadSelectionPlanner } from "./ThreadSessionTransitions.ts";
+import {
+  makeThreadSelectionPlanner,
+  OrchestratorProviderAdapterError,
+} from "./ThreadSessionTransitions.ts";
 import {
   canReleaseQueueHold,
   clearQueueHold,
@@ -243,19 +246,6 @@ export class OrchestratorDomainEventStreamError extends Schema.TaggedError<Orche
 ) {
   override get message(): string {
     return "Failed while streaming orchestration domain events.";
-  }
-}
-
-export class OrchestratorProviderAdapterError extends Schema.TaggedError<OrchestratorProviderAdapterError>()(
-  "OrchestratorProviderAdapterError",
-  {
-    commandId: CommandId,
-    providerInstanceId: ProviderInstanceId,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return `Provider adapter failed while dispatching orchestration command ${this.commandId}.`;
   }
 }
 
@@ -3171,6 +3161,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const providerSwitchPlan =
       command.type === "thread.model-selection.set" || command.type === "provider.switch"
         ? yield* planThreadSelectionChange({
+            commandId: command.commandId,
             projection: providerContext!,
             targetModelSelection: command.modelSelection,
           }).pipe(mapDispatchError(command))
