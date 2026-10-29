@@ -25,6 +25,7 @@ import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import {
   captureClaudeMcpApp,
   claudeMcpQuerySession,
+  claudeMcpQueryMessages,
   makeClaudeMcpApps,
   type ClaudeMcpQuery,
 } from "./ClaudeMcpApps.ts";
@@ -633,7 +634,6 @@ function closeClaudeQuery(queryRuntime: ClaudeQuery) {
   });
 }
 
-// Iterate Query itself: the raw generator's return() queues behind a pending CLI read and deadlocks interruption.
 export function claudeQueryMessages(queryRuntime: ClaudeQuery): AsyncIterable<SDKMessage, void> {
   return { [Symbol.asyncIterator]: () => queryRuntime };
 }
@@ -1099,8 +1099,9 @@ export const layerQueryRunner: Layer.Layer<
           );
 
           return {
-            messages: Stream.fromAsyncIterable(claudeQueryMessages(queryRuntime), (cause) =>
-              queryRunnerError(cause, "fromAsyncIterable"),
+            messages: Stream.fromAsyncIterable(
+              claudeMcpQueryMessages(queryRuntime, claudeQueryMessages(queryRuntime)),
+              (cause) => queryRunnerError(cause, "fromAsyncIterable"),
             ).pipe(
               Stream.tap((message) =>
                 logProtocolEvent({
