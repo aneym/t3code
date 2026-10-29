@@ -125,19 +125,45 @@ def gone(pid, stray, seconds):
         time.sleep(0.5)
 
 
+def bound(pid):
+    if sys.platform == "darwin":
+        return None
+    try:
+        return os.pidfd_open(int(pid))
+    except ProcessLookupError:
+        return -1
+
+
+def send(pid, handle, stray, sig):
+    if process_started(pid) != stray["started"] or process_argv(pid) != stray["argv"]:
+        raise ValueError("managed ssh-launch server identity changed before signal")
+    try:
+        if handle is None:
+            os.kill(int(pid), sig)
+        else:
+            signal.pidfd_send_signal(handle, sig)
+    except ProcessLookupError:
+        pass
+
+
 def reap(run, stray):
     pid = stray["pid"]
-    if not same(run, stray):
+    handle = bound(pid)
+    if handle == -1:
         return False
-    os.kill(int(pid), signal.SIGTERM)
-    signalled = "SIGTERM"
-    if not gone(pid, stray, TERM_WAIT_S):
-        if process_started(pid) != stray["started"] or process_argv(pid) != stray["argv"]:
-            raise ValueError("managed ssh-launch server identity changed before SIGKILL")
-        os.kill(int(pid), signal.SIGKILL)
-        signalled = "SIGKILL"
-        if not gone(pid, stray, KILL_WAIT_S):
-            raise ValueError("managed ssh-launch server did not exit")
+    try:
+        if not same(run, stray):
+            return False
+        send(pid, handle, stray, signal.SIGTERM)
+        signalled = "SIGTERM"
+        if not gone(pid, stray, TERM_WAIT_S):
+            send(pid, handle, stray, signal.SIGKILL)
+            signalled = "SIGKILL"
+            if not gone(pid, stray, KILL_WAIT_S):
+                raise ValueError("managed ssh-launch server did not exit")
+    finally:
+        if handle is not None:
+            os.close(handle)
     entry = {key: stray[key] for key in ("pid", "argv", "launchDir")} | {"signal": signalled, "at": time.time()}
     run.reaped.append(entry)
     run.step("hard-reap-ssh-launch", **entry)

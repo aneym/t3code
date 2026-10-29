@@ -75,8 +75,8 @@ def stray_serving(run, version, expected):
 def precheck(run, version, expected):
     try:
         serving(run, version, expected, reap=False)
-    except ValueError as error:
-        if str(error) != "candidate serving version did not become healthy" or run.server_version() != version or not stray_serving(run, version, expected):
+    except ValueError:
+        if run.server_version() != version or not stray_serving(run, version, expected):
             raise
 
 
@@ -149,7 +149,7 @@ def install(run):
 
     try:
         if previous == args.version:
-            serving(run, previous, observed["candidateRuntime.digest"])
+            precheck(run, previous, observed["candidateRuntime.digest"])
             outcome = "current"
         else:
             staged = stage_runtime(run.home, args.version, args.assets)
@@ -174,7 +174,12 @@ def install(run):
         if backup:
             try:
                 if not stopped:
-                    stop()
+                    try:
+                        stop()
+                    except ValueError as reaping:
+                        if not stopped:
+                            raise
+                        run.step("hard-rollback-stop", error=str(reaping))
                 activate(run, previous)
                 stopped = False
                 serving(run, previous, observed["oldRuntime.digest"])
