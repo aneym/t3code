@@ -29,7 +29,7 @@ import {
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 import { readServiceEnvironment } from "./serviceEnvironment.ts";
-import { stopSshLaunchedServers } from "./serviceHomeReclaim.ts";
+import { freeOwnedHome } from "./serviceHomeReclaim.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 /**
@@ -40,7 +40,8 @@ const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
-const MAX_HOME_RECLAIMS = 3;
+const MAX_HOME_RETRIES = 25;
+const HOME_RETRY_INTERVAL_MS = 5_000;
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
@@ -417,7 +418,7 @@ export class Launcher {
   #stopRequested = false;
   #stopping = false;
   #done = false;
-  #reclaims = 0;
+  #homeRetries = 0;
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
@@ -541,6 +542,7 @@ export class Launcher {
 
   async #startChild(version: string, role: ChildRole, update?: ServiceUpdateRecord): Promise<void> {
     if (this.#stopping) return;
+    if (role === "trial") this.#homeRetries = 0;
     if (!(await runtimeExists(this.#baseDir, version))) {
       throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
     }
@@ -728,7 +730,7 @@ export class Launcher {
       await this.#handleStateDirOwned();
       return;
     }
-    this.#reclaims = 0;
+    this.#homeRetries = 0;
     if (child.role === "trial") {
       this.#clearTimer();
       const pending = this.#state.update;
@@ -766,16 +768,25 @@ export class Launcher {
       this.#state = next;
       await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
     }
-    if (this.#reclaims < MAX_HOME_RECLAIMS && (await stopSshLaunchedServers(this.#baseDir))) {
-      this.#reclaims += 1;
-      await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
-      return;
-    }
+    if (await this.#retryOwnedHome(false)) return;
     // Signal listeners alone do not keep Node alive.
-    this.#timer = setInterval(() => {}, 2_147_483_647);
+    this.#timer = setInterval(
+      () => this.#enqueue(() => this.#retryOwnedHome(true).then(() => undefined)),
+      HOME_RETRY_INTERVAL_MS,
+    );
     process.stderr.write(
       "[service-launcher] Another T3 Code server owns this T3 home. Stop it, then restart this service.\n",
     );
+  }
+
+  async #retryOwnedHome(acquire: boolean): Promise<boolean> {
+    if (this.#child !== null || this.#stopping || this.#homeRetries >= MAX_HOME_RETRIES)
+      return false;
+    this.#homeRetries += 1;
+    if (!(await freeOwnedHome(this.#baseDir, acquire))) return false;
+    this.#clearTimer();
+    await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
+    return true;
   }
 
   async #returnToPrevious(
