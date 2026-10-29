@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .install_provenance import file_digest
+from .install_strays import port_listeners
 from .release_signatures import verify_cli
 
 
@@ -22,13 +23,10 @@ def serving_process(run, version, expected):
     if sys.platform == "darwin":
         result = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{run.service_label}"], capture_output=True, text=True, check=True, timeout=15)
         roots = re.findall(r"^\s*pid = (\d+)\s*$", result.stdout, re.MULTILINE)
-        sockets = subprocess.run(["/usr/sbin/lsof", "-nP", "-t", f"-iTCP:{run.args.port}", "-sTCP:LISTEN"], capture_output=True, text=True, check=True, timeout=15)
-        listeners = set(sockets.stdout.split())
     else:
         result = subprocess.run(["systemctl", "--user", "show", run.service_label, "--property=MainPID", "--value"], capture_output=True, text=True, check=True, timeout=15)
         roots = [result.stdout.strip()]
-        sockets = subprocess.run(["ss", "-H", "-ltnp", f"sport = :{run.args.port}"], capture_output=True, text=True, check=True, timeout=15)
-        listeners = set(re.findall(r"pid=(\d+),", sockets.stdout))
+    listeners = port_listeners(run.args.port)
     if len(roots) != 1 or not roots[0].isdigit() or int(roots[0]) <= 1:
         raise ValueError("intended service has no unambiguous root PID")
     root = roots[0]

@@ -26,7 +26,7 @@ def quiescent(db):
         raise ValueError("database users remain or lsof could not establish quiescence")
 
 
-def capture(run, previous, stop):
+def capture(run, previous, stop, binary_rollback=False):
     started = time.monotonic()
     root = run.home / "runtime" / "rollback"
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -49,13 +49,18 @@ def capture(run, previous, stop):
     stop()
     if sys.platform == "darwin":
         quiescent(source)
+    if binary_rollback:
+        metadata = {"method": "binary-rollback", "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
+        destination.rmdir()
+        run.step("hard-backup", **metadata)
+        return metadata
     if clone:
         for suffix in ("", "-wal"):
             original = Path(str(source) + suffix)
             if original.exists():
                 subprocess.run(["/bin/cp", "-c", str(original), str(target) + suffix], check=True, capture_output=True, timeout=30)
     else:
-        database_copy(source, target, time.monotonic() + 120)
+        database_copy(source, target, time.monotonic() + 120 + size / 40_000_000)
     metadata = {"path": str(target), "method": "apfs-clone" if clone else "sqlite-backup", "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
     (destination / "payload.json").write_text(json.dumps(metadata))
     run.step("hard-backup", **metadata)

@@ -12,6 +12,7 @@ from pathlib import Path
 from .install_backup import capture
 from .install_chat import identities, prove, retained
 from .install_process import serving_process
+from .install_strays import reap_strays
 from .install_provenance import file_digest, validate
 from .install_runtime import pin_runtime, stage_runtime
 from .release_receipts import INSTALL_SCHEMA, write
@@ -23,7 +24,10 @@ SERVICE_PROTOCOL = 3
 def service(run, action):
     if sys.platform == "darwin":
         domain = f"gui/{os.getuid()}"
-        command = ["launchctl", "bootout", "--wait", f"{domain}/{run.service_label}"] if action == "stop" else ["launchctl", "bootstrap", domain, str(run.service_plist)]
+        commands = {"stop": ["launchctl", "bootout", "--wait", f"{domain}/{run.service_label}"],
+                    "start": ["launchctl", "bootstrap", domain, str(run.service_plist)],
+                    "restart": ["launchctl", "kickstart", "-k", f"{domain}/{run.service_label}"]}
+        command = commands[action]
     else:
         command = ["systemctl", "--user", action, run.service_label]
     result = subprocess.run(command, capture_output=True, timeout=120, check=False)
@@ -62,13 +66,22 @@ def activate(run, version):
 
 def serving(run, version, expected):
     deadline = time.monotonic() + run.args.health_s
+    attempts = 0
     while time.monotonic() < deadline:
+        if reap_strays(run, attempts):
+            attempts += 1
+            service(run, "restart")
+            deadline = time.monotonic() + run.args.health_s
+            continue
         if run.server_version() == version:
-            break
+            try:
+                serving_process(run, version, expected)
+                return
+            except ValueError as error:
+                if str(error) != "endpoint listener does not belong to intended service":
+                    raise
         time.sleep(0.5)
-    else:
-        raise ValueError("candidate serving version did not become healthy")
-    serving_process(run, version, expected)
+    raise ValueError("candidate serving version did not become healthy")
 
 
 def advisory(run, backup):
@@ -81,6 +94,7 @@ def advisory(run, backup):
 
 def install(run):
     args = run.args
+    run.reaped = []
     previous = run.server_version()
     if not previous:
         return run.finish("failed", "old server unavailable; nothing stopped")
@@ -89,6 +103,8 @@ def install(run):
     archive = Path(args.assets) / f"t3-{args.version}-{target}.tar.gz"
     with cli_binary(archive) as candidate:
         manifest, rehearsal, host, observed = validate(run, previous, candidate)
+    compatibility = manifest.get("compatibility", {})
+    binary_rollback = compatibility.get("binaryRollback") is True and observed["oldMigrationHistory"] == compatibility.get("candidateMigrations", {}).get("history")
     serving(run, previous, observed["oldRuntime.digest"])
     try:
         baseline = prove(run, previous)
@@ -115,7 +131,7 @@ def install(run):
             staged = stage_runtime(run.home, args.version, args.assets)
             if file_digest(staged) != observed["candidateRuntime.digest"]:
                 raise ValueError("staged candidate runtime changed after provenance check")
-            backup = capture(run, previous, stop)
+            backup = capture(run, previous, stop, binary_rollback)
             activate(run, args.version)
             stopped = False
             serving(run, args.version, observed["candidateRuntime.digest"])
@@ -146,14 +162,14 @@ def install(run):
             except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as restart:
                 run.step("hard-restart-failed", error=str(restart))
     finally:
-        if backup:
+        if backup.get("path"):
             try:
                 advisory(run, backup)
             except (OSError, subprocess.SubprocessError) as error:
                 run.step("advisory-backup-check-failed", error=str(error))
     moment = datetime.now(timezone.utc).isoformat()
     serving_version = run.server_version() or previous
-    serving_binary = run.home / "runtime/launcher/t3"
+    serving_binary = run.runtime(serving_version)
     receipt = {
         "schema": INSTALL_SCHEMA, "release": args.version, "runId": uuid.uuid4().hex,
         "host": host, "platform": manifest["targets"][host]["platform"], "arch": manifest["targets"][host]["arch"],
@@ -161,7 +177,7 @@ def install(run):
         "artifactManifestDigest": observed["artifactManifestDigest"], "service": run.service_label,
         "oldRuntime": {"version": previous, "digest": observed["oldRuntime.digest"]},
         "servingRuntime": {"version": serving_version, "digest": file_digest(serving_binary)},
-        "backup": backup, "chat": post["proof"], "outcome": outcome,
+        "backup": backup, "chat": post["proof"], "outcome": outcome, "reapedSshLaunch": run.reaped,
         "startedAt": run.report["started_at"], "finishedAt": moment,
     }
     path = Path(args.install_receipt) if args.install_receipt else run.state / "receipts" / f"install-{host}.json"
