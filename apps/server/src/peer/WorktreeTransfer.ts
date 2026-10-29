@@ -13,6 +13,10 @@ const MAX_DIFF_STAT_BYTES = 4_000;
 export class WorktreeTransfer extends Context.Service<
   WorktreeTransfer,
   {
+    readonly remoteBranchesContaining: (
+      cwd: string,
+      commit: string,
+    ) => Effect.Effect<ReadonlyArray<string>, GitCommandError>;
     readonly resolveBase: (
       cwd: string,
     ) => Effect.Effect<
@@ -22,7 +26,7 @@ export class WorktreeTransfer extends Context.Service<
     readonly exportBranch: (input: {
       readonly worktreePath: string;
       readonly branch: string;
-      readonly base: string;
+      readonly bases: ReadonlyArray<string>;
     }) => Effect.Effect<WorktreeMcpExportResult, WorktreeTransferError>;
     readonly importBranch: (input: {
       readonly cwd: string;
@@ -34,10 +38,11 @@ export class WorktreeTransfer extends Context.Service<
 
 export class WorktreeTransferError extends Schema.TaggedError<WorktreeTransferError>()(
   "WorktreeTransferError",
-  { message: Schema.String },
+  { message: Schema.String, retryable: Schema.Boolean },
 ) {}
 
-const transferError = (message: string) => new WorktreeTransferError({ message });
+const transferError = (message: string, retryable = true) =>
+  new WorktreeTransferError({ message, retryable });
 const isTransferError = Schema.is(WorktreeTransferError);
 
 const make = Effect.gen(function* () {
@@ -49,12 +54,34 @@ const make = Effect.gen(function* () {
       .execute({ operation: `WorktreeTransfer.${operation}`, cwd, args, allowNonZeroExit: true })
       .pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : null)));
 
-  const required = (operation: string, cwd: string, args: ReadonlyArray<string>, why: string) =>
+  const required = (
+    operation: string,
+    cwd: string,
+    args: ReadonlyArray<string>,
+    why: string,
+    retryable = true,
+  ) =>
     run(operation, cwd, args).pipe(
       Effect.mapError((cause) => transferError(`${why}: ${cause.message}`)),
       Effect.filterOrFail(
         (stdout): stdout is string => stdout !== null,
-        () => transferError(why),
+        () => transferError(why, retryable),
+      ),
+    );
+
+  const remoteBranchesContaining: WorktreeTransfer["Service"]["remoteBranchesContaining"] = (
+    cwd,
+    commit,
+  ) =>
+    run("remoteBranchesContaining", cwd, [
+      "for-each-ref",
+      "--contains",
+      commit,
+      "--format=%(refname:short)",
+      "refs/remotes",
+    ]).pipe(
+      Effect.map((stdout) =>
+        (stdout ?? "").split("\n").filter((ref) => ref.length > 0 && !ref.endsWith("/HEAD")),
       ),
     );
 
@@ -74,17 +101,7 @@ const make = Effect.gen(function* () {
       "--symbolic-full-name",
       "@{upstream}",
     ]);
-    const containing = (
-      (yield* run("resolveBase.contains", cwd, [
-        "for-each-ref",
-        "--contains",
-        commit,
-        "--format=%(refname:short)",
-        "refs/remotes",
-      ])) ?? ""
-    )
-      .split("\n")
-      .filter((ref) => ref.length > 0 && !ref.endsWith("/HEAD"));
+    const containing = yield* remoteBranchesContaining(cwd, commit);
     const fetchable =
       upstream !== null && containing.includes(upstream) ? upstream : (containing[0] ?? null);
     return { commit, fetchable };
@@ -92,23 +109,34 @@ const make = Effect.gen(function* () {
 
   const exportBranch: WorktreeTransfer["Service"]["exportBranch"] = Effect.fn(
     "WorktreeTransfer.exportBranch",
-  )(function* ({ worktreePath, branch, base }) {
+  )(function* ({ worktreePath, branch, bases }) {
     const cwd = worktreePath;
-    const headCommit = yield* required("export.head", cwd, ["rev-parse", "HEAD"], "No commit");
-    const baseCommit = yield* required(
-      "export.base",
+    const headCommit = yield* required(
+      "export.head",
       cwd,
-      ["merge-base", base, headCommit],
-      `The base ${base} is not in this repository`,
+      ["rev-parse", "HEAD"],
+      "No commit",
+      false,
     );
-    const commitCount = Number(
-      yield* required(
+    const forks = (yield* Effect.forEach(bases, (base) =>
+      run("export.base", cwd, ["merge-base", base, headCommit]).pipe(
+        Effect.mapError((cause) => transferError(cause.message)),
+      ),
+    )).filter((fork): fork is string => fork !== null);
+    if (forks.length === 0)
+      return yield* transferError(`None of ${bases.join(", ")} is in this repository`, false);
+    const counted = yield* Effect.forEach(forks, (fork) =>
+      required(
         "export.count",
         cwd,
-        ["rev-list", "--count", `${baseCommit}..${headCommit}`],
-        `The base ${base} is not in this repository`,
-      ),
+        ["rev-list", "--count", `${fork}..${headCommit}`],
+        "Unable to count commits",
+      ).pipe(Effect.map((count) => ({ fork, count: Number(count) }))),
     );
+    const { fork: baseCommit, count: commitCount } = counted.reduce((best, next) =>
+      next.count < best.count ? next : best,
+    );
+    const exclude = forks.map((fork) => `^${fork}`);
     const uncommitted =
       ((yield* run("export.status", cwd, ["status", "--porcelain"]).pipe(
         Effect.orElseSucceed(() => null),
@@ -134,7 +162,7 @@ const make = Effect.gen(function* () {
         yield* required(
           "export.bundle",
           cwd,
-          ["bundle", "create", file, `refs/heads/${branch}`, `^${baseCommit}`],
+          ["bundle", "create", file, `refs/heads/${branch}`, ...exclude],
           "Unable to bundle the branch",
         );
         const stat = yield* fs.stat(file);
@@ -180,7 +208,7 @@ const make = Effect.gen(function* () {
     return local;
   });
 
-  return WorktreeTransfer.of({ resolveBase, exportBranch, importBranch });
+  return WorktreeTransfer.of({ remoteBranchesContaining, resolveBase, exportBranch, importBranch });
 });
 
 export const layer = Layer.effect(WorktreeTransfer, make);
