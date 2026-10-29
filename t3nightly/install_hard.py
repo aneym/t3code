@@ -145,7 +145,7 @@ def install(run):
 
     def rollback_gate():
         live = migration_history(run)
-        eligible = compatibility.get("binaryRollback") is True and compatibility.get("persistedState") == "compatible" and compatibility.get("migrationFiles") == [] and live == base_history
+        eligible = compatibility.get("binaryRollback") is True and ((compatibility.get("persistedState") == "compatible" and compatibility.get("migrationFiles") == []) or compatibility.get("persistedState") == "fork-additive") and live == base_history
         return {"liveMigrationHistory": live, "baseMigrationHistory": base_history} if eligible else None
     precheck(run, previous, observed["oldRuntime.digest"])
     try:

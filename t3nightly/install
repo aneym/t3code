@@ -45,6 +45,7 @@ def parse():
     parser.add_argument("--allow-downgrade", action="store_true")
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--smoke-verdict")
+    parser.add_argument("--rollback-proof")
     parser.add_argument("--snapshot-mib-s", type=float, default=32)
     parser.add_argument("--snapshot-max-s", type=int, default=1200)
     parser.add_argument("--prepare-only", action="store_true")

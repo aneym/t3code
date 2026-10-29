@@ -7,6 +7,7 @@ from .build_artifacts import load as load_artifact
 from .release_approval import approved
 from .release_graph import SUCCESS_OUTCOMES
 from .release_manifest import digest, load
+from .release_rollback_proof import proven, required
 from .release_receipts import INSTALL_SCHEMA, REHEARSAL_SCHEMA, parse, provenance, timestamp
 from .release_continuation import require_studio_proof
 from .release_timeline import latest_rows
@@ -200,6 +201,9 @@ def fast_output(stage, config):
     if stage in ("RM", "RL"):
         fast_rehearsal(config.receipt("rehearsal"), load(config.manifest), fast_artifact(config.artifact(), config.version, config.key), config.host)
         return True
+    if stage in ("XM", "XL"):
+        manifest = load(config.manifest)
+        return not required(manifest) or proven(config.receipt("rollback-proof"), manifest, fast_artifact(config.artifact(), config.version, config.key)["archive"]["sha256"])
     if stage in ("EM", "EL"):
         verdict = json.loads((run / f"e2e-{config.host}" / "smoke-verdict.json").read_text())
         artifact = fast_artifact(config.artifact(), config.version, config.key)

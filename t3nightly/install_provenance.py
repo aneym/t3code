@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .release_manifest import digest, engine_identity, history_digest, load
 from .release_receipts import REHEARSAL_SCHEMA, parse, provenance
+from .release_rollback_proof import proven, required
 
 
 def file_digest(path):
@@ -68,6 +69,10 @@ def validate(run, previous, candidate):
     if smoke.get("ok") is not True or (smoke.get("kind"), smoke.get("version"), smoke.get("archiveSha256")) != ("t3-smoke", args.version, artifact["archive"]["sha256"]):
         raise ValueError("e2e smoke verdict does not pass for this archive")
     run.step("hard-smoke-accepted", archive=smoke["archiveSha256"])
+    if required(manifest):
+        if not proven(args.rollback_proof, manifest, artifact["archive"]["sha256"]):
+            raise ValueError("fork-additive migrations require a forced-rollback proof for this archive")
+        run.step("hard-rollback-proof-accepted")
     receipt = parse(args.receipt)
     if receipt["schema"] != REHEARSAL_SCHEMA:
         raise ValueError("hard install requires a rehearsal receipt")

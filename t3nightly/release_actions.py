@@ -22,6 +22,7 @@ from .release_manifest import digest, freeze, history_digest, load
 from .release_outputs import fast_evidence
 from .release_ownership import ownership
 from .release_readiness import readiness
+from .release_rollback_proof import fast_rollback_proof
 from .release_seed_remotes import seed
 from .release_transport import command, git_tree, prepare_remote, remote_worker, require, transfer
 
@@ -228,7 +229,7 @@ def fast_install(config, log):
              "--manifest", str(config.manifest), "--artifact-manifest", str(config.artifact()), "--receipt", str(config.receipt("rehearsal")),
              "--receipt-host", config.host, "--install-receipt", str(config.receipt("install")), "--state-dir", str(state),
              "--chat-project", str(config.chat_project()), "--load-max", "64", "--health-s", "300",
-             "--smoke-verdict", str(config.run / f"e2e-{config.host}" / "smoke-verdict.json")]
+             "--smoke-verdict", str(config.run / f"e2e-{config.host}" / "smoke-verdict.json"), "--rollback-proof", str(config.receipt("rollback-proof"))]
     if config.host == "ax42":
         words.extend(["--service-label", "t3code.service", "--backups", str(backups)])
     config.receipt("install").unlink(missing_ok=True)
@@ -332,6 +333,8 @@ def run_fast_action(stage, config, log):
         return fast_rehearse(config, log)
     if stage in ("EM", "EL"):
         return fast_e2e(config, log)
+    if stage in ("XM", "XL"):
+        return fast_rollback_proof(config, log)
     if stage in ("IM", "IL"):
         return fast_install(config, log)
     if stage == "S":

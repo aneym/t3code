@@ -114,10 +114,10 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
       if (!first.threadId || !first.runId) throw fail("thread start did not return thread and run ids");
       const starting = (p) => {
         const run = p.runs.find((item) => item.id === first.runId);
-        return run !== undefined && !terminal.has(run.status) && !(p.attempts ?? []).some((attempt) => attempt.runId === first.runId && attempt.providerTurnId);
+        return run?.status === "running" && !(p.attempts ?? []).some((attempt) => attempt.runId === first.runId && attempt.providerTurnId);
       };
       yield* subscribe(first.threadId);
-      yield* waitFor("first run persisted", (p) => p.runs.some((run) => run.id === first.runId));
+      yield* waitFor("first run running before its provider turn", (p) => starting(p) || p.runs.some((run) => run.id === first.runId && terminal.has(run.status)) || (p.attempts ?? []).some((attempt) => attempt.runId === first.runId && attempt.providerTurnId));
       const openBefore = starting(projection);
       const sent = yield* cli("send", "--mode", "auto", first.threadId, `Reply with exactly ${markers[1]} and nothing else. Do not use tools.`);
       receipts.push(first, sent);

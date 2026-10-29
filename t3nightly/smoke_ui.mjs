@@ -99,7 +99,8 @@ await story("project-filter", async () => {
   await pickProject(names.otherProject);
   await waitShown(row(names.other), "filtered project's thread is missing");
   await waitGone(row(names.lane), "another project's thread stays visible under the filter");
-  await waitGone(agentRow(), "another project's agent stays visible under the filter");
+  if (names.build >= 28) await waitShown(agentRow(), "pinned orch does not come along into another project view");
+  else await waitGone(agentRow(), "another project's agent stays visible under the filter");
   await expect(visible(sidebar().getByRole("combobox", { name: `Filter threads by project: ${names.otherProject}` })), "filter button does not name the project");
   await pickProject("All projects");
   await waitShown(row(names.lane), "All projects did not bring the lane thread back");
@@ -116,14 +117,17 @@ await story("filter-while-focused", async () => {
   await pickProject(names.otherProject);
   await waitShown(row(names.other), "filter while focused does not show the chosen project's thread");
   await waitGone(row(names.lane), "filter while focused keeps the agent's lane thread");
-  await waitGone(agentRow(), "filter while focused keeps the other project's agent");
+  if (names.build >= 28) await waitShown(agentRow(), "filter while focused dropped the pinned orch");
+  else await waitGone(agentRow(), "filter while focused keeps the other project's agent");
   await pickProject("All projects");
   await waitShown(row(names.other), "All projects after focus did not restore threads");
   await waitShown(row(names.lane), "All projects after focus did not restore the lane");
 });
 
 await story("pinned-agent-in-project", async () => {
-  await agentButton("Pin");
+  if (names.build >= 28) await agentRow().first().hover();
+  if (names.build >= 28) await waitShown(sidebar().getByRole("button", { name: `Unpin ${names.agent}`, exact: true }), "orch did not arrive pinned in Agents");
+  else await agentButton("Pin");
   const pinned = sidebar().getByRole("list", { name: "Agents", exact: true }).getByRole("listitem").filter({ hasText: names.agent });
   await waitShown(pinned, "pinned agent is not under Agents");
   await pickProject(names.agentProject);

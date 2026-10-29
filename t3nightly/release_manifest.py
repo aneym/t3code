@@ -21,6 +21,15 @@ VERSION = re.compile(r"(\d+\.\d+\.\d+-nightly\.\d+\.\d+)\.aneym\.\d+")
 ENTRY = re.compile(r"\[(\d+),\s*\"([^\"]+)\",\s*(Migration\d+)\]")
 IMPORT = re.compile(r"import (Migration\d+) from \"\./(Migrations/[^\"]+)\"")
 UNHASHED = ("__pycache__", ".pyc")
+FORK_MIGRATIONS = "apps/server/src/persistence/ForkMigrations/"
+FORK_REGISTRY = "apps/server/src/persistence/ForkMigrations.ts"
+FORK_RECONCILE = "apps/server/src/persistence/reconcileForkMigrationIds.ts"
+UNSAFE_SQL = re.compile(r"\b(?:ALTER|DROP|UPDATE|DELETE|INSERT|REPLACE|PRAGMA|VACUUM|ATTACH|TRIGGER|VIEW)\b", re.I)
+ADDITIVE_SQL = re.compile(r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS \w+ ON (?!effect_sql_migrations|aneym_fork_migrations)\w+\(.*\)|CREATE TABLE IF NOT EXISTS aneym_\w+ \(.*\)", re.S)
+MIGRATIONS_HOOK = (re.compile(r'import \{ runForkMigrations \} from "\./ForkMigrations\.ts";'), re.compile(r"(?:if \([\w ]+===? undefined\) )?yield\* runForkMigrations\(\);"))
+RECONCILE_WHERE = re.compile(r"WHERE migration_id = (\d+) AND name = '\w+'")
+REGISTRY_SQL = re.compile(r"(?<![/\w])sql(?![/\w])|unsafe|SqlClient|\.raw\b")
+MIGRATION_LINE = re.compile(r'import \* as (?:Effect|SqlClient) from "effect/(?:Effect|sql/SqlClient)";|export default Effect\.gen\(function\* \(\) \{|const sql = yield\* SqlClient\.SqlClient;|yield\* sql``;?|\}\);')
 CONNECTION_ONLY = re.compile(r"//.*|yield\* sql`PRAGMA (?:busy_timeout|cache_size|temp_store|mmap_size) = \d+;?`;")
 
 
@@ -158,10 +167,77 @@ def topics(tree, base, head):
     return rows
 
 
+def standalone(source, rule):
+    code = [line.strip() for line in source.splitlines()]
+    kept, previous = [], ""
+    for line in code:
+        if not line or line.startswith("//"):
+            continue
+        if rule.fullmatch(line):
+            if previous[-1:] not in (";", "{", "}"):
+                return None
+            continue
+        kept.append(line)
+        previous = line
+    return kept
+
+
 def connection_only(tree, base, head, path):
+    present = [subprocess.run(["git", "-C", str(tree), "cat-file", "-e", f"{ref}:{path}"], capture_output=True, check=False).returncode == 0 for ref in (base, head)]
+    if not all(present):
+        return False
+    before = git(tree, "show", f"{base}:{path}")
+    after = git(tree, "show", f"{head}:{path}")
+    old, new = standalone(before, CONNECTION_ONLY), standalone(after, CONNECTION_ONLY)
+    return before != after and old is not None and new is not None and old == new
+
+
+def edits(tree, base, head, path):
     lines = git(tree, "diff", "-U0", base, head, "--", path).splitlines()
-    edits = [line[1:].strip() for line in lines if line[:1] in "+-" and not line.startswith(("+++", "---"))]
-    return bool(edits) and all(not edit or CONNECTION_ONLY.fullmatch(edit) for edit in edits)
+    return [(line[0], line[1:].strip()) for line in lines if line[:1] in "+-" and not line.startswith(("+++", "---")) and line[1:].strip()]
+
+
+def additive_migration(source):
+    statements = [" ".join(body.split()) for body in re.findall(r"sql`(.*?)`", source, re.S)]
+    rest = [line.strip() for line in re.sub(r"sql`.*?`", "sql``", source, flags=re.S).splitlines() if line.strip()]
+    return bool(statements) and not UNSAFE_SQL.search(source) and all(ADDITIVE_SQL.fullmatch(statement) for statement in statements) and all(MIGRATION_LINE.fullmatch(line) for line in rest)
+
+
+def reconcile_cleanup(changed, ceiling):
+    if any(sign != "+" for sign, _ in changed):
+        return False
+    lines = [line for _, line in changed]
+    if len(lines) % 4:
+        return False
+    for index in range(0, len(lines), 4):
+        opening, delete, where, closing = lines[index:index + 4]
+        match = RECONCILE_WHERE.fullmatch(where)
+        if opening != "yield* sql`" or delete != "DELETE FROM effect_sql_migrations" or closing != "`;" or not match or int(match[1]) <= ceiling:
+            return False
+    return True
+
+
+def fork_additive(tree, base, head, paths, old, new):
+    if old["history"] != new["history"] or old["content"] != new["content"] or not paths:
+        return False
+    status = dict(reversed(line.split("\t", 1)) for line in git(tree, "diff", "--name-status", "--no-renames", base, head, "--", *paths).splitlines())
+    for path in paths:
+        changed = edits(tree, base, head, path)
+        if path.startswith(FORK_MIGRATIONS):
+            if status.get(path) != "A" or not additive_migration(git(tree, "show", f"{head}:{path}")):
+                return False
+        elif path == FORK_REGISTRY:
+            if any(REGISTRY_SQL.search(line) or UNSAFE_SQL.search(line) for _, line in changed) or 'table: "aneym_fork_migrations"' not in git(tree, "show", f"{head}:{path}"):
+                return False
+        elif path == MIGRATIONS_FILE:
+            if not all(sign == "+" and any(rule.fullmatch(line) for rule in MIGRATIONS_HOOK) for sign, line in changed):
+                return False
+        elif path == FORK_RECONCILE:
+            if not reconcile_cleanup(changed, old["max"]):
+                return False
+        else:
+            return False
+    return True
 
 
 def compatibility(tree, base, head):
@@ -170,13 +246,14 @@ def compatibility(tree, base, head):
     persisted = [path for path in changed if path.startswith(PERSISTED_STATE_PATHS) and path not in migrations]
     connection = [path for path in persisted if connection_only(tree, base, head, path)]
     persisted = [path for path in persisted if path not in connection]
+    old, new = migration_identity(tree, base), migration_identity(tree, head)
+    additive = fork_additive(tree, base, head, migrations + persisted, old, new)
     base_tag, head_tag = newest_tag(tree, base), newest_tag(tree, head)
     rebased = git(tree, "tag", "--merged", head, "--no-merged", base, "-l", NIGHTLY_TAGS).split()
-    old, new = migration_identity(tree, base), migration_identity(tree, head)
     reasons = []
-    if migrations or old["history"] != new["history"] or old["content"] != new["content"]:
+    if not additive and (migrations or old["history"] != new["history"] or old["content"] != new["content"]):
         reasons.append("migrations-changed")
-    if persisted:
+    if persisted and not additive:
         reasons.append("persisted-state-changed")
     if rebased:
         reasons.append("upstream-rebase")
@@ -188,7 +265,8 @@ def compatibility(tree, base, head):
         "persistedStateFiles": persisted,
         "connectionOnlyFiles": connection,
         "upstreamTag": {"base": base_tag, "candidate": head_tag, "newlyMerged": rebased},
-        "persistedState": "compatible" if not (migrations or persisted) else "unproved",
+        "persistedState": "fork-additive" if additive else "compatible" if not (migrations or persisted) else "unproved",
+        "rollbackProof": "required" if additive else "not-required",
         "binaryRollback": not reasons,
         "fastPath": {"eligible": not reasons, "reasons": reasons},
     }
