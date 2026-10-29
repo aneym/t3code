@@ -132,6 +132,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const editBlockedReason = queuedRunEditBlockedReason({
     openQuestionCount: pendingRequests?.userInputs.length ?? 0,
   });
+  const sendAll = useAtomCommand(threadEnvironment.sendAllQueuedRuns, "send all queued messages");
+  const queueSendAll =
+    useAtomValue(serverEnvironment.configValueAtom(target.environmentId))?.settings.queueSendAll ===
+    true;
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
@@ -210,6 +214,25 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       contentContainerClassName="px-5 pb-6"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
     >
+      {queueSendAll && workflow?.canSendAll ? (
+        <View className="py-3">
+          <Button
+            label="Send all"
+            disabled={resuming || busyRunId !== null}
+            onPress={async () => {
+              if (busyRef.current) return;
+              busyRef.current = true;
+              setResuming(true);
+              try {
+                await sendAll({ ...target, input: { threadId: target.threadId } });
+              } finally {
+                busyRef.current = false;
+                setResuming(false);
+              }
+            }}
+          />
+        </View>
+      ) : null}
       {workflow?.isHeld && queuedRuns.length > 0 ? (
         <View className="gap-2 py-3">
           <Text className="text-sm text-foreground-muted">Queue paused</Text>

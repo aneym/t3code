@@ -170,6 +170,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "run.interrupt":
     case "queued-message.promote-to-steer":
     case "queued-run.start":
+    case "queue.send-all":
     case "queue.resume":
     case "queued-run.reorder":
     case "queued-run.cancel":
@@ -204,7 +205,7 @@ function scenarioSteps(
   );
 }
 
-function scenarioCommands(scenario: OrchestratorV2Scenario): ReadonlyArray<OrchestrationV2Command> {
+function scenarioCommands(scenario: OrchestratorV2Scenario) {
   return scenarioSteps(scenario).flatMap((step) =>
     step.type === "dispatch" ? [step.command] : [],
   );

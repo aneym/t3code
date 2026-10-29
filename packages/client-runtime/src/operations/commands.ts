@@ -226,9 +226,7 @@ export interface PromoteQueuedRunInput extends ThreadCommandInput {
   readonly targetRunId: RunId;
 }
 
-export interface CancelQueuedRunInput extends ThreadCommandInput {
-  readonly runId: RunId;
-}
+export type CancelQueuedRunInput = RetryWorkspacePreparationInput;
 
 export interface RetryWorkspacePreparationInput extends ThreadCommandInput {
   readonly runId: RunId;
@@ -370,11 +368,12 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
 
 function simpleThreadCommand(
   type:
+    | "queue.send-all"
+    | "queue.resume"
     | "thread.delete"
     | "thread.archive"
     | "thread.unarchive"
     | "thread.settle"
-    | "thread.pin"
     | "thread.unpin"
     | "thread.guest-share.close",
   input: ThreadCommandInput,
@@ -384,18 +383,14 @@ function simpleThreadCommand(
   );
 }
 
-export const deleteThread = Effect.fn("EnvironmentCommands.deleteThread")(function* (
-  input: DeleteThreadInput,
-) {
-  return yield* simpleThreadCommand("thread.delete", input);
-});
+export const deleteThread = Effect.fn("EnvironmentCommands.deleteThread")(
+  (input: DeleteThreadInput) => simpleThreadCommand("thread.delete", input),
+);
 
 export type CloseGuestShareInput = ThreadCommandInput;
-export const closeGuestShare = Effect.fn("EnvironmentCommands.closeGuestShare")(function* (
-  input: CloseGuestShareInput,
-) {
-  return yield* simpleThreadCommand("thread.guest-share.close", input);
-});
+export const closeGuestShare = Effect.fn("EnvironmentCommands.closeGuestShare")(
+  (input: CloseGuestShareInput) => simpleThreadCommand("thread.guest-share.close", input),
+);
 
 export interface ResolveGuestMessageInput extends ThreadCommandInput {
   readonly guestMessageId: GuestMessageId;
@@ -429,23 +424,17 @@ export const resolveGuestMessage = Effect.fn("EnvironmentCommands.resolveGuestMe
   });
 });
 
-export const archiveThread = Effect.fn("EnvironmentCommands.archiveThread")(function* (
-  input: ArchiveThreadInput,
-) {
-  return yield* simpleThreadCommand("thread.archive", input);
-});
+export const archiveThread = Effect.fn("EnvironmentCommands.archiveThread")(
+  (input: ArchiveThreadInput) => simpleThreadCommand("thread.archive", input),
+);
 
-export const unarchiveThread = Effect.fn("EnvironmentCommands.unarchiveThread")(function* (
-  input: UnarchiveThreadInput,
-) {
-  return yield* simpleThreadCommand("thread.unarchive", input);
-});
+export const unarchiveThread = Effect.fn("EnvironmentCommands.unarchiveThread")(
+  (input: UnarchiveThreadInput) => simpleThreadCommand("thread.unarchive", input),
+);
 
-export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(function* (
-  input: SettleThreadInput,
-) {
-  return yield* simpleThreadCommand("thread.settle", input);
-});
+export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(
+  (input: SettleThreadInput) => simpleThreadCommand("thread.settle", input),
+);
 
 export const pinThread = Effect.fn("EnvironmentCommands.pinThread")(function* (
   input: PinThreadInput,
@@ -496,11 +485,9 @@ export const reorderActiveThread = Effect.fn("EnvironmentCommands.reorderActiveT
   });
 });
 
-export const unpinThread = Effect.fn("EnvironmentCommands.unpinThread")(function* (
-  input: UnpinThreadInput,
-) {
-  return yield* simpleThreadCommand("thread.unpin", input);
-});
+export const unpinThread = Effect.fn("EnvironmentCommands.unpinThread")((input: UnpinThreadInput) =>
+  simpleThreadCommand("thread.unpin", input),
+);
 
 export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(function* (
   input: UnsettleThreadInput,
@@ -962,14 +949,18 @@ export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(
 export const resumeThreadQueue = Effect.fn("EnvironmentCommands.resumeThreadQueue")(function* (
   input: ResumeThreadQueueInput,
 ) {
+  if (input.runId === undefined) return yield* simpleThreadCommand("queue.resume", input);
   return yield* dispatch({
-    ...(input.runId === undefined
-      ? { type: "queue.resume" as const }
-      : { type: "queued-run.start" as const, runId: input.runId }),
+    type: "queued-run.start",
+    runId: input.runId,
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
   });
 });
+
+export const sendAllQueuedRuns = Effect.fn("EnvironmentCommands.sendAllQueuedRuns")(
+  (input: ThreadCommandInput) => simpleThreadCommand("queue.send-all", input),
+);
 
 export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun")(function* (
   input: PromoteQueuedRunInput,

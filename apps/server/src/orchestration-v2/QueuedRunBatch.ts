@@ -12,7 +12,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 
-const MAX_BATCH_SIZE = 20;
+export const MAX_BATCH_SIZE = 20;
 
 export interface QueuedRunBatchMember {
   readonly run: OrchestrationV2Run;
@@ -26,7 +26,7 @@ type DraftEvent = OrchestrationV2DomainEvent extends infer Event
     : never
   : never;
 
-function batchableMessage(
+export function batchableMessage(
   projection: Pick<OrchestrationV2ThreadProjection, "messages">,
   run: OrchestrationV2Run,
 ): OrchestrationV2ConversationMessage | undefined {
@@ -69,6 +69,7 @@ function changesConversation(
 export function queuedRunBatch(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
   first: OrchestrationV2Run,
+  explicitRelease = false,
 ): ReadonlyArray<QueuedRunBatchMember> {
   if (batchableMessage(projection, first) === undefined) return [];
   const members: Array<QueuedRunBatchMember> = [];
@@ -77,7 +78,7 @@ export function queuedRunBatch(
     if (run.id === first.id || run.queueHeld === true) continue;
     const message = batchableMessage(projection, run);
     if (message === undefined) {
-      if (changesConversation(projection, run)) break;
+      if (!explicitRelease && changesConversation(projection, run)) break;
       continue;
     }
     if (
@@ -95,12 +96,16 @@ export function foldedQueuedTurnItems(
   turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
   run: Pick<OrchestrationV2Run, "id" | "userMessageId">,
 ): ReadonlyArray<UserTurnItem> {
+  const firstItem = turnItems.find(
+    (item) => item.type === "user_message" && item.messageId === run.userMessageId,
+  );
   return turnItems
     .filter(
       (item): item is UserTurnItem =>
         item.type === "user_message" &&
         item.runId === run.id &&
-        item.inputIntent === "queued_turn" &&
+        (item.parentItemId === firstItem?.id ||
+          (item.parentItemId === null && item.inputIntent === "queued_turn")) &&
         item.messageId !== run.userMessageId,
     )
     .toSorted((left, right) => left.ordinal - right.ordinal);
@@ -114,6 +119,7 @@ export function queuedRunBatchEvents(input: {
   readonly firstItem: UserTurnItem;
   readonly itemId: (messageId: OrchestrationV2ConversationMessage["id"]) => UserTurnItem["id"];
   readonly occurredAt: UserTurnItem["updatedAt"];
+  readonly groupUnderFirst?: boolean;
 }): ReadonlyArray<DraftEvent> {
   const { target, rootNodeId, firstItem, occurredAt } = input;
   const into = {
@@ -138,6 +144,7 @@ export function queuedRunBatchEvents(input: {
       ...firstItem,
       id: input.itemId(message.id),
       ordinal: firstItem.ordinal + index + 1,
+      ...(input.groupUnderFirst ? { parentItemId: firstItem.id } : {}),
       messageId: message.id,
       text: message.text,
       attachments: message.attachments,
