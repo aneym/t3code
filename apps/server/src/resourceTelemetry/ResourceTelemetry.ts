@@ -300,9 +300,9 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
           groups: merged.groups,
           threads: aggregateThreadResources(
             merged.processes,
-            Option.isSome(portDiscovery)
+            Option.isSome(portDiscovery) && (yield* Ref.get(liveState)).retainCount > 0
               ? yield* portDiscovery.value.resourceOwners(
-                  merged.processes.map((entry) => entry.identity.pid),
+                  merged.processes.map((entry) => entry.identity),
                 )
               : new Map(),
           ),
