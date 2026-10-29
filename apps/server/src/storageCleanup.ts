@@ -485,6 +485,7 @@ const make = Effect.gen(function* () {
         cwd,
         detail,
       });
+    // Return null for missing/non-repository cwd; force untranslated git diagnostics for matching.
     const read = Effect.fnUntraced(function* (args: string[], allowedExitCode?: number) {
       const result = yield* git
         .execute({
