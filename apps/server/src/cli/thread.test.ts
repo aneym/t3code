@@ -3,7 +3,7 @@ import { RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import type { OwnerMcpTools } from "./ownerMcpTools.ts";
-import { waitForRun } from "./thread.ts";
+import { waitForRun } from "./threadRun.ts";
 
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
