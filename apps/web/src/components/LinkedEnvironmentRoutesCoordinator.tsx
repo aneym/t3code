@@ -2,7 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import {
-  updateClientSettings,
+  persistClientSettingsUpdate,
   useClientSettings,
   useClientSettingsHydrated,
 } from "../hooks/useSettings";
@@ -31,9 +31,13 @@ function LinkedEnvironmentRoutes(props: { readonly environmentId: EnvironmentId 
 
   const apply = useEffectEvent(async () => {
     if (plan.newlySeen.length > 0) {
-      updateClientSettings({
-        loadBalancingSeenLinkedEnvironmentIds: [...plan.seen, ...plan.newlySeen],
-      });
+      const newlySeen = plan.newlySeen;
+      void persistClientSettingsUpdate((current) => ({
+        ...current,
+        loadBalancingSeenLinkedEnvironmentIds: [
+          ...new Set([...current.loadBalancingSeenLinkedEnvironmentIds, ...newlySeen]),
+        ],
+      }));
     }
     for (const link of plan.join) {
       if (attempted.current.has(link.environmentId)) continue;
