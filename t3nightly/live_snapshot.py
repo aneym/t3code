@@ -79,9 +79,14 @@ def backup_database(source, destination, timeout):
         if time.monotonic() >= end:
             raise TimeoutError("stepwise snapshot backup exceeded its deadline")
 
-    with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=1)) as reader:
-        with closing(sqlite3.connect(destination)) as writer:
-            reader.backup(writer, pages=256, progress=progress, sleep=0.05)
+    with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=30, isolation_level=None)) as reader:
+        reader.execute("BEGIN")
+        reader.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
+        try:
+            with closing(sqlite3.connect(destination)) as writer:
+                reader.backup(writer, pages=256, progress=progress, sleep=0.05)
+        finally:
+            reader.execute("ROLLBACK")
 
 
 def take(dest, *, home=None, timeout=1200):
