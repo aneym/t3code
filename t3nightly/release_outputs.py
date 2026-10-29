@@ -120,14 +120,22 @@ def fast_install(path, manifest, artifact, rehearsal, host):
     receipt = parse(path)
     if receipt["schema"] != INSTALL_SCHEMA:
         raise ValueError(f"{path}: not an install receipt")
-    observed = {"artifactManifestDigest": artifact["digest"], "servingRuntime.digest": artifact["runtime"]["sha256"], "rehearsalDigest": rehearsal["digest"]}
+    current = receipt.get("outcome") == "current"
+    observed = {"artifactManifestDigest": artifact["digest"], "servingRuntime.digest": artifact["runtime"]["sha256"]}
+    if not current:
+        observed["rehearsalDigest"] = rehearsal["digest"]
     reasons = provenance(receipt, manifest, host, observed=observed)
     if receipt["servingRuntime"]["version"] != manifest["version"]:
         reasons.append(f"serving {receipt['servingRuntime']['version']}, not {manifest['version']}")
-    if not timestamp(rehearsal["finishedAt"]) <= timestamp(receipt["startedAt"]) < timestamp(rehearsal["expiresAt"]):
-        reasons.append("rehearsal did not precede the live install within its expiry")
-    if receipt["oldRuntime"]["digest"] != rehearsal["oldRuntime"]["digest"]:
-        reasons.append("live old runtime differs from rehearsed old runtime")
+    if current:
+        reasons = [reason for reason in reasons if not reason.startswith("oldRuntime.version:")]
+        if receipt["oldRuntime"] != {"version": manifest["version"], "digest": artifact["runtime"]["sha256"]}:
+            reasons.append("current install was not already serving the exact candidate runtime")
+    else:
+        if not timestamp(rehearsal["finishedAt"]) <= timestamp(receipt["startedAt"]) < timestamp(rehearsal["expiresAt"]):
+            reasons.append("rehearsal did not precede the live install within its expiry")
+        if receipt["oldRuntime"]["digest"] != rehearsal["oldRuntime"]["digest"]:
+            reasons.append("live old runtime differs from rehearsed old runtime")
     if reasons:
         raise ValueError(f"{path}: " + "; ".join(reasons))
     return receipt
