@@ -65,11 +65,14 @@ def parse():
     parser.add_argument("--chat-timeout", type=int, default=90)
     parser.add_argument("--restart-source-bridge", action="store_true")
     parser.add_argument("--rpc-tree", default="")
+    parser.add_argument("--drain-s", type=int, default=300)
     parser.add_argument("--node", default="node")
     parser.add_argument("--no-pin-launcher", action="store_true")
     args = parser.parse_args()
     if args.backup_keep < 1:
         parser.error("--backup-keep must be at least one")
+    if not 0 <= args.drain_s <= 1200:
+        parser.error("--drain-s must be between 0 and 1200")
     if args.hard and (args.seamless or args.wait or args.check_only or args.prepare_only):
         parser.error("--hard cannot be combined with --seamless, --wait, --check-only or --prepare-only")
     if args.hard and (not args.manifest or not args.artifact_manifest or not args.chat_project or (not args.receipt and not args.rehearsal)):

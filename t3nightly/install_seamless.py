@@ -46,6 +46,32 @@ def require_coverage(receipt, epoch, work):
             raise ValueError("server restart receipt does not cover all in-flight work")
 
 
+def prepare_with_drain(run, bearer, epoch):
+    drain_s = run.args.drain_s
+    if drain_s == 0:
+        return restart_rpc(run, bearer, "prepare", {"epoch": epoch})
+    run.step("restart-drain-start", deadline_s=drain_s)
+    receipt = restart_rpc(
+        run,
+        bearer,
+        "prepare",
+        {"epoch": epoch, "drainTimeoutMs": drain_s * 1000},
+        timeout=drain_s + 120,
+    )
+    drain = receipt.get("drain")
+    if drain is None:
+        run.step("restart-drain-unreported", deadline_s=drain_s)
+    else:
+        run.step(
+            "restart-drain",
+            deadline_s=drain_s,
+            drained=drain["drained"],
+            waited_ms=drain["waitedMs"],
+            active_run_ids=drain["activeRunIds"],
+        )
+    return receipt
+
+
 def install(run):
     if not run.args.rpc_tree:
         raise ValueError("seamless installation requires --rpc-tree")
@@ -79,7 +105,7 @@ def install(run):
         }
         try:
             if not bridge:
-                receipt = restart_rpc(run, bearer, "prepare", {"epoch": epoch})
+                receipt = prepare_with_drain(run, bearer, epoch)
             admission(run, "before-short-swap")
             captured = capture_work(run)
             manifest.update(receipt=receipt, captured=captured)
