@@ -37,7 +37,7 @@ const HANDOFF_DELAY_MS = 2_000;
  * take minutes. A missed window rolls back the database, so the next attempt pays the same cost.
  */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
-const TERMINATE_GRACE_MS = 5_000;
+const STOP_GRACE_MS = 75_000;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
 
@@ -423,7 +423,7 @@ async function terminateChild(
 ): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   child.kill(signal);
-  const force = setTimeout(() => child.kill("SIGKILL"), TERMINATE_GRACE_MS);
+  const force = setTimeout(() => child.kill("SIGKILL"), STOP_GRACE_MS);
   try {
     await waitForExit(child);
   } finally {
