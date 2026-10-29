@@ -1,5 +1,3 @@
-import * as NodeOS from "node:os";
-
 import * as Effect from "effect/Effect";
 
 import type * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -14,7 +12,9 @@ export function makeWorktreeIntegrationCheck(git: GitVcsDriver.GitVcsDriver["Ser
   ) {
     const run = (operation: string, args: ReadonlyArray<string>) =>
       git.execute({ operation, cwd, args: [...args], allowNonZeroExit: true }).pipe(
-        Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : null)),
+        Effect.map((result) =>
+          result.exitCode === 0 && !result.stdoutTruncated ? result.stdout : null,
+        ),
         Effect.orElseSucceed(() => null),
       );
     const bases = yield* run("StorageCleanup.contentMergeBases", [
@@ -23,36 +23,29 @@ export function makeWorktreeIntegrationCheck(git: GitVcsDriver.GitVcsDriver["Ser
       baseSha,
       headSha,
     ]);
-    if (bases === null || bases.split(/\r?\n/).length !== 1) return false;
-    const emptyTree = yield* run("StorageCleanup.contentEmptyTree", [
-      "hash-object",
-      "-t",
-      "tree",
-      NodeOS.devNull,
+    const mergeBase = bases?.trim() ?? "";
+    if (!/^[0-9a-f]{40,64}$/.test(mergeBase)) return false;
+    const treeDiff = ["diff-tree", "-r", "-z", "--no-renames", "--ignore-submodules=none"];
+    const changed = yield* run("StorageCleanup.contentBranchPaths", [
+      ...treeDiff,
+      "--name-only",
+      mergeBase,
+      headSha,
     ]);
-    const baseTree = yield* run("StorageCleanup.contentBaseTree", [
-      "rev-parse",
-      "--verify",
-      `${baseSha}^{tree}`,
+    if (changed === null) return false;
+    const paths = changed.split("\0").filter((entry) => entry.length > 0);
+    if (paths.length === 0) return true;
+    if (paths.length > 1_000) return false;
+    const landed = yield* run("StorageCleanup.contentLandedPaths", [
+      "--literal-pathspecs",
+      ...treeDiff,
+      "--quiet",
+      baseSha,
+      headSha,
+      "--",
+      ...paths,
     ]);
-    if (emptyTree === null || baseTree === null) return false;
-    for (const [ours, theirs] of [
-      [baseSha, headSha],
-      [headSha, baseSha],
-    ] as const) {
-      const merged = yield* run("StorageCleanup.contentMergeTree", [
-        "-c",
-        `core.attributesFile=${NodeOS.devNull}`,
-        `--attr-source=${emptyTree}`,
-        "merge-tree",
-        "--write-tree",
-        "--no-messages",
-        ours,
-        theirs,
-      ]);
-      if (merged?.split(/\r?\n/)[0]?.trim() !== baseTree) return false;
-    }
-    return /^[0-9a-f]{40,64}$/.test(baseTree);
+    return landed !== null;
   });
   return Effect.fn("StorageCleanup.worktreeIntegration")(function* (input: {
     readonly repositoryCwd: string;
