@@ -54,7 +54,8 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       Effect.ignore,
     );
 
-  const move = Effect.fn("WorktreeTrash.move")(function* (input: {
+  const move = Effect.fn("WorktreeTrash.move")(function* <E, R>(input: {
+    readonly blocked: () => Effect.Effect<string | null, E, R>;
     readonly root: string;
     readonly entry: string;
     readonly worktreePath: string;
@@ -79,7 +80,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
         .filter((part) => part.moved)
         .map((part) => `Move ${part.to} back to ${part.from}`)
         .join("\n");
-    yield* Effect.acquireUseRelease(
+    const blocked = yield* Effect.acquireUseRelease(
       Effect.succeed(parts),
       () =>
         Effect.uninterruptible(
@@ -101,12 +102,15 @@ export const makeWorktreeTrash = Effect.gen(function* () {
               .join("\n");
             for (const entry of entries)
               yield* fs.writeFileString(path.join(entry, RECOVERY_FAILED), `${pending}\n`);
+            const reason = yield* input.blocked();
+            if (reason !== null) return reason;
             for (const part of parts) {
               yield* fs.rename(part.from, part.to);
               part.moved = true;
             }
             const movedAtSeconds = (yield* Clock.currentTimeMillis) / 1000;
             for (const entry of entries) yield* fs.utimes(entry, movedAtSeconds, movedAtSeconds);
+            return null;
           }),
         ),
       (_, exit) =>
@@ -178,6 +182,8 @@ export const makeWorktreeTrash = Effect.gen(function* () {
           }),
         ),
       );
+    if (blocked !== null) yield* Effect.forEach(entries, discard, { discard: true });
+    return blocked;
   });
 
   const isRepository = Effect.fnUntraced(function* (directory: string) {
@@ -187,7 +193,41 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     return true;
   });
 
-  const checkoutStateReason = Effect.fnUntraced(function* (cwd: string) {
+  // Effect's stat follows links; readLink succeeds only on a link.
+  const isLink = (target: string) =>
+    fs.readLink(target).pipe(
+      Effect.as(true),
+      Effect.catchIf(
+        (error) =>
+          error.cause instanceof Error && "code" in error.cause && error.cause.code === "EINVAL",
+        () => Effect.succeed(false),
+      ),
+    );
+
+  // Walks the files Git listings hide (ignored, gitlinked, partly tracked); node_modules is disposable.
+  const nestedRepository = Effect.fnUntraced(function* (
+    cwd: string,
+    submodules: ReadonlySet<string>,
+  ) {
+    const pending = [cwd];
+    while (pending.length > 0) {
+      const directory = pending.pop()!;
+      for (const name of yield* fs.readDirectory(directory)) {
+        if (name === ".git" || name === "node_modules") continue;
+        const child = path.join(directory, name);
+        if (submodules.has(child) || (yield* isLink(child))) continue;
+        if ((yield* fs.stat(child)).type !== "Directory") continue;
+        if (yield* isRepository(child)) return `${path.relative(cwd, child)}/`;
+        pending.push(child);
+      }
+    }
+    return null;
+  });
+
+  const checkoutStateReason = Effect.fnUntraced(function* (
+    cwd: string,
+    submodules: ReadonlySet<string>,
+  ) {
     if (yield* fs.exists(path.join(cwd, ".lane"))) return "has excluded local state (.lane/)";
     const git = yield* GitVcsDriver.GitVcsDriver;
     const inspect = (operation: string, args: string[]) =>
@@ -217,88 +257,36 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       const file = excluded.stdout.split("\0").find((entry) => entry !== "");
       if (file !== undefined) return `has excluded local state (${file})`;
     }
-    const untracked = yield* inspect("StorageCleanup.untrackedDirectories", [
-      "ls-files",
-      "--others",
-      "--directory",
-      "-z",
-    ]);
-    if (untracked.stdoutTruncated) return "untracked files exceed the inspection limit";
-    for (const entry of untracked.stdout.split("\0")) {
-      if (entry.endsWith("/") && (yield* isRepository(path.join(cwd, entry))))
-        return `has a nested repository (${entry})`;
-    }
-    const unignored = yield* git.execute({
-      operation: "StorageCleanup.nestedRepositories",
-      cwd,
-      args: ["ls-files", "--others", "--exclude-standard", "-z"],
-      maxOutputBytes: 4 * 1024 * 1024,
-    });
-    if (unignored.stdoutTruncated) return "untracked files exceed the inspection limit";
-    for (const entry of unignored.stdout.split("\0")) {
-      if (entry.endsWith("/")) return `has a nested repository (${entry})`;
-      if (path.basename(entry) !== "HEAD") continue;
-      const bare = path.dirname(entry);
-      if (yield* isRepository(path.join(cwd, bare))) return `has a nested repository (${bare}/)`;
-    }
-    // Git hides a nested repository inside a tracked directory or an unregistered gitlink.
-    const tracked = yield* git.execute({
-      operation: "StorageCleanup.trackedDirectories",
-      cwd,
-      args: ["ls-tree", "-r", "-d", "-z", "--format=%(objecttype) %(path)", "HEAD"],
-      maxOutputBytes: 4 * 1024 * 1024,
-    });
-    if (tracked.stdoutTruncated) return "tracked directories exceed the inspection limit";
-    const registered = yield* git.execute({
-      operation: "StorageCleanup.registeredSubmodules",
-      cwd,
-      args: [
-        "config",
-        "--file",
-        ".gitmodules",
-        "--null",
-        "--get-regexp",
-        "^submodule\\..*\\.path$",
-      ],
-      allowNonZeroExit: true,
-      maxOutputBytes: 64 * 1024,
-    });
-    if (registered.stdoutTruncated) return "submodule inspection exceeded the limit";
-    const submodules = new Set(
-      registered.stdout
-        .split("\0")
-        .map((record) => record.slice(record.indexOf("\n") + 1))
-        .filter(Boolean),
-    );
-    for (const line of tracked.stdout.split("\0")) {
-      const [type, entry] = [line.slice(0, line.indexOf(" ")), line.slice(line.indexOf(" ") + 1)];
-      if (type !== "tree" && !(type === "commit" && !submodules.has(entry))) continue;
-      if (yield* isRepository(path.join(cwd, entry))) return `has a nested repository (${entry}/)`;
-    }
-    return null;
+    const nested = yield* nestedRepository(cwd, submodules);
+    return nested === null ? null : `has a nested repository (${nested})`;
   });
 
   const personalStateReason = Effect.fn("StorageCleanup.personalStateReason")(function* (
     cwd: string,
   ) {
     const git = yield* GitVcsDriver.GitVcsDriver;
-    const own = yield* checkoutStateReason(cwd);
-    if (own !== null || !(yield* fs.exists(path.join(cwd, ".gitmodules")))) return own;
-    const populated = yield* git.execute({
-      operation: "StorageCleanup.submodules",
-      cwd,
-      args: [
-        "submodule",
-        "foreach",
-        "--recursive",
-        "--quiet",
-        'printf "%s\\0" "$toplevel/$sm_path"',
-      ],
-      maxOutputBytes: 64 * 1024,
-    });
-    if (populated.stdoutTruncated) return "submodule inspection exceeded the limit";
-    for (const submodule of populated.stdout.split("\0").filter(Boolean)) {
-      const reason = yield* checkoutStateReason(submodule);
+    const submodules = new Set<string>();
+    if (yield* fs.exists(path.join(cwd, ".gitmodules"))) {
+      const populated = yield* git.execute({
+        operation: "StorageCleanup.submodules",
+        cwd,
+        args: [
+          "submodule",
+          "foreach",
+          "--recursive",
+          "--quiet",
+          'printf "%s\\0" "$toplevel/$sm_path"',
+        ],
+        maxOutputBytes: 64 * 1024,
+      });
+      if (populated.stdoutTruncated) return "submodule inspection exceeded the limit";
+      for (const submodule of populated.stdout.split("\0").filter(Boolean))
+        submodules.add(path.resolve(submodule));
+    }
+    const own = yield* checkoutStateReason(cwd, submodules);
+    if (own !== null) return own;
+    for (const submodule of submodules) {
+      const reason = yield* checkoutStateReason(submodule, submodules);
       if (reason !== null) return `submodule ${reason}`;
     }
     return null;
@@ -319,13 +307,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     const personal = yield* personalStateReason(worktreePath);
     if (personal !== null) return personal;
     const entry = yield* prepare(root, worktreePath);
-    const reason = yield* blocked();
-    if (reason !== null) {
-      yield* discard(entry);
-      return reason;
-    }
-    yield* move({ root, entry, worktreePath, adminDir });
-    return null;
+    return yield* move({ blocked, root, entry, worktreePath, adminDir });
   });
 
   const managedRoots = Effect.fn("StorageCleanup.managedRoots")(function* (

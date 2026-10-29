@@ -1402,9 +1402,13 @@ describe("storage cleanup reports and local file policies", () => {
         const { service, worktree } = yield* cleanupFixture().pipe(
           Effect.provideService(FileSystem.FileSystem, {
             ...fs,
-            readDirectory: (directory) => fs.readDirectory(`${directory}/missing-directory`),
+            readDirectory: (directory) =>
+              fs.readDirectory(
+                directory.endsWith("node_modules") ? `${directory}/missing-directory` : directory,
+              ),
           }),
         );
+        yield* fs.makeDirectory(`${worktree}/node_modules/package`, { recursive: true });
         const report = yield* service.runNow;
         expect(report.entries[0]).toMatchObject({ outcome: "removed", bytes: null, files: null });
         expect(report.bytesFreed).toBe(0);
@@ -1509,6 +1513,27 @@ describe("storage cleanup reports and local file policies", () => {
             ? fs.writeFileString(`${worktree}/tracked.txt`, "edited\n").pipe(Effect.orDie)
             : Effect.void,
         );
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+      }),
+    ),
+  );
+  it.live("keeps a tracked edit saved while the trash entry is prepared", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let worktreePath = "";
+        const { service, worktree } = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (target, data, options) =>
+              (target.endsWith("recovery-failed.txt") && worktreePath !== ""
+                ? fs.writeFileString(`${worktreePath}/tracked.txt`, "edited\n")
+                : Effect.void
+              ).pipe(Effect.andThen(fs.writeFileString(target, data, options))),
+          }),
+        );
+        worktreePath = worktree;
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
         expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
       }),
@@ -1902,6 +1927,22 @@ it.live.each([
     reason: "Has a nested repository (backup.git/)",
   },
   {
+    state: "bare repository with an ignored HEAD",
+    policy: "tracked-changes",
+    directory: "scratch/backup.git",
+    bare: "scratch/backup.git",
+    ignore: "scratch/.gitignore",
+    reason: "Has a nested repository (scratch/backup.git/)",
+  },
+  {
+    state: "repository under an uninitialized submodule",
+    policy: "tracked-changes",
+    directory: "module/scratch/repo",
+    repository: "module/scratch/repo",
+    submodule: "module",
+    reason: "Has a nested repository (module/scratch/repo/)",
+  },
+  {
     state: "unregistered gitlink",
     policy: "tracked-changes",
     directory: "embedded",
@@ -1920,6 +1961,24 @@ it.live.each([
       ]);
       if (row.directory === "notes")
         yield* fixture.fs.writeFileString(`${fixture.repo}/.git/info/exclude`, "notes/\n");
+      if ("submodule" in row) {
+        const head = (yield* fixture.command(fixture.worktree, [
+          "rev-parse",
+          "HEAD",
+        ])).stdout.trim();
+        yield* fixture.fs.writeFileString(
+          `${fixture.worktree}/.gitmodules`,
+          `[submodule "${row.submodule}"]\n\tpath = ${row.submodule}\n\turl = ${fixture.repo}\n`,
+        );
+        yield* fixture.command(fixture.worktree, [
+          "update-index",
+          "--add",
+          "--cacheinfo",
+          `160000,${head},${row.submodule}`,
+        ]);
+        yield* fixture.command(fixture.worktree, ["add", ".gitmodules"]);
+        yield* fixture.command(fixture.worktree, ["commit", "-qm", "register submodule"]);
+      }
       const ledger = `${fixture.worktree}/${row.directory}/ledger.md`;
       yield* fixture.fs.makeDirectory(`${fixture.worktree}/${row.directory}`, { recursive: true });
       if ("tracked" in row) {
@@ -1931,6 +1990,8 @@ it.live.each([
         yield* fixture.command(`${fixture.worktree}/${row.repository}`, ["init", "-q"]);
       if ("bare" in row)
         yield* fixture.command(`${fixture.worktree}/${row.directory}`, ["init", "-q", "--bare"]);
+      if ("ignore" in row)
+        yield* fixture.fs.writeFileString(`${fixture.worktree}/${row.ignore}`, "HEAD\n");
       if ("trackHead" in row) {
         yield* fixture.command(fixture.worktree, ["add", "-f", `${row.directory}/HEAD`]);
         yield* fixture.command(fixture.worktree, ["commit", "-qm", "track bare HEAD"]);
