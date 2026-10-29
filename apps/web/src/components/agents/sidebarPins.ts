@@ -12,6 +12,7 @@ import { readLocalApi } from "../../localApi";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentPresentations } from "../../state/presentation";
 import { railsAgentHandle } from "./railsAgents";
+import { mergeSidebarAgentOrder } from "./sidebarAgentOrder";
 
 const DEFAULT_PINNED_KEYS: ReadonlyArray<string> = ["cos"];
 const LOCAL_PINNED_KEY = "t3code:sidebar-agents:pinned";
@@ -23,11 +24,16 @@ const readLocalKeys = (key: string) => {
     return null;
   }
 };
-const localPinnedKeys = readLocalKeys(LOCAL_PINNED_KEY);
-const localHiddenKeys = readLocalKeys(LOCAL_HIDDEN_KEY);
+let localPinnedKeys = readLocalKeys(LOCAL_PINNED_KEY);
+let localHiddenKeys = readLocalKeys(LOCAL_HIDDEN_KEY);
 const migrationWrites = new Set<string>();
 let migrationComplete = false;
 let stopMigration: (() => void) | null = null;
+
+function dropLocalFallbacks() {
+  localPinnedKeys = null;
+  localHiddenKeys = null;
+}
 
 function watchMigrationWrite(updatedAt: string) {
   if (migrationComplete) return;
@@ -48,6 +54,7 @@ function watchMigrationWrite(updatedAt: string) {
       } catch {
         return;
       }
+      dropLocalFallbacks();
       stopMigration?.();
       migrationWrites.clear();
       migrationComplete = true;
@@ -66,6 +73,7 @@ const sidebarAgentsAtom = Atom.make((get) => {
         ? entry
         : current;
     }, null);
+  if (synced !== null) dropLocalFallbacks();
   const pending = get(pendingSidebarAgentsAtom);
   return pending !== null && (synced === null || pending.updatedAt > synced.updatedAt)
     ? pending
@@ -115,7 +123,10 @@ export function useSidebarPins() {
       hidden: [...hidden.filter((entry) => entry !== key), ...(wasPinned ? [key] : [])],
     });
   };
-  const setOrder = (handles: ReadonlyArray<string>) => write({ order: [...handles] });
+  const setOrder = (handles: ReadonlyArray<string>) => {
+    const current = appAtomRegistry.get(sidebarAgentsAtom);
+    write({ order: mergeSidebarAgentOrder(current?.order ?? [], handles) });
+  };
   const showMenu = async (
     key: string,
     name: string,
