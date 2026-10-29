@@ -9,9 +9,9 @@ import time
 import urllib.request
 from pathlib import Path
 
-from .codex_isolation import isolated_codex_home
 from .gate_proc import CheckFailed, Deadline, clean_env, run, spawn, stop_group
 from .gate_seed import CACHE_ROOT, populate_home
+from .headless_env import provider_env
 from .io_priority import background_command
 from .live_snapshot import for_run
 
@@ -22,6 +22,7 @@ QUIET_SETTINGS = {
     "continueThreadsAfterServerUpdate": False,
     "autoResumeLimitedThreads": False,
     "idleCompaction": "off",
+    "cursorKeychainUsageEnabled": False,
 }
 
 
@@ -133,7 +134,7 @@ def start_server(ctx, deadline):
         ],
         ctx.log("server"),
         cwd=str(ctx.project),
-        env=clean_env({"CODEX_HOME": str(isolated_codex_home(Path(ctx.work) / "codex-home"))}),
+        env=clean_env(provider_env(ctx.work, Path(ctx.log("security-refusals")))),
     )
     while True:
         if ctx.server.poll() is not None:

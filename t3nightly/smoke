@@ -13,7 +13,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from t3nightly.codex_isolation import isolated_codex_home  # noqa: E402
 from t3nightly.gate_checks import pair, t3  # noqa: E402
 from t3nightly.gate_env import (  # noqa: E402
     free_port,
@@ -25,6 +24,7 @@ from t3nightly.gate_env import (  # noqa: E402
     stop_server,
     unpack,
 )
+from t3nightly.headless_env import provider_env  # noqa: E402
 from t3nightly.gate_proc import SECRET, CheckFailed, Deadline, clean_env, redact_tree, run, spawn  # noqa: E402
 from t3nightly.release_approval import file_sha256, smoke_record, verdict_path  # noqa: E402
 from t3nightly.smoke_checks import AGENT_HANDLE, AGENT_NAME, CHECKS  # noqa: E402
@@ -61,7 +61,7 @@ def serve(ctx, deadline):
     ctx.port = free_port()
     ctx.origin = "http://127.0.0.1:%d" % ctx.port
     command = [ctx.t3, "serve", "--base-dir", str(ctx.home), "--host", "127.0.0.1", "--port", str(ctx.port), "--no-browser", str(ctx.project)]
-    env = clean_env({"T3CODE_AGENT_HOMES_DIR": str(ctx.agent_homes), "CODEX_HOME": str(isolated_codex_home(ctx.work / "codex-home"))})
+    env = clean_env({"T3CODE_AGENT_HOMES_DIR": str(ctx.agent_homes), **provider_env(ctx.work, ctx.logs / "security-refusals.log")})
     ctx.server = spawn(command, ctx.log("server"), cwd=str(ctx.project), env=env)
     while True:
         if ctx.server.poll() is not None:

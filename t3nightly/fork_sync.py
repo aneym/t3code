@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -140,7 +141,7 @@ def main():
     args = parser().parse_args()
     repo = args.repo.resolve()
     if not args.no_fetch:
-        subprocess.run(["git", "-C", str(repo), "fetch", args.upstream, "--tags"], check=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "credential.helper=", "fetch", args.upstream, "--tags"], check=True, env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
     tag = newest_tag(repo, args.tag_pattern)
     if not tag:
         raise SystemExit("no upstream nightly tag found")

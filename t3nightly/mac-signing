@@ -28,14 +28,13 @@ cleanup() {
 trap cleanup EXIT
 agent-secret get gh-agent-rails-csc-link | base64 --decode > "$dir/cert.p12"
 security create-keychain -p "$password" "$keychain" >/dev/null
-security set-keychain-settings -lut 21600 "$keychain"
+security set-keychain-settings "$keychain"
 security unlock-keychain -p "$password" "$keychain"
 /usr/bin/openssl pkcs12 -in "$dir/cert.p12" -passin fd:3 -nodes -out "$dir/cert.pem" 3< <(agent-secret get gh-agent-rails-csc-key-password)
 security import "$dir/cert.pem" -k "$keychain" -T /usr/bin/codesign >/dev/null
 rm -f "$dir/cert.p12" "$dir/cert.pem"
 security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
-existing="$(security list-keychains -d user | tr -d '"' | tr '\n' ' ')"
-security list-keychains -d user -s "$keychain" $existing
+"$here/keychain-search" add "$keychain"
 identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)"
 [ -n "$identity" ] || { echo "no Developer ID Application identity in the signing cert" >&2; exit 3; }
 agent-secret get gh-agent-rails-apple-api-key-p8 > "$dir/AuthKey.p8"
