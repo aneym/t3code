@@ -143,6 +143,7 @@ const make = Effect.gen(function* () {
           (error) =>
             error.code === "invalid_request" ||
             error.code === "thread_not_found" ||
+            error.code === "thread_deleted" ||
             error.code === "capability_denied",
           () => Effect.succeedNone,
         ),
