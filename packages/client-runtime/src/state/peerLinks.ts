@@ -76,15 +76,27 @@ export function peerLinkHealth(link: PeerLinkSummary, now: DateTime.Utc): PeerLi
   return { kind: "reachable", expiresInDays: days <= EXPIRY_WARNING_DAYS ? days : null };
 }
 
-export function linkedRoutesToJoin(
+export interface LinkedRoutePlan {
+  readonly join: ReadonlyArray<PeerLinkSummary>;
+  readonly removed: ReadonlyArray<PeerLinkSummary>;
+  readonly newlySeen: ReadonlyArray<EnvironmentId>;
+}
+
+export function linkedRoutePlan(
   links: ReadonlyArray<PeerLinkSummary>,
   knownEnvironmentIds: ReadonlySet<EnvironmentId>,
-): ReadonlyArray<PeerLinkSummary> {
-  return links.filter(
+  seenEnvironmentIds: ReadonlySet<EnvironmentId>,
+): LinkedRoutePlan {
+  const offered = links.filter(
     (link) =>
-      link.access === "full-access" &&
-      link.status === "reachable" &&
-      link.lastError === null &&
-      !knownEnvironmentIds.has(link.environmentId),
+      link.access === "full-access" && link.status === "reachable" && link.lastError === null,
   );
+  const missing = offered.filter((link) => !knownEnvironmentIds.has(link.environmentId));
+  return {
+    join: missing.filter((link) => !seenEnvironmentIds.has(link.environmentId)),
+    removed: missing.filter((link) => seenEnvironmentIds.has(link.environmentId)),
+    newlySeen: offered
+      .map((link) => link.environmentId)
+      .filter((id) => knownEnvironmentIds.has(id) && !seenEnvironmentIds.has(id)),
+  };
 }

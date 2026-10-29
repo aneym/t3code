@@ -164,7 +164,7 @@ export const make = Effect.gen(function* () {
     execute: ({ credential, proofKeyThumbprint, requestedScopes, consumedAt, now }) =>
       sql`
         UPDATE auth_pairing_links
-        SET consumed_at = ${consumedAt}
+        SET consumed_at = ${consumedAt}, credential = 'consumed:' || id
         WHERE credential = ${credential}
           AND revoked_at IS NULL
           AND consumed_at IS NULL
