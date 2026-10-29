@@ -111,10 +111,22 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
     }
     if (opts.scenario === "starting-send") {
       const first = yield* cli("start", "--provider", "claudeAgent", "--model", opts.model, opts.project, `Reply with exactly ${markers[0]} and nothing else. Do not use tools.`);
+      if (!first.threadId || !first.runId) throw fail("thread start did not return thread and run ids");
+      const starting = (p) => {
+        const run = p.runs.find((item) => item.id === first.runId);
+        return run !== undefined && !terminal.has(run.status) && !(p.attempts ?? []).some((attempt) => attempt.runId === first.runId && attempt.providerTurnId);
+      };
+      yield* subscribe(first.threadId);
+      yield* waitFor("first run persisted", (p) => p.runs.some((run) => run.id === first.runId));
+      const openBefore = starting(projection);
       const sent = yield* cli("send", "--mode", "auto", first.threadId, `Reply with exactly ${markers[1]} and nothing else. Do not use tools.`);
       receipts.push(first, sent);
-      if (!first.threadId || !first.runId || !sent.runId || sent.runId === first.runId) throw fail("start and send did not return two distinct runs");
-      yield* subscribe(first.threadId);
+      if (!sent.runId || sent.runId === first.runId) throw fail("send did not return a distinct run");
+      yield* waitFor("sent run persisted", (p) => p.runs.some((run) => run.id === sent.runId));
+      const openAfter = starting(projection);
+      restartObservation = { openBefore, openAfter, delivery: sent.delivery };
+      if (!openBefore || !openAfter) throw fail("inconclusive: the send missed the startup window (provider turn registered or run ended first)");
+      if (sent.delivery !== "queued") throw fail(`auto send into a starting run was delivered ${sent.delivery} instead of queued behind it`);
       const final = yield* waitFor("both runs to settle", (p) =>
         [first.runId, sent.runId].every((id) => p.runs.some((run) => run.id === id && terminal.has(run.status))) && p.runs.every((run) => terminal.has(run.status)),
       );
