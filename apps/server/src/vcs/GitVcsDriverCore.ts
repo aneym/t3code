@@ -3798,7 +3798,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { cwd: input.cwd, branch: input.newRefName, startPoint: input.refName },
         "git worktree add failed",
       );
-      createdBranchCommit = startCommit;
+      const createdAt = yield* executeGit(
+        "GitVcsDriver.createWorktree.readCreatedBranch",
+        input.cwd,
+        ["reflog", "show", "--format=%H", `refs/heads/${input.newRefName}`, "--"],
+        { allowNonZeroExit: true },
+      ).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")));
+      createdBranchCommit = createdAt.split("\n").at(-1) || startCommit;
     }
     const args = ["worktree", "add", "--", worktreePath, input.newRefName ?? input.refName];
     const progress = options?.progress;
