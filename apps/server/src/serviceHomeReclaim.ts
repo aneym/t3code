@@ -4,7 +4,10 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 import * as NodeUtil from "node:util";
+
+import { isExactServiceVersion, SERVER_OWNER_LOCK_FILE } from "./cloud/serviceProtocol.ts";
 
 const STOP_GRACE_MS = 15_000;
 const BASE_DIR_FLAG = "--base-dir";
@@ -66,29 +69,27 @@ function servedBaseDir(args: ReadonlyArray<string>): string | undefined {
   return flag.value;
 }
 
-async function serveExecutables(baseDir: string, home: string): Promise<ReadonlyArray<string>> {
-  const versions = await NodeFSP.readdir(NodePath.join(home, "runtime", "versions")).catch(
-    () => [],
-  );
-  const homes: Array<string> = [];
+async function homeSpellings(baseDir: string, home: string): Promise<ReadonlyArray<string>> {
+  const spellings: Array<string> = [];
   for (const spelling of new Set([baseDir, home, `${NodeOS.homedir()}/.t3`])) {
-    if ((await canonical(spelling)) === home) homes.push(spelling);
+    if ((await canonical(spelling)) === home) spellings.push(spelling);
   }
-  return homes.flatMap((spelling) =>
-    versions.map((version) => `${spelling}/runtime/versions/${version}/t3`),
-  );
+  return spellings;
 }
 
-function serveArgvOf(command: string, executables: ReadonlyArray<string>): ReadonlyArray<string> {
-  const program = executables.find(
-    (executable) => command === `${executable} serve` || command.startsWith(`${executable} serve `),
-  );
-  if (program === undefined) return [];
-  const rest = command.slice(`${program} serve `.length);
-  const flag = /(?:^| )--base-dir[ =]/.exec(rest);
-  const options = (flag === null ? rest : rest.slice(0, flag.index)).split(" ").filter(Boolean);
-  const baseDir = flag === null ? [] : [BASE_DIR_FLAG, rest.slice(flag.index + flag[0].length)];
-  return [program, "serve", ...options, ...baseDir];
+function serveArgvOf(command: string, homes: ReadonlyArray<string>): ReadonlyArray<string> {
+  for (const spelling of homes) {
+    const versions = `${spelling}/runtime/versions/`;
+    if (!command.startsWith(versions)) continue;
+    const program = `${versions}${command.slice(versions.length).split("/", 1)[0]}/t3`;
+    if (command !== `${program} serve` && !command.startsWith(`${program} serve `)) continue;
+    const rest = command.slice(`${program} serve `.length);
+    const flag = /(?:^| )--base-dir[ =]/.exec(rest);
+    const options = (flag === null ? rest : rest.slice(0, flag.index)).split(" ").filter(Boolean);
+    const baseDir = flag === null ? [] : [BASE_DIR_FLAG, rest.slice(flag.index + flag[0].length)];
+    return [program, "serve", ...options, ...baseDir];
+  }
+  return [];
 }
 
 interface Observation {
@@ -96,7 +97,7 @@ interface Observation {
   readonly argv: ReadonlyArray<string>;
 }
 
-async function observe(pid: number, executables: ReadonlyArray<string>): Promise<Observation> {
+async function observe(pid: number, homes: ReadonlyArray<string>): Promise<Observation> {
   if (ON_LINUX) {
     const start = await linuxStart(pid);
     const cmdline = await readText(`/proc/${pid}/cmdline`);
@@ -107,17 +108,30 @@ async function observe(pid: number, executables: ReadonlyArray<string>): Promise
   const match = /^(\S+\s+\S+\s+\S+\s+\S+\s+\S+)\s+(.*)$/s.exec(output);
   return {
     start: (match?.[1] ?? "").replace(/\s+/g, " "),
-    argv: serveArgvOf(match?.[2] ?? "", executables),
+    argv: serveArgvOf(match?.[2] ?? "", homes),
   };
+}
+
+async function runsFromHome(program: string, home: string): Promise<boolean> {
+  const versionDir = NodePath.dirname(program);
+  const runtimeDir = NodePath.dirname(NodePath.dirname(versionDir));
+  return (
+    NodePath.isAbsolute(program) &&
+    NodePath.normalize(program) === program &&
+    NodePath.basename(program) === "t3" &&
+    isExactServiceVersion(NodePath.basename(versionDir)) &&
+    NodePath.dirname(versionDir) === NodePath.join(runtimeDir, "versions") &&
+    NodePath.basename(runtimeDir) === "runtime" &&
+    (await canonical(NodePath.dirname(runtimeDir))) === home
+  );
 }
 
 async function servesHome(argv: ReadonlyArray<string>, home: string): Promise<boolean> {
   const [program = "", command, ...args] = argv;
-  if (command !== "serve" || NodePath.basename(program) !== "t3") return false;
-  const runtimeDir = await canonical(NodePath.dirname(program));
   const baseDir = servedBaseDir(args);
   return (
-    runtimeDir?.startsWith(NodePath.join(home, "runtime", "versions") + NodePath.sep) === true &&
+    command === "serve" &&
+    (await runsFromHome(program, home)) &&
     baseDir !== undefined &&
     (await canonical(baseDir)) === home
   );
@@ -145,17 +159,18 @@ async function exitsWithinGrace(pid: number, start: string): Promise<boolean> {
 export async function stopSshLaunchedServers(baseDir: string): Promise<boolean> {
   const home = await canonical(baseDir);
   if (home === undefined) return false;
-  const executables = await serveExecutables(baseDir, home);
+  const homes = ON_LINUX ? [] : await homeSpellings(baseDir, home);
   const launchDir = NodePath.join(baseDir, "ssh-launch");
   const entries = await NodeFSP.readdir(launchDir).catch(() => []);
   let stopped = false;
   for (const entry of entries) {
     const dir = NodePath.join(launchDir, entry);
     if ((await readRecord(dir, "managed")) !== "managed") continue;
-    const pid = Number.parseInt(await readRecord(dir, "pid"), 10);
+    const recordedPid = await readRecord(dir, "pid");
+    const pid = /^\d+$/.test(recordedPid) ? Number(recordedPid) : 0;
     const start = await readRecord(dir, "start");
-    if (!Number.isInteger(pid) || pid <= 1 || start === "") continue;
-    const observed = await observe(pid, executables);
+    if (!Number.isSafeInteger(pid) || pid <= 1 || start === "" || !isAlive(pid)) continue;
+    const observed = await observe(pid, homes);
     if (observed.start !== start || !(await servesHome(observed.argv, home))) continue;
     if (!(await terminateIfSame(pid, start))) continue;
     if (!(await exitsWithinGrace(pid, start))) return false;
@@ -167,17 +182,29 @@ export async function stopSshLaunchedServers(baseDir: string): Promise<boolean> 
   return stopped;
 }
 
-async function homeOwnerRecorded(baseDir: string): Promise<boolean> {
-  const runtime = await NodeFSP.readFile(
-    NodePath.join(baseDir, "userdata", "server-runtime.json"),
-    "utf8",
-  ).catch(() => "");
+function ownerLockHeld(stateDir: string): boolean | undefined {
+  let lock: NodeSqlite.DatabaseSync | undefined;
+  try {
+    lock = new NodeSqlite.DatabaseSync(NodePath.join(stateDir, SERVER_OWNER_LOCK_FILE));
+    lock.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE; ROLLBACK;");
+    return false;
+  } catch (cause) {
+    return cause instanceof Error && "errcode" in cause && cause.errcode === 5 ? true : undefined;
+  } finally {
+    lock?.close();
+  }
+}
+
+async function homeOwned(baseDir: string): Promise<boolean> {
+  const stateDir = NodePath.join(baseDir, "userdata");
+  const lockHeld = ownerLockHeld(stateDir);
+  if (lockHeld === true) return true;
+  const runtime = await readText(NodePath.join(stateDir, "server-runtime.json"));
   const pid = Number(/"pid"\s*:\s*(\d+)/.exec(runtime)?.[1]);
-  return pid > 1 && isAlive(pid);
+  const preLockOwner = !/"ownerId"\s*:/.test(runtime);
+  return pid > 1 && isAlive(pid) && (lockHeld === undefined || preLockOwner);
 }
 
 export async function freeOwnedHome(baseDir: string, acquire: boolean): Promise<boolean> {
-  return (
-    (await stopSshLaunchedServers(baseDir)) || (acquire && !(await homeOwnerRecorded(baseDir)))
-  );
+  return (await stopSshLaunchedServers(baseDir)) || (acquire && !(await homeOwned(baseDir)));
 }

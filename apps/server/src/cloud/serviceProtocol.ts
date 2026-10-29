@@ -9,6 +9,7 @@ export const SERVICE_STATE_FILE = "service-state.json";
 export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
 /** Marks a repointed unit whose service still runs the old version; launcher startup clears it. */
 export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
+export const SERVER_OWNER_LOCK_FILE = "server-owner.sqlite";
 
 export interface PendingServiceUpdate {
   readonly id: string;
