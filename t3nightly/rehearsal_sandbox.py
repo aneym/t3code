@@ -15,7 +15,7 @@ from contextlib import closing
 from pathlib import Path
 
 from .codex_isolation import isolated_codex_home
-from .headless_env import AGENT_LB_URL, claude_lb_lines, headless_bin, pin_settings
+from .headless_env import claude_lb_lines, headless_bin, pin_settings
 from .install_strays import port_listeners
 from .release_manifest import history_digest
 
@@ -44,7 +44,7 @@ def provider_wrapper(binary, evidence, destination):
     if sys.platform == "darwin":
         lines.extend(claude_lb_lines(headless_bin(destination.parent / "headless-bin", evidence / "security-refusals.log")))
     else:
-        lines.append(f"export ANTHROPIC_BASE_URL={AGENT_LB_URL}")
+        lines.extend(claude_lb_lines(destination.parent / "headless-bin"))
     lines.append(f'exec {shlex.quote(str(binary))} --setting-sources "" --tools Bash,Read,Write,Edit,Glob,Grep "$@" 2>>{shlex.quote(str(evidence / "provider-stderr.log"))}')
     destination.write_text("\n".join(lines) + "\n")
     destination.chmod(0o700)
