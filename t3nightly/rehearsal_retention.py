@@ -43,9 +43,6 @@ def process_start(proc):
     return boot + ticks / os.sysconf("SC_CLK_TCK")
 
 
-DAEMONS = {"sshd", "sshd-session", "systemd", "(sd-pam)", "gpg-agent", "caddy"}
-
-
 def ignored_commands():
     path = Path.home() / ".config/t3nightly/retention-ignore"
     try:
@@ -67,7 +64,8 @@ def ancestors():
 
 def ignorable(proc, lineage):
     try:
-        if int(proc.name) in lineage or (proc / "comm").read_text().strip() in DAEMONS:
+        parent = Path(f"/proc/{(proc / 'stat').read_text().rpartition(')')[2].split()[1]}")
+        if int(proc.name) in lineage or parent.stat().st_uid == 0:
             return True
         command = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
         return bool(command) and command in ignored_commands()
