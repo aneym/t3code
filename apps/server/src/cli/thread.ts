@@ -35,6 +35,7 @@ import {
 } from "./threadCommon.ts";
 import { finishRun, readFullText, readThreadOnly, readTimeline } from "./threadRun.ts";
 import { threadSendCommand } from "./threadSend.ts";
+import { threadUpdateCommand } from "./threadUpdate.ts";
 
 const TITLE_MAX_CHARS = 80;
 
@@ -557,6 +558,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadUnqueueCommand,
     threadInterruptCommand,
     threadShowCommand,
+    threadUpdateCommand,
     ...(
       ["archive", "unarchive", "settle", "unsettle", "pin", "unpin", "snooze", "unsnooze"] as const
     ).map(threadOrganizeCommand),
