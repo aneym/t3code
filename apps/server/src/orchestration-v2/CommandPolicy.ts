@@ -390,12 +390,8 @@ export function resolveQueueSendAllTarget(
   );
   if (active === undefined) return undefined;
   const message = projection.messages.find((candidate) => candidate.id === active.userMessageId);
-  if (
-    message !== undefined &&
-    isNativeMaintenanceCommand(message) &&
-    message.text.trim().toLowerCase() === "/compact"
-  )
-    return active;
+  if (message !== undefined && isNativeMaintenanceCommand(message))
+    return "Wait for compaction to finish, then send all.";
   const thread = projection.providerThreads.find(
     (candidate) => candidate.id === active.providerThreadId,
   );
