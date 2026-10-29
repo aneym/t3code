@@ -78,7 +78,8 @@ export const readCompletionDeliveries = Effect.fn("Orchestrator.readCompletionDe
           runIds: [run.id],
         },
       );
-      accepted = providerTurns.some((turn) => turn.runAttemptId === runs[0]?.activeAttemptId);
+      const attemptId = runs[0]?.activeAttemptId;
+      accepted = attemptId != null && providerTurns.some((turn) => turn.runAttemptId === attemptId);
     }
     return { messages, outcome: completionDeliveryOutcome(run.status, accepted) };
   },
