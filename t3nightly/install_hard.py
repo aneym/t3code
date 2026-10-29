@@ -19,6 +19,8 @@ from .release_receipts import INSTALL_SCHEMA, write
 from .release_signatures import cli_binary
 
 SERVICE_PROTOCOL = 3
+CONNECT_WAIT_S = 120
+CONNECT_POLL_S = 5
 
 
 def service(run, action):
@@ -78,6 +80,17 @@ def precheck(run, version, expected):
     except ValueError:
         if run.server_version() != version or not stray_serving(run, version, expected):
             raise
+
+
+def connect_returns(run, version):
+    end = time.monotonic() + CONNECT_WAIT_S
+    while True:
+        if run.connect_reachable(version):
+            run.step("hard-connect", version=version, waitedSeconds=round(CONNECT_WAIT_S - (end - time.monotonic()), 1))
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(CONNECT_POLL_S)
 
 
 def serving(run, version, expected, reap=True):
@@ -161,7 +174,7 @@ def install(run):
             stopped = False
             serving(run, args.version, observed["candidateRuntime.digest"])
             retained(run, before)
-            if connect and not run.connect_reachable(args.version):
+            if connect and not connect_returns(run, args.version):
                 raise ValueError("previously healthy Connect is unavailable")
             post = prove(run, args.version, baseline)
             if args.force_rollback:
