@@ -18,6 +18,14 @@ start_managed_server() {
   record_start "$REMOTE_PID" >"$ATTEMPT_DIR/start" || :
   printf '%s\\n' "$REMOTE_PID" >"$ATTEMPT_DIR/pid"
   printf 'managed\\n' >"$ATTEMPT_DIR/managed"
+  (
+    trap '' HUP
+    while [ -d "$ATTEMPT_DIR" ] && kill -0 "$REMOTE_PID" 2>/dev/null && [ "$(record_start "$REMOTE_PID")" = "$(cat "$ATTEMPT_DIR/start")" ]; do
+      case "$(ps -o stat= -p "$REMOTE_PID" 2>/dev/null || true)" in *Z*) break ;; esac
+      sleep 1
+    done
+    rm -rf "$ATTEMPT_DIR"
+  ) >/dev/null 2>&1 < /dev/null &
   if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
     printf 'Remote T3 server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
     if [ -s "$LOG_FILE" ]; then
@@ -39,6 +47,7 @@ start_managed_server() {
     mv "$PID_FILE.next.$$" "$PID_FILE"
     printf '%s\\n' "\${STARTED_RUNTIME#* }" >"$PORT_FILE"
     printf 'managed\\n' >"$MANAGED_FILE"
+    rm -rf "$ATTEMPT_DIR"
   else
     REMOTE_PID=""
     REMOTE_MANAGED="external"

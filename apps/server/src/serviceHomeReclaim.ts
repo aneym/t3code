@@ -208,7 +208,25 @@ async function linuxLegacyOwnerIsLive(baseDir: string, pid: number): Promise<boo
   const observed = await observe(pid, []);
   if (observed.start !== start || observed.argv.length === 0) return true;
   const command = observed.argv.indexOf("serve");
-  if (command < 0) return false;
+  if (command < 0) {
+    const [program = "", ...args] = observed.argv;
+    const executable = await NodeFSP.readlink(`/proc/${pid}/exe`).catch(() => program);
+    if ([program, executable].some((value) => /^t3(?:\.exe)?$/.test(NodePath.basename(value)))) {
+      return true;
+    }
+    if (!/^node(?:js)?(?:\.exe)?$/.test(NodePath.basename(executable))) return false;
+    for (const arg of args) {
+      if (/^t3(?:\.[cm]?js|\.ts)?$/.test(NodePath.basename(arg))) return true;
+      if (!/^bin\.(?:mjs|ts)$/.test(NodePath.basename(arg))) continue;
+      const cwd = await NodeFSP.readlink(`/proc/${pid}/cwd`).catch(() => undefined);
+      if (!NodePath.isAbsolute(arg) && cwd === undefined) return true;
+      const manifest = await readText(
+        NodePath.join(NodePath.dirname(NodePath.resolve(cwd ?? "/", arg)), "..", "package.json"),
+      );
+      if (manifest === "" || /"name"\s*:\s*"t3"/.test(manifest)) return true;
+    }
+    return false;
+  }
   const args = observed.argv.slice(command + 1);
   const flags = args.filter((arg) => arg === BASE_DIR_FLAG || arg.startsWith(`${BASE_DIR_FLAG}=`));
   if (flags.length > 1) return true;
