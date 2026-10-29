@@ -3,8 +3,10 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 
 import { assert, describe, it } from "@effect/vitest";
+import { RECORD_START_SCRIPT } from "@t3tools/ssh/remoteHomeServerScript";
 
 import { stopSshLaunchedServers } from "./serviceHomeReclaim.ts";
 
@@ -12,8 +14,14 @@ interface Sandbox {
   readonly home: string;
   readonly otherHome: string;
   readonly serve: (baseDir: string) => Promise<NodeChildProcess.ChildProcess>;
-  readonly record: (child: NodeChildProcess.ChildProcess) => Promise<string>;
+  readonly record: (child: NodeChildProcess.ChildProcess, start: string | null) => Promise<void>;
 }
+
+const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
+
+const launcherStart = async (pid: number | undefined) =>
+  (await execFile("/bin/sh", ["-euc", `${RECORD_START_SCRIPT}\nrecord_start "$1"`, "sh", `${pid}`]))
+    .stdout;
 
 const next = (child: NodeChildProcess.ChildProcess, event: "spawn" | "exit") =>
   new Promise<Array<unknown>>((resolve) =>
@@ -46,12 +54,12 @@ async function withSandbox(user: string, test: (sandbox: Sandbox) => Promise<voi
         await next(child, "spawn");
         return child;
       },
-      record: async (child) => {
+      record: async (child, start) => {
         const dir = NodePath.join(home, "ssh-launch", `record-${String(child.pid)}`);
         await NodeFSP.mkdir(dir, { recursive: true });
+        if (start !== null) await NodeFSP.writeFile(NodePath.join(dir, "start"), start);
         await NodeFSP.writeFile(NodePath.join(dir, "pid"), `${String(child.pid)}\n`);
         await NodeFSP.writeFile(NodePath.join(dir, "managed"), "managed\n");
-        return NodePath.join(dir, "pid");
       },
     });
   } finally {
@@ -69,11 +77,11 @@ async function withSandbox(user: string, test: (sandbox: Sandbox) => Promise<voi
 const isRunning = (child: NodeChildProcess.ChildProcess) =>
   child.exitCode === null && child.signalCode === null;
 
-describe.each(["alex", "Alex Smith"])("T3 home under %s", (user) => {
+describe.each(["alex", "Alex Smith", "t3 serve Alex"])("T3 home under %s", (user) => {
   it("stops a server the SSH launcher recorded for this T3 home", () =>
     withSandbox(user, async ({ home, serve, record }) => {
       const stray = await serve(home);
-      await record(stray);
+      await record(stray, await launcherStart(stray.pid));
       const exited = next(stray, "exit");
 
       assert.isTrue(await stopSshLaunchedServers(home));
@@ -83,20 +91,27 @@ describe.each(["alex", "Alex Smith"])("T3 home under %s", (user) => {
   it("leaves a recorded PID alone when it now serves another T3 home", () =>
     withSandbox(user, async ({ home, otherHome, serve, record }) => {
       const other = await serve(otherHome);
-      await record(other);
+      await record(other, await launcherStart(other.pid));
 
       assert.isFalse(await stopSshLaunchedServers(home));
       assert.isTrue(isRunning(other));
     }));
 
-  it("leaves a process alone when it started after the SSH launcher's record", () =>
+  it("leaves a recorded PID alone when a different process now holds it", () =>
     withSandbox(user, async ({ home, serve, record }) => {
-      const later = await serve(home);
-      const pidFile = await record(later);
-      const recordedAtSeconds = 1_577_836_800;
-      await NodeFSP.utimes(pidFile, recordedAtSeconds, recordedAtSeconds);
+      const successor = await serve(home);
+      await record(successor, await launcherStart(1));
 
       assert.isFalse(await stopSshLaunchedServers(home));
-      assert.isTrue(isRunning(later));
+      assert.isTrue(isRunning(successor));
+    }));
+
+  it("leaves a server alone when its record has no start identity", () =>
+    withSandbox(user, async ({ home, serve, record }) => {
+      const older = await serve(home);
+      await record(older, null);
+
+      assert.isFalse(await stopSshLaunchedServers(home));
+      assert.isTrue(isRunning(older));
     }));
 });
