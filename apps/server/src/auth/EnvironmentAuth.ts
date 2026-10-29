@@ -37,6 +37,12 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
+import {
+  isMcpClientSubject,
+  isOwnerCliSubject,
+  mcpClientSubject,
+  type McpClientSession,
+} from "./McpClientSubjects.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -68,17 +74,7 @@ export interface IssuedBearerSession {
   readonly expiresAt: DateTime.Utc;
 }
 
-// MCP client tokens are restricted to /mcp; HTTP API and WebSocket RPC would bypass their access cap.
-const MCP_CLIENT_SUBJECT = "mcp-client";
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
-
-export interface McpClientSession {
-  readonly sessionId: AuthSessionId;
-  readonly label: string;
-  readonly access: AuthMcpClientAccess;
-  /** Another T3 Code environment's link, whose work here stays within it. */
-  readonly peerLink: boolean;
-}
 
 export interface AuthenticatedSession {
   readonly sessionId: AuthSessionId;
@@ -539,6 +535,7 @@ export class EnvironmentAuth extends Context.Service<
       readonly label: string;
       readonly access: AuthMcpClientAccess;
       readonly peerLink: boolean;
+      readonly ownerCli?: boolean;
       readonly client: AuthClientMetadata;
     }) => Effect.Effect<
       {
@@ -596,7 +593,7 @@ function toBootstrapExchangeError(
 }
 
 const rejectMcpClientAudience = <S extends { readonly subject: string }>(session: S) =>
-  session.subject === MCP_CLIENT_SUBJECT
+  isMcpClientSubject(session.subject)
     ? Effect.fail(
         new ServerAuthInvalidCredentialError({
           diagnostic: "MCP client sessions are only accepted by the MCP endpoint.",
@@ -1280,7 +1277,7 @@ export const make = Effect.gen(function* () {
     return sessions.verify(token).pipe(
       mapSessionVerificationErrors,
       Effect.flatMap((session) =>
-        session.subject === MCP_CLIENT_SUBJECT && session.method === "bearer-access-token"
+        isMcpClientSubject(session.subject) && session.method === "bearer-access-token"
           ? Effect.succeed({
               sessionId: session.sessionId,
               label: session.client.label ?? "MCP client",
@@ -1288,6 +1285,7 @@ export const make = Effect.gen(function* () {
                 ? (session.runtimeModeCeiling ?? "approval-required")
                 : "read-only",
               peerLink: session.peerLink === true,
+              ownerCli: isOwnerCliSubject(session.subject),
             } satisfies McpClientSession)
           : Effect.fail(
               new ServerAuthInvalidCredentialError({
@@ -1302,7 +1300,7 @@ export const make = Effect.gen(function* () {
   const issueMcpClientSession: EnvironmentAuth["Service"]["issueMcpClientSession"] = (input) =>
     sessions
       .issue({
-        subject: MCP_CLIENT_SUBJECT,
+        subject: mcpClientSubject(input.ownerCli),
         method: "bearer-access-token",
         scopes: mcpClientScopes(input.access),
         ttl: MCP_CLIENT_SESSION_TTL,

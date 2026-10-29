@@ -12,6 +12,7 @@ import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as McpOAuth from "./McpOAuth.ts";
+import * as McpOAuthMetadata from "./mcpOAuthMetadata.ts";
 import { renderErrorPage } from "./mcpOAuthHtml.ts";
 
 const APPROVAL_PAGE_PATH = "/connect-agent";
@@ -32,7 +33,7 @@ const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
   ),
 );
 
-const requestUrls = Effect.map(HttpServerRequest.HttpServerRequest, McpOAuth.requestUrls);
+const requestUrls = Effect.map(HttpServerRequest.HttpServerRequest, McpOAuthMetadata.requestUrls);
 
 /**
  * An unverified client or redirect is reported, never redirected; any other problem goes back to
@@ -61,13 +62,13 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const oauth = yield* McpOAuth.McpOAuth;
     const protectedResource = () =>
-      requestUrls.pipe(Effect.map(McpOAuth.protectedResourceMetadata));
+      requestUrls.pipe(Effect.map(McpOAuthMetadata.protectedResourceMetadata));
 
     return handlers
       .handle("protectedResource", protectedResource)
       .handle("mcpProtectedResource", protectedResource)
       .handle("authorizationServer", () =>
-        requestUrls.pipe(Effect.map(McpOAuth.authorizationServerMetadata)),
+        requestUrls.pipe(Effect.map(McpOAuthMetadata.authorizationServerMetadata)),
       )
       .handle("register", ({ payload }) =>
         oauth.register(payload).pipe(
