@@ -131,9 +131,7 @@ export const makeQueuedRunSendAll = Effect.gen(function* () {
     for (const event of queueReleaseEvents(
       projection,
       now,
-      (run) =>
-        run.queueHeld === true &&
-        (released.has(run.id) || isAutomaticCompletionRun(projection, run)),
+      (run) => released.has(run.id) || isAutomaticCompletionRun(projection, run),
     ))
       yield* input.emit<OrchestrationV2DomainEvent>(event);
     if (target === undefined || first === undefined) return;

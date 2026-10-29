@@ -202,7 +202,14 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
   return {
     activeRun,
     queuedRuns,
-    canSendAll: eligible.length >= 2 && (canSendNow || canPromoteToSteer),
+    canSendAll:
+      eligible.length >= 2 &&
+      (canSendNow || canPromoteToSteer) &&
+      !(
+        activeMessage !== undefined &&
+        activeMessage.attachments.length === 0 &&
+        ["/compact", "/logout"].includes(activeMessage.text.trim().toLowerCase())
+      ),
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
     canSendNow,
     canPromoteToSteer,

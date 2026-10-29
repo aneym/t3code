@@ -179,6 +179,7 @@ import {
   wakeWorkStartedAt,
 } from "./QueuedRunOrder.ts";
 import { makeQueuedRunSendAll, sendAllStartRun } from "./QueuedRunSendAll.ts";
+import { makeQueuedSteerRecovery } from "./QueuedSteerRecovery.ts";
 import { queuedRunBatch, queuedRunBatchEvents } from "./QueuedRunBatch.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
@@ -9136,6 +9137,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   const dispatchQueueSendAll = yield* makeQueuedRunSendAll;
+  const recoverSteeringBatch = yield* makeQueuedSteerRecovery;
 
   const dispatchQueuedRunReorder = Effect.fn("Orchestrator.dispatchQueuedRunReorder")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "queued-run.reorder" }>,
@@ -12554,6 +12556,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 context: { version: 1 as const, records: [], guest: guestSend.guest },
               };
         cancelUnsettledEffects = yield* dispatchMessage(dispatched, events, effects);
+        for (const event of yield* recoverSteeringBatch(dispatched, yield* Ref.get(events)))
+          yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
         yield* recordSubagentFollowup(dispatched, events).pipe(mapDispatchError(command));
         break;
       }
