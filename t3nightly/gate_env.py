@@ -4,7 +4,6 @@ import os
 import platform
 import re
 import socket
-import sqlite3
 import subprocess
 import time
 import urllib.request
@@ -12,6 +11,8 @@ from pathlib import Path
 
 from .gate_proc import CheckFailed, Deadline, clean_env, run, spawn, stop_group
 from .gate_seed import CACHE_ROOT, populate_home
+from .io_priority import background_command
+from .live_snapshot import for_run
 
 LIVE_HOME = Path.home() / ".t3"
 QUIET_SETTINGS = {
@@ -64,51 +65,33 @@ def guard_isolated(home):
         raise CheckFailed("refusing to use the live T3 home %s" % live)
 
 
-def snapshot_live_db(dest, deadline):
-    live = LIVE_HOME / "userdata" / "statev2.sqlite"
-    if not live.exists():
-        raise CheckFailed("no live database at %s to seed from" % live)
-    source = sqlite3.connect("file:%s?mode=ro" % live, uri=True, timeout=30)
-    target = sqlite3.connect(str(dest))
-    try:
-        source.execute("BEGIN")
-        source.execute("SELECT rootpage FROM sqlite_schema LIMIT 1").fetchone()
-        source.backup(target, pages=1024, progress=lambda *_: deadline.left())
-    finally:
-        target.close()
-        source.close()
-    return live.stat().st_size
+def snapshot_live_db(key, deadline, *, home=None):
+    return for_run(key, home=home if home is not None else LIVE_HOME, timeout=deadline.left())
 
 
 def build_seed(ctx, home, deadline):
     guard_isolated(home)
-    snapshot = home.parent / "live-snapshot.sqlite"
-    try:
-        live_bytes = snapshot_live_db(snapshot, deadline)
-        code, _ = run(
-            [
-                ctx.node,
-                "scripts/migrate-dev-db.ts",
-                "--base-dir",
-                str(home),
-                "--source",
-                str(snapshot),
-                "--projects",
-                "3",
-                "--threads-per-project",
-                "5",
-            ],
-            ctx.log("boot"),
-            deadline,
-            cwd=str(Path(ctx.tree) / "apps/server"),
-        )
-    finally:
-        snapshot.unlink(missing_ok=True)
-        for suffix in ("-wal", "-shm"):
-            Path(str(snapshot) + suffix).unlink(missing_ok=True)
+    snapshot = snapshot_live_db(ctx.version, deadline)
+    code, _ = run(
+        background_command([
+            ctx.node,
+            "scripts/migrate-dev-db.ts",
+            "--base-dir",
+            str(home),
+            "--source",
+            str(snapshot),
+            "--projects",
+            "2",
+            "--threads-per-project",
+            "3",
+        ]),
+        ctx.log("boot"),
+        deadline,
+        cwd=str(Path(ctx.tree) / "apps/server"),
+    )
     if code != 0:
         raise CheckFailed("migrate-dev-db exited %d" % code)
-    return live_bytes
+    return snapshot.stat().st_size
 
 
 def seed_home(ctx, deadline):

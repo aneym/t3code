@@ -9,6 +9,7 @@ from pathlib import Path
 from t3nightly.install_resources import copy_snapshot
 from t3nightly.install_storage import record_payload
 from t3nightly.install_payload_gc import discard_snapshot, prune_backups
+from t3nightly.live_snapshot import take
 
 
 def refresh_snapshot(run):
@@ -16,14 +17,7 @@ def refresh_snapshot(run):
     replaced_bytes = run.snapshot.stat().st_size if run.snapshot.exists() else 0
     staged = Path(str(run.snapshot) + ".partial")
     try:
-        with closing(
-            sqlite3.connect(f"file:{run.db}?mode=ro", uri=True, timeout=30)
-        ) as source:
-            source.execute("BEGIN")
-            source.execute("SELECT rootpage FROM sqlite_schema LIMIT 1").fetchone()
-            with closing(sqlite3.connect(staged, timeout=30)) as target:
-                copy_snapshot(run, source, target)
-                target.execute("PRAGMA journal_mode=DELETE").fetchone()
+        take(staged, home=run.home, timeout=getattr(run.args, "snapshot_max_s", 1200))
         os.chmod(staged, 0o600)
         os.replace(staged, run.snapshot)
     finally:

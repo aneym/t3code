@@ -66,7 +66,7 @@ def run_action(stage, config, log):
             transfer(f"ax42:{config.remote_run}/{folder}", str(config.run) + "/", log)
         return code
     if stage == "stage-review":
-        return command([str(tools / "stage-review"), "--worktree", str(config.tree("mac-cli")), "--out", str(config.run / "shots")], log)
+        return command([str(tools / "stage-review"), "--version", config.version, "--worktree", str(config.tree("mac-cli")), "--out", str(config.run / "shots")], log)
     if stage == "awaiting-verdict":
         if not approved(config):
             print(f"awaiting-verdict: lead must approve {config.verdict}; rerun to resume", flush=True)

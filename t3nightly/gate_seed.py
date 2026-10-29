@@ -21,7 +21,7 @@ IMPORTS = re.compile(
 )
 
 
-def seed_key(tree):
+def seed_key(tree, run_key):
     tree = Path(tree).resolve()
     packages = {}
     for manifest in (tree / "packages").glob("*/package.json"):
@@ -66,7 +66,7 @@ def seed_key(tree):
             if not target.is_file() or not target.resolve().is_relative_to(tree):
                 raise CheckFailed("cannot resolve seed dependency %s" % specifier)
             pending.append(target)
-    digest = hashlib.sha256(b"gate-seed-v1:projects=3:threads=5\0")
+    digest = hashlib.sha256(("gate-seed-v2:projects=2:threads=3:run=%s\0" % run_key).encode())
     for path in sorted(inputs):
         digest.update(str(path.relative_to(tree)).encode() + b"\0")
         content = path.read_bytes()
@@ -109,7 +109,7 @@ def populate_home(ctx, deadline, build):
         with open(ctx.log("boot"), "a") as log:
             log.write("explicit seed cache %s in %.3fs\n" % (entry, time.monotonic() - started))
         return json.loads((entry / "seed.json").read_text())["live_bytes"]
-    key = seed_key(ctx.tree)
+    key = seed_key(ctx.tree, ctx.version)
     CACHE_ROOT.mkdir(parents=True, exist_ok=True)
     with (CACHE_ROOT / "build.lock").open("a") as lock:
         while True:

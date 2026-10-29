@@ -9,9 +9,15 @@ import sqlite3
 import subprocess
 import sys
 import time
+from contextlib import closing
 from pathlib import Path
 
-LIVE_DB = Path.home() / ".t3" / "userdata" / "statev2.sqlite"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from t3nightly.io_priority import background_command
+from t3nightly.live_snapshot import for_run
+from t3nightly.stage_owners import ensure_owners
+
 NODE_BIN = Path.home() / ".vite-plus" / "js_runtime" / "node" / "26.12.1" / "bin"
 PLAYWRIGHT_PY = Path.home() / ".local" / "share" / "launchd-venvs" / "py314-playwright" / "bin" / "python"
 SHOTS = Path(__file__).resolve().with_name("stage_shots.py")
@@ -26,19 +32,19 @@ def run(cmd, cwd, env, log):
         return subprocess.run(cmd, cwd=cwd, env=env, stdout=handle, stderr=subprocess.STDOUT).returncode
 
 
-def seed(worktree, home, env, log):
-    if run(["vp", "run", "migrate-dev-db", "--base-dir", str(home)], worktree, env, log) != 0:
+def seed(worktree, home, env, log, key, *, source_home=None):
+    snapshot = for_run(key, home=source_home)
+    command = background_command(["vp", "run", "migrate-dev-db", "--base-dir", str(home), "--source", str(snapshot), "--projects", "2", "--threads-per-project", "3"])
+    if run(command, worktree, env, log) != 0:
         raise SystemExit(f"migrate-dev-db failed; see {log}")
     dev_db = home / "userdata" / "statev2.sqlite"
-    with sqlite3.connect(f"file:{LIVE_DB}?mode=ro", uri=True, timeout=30) as live:
-        live.row_factory = sqlite3.Row
-        rows = [dict(row) for row in live.execute("select * from scheduled_tasks")]
+    with closing(sqlite3.connect(snapshot.as_uri() + "?mode=ro", uri=True, timeout=30)) as source:
+        source.row_factory = sqlite3.Row
+        rows = [dict(row) for row in source.execute("select * from scheduled_tasks")]
     with sqlite3.connect(dev_db, timeout=30) as dev:
         columns = {row[1] for row in dev.execute("pragma table_info(scheduled_tasks)")}
-        owners = list(dev.execute("select thread_id, project_id from orchestration_v2_projection_threads where deleted_at is null and json_extract(payload_json, '$.archivedAt') is null order by thread_id"))
         groups = list(dict.fromkeys(row["thread_id"] or row["task_id"] for row in rows))
-        if len(owners) < len(groups):
-            raise RuntimeError("staging needs a stopped sandbox owner per automation group")
+        owners = ensure_owners(dev, len(groups))
         bindings = dict(zip(groups, owners))
         for row in rows:
             owner, project = bindings[row["thread_id"] or row["task_id"]]
@@ -85,6 +91,7 @@ def main():
     parser = argparse.ArgumentParser(description="Screenshot a candidate T3 build on a copy of real data, headless")
     parser.add_argument("--worktree", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--version", required=True)
     parser.add_argument("--keep-db", action="store_true", help="reuse the retained staging database")
     args = parser.parse_args()
     worktree = Path(args.worktree).resolve()
@@ -107,7 +114,7 @@ def main():
         env.pop(key)
     tasks = None
     if not args.keep_db or not (home / "userdata" / "statev2.sqlite").exists():
-        tasks = seed(worktree, home, env, log)
+        tasks = seed(worktree, home, env, log, args.version)
     process, pairing, (server_port, web_port) = start_dev(worktree, home, env, log)
     try:
         origin = f"http://localhost:{web_port}"

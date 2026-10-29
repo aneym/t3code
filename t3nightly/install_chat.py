@@ -1,10 +1,13 @@
 import json
 import sqlite3
 import subprocess
+import tempfile
 import time
 import uuid
 from contextlib import closing
+from pathlib import Path
 
+from .live_snapshot import take
 from .release_manifest import digest
 
 
@@ -14,10 +17,13 @@ def query(run, sql, params=()):
 
 
 def identities(run):
-    return {
-        table: {row[0] for row in query(run, f"SELECT {key} FROM {table}")}
-        for table, key in (("orchestration_v2_projection_threads", "thread_id"), ("orchestration_v2_projection_messages", "message_id"))
-    }
+    with tempfile.TemporaryDirectory(prefix=".identity-snapshot-", dir=run.home.parent) as raw:
+        snapshot = take(Path(raw) / "statev2.sqlite", home=run.home, timeout=getattr(run.args, "snapshot_max_s", 1200))
+        with closing(sqlite3.connect(snapshot.as_uri() + "?mode=ro", uri=True)) as connection:
+            return {
+                table: {row[0] for row in connection.execute(f"SELECT {key} FROM {table}")}
+                for table, key in (("orchestration_v2_projection_threads", "thread_id"), ("orchestration_v2_projection_messages", "message_id"))
+            }
 
 
 def retained(run, before):
