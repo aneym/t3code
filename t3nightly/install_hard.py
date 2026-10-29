@@ -155,7 +155,7 @@ def install(run):
             staged = stage_runtime(run.home, args.version, args.assets)
             if file_digest(staged) != observed["candidateRuntime.digest"]:
                 raise ValueError("staged candidate runtime changed after provenance check")
-            run.step("hard-retain-runtime", version=previous, path=str(retain_runtime(run.home, previous, run.state / "rollback-runtime")))
+            run.step("hard-retain-runtime", version=previous, path=str(retain_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")))
             backup = capture(run, previous, stop, rollback_gate)
             activate(run, args.version)
             stopped = False
@@ -181,7 +181,7 @@ def install(run):
                         if not stopped:
                             raise
                         run.step("hard-rollback-stop", error=str(reaping))
-                if restore_runtime(run.home, previous, run.state / "rollback-runtime"):
+                if restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime"):
                     run.step("hard-restore-runtime", version=previous)
                 activate(run, previous)
                 stopped = False
