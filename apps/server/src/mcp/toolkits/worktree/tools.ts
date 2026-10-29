@@ -89,7 +89,7 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
   .annotate(Tool.Destructive, false);
 const WorktreeExportTool = Tool.make("t3_worktree_export", {
   description:
-    "Bundle a thread's worktree branch after `base`, for delegate_task to bring a linked environment's child back. Not for agents.",
+    "Bundle a thread's worktree branch past `bases`, for delegate_task to bring a linked environment's child back. Not for agents.",
   parameters: WorktreeMcpExportInput,
   success: WorktreeMcpExportResult,
   failure: OrchestratorMcpFailure,

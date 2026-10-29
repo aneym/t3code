@@ -44,12 +44,15 @@ const handlers = {
       const { worktreePath, branch } = thread;
       return yield* WorktreeTransfer.WorktreeTransfer.pipe(
         Effect.flatMap((transfer) =>
-          transfer.exportBranch({ worktreePath, branch, base: input.base }),
+          transfer.exportBranch({ worktreePath, branch, bases: input.bases }),
         ),
         Effect.provide(WorktreeTransfer.layer),
         Effect.mapError(
           (error) =>
-            new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+            new OrchestratorMcpFailure({
+              code: error.retryable ? "orchestration_error" : "invalid_request",
+              message: error.message,
+            }),
         ),
       );
     }),

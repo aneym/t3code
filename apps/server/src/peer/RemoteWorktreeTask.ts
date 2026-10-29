@@ -105,7 +105,7 @@ const make = Effect.gen(function* () {
                   }),
                 )
               : launchFrom(fetchable, true).pipe(
-                  Effect.map((launched) => ({ launched, worktreeBase: fetchable })),
+                  Effect.map((launched) => ({ launched, worktreeBase: commit })),
                 ),
         ),
       );
@@ -118,10 +118,17 @@ const make = Effect.gen(function* () {
     parent: ParentCheckout,
     suffix: string,
   ) {
+    const cwd = yield* checkoutOf(parent);
+    const branches =
+      cwd === undefined
+        ? []
+        : yield* transfer
+            .remoteBranchesContaining(cwd, remote.worktreeBase)
+            .pipe(Effect.orElseSucceed(() => []));
     const exported = yield* forwarding
       .call(scope, WorktreeToolkit.tools.t3_worktree_export, remote.environmentId, {
         threadId: remote.threadId,
-        base: remote.worktreeBase,
+        bases: [remote.worktreeBase, ...branches],
       })
       .pipe(
         Effect.asSome,
@@ -139,7 +146,6 @@ const make = Effect.gen(function* () {
     const there = `branch ${out.branch} in ${out.worktreePath} in ${remote.label}`;
     const left = out.uncommitted ? ` Uncommitted changes stay in ${out.worktreePath} there.` : "";
     if (out.commitCount === 0) return `It made no commits on ${there}.${left}`;
-    const cwd = yield* checkoutOf(parent);
     const bundle = out.bundle;
     const local =
       bundle === null || cwd === undefined
