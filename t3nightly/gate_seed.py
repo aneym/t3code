@@ -5,6 +5,7 @@ import os
 import platform
 import re
 import shutil
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -81,20 +82,32 @@ def seed_key(tree, run_key):
 
 
 def cache_entries(root):
-    return sorted(
-        (
-            path
-            for path in root.iterdir()
-            if path.is_dir() and re.fullmatch(r"[0-9a-f]{64}-[0-9]+", path.name)
-        ),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
+    entries = []
+    for path in root.iterdir():
+        if not re.fullmatch(r"[0-9a-f]{64}-[0-9]+", path.name):
+            continue
+        try:
+            status = path.stat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISDIR(status.st_mode):
+            entries.append((status.st_mtime, path))
+    return [path for _, path in sorted(entries, reverse=True)]
 
 
 def populate_home(ctx, deadline, build):
     started = time.monotonic()
     pinned_seed = os.environ.get("T3NIGHTLY_GATE_SEED")
+    if pinned_seed == "latest":
+        CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+        pinned_seed = next(
+            (
+                str(path)
+                for path in cache_entries(CACHE_ROOT)
+                if (path / "userdata/statev2.sqlite").is_file() and (path / "seed.json").is_file()
+            ),
+            None,
+        )
     if pinned_seed:
         entry = Path(pinned_seed).expanduser().resolve()
         database = entry / "userdata/statev2.sqlite"
