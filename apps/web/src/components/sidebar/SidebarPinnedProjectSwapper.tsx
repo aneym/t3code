@@ -26,7 +26,8 @@ const chipClass =
 
 type PinnedProjectControls = {
   projects: readonly SidebarProjectSnapshot[];
-  scopeKey: string | null;
+  scopeKeys: readonly string[];
+  allSelected: boolean;
   setScopeKey: (key: string | null) => void;
   reorder: (active: string, over: string) => Promise<void>;
   canPin: (project: SidebarProjectSnapshot) => boolean;
@@ -86,7 +87,7 @@ function PinnedProjectChip({
 
 function SortablePinnedProjectChips({
   projects,
-  scopeKey,
+  scopeKeys,
   setScopeKey,
   reorder,
   canPin,
@@ -113,9 +114,13 @@ function SortablePinnedProjectChips({
             <PinnedProjectChip
               key={project.projectKey}
               project={project}
-              selected={scopeKey === project.projectKey}
+              selected={scopeKeys.includes(project.projectKey)}
               onSelect={() =>
-                setScopeKey(scopeKey === project.projectKey ? null : project.projectKey)
+                setScopeKey(
+                  scopeKeys.length === 1 && scopeKeys[0] === project.projectKey
+                    ? null
+                    : project.projectKey,
+                )
               }
               disabled={!canPin(project)}
             />
@@ -127,7 +132,7 @@ function SortablePinnedProjectChips({
 }
 
 export function SidebarPinnedProjectSwapper(props: PinnedProjectControls) {
-  const { projects, scopeKey, setScopeKey } = props;
+  const { projects, allSelected, setScopeKey } = props;
   if (projects.length === 0) return null;
   return (
     <div
@@ -143,7 +148,7 @@ export function SidebarPinnedProjectSwapper(props: PinnedProjectControls) {
             <button
               type="button"
               aria-label="All projects"
-              aria-pressed={scopeKey === null}
+              aria-pressed={allSelected}
               className={chipClass}
               style={{ borderRadius: 5 }}
               onClick={() => setScopeKey(null)}

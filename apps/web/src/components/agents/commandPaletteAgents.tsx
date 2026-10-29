@@ -34,7 +34,7 @@ export function useCommandPaletteAgentThreads(
       value: `agent:${agent.handle}`,
       searchTerms: [agent.name, agent.handle],
       title: agent.name,
-      icon: <AgentFace handle={agent.handle} name={agent.name} />,
+      icon: <AgentFace agent={agent} />,
       description: environmentLabel ? `Main thread · ${environmentLabel}` : "Main thread",
     };
     const threadItem =

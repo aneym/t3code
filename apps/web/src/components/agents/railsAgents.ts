@@ -1,4 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import { useEffect } from "react";
@@ -19,7 +20,7 @@ export interface RailsAgent {
   readonly environmentIds: ReadonlyArray<EnvironmentId>;
   readonly target: ScopedThreadRef | null;
   readonly remoteHost: string | null;
-  readonly projects: ReadonlyArray<string>;
+  readonly workProjects: ReadonlyArray<EnvironmentProject>;
   readonly lanes: ReadonlyArray<ScopedThreadRef>;
   readonly thread: EnvironmentThreadShell | null;
 }
@@ -30,6 +31,33 @@ export function railsAgentHandle(workspaceRoot: string): string | null {
 
 export function railsAgentFaceUrl(handle: string): string {
   return `https://rails.so/api/mobile/v1/agent-faces/${handle}.png`;
+}
+
+const folderName = (workspaceRoot: string) =>
+  workspaceRoot
+    .replace(/[\\/]+$/, "")
+    .split(/[\\/]/)
+    .at(-1)
+    ?.toLowerCase() ?? "";
+
+function declaredWorkProjects(
+  declared: ReadonlyArray<string>,
+  projects: ReadonlyArray<EnvironmentProject>,
+  environmentId: EnvironmentId | undefined,
+): ReadonlyArray<EnvironmentProject> {
+  const local = projects.filter(
+    (project) =>
+      project.environmentId === environmentId && railsAgentHandle(project.workspaceRoot) === null,
+  );
+  const resolved = declared.flatMap((name) => {
+    const wanted = name.toLowerCase();
+    const matches = local.filter(
+      (project) =>
+        project.title.toLowerCase() === wanted || folderName(project.workspaceRoot) === wanted,
+    );
+    return matches.length === 1 ? matches : [];
+  });
+  return [...new Set(resolved)];
 }
 
 export function railsAgentThreadKey(thread: EnvironmentThreadShell): string {
@@ -100,6 +128,15 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
       homeProjectRefs.find((ref) => ref.environmentId === preferred?.environmentId) ??
       homeProjectRefs[0] ??
       null;
+    const workProjects = (
+      preferred ? [preferred, ...ordered.filter((home) => home !== preferred)] : ordered
+    ).flatMap((home) =>
+      declaredWorkProjects(
+        home.projects.length > 0 ? home.projects : [handle],
+        projects,
+        home.environmentId,
+      ),
+    );
     agents.push({
       handle,
       name:
@@ -114,7 +151,11 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
       environmentIds: ordered.map((home) => home.environmentId),
       target,
       remoteHost,
-      projects: [...new Set(ordered.flatMap((home) => home.projects))],
+      workProjects: [
+        ...new Map(
+          workProjects.map((project) => [`${project.environmentId}:${project.id}`, project]),
+        ).values(),
+      ],
       lanes: ordered.flatMap((home) =>
         home.lanes.flatMap((lane) => {
           const environmentId =

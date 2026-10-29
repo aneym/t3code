@@ -83,7 +83,12 @@ describe("filterSidebarV2VisibleThreads", () => {
       const otherEnvironment = { ...bound, environmentId: EnvironmentId.make("other") };
       const bindings = new Set([`${bound.environmentId}:${bound.id}`]);
       expect(
-        filterSidebarV2VisibleThreads([manual, created, bound, otherEnvironment], null, bindings),
+        filterSidebarV2VisibleThreads(
+          [manual, created, bound, otherEnvironment],
+          null,
+          new Set(),
+          bindings,
+        ),
       ).toEqual(
         section === "pinned"
           ? [manual, created, bound, otherEnvironment]

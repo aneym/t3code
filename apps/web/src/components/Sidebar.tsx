@@ -144,6 +144,7 @@ import {
   useSidebarAgentLists,
 } from "./agents/sidebarAgentLists";
 import {
+  agentScopeProjectKeys,
   useAgentFocusHandle,
   useSidebarAgentThreads,
   withoutAgentHomes,
@@ -1025,27 +1026,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   // A scope whose project is gone reads as all projects once every snapshot has
   // loaded. The stored keys are left alone, so the scope returns with its project.
-  const chosenProjectScopeKeys = resolveSidebarProjectScopeKeys({
-    groups: projectGroups,
-    keys: persistedProjectScopeKeys,
-    settings: projectGroupingSettings,
-    canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
-  });
+  const threads = useQuietThreadShells();
+  const agentWork = useSidebarAgentThreads(threads, projectGroups);
+  const agentFocused = agentWork.projectKeys !== null;
+  const chosenProjectScopeKeys =
+    agentWork.scopeKeys ??
+    resolveSidebarProjectScopeKeys({
+      groups: projectGroups,
+      keys: persistedProjectScopeKeys,
+      settings: projectGroupingSettings,
+      canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
+    });
   const chosenProjectGroups = projectGroups.filter((project) =>
     chosenProjectScopeKeys.includes(project.projectKey),
   );
-  const chosenScopeProjectKeys =
-    chosenProjectGroups.length === 0
-      ? null
-      : new Set(
-          chosenProjectGroups.flatMap((project) =>
-            project.memberProjectRefs.map(
-              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-            ),
-          ),
-        );
-  const threads = useQuietThreadShells();
-  const agentWork = useSidebarAgentThreads(threads);
+  const chosenScopeProjectKeys = agentScopeProjectKeys(chosenProjectGroups);
   const routeRowThreadKey =
     routeThreadRef === null
       ? null
@@ -1069,7 +1064,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     reveal: routeReveal,
     routeKey: routeRowThreadKey,
     isSearching: isSearchingThreads,
-    scopedProjectKeys: chosenScopeProjectKeys,
+    scopedProjectKeys: agentFocused ? null : chosenScopeProjectKeys,
     delegatedUnderParent,
     findThread: (key) => agentWork.threads.find((candidate) => threadShellKey(candidate) === key),
   });
@@ -1220,7 +1215,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     activeKeysById,
   } = useSidebarThreads({
     projectScopeKey,
-    scopedProjectKeys,
+    scopedProjectKeys: agentFocused ? null : scopedProjectKeys,
     serverConfigs,
     optimisticDrop,
     threads: agentWork.threads,
@@ -1228,11 +1223,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     delegatedUnderParent,
     routeRowThreadKey,
     folderGroups: boringSidebarEnabled
-      ? scopedProjectGroups.length === 0
+      ? scopedProjectGroups.length === 0 || agentFocused
         ? projectGroups
         : scopedProjectGroups
       : null,
-    keepEmptyFolders: scopedProjectGroups.length > 0,
+    keepEmptyFolders: scopedProjectGroups.length > 0 && !agentFocused,
   });
   const sidebarAgents = useSidebarAgentLists(scopedProjectKeys);
   const jumpKeys = sidebarJumpKeys(sidebarAgents.jumpable, orderedThreadKeys);
@@ -2095,7 +2090,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         threadKey,
         currentThreadKey: readRouteThreadKey(router),
         action: "snooze",
-        // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
         now: new Date().toISOString(),
         thread: readThreadShell(threadRef),
       })
@@ -2135,7 +2129,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       );
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
-      // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
       const selectionNow = new Date();
       const selectedThreads = threadKeys.flatMap((threadKey) => {
         const thread = threadByKeyRef.current.get(threadKey);
@@ -2166,7 +2159,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         pinnedCount: pinnedSelectedThreads.length,
       });
       // Presets sync across environments, so the first selected thread's stand for all.
-      // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
       const menuOpenedAt = new Date();
       const snoozePresets = resolveSnoozePresets(
         menuOpenedAt,
@@ -2837,10 +2829,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               projectScope={
                 <SidebarProjectScopePicker
                   groups={withoutAgentHomes(projectGroups)}
-                  scopeKey={projectScopeKeys.length === 1 ? (projectScopeKeys[0] ?? null) : null}
-                  scopedProject={
-                    scopedProjectGroups.length === 1 ? (scopedProjectGroups[0] ?? null) : null
-                  }
+                  scopeKeys={projectScopeKeys}
+                  allSelected={projectScopeKeys.length === 0 && !agentFocused}
+                  scopedProjects={scopedProjectGroups}
                   setScopeKey={(key) => setProjectScopeKeys(key === null ? [] : [key])}
                   openSettings={openProjectSettings}
                   anchor={headerSearchRef}
@@ -2871,7 +2862,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               pinned={sidebarAgents.pinned}
               hidden={sidebarAgents.hidden}
               jumpLabelByKey={showJumpHints ? jumpLabelByKey : null}
-              clearProjectScope={() => setProjectScopeKeys([])}
+              setProjectScope={setProjectScopeKeys}
             />
           </SidebarGroup>
         }

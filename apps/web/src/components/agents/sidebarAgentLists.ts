@@ -23,10 +23,14 @@ export function useSidebarAgentLists(projectKeys: ReadonlySet<string> | null) {
     projectKeys === null ||
     (agent.projectRef !== null && projectKeys.has(scopedProjectKey(agent.projectRef)));
   const agents = useRailsAgents();
-  const pinnedKeys = [...new Set(useSidebarPins().pinnedKeys)];
+  const pins = useSidebarPins();
+  const pinnedKeys = [...new Set(pins.pinnedKeys)];
   const projects = useProjects();
   const [expanded] = useLocalStorage(AGENTS_SECTION_STORAGE_KEY, true, Schema.Boolean);
   const agentByHandle = new Map(agents.map((agent) => [agent.handle, agent] as const));
+  const byName = (a: RailsAgent, b: RailsAgent) => a.name.localeCompare(b.name);
+  const listed = (agent: RailsAgent) =>
+    pinnedKeys.includes(agent.handle) || !pins.hiddenKeys.includes(agent.handle);
   const pinned = pinnedKeys.flatMap((handle): RailsAgent[] => {
     const agent = agentByHandle.get(handle);
     if (agent) return [agent];
@@ -45,16 +49,20 @@ export function useSidebarAgentLists(projectKeys: ReadonlySet<string> | null) {
         environmentIds: [project.environmentId],
         target: null,
         remoteHost: null,
-        projects: [],
+        workProjects: [project],
         lanes: [],
         thread: null,
       },
     ];
   });
-  const hidden = agents
-    .filter((agent) => inScope(agent) && !pinnedKeys.includes(agent.handle))
-    .toSorted((a, b) => a.name.localeCompare(b.name));
-  return { pinned, hidden, jumpable: expanded ? pinned : [] };
+  const shown = [
+    ...pinned,
+    ...agents
+      .filter((agent) => !pinnedKeys.includes(agent.handle) && listed(agent))
+      .toSorted(byName),
+  ];
+  const hidden = agents.filter((agent) => inScope(agent) && !listed(agent)).toSorted(byName);
+  return { pinned: shown, hidden, jumpable: expanded ? shown : [] };
 }
 
 export function sidebarAgentJumpKey(agent: RailsAgent): string {
