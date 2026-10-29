@@ -83,14 +83,20 @@ def precheck(run, version, expected):
 
 
 def connect_returns(run, version):
-    end = time.monotonic() + CONNECT_WAIT_S
+    start = time.monotonic()
+    end = start + CONNECT_WAIT_S
     while True:
-        if run.connect_reachable(version):
-            run.step("hard-connect", version=version, waitedSeconds=round(CONNECT_WAIT_S - (end - time.monotonic()), 1))
-            return True
-        if time.monotonic() >= end:
+        remaining = end - time.monotonic()
+        if remaining <= 0:
             return False
-        time.sleep(CONNECT_POLL_S)
+        try:
+            reachable = run.connect_reachable(version, timeout=remaining)
+        except subprocess.TimeoutExpired:
+            return False
+        if reachable and time.monotonic() <= end:
+            run.step("hard-connect", version=version, waitedSeconds=round(time.monotonic() - start, 1))
+            return True
+        time.sleep(max(0, min(CONNECT_POLL_S, end - time.monotonic())))
 
 
 def serving(run, version, expected, reap=True):
@@ -176,6 +182,8 @@ def install(run):
             retained(run, before)
             if connect and not connect_returns(run, args.version):
                 raise ValueError("previously healthy Connect is unavailable")
+            if connect:
+                serving(run, args.version, observed["candidateRuntime.digest"], reap=False)
             post = prove(run, args.version, baseline)
             if args.force_rollback:
                 candidate_writes(run, args.version, post["proof"])

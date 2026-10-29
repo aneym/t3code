@@ -201,7 +201,7 @@ class Run:
                 return reasons
             time.sleep(self.args.recheck_s)
 
-    def connect_reachable(self, version):
+    def connect_reachable(self, version, timeout=120):
         binary = self.runtime(version)
         if not binary.exists():
             binary = Path(shutil.which("t3") or "t3")
@@ -210,7 +210,7 @@ class Run:
             [str(binary), "connect", "status", "--base-dir", str(self.home)],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=timeout,
             check=False,
         )
         return REACHABLE in out.stdout
