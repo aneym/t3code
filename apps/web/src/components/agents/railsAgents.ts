@@ -110,7 +110,7 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
     });
   }
   const targetKey = JSON.stringify(agents.flatMap((agent) => (agent.target ? [agent.target] : [])));
-  // oxlint-disable-next-line t3code/react-effect-budget -- bound threads outside the shell window need a live detail subscription
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds live detail subscriptions for bound threads outside the shell window until unmount
   useEffect(() => {
     const targets = JSON.parse(targetKey) as ScopedThreadRef[];
     const releases = targets.map((target) =>

@@ -43,6 +43,7 @@ export function useSidebarAgentLists(projectKeys: ReadonlySet<string> | null) {
           homeProjectRefs: [projectRef],
           environmentIds: [project.environmentId],
           target: null,
+          remoteHost: null,
           thread: null,
         },
       ];
