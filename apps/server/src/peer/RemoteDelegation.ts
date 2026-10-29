@@ -40,6 +40,7 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import { forkParked } from "../serverActivation.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+import * as RemoteWorktreeTask from "./RemoteWorktreeTask.ts";
 
 /** How long one follow of a remote task waits on its thread there before checking again. */
 const FOLLOW_WAIT_MS = 10 * 60 * 1_000;
@@ -122,6 +123,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const crypto = yield* Crypto.Crypto;
+  const worktrees = yield* RemoteWorktreeTask.RemoteWorktreeTask;
   const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
   );
@@ -210,15 +212,6 @@ const make = Effect.gen(function* () {
       }
       const parentNodeId = parentRun.rootNodeId;
       const { target } = input;
-      // A worktree there would branch from a commit this checkout has and the
-      // other may not, so a remote task runs in that project's checkout.
-      if (input.isolation === "worktree") {
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message:
-            'A task in a linked environment runs in that project\'s checkout; isolation "worktree" is not supported there. Omit isolation, or use t3_thread_launch with environmentId and a worktree workspaceStrategy.',
-        });
-      }
       // The provider and model inherit as they do for a task here. Another
       // provider there has no model to inherit, so the caller names one.
       const inherited = parent.thread.modelSelection;
@@ -258,10 +251,10 @@ const make = Effect.gen(function* () {
       // the forwarder scopes the launch's, and the record's names it.
       const key = input.clientRequestId ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
       const task = taskPrompt(input);
-      const launched = yield* forwarding.call(
+      const { launched, worktreeBase } = yield* worktrees.launch(
         scope,
-        ProjectToolkit.tools.t3_thread_launch,
         target.environmentId,
+        input.isolation === "worktree" ? parent.thread : undefined,
         {
           projectId,
           title: input.title ?? parent.thread.title,
@@ -290,6 +283,7 @@ const make = Effect.gen(function* () {
         threadId: launched.threadId,
         label: link?.label ?? target.environmentId,
         ...(launched.runId === null ? {} : { runId: launched.runId }),
+        ...(worktreeBase === undefined ? {} : { worktreeBase }),
       };
       const recorded = yield* threads
         .dispatch({
@@ -628,14 +622,9 @@ const make = Effect.gen(function* () {
       runId: remote.runId ?? waited.runId,
       status: waited.status,
     };
-    const result = yield* lastReply(scope, remote, resultRun.runId, resultRun.status === "failed");
-    yield* complete(
-      parentThreadId,
-      taskId,
-      terminalStatus(resultRun.status),
-      result ?? noReply,
-      "ran-out",
-    );
+    const reply = yield* lastReply(scope, remote, resultRun.runId, resultRun.status === "failed");
+    const result = yield* worktrees.withWork(scope, remote, thread, taskId, reply ?? noReply);
+    yield* complete(parentThreadId, taskId, terminalStatus(resultRun.status), result, "ran-out");
     return yield* settled(parentThreadId, taskId);
   });
 
@@ -798,4 +787,6 @@ const isTerminal = (status: string) =>
 const terminalStatus = (status: string): "completed" | "failed" | "cancelled" | "interrupted" =>
   status === "completed" || status === "failed" || status === "interrupted" ? status : "cancelled";
 
-export const layer = Layer.effect(RemoteDelegation, make);
+export const layer = Layer.effect(RemoteDelegation, make).pipe(
+  Layer.provide(RemoteWorktreeTask.layer),
+);

@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as GitWorkflow from "../../../git/GitWorkflowService.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as WorktreeTransfer from "../../../peer/WorktreeTransfer.ts";
 import { readThread, unavailable } from "../../threadAccess.ts";
 import * as Effect from "effect/Effect";
 
@@ -10,15 +11,47 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as WorktreeMcpService from "../../WorktreeMcpService.ts";
 import { WorktreeToolkit } from "./tools.ts";
 
+const requireWorktreeCapability = McpInvocationContext.McpInvocationContext.pipe(
+  Effect.flatMap((context) =>
+    context.capabilities.has("worktree")
+      ? Effect.void
+      : Effect.fail(
+          new OrchestratorMcpFailure({
+            code: "capability_denied",
+            message: "This credential cannot inspect worktrees.",
+          }),
+        ),
+  ),
+);
+
 const handlers = {
+  t3_worktree_export: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      yield* requireWorktreeCapability;
+      const {
+        projection: { thread },
+      } = yield* readThread(input.threadId);
+      if (thread.worktreePath === null || thread.branch === null)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The thread has no worktree branch.",
+        });
+      const { worktreePath, branch } = thread;
+      return yield* WorktreeTransfer.WorktreeTransfer.pipe(
+        Effect.flatMap((transfer) =>
+          transfer.exportBranch({ worktreePath, branch, baseCommit: input.baseCommit }),
+        ),
+        Effect.provide(WorktreeTransfer.layer),
+        Effect.mapError(
+          (error) =>
+            new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+        ),
+      );
+    }),
+  ),
   t3_worktree_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const context = yield* McpInvocationContext.McpInvocationContext;
-      if (!context.capabilities.has("worktree"))
-        return yield* new OrchestratorMcpFailure({
-          code: "capability_denied",
-          message: "This credential cannot inspect worktrees.",
-        });
+      yield* requireWorktreeCapability;
       const { threadId, ...refs } = input;
       const {
         projection: { thread },
