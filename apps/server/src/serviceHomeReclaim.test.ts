@@ -4,7 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 
 import { stopSshLaunchedServers } from "./serviceHomeReclaim.ts";
 
@@ -20,12 +20,12 @@ const next = (child: NodeChildProcess.ChildProcess, event: "spawn" | "exit") =>
     child.once(event, (...args: Array<unknown>) => resolve(args)),
   );
 
-async function withSandbox(test: (sandbox: Sandbox) => Promise<void>): Promise<void> {
+async function withSandbox(user: string, test: (sandbox: Sandbox) => Promise<void>): Promise<void> {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-home-reclaim-"));
   const children: Array<NodeChildProcess.ChildProcess> = [];
   try {
-    const home = NodePath.join(root, "home");
-    const otherHome = NodePath.join(root, "other-home");
+    const home = NodePath.join(root, user, ".t3");
+    const otherHome = NodePath.join(root, user, "other-home");
     const versionDir = NodePath.join(home, "runtime", "versions", "1.0.0");
     const scriptDir = NodePath.join(root, "script");
     await NodeFSP.mkdir(versionDir, { recursive: true });
@@ -69,32 +69,34 @@ async function withSandbox(test: (sandbox: Sandbox) => Promise<void>): Promise<v
 const isRunning = (child: NodeChildProcess.ChildProcess) =>
   child.exitCode === null && child.signalCode === null;
 
-it("stops a server the SSH launcher recorded for this T3 home", () =>
-  withSandbox(async ({ home, serve, record }) => {
-    const stray = await serve(home);
-    await record(stray);
-    const exited = next(stray, "exit");
+describe.each(["alex", "Alex Smith"])("T3 home under %s", (user) => {
+  it("stops a server the SSH launcher recorded for this T3 home", () =>
+    withSandbox(user, async ({ home, serve, record }) => {
+      const stray = await serve(home);
+      await record(stray);
+      const exited = next(stray, "exit");
 
-    assert.isTrue(await stopSshLaunchedServers(home));
-    assert.deepEqual(await exited, [null, "SIGTERM"]);
-  }));
+      assert.isTrue(await stopSshLaunchedServers(home));
+      assert.deepEqual(await exited, [null, "SIGTERM"]);
+    }));
 
-it("leaves a recorded PID alone when it now serves another T3 home", () =>
-  withSandbox(async ({ home, otherHome, serve, record }) => {
-    const other = await serve(otherHome);
-    await record(other);
+  it("leaves a recorded PID alone when it now serves another T3 home", () =>
+    withSandbox(user, async ({ home, otherHome, serve, record }) => {
+      const other = await serve(otherHome);
+      await record(other);
 
-    assert.isFalse(await stopSshLaunchedServers(home));
-    assert.isTrue(isRunning(other));
-  }));
+      assert.isFalse(await stopSshLaunchedServers(home));
+      assert.isTrue(isRunning(other));
+    }));
 
-it("leaves a process alone when it started after the SSH launcher's record", () =>
-  withSandbox(async ({ home, serve, record }) => {
-    const later = await serve(home);
-    const pidFile = await record(later);
-    const recordedAtSeconds = 1_577_836_800;
-    await NodeFSP.utimes(pidFile, recordedAtSeconds, recordedAtSeconds);
+  it("leaves a process alone when it started after the SSH launcher's record", () =>
+    withSandbox(user, async ({ home, serve, record }) => {
+      const later = await serve(home);
+      const pidFile = await record(later);
+      const recordedAtSeconds = 1_577_836_800;
+      await NodeFSP.utimes(pidFile, recordedAtSeconds, recordedAtSeconds);
 
-    assert.isFalse(await stopSshLaunchedServers(home));
-    assert.isTrue(isRunning(later));
-  }));
+      assert.isFalse(await stopSshLaunchedServers(home));
+      assert.isTrue(isRunning(later));
+    }));
+});

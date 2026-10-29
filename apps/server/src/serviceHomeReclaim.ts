@@ -10,6 +10,7 @@ import * as NodeUtil from "node:util";
 const STOP_GRACE_MS = 15_000;
 const START_SLACK_MS = 2_000;
 const BASE_DIR_FLAG = "--base-dir";
+const LINUX_USER_HZ = 100;
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
@@ -53,24 +54,64 @@ function servedBaseDir(args: ReadonlyArray<string>): string | undefined {
   return flag.value;
 }
 
-async function servesHome(pid: number, home: string, recordedAt: number): Promise<boolean> {
-  const output = await execFile(
-    "ps",
-    ["-ww", "-o", "etime=", "-o", "command=", "-p", String(pid)],
-    {
-      timeout: 5_000,
-      env: { ...process.env, LC_ALL: "C" },
-    },
-  ).then(
+const ps = (pid: number, field: string) =>
+  execFile("ps", ["-ww", "-o", `${field}=`, "-p", String(pid)], {
+    timeout: 5_000,
+    env: { ...process.env, LC_ALL: "C" },
+  }).then(
     ({ stdout }) => stdout.trim(),
     () => "",
   );
-  const [elapsed = "", program = "", command, ...args] = output.split(/\s+/);
-  const seconds = elapsedSeconds(elapsed);
-  if (seconds === undefined || command !== "serve" || NodePath.basename(program) !== "t3") {
+
+function serveArgvOf(command: string): ReadonlyArray<string> {
+  const match = /^(.*?\/t3) serve(?: (.*))?$/s.exec(command);
+  if (match === null) return [];
+  const [, program = "", rest = ""] = match;
+  const flag = /(?:^| )--base-dir[ =]/.exec(rest);
+  const options = (flag === null ? rest : rest.slice(0, flag.index)).split(" ").filter(Boolean);
+  const baseDir = flag === null ? [] : [BASE_DIR_FLAG, rest.slice(flag.index + flag[0].length)];
+  return [program, "serve", ...options, ...baseDir];
+}
+
+interface ProcessView {
+  readonly elapsed: number | undefined;
+  readonly argv: ReadonlyArray<string>;
+}
+
+async function linuxProcess(pid: number): Promise<ProcessView> {
+  const read = (path: string) => NodeFSP.readFile(path, "utf8").catch(() => "");
+  const [stat, uptime, cmdline] = await Promise.all([
+    read(`/proc/${pid}/stat`),
+    read("/proc/uptime"),
+    read(`/proc/${pid}/cmdline`),
+  ]);
+  const startTicks = Number.parseInt(
+    stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] ?? "",
+    10,
+  );
+  const elapsed = Math.max(0, Number.parseFloat(uptime) - startTicks / LINUX_USER_HZ);
+  return {
+    elapsed: Number.isFinite(elapsed) ? elapsed : undefined,
+    argv: cmdline.replace(/\0$/, "").split("\0"),
+  };
+}
+
+const psProcess = async (pid: number): Promise<ProcessView> => ({
+  elapsed: elapsedSeconds(await ps(pid, "etime")),
+  argv: serveArgvOf(await ps(pid, "command")),
+});
+
+async function servesHome(pid: number, home: string, recordedAt: number): Promise<boolean> {
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+  const view = process.platform === "linux" ? await linuxProcess(pid) : await psProcess(pid);
+  if (
+    view.elapsed === undefined ||
+    Date.now() - view.elapsed * 1_000 > recordedAt + START_SLACK_MS
+  ) {
     return false;
   }
-  if (Date.now() - seconds * 1_000 > recordedAt + START_SLACK_MS) return false;
+  const [program = "", command, ...args] = view.argv;
+  if (command !== "serve" || NodePath.basename(program) !== "t3") return false;
   const runtimeDir = await canonical(NodePath.dirname(program));
   const baseDir = servedBaseDir(args);
   return (
