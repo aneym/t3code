@@ -223,8 +223,8 @@ function AgentRow(props: {
   const content = (
     <>
       <AgentFace agent={agent} />
-      <span className="min-w-[min(8ch,100%)] flex-1 truncate">{agent.name}</span>
-      <span className="flex shrink-0 text-xs text-sidebar-muted-foreground group-focus-within/agent-row:hidden group-hover/agent-row:hidden">
+      <span className="min-w-[min(8ch,100%)] truncate">{agent.name}</span>
+      <span className="ml-auto flex shrink-0 text-xs text-sidebar-muted-foreground group-focus-within/agent-row:hidden group-hover/agent-row:hidden">
         {agent.thread !== null ? (
           <AgentStatus thread={agent.thread} />
         ) : agent.target ? (
@@ -234,7 +234,7 @@ function AgentRow(props: {
         ) : null}
       </span>
       {props.machines === "" ? null : (
-        <span className="hidden min-w-0 shrink-[999] truncate text-xs text-sidebar-muted-foreground group-focus-within/agent-row:block group-hover/agent-row:block">
+        <span className="ml-auto hidden min-w-0 shrink-[999] truncate text-xs text-sidebar-muted-foreground group-focus-within/agent-row:block group-hover/agent-row:block">
           {props.machines}
         </span>
       )}
