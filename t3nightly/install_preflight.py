@@ -11,7 +11,7 @@ from .release_approval import require_approval, require_archive_smoke, verdict_p
 from .release_signatures import verify_archive
 
 
-def require_smoke(args, name, digest):
+def preflight_smoke(args, name, digest):
     if args.rehearsal:
         return
     if not args.smoke_verdict:
@@ -48,6 +48,6 @@ def checked_assets(args):
                 raise ValueError("release checksum does not match the downloaded archive")
         with archive.open("rb") as handle:
             digest = hashlib.file_digest(handle, "sha256").hexdigest()
-        require_smoke(args, name, digest)
+        preflight_smoke(args, name, digest)
         (directory / "SHA256SUMS").write_text(f"{digest}  {name}\n")
         yield directory
