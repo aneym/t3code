@@ -1,5 +1,4 @@
 import {
-  parseGoalCommand,
   type NodeId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
@@ -8,12 +7,13 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import {
+  batchableQueuedMessage as batchableMessage,
+  compatibleQueuedRuns,
+  MAX_QUEUED_MESSAGE_BATCH_SIZE as MAX_BATCH_SIZE,
+} from "@t3tools/shared/queuedMessages";
 
-import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
-
-export const MAX_BATCH_SIZE = 20;
 
 export interface QueuedRunBatchMember {
   readonly run: OrchestrationV2Run;
@@ -27,33 +27,15 @@ type DraftEvent = OrchestrationV2DomainEvent extends infer Event
     : never
   : never;
 
-export function batchableMessage(
+function changesConversation(
   projection: Pick<OrchestrationV2ThreadProjection, "messages">,
   run: OrchestrationV2Run,
-): OrchestrationV2ConversationMessage | undefined {
-  if (
-    run.status !== "queued" ||
-    run.queueHeld === true ||
-    run.restartContinuationOfRunId !== undefined ||
-    run.delegatedTaskId !== undefined ||
-    run.sourcePlanRef !== undefined
-  ) {
-    return undefined;
-  }
+): boolean {
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-  if (
-    message === undefined ||
-    message.notification !== undefined ||
-    message.workflowScript === true ||
-    message.scheduledTaskId !== undefined ||
-    message.idleCompaction !== undefined ||
-    message.text.trimStart().startsWith("/") ||
-    isNativeMaintenanceCommand(message) ||
-    parseGoalCommand(message) !== null
-  ) {
-    return undefined;
-  }
-  return message;
+  return (
+    message !== undefined &&
+    (message.idleCompaction !== undefined || message.text.trimStart().startsWith("/"))
+  );
 }
 
 export function queuedRunBatch(
@@ -68,9 +50,7 @@ export function queuedRunBatch(
     const message = batchableMessage(projection, run);
     if (
       message === undefined ||
-      run.providerInstanceId !== first.providerInstanceId ||
-      !modelSelectionsEqual(run.modelSelection, first.modelSelection) ||
-      run.workspacePreparation?.type !== first.workspacePreparation?.type ||
+      !compatibleQueuedRuns(first, run) ||
       members.length + 1 >= MAX_BATCH_SIZE
     ) {
       break;
@@ -80,7 +60,7 @@ export function queuedRunBatch(
   return members;
 }
 
-function foldedQueuedTurnItems(
+export function foldedQueuedTurnItems(
   turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
   run: Pick<OrchestrationV2Run, "id" | "userMessageId">,
 ): ReadonlyArray<UserTurnItem> {

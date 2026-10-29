@@ -2,6 +2,7 @@ import { queuedRunRows, type QueuedRowThumbnail } from "./queuedRunRows";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   deriveThreadQueueWorkflowState,
+  canSendAllQueued,
   describeSendAllQueued,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
@@ -103,6 +104,7 @@ export function QueuedRunsControl({
     queuedImageAttachmentResources,
   );
   const workflow = projection ? deriveThreadQueueWorkflowState(projection) : null;
+  const canSendAll = canSendAllQueued(workflow, props.editingRunId !== null);
   const queued = workflow?.queuedRuns ?? [];
   const activeRun = workflow?.activeRun ?? null;
   const canSend = workflow?.canSendNow === true || workflow?.canPromoteToSteer === true;
@@ -142,8 +144,7 @@ export function QueuedRunsControl({
   };
 
   const sendAllMessages = async () => {
-    if (!queueSendAll || !workflow?.canSendAll || steerInFlightRef.current || busyRunId !== null)
-      return;
+    if (!queueSendAll || !canSendAll || steerInFlightRef.current || busyRunId !== null) return;
     steerInFlightRef.current = true;
     setBusyRunId(queued[0]!.run.id);
     try {
@@ -156,7 +157,7 @@ export function QueuedRunsControl({
 
   useImperativeHandle(ref, () => ({
     sendAll(repeat) {
-      if (!queueSendAll || !workflow?.canSendAll) return false;
+      if (!queueSendAll || !canSendAll) return false;
       if (!repeat) void sendAllMessages();
       return true;
     },
@@ -216,7 +217,7 @@ export function QueuedRunsControl({
       <span className="sr-only" aria-live="polite">
         {items.length} queued
       </span>
-      {queueSendAll && workflow?.canSendAll ? (
+      {queueSendAll && canSendAll && workflow ? (
         <div className="flex justify-end">
           <Tooltip>
             <TooltipTrigger

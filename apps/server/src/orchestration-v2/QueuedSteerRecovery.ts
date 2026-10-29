@@ -41,7 +41,9 @@ export const makeQueuedSteerRecovery = Effect.gen(function* () {
         event.payload.messageId === source.id,
     );
     const runEvent = pending.findLast(
-      (event) => event.type === "run.updated" && event.payload.userMessageId === source.id,
+      (event) =>
+        (event.type === "run.updated" || event.type === "run.created") &&
+        event.payload.userMessageId === source.id,
     );
     const sourceItem = projection.turnItems.find(
       (item): item is UserItem => item.type === "user_message" && item.messageId === source.id,
@@ -49,7 +51,8 @@ export const makeQueuedSteerRecovery = Effect.gen(function* () {
     const first =
       firstEvent?.type === "turn-item.updated" && firstEvent.payload.type === "user_message"
         ? firstEvent.payload
-        : runEvent?.type === "run.updated" && sourceItem !== undefined
+        : (runEvent?.type === "run.updated" || runEvent?.type === "run.created") &&
+            sourceItem !== undefined
           ? {
               ...sourceItem,
               runId: runEvent.payload.id,
@@ -65,10 +68,12 @@ export const makeQueuedSteerRecovery = Effect.gen(function* () {
     if (first === undefined || first.runId === source.runId) return [];
     const carried = recoveredBatchEvents(projection, first, members, firstEvent === undefined);
     const targetEvent = pending.findLast(
-      (event) => event.type === "run.updated" && event.payload.id === first.runId,
+      (event) =>
+        (event.type === "run.updated" || event.type === "run.created") &&
+        event.payload.id === first.runId,
     );
     const target =
-      targetEvent?.type === "run.updated"
+      targetEvent?.type === "run.updated" || targetEvent?.type === "run.created"
         ? targetEvent.payload
         : projection.runs.find((run) => run.id === first.runId);
     if (retain && target !== undefined)
