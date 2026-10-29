@@ -5,6 +5,7 @@ import {
   lastDeliveredRunForProviderThread,
 } from "./ProviderThreadHistory.ts";
 import { restartDispatchAllowed } from "./RestartDispatchPolicy.ts";
+import { makeThreadSelectionPlanner } from "./ThreadSessionTransitions.ts";
 import {
   canReleaseQueueHold,
   clearQueueHold,
@@ -948,6 +949,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const providerSessions = yield* ProviderSessionManagerV2;
   const providerSwitchService = yield* ProviderSwitchServiceV2;
+  const planThreadSelectionChange = yield* makeThreadSelectionPlanner;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
@@ -3168,24 +3170,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       : null;
     const providerSwitchPlan =
       command.type === "thread.model-selection.set" || command.type === "provider.switch"
-        ? yield* Effect.gen(function* () {
-            yield* providerAdapters.get(command.modelSelection.instanceId).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestratorProviderAdapterError({
-                    commandId: command.commandId,
-                    providerInstanceId: command.modelSelection.instanceId,
-                    cause,
-                  }),
-              ),
-            );
-            return yield* providerSwitchService
-              .plan({
-                projection: providerContext!,
-                targetModelSelection: command.modelSelection,
-              })
-              .pipe(mapDispatchError(command));
-          })
+        ? yield* planThreadSelectionChange({
+            projection: providerContext!,
+            targetModelSelection: command.modelSelection,
+          }).pipe(mapDispatchError(command))
         : null;
 
     const now = yield* DateTime.now;
