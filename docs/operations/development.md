@@ -66,8 +66,10 @@ The first start in a worktree seeds its empty database from a read-only copy of
 and dev starts with an empty database. `--no-seed` or `T3CODE_DEV_SEED=0` skips seeding.
 To copy a larger source, run `vp run migrate-dev-db` with dev stopped. It briefly
 holds a read transaction to reflink the source and WAL, then copies from the clone.
-Live sources require reflink support; otherwise stop the source server or pass
-`--source <a snapshot>`. Copying may use substantial disk space before pruning.
+Without reflinks it uses a consistent read-only transaction on the source instead.
+Explicit `--source <a snapshot>` reads that file directly, ignoring copied runtime descriptors.
+Clones live in `dev-db-snapshots` beside the source home; runs remove abandoned clones older than six hours.
+Copying may use substantial disk space before pruning.
 Never run a development server against the live `~/.t3/userdata`.
 See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
 

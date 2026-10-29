@@ -7,16 +7,20 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { makeSnapshotDirectory } from "./devDbSnapshotCleanup.ts";
 
 class DevDbSnapshotError extends Schema.TaggedError<DevDbSnapshotError>()("DevDbSnapshotError", {
   sourcePath: Schema.String,
-  cause: Schema.Defect(),
+  detail: Schema.String,
 }) {
   override get message(): string {
-    return `Could not clone source database '${this.sourcePath}'. Stop that server or pass --source <a snapshot>.`;
+    return `Could not clone source database '${this.sourcePath}': ${this.detail}`;
   }
 }
+
+const isDevDbSnapshotError = Schema.is(DevDbSnapshotError);
 
 export const snapshotDevDb = Effect.fn("snapshotDevDb")(
   function* (sourcePath: string) {
@@ -29,11 +33,7 @@ export const snapshotDevDb = Effect.fn("snapshotDevDb")(
       path.basename(sourceDir) === "userdata" ? path.dirname(sourceDir) : sourceDir,
       "dev-db-snapshots",
     );
-    yield* fs.makeDirectory(snapshotDir, { recursive: true });
-    const directory = yield* fs.makeTempDirectoryScoped({
-      directory: snapshotDir,
-      prefix: "snapshot-",
-    });
+    const directory = yield* makeSnapshotDirectory(snapshotDir);
     const snapshotPath = path.join(directory, "statev2.sqlite");
     if (platform === "darwin") {
       const sourceInfo = yield* fs.stat(sourcePath);
@@ -44,26 +44,41 @@ export const snapshotDevDb = Effect.fn("snapshotDevDb")(
       if (sourceInfo.dev !== directoryInfo.dev || sourceFs.type !== 26 || directoryFs.type !== 26) {
         return yield* new DevDbSnapshotError({
           sourcePath,
-          cause: "Source snapshots require the same APFS volume",
+          detail: "Source snapshots require the same APFS volume",
         });
       }
     }
     const cloneFile = Effect.fn("cloneDevDbFile")(function* (from: string, to: string) {
-      const exitCode = yield* spawner.exitCode(
-        ChildProcess.make(
-          "/bin/cp",
-          [platform === "darwin" ? "-c" : "--reflink=always", from, to],
-          {
+      const [stderr, exitCode] = yield* spawner
+        .spawn(
+          ChildProcess.make("cp", [platform === "darwin" ? "-c" : "--reflink=always", from, to], {
             stdin: "ignore",
             stdout: "ignore",
-            stderr: "ignore",
-          },
-        ),
-      );
+            stderr: "pipe",
+          }),
+        )
+        .pipe(
+          Effect.flatMap((handle) =>
+            Effect.all(
+              [
+                handle.stderr.pipe(
+                  Stream.decodeText(),
+                  Stream.runFold(
+                    () => "",
+                    (tail, chunk) => `${tail}${chunk}`.slice(-4096),
+                  ),
+                ),
+                handle.exitCode,
+              ],
+              { concurrency: "unbounded" },
+            ),
+          ),
+          Effect.scoped,
+        );
       if (exitCode !== 0) {
         return yield* new DevDbSnapshotError({
           sourcePath,
-          cause: `Source clone exited ${exitCode}`,
+          detail: stderr.trim() || `Source clone exited ${exitCode}`,
         });
       }
     });
@@ -73,7 +88,7 @@ export const snapshotDevDb = Effect.fn("snapshotDevDb")(
       ),
       Effect.fn("cloneDevDbSource")(function* (source: NodeSqlite.DatabaseSync) {
         yield* Effect.try(() => {
-          source.exec("BEGIN");
+          source.exec("PRAGMA busy_timeout = 5000; BEGIN");
           source.prepare("SELECT 1 FROM sqlite_master LIMIT 1").get();
         });
         yield* cloneFile(sourcePath, snapshotPath);
@@ -99,5 +114,11 @@ export const snapshotDevDb = Effect.fn("snapshotDevDb")(
     return snapshotPath;
   },
   (effect, sourcePath) =>
-    effect.pipe(Effect.mapError((cause) => new DevDbSnapshotError({ sourcePath, cause }))),
+    effect.pipe(
+      Effect.mapError((cause) =>
+        isDevDbSnapshotError(cause)
+          ? cause
+          : new DevDbSnapshotError({ sourcePath, detail: String(cause) }),
+      ),
+    ),
 );

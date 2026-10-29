@@ -38,7 +38,7 @@ class MigrateDevDbDestinationBusyError extends Schema.TaggedError<MigrateDevDbDe
 const ServerRuntimeState = Schema.fromJsonString(Schema.Struct({ pid: Schema.Number }));
 const decodeServerRuntimeState = Schema.decodeEffect(ServerRuntimeState);
 
-const isProcessAlive = (pid: number): boolean => {
+export const isDevDbProcessAlive = (pid: number): boolean => {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
@@ -48,13 +48,13 @@ const isProcessAlive = (pid: number): boolean => {
   }
 };
 
-export const liveDevDbServerPid = Effect.fn("liveDevDbServerPid")(function* (databasePath: string) {
+const liveDevDbServerPid = Effect.fn("liveDevDbServerPid")(function* (databasePath: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtimeState = yield* fs
     .readFileString(path.join(path.dirname(databasePath), "server-runtime.json"))
     .pipe(Effect.flatMap(decodeServerRuntimeState), Effect.option);
-  return Option.isSome(runtimeState) && isProcessAlive(runtimeState.value.pid)
+  return Option.isSome(runtimeState) && isDevDbProcessAlive(runtimeState.value.pid)
     ? runtimeState.value.pid
     : undefined;
 });

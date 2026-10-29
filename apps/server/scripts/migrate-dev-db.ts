@@ -26,7 +26,7 @@ import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
 import { rebuildMessageSearch } from "../src/orchestration-v2/messageSearchIndex.ts";
 import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import { ensureNotInUse, liveDevDbServerPid } from "./devDbRuntime.ts";
+import { ensureNotInUse } from "./devDbRuntime.ts";
 import { snapshotDevDb } from "./devDbSnapshot.ts";
 
 export interface RunMigrateDevDbInput {
@@ -79,39 +79,40 @@ const rootIsVisible = (sql: SqlClient.SqlClient) => sql`
 
 const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath: string) {
   const sql = yield* SqlClient.SqlClient;
+  yield* sql.unsafe("PRAGMA busy_timeout = 5000").unprepared;
   yield* sql`ATTACH DATABASE ${`${NodeURL.pathToFileURL(sourcePath).href}?mode=ro`} AS src`;
-  const schema = yield* sql<{ type: string; name: string; sql: string }>`
-    SELECT type, name, sql FROM src.sqlite_master
-    WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'`;
-  const threadColumns = yield* sql<{ name: string; notnull: number }>`
-    SELECT m.name, c."notnull" FROM src.sqlite_master m, pragma_table_info(m.name, 'src') c
-    WHERE m.type = 'table' AND c.name = 'thread_id'`;
-  const threadIdNullable = new Map(threadColumns.map((row) => [row.name, row.notnull === 0]));
-  const virtualTables = schema
-    .filter((entry) => entry.type === "table" && /^CREATE VIRTUAL TABLE/i.test(entry.sql))
-    .map((entry) => entry.name);
-  const isShadowTable = (name: string) =>
-    virtualTables.some((virtual) =>
-      FTS5_SHADOW_SUFFIXES.some((suffix) => name === `${virtual}${suffix}`),
-    );
-  const tables = schema.filter((entry) => entry.type === "table" && !isShadowTable(entry.name));
-  const filtered = tables.some((table) => table.name === "orchestration_v2_projection_threads");
-  const references = yield* sql<{ name: string; parent: string }>`
-    SELECT m.name, f."table" AS parent FROM src.sqlite_master m, pragma_foreign_key_list(m.name, 'src') f
-    WHERE m.type = 'table'`;
-  const cleared = new Set(CLEARED_TABLES);
-  for (let grew = true; grew;) {
-    grew = false;
-    for (const { name, parent } of references) {
-      if (cleared.has(parent) && !cleared.has(name)) {
-        cleared.add(name);
-        grew = true;
-      }
-    }
-  }
-
   yield* sql.withTransaction(
     Effect.gen(function* () {
+      const schema = yield* sql<{ type: string; name: string; sql: string }>`
+    SELECT type, name, sql FROM src.sqlite_master
+    WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'`;
+      const threadColumns = yield* sql<{ name: string; notnull: number }>`
+    SELECT m.name, c."notnull" FROM src.sqlite_master m, pragma_table_info(m.name, 'src') c
+    WHERE m.type = 'table' AND c.name = 'thread_id'`;
+      const threadIdNullable = new Map(threadColumns.map((row) => [row.name, row.notnull === 0]));
+      const virtualTables = schema
+        .filter((entry) => entry.type === "table" && /^CREATE VIRTUAL TABLE/i.test(entry.sql))
+        .map((entry) => entry.name);
+      const isShadowTable = (name: string) =>
+        virtualTables.some((virtual) =>
+          FTS5_SHADOW_SUFFIXES.some((suffix) => name === `${virtual}${suffix}`),
+        );
+      const tables = schema.filter((entry) => entry.type === "table" && !isShadowTable(entry.name));
+      const filtered = tables.some((table) => table.name === "orchestration_v2_projection_threads");
+      const references = yield* sql<{ name: string; parent: string }>`
+    SELECT m.name, f."table" AS parent FROM src.sqlite_master m, pragma_foreign_key_list(m.name, 'src') f
+    WHERE m.type = 'table'`;
+      const cleared = new Set(CLEARED_TABLES);
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const { name, parent } of references) {
+          if (cleared.has(parent) && !cleared.has(name)) {
+            cleared.add(name);
+            grew = true;
+          }
+        }
+      }
+
       for (const table of tables) yield* sql.unsafe(table.sql).unprepared;
       if (filtered) {
         yield* sql`CREATE TEMP TABLE copied_threads (thread_id TEXT PRIMARY KEY)`;
@@ -288,9 +289,6 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   const sourcePath = yield* fs
     .realPath(resolvedSourcePath)
     .pipe(Effect.orElseSucceed(() => resolvedSourcePath));
-  const canonicalDefaultSourcePath = yield* fs
-    .realPath(defaultSourcePath)
-    .pipe(Effect.orElseSucceed(() => defaultSourcePath));
 
   const baseDir =
     input.baseDir !== undefined
@@ -338,20 +336,13 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   const { executedMigrations, pruned } = yield* Effect.gen(function* () {
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const livePid = yield* liveDevDbServerPid(sourcePath);
         const copyPath =
-          sourcePath === canonicalDefaultSourcePath || livePid !== undefined
+          input.source === undefined
             ? yield* snapshotDevDb(sourcePath).pipe(
                 Effect.catchTags({
                   DevDbSnapshotError: Effect.fn("fallbackDevDbSource")(function* (error) {
-                    if (
-                      livePid !== undefined ||
-                      (yield* liveDevDbServerPid(sourcePath)) !== undefined
-                    ) {
-                      return yield* error;
-                    }
                     yield* Console.log(
-                      "Source is not owned by a live server; reading it directly.",
+                      `${error.message} Using a consistent read-only source transaction.`,
                     );
                     return sourcePath;
                   }),

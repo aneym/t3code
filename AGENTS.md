@@ -91,7 +91,7 @@ The most common defect in this repo is a change that works on the path you teste
 An empty database is a bad test. Seed your worktree's `.t3` with a copy of real data instead of pointing at live state:
 
 - The first `vp run dev` in a worktree does this for you when its database is missing and the source is at most 500 MiB. Larger sources warn and dev starts with an empty database. `--no-seed` or `T3CODE_DEV_SEED=0` skips seeding. Manual migration still accepts larger sources and may use substantial disk space before pruning.
-- Run `vp run migrate-dev-db` with dev stopped to refresh from `~/.t3/userdata/statev2.sqlite`. It briefly holds a read transaction to reflink the source and WAL, then copies the clone. Live sources need reflinks; otherwise stop the source server or pass `--source <a snapshot>`. It keeps recent projects and stopped threads, drops scheduled tasks, pending work and auth sessions. Raise `--projects` and `--threads-per-project` for more.
+- Run `vp run migrate-dev-db` with dev stopped to copy from `~/.t3/userdata/statev2.sqlite` read-only. It locks a read snapshot to reflink the DB and WAL; without reflinks it uses a consistent read. It keeps projects and stopped threads, dropping scheduled tasks, pending work and auth sessions so dev never runs the developer's agents. Use `--source <snapshot>` for a copy; raise `--projects` and `--threads-per-project` for more.
 - Refresh `statev2.sqlite`, not `state.sqlite`. The server copies the V1 `state.sqlite` only when `statev2.sqlite` is missing.
 - Bring `secrets` and `settings.json` only if the flow under test needs them.
 - Copy in, never symlink. Data flows one way: into your sandbox, never back out.
