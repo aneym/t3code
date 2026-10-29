@@ -978,7 +978,8 @@ export const layerQueryRunner: Layer.Layer<
           const spawnProcess =
             options.spawnClaudeCodeProcess ??
             ((spawnOptions: ClaudeSpawnOptions) => {
-              if (platform !== "win32") return spawnClaudeProcessGroup(spawnOptions, stopScope);
+              if (platform !== "win32")
+                return spawnClaudeProcessGroup(spawnOptions, input.threadId, stopScope);
               const child = NodeChildProcess.spawn(spawnOptions.command, spawnOptions.args, {
                 cwd: spawnOptions.cwd,
                 env: spawnOptions.env,

@@ -12,7 +12,7 @@ const CLAUDE_GROUP_WATCH_SCRIPT = [
   'exec "$@" 3<&-',
 ].join("\n");
 
-const liveGroups = new Set<NodeChildProcess.ChildProcess>();
+const liveGroups = new Map<NodeChildProcess.ChildProcess, string>();
 
 /**
  * Kill the CLI's group on exit to stop MCP grandchildren; `onExit` stops its agent scope for
@@ -21,6 +21,7 @@ const liveGroups = new Set<NodeChildProcess.ChildProcess>();
  */
 export function spawnClaudeProcessGroup(
   options: ClaudeSpawnOptions,
+  threadId: string,
   onExit?: () => void,
 ): ClaudeSpawnedProcess {
   const child = NodeChildProcess.spawn(
@@ -34,7 +35,7 @@ export function spawnClaudeProcessGroup(
       detached: true,
     },
   );
-  liveGroups.add(child);
+  liveGroups.set(child, threadId);
   child.once("exit", () => {
     liveGroups.delete(child);
     try {
@@ -46,9 +47,10 @@ export function spawnClaudeProcessGroup(
   return child as ClaudeSpawnedProcess;
 }
 
-export function releaseClaudeBackgroundWork(): number {
+export function releaseClaudeBackgroundWork(threadId: string): number {
   let released = 0;
-  for (const child of liveGroups) {
+  for (const [child, owner] of liveGroups) {
+    if (owner !== threadId) continue;
     try {
       signalProcessGroup(child.pid ?? 0, "SIGKILL");
       released += 1;

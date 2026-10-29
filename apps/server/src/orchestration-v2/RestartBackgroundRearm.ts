@@ -9,6 +9,7 @@ import type {
   OrchestrationV2RestartCancelledBackgroundWork,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
 import type {
@@ -100,10 +101,12 @@ const findOutputPath = Effect.fnUntraced(function* (
 });
 
 const writersOf = (path: string) =>
-  Effect.callback<ReadonlyArray<string>>((resume) => {
-    NodeChildProcess.execFile("lsof", ["-t", "--", path], { timeout: 5000 }, (_error, stdout) =>
-      resume(Effect.succeed(stdout.split("\n").filter((pid) => /^\d+$/.test(pid)))),
-    );
+  Effect.callback<ReadonlyArray<string> | undefined>((resume) => {
+    NodeChildProcess.execFile("lsof", ["-t", "--", path], { timeout: 5000 }, (error, stdout) => {
+      const pids = stdout.split("\n").filter((pid) => /^\d+$/.test(pid));
+      const unknown = error !== null && (error.code !== 1 || error.killed);
+      resume(Effect.succeed(unknown && pids.length === 0 ? undefined : pids));
+    });
   });
 
 const quote = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
@@ -119,7 +122,7 @@ function shellRearm(
   work: Work,
   command: string | undefined,
   outputPath: string | undefined,
-  writers: ReadonlyArray<string>,
+  writers: ReadonlyArray<string> | undefined,
 ): string | undefined {
   const rerun =
     command === undefined
@@ -127,14 +130,17 @@ function shellRearm(
       : work.kind === "monitor"
         ? `start a Monitor with the same command: ${commandText(command)}`
         : `run it again in the background: ${commandText(command)}`;
-  if (outputPath !== undefined && writers.length > 0) {
-    const wait = `while lsof -t -- ${quote(outputPath)} >/dev/null 2>&1; do sleep 5; done; tail -n 40 ${quote(outputPath)}`;
-    return [
-      `It survived the restart (pid ${writers.join(", ")}). Rejoin it: run \`${wait}\` in the background and wait for it.`,
-      rerun === undefined ? undefined : `If that output shows it did not finish, ${rerun}`,
-    ]
-      .filter((part) => part !== undefined)
-      .join(" ");
+  if (outputPath !== undefined && (writers === undefined || writers.length > 0)) {
+    const path = quote(outputPath);
+    const join = `run \`while lsof -t -- ${path} >/dev/null 2>&1; do sleep 5; done; tail -n 40 ${path}\` in the background and wait for it.`;
+    const check =
+      writers === undefined
+        ? `If \`lsof -t -- ${path}\` lists a process, it survived the restart: ${join}`
+        : `It survived the restart (pid ${writers.join(", ")}). Rejoin it: ${join}`;
+    if (rerun === undefined) return check;
+    return writers === undefined
+      ? `${check} Otherwise ${rerun}`
+      : `${check} If that output shows it did not finish, ${rerun}`;
   }
   if (rerun === undefined) return undefined;
   const action = `Re-arm it: ${rerun}`;
@@ -145,7 +151,7 @@ function subagentRearm(work: Work, driver: string): string | undefined {
   if (driver !== "claudeAgent") return undefined;
   const agentId = /\((?:id|subagent) ([^)\s]+)\)$/.exec(work.label)?.[1];
   if (agentId === undefined) return undefined;
-  return `Resume it: SendMessage to "${agentId}" asking it to finish its task and report back; if SendMessage cannot find it, launch it again with its original prompt.`;
+  return `Resume it: SendMessage to "${agentId}" to finish and report back; if it is not found, relaunch it with its original prompt.`;
 }
 
 const rearm = Effect.fnUntraced(function* (
@@ -155,6 +161,7 @@ const rearm = Effect.fnUntraced(function* (
 ) {
   if (work.every((entry) => entry.rearm !== undefined) || providerThread === undefined) return work;
   const driver = providerThread.driver;
+  const linux = (yield* HostProcess.Platform) === "linux";
   const needsLaunches = work.some((entry) => entry.kind === "shell" || entry.kind === "monitor");
   const found = launches(needsLaunches ? yield* loadItems : []);
   const sessionId = providerThread.nativeThreadRef?.nativeId ?? undefined;
@@ -174,7 +181,7 @@ const rearm = Effect.fnUntraced(function* (
         (driver === "claudeAgent"
           ? yield* findOutputPath(entry.id, found.taskDirs, sessionId)
           : undefined);
-      const writers = outputPath === undefined ? [] : yield* writersOf(outputPath);
+      const writers = outputPath === undefined || linux ? [] : yield* writersOf(outputPath);
       action = shellRearm(entry, launch?.command, outputPath, writers);
     }
     rearmed.push(action === undefined ? entry : { ...entry, rearm: action });
