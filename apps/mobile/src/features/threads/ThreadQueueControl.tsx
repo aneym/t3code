@@ -1,12 +1,10 @@
-import { threadQueueEntryControls } from "./threadQueueEntryControls";
+import { QueuedRunSender } from "./QueuedRunSender";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
 import {
   makeQueuedRunsAtom,
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
@@ -30,9 +28,6 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { useAssetUrl } from "../../state/assets";
-import { useQuietThreadShell } from "../../state/entities";
-import { useEnvironmentQuery } from "../../state/query";
-import { serverEnvironment } from "../../state/server";
 import { assetImageSource } from "../../lib/assetImageSource";
 import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edit";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
@@ -41,6 +36,7 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
   REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
   buildCancelQueuedRunCommand,
+  resolveThreadQueueRowControls,
 } from "./threadQueueControlPresentation";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
@@ -60,62 +56,6 @@ function useThreadQueueWorkflow(target: QueueTarget) {
 export function useThreadQueuedCount(target: QueueTarget | null) {
   return useAtomValue(
     target === null ? EMPTY_QUEUED_COUNT_ATOM : environmentThreadDetails.queuedCountAtom(target),
-  );
-}
-
-type QueuedRunMessage = NonNullable<
-  NonNullable<ReturnType<typeof useThreadQueueWorkflow>>["queuedRuns"][number]["message"]
->;
-
-/** Who sent a queued message, as its sent form shows it in the thread. */
-function QueuedRunSender(props: {
-  readonly environmentId: EnvironmentId;
-  readonly message: QueuedRunMessage;
-}) {
-  const { attribution, scheduledTaskId } = resolveUserMessagePresentation(props.message);
-  const senderThreadId = attribution === "agent" ? props.message.senderThreadId : undefined;
-  const senderShell = useQuietThreadShell(
-    senderThreadId ? scopeThreadRef(props.environmentId, senderThreadId) : null,
-  );
-  const tasks = useEnvironmentQuery(
-    scheduledTaskId
-      ? serverEnvironment.scheduledTasksLive({ environmentId: props.environmentId, input: {} })
-      : null,
-  );
-  const sender =
-    attribution === "automation"
-      ? {
-          icon: "calendar.badge.clock" as const,
-          label:
-            tasks.data?.tasks.find((task) => task.id === scheduledTaskId)?.title ?? "Automation",
-        }
-      : attribution === "agent"
-        ? {
-            icon: "bubble.left.and.bubble.right" as const,
-            label: senderShell?.title.trim() || "Agent",
-          }
-        : attribution === "t3code"
-          ? { icon: null, label: "Sent by T3 Code" }
-          : null;
-  if (sender === null) return null;
-  return (
-    <View className="flex-row items-center gap-1">
-      {sender.icon ? (
-        <SymbolView
-          name={sender.icon}
-          size={11}
-          weight="medium"
-          tintColorClassName="accent-foreground-muted"
-          type="monochrome"
-        />
-      ) : null}
-      <Text
-        numberOfLines={1}
-        className="min-w-0 shrink font-t3-medium text-2xs text-foreground-muted"
-      >
-        {sender.label}
-      </Text>
-    </View>
   );
 }
 
@@ -235,12 +175,16 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, attachments, context, message }, index) => {
-        const controls = threadQueueEntryControls(queuedRuns[index]!, {
-          busyRunId,
-          workflow,
-          editBlockedReason,
-          editingRunId: editing?.runId,
+      {queuedRuns.map(({ run, attachments, context, message, isBackgroundResult, text }, index) => {
+        const controls = resolveThreadQueueRowControls({
+          busy: busyRunId !== null,
+          canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
+          canSendNow: workflow?.canSendNow ?? false,
+          editBlocked: editBlockedReason !== null,
+          isEditing: editing?.runId === run.id,
+          isGuestMessage: context?.guest !== undefined,
+          isBackgroundResult,
+          text,
         });
         const title =
           controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");

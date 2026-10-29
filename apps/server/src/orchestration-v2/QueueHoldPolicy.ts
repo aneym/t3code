@@ -1,5 +1,8 @@
 import type { OrchestrationV2Run, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
-import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
+import {
+  latestExecutedRun,
+  usageLimitBlockedRun,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 
 type Hold = Pick<OrchestrationV2Run, "queueHeld" | "queueHoldReason" | "queueHeldAt">;
@@ -25,8 +28,12 @@ export function canReleaseQueueHold(run: OrchestrationV2Run, release: Release): 
 export function releasesQueueHoldAtRunEnd(
   run: OrchestrationV2Run,
   ended: OrchestrationV2Run | null | undefined,
-  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "turnItems">,
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "turnItems" | "runs">,
+  recovering = false,
 ): boolean {
+  if (ended == null && recovering && run.queueHoldReason === "stop") {
+    ended = latestExecutedRun(projection.runs);
+  }
   if (run.status !== "queued" || run.queueHeld !== true || ended == null) return false;
   switch (run.queueHoldReason) {
     case "stop":
@@ -45,7 +52,12 @@ function releasesStopHold(
   ended: OrchestrationV2Run,
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "turnItems">,
 ): boolean {
-  if (projection.thread.createdBy !== "agent" || ended.completedAt === null) return false;
+  if (
+    projection.thread.createdBy !== "agent" ||
+    !["completed", "failed", "interrupted", "cancelled", "rolled_back"].includes(ended.status) ||
+    ended.completedAt === null
+  )
+    return false;
   let heldAt = run.queueHeldAt;
   for (const item of projection.turnItems) {
     if (

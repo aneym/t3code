@@ -1407,10 +1407,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     ) {
       if ((yield* effectOutbox.restartPrepared) !== undefined) return;
-      if (options?.endedRunId !== undefined) {
+      {
         const view = yield* readCommandProjection(threadId);
         const latest = latestExecutedRun(view.runs);
-        const ended = latest?.id === options.endedRunId ? latest : undefined;
+        const ended = latest?.id === options?.endedRunId ? latest : undefined;
         for (const run of ended?.status === "completed" ? view.runs : []) {
           const delivery = run.delegatedCompletion?.delivery;
           if (delivery != null && completionDeliveryMessage(view, delivery) === undefined) {
@@ -1421,9 +1421,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           releasesQueueHoldAtRunEnd(
             run,
             run.queueHoldReason === "restart"
-              ? view.runs.find((candidate) => candidate.id === options.endedRunId)
+              ? view.runs.find((candidate) => candidate.id === options?.endedRunId)
               : ended,
             view,
+            options?.endedRunId === undefined,
           ),
         );
         if (held.length > 0) {
@@ -2184,7 +2185,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             yield* effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`);
           }
         }
-        if (!(yield* projectionStore.canStartQueuedRun(threadId))) return false;
         yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
         return true;
       }).pipe(
