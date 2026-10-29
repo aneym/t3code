@@ -32,7 +32,7 @@ import {
   resolveSidebarThreadStatus,
   type SidebarThreadStatus,
 } from "../Sidebar.logic";
-import { SIDEBAR_DRAG_DISTANCE, SidebarPointerSensor } from "../Sidebar.pointer";
+import { SidebarPointerSensor } from "../Sidebar.pointer";
 import { SidebarSection } from "../sidebar/SidebarSection";
 import { JumpHintBadge } from "../sidebar/SidebarThreadRow";
 import { toastManager } from "../ui/toast";
@@ -42,12 +42,7 @@ import type { RailsAgent } from "./railsAgents";
 import { useAgentFocusAction } from "./agentFocus";
 import { AGENTS_SECTION_STORAGE_KEY, sidebarAgentJumpKey } from "./sidebarAgentLists";
 import { useSidebarPins } from "./sidebarPins";
-
-const pointerSensorOptions = {
-  distance: SIDEBAR_DRAG_DISTANCE,
-  onAttach: () => {},
-  onFinish: () => {},
-};
+import { useAgentDragSensor } from "./useAgentDragSensor";
 
 export function SidebarAgents({
   onNavigate,
@@ -63,6 +58,7 @@ export function SidebarAgents({
   readonly setProjectScope: (keys: readonly string[]) => void;
 }) {
   const { toggle, setOrder, showMenu } = useSidebarPins();
+  const { containerRef, pointerSensorOptions } = useAgentDragSensor();
   const sensors = useSensors(
     useSensor(SidebarPointerSensor, pointerSensorOptions),
     useSensor(KeyboardSensor, {
@@ -101,7 +97,7 @@ export function SidebarAgents({
   });
 
   return (
-    <div className="mt-2">
+    <div ref={containerRef} className="mt-2">
       <SidebarSection label="Agents" storageKey={AGENTS_SECTION_STORAGE_KEY}>
         <DndContext
           sensors={sensors}

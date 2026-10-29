@@ -2,8 +2,6 @@ import { type PointerEvent as ReactPointerEvent } from "react";
 import { type SensorProps } from "@dnd-kit/core";
 import { getOwnerDocument, getWindow } from "@dnd-kit/utilities";
 
-export const SIDEBAR_DRAG_DISTANCE = 6;
-
 type Options = {
   distance: number;
   onAttach: (sensor: SidebarPointerSensor) => void;
@@ -53,7 +51,6 @@ export class SidebarPointerSensor {
     this.document.removeEventListener("pointerdown", this.clearClickSuppression, { capture: true });
   };
   private suppressClick = (event: Event) => {
-    event.preventDefault();
     event.stopPropagation();
     this.clearClickSuppression();
   };
