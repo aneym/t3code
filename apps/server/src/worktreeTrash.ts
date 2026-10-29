@@ -180,6 +180,13 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       );
   });
 
+  const isRepository = Effect.fnUntraced(function* (directory: string) {
+    if (yield* fs.exists(path.join(directory, ".git"))) return true;
+    for (const name of ["HEAD", "objects", "refs"])
+      if (!(yield* fs.exists(path.join(directory, name)))) return false;
+    return true;
+  });
+
   const checkoutStateReason = Effect.fnUntraced(function* (cwd: string) {
     if (yield* fs.exists(path.join(cwd, ".lane"))) return "has excluded local state (.lane/)";
     const git = yield* GitVcsDriver.GitVcsDriver;
@@ -218,7 +225,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     ]);
     if (untracked.stdoutTruncated) return "untracked files exceed the inspection limit";
     for (const entry of untracked.stdout.split("\0")) {
-      if (entry.endsWith("/") && (yield* fs.exists(path.join(cwd, entry, ".git"))))
+      if (entry.endsWith("/") && (yield* isRepository(path.join(cwd, entry))))
         return `has a nested repository (${entry})`;
     }
     const unignored = yield* git.execute({
@@ -232,11 +239,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       if (entry.endsWith("/")) return `has a nested repository (${entry})`;
       if (path.basename(entry) !== "HEAD") continue;
       const bare = path.dirname(entry);
-      if (
-        (yield* fs.exists(path.join(cwd, bare, "objects"))) &&
-        (yield* fs.exists(path.join(cwd, bare, "refs")))
-      )
-        return `has a nested repository (${bare}/)`;
+      if (yield* isRepository(path.join(cwd, bare))) return `has a nested repository (${bare}/)`;
     }
     // Git hides a nested repository inside a tracked directory or an unregistered gitlink.
     const tracked = yield* git.execute({
@@ -270,8 +273,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     for (const line of tracked.stdout.split("\0")) {
       const [type, entry] = [line.slice(0, line.indexOf(" ")), line.slice(line.indexOf(" ") + 1)];
       if (type !== "tree" && !(type === "commit" && !submodules.has(entry))) continue;
-      if (yield* fs.exists(path.join(cwd, entry, ".git")))
-        return `has a nested repository (${entry}/)`;
+      if (yield* isRepository(path.join(cwd, entry))) return `has a nested repository (${entry}/)`;
     }
     return null;
   });

@@ -1894,6 +1894,14 @@ it.live.each([
     reason: "Has a nested repository (backup.git/)",
   },
   {
+    state: "bare repository with a parent-tracked HEAD",
+    policy: "tracked-changes",
+    directory: "backup.git",
+    bare: "backup.git",
+    trackHead: true,
+    reason: "Has a nested repository (backup.git/)",
+  },
+  {
     state: "unregistered gitlink",
     policy: "tracked-changes",
     directory: "embedded",
@@ -1923,6 +1931,10 @@ it.live.each([
         yield* fixture.command(`${fixture.worktree}/${row.repository}`, ["init", "-q"]);
       if ("bare" in row)
         yield* fixture.command(`${fixture.worktree}/${row.directory}`, ["init", "-q", "--bare"]);
+      if ("trackHead" in row) {
+        yield* fixture.command(fixture.worktree, ["add", "-f", `${row.directory}/HEAD`]);
+        yield* fixture.command(fixture.worktree, ["commit", "-qm", "track bare HEAD"]);
+      }
       yield* fixture.fs.writeFileString(ledger, "state\n");
       if ("gitlink" in row) {
         const embedded = `${fixture.worktree}/${row.directory}`;
