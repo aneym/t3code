@@ -1729,13 +1729,30 @@ describe("storage cleanup reports and local file policies", () => {
         }),
       ),
   );
-  it.live("still removes a sparse checkout whose skipped files are absent", () =>
+  it.live("removes a skipped file's checkout only under sparse checkout", () =>
     runCleanupTest(
       Effect.gen(function* () {
         const { service, fs, worktree, command } = yield* cleanupFixture();
         yield* command(worktree, ["update-index", "--skip-worktree", "tracked.txt"]);
         yield* fs.remove(`${worktree}/tracked.txt`);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        yield* command(worktree, ["config", "core.sparseCheckout", "true"]);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+      }),
+    ),
+  );
+  it.live.each(["grafts", "replace refs"])("keeps a checkout whose repository has %s", (state) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command } = yield* cleanupFixture();
+        const head = (yield* command(repo, ["rev-parse", "HEAD"])).stdout.trim();
+        if (state === "grafts") yield* fs.writeFileString(`${repo}/.git/info/grafts`, `${head}\n`);
+        else {
+          const other = yield* command(repo, ["commit-tree", "HEAD^{tree}", "-m", "replacement"]);
+          yield* command(repo, ["update-ref", `refs/replace/${head}`, other.stdout.trim()]);
+        }
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.exists(`${worktree}/tracked.txt`)).toBe(true);
       }),
     ),
   );

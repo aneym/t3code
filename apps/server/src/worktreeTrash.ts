@@ -244,18 +244,40 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       maxOutputBytes: 16 * 1024 * 1024,
     });
     if (index.stdoutTruncated) return "index exceeds the inspection limit";
+    const sparse = yield* git.execute({
+      operation: "StorageCleanup.sparseCheckout",
+      cwd,
+      args: ["config", "--bool", "core.sparseCheckout"],
+      allowNonZeroExit: true,
+    });
     for (const line of index.stdout.split("\0")) {
       const tag = line.slice(0, 1);
       const file = line.slice(2);
       if (tag !== "" && tag === tag.toLowerCase()) return `has a file marked unchanged (${file})`;
-      if (tag === "S" && (yield* fs.exists(path.join(cwd, file))))
-        return `has a skip-worktree file on disk (${file})`;
+      if (
+        tag === "S" &&
+        (sparse.stdout.trim() !== "true" ||
+          (yield* fs.exists(path.join(cwd, file))) ||
+          (yield* fs.readLink(path.join(cwd, file)).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          )))
+      )
+        return `has a skip-worktree file outside sparse checkout (${file})`;
     }
     const commonDir = yield* inspect("StorageCleanup.commonDir", [
       "rev-parse",
       "--path-format=absolute",
       "--git-common-dir",
     ]);
+    if (yield* fs.exists(path.join(commonDir.stdout.trim(), "info", "grafts")))
+      return "repository has grafts";
+    const replaced = yield* inspect("StorageCleanup.replaceRefs", [
+      "for-each-ref",
+      "--count=1",
+      "refs/replace/",
+    ]);
+    if (replaced.stdout.trim() !== "") return "repository has replace refs";
     const excludeFile = path.join(commonDir.stdout.trim(), "info", "exclude");
     const patterns = (yield* fs.exists(excludeFile))
       ? (yield* fs.readFileString(excludeFile))
