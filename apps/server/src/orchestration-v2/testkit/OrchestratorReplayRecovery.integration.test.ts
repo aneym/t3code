@@ -119,7 +119,7 @@ const readClaudeCancelledSubagentResumeTranscript = Effect.fn(
     throw new Error("Expected the recorded subagent's first run.");
   }
   const entries = recorded.entries
-    // A CLI exit settles the task; hold at query.open:2 until the crash snapshot instead.
+    // Hold at query.open:2 until the crash snapshot.
     .filter(
       (_, index) => (index < firstSubagentFrame || index > firstOutcome) && index !== firstExit,
     )
@@ -137,8 +137,8 @@ const readClaudeCancelledSubagentResumeTranscript = Effect.fn(
             message: {
               ...frame.message.message,
               content: [
-                "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
-                "- subagent: Audit src/math.ts (id a44c0ed810da9e4f3)",
+                "Note: the T3 server restarted, and this background work will not report back on its own. Without asking, take each item's listed action, or resume or restart it yourself, and wait for its result:",
+                '- subagent: Audit src/math.ts (id a44c0ed810da9e4f3). Resume it: SendMessage to "a44c0ed810da9e4f3" to finish and report back; if it is not found, relaunch it with its original prompt.',
                 "",
                 "User message:",
                 frame.message.message.content,
@@ -243,7 +243,7 @@ const runCursorRecovery = Effect.fn("runCursorRecovery")(function* (input: {
         runtimePolicyOverride: { cwd: tempDir },
       },
       harness,
-      // A real restart requeues effects, like checkpoint capture, the first runtime left running.
+      // A restart requeues effects the first runtime left running.
       { ...options, recoverOnStartup: true },
     ),
   );
@@ -274,7 +274,7 @@ describe("orchestrator replay recovery", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          // Use a throwaway checkpoint workspace; cold full-repo capture exceeds CI wait budgets.
+          // Cold full-repo capture exceeds CI wait budgets.
           const workspace = yield* checkpointWorkspace("provider_thread_resume");
           const transcript = yield* readCodexTranscript(workspace);
           const fs = yield* FileSystem.FileSystem;
@@ -544,7 +544,7 @@ describe("orchestrator replay recovery", () => {
             const result = yield* runOrchestratorV2Scenario(beforeScenario);
             const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
             yield* worker.drain();
-            // Preserve the orphan before scoped teardown settles its provider work.
+            // Keep the orphan past scoped teardown.
             const sql = yield* SqlClient.SqlClient;
             yield* sql`VACUUM INTO ${snapshotPath}`;
             return result;

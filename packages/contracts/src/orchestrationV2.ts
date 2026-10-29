@@ -628,8 +628,9 @@ export const OrchestrationV2RestartCancelledBackgroundWork = Schema.Struct({
   kind: Schema.Literals(["subagent", "shell", "monitor", "task"]),
   label: TrimmedNonEmptyString,
   id: Schema.optional(TrimmedNonEmptyString),
-  /** The agent was waiting on this work, so its restart note wakes the agent even for a shell. */
+  /** The agent waited on this work, so its restart note wakes the agent. */
   awaited: Schema.optional(Schema.Literal(true)),
+  rearm: Schema.optional(TrimmedNonEmptyString),
 });
 export type OrchestrationV2RestartCancelledBackgroundWork =
   typeof OrchestrationV2RestartCancelledBackgroundWork.Type;
@@ -1209,7 +1210,7 @@ const SubagentNotificationSource = Schema.Struct({
 });
 const CommandNotificationSource = Schema.Struct({ kind: Schema.Literal("command") });
 
-/** Encode legacy background_command/background_task shapes first so older clients accept command/subagent sources. */
+/** Encode legacy shapes first so older clients accept command/subagent sources. */
 export const OrchestrationV2NotificationSource = kindUnionWithFallback(
   [
     Schema.Struct({

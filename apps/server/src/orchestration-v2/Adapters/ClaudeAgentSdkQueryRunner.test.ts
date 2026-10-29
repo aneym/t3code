@@ -29,8 +29,8 @@ import {
   ClaudeAgentSdkQueryRunner,
   type ClaudeAgentSdkQueryOpenInput,
   layerQueryRunner,
-  spawnClaudeProcessGroup,
 } from "./ClaudeAdapterV2.ts";
+import { spawnClaudeProcessGroup } from "./ClaudeProcessGroup.ts";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
@@ -456,21 +456,23 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     }),
   );
 
-  // The CLI keeps running its turn after its pipes close, so a server that
-  // crashed would leave it working next to the session it resumes.
+  // A CLI outliving a crashed server would work beside the session it resumes.
   it.effect("stops the CLI when the server that started it goes away", () =>
     Effect.gen(function* () {
       const cli = fakeClaudeCli(['dir=$(dirname "$0")', 'sleep 600 > "$dir/alive"'].join("\n"));
       const dir = NodePath.dirname(cli);
       NodeChildProcess.execFileSync("mkfifo", [NodePath.join(dir, "alive")]);
-      const child = spawnClaudeProcessGroup({
-        command: cli,
-        args: [],
-        cwd: dir,
-        env: process.env,
-        // @effect-diagnostics-next-line abortControllerInEffect:off - This crash fixture closes pipes itself; aborting on test teardown raises an unrelated process error.
-        signal: new AbortController().signal,
-      }) as NodeChildProcess.ChildProcess;
+      const child = spawnClaudeProcessGroup(
+        {
+          command: cli,
+          args: [],
+          cwd: dir,
+          env: process.env,
+          // @effect-diagnostics-next-line abortControllerInEffect:off - The fixture closes its pipes itself.
+          signal: new AbortController().signal,
+        },
+        "thread-1",
+      ) as NodeChildProcess.ChildProcess;
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           try {

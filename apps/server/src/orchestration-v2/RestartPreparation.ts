@@ -1,4 +1,5 @@
 import * as ServerSettings from "../serverSettings.ts";
+import { releaseClaudeBackgroundWork } from "./Adapters/ClaudeProcessGroup.ts";
 import { restartContinuationRun, unacceptedRestartRun } from "./RestartContinuation.ts";
 import * as Cause from "effect/Cause";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -9,6 +10,7 @@ import {
   type ServerImportRestartHandoffInput,
   type ServerRestartHandoff,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { legacyRestartHandoffs } from "./RestartHandoffImport.ts";
@@ -156,11 +158,12 @@ export const importRestartHandoff = Effect.fn("RestartPreparation.importRestartH
 );
 export const prepareForShutdown = Effect.gen(function* () {
   const outbox = yield* EffectOutbox.EffectOutboxV2;
-  if ((yield* outbox.restartPrepared) !== undefined) return;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
+  const prepared = (yield* outbox.restartPrepared) !== undefined;
+  const linux = (yield* HostProcess.Platform) === "linux";
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
-  const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
   if (!enabled) return;
   const threadIds = yield* projections.getRecoveryThreadIds("runtime");
   for (const threadId of threadIds) {
@@ -171,6 +174,10 @@ export const prepareForShutdown = Effect.gen(function* () {
           .continueThreadsAfterServerUpdate
       )
         return;
+      const released = linux ? 0 : releaseClaudeBackgroundWork(threadId);
+      if (released > 0)
+        yield* Effect.logInfo("Released Claude background work for restart", { threadId });
+      if (prepared) return;
       const run = restartContinuationRun(projection) ?? unacceptedRestartRun(projection);
       if (!run) return;
       const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
