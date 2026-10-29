@@ -82,7 +82,7 @@ class Workload:
             "messages": self.sandbox.query("SELECT message_id,thread_id,run_id,role,payload_json FROM orchestration_v2_projection_messages ORDER BY message_id"),
         }
 
-    def verify(self):
+    def verify(self, interrupted=False):
         if self.held is None or time.monotonic() - self.held > HOLD_S - 10:
             raise RuntimeError("active rehearsal hold may have expired before cutover")
         after = self.snapshot()
@@ -108,7 +108,11 @@ class Workload:
         if queued["messageId"] not in current or current[queued["messageId"]][2] != queued["runId"]:
             raise ValueError("queued message identity changed")
         (self.sandbox.home / "release-gate").touch()
-        queued_reply = self.reply({"threadId": queued["threadId"], "runId": queued["runId"]}, queued["nonce"])
+        queued_state = self.sandbox.query("SELECT status FROM orchestration_v2_projection_runs WHERE run_id=?", (queued["runId"],))
+        if interrupted and queued_state and queued_state[0][0] in ("cancelled", "interrupted"):
+            queued_reply = {"threadId": queued["threadId"], "runId": queued["runId"], "disposition": "interrupted-by-rollback-stop", "status": queued_state[0][0]}
+        else:
+            queued_reply = self.reply({"threadId": queued["threadId"], "runId": queued["runId"]}, queued["nonce"])
         nonce = f"RESUME_{uuid.uuid4().hex}"
         active = self.work["active-turn"]
         result = self.sandbox.t3("thread", "send", active["threadId"], f"Reply with exactly {nonce} and nothing else. Do not use tools.", "--mode", "queue", "--json")

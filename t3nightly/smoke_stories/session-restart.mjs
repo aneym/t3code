@@ -124,12 +124,33 @@ try {
     const pending = yield* until('a pending background task', (projection) => backgroundTasks(projection) > 0 && projection.runs.every((run) => !live(run.status)), 30);
     assert.equal(yield* restart('background-task', pending), true, 'restart was accepted while a background task was live');
     yield* Effect.promise(() => note('restart refused while a background task is live and no run is'));
-    const idle = yield* until('the background task to finish', (projection) => backgroundTasks(projection) === 0 && projection.runs.every((run) => !live(run.status)), 120);
+    const quiet = (projection) => backgroundTasks(projection) === 0 && projection.runs.every((run) => !live(run.status));
+    const settled = (label) => Effect.gen(function* () {
+      let streak = 0;
+      let runs = -1;
+      for (let second = 0; second < 150; second += 1) {
+        const projection = yield* read();
+        streak = quiet(projection) && projection.runs.length === runs ? streak + 1 : 0;
+        runs = projection.runs.length;
+        if (streak >= 5) return projection;
+        yield* Effect.sleep('1 second');
+      }
+      return yield* Effect.fail(new Error(`timed out waiting for ${label}`));
+    });
+    let idle = yield* settled('the background task to finish and the thread to settle');
+    let refused = yield* restart('idle', idle);
+    if (refused) {
+      const after = yield* read();
+      assert(after.runs.length > idle.runs.length, 'restart was refused on an idle thread');
+      yield* Effect.promise(() => note('a run started after the idle read, so the refusal was honest; waiting for it to settle'));
+      idle = yield* settled('the follow-up run to settle');
+      refused = yield* restart('idle-retry', idle);
+    }
+    assert.equal(refused, false, 'restart was refused on an idle thread');
     const before = idle.providerSessions.find((session) => session.status !== 'stopped' && session.status !== 'error');
     assert(before, 'no live provider session before the idle restart');
     evidence.oldSession = { id: before.id, createdAt: millis(before.createdAt) };
     assert(Number.isFinite(evidence.oldSession.createdAt), 'unreadable session createdAt');
-    assert.equal(yield* restart('idle', idle), false, 'restart was refused on an idle thread');
     yield* until('the old session to detach', (projection) => !projection.providerSessions.some((session) => session.id === before.id && millis(session.createdAt) === evidence.oldSession.createdAt), 30);
     yield* Effect.promise(() => note('restart accepted once the thread is idle and the old session detached'));
   }));

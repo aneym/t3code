@@ -177,7 +177,7 @@ class Rehearsal:
         snoozed = shown["thread"].get("snoozedUntil")
         if not snoozed or datetime.fromisoformat(snoozed.replace("Z", "+00:00")) != datetime.fromisoformat(writes["snoozedUntil"]):
             raise ValueError("old runtime cannot read the candidate's snooze")
-        post, evidence = workload.verify()
+        post, evidence = workload.verify(interrupted=True)
         proof = {"candidateWrites": writes, "backup": receipt["backup"], "receiptOutcome": receipt["outcome"], "oldReadBack": {"thread": shown["thread"], "messages": shown["messages"]},
                  "servingAfterRollback": {"version": self.sandbox.version(), "digest": self.sandbox.serving_digest()}, "oldRuntimeWrites": post, "workload": evidence}
         path = self.sandbox.evidence / "rollback-proof.json"
