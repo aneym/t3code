@@ -214,4 +214,4 @@ def fast_output(stage, config):
         return (run / "desktop-swap.json").is_file()
     if stage == "F":
         return json.loads((run / "final-receipt.json").read_text())["published"] == config.version
-    return stage in ("LM", "H", "AS")
+    return stage in ("LM", "LR", "H", "AS")

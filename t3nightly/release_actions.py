@@ -239,8 +239,6 @@ def fast_install(config, log):
     if code and outcome in SUCCESS_OUTCOMES:
         outcome = "failed"
     (config.outcome()).write_text(json.dumps({"outcome": outcome, "installerExit": code}) + "\n")
-    if config.host == "studio" and outcome in SUCCESS_OUTCOMES:
-        publish_landings(config, log)
     return 0
 
 
@@ -340,6 +338,9 @@ def run_fast_action(stage, config, log):
         return fast_swap(config, log)
     if stage == "F":
         return fast_publish(config, log)
+    if stage == "LR":
+        publish_landings(config, log)
+        return 0
     if stage == "LM":
         return command([str(config.home / ".local/bin/t3-link-mesh"), "--json"], log)
     if stage == "H":

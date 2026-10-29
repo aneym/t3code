@@ -12,7 +12,7 @@ from .release_jobs import HostJobs, TERMINAL, status, submit, write_status
 from .release_timeline import Timeline, utc_now
 
 HANG_GUARD = 10
-LIVE_NODES = {"IM", "IL", "S", "F", "LM", "H", "AS"}
+LIVE_NODES = {"IM", "IL", "S", "F", "LM", "LR", "H", "AS"}
 
 
 def stage_spec(node, args):

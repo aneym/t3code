@@ -43,6 +43,9 @@ def from_manifest(manifest):
 
 def publish(config, log):
     try:
+        if json.loads(config.outcome().read_text())["outcome"] not in ("installed", "current"):
+            log.write(json.dumps({"step": "landing-receipts-skipped", "reason": "studio install did not succeed"}) + "\n")
+            return
         main_sha, topics = from_manifest(config.manifest)
         delivered = post(build(config.tools.parent, main_sha, topics), config.run / "receipts" / "landing-receipts.json")
         log.write(json.dumps({"step": "landing-receipts", "delivered": delivered, "topics": len(topics)}) + "\n")

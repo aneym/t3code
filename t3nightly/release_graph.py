@@ -76,6 +76,7 @@ FAST_GRAPH = (
     FastNode("S", "desktop-swap", "studio", ("D", "IM"), 5, ("desktop-app:studio",)),
     FastNode("F", "publish-feed", "studio", ("S", "IL"), 15, ("feed",)),
     FastNode("LM", "link-mesh", "studio", ("IM", "IL"), 60, ("link-mesh",), gating=False),
+    FastNode("LR", "land-receipts", "studio", ("IM", "IL"), 120, (), gating=False),
     FastNode("H", "health-watch", "studio", ("F",), 600, (), gating=False),
     FastNode("AS", "advisory-suites", "studio", ("F",), 3600, (), gating=False),
 )
