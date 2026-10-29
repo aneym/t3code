@@ -110,6 +110,12 @@ const make = Effect.gen(function* () {
         message: `${resolved.link.label} runs a T3 Code version that cannot pair clients over a link.`,
       });
     }
+    if (response.status === 403) {
+      return yield* new PeerLinkError({
+        reason: "disabled",
+        message: `${resolved.link.label} does not pair clients over this link.`,
+      });
+    }
     if (response.status !== 200) {
       return yield* unreachable(`HTTP ${response.status}`);
     }
