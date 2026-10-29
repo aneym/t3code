@@ -5506,6 +5506,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           run.workspacePreparation?.type === "worktree",
       );
     const sentByUserFromClient =
+      command.retrySteeringBatch !== true &&
       command.createdBy === "user" &&
       (command.creationSource === "web" || command.creationSource === "mobile") &&
       command.scheduledTaskId === undefined;

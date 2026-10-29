@@ -4,7 +4,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { sendAllQueuedMembers } from "@t3tools/shared/queuedMessages";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
@@ -18,38 +18,12 @@ import {
   type OrchestratorV2Error,
 } from "./OrchestratorErrors.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
-import {
-  batchableMessage,
-  MAX_BATCH_SIZE,
-  queuedRunBatchEvents,
-  type QueuedRunBatchMember,
-} from "./QueuedRunBatch.ts";
+import { queuedRunBatchEvents } from "./QueuedRunBatch.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
-import { clearQueueHold, queueReleaseEvents, usageLimitHoldsQueue } from "./QueueHoldPolicy.ts";
+import { queueReleaseEvents, usageLimitHoldsQueue } from "./QueueHoldPolicy.ts";
 
 type SendAllCommand = Extract<OrchestrationV2Command, { type: "queue.send-all" }>;
 type PromoteCommand = Extract<OrchestrationV2Command, { type: "queued-message.promote-to-steer" }>;
-
-function sendAllQueuedMembers(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
-): ReadonlyArray<QueuedRunBatchMember> {
-  const members: Array<QueuedRunBatchMember> = [];
-  for (const run of queuedRunsInDeliveryOrder(projection)) {
-    const message = batchableMessage(projection, clearQueueHold(run));
-    if (message === undefined || message.delegatedCompletion !== undefined) continue;
-    const first = members[0]?.run;
-    if (
-      first !== undefined &&
-      (run.providerInstanceId !== first.providerInstanceId ||
-        !modelSelectionsEqual(run.modelSelection, first.modelSelection) ||
-        run.workspacePreparation?.type !== first.workspacePreparation?.type)
-    )
-      continue;
-    members.push({ run, message });
-    if (members.length === MAX_BATCH_SIZE) break;
-  }
-  return members;
-}
 
 export function isBlockedCompletionRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
