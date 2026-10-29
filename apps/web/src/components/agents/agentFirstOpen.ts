@@ -1,23 +1,26 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { toastManager } from "../ui/toast";
-import { readAgentHomes } from "./agentHomeBindings";
+import { readLoadedAgentHomes } from "./agentHomeBindings";
 import { assignAgentHomes } from "./agentMainThreadMenu";
-import { railsAgentHandle } from "./railsAgents";
 
 export async function bindAgentFirstOpen(
   threadId: ThreadId,
   environmentId: EnvironmentId,
   workspaceRoot: string | null,
 ): Promise<void> {
-  const handle = workspaceRoot ? railsAgentHandle(workspaceRoot) : null;
-  if (!handle) return;
-  const homes = readAgentHomes().filter((home) => home.handle === handle);
-  if (
-    !homes.some((home) => home.role === "orch" && home.environmentId === environmentId) ||
-    homes.some((home) => home.binding !== null)
-  )
-    return;
+  if (workspaceRoot === null) return;
+  const root = workspaceRoot.replace(/\/$/, "");
+  const loaded = readLoadedAgentHomes();
+  const home = loaded?.find(
+    (entry) =>
+      entry.environmentId === environmentId &&
+      entry.role === "orch" &&
+      entry.workspaceRoot.replace(/\/$/, "") === root,
+  );
+  if (!loaded || !home) return;
+  const handle = home.handle;
+  if (loaded.some((entry) => entry.handle === handle && entry.binding !== null)) return;
   const failed = await assignAgentHomes({
     handle,
     target: { environmentId, threadId },

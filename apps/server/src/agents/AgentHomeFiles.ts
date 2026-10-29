@@ -65,16 +65,17 @@ export const isLaneThread = async (root: string, threadId: string) => {
     entries
       .filter((entry) => entry.isDirectory())
       .map((entry) =>
-        NodeFSP.readFile(NodePath.join(lanes, entry.name, "lane.json"), "utf8").then(
-          (text) => {
-            const lane = parseDocument(text);
-            const t3 = lane.t3 as { thread_id?: unknown } | undefined;
-            return (
-              typeof lane.parent === "string" && lane.parent !== "" && t3?.thread_id === threadId
-            );
-          },
-          () => false,
-        ),
+        NodeFSP.readFile(NodePath.join(lanes, entry.name, "lane.json"), "utf8")
+          .then(parseDocument)
+          .then(
+            (lane) => {
+              const t3 = lane.t3 as { thread_id?: unknown } | undefined;
+              return (
+                typeof lane.parent === "string" && lane.parent !== "" && t3?.thread_id === threadId
+              );
+            },
+            () => false,
+          ),
       ),
   );
   return owners.includes(true);
