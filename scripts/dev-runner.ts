@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 import { ChildProcess } from "effect/process";
 
+import { watchDevRunnerParent } from "./lib/dev-runner-parent.ts";
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 
@@ -871,10 +872,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     env,
     extendEnv: false,
     shell: spawnCommand.shell,
-    // Keep Vite+ in the same process group so terminal signals (Ctrl+C)
-    // reach it directly. Effect defaults to detached: true on non-Windows,
-    // which would put the runner in a new group and require manual forwarding.
-    detached: false,
+    detached: (yield* HostProcess.Platform) !== "win32",
     forceKillAfter: "1500 millis",
   }).pipe(
     Effect.mapError(
@@ -988,6 +986,7 @@ const cliRuntimeLayer = Layer.mergeAll(
 if (import.meta.main) {
   Command.run(devRunnerCli, { version: "0.0.0" }).pipe(
     Effect.scoped,
+    Effect.raceFirst(watchDevRunnerParent()),
     Effect.provide(cliRuntimeLayer),
     NodeRuntime.runMain,
   );
