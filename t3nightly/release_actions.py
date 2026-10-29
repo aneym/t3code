@@ -215,8 +215,11 @@ def fast_e2e(config, log):
 
 
 def fast_install(config, log):
+    config.install_state().mkdir(parents=True, exist_ok=True)
     state = config.install_state()
-    state.mkdir(parents=True, exist_ok=True)
+    if config.host == "ax42":
+        state = (config.home / ".t3nightly" / "backups").resolve().parent / "fast-install" / config.version
+        state.mkdir(parents=True, exist_ok=True)
     words = [sys.executable, str(config.tools / "install"), "--hard", "--version", config.version, "--assets", str(config.build_out()),
              "--manifest", str(config.manifest), "--artifact-manifest", str(config.artifact()), "--receipt", str(config.receipt("rehearsal")),
              "--receipt-host", config.host, "--install-receipt", str(config.receipt("install")), "--state-dir", str(state),
