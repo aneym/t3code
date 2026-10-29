@@ -153,7 +153,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const act = async (runId: RunId, action: QueueAction) => {
     if (busyRef.current) return;
     const index = queuedRuns.findIndex(({ run }) => run.id === runId);
-    if (index < 0) return;
+    if (index < 0 || queuedRuns[index]?.isBackgroundResult) return;
     if (action === "edit") {
       if (editBlockedReason !== null) return;
       const entry = queuedRuns[index]!;
@@ -235,7 +235,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, text, attachments, context, message }, index) => {
+      {queuedRuns.map(({ run, text, attachments, context, message, isBackgroundResult }, index) => {
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null,
           canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
@@ -243,6 +243,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           editBlocked: editBlockedReason !== null,
           isEditing: editing?.runId === run.id,
           isGuestMessage: context?.guest !== undefined,
+          isBackgroundResult,
           text,
         });
         const title =
