@@ -20,7 +20,7 @@ def supported(environment, run=None):
     capabilities = (environment or {}).get("capabilities", {})
     from .launcher_artifact import ingress_qualified
 
-    return capabilities.get("serverSelfUpdate") == "boot-service" and (ingress_qualified(run) if run is not None else capabilities.get("serverHotSwap") is True)
+    return capabilities.get("serverSelfUpdate") == "boot-service" and capabilities.get("serverHotSwap") is True and (ingress_qualified(run) if run is not None else True)
 
 
 def mark_candidate(run, manifest, rehearsal):
