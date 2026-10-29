@@ -77,25 +77,30 @@ def holds(pid, path):
     return False
 
 
-def owns_lock(pid, path):
+def lock_holder(path):
     if sys.platform == "darwin":
         try:
             descriptor = os.open(path, os.O_RDONLY)
         except FileNotFoundError:
-            return False
+            return None
         try:
             query = struct.pack("qqihh", SQLITE_SHARED_FIRST, SQLITE_SHARED_SIZE, 0, fcntl.F_RDLCK, os.SEEK_SET)
             _, _, holder, kind, _ = struct.unpack("qqihh", fcntl.fcntl(descriptor, fcntl.F_GETLK, query))
         finally:
             os.close(descriptor)
-        return kind == fcntl.F_WRLCK and str(holder) == pid
+        return str(holder) if kind == fcntl.F_WRLCK else None
     try:
         info = os.stat(path)
         locks = Path("/proc/locks").read_text().splitlines()
     except FileNotFoundError:
-        return False
+        return None
     device = f"{os.major(info.st_dev):02x}:{os.minor(info.st_dev):02x}:{info.st_ino}"
-    return any(fields[2] == "WRITE" and fields[3] == pid and fields[4] == device for fields in (line.split()[1:] for line in locks) if len(fields) > 4)
+    holders = {fields[3] for fields in (line.split()[1:] for line in locks) if len(fields) > 4 and fields[2] == "WRITE" and fields[4] == device}
+    return holders.pop() if len(holders) == 1 else None
+
+
+def owns_lock(pid, path):
+    return lock_holder(path) == pid
 
 
 def serves_home(argv, home):
@@ -105,24 +110,42 @@ def serves_home(argv, home):
     return index + 1 < len(argv) and Path(argv[index + 1]).resolve() == home.resolve()
 
 
-def identify(run, launch):
+def launched_pid(launch):
     try:
-        marker = (launch / "managed").read_text().strip()
         pid_file = launch / "pid"
         pid = pid_file.read_text().strip()
         launched = pid_file.stat().st_mtime
     except (FileNotFoundError, NotADirectoryError):
         return None
-    if marker != "managed" or not pid.isdigit() or int(pid) <= 1:
+    if not pid.isdigit() or int(pid) <= 1:
         return None
     started = process_started(pid)
-    if started is None or abs(started - launched) > LAUNCH_SKEW_S:
+    return pid if started is not None and abs(started - launched) <= LAUNCH_SKEW_S else None
+
+
+def logging_holder(launch, lock):
+    pid = lock_holder(lock)
+    if pid is None or not pid.isdigit() or int(pid) <= 1:
         return None
+    return pid if holds(pid, launch / "server.log") else None
+
+
+def identify(run, launch):
+    try:
+        marker = (launch / "managed").read_text().strip()
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    if marker != "managed":
+        return None
+    lock = run.db.parent / "server-owner.sqlite"
+    pid = launched_pid(launch) or logging_holder(launch, lock)
+    if pid is None:
+        return None
+    started = process_started(pid)
     argv = process_argv(pid)
-    if process_uid(pid) != os.getuid() or not serves_home(argv, run.home):
+    if started is None or process_uid(pid) != os.getuid() or not serves_home(argv, run.home):
         return None
     on_service_port = pid in port_listeners(run.args.port)
-    lock = run.db.parent / "server-owner.sqlite"
     lock_owner = holds(pid, lock) and owns_lock(pid, lock)
     if not (on_service_port or lock_owner):
         return None
