@@ -195,6 +195,23 @@ function ownerLockHeld(stateDir: string): boolean | undefined {
   }
 }
 
+async function linuxLegacyOwnerIsLive(baseDir: string, pid: number): Promise<boolean> {
+  const start = await startOf(pid);
+  if (start === "") return true;
+  const launchDir = NodePath.join(baseDir, "ssh-launch");
+  for (const entry of await NodeFSP.readdir(launchDir).catch(() => [])) {
+    const dir = NodePath.join(launchDir, entry);
+    if ((await readRecord(dir, "pid")) !== String(pid)) continue;
+    const recorded = await readRecord(dir, "start");
+    if (/^[0-9a-f-]+ \d+$/.test(recorded)) return recorded === start;
+  }
+  const observed = await observe(pid, []);
+  if (observed.start !== start || observed.argv.length === 0) return true;
+  const home = await canonical(baseDir);
+  const served = servedBaseDir(observed.argv.slice(2));
+  return observed.argv[1] === "serve" && served !== undefined && (await canonical(served)) === home;
+}
+
 async function homeOwned(baseDir: string): Promise<boolean> {
   const stateDir = NodePath.join(baseDir, "userdata");
   const lockHeld = ownerLockHeld(stateDir);
@@ -203,6 +220,9 @@ async function homeOwned(baseDir: string): Promise<boolean> {
   const pid = Number(/"pid"\s*:\s*(\d+)/.exec(runtime)?.[1]);
   const preLockOwner = !/"ownerId"\s*:/.test(runtime);
   if (pid <= 1 || !isAlive(pid) || (lockHeld === false && !preLockOwner)) return false;
+  if (ON_LINUX && (await readText("/proc/sys/kernel/random/boot_id")).trim() !== "") {
+    return linuxLegacyOwnerIsLive(baseDir, pid);
+  }
   const recordedAt = Date.parse(/"startedAt"\s*:\s*"([^"]+)"/.exec(runtime)?.[1] ?? "");
   if (!Number.isFinite(recordedAt)) return true;
   const startedAt = Date.parse(`${await ps(pid, ["lstart"])} UTC`);
