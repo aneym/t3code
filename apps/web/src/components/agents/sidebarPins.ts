@@ -16,20 +16,30 @@ import { railsAgentHandle } from "./railsAgents";
 const DEFAULT_PINNED_KEYS: ReadonlyArray<string> = ["cos"];
 const LOCAL_PINNED_KEY = "t3code:sidebar-agents:pinned";
 
-const newer = (current: SidebarAgentsSettings | null, entry: SidebarAgentsSettings | null) =>
-  entry !== null && (current === null || entry.updatedAt > current.updatedAt) ? entry : current;
+const localPinnedKeys = (() => {
+  try {
+    return getLocalStorageItem(LOCAL_PINNED_KEY, Schema.Array(Schema.String));
+  } catch {
+    return null;
+  }
+})();
 
 const pendingSidebarAgentsAtom = Atom.keepAlive(Atom.make<SidebarAgentsSettings | null>(null));
 
-const sidebarAgentsAtom = Atom.make((get) =>
-  [...get(environmentPresentations.presentationsAtom).entries()]
+const sidebarAgentsAtom = Atom.make((get) => {
+  const synced = [...get(environmentPresentations.presentationsAtom).entries()]
     .toSorted(([a], [b]) => a.localeCompare(b))
-    .reduce(
-      (current, [, presentation]) =>
-        newer(current, presentation.serverConfig?.settings.sidebarAgents ?? null),
-      get(pendingSidebarAgentsAtom),
-    ),
-).pipe(Atom.withLabel("web-sidebar-agents"));
+    .reduce<SidebarAgentsSettings | null>((current, [, presentation]) => {
+      const entry = presentation.serverConfig?.settings.sidebarAgents ?? null;
+      return entry !== null && (current === null || entry.updatedAt > current.updatedAt)
+        ? entry
+        : current;
+    }, null);
+  const pending = get(pendingSidebarAgentsAtom);
+  return pending !== null && (synced === null || pending.updatedAt > synced.updatedAt)
+    ? pending
+    : synced;
+}).pipe(Atom.withLabel("web-sidebar-agents"));
 
 export function sidebarProjectPinKey(project: EnvironmentProject) {
   return (
@@ -41,9 +51,7 @@ export function useSidebarPins() {
   const synced = useAtomValue(sidebarAgentsAtom);
   const updateSettings = useUpdatePrimarySettings();
   const pinnedFrom = (settings: SidebarAgentsSettings | null) =>
-    settings?.pinned ??
-    getLocalStorageItem(LOCAL_PINNED_KEY, Schema.Array(Schema.String)) ??
-    DEFAULT_PINNED_KEYS;
+    settings?.pinned ?? localPinnedKeys ?? DEFAULT_PINNED_KEYS;
   const pinnedKeys = pinnedFrom(synced);
   const toggle = (key: string) => {
     const current = appAtomRegistry.get(sidebarAgentsAtom);
