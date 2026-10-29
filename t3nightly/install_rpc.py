@@ -2,6 +2,7 @@ import json
 import logging
 import math
 import os
+import shutil
 import subprocess
 import tempfile
 from contextlib import contextmanager
@@ -42,6 +43,11 @@ def restart_session(run, previous):
         prefix=".restart-rpc-", dir=run.state, ignore_cleanup_errors=True
     ) as raw:
         bearer = Path(raw) / "bearer"
+        revoker = Path(raw) / "t3"
+        try:
+            os.link(binary, revoker)
+        except OSError:
+            shutil.copy2(binary, revoker)
         try:
             bearer.write_text(token)
             os.chmod(bearer, 0o600)
@@ -50,7 +56,7 @@ def restart_session(run, previous):
             try:
                 revoked = subprocess.run(
                     [
-                        str(binary),
+                        str(revoker),
                         "auth",
                         "session",
                         "revoke",
