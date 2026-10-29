@@ -228,8 +228,16 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       maxOutputBytes: 4 * 1024 * 1024,
     });
     if (unignored.stdoutTruncated) return "untracked files exceed the inspection limit";
-    const nested = unignored.stdout.split("\0").find((entry) => entry.endsWith("/"));
-    if (nested !== undefined) return `has a nested repository (${nested})`;
+    for (const entry of unignored.stdout.split("\0")) {
+      if (entry.endsWith("/")) return `has a nested repository (${entry})`;
+      if (path.basename(entry) !== "HEAD") continue;
+      const bare = path.dirname(entry);
+      if (
+        (yield* fs.exists(path.join(cwd, bare, "objects"))) &&
+        (yield* fs.exists(path.join(cwd, bare, "refs")))
+      )
+        return `has a nested repository (${bare}/)`;
+    }
     // Git hides a nested repository inside a tracked directory or an unregistered gitlink.
     const tracked = yield* git.execute({
       operation: "StorageCleanup.trackedDirectories",

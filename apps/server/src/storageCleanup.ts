@@ -972,10 +972,13 @@ const make = Effect.gen(function* () {
           return keep("settings changed since check");
         const submodules = yield* submoduleKeepReason(worktreePath, settings);
         if (submodules !== null) return keep(submodules);
-        const removal = yield* trash.remove(managedRoot, worktreePath, () => {
-          // Last, after every slow inspection: a snooze or unarchive here still cancels removal.
-          return blockedSinceCheck();
-        });
+        // Last, after every slow inspection: an edit, snooze or unarchive here still cancels removal.
+        const removal = yield* trash.remove(managedRoot, worktreePath, () =>
+          Effect.gen(function* () {
+            const changed = yield* localChangesReason(worktreePath, settings);
+            return changed ?? (yield* blockedSinceCheck());
+          }),
+        );
         if (removal !== null) return keep(removal);
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
