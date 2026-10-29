@@ -8,6 +8,16 @@ from .install_provenance import file_digest
 from .release_signatures import verify_cli
 
 
+def descends(pid, root, parents):
+    seen = set()
+    while pid != root:
+        if pid in seen or pid not in parents or int(pid) <= 1:
+            return False
+        seen.add(pid)
+        pid = parents[pid]
+    return True
+
+
 def serving_process(run, version, expected):
     if sys.platform == "darwin":
         result = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{run.service_label}"], capture_output=True, text=True, check=True, timeout=15)
@@ -19,19 +29,15 @@ def serving_process(run, version, expected):
         roots = [result.stdout.strip()]
         sockets = subprocess.run(["ss", "-H", "-ltnp", f"sport = :{run.args.port}"], capture_output=True, text=True, check=True, timeout=15)
         listeners = set(re.findall(r"pid=(\d+),", sockets.stdout))
-    if len(roots) != 1 or not roots[0].isdigit() or int(roots[0]) <= 1 or len(listeners) != 1:
-        raise ValueError("intended service has no unambiguous root and listener PID")
+    if len(roots) != 1 or not roots[0].isdigit() or int(roots[0]) <= 1:
+        raise ValueError("intended service has no unambiguous root PID")
     root = roots[0]
-    pid = next(iter(listeners))
     processes = subprocess.run(["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, check=True, timeout=15)
     parents = dict(line.split() for line in processes.stdout.splitlines() if len(line.split()) == 2)
-    ancestor = pid
-    seen = set()
-    while ancestor != root:
-        if ancestor in seen or ancestor not in parents or int(ancestor) <= 1:
-            raise ValueError("endpoint listener does not belong to intended service")
-        seen.add(ancestor)
-        ancestor = parents[ancestor]
+    owned = {pid for pid in listeners if descends(pid, root, parents)}
+    if len(owned) != 1:
+        raise ValueError("endpoint listener does not belong to intended service" if not owned else "intended service has more than one listener PID")
+    pid = next(iter(owned))
     allowed = {run.runtime(version).resolve(), (run.home / "runtime/launcher/t3").resolve()}
     if sys.platform == "darwin":
         files = subprocess.run(["/usr/sbin/lsof", "-a", "-p", pid, "-d", "txt", "-Fn"], capture_output=True, text=True, check=True, timeout=15)
