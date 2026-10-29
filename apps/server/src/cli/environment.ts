@@ -18,6 +18,7 @@ import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { authLocationFlags, type CliAuthLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { environmentShowCommand } from "./environmentShow.ts";
 
 /**
  * Links live in this environment's database and secret store, so these
@@ -157,6 +158,7 @@ const environmentUnlinkCommand = Command.make("unlink", {
 export const environmentCommand = Command.make("environment").pipe(
   Command.withDescription("Link other T3 Code environments, so agents here can work there."),
   Command.withSubcommands([
+    environmentShowCommand,
     environmentLinkCommand,
     environmentListCommand,
     environmentUnlinkCommand,
