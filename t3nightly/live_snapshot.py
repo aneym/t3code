@@ -1,4 +1,5 @@
 import argparse
+import ctypes
 import errno
 import fcntl
 import hashlib
@@ -37,8 +38,18 @@ def snapshot_root(home):
     return root
 
 
+def clone_file(original, copy, timeout):
+    if sys.platform != "darwin":
+        subprocess.run(["cp", "--reflink=always", str(original), str(copy)], check=True, capture_output=True, timeout=min(10, timeout))
+        return
+    libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+    libc.clonefile.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32)
+    if libc.clonefile(os.fsencode(original), os.fsencode(copy), 0) != 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code), str(original), None, str(copy))
+
+
 def clone_database(source, destination, timeout):
-    prefix = ["/bin/cp", "-c"] if sys.platform == "darwin" else ["cp", "--reflink=always"]
     with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=30, isolation_level=None)) as reader:
         reader.execute("BEGIN")
         reader.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
@@ -46,7 +57,7 @@ def clone_database(source, destination, timeout):
             for suffix in ("", "-wal"):
                 original = Path(str(source) + suffix)
                 if original.exists():
-                    subprocess.run([*prefix, str(original), str(destination) + suffix], check=True, capture_output=True, timeout=min(10, timeout))
+                    clone_file(original, Path(str(destination) + suffix), timeout)
         finally:
             reader.execute("ROLLBACK")
 
