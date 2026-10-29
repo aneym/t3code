@@ -16,6 +16,8 @@ import {
   type ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -27,6 +29,8 @@ import type {
 } from "./ProjectionStore.ts";
 
 type ThreadSendMode = "auto" | "queue" | "steer" | "restart";
+
+const UNACCEPTED_RUN_ABANDONED_AFTER = Duration.minutes(2);
 
 export interface ThreadSendInput {
   readonly projectId: ProjectId;
@@ -163,13 +167,23 @@ export const makeSendToThread = <LoadError, DispatchError>(
     const providerThread = target.providerThreads.find(
       (thread) => thread.id === active.providerThreadId,
     );
-    const turnRunning = target.providerTurns.some(
-      (turn) => turn.runAttemptId === active.activeAttemptId && turn.status === "running",
+    const turns = target.providerTurns.filter(
+      (turn) => turn.runAttemptId === active.activeAttemptId,
     );
     const sessionLost =
       providerThread?.providerSessionId == null ||
       !(yield* deps.sessionIsLive(providerThread.providerSessionId));
-    return sessionLost || !turnRunning ? active : undefined;
+    if (
+      sessionLost ||
+      (input.mode === "restart" && !turns.some((turn) => turn.status === "running"))
+    )
+      return active;
+    if (turns.length > 0 || active.status !== "running" || active.startedAt === null)
+      return undefined;
+    const waited = DateTime.distance(active.startedAt, yield* DateTime.now);
+    return Duration.isGreaterThanOrEqualTo(waited, UNACCEPTED_RUN_ABANDONED_AFTER)
+      ? active
+      : undefined;
   });
 
   const resolveDispatchMode = Effect.fn("ThreadSend.resolveDispatchMode")(function* (

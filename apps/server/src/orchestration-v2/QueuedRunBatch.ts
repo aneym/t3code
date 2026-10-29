@@ -7,6 +7,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 
 import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
@@ -79,7 +80,7 @@ export function queuedRunBatch(
   return members;
 }
 
-export function foldedQueuedTurnItems(
+function foldedQueuedTurnItems(
   turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
   run: Pick<OrchestrationV2Run, "id" | "userMessageId">,
 ): ReadonlyArray<UserTurnItem> {
@@ -192,7 +193,7 @@ function batchSender(part: QueuedRunBatchPart): string {
     : `${part.createdBy} (${part.creationSource})`;
 }
 
-export function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): string {
+function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): string {
   if (parts.length < 2) return parts[0]?.text ?? "";
   return [
     `These ${parts.length} messages were queued separately while you were working. They are listed in the order they were sent, with their senders. Handle each one accordingly.`,
@@ -201,4 +202,93 @@ export function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): s
         `Message ${index + 1} of ${parts.length}, from ${batchSender(part)}:\n${part.text}`,
     ),
   ].join("\n\n");
+}
+
+export function unacceptedSourceOf(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns">,
+  run: Pick<OrchestrationV2Run, "restartContinuationOfRunId">,
+): OrchestrationV2Run | undefined {
+  return projection.runs.find(
+    (source) =>
+      source.id === run.restartContinuationOfRunId &&
+      !projection.providerTurns.some((turn) => turn.runAttemptId === source.activeAttemptId),
+  );
+}
+
+function everAccepted(
+  projection: Pick<OrchestrationV2ThreadProjection, "attempts" | "providerTurns">,
+  run: Pick<OrchestrationV2Run, "id">,
+): boolean {
+  return projection.attempts.some(
+    (attempt) =>
+      attempt.runId === run.id &&
+      projection.providerTurns.some((turn) => turn.runAttemptId === attempt.id),
+  );
+}
+
+export function unacceptedContinuationChain(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts" | "providerTurns">,
+  run: Pick<OrchestrationV2Run, "id" | "restartContinuationOfRunId">,
+): ReadonlyArray<OrchestrationV2Run> {
+  const chain: Array<OrchestrationV2Run> = [];
+  let from: Pick<OrchestrationV2Run, "id" | "restartContinuationOfRunId"> = run;
+  let source = unacceptedSourceOf(projection, from);
+  while (source !== undefined && !chain.includes(source) && !everAccepted(projection, from)) {
+    chain.push(source);
+    from = source;
+    source = unacceptedSourceOf(projection, from);
+  }
+  return chain;
+}
+
+export function unacceptedAttemptItems(
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  source: Pick<OrchestrationV2Run, "rootNodeId">,
+): ReadonlyArray<OrchestrationV2TurnItem> {
+  return items.filter((item) => item.nodeId === source.rootNodeId);
+}
+
+export function batchedProviderPrompt(
+  message: OrchestrationV2ConversationMessage,
+  owner: Pick<OrchestrationV2Run, "id" | "userMessageId">,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+) {
+  const folded = foldedQueuedTurnItems(turnItems, owner);
+  const origin =
+    turnItems.find(
+      (item): item is UserTurnItem =>
+        item.type === "user_message" && item.messageId === owner.userMessageId,
+    ) ?? message;
+  return {
+    text: batchedProviderText(
+      [{ ...origin, text: message.text, context: message.context }, ...folded].map((part) => ({
+        ...part,
+        text: projectComposerContextForProvider({
+          text: part.text,
+          records: part.context?.records ?? [],
+        }),
+      })),
+    ),
+    attachments: [...message.attachments, ...folded.flatMap((item) => item.attachments)],
+    foldedItems: folded,
+  };
+}
+
+export function unpromptedHistory(
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  run: OrchestrationV2Run,
+  chain: ReadonlyArray<OrchestrationV2Run>,
+  foldedItems: ReadonlyArray<UserTurnItem>,
+): ReadonlyArray<OrchestrationV2TurnItem> {
+  const replayed = new Set([
+    ...[run, ...chain].map((source) => source.userMessageId),
+    ...foldedItems.map((item) => item.messageId),
+  ]);
+  return items.filter(
+    (item) =>
+      (item.runId === null ||
+        runs.some((source) => source.id === item.runId && source.ordinal <= run.ordinal)) &&
+      !(item.type === "user_message" && replayed.has(item.messageId)),
+  );
 }
