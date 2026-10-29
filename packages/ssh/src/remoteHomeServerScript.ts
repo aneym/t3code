@@ -2,7 +2,24 @@ const SYSTEMD_UNIT = "t3code.service";
 const LAUNCHD_LABEL = "com.t3tools.t3code.service";
 const SERVICE_WAIT_SECONDS = 60;
 
-export const REMOTE_HOME_SERVER_SCRIPT = `resolve_default_runtime_port() {
+export const RECORD_START_SCRIPT = `record_start() {
+  if [ -r /proc/self/stat ]; then
+    printf '%s %s\\n' "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" "$(sed 's/.*) //' "/proc/$1/stat" 2>/dev/null | cut -d' ' -f20)"
+  else
+    LC_ALL=C TZ=UTC0 ps -o lstart= -p "$1" 2>/dev/null | awk '{$1 = $1; print}'
+  fi
+}`;
+
+export const REMOTE_HOME_SERVER_SCRIPT = `${RECORD_START_SCRIPT}
+start_managed_server() {
+  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  REMOTE_PID="$!"
+  record_start "$REMOTE_PID" >"$STATE_DIR/start" || :
+  printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+  printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+  printf 'managed\\n' >"$MANAGED_FILE"
+}
+resolve_default_runtime_port() {
   if [ "$T3_ARCHIVE_MODE" = "1" ]; then
     "$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"
     return

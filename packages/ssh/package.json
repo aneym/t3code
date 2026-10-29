@@ -19,6 +19,10 @@
       "types": "./src/errors.ts",
       "import": "./src/errors.ts"
     },
+    "./remoteHomeServerScript": {
+      "types": "./src/remoteHomeServerScript.ts",
+      "import": "./src/remoteHomeServerScript.ts"
+    },
     "./tunnel": {
       "types": "./src/tunnel.ts",
       "import": "./src/tunnel.ts"

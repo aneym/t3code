@@ -680,11 +680,7 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     exit 1
   fi
-  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
-  REMOTE_PID="$!"
-  printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
-  printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-  printf 'managed\\n' >"$MANAGED_FILE"
+  start_managed_server
   if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
     printf 'Remote T3 server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
     if [ -s "$LOG_FILE" ]; then
