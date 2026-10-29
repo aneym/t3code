@@ -21,6 +21,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { resolveMobileSettingsTargets, uniformMobileSetting } from "./settings-scoped-server";
+import { RemovedLinkedRoutes } from "./RemovedLinkedRoutes";
 
 export function SettingsLabsRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -256,7 +257,7 @@ function BetaSettingsSection() {
       {linked.length > 0 ? (
         <SettingsSection
           title="Linked machines in load balancing"
-          footer="Devices that balance load add a route to each machine linked there with full access."
+          footer="Devices that balance load add a route to each machine linked there with full access, once. A route you remove stays removed until you add it back."
         >
           {linked.map((environment) => (
             <SettingsSwitchRow
@@ -277,6 +278,12 @@ function BetaSettingsSection() {
           ))}
         </SettingsSection>
       ) : null}
+      <RemovedLinkedRoutes
+        hosts={linked.filter(
+          (environment) =>
+            environment.serverConfig?.settings.loadBalancingIncludeLinkedEnvironments === true,
+        )}
+      />
     </View>
   );
 }

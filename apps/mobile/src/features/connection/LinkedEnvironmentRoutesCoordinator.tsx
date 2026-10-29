@@ -1,15 +1,11 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
-import { linkedRoutesToJoin } from "@t3tools/client-runtime/state/peerLinks";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useRef } from "react";
 
-import { connectPairingUrl } from "../../connection/onboarding";
 import { useEnvironments } from "../../state/environments";
-import { peerLinkEnvironment } from "../../state/peerLinks";
-import { mobilePreferencesAtom } from "../../state/preferences";
-import { useEnvironmentQuery } from "../../state/query";
-import { useAtomCommand } from "../../state/use-atom-command";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { useJoinLinkedRoute, useLinkedRoutePlan } from "./linkedRoutes";
 
 export function LinkedEnvironmentRoutesCoordinator() {
   const preferences = useAtomValue(mobilePreferencesAtom);
@@ -28,45 +24,36 @@ export function LinkedEnvironmentRoutesCoordinator() {
       <LinkedEnvironmentRoutes
         key={environment.environmentId}
         environmentId={environment.environmentId}
-        knownEnvironmentIds={environments.map((known) => known.environmentId)}
       />
     ));
 }
 
-function LinkedEnvironmentRoutes(props: {
-  readonly environmentId: EnvironmentId;
-  readonly knownEnvironmentIds: ReadonlyArray<EnvironmentId>;
-}) {
-  const allowed = useAtomValue(peerLinkEnvironment.pairClient.permissionAtom(props.environmentId));
-  const links = useEnvironmentQuery(
-    allowed ? peerLinkEnvironment.list({ environmentId: props.environmentId, input: {} }) : null,
-  );
-  const pairClient = useAtomCommand(peerLinkEnvironment.pairClient, { reportFailure: false });
-  const connect = useAtomCommand(connectPairingUrl, { reportFailure: false });
+function LinkedEnvironmentRoutes(props: { readonly environmentId: EnvironmentId }) {
+  const plan = useLinkedRoutePlan(props.environmentId);
+  const joinRoute = useJoinLinkedRoute(props.environmentId, false);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
   const attempted = useRef(new Set<EnvironmentId>());
-  const targets = linkedRoutesToJoin(links.data?.links ?? [], new Set(props.knownEnvironmentIds));
-  const targetsKey = targets.map((link) => link.environmentId).join("\n");
+  const planKey = [...plan.newlySeen, "", ...plan.join.map((link) => link.environmentId)].join(
+    "\n",
+  );
 
-  const join = useEffectEvent(async () => {
-    for (const link of targets) {
+  const apply = useEffectEvent(async () => {
+    if (plan.newlySeen.length > 0) {
+      await savePreferences({
+        loadBalancingSeenLinkedEnvironmentIds: [...plan.seen, ...plan.newlySeen],
+      });
+    }
+    for (const link of plan.join) {
       if (attempted.current.has(link.environmentId)) continue;
       attempted.current.add(link.environmentId);
-      const issued = await pairClient({
-        environmentId: props.environmentId,
-        input: { environmentId: link.environmentId },
-      });
-      if (issued._tag !== "Success") continue;
-      await connect({
-        pairingUrl: issued.value.pairingUrl,
-        expectedEnvironmentId: link.environmentId,
-      });
+      await joinRoute(link.environmentId);
     }
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- adds saved routes for machines the host links once its link list loads
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pairs with machines the host links once its link list loads
   useEffect(() => {
-    if (targetsKey !== "") void join();
-  }, [targetsKey]);
+    if (planKey !== "") void apply();
+  }, [planKey]);
 
   return null;
 }

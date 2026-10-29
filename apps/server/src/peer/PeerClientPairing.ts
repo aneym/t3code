@@ -27,8 +27,27 @@ export class PeerClientPairing extends Context.Service<
     readonly pairClient: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<PeerLinkPairClientResult, PeerLinkError>;
+    readonly issueToLink: (
+      request: HttpServerRequest.HttpServerRequest,
+    ) => Effect.Effect<
+      PeerClientPairingCredential,
+      PeerClientPairingRefused | EnvironmentAuth.ServerAuthInternalError
+    >;
   }
 >()("t3/peer/PeerClientPairing") {}
+
+export class PeerClientPairingRefused extends Schema.TaggedError<PeerClientPairingRefused>()(
+  "PeerClientPairingRefused",
+  {
+    status: Schema.Literals([401, 403]),
+    reason: Schema.Literals([
+      "unauthorized",
+      "full_access_link_required",
+      "linked_environments_off",
+      "load_balancing_off",
+    ]),
+  },
+) {}
 
 const decodeCredential = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(PeerClientPairingCredential)),
@@ -36,6 +55,7 @@ const decodeCredential = Schema.decodeUnknownEffect(
 const encodeCredential = Schema.encodeEffect(Schema.toCodecJson(PeerClientPairingCredential));
 
 const make = Effect.gen(function* () {
+  const auth = yield* EnvironmentAuth.EnvironmentAuth;
   const links = yield* PeerLinks.PeerLinks;
   const httpClient = yield* HttpClient.HttpClient;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -100,7 +120,36 @@ const make = Effect.gen(function* () {
     return { pairingUrl: buildPairingUrl(resolved.url, issued.credential) };
   });
 
-  return PeerClientPairing.of({ pairClient });
+  const issueToLink: PeerClientPairing["Service"]["issueToLink"] = Effect.fn(
+    "PeerClientPairing.issueToLink",
+  )(function* (request) {
+    const client = yield* auth.authenticateMcpClient(request).pipe(Effect.option);
+    if (Option.isNone(client)) {
+      return yield* new PeerClientPairingRefused({ status: 401, reason: "unauthorized" });
+    }
+    if (!client.value.peerLink || client.value.access !== "full-access") {
+      return yield* new PeerClientPairingRefused({
+        status: 403,
+        reason: "full_access_link_required",
+      });
+    }
+    const settings = yield* serverSettings.getSettings.pipe(Effect.option);
+    if (Option.isNone(settings) || !settings.value.linkedEnvironmentsEnabled) {
+      return yield* new PeerClientPairingRefused({
+        status: 403,
+        reason: "linked_environments_off",
+      });
+    }
+    if (!settings.value.loadBalancingIncludeLinkedEnvironments) {
+      return yield* new PeerClientPairingRefused({ status: 403, reason: "load_balancing_off" });
+    }
+    const issued = yield* auth.issuePairingCredential({
+      label: `Linked route via ${client.value.label}`,
+    });
+    return { credential: issued.credential, expiresAt: issued.expiresAt };
+  });
+
+  return PeerClientPairing.of({ pairClient, issueToLink });
 });
 
 export const layer = Layer.effect(PeerClientPairing, make);
@@ -108,38 +157,29 @@ export const layer = Layer.effect(PeerClientPairing, make);
 const refused = (status: number, error: string) =>
   HttpServerResponse.jsonUnsafe({ error }, { status, headers: { "cache-control": "no-store" } });
 
-export const routeLayer = HttpRouter.add(
-  "POST",
-  PEER_CLIENT_PAIRING_PATH,
+export const routeLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const auth = yield* EnvironmentAuth.EnvironmentAuth;
-    const serverSettings = yield* ServerSettings.ServerSettingsService;
-    const client = yield* auth.authenticateMcpClient(request).pipe(Effect.option);
-    if (Option.isNone(client)) return refused(401, "unauthorized");
-    if (!client.value.peerLink || client.value.access !== "full-access") {
-      return refused(403, "full_access_link_required");
-    }
-    const enabled = yield* serverSettings.getSettings.pipe(
-      Effect.map((settings) => settings.linkedEnvironmentsEnabled),
-      Effect.orElseSucceed(() => false),
-    );
-    if (!enabled) return refused(403, "linked_environments_off");
-    const issued = yield* auth.issuePairingCredential({
-      label: `Linked route via ${client.value.label}`,
-    });
-    return yield* HttpServerResponse.json(
-      yield* encodeCredential({
-        credential: issued.credential,
-        expiresAt: issued.expiresAt,
-      }),
-      { headers: { "cache-control": "no-store" } },
-    );
-  }).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Could not issue a client pairing credential over a link.", cause).pipe(
-        Effect.as(refused(500, "pairing_failed")),
+    const pairing = yield* PeerClientPairing;
+    return HttpRouter.add(
+      "POST",
+      PEER_CLIENT_PAIRING_PATH,
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const issued = yield* pairing.issueToLink(request);
+        return yield* HttpServerResponse.json(yield* encodeCredential(issued), {
+          headers: { "cache-control": "no-store" },
+        });
+      }).pipe(
+        Effect.catchTags({
+          PeerClientPairingRefused: (refusal) =>
+            Effect.succeed(refused(refusal.status, refusal.reason)),
+        }),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not issue a client pairing credential over a link.", cause).pipe(
+            Effect.as(refused(500, "pairing_failed")),
+          ),
+        ),
       ),
-    ),
-  ),
+    );
+  }),
 );
