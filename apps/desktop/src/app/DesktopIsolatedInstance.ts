@@ -97,6 +97,11 @@ const watchCaptureRequests = (directory: string) => {
 };
 
 if (isolatedUserData) {
+  const temporaryDirectory = NodePath.join(isolatedUserData, "tmp");
+  NodeFS.mkdirSync(temporaryDirectory, { recursive: true });
+  process.env.TMPDIR = temporaryDirectory;
+  process.env.TMP = temporaryDirectory;
+  process.env.TEMP = temporaryDirectory;
   process.env.T3CODE_HOME = NodePath.join(isolatedUserData, "t3");
   process.env.T3CODE_AGENT_HOMES_DIR = NodePath.join(isolatedUserData, "agents");
   process.env.T3CODE_DISABLE_AUTO_UPDATE = "1";
