@@ -75,3 +75,11 @@ def require_approval(version, verdict, shots_dir=None):
     except OSError as error:
         raise ValueError("approval or adjacent shots are missing or unreadable") from error
     require_smoke(version, verdict, shots_dir)
+
+
+def approved(config):
+    try:
+        require_approval(config.version, config.verdict, config.run / "shots")
+        return True
+    except ValueError:
+        return False

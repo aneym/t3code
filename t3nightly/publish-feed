@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -15,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from t3nightly.release_signatures import verify_archive, verify_desktop_zip
 from t3nightly.release_approval import require_approval, verdict_path
+from t3nightly.release_outputs import fast_evidence
 
 FEED = Path("/Volumes/StudioExt/t3nightly-feed")
 RELEASES = Path.home() / ".agent-rails/lanes/t3-nightly/release"
@@ -95,12 +97,20 @@ def publish(directory, desktop, feed):
     if VERSION.fullmatch(version) is None:
         raise ValueError(f"not a fork nightly version: {version}")
     checksums = directory / "SHA256SUMS"
-    require_approval(version, verdict_path(version, getattr(publish, "verdict", None)))
+    evidence = getattr(publish, "evidence", None)
+    if evidence:
+        proven = fast_evidence(evidence, version)
+        expected = {f"t3-{version}-{'darwin-arm64' if host == 'studio' else 'linux-x64'}.tar.gz": row["archive"] for host, row in proven["hosts"].items()}
+        if {path.name: hashlib.file_digest(path.open("rb"), "sha256").hexdigest() for path in archives} != expected:
+            raise ValueError("feed archives are not exactly the installed and verified artifacts")
+        if not desktop:
+            raise ValueError("fast publication requires the swapped desktop artifacts")
+    else:
+        require_approval(version, verdict_path(version, getattr(publish, "verdict", None)))
     if not checksums.is_file():
         raise ValueError(f"missing {checksums}")
     assets = desktop_assets(desktop, version) if desktop else []
     rows = {line.split()[1]: line.split()[0] for line in checksums.read_text().splitlines() if len(line.split()) == 2}
-    import hashlib
     for archive in archives:
         digest = hashlib.file_digest(archive.open("rb"), "sha256").hexdigest()
         if rows.get(archive.name) != digest:
@@ -108,6 +118,8 @@ def publish(directory, desktop, feed):
         verify_archive(archive)
     if assets:
         verify_desktop_zip(assets[0])
+        if evidence and hashlib.file_digest(assets[0].open("rb"), "sha256").hexdigest() != proven["desktopZip"]:
+            raise ValueError("feed desktop zip is not the swapped and verified artifact")
     timestamp = built_at(archives[0])
     feed.mkdir(parents=True, exist_ok=True)
     with (feed / ".publish.lock").open("a") as lock:
@@ -161,6 +173,7 @@ def main():
     parser.add_argument("--feed-dir", type=Path, default=FEED, help="Release feed directory")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verdict", type=Path)
+    parser.add_argument("--fast-evidence", type=Path, help="fast-release run whose rehearsal, install and desktop-swap receipts replace the visual verdict")
     args = parser.parse_args()
     directory = Path(args.build).expanduser()
     if not directory.is_dir():
@@ -168,12 +181,16 @@ def main():
     if not directory.is_dir():
         parser.error(f"release directory not found: {directory}")
     publish.verdict = args.verdict
+    publish.evidence = args.fast_evidence
     try:
         archive = next(directory.glob("t3-*.tar.gz"), None)
         match = ARCHIVE.fullmatch(archive.name) if archive else None
         if match is None:
             raise ValueError("release archive is missing or invalid")
-        require_approval(match["version"], verdict_path(match["version"], args.verdict), directory / "shots")
+        if args.fast_evidence:
+            fast_evidence(args.fast_evidence, match["version"])
+        else:
+            require_approval(match["version"], verdict_path(match["version"], args.verdict), directory / "shots")
         feed = args.feed_dir.expanduser().resolve()
         if args.dry_run and (feed == FEED or feed.exists()):
             raise ValueError("dry-run requires a new scratch --feed-dir")
@@ -189,7 +206,7 @@ def main():
                     if source.is_file() and source.suffix in (".zip", ".blockmap", ".yml"):
                         atomic_copy(source, desktop / source.name)
             publish(snapshot, desktop, feed)
-    except (OSError, ValueError, tarfile.TarError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, KeyError, tarfile.TarError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"publish-feed: {error}\n")
 
 

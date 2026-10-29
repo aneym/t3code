@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+from dataclasses import asdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from t3nightly.release_graph import FAST_DEADLINE, FAST_GRAPH, critical_path
+from t3nightly.release_manifest import freeze, load
+
+
+def old_release(value):
+    host, separator, version = value.partition("=")
+    if not separator or not host or not version:
+        raise argparse.ArgumentTypeError("expected HOST=VERSION")
+    return host, version
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Freeze and inspect fast-path release candidates.")
+    commands = parser.add_subparsers(dest="command", required=True)
+    frozen = commands.add_parser("freeze", help="write an immutable candidate.json for an assembled tree")
+    frozen.add_argument("--tree", type=Path, required=True)
+    frozen.add_argument("--base", required=True, help="installed release head, or a nightly tag")
+    frozen.add_argument("--version", required=True)
+    frozen.add_argument("--out", type=Path, required=True)
+    frozen.add_argument("--old-release", type=old_release, action="append", default=[], metavar="HOST=VERSION")
+    shown = commands.add_parser("show", help="verify and print a frozen candidate.json")
+    shown.add_argument("manifest", type=Path)
+    commands.add_parser("graph", help="print the fast release graph and its budgeted critical path")
+    args = parser.parse_args()
+    if args.command == "graph":
+        path, seconds = critical_path()
+        print(json.dumps({
+            "deadline": FAST_DEADLINE, "criticalPath": path, "criticalSeconds": seconds,
+            "nodes": [asdict(node) for node in FAST_GRAPH],
+        }, indent=2))
+        return 0
+    try:
+        if args.command == "show":
+            manifest = load(args.manifest)
+        else:
+            manifest = freeze(args.tree, args.base, args.version, args.out, dict(args.old_release))
+    except (ValueError, OSError) as error:
+        print(json.dumps({"ok": False, "error": str(error)}), file=sys.stderr)
+        return 1
+    print(json.dumps(manifest, indent=2, sort_keys=True))
+    return 0 if manifest["compatibility"]["fastPath"]["eligible"] else 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

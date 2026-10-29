@@ -17,6 +17,15 @@ class Timeline:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.Lock()
 
+    def record_fast(self, stage, row):
+        value = dict(row, stage=stage.name, node=stage.id, host=stage.host,
+                     gating=stage.gating, resources=stage.resources,
+                     budget=stage.budget)
+        with self.lock, self.path.open("a") as handle:
+            handle.write(json.dumps(value, separators=(",", ":")) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
     def run(self, stage, log, action):
         started = utc_now()
         clock = time.monotonic()

@@ -70,7 +70,7 @@ class Run:
         path.write_text(json.dumps(self.report, indent=1))
         (self.state / "last.json").write_text(json.dumps(self.report, indent=1))
         print(line, flush=True)
-        return 0 if outcome in ("installed", "current", "rolled-back-clean") else 1
+        return 0 if outcome in ("installed", "current") else 1
 
     def environment(self):
         url = f"http://127.0.0.1:{self.args.port}/.well-known/t3/environment"
@@ -97,8 +97,6 @@ class Run:
             yield connection
 
     def streaming_runs(self, *, live=False):
-        if self.args.hard:
-            return []
         marks = ",".join("?" for _ in STREAMING)
         query = (
             "select r.thread_id, r.status from orchestration_v2_projection_runs r "
@@ -359,7 +357,7 @@ class Run:
                 else ["launchctl", "bootstrap", domain, str(self.service_plist)]
             )
         else:
-            command = ["systemctl", "--user", action, "t3code.service"]
+            command = ["systemctl", "--user", action, self.service_label]
         code = subprocess.run(
             command, capture_output=True, timeout=120, check=False
         ).returncode

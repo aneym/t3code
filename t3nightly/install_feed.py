@@ -1,10 +1,12 @@
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
 FEED = "https://studio.tailf266ac.ts.net:8972"
+FEED_SETTLE_S = 30
 
 
 def persist_release_feed(args, version):
@@ -30,15 +32,30 @@ def persist_release_feed(args, version):
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=120)
 
 
-def verify_release_feed(args, version):
-    if sys.platform == "darwin" or args.dry_run:
-        return
+def service_feed():
     result = subprocess.run(["systemctl", "--user", "show", "--property=MainPID", "--value", "t3code.service"], capture_output=True, text=True, check=True, timeout=120)
     pid = int(result.stdout.strip())
     if pid <= 0:
-        raise ValueError("service has no main PID after restart")
-    environ = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
-    values = [entry for entry in environ if entry.startswith(b"T3CODE_RELEASE_BASE_URL=")]
+        return None
+    try:
+        environ = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+    except OSError:
+        return None
+    return [entry for entry in environ if entry.startswith(b"T3CODE_RELEASE_BASE_URL=")]
+
+
+def verify_release_feed(args, version):
+    if sys.platform == "darwin" or args.dry_run:
+        return
     expected = [f"T3CODE_RELEASE_BASE_URL={FEED}".encode()] if ".aneym." in version else []
-    if values != expected:
-        raise ValueError("service release feed environment does not match its version after restart")
+    deadline = time.monotonic() + FEED_SETTLE_S
+    while True:
+        values = service_feed()
+        if values == expected:
+            return
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+    if values is None:
+        raise ValueError("service has no readable main process after restart")
+    raise ValueError("service release feed environment does not match its version after restart")

@@ -2,6 +2,7 @@ import os
 import plistlib
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -18,6 +19,16 @@ def service_identity(args, run):
         if raw
         else Path.home() / "Library/LaunchAgents" / f"{label}.plist"
     )
+    if sys.platform != "darwin":
+        if label == DEFAULT_LABEL:
+            label = "t3code.service"
+        if not label.endswith(".service"):
+            raise ValueError("Linux service identity must name a service unit")
+        if label != "t3code.service":
+            expected = Path.home() / ".config/systemd/user" / f"{label}.d"
+            if Path(args.systemd_dropin).expanduser() != expected:
+                raise ValueError("sandbox drop-in does not match intended service")
+        return label, path
     if label != DEFAULT_LABEL:
         if not raw or path.is_symlink() or path.resolve().parent != run.home.resolve():
             raise ValueError(
@@ -28,8 +39,10 @@ def service_identity(args, run):
         argv = unit.get("ProgramArguments", [])
         if (
             unit.get("Label") != label
-            or "--base-dir" not in argv
-            or argv[argv.index("--base-dir") + 1] != str(run.home)
+            or not (
+                ("--base-dir" in argv and argv[argv.index("--base-dir") + 1] == str(run.home))
+                or (argv[1:] == ["__service-launcher"] and unit.get("EnvironmentVariables", {}).get("T3CODE_HOME") == str(run.home))
+            )
         ):
             raise ValueError("isolated service identity does not match its home")
     return label, path

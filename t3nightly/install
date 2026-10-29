@@ -44,11 +44,23 @@ def parse():
     parser.add_argument("--settle-s", type=int, default=60)
     parser.add_argument("--allow-downgrade", action="store_true")
     parser.add_argument("--check-only", action="store_true")
+    parser.add_argument("--smoke-verdict")
     parser.add_argument("--snapshot-mib-s", type=float, default=32)
     parser.add_argument("--snapshot-max-s", type=int, default=1200)
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--seamless", action="store_true")
     parser.add_argument("--hard", action="store_true")
+    parser.add_argument("--receipt", default="")
+    parser.add_argument("--manifest", default="")
+    parser.add_argument("--artifact-manifest", default="")
+    parser.add_argument("--install-receipt", default="")
+    parser.add_argument("--receipt-host", choices=("studio", "ax42"))
+    parser.add_argument("--rehearsal", action="store_true")
+    parser.add_argument("--compatibility-probe", action="store_true")
+    parser.add_argument("--chat-project", default="")
+    parser.add_argument("--chat-provider", default="claudeAgent")
+    parser.add_argument("--chat-model", default="claude-sonnet-4-6")
+    parser.add_argument("--chat-timeout", type=int, default=90)
     parser.add_argument("--restart-source-bridge", action="store_true")
     parser.add_argument("--rpc-tree", default="")
     parser.add_argument("--node", default="node")
@@ -56,8 +68,14 @@ def parse():
     args = parser.parse_args()
     if args.backup_keep < 1:
         parser.error("--backup-keep must be at least one")
-    if args.hard and (args.seamless or args.wait):
-        parser.error("--hard cannot be combined with --seamless or --wait")
+    if args.hard and (args.seamless or args.wait or args.check_only or args.prepare_only):
+        parser.error("--hard cannot be combined with --seamless, --wait, --check-only or --prepare-only")
+    if args.hard and (not args.manifest or not args.artifact_manifest or not args.chat_project or (not args.receipt and not args.rehearsal)):
+        parser.error("--hard requires --manifest, --artifact-manifest, --chat-project and --receipt (or isolated --rehearsal)")
+    if args.rehearsal and not args.hard:
+        parser.error("--rehearsal requires --hard")
+    if args.compatibility_probe and not args.rehearsal:
+        parser.error("--compatibility-probe requires isolated --rehearsal")
     return args
 
 
@@ -84,6 +102,10 @@ if __name__ == "__main__":
             from t3nightly.install_resources import installer_owner
 
             with installer_owner(run), payload_lifecycle(run):
+                if args.hard:
+                    from t3nightly.install_hard import install as hard_install
+
+                    sys.exit(hard_install(run))
                 if args.seamless:
                     from t3nightly.install_seamless import install
 

@@ -8,6 +8,14 @@ from pathlib import Path
 from .release_graph import GRAPH
 
 
+HOSTS = {
+    "studio": {"repo": Path("/Volumes/StudioExt/repos/t3code"), "trees": Path("/Volumes/StudioExt/repos/t3code-wt"), "key": "darwin-arm64"},
+    "ax42": {"repo": Path("/home/jobs/repos/t3code"), "trees": Path("/home/jobs/repos/t3code-wt"), "key": "linux-x64"},
+}
+CHAT_PROJECT = ".t3nightly/fast-chat-project"
+SEEDS = ".t3nightly/rehearsal-seeds"
+
+
 @dataclass(frozen=True)
 class Config:
     version: str
@@ -62,6 +70,87 @@ class Config:
         if path.exists() and json.loads(path.read_text()) != value:
             raise ValueError("run inputs changed; use a new version")
         path.write_text(json.dumps(value, indent=2) + "\n")
+
+
+@dataclass(frozen=True)
+class FastConfig:
+    version: str
+    topic: str
+    run: Path
+    host: str
+    remote_run: str
+    remote_tools: str
+    base: str = ""
+
+    @property
+    def number(self):
+        return self.version.rsplit(".", 1)[1]
+
+    @property
+    def nightly(self):
+        return self.version.split(".aneym.", 1)[0]
+
+    @property
+    def tools(self):
+        return Path(__file__).resolve().parent
+
+    @property
+    def repo(self):
+        return HOSTS[self.host]["repo"]
+
+    @property
+    def key(self):
+        return HOSTS[self.host]["key"]
+
+    @property
+    def home(self):
+        return Path.home() if self.host == "studio" else Path("/home/jobs")
+
+    @property
+    def manifest(self):
+        return self.run / "candidate.json"
+
+    @property
+    def held(self):
+        return (self.home / ".t3nightly" / f"hold-install{self.number}").exists()
+
+    def on(self, host):
+        run = Path(self.remote_run) if host == "ax42" and self.host == "studio" else self.run
+        return FastConfig(self.version, self.topic, run, host, self.remote_run, self.remote_tools, self.base)
+
+    def tree(self, stage):
+        return HOSTS[self.host]["trees"] / f"aneym-fast-{stage}"
+
+    def candidate_tree(self):
+        return HOSTS[self.host]["trees"] / "aneym-fast-candidate"
+
+    def archive(self, key=None):
+        return f"t3-{self.version}-{key or self.key}.tar.gz"
+
+    def build_out(self):
+        return self.run / ("mac" if self.host == "studio" else "linux")
+
+    def artifact(self, root=None):
+        platform, arch = self.key.split("-")
+        return (root or self.build_out()) / f"artifact-{platform}-{arch}.json"
+
+    def sandbox_root(self):
+        return self.home / ".t3nightly" / f"rehearsal-fast-{self.number}-{self.host}"
+
+    def receipt(self, kind):
+        return self.run / "receipts" / f"{kind}-{self.host}.json"
+
+    def install_state(self):
+        return self.run / f"install-{self.host}"
+
+    def outcome(self):
+        return self.install_state() / "outcome.json"
+
+    def seed(self, history):
+        return self.home / SEEDS / f"{history}.sqlite"
+
+    def chat_project(self):
+        return self.home / CHAT_PROJECT
 
 
 def parse():

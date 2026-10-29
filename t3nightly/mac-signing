@@ -13,10 +13,14 @@ keychain="$dir/t3nightly-signing.keychain-db"
 password="$(/usr/bin/openssl rand -hex 16)"
 lock="$HOME/.t3nightly/mac-signing.lock"
 mkdir -p "$(dirname "$lock")"
-if ! mkdir "$lock" 2>/dev/null; then
-  echo "mac-signing refusal: another signing job is active" >&2
-  exit 4
-fi
+deadline=$((SECONDS + ${T3NIGHTLY_SIGNING_WAIT_S:-900}))
+until mkdir "$lock" 2>/dev/null; do
+  if [ "$SECONDS" -ge "$deadline" ]; then
+    echo "mac-signing refusal: another signing job held the lock past the wait ($(cat "$lock/owner" 2>/dev/null))" >&2
+    exit 4
+  fi
+  sleep 2
+done
 printf '%s\n' "$dir" > "$lock/owner"
 cleanup() {
   "$here/mac-signing-done" "$dir"

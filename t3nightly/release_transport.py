@@ -2,13 +2,20 @@ import json
 import os
 import shlex
 import subprocess
+import time
 from pathlib import Path
 
 from .release_ownership import ownership, verify_tree
 
 
 def command(words, log, cwd=None, env=None):
-    return subprocess.run(words, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT, check=False).returncode
+    log.write(f"$ {shlex.join(str(word) for word in words)}\n")
+    log.flush()
+    started = time.monotonic()
+    code = subprocess.run(words, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT, check=False).returncode
+    log.write(f"[{time.monotonic() - started:.2f}s exit {code}]\n")
+    log.flush()
+    return code
 
 
 def require(words, log, cwd=None):

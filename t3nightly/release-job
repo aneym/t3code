@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from t3nightly.release_job_runner import run
+from t3nightly.release_jobs import status, submit
+
+
+if __name__ == "__main__":
+    operation, directory = sys.argv[1:]
+    if operation == "run":
+        raise SystemExit(run(directory))
+    if operation == "submit":
+        value = submit(directory, json.load(sys.stdin))
+    elif operation == "status":
+        value = status(directory)
+    else:
+        raise SystemExit("expected run, submit or status")
+    print(json.dumps(value))

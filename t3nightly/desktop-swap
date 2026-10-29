@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from t3nightly.release_approval import require_approval, verdict_path
+from t3nightly.release_outputs import fast_swap_ready
 from t3nightly.release_signatures import verify_desktop
 
 
@@ -19,6 +20,7 @@ def main():
     parser.add_argument("zip", type=Path)
     parser.add_argument("--verdict", type=Path)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--fast-evidence", type=Path, help="fast-release run whose Studio rehearsal and install receipts replace the visual verdict")
     args = parser.parse_args()
     dest = Path("/Applications/T3 Dev.app")
     try:
@@ -28,13 +30,19 @@ def main():
             new = work / dest.name
             with (new / "Contents/Info.plist").open("rb") as handle:
                 version = plistlib.load(handle)["CFBundleShortVersionString"]
-            require_approval(version, verdict_path(version, args.verdict), args.zip.parent.parent / "shots")
+            if args.fast_evidence:
+                fast_swap_ready(args.fast_evidence, version, args.zip)
+            else:
+                require_approval(version, verdict_path(version, args.verdict), args.zip.parent.parent / "shots")
             verify_desktop(new)
             if args.dry_run:
                 print(f"desktop-swap: accepted {version}; no app writes")
                 return
             backups = Path.home() / "Applications-backup"
             backups.mkdir(exist_ok=True)
+            if backups.stat().st_dev != dest.parent.stat().st_dev:
+                backups = dest.parent / ".t3nightly-backup"
+                backups.mkdir(exist_ok=True)
             backup = backups / f"T3 Dev {datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}.app"
             with tempfile.TemporaryDirectory(prefix=".t3nightly-", dir=dest.parent) as staging:
                 staged = Path(staging) / dest.name
@@ -48,9 +56,8 @@ def main():
                     if backup.exists():
                         os.replace(backup, dest)
                     raise
-            cutoff = datetime.now(timezone.utc).timestamp() - 14 * 86400
             for old in backups.glob("T3 Dev *.app"):
-                if old != backup and old.is_dir() and not old.is_symlink() and old.stat().st_mtime < cutoff:
+                if old != backup and backup.exists() and old.is_dir() and not old.is_symlink():
                     shutil.rmtree(old)
             print(f"installed desktop {version}; quit and reopen the app yourself to load it")
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:

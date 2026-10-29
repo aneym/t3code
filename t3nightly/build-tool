@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+
+name = Path(sys.argv[0]).name
+paths = {"codesign": "/usr/bin/codesign", "xcrun": "/usr/bin/xcrun"}
+if name not in paths:
+    raise SystemExit(2)
+steps = {"codesign": "sign", "xcrun": "notarize"}
+script = Path(__file__).resolve().with_name("build_steps.py")
+words = [
+    sys.executable, str(script),
+    "--out", os.environ["T3NIGHTLY_BUILD_OUT"],
+    "--step", steps[name],
+    "--platform", os.environ["T3NIGHTLY_BUILD_PLATFORM"],
+    "--arch", os.environ["T3NIGHTLY_BUILD_ARCH"],
+    "--", paths[name], *sys.argv[1:],
+]
+os.execv(sys.executable, words)

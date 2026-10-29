@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from t3nightly.release_observe import watch
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Record an advisory post-install health watch without mutating the service or database.")
+    parser.add_argument("--host", required=True, choices=["studio", "ax42"])
+    parser.add_argument("--service")
+    parser.add_argument("--port", type=int, default=3773)
+    parser.add_argument("--database", default="~/.t3/userdata/statev2.sqlite")
+    parser.add_argument("--expected-version", required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--duration", type=float, default=600)
+    parser.add_argument("--interval", type=float, default=10)
+    args = parser.parse_args()
+    service = args.service or ("t3code.service" if args.host == "ax42" else "com.t3tools.t3code.service")
+    try:
+        result = watch(args.host, service, args.port, args.database, args.expected_version, args.out, args.duration, args.interval)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        print(json.dumps({"ok": False, "error": str(error)}), file=sys.stderr)
+        return 2
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return {"pass": 0, "fail": 1, "unavailable": 3}[result["result"]]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

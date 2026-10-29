@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import re
+import sys
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from t3nightly.release_manifest import load
+from t3nightly.release_receipts import OBSERVED, parse, provenance
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Check rehearsal and install receipts against a frozen candidate.")
+    commands = parser.add_subparsers(dest="command", required=True)
+    checked = commands.add_parser("check", help="exit 0 only when the receipt is valid for this candidate and host now")
+    checked.add_argument("--receipt", type=Path, required=True)
+    checked.add_argument("--manifest", type=Path, required=True)
+    checked.add_argument("--host", required=True)
+    checked.add_argument("--now", type=datetime.fromisoformat, help="aware ISO time; default is the current time")
+    for key in OBSERVED:
+        checked.add_argument("--" + re.sub(r"([A-Z])", r"-\1", key.replace(".", "-")).lower(), dest=key, metavar="SHA256", help=f"recomputed {key} to compare")
+    args = parser.parse_args()
+    observed = {key: getattr(args, key) for key in OBSERVED if getattr(args, key)}
+    try:
+        receipt = parse(args.receipt)
+        reasons = provenance(receipt, load(args.manifest), args.host, args.now, observed)
+    except (ValueError, OSError, KeyError) as error:
+        reasons = [f"unreadable: {error}"]
+        receipt = {}
+    print(json.dumps({"ok": not reasons, "receipt": str(args.receipt), "digest": receipt.get("digest"), "reasons": reasons}, indent=2))
+    return 0 if not reasons else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

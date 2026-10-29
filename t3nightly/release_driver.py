@@ -10,6 +10,7 @@ from .release_actions import run_action
 from .release_admission import heavy_owner
 from .release_config import parse
 from .release_graph import GRAPH, studio_first_graph
+from .release_fast import main as fast_main
 from .release_ownership import ownership, release_local, verify_tree
 from .release_outputs import completed, valid_output, remote_archive_exists
 from .release_timeline import Timeline
@@ -144,6 +145,8 @@ def drive(config, graph):
 
 
 def main():
+    if "--fast" in sys.argv[1:]:
+        return fast_main(sys.argv[1:])
     config, args = parse()
     graph = selected_graph(args.until, studio_first=args.studio_first)
     if args.plan:

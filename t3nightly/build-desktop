@@ -21,6 +21,33 @@ stage_root="$(df -P "$tree" | awk 'NR==2{print $NF}')/tmp"
 [ -d "$stage_root" ] && [ -w "$stage_root" ] || stage_root="${TMPDIR:-/tmp}"
 export TMPDIR="${T3NIGHTLY_DESKTOP_TMP:-$stage_root/t3nightly-desktop/$(basename "$tree")}"
 mkdir -p "$TMPDIR"
+unset CSC_LINK CSC_KEY_PASSWORD T3CODE_MACOS_PROVISIONING_PROFILE
+set -a
+. "$config"
+set +a
+export T3CODE_DESKTOP_UPDATE_REPOSITORY=aneym/t3code
+export T3CODE_DESKTOP_UPDATE_URL=https://studio.tailf266ac.ts.net:8972/
+node_version="$(sed -n 's/.*"node": *"\([0-9.]*\)".*/\1/p' "$tree/package.json" | head -n 1)"
+[ -n "$node_version" ] || { echo "no engines.node in $tree/package.json" >&2; exit 3; }
+node_bin="$HOME/.vite-plus/js_runtime/node/$node_version/bin"
+[ -x "$node_bin/node" ] || { echo "node $node_version not installed under $node_bin" >&2; exit 3; }
+export PATH="$tree/node_modules/.bin:$node_bin:$HOME/.vite-plus/bin:$PATH"
+export T3NIGHTLY_BUILD_OUT="$out" T3NIGHTLY_BUILD_PLATFORM=darwin T3NIGHTLY_BUILD_ARCH=arm64
+cd "$tree"
+step() {
+  name="$1"
+  shift
+  python3 "$here/build_steps.py" --out "$out" --step "$name" --platform darwin --arch arm64 -- "$@"
+}
+tool_bin="$tree/.local-release/build-tool-bin"
+mkdir -p "$tool_bin"
+ln -sf "$here/build-tool" "$tool_bin/codesign"
+ln -sf "$here/build-tool" "$tool_bin/xcrun"
+{
+  step vp-install python3 "$here/build_dependencies.py" --tree "$tree" --node-version "$node_version" --platform darwin --arch arm64 -- vp i --frozen-lockfile -- --package-import-method=clone &&
+  step web-build nice -n 10 vp run build:desktop &&
+  "$here/fork-build-manifest" "$version" > apps/server/dist/client/fork-build.json
+} 2>&1 | python3 "$here/release_redact.py"
 sign_dir="$(mktemp -d "$TMPDIR/sign.XXXXXX")"
 trap '"$here/mac-signing-done" "$sign_dir"' EXIT
 if ! signing_env=$("$here/mac-signing" "$sign_dir"); then
@@ -29,20 +56,8 @@ if ! signing_env=$("$here/mac-signing" "$sign_dir"); then
 fi
 eval "$signing_env"
 export T3CODE_CLI_MAC_SIGN_IDENTITY CSC_NAME CSC_KEYCHAIN APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID
-unset CSC_LINK CSC_KEY_PASSWORD T3CODE_MACOS_PROVISIONING_PROFILE
-set -a
-. "$config"
-set +a
-export T3CODE_DESKTOP_UPDATE_REPOSITORY=aneym/t3code
-export T3CODE_DESKTOP_UPDATE_URL=https://studio.tailf266ac.ts.net:8972/
-export PATH="$HOME/.vite-plus/js_runtime/node/26.12.1/bin:$HOME/.vite-plus/bin:$PATH"
-cd "$tree"
-build() {
-  vp i --frozen-lockfile -- --package-import-method=clone &&
-  nice -n 10 vp run build:desktop &&
-  "$here/fork-build-manifest" "$version" > apps/server/dist/client/fork-build.json &&
-  T3CODE_DESKTOP_SKIP_BUILD=1 nice -n 10 vp run dist:desktop:artifact --platform mac --target dmg --arch arm64 --build-version "$version" --signed --verbose --output-dir "$out"
-}
-build 2>&1 | python3 "$here/release_redact.py"
+PATH="$tool_bin:$PATH" step desktop-build env T3CODE_DESKTOP_SKIP_BUILD=1 nice -n 10 vp run dist:desktop:artifact --platform mac --target dmg --arch arm64 --build-version "$version" --signed --verbose --output-dir "$out" 2>&1 | python3 "$here/release_redact.py"
+"$here/mac-signing-done" "$sign_dir"
+trap - EXIT
 zip="$out/T3-Code-$version-arm64.zip"
-python3 "$here/release_signatures.py" desktop-zip "$zip"
+step verify python3 "$here/build_artifacts.py" desktop --archive "$zip" --out "$out" --version "$version" --platform darwin --arch arm64
