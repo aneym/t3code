@@ -54,9 +54,17 @@ def restart_session(run, previous):
             yield bearer
         finally:
             try:
+                revoke_binary = revoker
+                state = run.home / "runtime/service-state.json"
+                if state.is_file():
+                    active = json.loads(state.read_text()).get("activeVersion", "")
+                    if active and Path(active).name == active and active not in (".", ".."):
+                        current = run.home / "runtime/versions" / active / "t3"
+                        if current.is_file():
+                            revoke_binary = current
                 revoked = subprocess.run(
                     [
-                        str(revoker),
+                        str(revoke_binary),
                         "auth",
                         "session",
                         "revoke",
