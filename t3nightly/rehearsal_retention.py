@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 PREFIX = "rehearsal-fast-"
@@ -36,6 +37,19 @@ def installer_target(root):
     return Path(state).resolve() if isinstance(state, str) and state else None
 
 
+def process_start(proc):
+    boot = next(int(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines() if line.startswith("btime "))
+    ticks = int((proc / "stat").read_text().rpartition(")")[2].split()[19])
+    return boot + ticks / os.sysconf("SC_CLK_TCK")
+
+
+def rehearsal_start(path):
+    try:
+        return datetime.fromisoformat(str((finished(path) or {}).get("startedAt"))).timestamp()
+    except ValueError:
+        return None
+
+
 def live_references():
     own = os.getpid()
     if sys.platform == "darwin":
@@ -51,8 +65,8 @@ def live_references():
                 pid = line[1:]
             elif line.startswith("n") and pid != str(own):
                 references.append(line[1:])
-        return references
-    references = []
+        return references, []
+    references, protected = [], []
     if not Path("/proc/self/cwd").exists():
         raise RuntimeError("process inspection unavailable")
     for proc in Path("/proc").iterdir():
@@ -65,11 +79,12 @@ def live_references():
         except FileNotFoundError:
             continue
         except PermissionError:
-            continue
+            if mine:
+                protected.append(process_start(proc))
         except OSError:
             if mine:
                 raise
-    return references
+    return references, protected
 
 
 def held(spellings, references):
@@ -95,7 +110,7 @@ def retain(sandbox_dir):
         fcntl.flock(lock, fcntl.LOCK_EX)
         dirs = listed(root)
         target = installer_target(root)
-        references = live_references()
+        references, protected = live_references()
         report = {"kept": [], "dropped": [], "held": []}
         for path in dirs:
             home = path / "home"
@@ -106,7 +121,9 @@ def retain(sandbox_dir):
                 continue
             if not home.is_dir() or home.is_symlink():
                 continue
-            if (target and target.is_relative_to(path)) or held({str(path), str(alias / path.name)}, references):
+            began = rehearsal_start(path)
+            shielded = protected and (began is None or max(protected) >= began - 5)
+            if (target and target.is_relative_to(path)) or shielded or held({str(path), str(alias / path.name)}, references):
                 report["held"].append(path.name)
             else:
                 shutil.rmtree(home)
