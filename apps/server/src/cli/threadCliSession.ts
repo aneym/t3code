@@ -57,16 +57,18 @@ const isUsable = Effect.fn("cli.thread.session.isUsable")(function* (credential:
   return credential.expiresAtMs - Duration.toMillis(REFRESH_BEFORE_EXPIRY) > now;
 });
 
+const randomId = Crypto.Crypto.pipe(
+  Effect.flatMap((crypto) => crypto.randomUUIDv4()),
+  Effect.orDie,
+);
+
 const writeCredential = Effect.fn("cli.thread.session.writeCache")(function* (
   cachePath: string,
   credential: CachedCredential,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
-  const tempPath = `${cachePath}.${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}.tmp`;
-  yield* Effect.gen(function* () {
-    yield* fileSystem.makeDirectory(path.dirname(cachePath), { recursive: true, mode: 0o700 });
+  const tempPath = `${cachePath}.${yield* randomId}.tmp`;
+  return yield* Effect.gen(function* () {
     yield* Effect.scoped(
       Effect.gen(function* () {
         const file = yield* fileSystem.open(tempPath, { flag: "wx", mode: 0o600 });
@@ -75,18 +77,49 @@ const writeCredential = Effect.fn("cli.thread.session.writeCache")(function* (
     );
     yield* fileSystem.chmod(tempPath, 0o600);
     yield* fileSystem.rename(tempPath, cachePath);
+    return true;
   }).pipe(
     Effect.ensuring(fileSystem.remove(tempPath, { force: true }).pipe(Effect.ignore)),
-    Effect.ignore({ log: true }),
+    Effect.tapError((cause) =>
+      Effect.logDebug("Could not cache the thread CLI session", { cause }),
+    ),
+    Effect.orElseSucceed(() => false),
   );
 });
 
 type LockAttempt = "taken" | "busy" | "unavailable";
 
-const tryTakeLock = Effect.fn("cli.thread.session.tryTakeLock")(function* (lockPath: string) {
+const readLock = (lockPath: string) =>
+  FileSystem.FileSystem.pipe(
+    Effect.flatMap((fileSystem) => fileSystem.readFileString(lockPath)),
+    Effect.option,
+  );
+
+const takeOverStaleLock = Effect.fn("cli.thread.session.takeOverStaleLock")(function* (
+  lockPath: string,
+  staleOwner: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const asidePath = `${lockPath}.${yield* randomId}.stale`;
+  const moved = yield* fileSystem.rename(lockPath, asidePath).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+  if (!moved) return;
+  const movedOwner = yield* readLock(asidePath);
+  if (!Option.contains(movedOwner, staleOwner)) {
+    yield* fileSystem.link(asidePath, lockPath).pipe(Effect.ignore);
+  }
+  yield* fileSystem.remove(asidePath, { force: true }).pipe(Effect.ignore);
+});
+
+const tryTakeLock = Effect.fn("cli.thread.session.tryTakeLock")(function* (
+  lockPath: string,
+  owner: string,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const attempt: LockAttempt = yield* fileSystem
-    .writeFileString(lockPath, "", { flag: "wx", mode: 0o600 })
+    .writeFileString(lockPath, owner, { flag: "wx", mode: 0o600 })
     .pipe(
       Effect.as<LockAttempt>("taken"),
       Effect.catchReason("PlatformError", "AlreadyExists", () =>
@@ -95,24 +128,40 @@ const tryTakeLock = Effect.fn("cli.thread.session.tryTakeLock")(function* (lockP
       Effect.orElseSucceed((): LockAttempt => "unavailable"),
     );
   if (attempt !== "busy") return attempt;
+  const currentOwner = yield* readLock(lockPath);
   const now = yield* Clock.currentTimeMillis;
   const info = yield* fileSystem.stat(lockPath).pipe(Effect.option);
   const stale = Option.exists(
     Option.flatMap(info, (stat) => stat.mtime),
     (mtime) => now - mtime.getTime() > Duration.toMillis(LOCK_STALE_AFTER),
   );
-  if (stale) yield* fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore);
+  if (stale && Option.isSome(currentOwner)) {
+    yield* takeOverStaleLock(lockPath, currentOwner.value);
+  }
   return attempt;
 });
 
-const acquireLock = Effect.fn("cli.thread.session.acquireLock")(function* (lockPath: string) {
+const acquireLock = Effect.fn("cli.thread.session.acquireLock")(function* (
+  lockPath: string,
+  owner: string,
+) {
   const deadline = (yield* Clock.currentTimeMillis) + Duration.toMillis(LOCK_WAIT);
   while ((yield* Clock.currentTimeMillis) < deadline) {
-    const attempt = yield* tryTakeLock(lockPath);
+    const attempt = yield* tryTakeLock(lockPath, owner);
     if (attempt !== "busy") return attempt === "taken";
     yield* Effect.sleep(LOCK_POLL);
   }
   return false;
+});
+
+const releaseLock = Effect.fn("cli.thread.session.releaseLock")(function* (
+  lockPath: string,
+  owner: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  if (Option.contains(yield* readLock(lockPath), owner)) {
+    yield* fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore);
+  }
 });
 
 const mint = Effect.fn("cli.thread.session.mint")(function* (
@@ -146,12 +195,12 @@ const refreshCached = Effect.fn("cli.thread.session.refresh")(function* (
     !Option.contains(replaced, current.value.sessionId) &&
     (yield* isUsable(current.value))
   ) {
-    return current.value;
+    return { credential: current.value, cached: true };
   }
   const credential = yield* mint(config);
-  yield* writeCredential(cachePath, credential);
+  const cached = yield* writeCredential(cachePath, credential);
   if (Option.isSome(replaced)) yield* revoke(config, replaced.value);
-  return credential;
+  return { credential, cached };
 });
 
 const openSession = (endpoint: string, token: string) =>
@@ -184,16 +233,19 @@ export const openThreadCliSession = Effect.fn("cli.thread.session.open")(functio
   yield* fileSystem
     .makeDirectory(config.secretsDir, { recursive: true, mode: 0o700 })
     .pipe(Effect.ignore);
+  const owner = yield* randomId;
   const refreshed = yield* Effect.scoped(
     Effect.gen(function* () {
-      const held = yield* Effect.acquireRelease(acquireLock(lockPath), (taken) =>
-        taken ? fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore) : Effect.void,
+      const held = yield* Effect.acquireRelease(acquireLock(lockPath, owner), (taken) =>
+        taken ? releaseLock(lockPath, owner) : Effect.void,
       );
       return held ? Option.some(yield* refreshCached(config, cachePath, replaced)) : Option.none();
     }),
   );
-  const credential = Option.isSome(refreshed)
+  const outcome = Option.isSome(refreshed)
     ? refreshed.value
-    : yield* Effect.acquireRelease(mint(config), (uncached) => revoke(config, uncached.sessionId));
+    : { credential: yield* mint(config), cached: false };
+  const credential = outcome.credential;
+  if (!outcome.cached) yield* Effect.addFinalizer(() => revoke(config, credential.sessionId));
   return yield* openSession(endpoint, credential.token);
 });
