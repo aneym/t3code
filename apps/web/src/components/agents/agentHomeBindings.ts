@@ -28,20 +28,22 @@ export interface EnvironmentAgentHome extends AgentHome {
 }
 
 const environmentHomes = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make((get): ReadonlyArray<EnvironmentAgentHome> => {
+  Atom.make((get): ReadonlyArray<EnvironmentAgentHome> | null => {
     const result = get(subscribeHomes({ environmentId, input: {} }));
     const snapshot = Option.getOrNull(AsyncResult.value(result));
-    return snapshot?.homes.map((home) => ({ ...home, environmentId })) ?? [];
+    return snapshot?.homes.map((home) => ({ ...home, environmentId })) ?? null;
   }),
 );
 const allHomes = environmentAtomList("web-agents:all-homes", environmentHomes);
 
 export function useAgentHomes(): ReadonlyArray<EnvironmentAgentHome> {
   const ids = useEnvironmentIds().toSorted();
-  return useAtomValue(allHomes(environmentIdsKey(ids))).flat();
+  return useAtomValue(allHomes(environmentIdsKey(ids))).flatMap((homes) => homes ?? []);
 }
 
-export function readAgentHomes(): ReadonlyArray<EnvironmentAgentHome> {
+export function readLoadedAgentHomes(): ReadonlyArray<EnvironmentAgentHome> | null {
   const ids = appAtomRegistry.get(environmentSummaries.environmentIdsAtom).toSorted();
-  return appAtomRegistry.get(allHomes(environmentIdsKey(ids))).flat();
+  const perEnvironment = appAtomRegistry.get(allHomes(environmentIdsKey(ids)));
+  if (perEnvironment.some((homes) => homes === null)) return null;
+  return perEnvironment.flatMap((homes) => homes ?? []);
 }
