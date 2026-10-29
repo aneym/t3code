@@ -39,6 +39,7 @@ const HANDOFF_DELAY_MS = 2_000;
  * take minutes. A missed window rolls back the database, so the next attempt pays the same cost.
  */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
+const OWNED_RETRY_MAX_MS = 30_000;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
 
@@ -407,6 +408,8 @@ export class Launcher {
   #stopRequested = false;
   #stopping = false;
   #done = false;
+  #failure: Error | undefined;
+  #ownedRetries = 0;
   readonly #terminator = new ChildTerminator();
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
@@ -449,46 +452,55 @@ export class Launcher {
       );
   }
 
+  #startStopDeadline(): void {
+    this.#terminator.startStopDeadline(() => {
+      if (this.#done) return;
+      this.#done = true;
+      this.#stopping = true;
+      this.#child?.process.kill("SIGKILL");
+      killCopyHelpers();
+      if (this.#failure !== undefined) {
+        process.stderr.write(`[service-launcher] ${this.#failure.message}\n`);
+      }
+      process.stderr.write(
+        "[service-launcher] Stop deadline passed; exiting without the server.\n",
+      );
+      process.removeAllListeners("SIGTERM");
+      process.kill(process.pid, "SIGTERM");
+    });
+  }
+
   async #fatal(error: Error): Promise<void> {
     if (this.#done) return;
-    this.#done = true;
+    this.#failure = error;
+    this.#startStopDeadline();
     this.#stopping = true;
     this.#clearTimer();
     const child = this.#child?.process;
     this.#child = null;
     if (child !== undefined) await this.#terminator.terminate(child);
+    this.#done = true;
     this.#completion.reject(error);
   }
 
   async stop(signal: NodeJS.Signals): Promise<void> {
-    if (this.#stopRequested || this.#stopping) {
-      await this.#completion.promise.catch(() => undefined);
-      return;
-    }
-    this.#stopRequested = true;
-    const marker = this.#terminator.startStopDeadline(
-      () => {
-        if (this.#done) return;
-        this.#stopping = true;
-        this.#child?.process.kill("SIGKILL");
-        killCopyHelpers();
-        process.removeAllListeners("SIGTERM");
-        process.kill(process.pid, "SIGTERM");
-      },
-      () => writeStopMarker(this.#baseDir),
-    );
-    this.#clearTimer();
-    // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
-    this.#enqueue(async () => {
-      this.#stopping = true;
+    if (!this.#stopRequested && !this.#done) {
+      this.#stopRequested = true;
+      this.#startStopDeadline();
+      const marker = this.#terminator.holdSignalsUntil(writeStopMarker(this.#baseDir));
       this.#clearTimer();
-      const child = this.#child?.process;
-      this.#child = null;
-      if (child !== undefined) await this.#terminator.terminate(child, signal);
-      await marker;
-      this.#done = true;
-      this.#completion.resolve();
-    });
+      // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
+      this.#enqueue(async () => {
+        this.#stopping = true;
+        this.#clearTimer();
+        const child = this.#child?.process;
+        this.#child = null;
+        if (child !== undefined) await this.#terminator.terminate(child, signal);
+        await marker;
+        this.#done = true;
+        this.#completion.resolve();
+      });
+    }
     await this.#completion.promise.catch(() => undefined);
   }
 
@@ -724,9 +736,10 @@ export class Launcher {
     if (this.#child !== child || this.#stopping) return;
     this.#child = null;
     if (code === STATE_DIR_OWNED_EXIT_CODE) {
-      await this.#idleWhileStateDirOwned();
+      this.#retryWhileStateDirOwned(child);
       return;
     }
+    this.#ownedRetries = 0;
     if (child.role === "trial") {
       this.#clearTimer();
       const pending = this.#state.update;
@@ -750,25 +763,25 @@ export class Launcher {
     throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);
   }
 
-  // Stay idle to avoid supervisor restart loops; never restore backups over another owner's possible writes.
-  async #idleWhileStateDirOwned(): Promise<void> {
+  #retryWhileStateDirOwned(child: ManagedChild): void {
     this.#clearTimer();
-    const pending = this.#state.update;
-    if (pending?.status === "pending") {
-      const next: ServiceState = {
-        ...this.#state,
-        activeVersion: pending.fromVersion,
-        update: terminalUpdate({ pending, status: "failed", reason: "state-dir-owned" }),
-      };
-      await writeServiceState(this.#statePath, next);
-      this.#state = next;
-      await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
+    if (this.#ownedRetries === 0) {
+      process.stderr.write(
+        "[service-launcher] Another T3 Code server owns this T3 home. Retrying until it stops.\n",
+      );
     }
-    // Signal listeners alone do not keep Node alive.
-    this.#timer = setInterval(() => {}, 2_147_483_647);
-    process.stderr.write(
-      "[service-launcher] Another T3 Code server owns this T3 home. Stop it, then restart this service.\n",
-    );
+    const delay = Math.min(1_000 * 2 ** this.#ownedRetries++, OWNED_RETRY_MAX_MS);
+    this.#timer = setTimeout(() => this.#enqueue(() => this.#restartOwned(child)), delay);
+  }
+
+  async #restartOwned(child: ManagedChild): Promise<void> {
+    this.#timer = undefined;
+    const pending = this.#state.update;
+    if (child.role === "trial" && pending?.status === "pending") {
+      await this.#startTrial(pending);
+      return;
+    }
+    await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
   }
 
   async #returnToPrevious(

@@ -12,17 +12,23 @@ function waitForExit(child: NodeChildProcess.ChildProcess): Promise<void> {
 export class ChildTerminator {
   readonly #stopDeadline = new AbortController();
   readonly #terminating = new Set<NodeChildProcess.ChildProcess>();
+  #deadlineArmed = false;
   #beforeSignal: Promise<void> = Promise.resolve();
 
-  startStopDeadline(onDeadline: () => void, beforeSignal: () => Promise<void>): Promise<void> {
+  startStopDeadline(onDeadline: () => void): void {
+    if (this.#deadlineArmed) return;
+    this.#deadlineArmed = true;
     const forceStop = () => {
       for (const child of this.#terminating) child.kill("SIGKILL");
       onDeadline();
     };
     this.#stopDeadline.signal.addEventListener("abort", forceStop, { once: true });
     setTimeout(() => this.#stopDeadline.abort(), STOP_GRACE_MS).unref();
-    this.#beforeSignal = beforeSignal();
-    return this.#beforeSignal;
+  }
+
+  holdSignalsUntil(ready: Promise<void>): Promise<void> {
+    this.#beforeSignal = ready;
+    return ready;
   }
 
   async terminate(
