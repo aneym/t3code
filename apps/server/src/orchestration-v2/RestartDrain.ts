@@ -1,9 +1,4 @@
-import {
-  type OrchestrationV2Run,
-  type RunId,
-  ServerPrepareRestartError,
-  type ServerRestartDrain,
-} from "@t3tools/contracts";
+import { type OrchestrationV2Run, type RunId, type ServerRestartDrain } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -50,8 +45,7 @@ export const drainBeforeRestart = Effect.fn("RestartDrain.drainBeforeRestart")(f
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const sink = yield* EventSink.EventSinkV2;
   const startedAt = yield* Clock.currentTimeMillis;
-  if (!(yield* outbox.drainForRestart(epoch)))
-    return yield* new ServerPrepareRestartError({ cause: "A restart drain is already running." });
+  yield* outbox.drainForRestart(epoch);
   const afterSequence = yield* sink.latestSequence();
   const initial = yield* activeRuns;
   const settled =

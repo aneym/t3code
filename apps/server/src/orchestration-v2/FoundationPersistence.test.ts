@@ -33,7 +33,6 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -2974,36 +2973,43 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
-  it.effect("refuses a second drain while one is running and keeps holding starts", () =>
-    Effect.gen(function* () {
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
-      yield* seedRunningRun("restart-drain-concurrent");
-      yield* outbox.enqueue([
-        {
-          id: "effect:restart-drain-concurrent:start",
-          commandId: CommandId.make("command:restart-drain-concurrent"),
-          threadId: ThreadId.make("thread:restart-drain-concurrent:queued"),
-          request: {
-            type: "provider-turn.start",
-            runId: RunId.make("run:restart-drain-concurrent:queued"),
+  it.effect(
+    "queues a second prepare behind a drain and keeps it when the drain is interrupted",
+    () =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        yield* seedRunningRun("restart-drain-concurrent");
+        yield* outbox.enqueue([
+          {
+            id: "effect:restart-drain-concurrent:start",
+            commandId: CommandId.make("command:restart-drain-concurrent"),
+            threadId: ThreadId.make("thread:restart-drain-concurrent:queued"),
+            request: {
+              type: "provider-turn.start",
+              runId: RunId.make("run:restart-drain-concurrent:queued"),
+            },
           },
-        },
-      ]);
-      const first = yield* RestartPreparation.prepareRestart("epoch:concurrent", 60_000).pipe(
-        Effect.forkChild,
-      );
-      yield* TestClock.adjust("1 second");
-      const second = yield* RestartPreparation.prepareRestart("epoch:concurrent", 60_000).pipe(
-        Effect.exit,
-      );
-      assert.isTrue(Exit.isFailure(second));
-      assert.equal(yield* outbox.restartDraining, "epoch:concurrent");
-      assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId: "drain-worker" })));
-      yield* Fiber.interrupt(first);
-      assert.isUndefined(yield* outbox.restartDraining);
-      const released = yield* outbox.claimNext({ workerId: "drain-worker" });
-      assert.equal(Option.getOrUndefined(released)?.id, "effect:restart-drain-concurrent:start");
-    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+        ]);
+        const first = yield* RestartPreparation.prepareRestart("epoch:concurrent", 60_000).pipe(
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("1 second");
+        const second = yield* RestartPreparation.prepareRestart("epoch:concurrent").pipe(
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("1 second");
+        assert.equal(yield* outbox.restartDraining, "epoch:concurrent");
+        assert.isUndefined(yield* outbox.restartPrepared);
+        assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId: "drain-worker" })));
+        yield* Fiber.interrupt(first);
+        const receipt = yield* Fiber.join(second);
+        assert.isTrue(receipt.ready);
+        assert.equal(yield* outbox.restartPrepared, "epoch:concurrent");
+        assert.isUndefined(yield* outbox.restartDraining);
+        yield* RestartPreparation.abortRestart("epoch:concurrent");
+        const released = yield* outbox.claimNext({ workerId: "drain-worker" });
+        assert.equal(Option.getOrUndefined(released)?.id, "effect:restart-drain-concurrent:start");
+      }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
   it.effect("spaces restart resumes so their sessions do not open together", () =>

@@ -44,7 +44,10 @@ export interface EffectOutboxV2Shape {
   readonly restartPrepared: Effect.Effect<string | undefined>;
   readonly prepareRestart: (epoch: string) => Effect.Effect<void>;
   readonly restartDraining: Effect.Effect<string | undefined>;
-  readonly drainForRestart: (epoch: string) => Effect.Effect<boolean, never, Scope.Scope>;
+  readonly drainForRestart: (epoch: string) => Effect.Effect<void, never, Scope.Scope>;
+  readonly serializeRestartPrepare: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
   readonly restartHandoffs: Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
   readonly awaitAvailable: Effect.Effect<void>;
   readonly notifyAvailable: (count?: number) => Effect.Effect<void>;
@@ -107,6 +110,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
     let restartEpoch: string | undefined;
     let drain: { readonly epoch: string } | undefined;
     const claimGate = yield* Semaphore.make(1);
+    const prepareGate = yield* Semaphore.make(1);
     const cancellationSignals = new Map<string, Deferred.Deferred<void>>();
     const settledSignals = new Map<string, Deferred.Deferred<void>>();
     const signalSettled = (effectIds: ReadonlyArray<string>) =>
@@ -153,9 +157,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         return Effect.acquireRelease(
           claimGate.withPermits(1)(
             Effect.sync(() => {
-              if (drain !== undefined) return false;
               drain = owner;
-              return true;
             }),
           ),
           () =>
@@ -168,6 +170,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             ),
         );
       },
+      serializeRestartPrepare: (effect) => prepareGate.withPermits(1)(effect),
       prepareRestart: (epoch) =>
         claimGate.withPermits(1)(
           Effect.sync(() => {

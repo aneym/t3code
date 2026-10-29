@@ -38,73 +38,75 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
         ? yield* drainBeforeRestart(epoch, Duration.millis(drainTimeoutMs))
         : undefined;
     yield* outbox.prepareRestart(epoch);
-    const running = yield* outbox.runningEffects;
-    yield* Effect.forEach(running, (effect) => outbox.awaitSettled(effect.id), { discard: true });
-    const receipt = yield* outbox.withTransaction(
-      Effect.gen(function* () {
-        const threadIds = yield* projections.getRecoveryThreadIds("runtime");
-        const handoffs: ServerRestartHandoff[] = [];
-        for (const threadId of threadIds) {
-          const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-          const requests = projection.runtimeRequests.filter(
-            (request) => request.status === "pending",
+    const receipt = yield* Effect.gen(function* () {
+      const running = yield* outbox.runningEffects;
+      yield* Effect.forEach(running, (effect) => outbox.awaitSettled(effect.id), { discard: true });
+      return yield* outbox.withTransaction(
+        Effect.gen(function* () {
+          const threadIds = yield* projections.getRecoveryThreadIds("runtime");
+          const handoffs: ServerRestartHandoff[] = [];
+          for (const threadId of threadIds) {
+            const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
+            const requests = projection.runtimeRequests.filter(
+              (request) => request.status === "pending",
+            );
+            const runIds = projection.runs
+              .filter((run) => ["preparing", "starting", "running", "waiting"].includes(run.status))
+              .map((run) => run.id);
+            handoffs.push({
+              threadId,
+              runIds,
+              sourceRunIds: runIds,
+              queuedRunIds: projection.runs
+                .filter((run) => run.status === "queued")
+                .map((run) => run.id),
+              requestIds: requests.map((request) => request.id),
+              delegatedTaskIds: projection.subagents
+                .filter(
+                  (task) =>
+                    task.status === "pending" ||
+                    task.status === "running" ||
+                    task.status === "waiting",
+                )
+                .map((task) => task.id),
+              pausedRunIds: projection.runs
+                .filter(
+                  (run) =>
+                    requests.some(
+                      (request) =>
+                        request.kind !== "dynamic_tool_call" &&
+                        request.kind !== "auth_refresh" &&
+                        projection.nodes.some(
+                          (node) => node.id === request.nodeId && node.runId === run.id,
+                        ),
+                    ) ||
+                    projection.turnItems.some(
+                      (item) =>
+                        item.type === "secret_request" &&
+                        item.secretStatus === "pending" &&
+                        item.runId === run.id,
+                    ),
+                )
+                .map((run) => run.id),
+              paused:
+                projection.thread.archivedAt !== null ||
+                projection.thread.deletedAt !== null ||
+                projection.thread.settledOverride === "settled",
+            });
+          }
+          const commandId = CommandId.make(`command:restart-handoff:${epoch}`);
+          yield* outbox.enqueue(
+            handoffs.map((handoff) => ({
+              id: `effect:restart-handoff:${epoch}:${handoff.threadId}`,
+              commandId,
+              threadId: handoff.threadId,
+              request: { type: "provider-runtime.restart-handoff" as const, epoch, handoff },
+            })),
           );
-          const runIds = projection.runs
-            .filter((run) => ["preparing", "starting", "running", "waiting"].includes(run.status))
-            .map((run) => run.id);
-          handoffs.push({
-            threadId,
-            runIds,
-            sourceRunIds: runIds,
-            queuedRunIds: projection.runs
-              .filter((run) => run.status === "queued")
-              .map((run) => run.id),
-            requestIds: requests.map((request) => request.id),
-            delegatedTaskIds: projection.subagents
-              .filter(
-                (task) =>
-                  task.status === "pending" ||
-                  task.status === "running" ||
-                  task.status === "waiting",
-              )
-              .map((task) => task.id),
-            pausedRunIds: projection.runs
-              .filter(
-                (run) =>
-                  requests.some(
-                    (request) =>
-                      request.kind !== "dynamic_tool_call" &&
-                      request.kind !== "auth_refresh" &&
-                      projection.nodes.some(
-                        (node) => node.id === request.nodeId && node.runId === run.id,
-                      ),
-                  ) ||
-                  projection.turnItems.some(
-                    (item) =>
-                      item.type === "secret_request" &&
-                      item.secretStatus === "pending" &&
-                      item.runId === run.id,
-                  ),
-              )
-              .map((run) => run.id),
-            paused:
-              projection.thread.archivedAt !== null ||
-              projection.thread.deletedAt !== null ||
-              projection.thread.settledOverride === "settled",
-          });
-        }
-        const commandId = CommandId.make(`command:restart-handoff:${epoch}`);
-        yield* outbox.enqueue(
-          handoffs.map((handoff) => ({
-            id: `effect:restart-handoff:${epoch}:${handoff.threadId}`,
-            commandId,
-            threadId: handoff.threadId,
-            request: { type: "provider-runtime.restart-handoff" as const, epoch, handoff },
-          })),
-        );
-        return handoffs;
-      }),
-    );
+          return handoffs;
+        }),
+      );
+    }).pipe(Effect.onError(() => abortRestart(epoch).pipe(Effect.ignore)));
     return {
       epoch,
       ready: true as const,
@@ -112,12 +114,11 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
       ...(drain === undefined ? {} : { drain }),
     };
   },
-  (effect, epoch, _drainTimeoutMs?: number) =>
-    effect.pipe(
-      Effect.scoped,
-      Effect.onError(() => abortRestart(epoch).pipe(Effect.ignore)),
-      Effect.mapError((cause) => new ServerPrepareRestartError({ cause })),
-    ),
+  (effect) =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      return yield* outbox.serializeRestartPrepare(Effect.scoped(effect));
+    }).pipe(Effect.mapError((cause) => new ServerPrepareRestartError({ cause }))),
 );
 
 export const abortRestart = Effect.fn("RestartPreparation.abortRestart")(
