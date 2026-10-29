@@ -259,6 +259,7 @@ it.effect(
           getCheckpointRollbackContext: () => Effect.die("unused rollback context"),
           getCheckpointCaptureContext: () => Effect.die("not used"),
           isNodeStored: () => Effect.die("not used"),
+          getRunCompletionDeliveries: () => Effect.die("not used"),
           canStartQueuedRun: () => Effect.die("not used"),
           getRecoveryThreadIds: () => Effect.die("unused getRecoveryThreadIds"),
           getUnreadableThreadIds: () => Effect.die("unused getUnreadableThreadIds"),

@@ -207,7 +207,7 @@ function batchSender(part: QueuedRunBatchPart): string {
 export function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): string {
   if (parts.length < 2) return parts[0]?.text ?? "";
   return [
-    `These ${parts.length} messages were queued separately while you were working. They are listed in the order they were sent, with their senders. Handle each one accordingly.`,
+    `These ${parts.length} messages were queued separately while you were working. They are listed with their senders: task completions first, then queued messages in the order they were sent. Handle each one accordingly.`,
     ...parts.map(
       (part, index) =>
         `Message ${index + 1} of ${parts.length}, from ${batchSender(part)}:\n${part.text}`,

@@ -24,17 +24,20 @@ export function canReleaseQueueHold(run: OrchestrationV2Run, release: Release): 
 
 export function releasesQueueHoldAtRunEnd(
   run: OrchestrationV2Run,
-  ended: OrchestrationV2Run | undefined,
+  ended: OrchestrationV2Run | null | undefined,
   agentThread: boolean,
 ): boolean {
-  if (run.status !== "queued" || run.queueHeld !== true || run.queueHoldReason === "stop") {
-    return false;
+  if (run.status !== "queued" || run.queueHeld !== true || ended == null) return false;
+  switch (run.queueHoldReason) {
+    case "stop":
+      return false;
+    case "restart":
+      return true;
+    case "blocked":
+      return ended.status === "completed";
+    case undefined:
+      return agentThread;
   }
-  return (
-    agentThread ||
-    run.queueHoldReason === "restart" ||
-    (run.queueHoldReason === "blocked" && ended?.status === "completed")
-  );
 }
 
 export function stoppedQueueHold(run: OrchestrationV2Run): Hold | undefined {
