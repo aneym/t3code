@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+
+tree="" version="" out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help) echo "usage: build-cli --tree DIR --version V --out DIR"; exit 0 ;;
+    --tree) tree="$2"; shift 2 ;;
+    --version) version="$2"; shift 2 ;;
+    --out) out="$2"; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+[ -n "$tree" ] && [ -n "$version" ] && [ -n "$out" ] || { echo "usage: build-cli --tree DIR --version V --out DIR" >&2; exit 2; }
+
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) platform=mac arch=arm64 rust_target=aarch64-apple-darwin resource_key=darwin-arm64 exe_target=darwin-arm64 ;;
+  Linux-x86_64) platform=linux arch=x64 rust_target=x86_64-unknown-linux-gnu resource_key=linux-x64 exe_target=linux-x64 ;;
+  *) echo "unsupported host $(uname -s)-$(uname -m)" >&2; exit 2 ;;
+esac
+if [ "$platform" = mac ]; then
+  export CC=/usr/bin/clang CXX=/usr/bin/clang++ CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER=/usr/bin/cc
+fi
+if [ "$platform" = linux ]; then
+  export CC=/usr/bin/gcc CXX=/usr/bin/g++ CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
+fi
+
+node_version="$(sed -n 's/.*"node": *"\([0-9.]*\)".*/\1/p' "$tree/package.json" | head -n 1)"
+[ -n "$node_version" ] || { echo "no engines.node in $tree/package.json" >&2; exit 3; }
+node_bin="$HOME/.vite-plus/js_runtime/node/$node_version/bin"
+[ -x "$node_bin/node" ] || "$HOME/.vite-plus/bin/vp" env exec --node "$node_version" node --version
+[ -x "$node_bin/node" ] || { echo "node $node_version not installed under $node_bin" >&2; exit 3; }
+export PATH="$tree/node_modules/.bin:$node_bin:$HOME/.vite-plus/bin:$HOME/.cargo/bin:$PATH"
+[ "$(node --version)" = "v$node_version" ] || { echo "node $node_version not selected" >&2; exit 3; }
+export TMPDIR="$(cd "${T3NIGHTLY_TMP:-${TMPDIR:-/tmp}}" && pwd -P)"
+public_config="${T3NIGHTLY_PUBLIC_CONFIG:-$HOME/.config/t3nightly/public-config.env}"
+[ -s "$public_config" ] || { echo "missing $public_config (run public-config against a stock runtime)" >&2; exit 3; }
+set -a
+. "$public_config"
+set +a
+for key in T3CODE_RELAY_URL T3CODE_CLERK_PUBLISHABLE_KEY T3CODE_CLERK_JWT_TEMPLATE T3CODE_CLERK_CLI_OAUTH_CLIENT_ID; do
+  [ -n "${!key:-}" ] || { echo "$key empty in $public_config" >&2; exit 3; }
+done
+export T3CODE_DESKTOP_UPDATE_REPOSITORY=aneym/t3code
+mkdir -p "$out"
+cd "$tree"
+
+[ "$(node -p 'require("./apps/server/package.json").version')" = "$version" ] || { echo "tree is not stamped $version" >&2; exit 3; }
+
+import_method=auto
+[ "$platform" != mac ] || import_method=clone
+vp i --frozen-lockfile -- --package-import-method="$import_method"
+T3CODE_TELEMETRY_CHANNEL=dev vp run --filter t3 build
+node scripts/apply-web-brand-assets.ts nightly apps/server/dist/client
+"$here/fork-build-manifest" "$version" > apps/server/dist/client/fork-build.json
+cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target "$rust_target"
+monitor="$tree/.local-release/resource-monitor"
+mkdir -p "$monitor/$resource_key"
+cp "native/resource-monitor/target/$rust_target/release/t3-resource-monitor" "$monitor/$resource_key/t3-resource-monitor"
+T3CODE_TELEMETRY_CHANNEL=dev node apps/server/scripts/cli.ts build-exe --verbose --target "$exe_target"
+
+sign_dir=""
+cleanup() { [ -n "$sign_dir" ] && "$here/mac-signing-done" "$sign_dir"; return 0; }
+trap cleanup EXIT
+if [ "$platform" = mac ] && [ "${T3NIGHTLY_MAC_SIGN:-0}" = 1 ]; then
+  sign_dir="$(mktemp -d "$TMPDIR/t3nightly-sign.XXXXXX")"
+  if ! signing_env=$("$here/mac-signing" "$sign_dir"); then
+    echo "build-cli: mac signing setup failed" >&2
+    exit 4
+  fi
+  eval "$signing_env"
+  export T3CODE_CLI_MAC_SIGN_IDENTITY CSC_KEYCHAIN APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER
+fi
+
+node scripts/build-cli-archive.ts --platform "$platform" --arch "$arch" --version "$version" --resource-monitor-dir "$monitor" --output-dir "$out" 2>&1 | python3 "$here/release_redact.py"
+archive="$out/t3-$version-$resource_key.tar.gz"
+node scripts/smoke-cli-archive.ts --archive "$archive" --expect-version "$version"
+if [ "$platform" = mac ]; then
+  python3 "$here/release_signatures.py" archive "$archive"
+fi
+echo "archive=$archive"

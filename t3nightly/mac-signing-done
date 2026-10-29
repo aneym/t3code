@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${1:-}" = --help ]; then
+  echo "usage: mac-signing-done DIR (delete the temporary signing keychain and release its lock)"
+  exit 0
+fi
+dir="${1:?usage: mac-signing-done DIR}"
+keychain="$dir/t3nightly-signing.keychain-db"
+lock="$HOME/.t3nightly/mac-signing.lock"
+cleanup_lock() {
+  if [ -f "$lock/owner" ] && [ "$(cat "$lock/owner")" = "$dir" ]; then
+    rm -f "$lock/owner"
+    rmdir "$lock"
+  fi
+}
+trap cleanup_lock EXIT
+if [ -f "$keychain" ]; then
+  remaining="$(security list-keychains -d user | tr -d '"' | { grep -v -F "$keychain" || [ "$?" = 1 ]; } | tr '\n' ' ')"
+  security list-keychains -d user -s $remaining
+  security delete-keychain "$keychain"
+fi
+rm -rf "$dir"

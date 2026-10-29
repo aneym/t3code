@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from t3nightly.install_run import Failure, Run
+from t3nightly.install_preflight import checked_assets
+from t3nightly.install_assets import serve_assets
+from t3nightly.install_payload_gc import payload_lifecycle
+
+FORK_BASE_URL = "https://github.com/aneym/t3code/releases/download"
+
+
+def parse():
+    parser = argparse.ArgumentParser(prog="t3nightly-install")
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--home", default="~/.t3")
+    parser.add_argument("--port", type=int, default=3773)
+    parser.add_argument("--base-url", default=FORK_BASE_URL)
+    parser.add_argument("--assets", default="")
+    parser.add_argument("--verdict", default="")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--state-dir", default="~/.t3nightly")
+    parser.add_argument("--service-label", default="com.t3tools.t3code.service")
+    parser.add_argument("--service-plist", default="")
+    parser.add_argument("--service-env", default="~/.t3/service.env")
+    parser.add_argument(
+        "--systemd-dropin", default="~/.config/systemd/user/t3code.service.d"
+    )
+    parser.add_argument("--backups", default="~/.t3nightly/backups")
+    parser.add_argument("--backup-keep", type=int, default=1)
+    parser.add_argument("--load-max", type=float, default=1.5)
+    parser.add_argument("--merge-repo", default="")
+    parser.add_argument("--merge-fresh-s", type=int, default=2700)
+    parser.add_argument("--lock", action="append", default=[])
+    parser.add_argument("--ignore-thread", action="append", default=[])
+    parser.add_argument("--wait", action="store_true")
+    parser.add_argument("--until", default="")
+    parser.add_argument("--recheck-s", type=int, default=600)
+    parser.add_argument("--health-s", type=int, default=300)
+    parser.add_argument("--settle-s", type=int, default=60)
+    parser.add_argument("--allow-downgrade", action="store_true")
+    parser.add_argument("--check-only", action="store_true")
+    parser.add_argument("--snapshot-mib-s", type=float, default=32)
+    parser.add_argument("--snapshot-max-s", type=int, default=1200)
+    parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--seamless", action="store_true")
+    parser.add_argument("--hard", action="store_true")
+    parser.add_argument("--restart-source-bridge", action="store_true")
+    parser.add_argument("--rpc-tree", default="")
+    parser.add_argument("--node", default="node")
+    parser.add_argument("--no-pin-launcher", action="store_true")
+    args = parser.parse_args()
+    if args.backup_keep < 1:
+        parser.error("--backup-keep must be at least one")
+    if args.hard and (args.seamless or args.wait):
+        parser.error("--hard cannot be combined with --seamless or --wait")
+    return args
+
+
+if __name__ == "__main__":
+    args = parse()
+    try:
+        if args.version == "previous":
+            args.version = json.loads(
+                (Path(args.state_dir).expanduser() / "last.json").read_text()
+            )["previous"]
+            args.allow_downgrade = True
+        with checked_assets(args) as assets:
+            args.assets = str(assets)
+            args.base_url = serve_assets(assets, args.version)
+            if args.dry_run:
+                from t3nightly.install_assets import check_served_assets
+
+                check_served_assets(args.base_url, args.version)
+                print(
+                    f"install: dry-run accepted {args.version}; served checksums and archive fetched and matched; no install writes"
+                )
+                sys.exit(0)
+            run = Run(args)
+            from t3nightly.install_resources import installer_owner
+
+            with installer_owner(run), payload_lifecycle(run):
+                if args.seamless:
+                    from t3nightly.install_seamless import install
+
+                    sys.exit(install(run))
+                if args.prepare_only:
+                    from t3nightly.install_prepare import prepare
+
+                    sys.exit(prepare(run))
+                sys.exit(run.main())
+    except (Failure, OSError, ValueError, subprocess.SubprocessError) as error:
+        sys.exit(f"install refusal: {error}")

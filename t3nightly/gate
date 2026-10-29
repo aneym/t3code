@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import platform
+import shutil
+import signal
+import socket
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from t3nightly.gate_checks import CHECKS  # noqa: E402
+from t3nightly.gate_tools import CHECKS as TOOL_CHECKS  # noqa: E402
+from t3nightly.gate_env import resolve_node, stop_server  # noqa: E402
+from t3nightly.gate_proc import CheckFailed, Deadline, redact_tree  # noqa: E402
+
+
+class Context:
+    def __init__(self, args):
+        self.archive = args.archive
+        self.version = args.version
+        self.tree = Path(args.tree).resolve()
+        self.out = Path(args.out).resolve()
+        self.logs = self.out / 'logs'
+        self.work = Path(tempfile.mkdtemp(prefix='t3gate.', dir=os.environ.get('T3NIGHTLY_TMP') or None)).resolve()
+        self.home = self.work / 'home'
+        self.project = self.work / 'project'
+        self.client = Path(__file__).resolve().parent / 'client.mjs'
+        self.node = resolve_node(self.tree)
+        self.t3 = None
+        self.server = None
+        self.origin = None
+        self.ready = False
+
+    def log(self, name):
+        return str(self.logs / ('%s.log' % name))
+
+
+def timed(name, limit, body, ctx):
+    started = time.monotonic()
+    try:
+        detail = body(ctx, Deadline(limit))
+        ok = True
+    except CheckFailed as error:
+        ok, detail = False, str(error)
+    except Exception as error:
+        ok, detail = False, '%s: %s' % (type(error).__name__, error)
+    entry = {'name': name, 'ok': ok, 'detail': detail, 'seconds': round(time.monotonic() - started, 1)}
+    with open(ctx.log(name), 'a') as handle:
+        handle.write('[verdict] %s\n' % json.dumps(entry))
+    return entry
+
+
+def teardown(ctx, _deadline):
+    stopped, notes = stop_server(ctx)
+    shutil.rmtree(ctx.work, ignore_errors=True)
+    if ctx.work.exists():
+        raise CheckFailed('temp dir %s survived removal; %s' % (ctx.work, '; '.join(notes)))
+    if not stopped:
+        raise CheckFailed('; '.join(notes))
+    return '%s; removed %s' % ('; '.join(notes) or 'no server started', ctx.work)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Release gate for a built T3 Code CLI archive.')
+    parser.add_argument('--archive', required=True, help='t3-<version>-<platform>.tar.gz, or an unpacked runtime dir')
+    parser.add_argument('--version', required=True)
+    parser.add_argument('--out', required=True)
+    parser.add_argument('--tree', default=os.environ.get('T3NIGHTLY_TREE'), help='same-tag t3code source tree with node_modules installed')
+    args = parser.parse_args()
+    if not args.tree or not (Path(args.tree) / 'packages/client-runtime').is_dir():
+        parser.error('--tree (or T3NIGHTLY_TREE) must name a same-tag t3code checkout with dependencies installed')
+    if not Path(args.archive).exists():
+        parser.error('archive %s does not exist' % args.archive)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    ctx = Context(args)
+    ctx.logs.mkdir(parents=True, exist_ok=True)
+    for stale in ctx.logs.glob('*.log'):
+        stale.unlink()
+    started = time.time()
+    checks = []
+    try:
+        for name, limit, body in CHECKS + TOOL_CHECKS:
+            if name != 'boot' and not ctx.ready:
+                checks.append({'name': name, 'ok': False, 'detail': 'skipped: boot failed', 'seconds': 0})
+                continue
+            checks.append(timed(name, limit, body, ctx))
+    finally:
+        checks.append(timed('teardown', 120, teardown, ctx))
+        redact_tree(ctx.logs)
+        verdict = {
+            'version': args.version,
+            'ok': all(check['ok'] for check in checks),
+            'archive': str(Path(args.archive).resolve()),
+            'host': socket.gethostname(),
+            'platform': '%s-%s' % (platform.system().lower(), platform.machine()),
+            'startedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(started)),
+            'seconds': round(time.time() - started, 1),
+            'checks': checks,
+        }
+        (ctx.out / 'verdict.json').write_text(json.dumps(verdict, indent=2) + '\n')
+    for check in checks:
+        print('%-16s %-4s %6.1fs  %s' % (check['name'], 'ok' if check['ok'] else 'FAIL', check['seconds'], check['detail']))
+    print('verdict: %s' % (ctx.out / 'verdict.json'))
+    return 0 if verdict['ok'] else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

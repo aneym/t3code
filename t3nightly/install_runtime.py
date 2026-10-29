@@ -1,0 +1,81 @@
+import ctypes
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import uuid
+from pathlib import Path
+
+from .release_signatures import verify_cli
+
+
+def mark_update_restart(home):
+    runtime = Path(home) / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=".desktop-update-restart-", dir=runtime)
+    os.close(fd)
+    staged = Path(name)
+    try:
+        os.replace(staged, runtime / "desktop-update-restart")
+    finally:
+        staged.unlink(missing_ok=True)
+
+
+def exchange(left, right):
+    library = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin":
+        result = library.renamex_np(os.fsencode(left), os.fsencode(right), 2)
+    else:
+        result = library.renameat2(-100, os.fsencode(left), -100, os.fsencode(right), 2)
+    if result:
+        number = ctypes.get_errno()
+        raise OSError(number, os.strerror(number))
+
+
+def activate(staged, target):
+    verify_cli(staged / "t3")
+    if target.exists() or target.is_symlink():
+        exchange(staged, target)
+        backup = target.with_name(f".{target.name}-rollback-{uuid.uuid4().hex}")
+        try:
+            os.replace(staged, backup)
+        except OSError:
+            exchange(staged, target)
+            raise
+        return backup
+    os.replace(staged, target)
+    return None
+
+
+def stage_runtime(home, version, assets):
+    platform = "darwin-arm64" if sys.platform == "darwin" else "linux-x64"
+    archive = Path(assets) / f"t3-{version}-{platform}.tar.gz"
+    versions = Path(home) / "runtime" / "versions"
+    versions.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".verified-", dir=versions) as raw:
+        with tarfile.open(archive, "r:gz") as bundle:
+            bundle.extractall(raw, filter="data")
+        roots = [path for path in Path(raw).iterdir() if not path.name.startswith("._")]
+        if len(roots) != 1 or not roots[0].is_dir():
+            raise ValueError("runtime archive must contain one directory")
+        staged = roots[0]
+        verify_cli(staged / "t3")
+        (staged / ".install-complete").write_text(version + "\n")
+        activate(staged, versions / version)
+    return versions / version / "t3"
+
+
+def pin_runtime(home, version):
+    runtime = Path(home) / "runtime"
+    source = runtime / "versions" / version
+    verify_cli(source / "t3")
+    with tempfile.TemporaryDirectory(prefix=".launcher-", dir=runtime) as raw:
+        staged = Path(raw) / "launcher"
+        if sys.platform == "darwin":
+            subprocess.run(["cp", "-c", "-R", str(source), str(staged)], check=True, timeout=240)
+        else:
+            shutil.copytree(source, staged, symlinks=True)
+        backup = activate(staged, runtime / "launcher")
+    return runtime / "launcher" / "t3", backup

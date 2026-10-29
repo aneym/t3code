@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -uo pipefail
+tree="$1"
+export PATH="$tree/node_modules/.bin:$HOME/.vite-plus/bin:$PATH"
+cd "$tree/apps/web" || exit 2
+status=0
+vp test run --passWithNoTests --project unit || status=1
+while IFS= read -r file; do
+  printf 'browser-file: %s\n' "$file"
+  vp test run --project browser "$file" || status=1
+done < <(git ls-files 'src/**/*.browser.test.ts' 'src/**/*.browser.test.tsx')
+exit "$status"

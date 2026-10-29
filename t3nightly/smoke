@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import platform
+import shutil
+import signal
+import socket
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from t3nightly.gate_checks import pair, t3  # noqa: E402
+from t3nightly.gate_env import (  # noqa: E402
+    free_port,
+    guard_isolated,
+    http_json,
+    make_project,
+    resolve_node,
+    seed_home,
+    stop_server,
+    unpack,
+)
+from t3nightly.gate_proc import SECRET, CheckFailed, Deadline, clean_env, redact_tree, run, spawn  # noqa: E402
+from t3nightly.release_approval import file_sha256, smoke_record, verdict_path  # noqa: E402
+from t3nightly.smoke_checks import AGENT_HANDLE, AGENT_NAME, CHECKS  # noqa: E402
+from t3nightly.smoke_extra import story_steps  # noqa: E402
+from t3nightly.smoke_ui import ui  # noqa: E402
+
+
+class Context:
+    def __init__(self, args):
+        self.archive = args.archive
+        self.version = args.version
+        self.tree = Path(args.tree).resolve()
+        self.out = Path(args.out).resolve()
+        self.logs = self.out / "logs"
+        self.work = Path(tempfile.mkdtemp(prefix="t3smoke.", dir=os.environ.get("T3NIGHTLY_TMP") or None)).resolve()
+        self.home = self.work / "home"
+        self.project = self.work / "project"
+        self.agent_homes = self.work / "rails" / "agents"
+        self.client = Path(__file__).resolve().parent / "client.mjs"
+        self.node = resolve_node(self.tree)
+        self.t3 = None
+        self.server = None
+        self.origin = None
+        self.ready = False
+
+    def log(self, name):
+        return str(self.logs / ("%s.log" % name))
+
+
+def serve(ctx, deadline):
+    guard_isolated(ctx.home)
+    ctx.port = free_port()
+    ctx.origin = "http://127.0.0.1:%d" % ctx.port
+    command = [ctx.t3, "serve", "--base-dir", str(ctx.home), "--host", "127.0.0.1", "--port", str(ctx.port), "--no-browser", str(ctx.project)]
+    env = clean_env({"T3CODE_AGENT_HOMES_DIR": str(ctx.agent_homes)})
+    ctx.server = spawn(command, ctx.log("server"), cwd=str(ctx.project), env=env)
+    while True:
+        if ctx.server.poll() is not None:
+            raise CheckFailed("server exited %d during startup" % ctx.server.returncode)
+        try:
+            if http_json(ctx.origin + "/", timeout=2)[0] == 200:
+                break
+        except OSError:
+            pass
+        deadline.left()
+        time.sleep(0.5)
+    return json.loads(http_json(ctx.origin + "/.well-known/t3/environment")[1])
+
+
+def boot(ctx, deadline):
+    runtime = unpack(ctx.archive, ctx.work)
+    ctx.t3 = str(runtime / "t3")
+    code, out = run([ctx.t3, "--version"], ctx.log("boot"), deadline, cap=60)
+    if code != 0 or ctx.version not in out:
+        raise CheckFailed("t3 --version printed %r, expected %s" % (out.strip()[:80], ctx.version))
+    make_project(ctx.project)
+    origin = ctx.work / "origin.git"
+    for command in (
+        ["git", "branch", "-M", "main"],
+        ["git", "clone", "-q", "--bare", str(ctx.project), str(origin)],
+        ["git", "remote", "add", "origin", str(origin)],
+        ["git", "fetch", "-q", "origin"],
+    ):
+        if run(command, ctx.log("boot"), deadline, cwd=str(ctx.project), cap=30)[0] != 0:
+            raise CheckFailed("%s failed in the scratch project" % " ".join(command[:2]))
+    home = ctx.agent_homes / AGENT_HANDLE
+    home.mkdir(parents=True)
+    (home / "agent.json").write_text(json.dumps({"display_name": AGENT_NAME, "role": "orch"}) + "\n")
+    seed_home(ctx, deadline)
+    descriptor = serve(ctx, deadline)
+    if descriptor.get("serverVersion") != ctx.version:
+        raise CheckFailed("server reports %s, expected %s" % (descriptor.get("serverVersion"), ctx.version))
+    code, _ = t3(ctx, "boot", deadline, "project add", "--title", "t3smoke", str(ctx.project), cap=60)
+    if code != 0:
+        raise CheckFailed("t3 project add exited %d" % code)
+    ctx.ready = True
+    return "served %s on %s from a seeded home" % (ctx.version, ctx.origin)
+
+
+def timed(name, limit, body, ctx):
+    started = time.monotonic()
+    try:
+        detail, ok = body(ctx, Deadline(limit)), True
+    except CheckFailed as error:
+        detail, ok = str(error), False
+    except Exception as error:
+        detail, ok = "%s: %s" % (type(error).__name__, error), False
+    entry = {"name": name, "ok": ok, "detail": detail, "seconds": round(time.monotonic() - started, 1)}
+    with open(ctx.log(name), "a") as handle:
+        handle.write("[verdict] %s\n" % json.dumps(entry))
+    return entry
+
+
+def teardown(ctx, _deadline):
+    stopped, notes = stop_server(ctx)
+    shutil.rmtree(ctx.work, ignore_errors=True)
+    if not stopped or ctx.work.exists():
+        raise CheckFailed("; ".join(notes) or "temp dir survived removal")
+    return "; ".join(notes) or "no server started"
+
+
+STEPS = [("boot", 600, boot), ("pair", 120, pair), *CHECKS, ("ui", 420, ui), *story_steps()]
+
+
+def main():
+    parser = argparse.ArgumentParser(description="User-path smoke for a built T3 Code CLI archive; exits 1 when any step fails.")
+    parser.add_argument("--archive", required=True, help="t3-<version>-<platform>.tar.gz, or an unpacked runtime dir")
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--tree", default=os.environ.get("T3NIGHTLY_TREE"), help="same-tag t3code tree with dependencies installed")
+    parser.add_argument("--only", help="comma-separated step names to run after boot")
+    parser.add_argument("--record", action="store_true", help="also write the verdict where release approval reads it")
+    parser.add_argument("--verdict", help="visual-verdict.md the release approval uses (default: the t3-nightly lane path)")
+    args = parser.parse_args()
+    if not args.tree or not (Path(args.tree) / "packages/client-runtime").is_dir():
+        parser.error("--tree (or T3NIGHTLY_TREE) must name a same-tag t3code checkout with dependencies installed")
+    if not Path(args.archive).exists():
+        parser.error("archive %s does not exist" % args.archive)
+    if args.record and (args.only or not Path(args.archive).is_file()):
+        parser.error("--record needs the full smoke on a .tar.gz archive")
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    ctx = Context(args)
+    ctx.logs.mkdir(parents=True, exist_ok=True)
+    for stale in ctx.logs.glob("*.log"):
+        stale.unlink()
+    only = set(args.only.split(",")) if args.only else None
+    expected = [name for name, _, _ in STEPS if not only or name == "boot" or name in only] + ["teardown"]
+    digest = file_sha256(args.archive) if Path(args.archive).is_file() else None
+    started = time.time()
+    steps = []
+    try:
+        for name, limit, body in STEPS:
+            if only and name != "boot" and name not in only:
+                continue
+            if steps and not all(step["ok"] for step in steps):
+                steps.append({"name": name, "ok": False, "detail": "skipped: an earlier step failed", "seconds": 0})
+                continue
+            steps.append(timed(name, limit, body, ctx))
+    finally:
+        steps.append(timed("teardown", 120, teardown, ctx))
+        redact_tree(ctx.logs)
+        for step in steps:
+            step["detail"] = SECRET.sub(r"\1REDACTED", str(step["detail"]))
+        unchanged = digest == (file_sha256(args.archive) if Path(args.archive).is_file() else None)
+        if not unchanged:
+            steps.append({"name": "archive", "ok": False, "detail": "archive bytes changed during the run", "seconds": 0})
+        complete = [step["name"] for step in steps][: len(expected)] == expected
+        verdict = {
+            "kind": "t3-smoke",
+            "version": args.version,
+            "ok": complete and unchanged and all(step["ok"] for step in steps),
+            "archive": str(Path(args.archive).resolve()),
+            "archiveSha256": digest,
+            "host": socket.gethostname(),
+            "platform": "%s-%s" % (platform.system().lower(), platform.machine()),
+            "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)),
+            "seconds": round(time.time() - started, 1),
+            "steps": steps,
+        }
+        (ctx.out / "smoke-verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
+        if args.record and complete:
+            record = smoke_record(verdict_path(args.version, args.verdict), Path(args.archive).name)
+            record.parent.mkdir(parents=True, exist_ok=True)
+            record.write_text(json.dumps(verdict, indent=2) + "\n")
+            print("recorded: %s" % record)
+    for step in steps:
+        print("%-10s %-4s %6.1fs  %s" % (step["name"], "ok" if step["ok"] else "FAIL", step["seconds"], step["detail"]))
+    print("verdict: %s" % (ctx.out / "smoke-verdict.json"))
+    return 0 if verdict["ok"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

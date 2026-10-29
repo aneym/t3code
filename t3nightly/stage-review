@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import re
+import shutil
+import signal
+import sqlite3
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+LIVE_DB = Path.home() / ".t3" / "userdata" / "statev2.sqlite"
+NODE_BIN = Path.home() / ".vite-plus" / "js_runtime" / "node" / "26.12.1" / "bin"
+PLAYWRIGHT_PY = Path.home() / ".local" / "share" / "launchd-venvs" / "py314-playwright" / "bin" / "python"
+SHOTS = Path(__file__).resolve().with_name("stage_shots.py")
+PAIRING = re.compile(r"pairingUrl: (\S+)")
+PORTS = re.compile(r"\[dev-runner\] .*serverPort=(\d+) webPort=(\d+)")
+
+
+def run(cmd, cwd, env, log):
+    with log.open("a") as handle:
+        handle.write(f"$ {' '.join(cmd)}\n")
+        handle.flush()
+        return subprocess.run(cmd, cwd=cwd, env=env, stdout=handle, stderr=subprocess.STDOUT).returncode
+
+
+def seed(worktree, home, env, log):
+    if run(["vp", "run", "migrate-dev-db", "--base-dir", str(home)], worktree, env, log) != 0:
+        raise SystemExit(f"migrate-dev-db failed; see {log}")
+    dev_db = home / "userdata" / "statev2.sqlite"
+    with sqlite3.connect(f"file:{LIVE_DB}?mode=ro", uri=True, timeout=30) as live:
+        live.row_factory = sqlite3.Row
+        rows = [dict(row) for row in live.execute("select * from scheduled_tasks")]
+    with sqlite3.connect(dev_db, timeout=30) as dev:
+        columns = {row[1] for row in dev.execute("pragma table_info(scheduled_tasks)")}
+        owners = list(dev.execute("select thread_id, project_id from orchestration_v2_projection_threads where deleted_at is null and json_extract(payload_json, '$.archivedAt') is null order by thread_id"))
+        groups = list(dict.fromkeys(row["thread_id"] or row["task_id"] for row in rows))
+        if len(owners) < len(groups):
+            raise RuntimeError("staging needs a stopped sandbox owner per automation group")
+        bindings = dict(zip(groups, owners))
+        for row in rows:
+            owner, project = bindings[row["thread_id"] or row["task_id"]]
+            row.update(thread_id=owner, project_id=project, enabled=0, next_run_at=None, webhook_token=None, webhook_secret=None)
+            kept = {key: value for key, value in row.items() if key in columns}
+            marks = ",".join("?" for _ in kept)
+            dev.execute(f"insert or replace into scheduled_tasks ({','.join(kept)}) values ({marks})", list(kept.values()))
+    return {"tasks": len(rows), "sandboxOwners": [owner for owner, _ in bindings.values()]}
+
+
+def start_dev(worktree, home, env, log):
+    handle = log.open("a")
+    process = subprocess.Popen(
+        ["vp", "run", "dev", "--home-dir", str(home)], cwd=worktree, env=env, stdout=handle, stderr=subprocess.STDOUT, start_new_session=True
+    )
+    deadline = time.monotonic() + 240
+    pairing = ports = None
+    while time.monotonic() < deadline and process.poll() is None:
+        text = log.read_text(errors="replace")
+        pairing = pairing or (PAIRING.search(text) or [None, None])[1]
+        found = PORTS.search(text)
+        ports = ports or (found and (int(found[1]), int(found[2])))
+        if pairing and ports:
+            return process, pairing, ports
+        if "EADDRINUSE" in text:
+            break
+        time.sleep(2)
+    stop(process)
+    raise SystemExit(f"dev server did not print its pairing URL; see {log}")
+
+
+def stop(process):
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=30)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Screenshot a candidate T3 build on a copy of real data, headless")
+    parser.add_argument("--worktree", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--keep-db", action="store_true", help="reuse the retained staging database")
+    args = parser.parse_args()
+    worktree = Path(args.worktree).resolve()
+    home_root = Path("/Volumes/StudioExt/t3nightly-staging-homes") if sys.platform == "darwin" else Path.home() / ".t3nightly" / "staging-homes"
+    home = home_root / worktree.name
+    if home.is_symlink():
+        raise SystemExit(f"staging home must not be a symlink: {home}")
+    out = Path(args.out).expanduser().resolve()
+    if out == home or out in home.parents or home in out.parents:
+        raise SystemExit("screenshot output must not overlap the retained staging home")
+    home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    home.chmod(0o700)
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    log = out / "stage.log"
+    log.write_text(f"stagingHome: {home}\nsourceWorktree: {worktree}\n")
+    env = dict(os.environ, PATH=f"{NODE_BIN}:{os.environ.get('PATH', '')}", T3CODE_NO_BROWSER="1")
+    for key in [key for key in env if key.startswith(("T3CODE_", "T3_", "VITE_")) and key != "T3CODE_NO_BROWSER"]:
+        env.pop(key)
+    tasks = None
+    if not args.keep_db or not (home / "userdata" / "statev2.sqlite").exists():
+        tasks = seed(worktree, home, env, log)
+    process, pairing, (server_port, web_port) = start_dev(worktree, home, env, log)
+    try:
+        origin = f"http://localhost:{web_port}"
+        pair_path = pairing.split("/pair", 1)[1] if "/pair" in pairing else ""
+        code = subprocess.run(
+            [str(PLAYWRIGHT_PY), str(SHOTS), "--origin", origin, "--pair", f"{origin}/pair{pair_path}", "--out", str(out), "--owners", json.dumps(tasks["sandboxOwners"] if tasks else [])],
+            env=dict(os.environ),
+        ).returncode
+    finally:
+        stop(process)
+    shots = sorted(str(path) for path in out.glob("*.png"))
+    print(json.dumps({"ok": code == 0, "shots": shots, "seededTasks": tasks, "home": str(home), "log": str(log)}, indent=1))
+    return 0 if code == 0 and shots else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

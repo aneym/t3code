@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+import argparse
+import fcntl
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from t3nightly.release_signatures import verify_archive, verify_desktop_zip
+from t3nightly.release_approval import require_approval, verdict_path
+
+FEED = Path("/Volumes/StudioExt/t3nightly-feed")
+RELEASES = Path.home() / ".agent-rails/lanes/t3-nightly/release"
+ARCHIVE = re.compile(r"t3-(?P<version>[0-9][0-9A-Za-z.+-]*)-(?P<platform>darwin|linux)-(?P<arch>arm64|x64)\.tar\.gz")
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]+\.[0-9]+\.aneym\.[0-9]+")
+
+
+def version_key(version):
+    return tuple(int(part) for part in re.findall(r"\d+", version))
+
+
+def built_at(archive):
+    with tarfile.open(archive, "r|gz") as bundle:
+        for member in bundle:
+            if member.name.endswith("/client/fork-build.json"):
+                handle = bundle.extractfile(member)
+                if handle is not None:
+                    with handle:
+                        return datetime.fromisoformat(json.load(handle)["builtAt"].replace("Z", "+00:00")).astimezone(timezone.utc).isoformat()
+    return datetime.fromtimestamp(archive.stat().st_mtime, timezone.utc).isoformat()
+
+
+def atomic_json(path, value):
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as handle:
+        temp = Path(handle.name)
+        json.dump(value, handle, indent=2)
+        handle.write("\n")
+    try:
+        temp.chmod(0o644)
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def atomic_copy(source, target):
+    with tempfile.TemporaryDirectory(dir=target.parent) as staging:
+        temp = Path(staging) / target.name
+        if sys.platform == "darwin" and source.stat().st_dev == target.parent.stat().st_dev:
+            subprocess.run(["cp", "-c", str(source), str(temp)], check=True)
+        else:
+            shutil.copy2(source, temp)
+        os.replace(temp, target)
+
+
+def desktop_assets(directory, version):
+    manifest = directory / "nightly-mac.yml"
+    text = manifest.read_text()
+    if not re.search(rf"^version: ['\"]?{re.escape(version)}['\"]?\s*$", text, re.MULTILINE):
+        raise ValueError(f"desktop feed does not match {version}")
+    zip_name = f"T3-Code-{version}-arm64.zip"
+    assets = [directory / zip_name, directory / f"{zip_name}.blockmap", manifest]
+    if not all(path.is_file() for path in assets):
+        raise ValueError(f"desktop zip or blockmap missing in {directory}")
+    return assets
+
+
+def root_desktop_assets(manifest):
+    if not manifest.is_file():
+        return set()
+    names = set()
+    for line in manifest.read_text().splitlines():
+        match = re.match(r"^\s*(?:-\s+)?(?:url|path):\s*['\"]?([^'\"\s]+)", line)
+        if match:
+            names.add(Path(match.group(1)).name)
+    names.update({f"{name}.blockmap" for name in names if name.endswith(".zip")})
+    return names
+
+
+def publish(directory, desktop, feed):
+    archives = sorted(directory.glob("t3-*.tar.gz"))
+    matches = [ARCHIVE.fullmatch(path.name) for path in archives]
+    if not archives or not all(matches):
+        raise ValueError(f"no supported CLI archives in {directory}")
+    versions = {match["version"] for match in matches if match is not None}
+    if len(versions) != 1:
+        raise ValueError("CLI archives must have the same version")
+    version = versions.pop()
+    if VERSION.fullmatch(version) is None:
+        raise ValueError(f"not a fork nightly version: {version}")
+    checksums = directory / "SHA256SUMS"
+    require_approval(version, verdict_path(version, getattr(publish, "verdict", None)))
+    if not checksums.is_file():
+        raise ValueError(f"missing {checksums}")
+    assets = desktop_assets(desktop, version) if desktop else []
+    rows = {line.split()[1]: line.split()[0] for line in checksums.read_text().splitlines() if len(line.split()) == 2}
+    import hashlib
+    for archive in archives:
+        digest = hashlib.file_digest(archive.open("rb"), "sha256").hexdigest()
+        if rows.get(archive.name) != digest:
+            raise ValueError(f"checksum mismatch for {archive.name}")
+        verify_archive(archive)
+    if assets:
+        verify_desktop_zip(assets[0])
+    timestamp = built_at(archives[0])
+    feed.mkdir(parents=True, exist_ok=True)
+    with (feed / ".publish.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        manifest = feed / "releases.json"
+        releases = json.loads(manifest.read_text())["releases"] if manifest.exists() else []
+        if any(VERSION.fullmatch(row["version"]) is None for row in releases):
+            raise ValueError("feed contains an invalid version")
+        previous = next((row for row in releases if row["version"] == version), None)
+        target = feed / f"v{version}"
+        target.mkdir(exist_ok=True)
+        for source in [*archives, checksums]:
+            atomic_copy(source, target / source.name)
+        if assets:
+            desktop_target = feed / "desktop" / version
+            desktop_target.mkdir(parents=True, exist_ok=True)
+            for source in assets:
+                atomic_copy(source, desktop_target / source.name)
+        row = {
+            "version": version,
+            "builtAt": previous["builtAt"] if previous else timestamp,
+            "cli": sorted(f"{match['platform']}-{match['arch']}" for match in matches if match is not None),
+            "desktop": ["mac-arm64"] if assets else (previous["desktop"] if previous else []),
+        }
+        releases = [entry for entry in releases if entry["version"] != version] + [row]
+        releases.sort(key=lambda entry: version_key(entry["version"]), reverse=True)
+        if releases[0]["version"] == version and assets:
+            for source in assets:
+                if source.name != "nightly-mac.yml":
+                    atomic_copy(source, feed / source.name)
+            atomic_copy(desktop / "nightly-mac.yml", feed / "nightly-mac.yml")
+        kept = releases[:5]
+        atomic_json(manifest, {"releases": kept})
+        protected_desktop = root_desktop_assets(feed / "nightly-mac.yml")
+        for old in releases[5:]:
+            old_version = old["version"]
+            shutil.rmtree(feed / f"v{old_version}", ignore_errors=True)
+            shutil.rmtree(feed / "desktop" / old_version, ignore_errors=True)
+        retained_versions = {entry["version"] for entry in kept}
+        for path in feed.glob("T3-Code-*.zip*"):
+            match = re.fullmatch(rf"T3-Code-({VERSION.pattern})-arm64\.zip(?:\.blockmap)?", path.name)
+            if match and match[1] not in retained_versions and path.name not in protected_desktop:
+                path.unlink()
+        print(json.dumps({"published": version, "feed": str(manifest), "releases": [entry["version"] for entry in kept]}))
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Publish a fork nightly to the Studio release feed; retain the newest five builds.")
+    parser.add_argument("build", help="Build name or release directory")
+    parser.add_argument("--desktop-dir", type=Path, help="Desktop output containing nightly-mac.yml, zip and blockmap")
+    parser.add_argument("--feed-dir", type=Path, default=FEED, help="Release feed directory")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--verdict", type=Path)
+    args = parser.parse_args()
+    directory = Path(args.build).expanduser()
+    if not directory.is_dir():
+        directory = RELEASES / args.build
+    if not directory.is_dir():
+        parser.error(f"release directory not found: {directory}")
+    publish.verdict = args.verdict
+    try:
+        archive = next(directory.glob("t3-*.tar.gz"), None)
+        match = ARCHIVE.fullmatch(archive.name) if archive else None
+        if match is None:
+            raise ValueError("release archive is missing or invalid")
+        require_approval(match["version"], verdict_path(match["version"], args.verdict), directory / "shots")
+        feed = args.feed_dir.expanduser().resolve()
+        if args.dry_run and (feed == FEED or feed.exists()):
+            raise ValueError("dry-run requires a new scratch --feed-dir")
+        with tempfile.TemporaryDirectory(prefix="t3nightly-publish-check-") as raw:
+            snapshot = Path(raw)
+            for source in [*directory.glob("t3-*.tar.gz"), directory / "SHA256SUMS"]:
+                atomic_copy(source, snapshot / source.name)
+            desktop = None
+            if args.desktop_dir:
+                desktop = snapshot / "desktop"
+                desktop.mkdir()
+                for source in args.desktop_dir.expanduser().iterdir():
+                    if source.is_file() and source.suffix in (".zip", ".blockmap", ".yml"):
+                        atomic_copy(source, desktop / source.name)
+            publish(snapshot, desktop, feed)
+    except (OSError, ValueError, tarfile.TarError, subprocess.CalledProcessError) as error:
+        parser.exit(1, f"publish-feed: {error}\n")
+
+
+if __name__ == "__main__":
+    main()

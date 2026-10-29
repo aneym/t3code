@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -uo pipefail
+tree="" out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --tree) tree="$2"; shift 2 ;;
+    --out) out="$2"; shift 2 ;;
+    *) echo "unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+[ -n "$tree" ] && [ -n "$out" ] || { echo "usage: gate-suite --tree DIR --out DIR" >&2; exit 2; }
+mkdir -p "$out"
+out="$(cd "$out" && pwd -P)"
+node_version="$(node -p "require('$tree/package.json').engines.node" 2>/dev/null || true)"
+node_bin="$HOME/.vite-plus/js_runtime/node/$node_version/bin"
+export PATH="$tree/node_modules/.bin:$node_bin:/usr/bin:/bin:$HOME/.vite-plus/bin:$PATH"
+scratch="/tmp/t3nightly-suite-$$"
+mkdir -p "$scratch"
+mounted=0
+cleanup() {
+  if [ "$mounted" = 1 ]; then
+    /usr/bin/hdiutil detach "$scratch/tmp" >/dev/null || return
+  fi
+  rm -rf "$scratch"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+server_env=()
+if [ "$(uname -s)" = Darwin ]; then
+  /usr/bin/hdiutil create -quiet -size 16g -type SPARSE -fs "Case-sensitive APFS" -volname t3nightly-suite "$scratch/scratch.sparseimage" || exit 2
+  mkdir -p "$scratch/tmp"
+  /usr/bin/hdiutil attach -nobrowse -mountpoint "$scratch/tmp" "$scratch/scratch.sparseimage" > "$out/scratch-mount.log" || exit 2
+  mounted=1
+  server_env=(/usr/bin/sandbox-exec -p '(version 1)(allow default)(deny file-read* (subpath "/Applications"))')
+  scratch_tmp="$scratch/tmp"
+else
+  scratch_tmp="$scratch"
+fi
+export TMPDIR="$(cd "$scratch_tmp" && pwd -P)"
+node -e 'const fs=require("fs"),p=require("path"); const d=fs.mkdtempSync(p.join(process.env.TMPDIR,"case-probe-")); try {fs.writeFileSync(p.join(d,"a"),""); if(fs.existsSync(p.join(d,"A"))) throw Error("suite TMPDIR must be case-sensitive");} finally {fs.rmSync(d,{recursive:true,force:true});}' || exit 2
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 FACTORY_RAW_WORKTREE=1
+export CC=/usr/bin/cc CXX=/usr/bin/c++
+probe="$TMPDIR"
+while [ "$probe" != "/" ]; do
+  [ -e "$probe/node_modules" ] && { echo "node_modules above TMPDIR at $probe" >&2; exit 2; }
+  probe="$(dirname "$probe")"
+done
+cd "$tree"
+if [ -f apps/desktop/node_modules/electron/index.js ]; then
+  (cd apps/desktop && node -e 'require("electron")') > "$out/electron-install.log" 2>&1 || exit 1
+fi
+node apps/web/node_modules/playwright/cli.js install --only-shell chromium > "$out/playwright-web.log" 2>&1
+node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium > "$out/playwright-server.log" 2>&1
+run() {
+  local name="$1"; shift
+  local began=$SECONDS
+  nice -n 10 "$@" > "$out/$name.log" 2>&1
+  local code=$?
+  printf '{"part":"%s","exit":%d,"seconds":%d,"log":"%s"}\n' "$name" "$code" "$((SECONDS - began))" "$out/$name.log" >> "$out/suite.jsonl"
+  return $code
+}
+: > "$out/suite.jsonl"
+status=0
+run typecheck vp run -r typecheck || status=1
+packages=$(node -e '
+const {execSync}=require("child_process");
+const files=execSync("git ls-files \"*package.json\"",{encoding:"utf8"}).split("\n").filter(f=>f&&!f.startsWith(".repos/")&&!f.includes("node_modules"));
+for(const f of files){const p=require(require("path").resolve(f));if(p.scripts&&p.scripts.test&&!["t3","@t3tools/monorepo","@t3tools/web"].includes(p.name))console.log(p.name)}')
+for pkg in $packages; do
+  extra=()
+  native_env=()
+  native_root="$HOME/.t3nightly/native-deps/root"
+  if [ "$pkg" = "@t3tools/desktop" ] && [ "$(uname -s)" = Linux ] && [ -d "$native_root" ]; then
+    native_env=(env CC=/usr/bin/cc CXX=/usr/bin/c++ "PKG_CONFIG_SYSROOT_DIR=$native_root" "PKG_CONFIG_LIBDIR=$native_root/usr/lib/x86_64-linux-gnu/pkgconfig:$native_root/usr/share/pkgconfig" "LD_LIBRARY_PATH=$native_root/usr/lib/x86_64-linux-gnu")
+  fi
+  if [ "$pkg" = "@t3tools/desktop" ] && [ "$(uname -s)" = Linux ] && ! "${native_env[@]}" pkg-config --exists libsecret-1 2>/dev/null; then
+    extra=(--exclude scripts/browser-secret-native.test.mjs)
+    echo "{\"part\":\"package:$pkg\",\"skipped\":\"scripts/browser-secret-native.test.mjs: libsecret-1 dev files missing on this host\"}" >> "$out/suite.jsonl"
+  fi
+  run "package-${pkg//\//_}" "${native_env[@]}" vp run --filter "$pkg" test "${extra[@]}" || status=1
+done
+run web "$(dirname "$0")/gate-web" "$tree" || status=1
+run server "${server_env[@]}" vp run --filter t3 test --maxWorkers=4 || status=1
+cat "$out/suite.jsonl"
+exit $status

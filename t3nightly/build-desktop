@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+tree="" version="" out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help) echo "usage: build-desktop --tree DIR --version V --out DIR"; exit 0 ;;
+    --tree) tree="$2"; shift 2 ;;
+    --version) version="$2"; shift 2 ;;
+    --out) out="$2"; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+[ -n "$tree" ] && [ -n "$version" ] && [ -n "$out" ] || { echo "usage: build-desktop --tree DIR --version V --out DIR" >&2; exit 2; }
+config="${T3NIGHTLY_PUBLIC_CONFIG:-$HOME/.config/t3nightly/public-config.env}"
+[ -s "$config" ] || { echo "missing public config" >&2; exit 3; }
+mkdir -p "$out"
+out="$(cd "$out" && pwd -P)"
+export CC=/usr/bin/clang CXX=/usr/bin/clang++ CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER=/usr/bin/cc
+stage_root="$(df -P "$tree" | awk 'NR==2{print $NF}')/tmp"
+[ -d "$stage_root" ] && [ -w "$stage_root" ] || stage_root="${TMPDIR:-/tmp}"
+export TMPDIR="${T3NIGHTLY_DESKTOP_TMP:-$stage_root/t3nightly-desktop/$(basename "$tree")}"
+mkdir -p "$TMPDIR"
+sign_dir="$(mktemp -d "$TMPDIR/sign.XXXXXX")"
+trap '"$here/mac-signing-done" "$sign_dir"' EXIT
+if ! signing_env=$("$here/mac-signing" "$sign_dir"); then
+  echo "build-desktop: mac signing setup failed" >&2
+  exit 4
+fi
+eval "$signing_env"
+export T3CODE_CLI_MAC_SIGN_IDENTITY CSC_NAME CSC_KEYCHAIN APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID
+unset CSC_LINK CSC_KEY_PASSWORD T3CODE_MACOS_PROVISIONING_PROFILE
+set -a
+. "$config"
+set +a
+export T3CODE_DESKTOP_UPDATE_REPOSITORY=aneym/t3code
+export T3CODE_DESKTOP_UPDATE_URL=https://studio.tailf266ac.ts.net:8972/
+export PATH="$HOME/.vite-plus/js_runtime/node/26.12.1/bin:$HOME/.vite-plus/bin:$PATH"
+cd "$tree"
+build() {
+  vp i --frozen-lockfile -- --package-import-method=clone &&
+  nice -n 10 vp run build:desktop &&
+  "$here/fork-build-manifest" "$version" > apps/server/dist/client/fork-build.json &&
+  T3CODE_DESKTOP_SKIP_BUILD=1 nice -n 10 vp run dist:desktop:artifact --platform mac --target dmg --arch arm64 --build-version "$version" --signed --verbose --output-dir "$out"
+}
+build 2>&1 | python3 "$here/release_redact.py"
+zip="$out/T3-Code-$version-arm64.zip"
+python3 "$here/release_signatures.py" desktop-zip "$zip"

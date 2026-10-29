@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import re
+import sys
+from pathlib import Path
+
+
+def literal(source, name):
+    match = re.search(re.escape(name).encode() + rb'\s*=\s*(?:\w+\()?readBuildTimeValue\("([^"]*)"\)', source)
+    return match.group(1).decode() if match else ''
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--runtime', required=True)
+    parser.add_argument('--out', required=True)
+    args = parser.parse_args()
+    runtime = Path(args.runtime)
+    binary = (runtime / 't3').read_bytes()
+    client = b'\n'.join(path.read_bytes() for path in sorted((runtime / 'client').rglob('*.js')))
+    block = re.search(rb'buildTimeRelayUrl = \w+\("([^"]+)"\)[^;]*;\s*(\w+) = readBuildTimeValue\("([^"]*)"\);\s*(\w+) = readBuildTimeValue\("([^"]*)"\);\s*\w+ = \{\s*tracesUrl: readBuildTimeValue\("([^"]*)"\),\s*tracesDataset: readBuildTimeValue\("([^"]*)"\),\s*tracesToken: readBuildTimeValue\("([^"]*)"\)', binary)
+    if not block:
+        print('public config block not found in ' + str(runtime / 't3'), file=sys.stderr)
+        return 3
+    relay, _, publishable, _, oauth, traces_url, traces_dataset, traces_token = (part.decode() for part in block.groups())
+    template = re.search(rb'VITE_CLERK_JWT_TEMPLATE:`([^`]+)`', client)
+    values = {
+        'T3CODE_RELAY_URL': relay,
+        'T3CODE_CLERK_PUBLISHABLE_KEY': publishable,
+        'T3CODE_CLERK_CLI_OAUTH_CLIENT_ID': oauth,
+        'T3CODE_CLERK_JWT_TEMPLATE': template.group(1).decode() if template else '',
+        'T3CODE_RELAY_CLIENT_OTLP_TRACES_URL': traces_url,
+        'T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET': traces_dataset,
+        'T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN': traces_token,
+    }
+    missing = [key for key, value in values.items() if not value]
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as handle:
+        for key, value in values.items():
+            handle.write('%s=%s\n' % (key, value))
+    print('wrote %d values to %s; missing: %s' % (len(values) - len(missing), out, ','.join(missing) or 'none'))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

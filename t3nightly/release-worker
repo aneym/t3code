@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from t3nightly.release_assemble import stamp
+from t3nightly.release_ownership import ownership, verify_tree
+from t3nightly.release_transport import command, git_tree, require
+
+
+def perform(args):
+    tools = Path(__file__).resolve().parent
+    archive = args.run / f"t3-{args.version}-linux-x64.tar.gz"
+    if args.action == "build":
+        head = (args.run / "candidate-head").read_text().strip()
+        require(["git", "-C", args.repo, "fetch", str(args.run / "candidate.bundle"), "HEAD"], sys.stdout)
+        git_tree(args.repo, args.tree, head, sys.stdout)
+        code = 1
+        try:
+            stamp(args.tree, args.version)
+            code = command([str(tools / "build-cli"), "--tree", str(args.tree), "--version", args.version, "--out", str(args.run)], sys.stdout)
+            return code
+        finally:
+            if code:
+                ownership("release", args.tree, sys.stdout)
+    if args.action == "gate":
+        head = (args.run / "candidate-head").read_text().strip()
+        verify_tree(args.tree, head)
+        ownership("lease", args.tree, sys.stdout)
+        try:
+            code = command([
+                str(tools / "gate"), "--archive", str(archive), "--tree", str(args.tree),
+                "--version", args.version, "--out", str(args.run / "gate"),
+            ], sys.stdout)
+            if code:
+                return code
+            return command([str(tools / "gate-suite"), "--tree", str(args.tree), "--out", str(args.run / "suite")], sys.stdout)
+        finally:
+            ownership("release", args.tree, sys.stdout)
+    code = command([
+        str(tools / "install"), "--version", args.version, "--assets", str(args.run),
+        "--state-dir", str((args.run / "install").resolve()),
+        "--backups", str((Path.home() / ".t3nightly/backups").resolve()), "--verdict", str(args.run / "visual-verdict.md"),
+        "--load-max", "8", "--wait",
+    ], sys.stdout)
+    report = args.run / "install/last.json"
+    if code or not report.is_file():
+        return code or 1
+    result = json.loads(report.read_text())
+    return 0 if result.get("target") == args.version and result.get("outcome") in ("installed", "current") else 1
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("action", choices=("build", "gate", "install", "outputs"))
+    parser.add_argument("--repo", required=True)
+    parser.add_argument("--tree", type=Path, required=True)
+    parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--version", required=True)
+    args = parser.parse_args()
+    archive = args.run / f"t3-{args.version}-linux-x64.tar.gz"
+    if args.action == "outputs":
+        return 0 if archive.is_file() else 1
+    args.run.mkdir(parents=True, exist_ok=True)
+    if args.action == "install":
+        return perform(args)
+    from t3nightly.release_admission import heavy_owner
+    with heavy_owner(args.run, args.action, sys.stdout) as admitted:
+        return perform(args) if admitted else 10
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
