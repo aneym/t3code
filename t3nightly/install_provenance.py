@@ -47,6 +47,9 @@ def validate(run, previous, candidate):
         raise ValueError("artifact requires verified signing and notarization")
     if artifact["archive"]["sha256"] != file_digest(archive) or artifact["runtime"]["sha256"] != observed["candidateRuntime.digest"]:
         raise ValueError("artifact manifest archive/runtime digest mismatch")
+    if not args.rehearsal and previous == args.version and observed["oldRuntime.digest"] == observed["candidateRuntime.digest"]:
+        run.step("hard-already-current", version=previous, digest=observed["candidateRuntime.digest"])
+        return manifest, None, host, observed
     if args.rehearsal:
         owner = Path(pwd.getpwuid(os.getuid()).pw_dir)
         live = (owner / ".t3").resolve()
