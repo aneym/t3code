@@ -183,8 +183,12 @@ def topics(tree, base, head):
 
 
 def typescript(tree):
-    found = sorted(Path(tree).glob("node_modules/.pnpm/typescript@6.0.3/node_modules/typescript/lib/typescript.js"))
-    return found[-1].resolve() if found else None
+    common = Path(tree, git(tree, "rev-parse", "--git-common-dir").strip()).resolve().parent
+    for root in (Path(tree), common):
+        found = sorted(root.glob("node_modules/.pnpm/typescript@6.0.3/node_modules/typescript/lib/typescript.js"))
+        if found:
+            return found[-1].resolve()
+    return None
 
 
 def ast_same(tree, base, head, path, mode):
