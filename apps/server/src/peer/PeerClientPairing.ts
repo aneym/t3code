@@ -30,8 +30,10 @@ export class PeerClientPairing extends Context.Service<
   }
 >()("t3/peer/PeerClientPairing") {}
 
-const decodeCredential = Schema.decodeUnknownEffect(PeerClientPairingCredential);
-const encodeCredential = Schema.encodeEffect(PeerClientPairingCredential);
+const decodeCredential = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(PeerClientPairingCredential)),
+);
+const encodeCredential = Schema.encodeEffect(Schema.toCodecJson(PeerClientPairingCredential));
 
 const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
@@ -91,7 +93,7 @@ const make = Effect.gen(function* () {
     if (response.status !== 200) {
       return yield* unreachable(`HTTP ${response.status}`);
     }
-    const issued = yield* response.json.pipe(
+    const issued = yield* response.text.pipe(
       Effect.flatMap(decodeCredential),
       Effect.mapError(unreachable),
     );
