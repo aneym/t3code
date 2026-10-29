@@ -64,8 +64,8 @@ def ancestors():
 
 def ignorable(proc, lineage):
     try:
-        parent = Path(f"/proc/{(proc / 'stat').read_text().rpartition(')')[2].split()[1]}")
-        if int(proc.name) in lineage or parent.stat().st_uid == 0:
+        parent_pid = (proc / "stat").read_text().rpartition(")")[2].split()[1]
+        if int(proc.name) in lineage or (parent_pid != "1" and Path(f"/proc/{parent_pid}").stat().st_uid == 0):
             return True
         command = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
         return bool(command) and command in ignored_commands()
