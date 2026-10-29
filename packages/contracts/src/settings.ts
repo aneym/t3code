@@ -24,6 +24,10 @@ import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
+  LinkedEnvironmentServerSettingsFields,
+  LinkedEnvironmentServerSettingsPatchFields,
+} from "./linkedEnvironmentSettings.ts";
+import {
   CustomModelSetting,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
@@ -1338,11 +1342,7 @@ export const ServerSettings = Schema.Struct({
   ),
   /** Beta: guest links for this machine's threads. Off refuses new links and pauses existing ones. */
   guestSharingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  /**
-   * Beta: links to the user's other machines, both ways. Off refuses new links, calls over links
-   * and tasks on another machine; tasks already running there finish.
-   */
-  linkedEnvironmentsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  ...LinkedEnvironmentServerSettingsFields,
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -1689,7 +1689,7 @@ export const ServerSettingsPatch = Schema.Struct({
   snoozePresets: Schema.optionalKey(SnoozePresetSettings),
   sidebarAgents: Schema.optionalKey(Schema.NullOr(SidebarAgentsSettings)),
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
-  linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
+  ...LinkedEnvironmentServerSettingsPatchFields,
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),
