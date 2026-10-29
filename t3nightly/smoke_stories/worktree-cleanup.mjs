@@ -17,6 +17,7 @@ if (!(await readFile(server)).includes('worktreeContentIntegration')) {
   console.log(`SKIP: ${server} has no worktreeContentIntegration setting`);
   process.exit(0);
 }
+assert((await readFile(`${tree}/packages/contracts/src/settings.ts`)).includes('worktreeContentIntegration'), `${tree} contracts lack worktreeContentIntegration; its client would drop the cleanup guards`);
 assert.notEqual(await realpath(home), await realpath(join(homedir(), '.t3')).catch(() => join(homedir(), '.t3')));
 await mkdir(out, { recursive: true });
 const execute = promisify(execFile);
@@ -73,7 +74,8 @@ const rpc = async (body) => {
 };
 const sweep = async (label, patch) => {
   const report = await rpc((client) => Effect.gen(function* () {
-    yield* client['server.updateSettings']({ patch: { storageCleanup: patch } });
+    const applied = (yield* client['server.updateSettings']({ patch: { storageCleanup: patch } })).storageCleanup;
+    for (const [key, value] of Object.entries(patch)) assert.equal(applied?.[key], value, `server did not apply storageCleanup.${key}`);
     return yield* client['server.runStorageCleanup']({});
   }));
   const paths = new Set(Object.values(evidence.threads).map((thread) => thread.path));
