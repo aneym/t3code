@@ -34,7 +34,7 @@ def retained(run, before):
 
 
 def candidate_writes(run, version, proof):
-    until = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    until = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(timespec="milliseconds")
     command = [str(run.runtime(version)), "thread", "snooze", proof["threadId"], "--snoozed-until", until, "--json", "--base-dir", str(run.home)]
     result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
     if result.returncode:
