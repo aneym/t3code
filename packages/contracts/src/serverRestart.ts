@@ -20,13 +20,28 @@ export const ServerRestartHandoff = Schema.Struct({
 });
 export type ServerRestartHandoff = typeof ServerRestartHandoff.Type;
 
+const SERVER_RESTART_MAX_DRAIN_MS = 30 * 60 * 1000;
+
 export const ServerPrepareRestartInput = Schema.Struct({
   epoch: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  drainTimeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: SERVER_RESTART_MAX_DRAIN_MS })),
+  ),
 });
+export type ServerPrepareRestartInput = typeof ServerPrepareRestartInput.Type;
+
+export const ServerRestartDrain = Schema.Struct({
+  drained: Schema.Boolean,
+  waitedMs: Schema.Number,
+  activeRunIds: Schema.Array(RunId),
+});
+export type ServerRestartDrain = typeof ServerRestartDrain.Type;
+
 export const ServerPrepareRestartResult = Schema.Struct({
   epoch: Schema.String,
   ready: Schema.Literal(true),
   threads: Schema.Array(ServerRestartHandoff),
+  drain: Schema.optional(ServerRestartDrain),
 });
 export type ServerPrepareRestartResult = typeof ServerPrepareRestartResult.Type;
 

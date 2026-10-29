@@ -9,17 +9,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
-import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { forkParked } from "../serverActivation.ts";
+import { claimableCandidatePredicate } from "./EffectOutboxClaims.ts";
+import { type EffectRow, encodeRequest, rowToEffect } from "./EffectOutboxRows.ts";
 
 import {
   OrchestrationEffectRequestV2,
   REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS,
   PROCESS_BOUND_EFFECT_TYPES,
-  OrchestrationEffectStatusV2,
   SETTLED_EFFECT_RETENTION,
   type OrchestrationEffectV2,
   type PendingOrchestrationEffectV2,
@@ -37,6 +37,12 @@ export interface EffectOutboxV2Shape {
   readonly runningEffects: Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
   readonly restartPrepared: Effect.Effect<string | undefined>;
   readonly prepareRestart: (epoch: string) => Effect.Effect<void>;
+  readonly restartDraining: Effect.Effect<string | undefined>;
+  readonly drainForRestart: (epoch: string | undefined) => Effect.Effect<void>;
+  readonly staggerPending: (input: {
+    readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+    readonly spacing: number;
+  }) => Effect.Effect<number, EffectOutboxError>;
   readonly restartHandoffs: Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
   readonly awaitAvailable: Effect.Effect<void>;
   readonly notifyAvailable: (count?: number) => Effect.Effect<void>;
@@ -91,51 +97,13 @@ export class EffectOutboxV2 extends Context.Service<EffectOutboxV2, EffectOutbox
   "t3/orchestration-v2/EffectOutbox/EffectOutboxV2",
 ) {}
 
-type EffectRow = {
-  readonly effect_id: string;
-  readonly command_id: string;
-  readonly thread_id: string;
-  readonly effect_type: string;
-  readonly payload_json: string;
-  readonly status: string;
-  readonly attempt_count: number;
-  readonly available_at: string;
-  readonly lease_owner: string | null;
-  readonly created_at: string;
-  readonly updated_at: string;
-  readonly completed_at: string | null;
-  readonly last_error: string | null;
-};
-
-const encodeRequest = Schema.encodeSync(Schema.fromJsonString(OrchestrationEffectRequestV2));
-const decodeRequest = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationEffectRequestV2),
-);
-
-const rowToEffect = (row: EffectRow) =>
-  decodeRequest(row.payload_json).pipe(
-    Effect.map((request): OrchestrationEffectV2 => ({
-      id: row.effect_id,
-      commandId: CommandId.make(row.command_id),
-      threadId: ThreadId.make(row.thread_id),
-      request,
-      status: row.status as OrchestrationEffectStatusV2,
-      attemptCount: row.attempt_count,
-      availableAt: row.available_at,
-      leaseOwner: row.lease_owner,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      completedAt: row.completed_at,
-      lastError: row.last_error,
-    })),
-  );
-
 export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = Layer.effect(
   EffectOutboxV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const available = yield* Queue.dropping<void>(64);
     let restartEpoch: string | undefined;
+    let drainEpoch: string | undefined;
     const claimGate = yield* Semaphore.make(1);
     const cancellationSignals = new Map<string, Deferred.Deferred<void>>();
     const settledSignals = new Map<string, Deferred.Deferred<void>>();
@@ -155,48 +123,6 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
-    // Retry backoff must block later effects so turns cannot race a pending rollback.
-    const claimableCandidatePredicate = (
-      availableBefore?: string,
-      excludeRestartContinuations = false,
-    ) =>
-      sql`
-        ${
-          availableBefore === undefined
-            ? sql`1 = 1`
-            : sql`candidate.available_at <= ${availableBefore}`
-        }
-        AND candidate.status = 'pending'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM orchestration_v2_effect_outbox AS active
-          WHERE active.thread_id = candidate.thread_id
-            AND (
-              active.status = 'running'
-              OR (
-                active.status = 'pending'
-                AND active.rowid < candidate.rowid
-                AND ${
-                  excludeRestartContinuations
-                    ? sql`active.effect_type != 'provider-runtime.continue'`
-                    : sql`1 = 1`
-                }
-              )
-            )
-            AND (
-              (
-                candidate.effect_type = 'thread-title.generate'
-                AND active.effect_type = 'thread-title.generate'
-              )
-              OR
-              (
-                candidate.effect_type != 'thread-title.generate'
-                AND active.effect_type != 'thread-title.generate'
-              )
-            )
-        )
-      `;
-
     const cancellationSignal = (effectId: string) => {
       const existing = cancellationSignals.get(effectId);
       if (existing !== undefined) return existing;
@@ -219,10 +145,18 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             Effect.mapError((cause) => new EffectOutboxError({ operation: "transaction", cause })),
           ),
       restartPrepared: Effect.sync(() => restartEpoch),
+      restartDraining: Effect.sync(() => drainEpoch),
+      drainForRestart: (epoch) =>
+        claimGate.withPermits(1)(
+          Effect.sync(() => {
+            drainEpoch = epoch;
+          }).pipe(Effect.andThen(epoch === undefined ? notifyAvailable() : Effect.void)),
+        ),
       prepareRestart: (epoch) =>
         claimGate.withPermits(1)(
           Effect.sync(() => {
             restartEpoch = epoch;
+            drainEpoch = undefined;
           }),
         ),
       abortRestart: (epoch) =>
@@ -231,6 +165,34 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             if (restartEpoch === epoch) restartEpoch = undefined;
           }).pipe(Effect.andThen(notifyAvailable())),
         ),
+      staggerPending: Effect.fn("EffectOutbox.staggerPending")(
+        function* ({ effectTypes, spacing }) {
+          const now = DateTime.toEpochMillis(yield* DateTime.now);
+          const rows = yield* sql<{ readonly effect_id: string; readonly available_at: string }>`
+            SELECT effect_id, available_at FROM orchestration_v2_effect_outbox
+            WHERE status = 'pending' AND effect_type IN ${sql.in(effectTypes)}
+            ORDER BY created_at, rowid
+          `;
+          yield* Effect.forEach(
+            rows,
+            (row, index) => {
+              const at = Math.max(
+                DateTime.toEpochMillis(DateTime.makeUnsafe(row.available_at)),
+                now + index * spacing,
+              );
+              return sql`
+                UPDATE orchestration_v2_effect_outbox
+                SET available_at = ${DateTime.formatIso(DateTime.makeUnsafe(at))}
+                WHERE effect_id = ${row.effect_id} AND status = 'pending'
+              `;
+            },
+            { discard: true },
+          );
+          return rows.length;
+        },
+        (effect) => sql.withTransaction(effect),
+        Effect.mapError((cause) => new EffectOutboxError({ operation: "stagger", cause })),
+      ),
       runningEffects:
         sql<EffectRow>`SELECT * FROM orchestration_v2_effect_outbox WHERE status = 'running'`.pipe(
           Effect.flatMap((rows) => decodeRows("list", rows)),
@@ -416,7 +378,11 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             WHERE effect_id = (
               SELECT candidate.effect_id
               FROM orchestration_v2_effect_outbox AS candidate
-              WHERE ${claimableCandidatePredicate(nowIso, excludeRestartContinuations)}
+              WHERE ${claimableCandidatePredicate(sql, {
+                availableBefore: nowIso,
+                excludeRestartContinuations,
+                draining: drainEpoch !== undefined,
+              })}
                 AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
               ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
               LIMIT 1
@@ -437,7 +403,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         const rows = yield* sql<{ readonly available_at: string | null }>`
           SELECT MIN(candidate.available_at) AS available_at
           FROM orchestration_v2_effect_outbox AS candidate
-          WHERE ${claimableCandidatePredicate()}
+          WHERE ${claimableCandidatePredicate(sql, { draining: drainEpoch !== undefined })}
         `.pipe(NodeSqliteClient.readOnly, Effect.withTracerEnabled(false));
         const availableAt = rows[0]?.available_at;
         if (availableAt === undefined || availableAt === null) return Option.none();

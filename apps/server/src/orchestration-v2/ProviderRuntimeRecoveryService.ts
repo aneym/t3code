@@ -104,6 +104,7 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
     ) => Effect.Effect<ServerPrepareRestartResult, ServerImportRestartHandoffError>;
     readonly prepareRestart: (
       epoch: string,
+      drainTimeoutMs?: number,
     ) => Effect.Effect<ServerPrepareRestartResult, ServerPrepareRestartError>;
     readonly reconcile: (
       trigger: "startup" | "shutdown",
@@ -779,9 +780,16 @@ export const make = Effect.gen(function* () {
     } satisfies ProviderRuntimeReconciliationSummary;
   });
 
-  const recover = Effect.gen(function* () {
-    return (yield* reconcile("startup")) satisfies ProviderRuntimeRecoverySummary;
-  });
+  const recover = reconcile("startup").pipe(
+    Effect.tap(() =>
+      outbox
+        .staggerPending({
+          effectTypes: EffectOutboxModel.RESTART_RESUME_EFFECT_TYPES,
+          spacing: EffectOutboxModel.RESTART_RESUME_SPACING_MS,
+        })
+        .pipe(Effect.ignoreCause({ log: true })),
+    ),
+  );
 
   const restartContext = yield* Effect.context<
     | EffectOutbox.EffectOutboxV2
@@ -800,8 +808,9 @@ export const make = Effect.gen(function* () {
     importRestartHandoff: Effect.fn("ProviderRuntimeRecoveryService.importRestartHandoff")(
       (input) => importRestartHandoff(input).pipe(Effect.provide(restartContext)),
     ),
-    prepareRestart: Effect.fn("ProviderRuntimeRecoveryService.prepareRestart")((epoch) =>
-      prepareRestart(epoch).pipe(Effect.provide(restartContext)),
+    prepareRestart: Effect.fn("ProviderRuntimeRecoveryService.prepareRestart")(
+      (epoch, drainTimeoutMs) =>
+        prepareRestart(epoch, drainTimeoutMs).pipe(Effect.provide(restartContext)),
     ),
     reconcile,
     prepareForShutdown: prepareForShutdown.pipe(

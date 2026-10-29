@@ -12,13 +12,15 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import { drainBeforeRestart, releaseRestartDrain } from "./RestartDrain.ts";
 import { legacyRestartHandoffs } from "./RestartHandoffImport.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareRestart")(
-  function* (epoch: string) {
+  function* (epoch: string, drainTimeoutMs = 0) {
     const outbox = yield* EffectOutbox.EffectOutboxV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const preparedEpoch = yield* outbox.restartPrepared;
@@ -31,6 +33,10 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
       return yield* new ServerPrepareRestartError({
         cause: "Restart epoch has already been consumed or aborted.",
       });
+    const drain =
+      preparedEpoch === undefined && drainTimeoutMs > 0
+        ? yield* drainBeforeRestart(epoch, Duration.millis(drainTimeoutMs))
+        : undefined;
     yield* outbox.prepareRestart(epoch);
     const running = yield* outbox.runningEffects;
     yield* Effect.forEach(running, (effect) => outbox.awaitSettled(effect.id), { discard: true });
@@ -99,11 +105,18 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
         return handoffs;
       }),
     );
-    return { epoch, ready: true as const, threads: receipt };
+    return {
+      epoch,
+      ready: true as const,
+      threads: receipt,
+      ...(drain === undefined ? {} : { drain }),
+    };
   },
-  (effect, epoch) =>
+  (effect, epoch, _drainTimeoutMs?: number) =>
     effect.pipe(
-      Effect.onError(() => abortRestart(epoch).pipe(Effect.ignore)),
+      Effect.onError(() =>
+        abortRestart(epoch).pipe(Effect.ignore, Effect.andThen(releaseRestartDrain(epoch))),
+      ),
       Effect.mapError((cause) => new ServerPrepareRestartError({ cause })),
     ),
 );

@@ -68,6 +68,7 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
           restartPrepared: Effect.sync(() => undefined),
           restartHandoffs: Effect.succeed([]),
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          staggerPending: () => Effect.succeed(0),
         }),
       ),
     ),
@@ -495,6 +496,7 @@ it.effect("recovery closes a secret card's form but leaves a link card open", ()
         Layer.mock(EffectOutbox.EffectOutboxV2)({
           listByCommandId: () => Effect.succeed([]),
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          restartHandoffs: Effect.succeed([]),
         }),
       ),
     ),
@@ -710,6 +712,7 @@ it.effect(
             restartPrepared: Effect.sync(() => undefined),
             restartHandoffs: Effect.succeed([]),
             reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+            staggerPending: () => Effect.succeed(0),
           }),
         ),
       ),
