@@ -29,6 +29,11 @@ import * as ProcessRunner from "../processRunner.ts";
 export class PortDiscovery extends Context.Service<
   PortDiscovery,
   {
+    readonly resourceOwners: (
+      pids: ReadonlyArray<number>,
+    ) => Effect.Effect<
+      ReadonlyMap<number, { readonly threadId: ThreadId; readonly terminalId?: string }>
+    >;
     readonly scan: (
       configuredUrls?: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<DiscoveredLocalServer>>;
@@ -525,8 +530,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
   const readAgentThreads = Effect.fn("PortDiscovery.readAgentThreads")(function* (
     pids: ReadonlyArray<number>,
+    useCache = true,
   ) {
-    const cached = yield* Ref.get(agentThreadsRef);
+    const cached = useCache ? yield* Ref.get(agentThreadsRef) : new Map<number, ThreadId | null>();
     const unread = pids.filter((pid) => !cached.has(pid));
     const read: ReadonlyMap<number, ThreadId | null> =
       unread.length === 0
@@ -563,7 +569,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       const threadId = cached.has(pid) ? cached.get(pid) : read.get(pid);
       if (threadId !== undefined) next.set(pid, threadId);
     }
-    yield* Ref.set(agentThreadsRef, next);
+    if (useCache) yield* Ref.set(agentThreadsRef, next);
     return next;
   });
 
@@ -577,6 +583,21 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const owners = new Map(terminalOwners);
     for (const [pid, threadId] of threads) {
       if (threadId !== null) owners.set(pid, { terminal: null, agent: { threadId } });
+    }
+    return owners;
+  });
+
+  const resourceOwners = Effect.fn("PortDiscovery.resourceOwners")(function* (
+    pids: ReadonlyArray<number>,
+  ) {
+    const owners = new Map<number, { threadId: ThreadId; terminalId?: string }>();
+    if (hostPlatform !== "win32") {
+      for (const [pid, threadId] of yield* readAgentThreads(pids, false)) {
+        if (threadId !== null) owners.set(pid, { threadId });
+      }
+    }
+    for (const registration of (yield* Ref.get(stateRef)).terminalProcesses.values()) {
+      for (const pid of registration.processIds) owners.set(pid, registration.owner);
     }
     return owners;
   });
@@ -1175,6 +1196,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     scan: scanOnce,
     subscribe,
     retain,
+    resourceOwners,
     registerTerminalProcesses,
     unregisterTerminal,
     trackAgent,

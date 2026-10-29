@@ -1,3 +1,5 @@
+import * as PortScanner from "../preview/PortScanner.ts";
+import { aggregateThreadResources } from "./ThreadResources.ts";
 import type {
   DesktopHostTelemetrySnapshot,
   HostPowerSnapshot,
@@ -140,6 +142,7 @@ function buildHealth(input: {
 
 /** @public */
 export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(function* () {
+  const portDiscovery = yield* Effect.serviceOption(PortScanner.PortDiscovery);
   const nativeClient = yield* NativeTelemetryClient.NativeTelemetryClient;
   const desktopReceiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const attribution = yield* ResourceAttribution.ResourceAttribution;
@@ -295,6 +298,14 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
           sampleIntervalMs: nativeHealth.sampleIntervalMs,
           processes: merged.processes,
           groups: merged.groups,
+          threads: aggregateThreadResources(
+            merged.processes,
+            Option.isSome(portDiscovery)
+              ? yield* portDiscovery.value.resourceOwners(
+                  merged.processes.map((entry) => entry.identity.pid),
+                )
+              : new Map(),
+          ),
           power: Option.match(desktopSnapshot, {
             onNone: () => unknownPower(readAt),
             onSome: (desktop) => desktop.power,

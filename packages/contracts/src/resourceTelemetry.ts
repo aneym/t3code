@@ -436,10 +436,22 @@ export const ResourceAttributionSnapshot = Schema.Struct({
 });
 export type ResourceAttributionSnapshot = typeof ResourceAttributionSnapshot.Type;
 
+export const ResourceTelemetryThread = Schema.Struct({
+  key: Schema.String,
+  threadId: Schema.optionalKey(Schema.String),
+  label: Schema.String,
+  cpuPercent: Schema.Number,
+  residentBytes: NonNegativeInt,
+  processCount: NonNegativeInt,
+  terminalCount: NonNegativeInt,
+});
+export type ResourceTelemetryThread = typeof ResourceTelemetryThread.Type;
+
 export const ResourceTelemetrySnapshot = Schema.Struct({
   readAt: Schema.DateTimeUtc,
   sampleIntervalMs: NonNegativeInt,
   processes: Schema.Array(ResourceTelemetryProcess),
+  threads: Schema.optionalKey(Schema.Array(ResourceTelemetryThread)),
   groups: ResourceTelemetryGroups,
   power: HostPowerSnapshot,
   speedLimitPercent: Schema.Option(Schema.Number),

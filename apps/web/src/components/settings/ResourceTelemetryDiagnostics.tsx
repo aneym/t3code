@@ -1,3 +1,4 @@
+import { ThreadResourcesTable } from "./ThreadResourcesTable";
 import { ProcessSignalActions } from "./ProcessSignalActions";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -1261,6 +1262,7 @@ function ResourceTelemetryDiagnosticsBody({
         }
       >
         <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-xs/5">
+          <ThreadResourcesTable rows={snapshot?.threads} environmentId={environmentId} />
           <ProcessTable
             processes={snapshot?.processes ?? []}
             canMaintainEnvironment={canMaintainEnvironment}
