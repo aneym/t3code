@@ -76,7 +76,7 @@ export function useSidebarAgentThreads<T extends EnvironmentThreadShell>(
     ? undefined
     : projects.find((project) => handle !== null && sidebarProjectPinKey(project) === handle);
   if (!focused && !pinnedProject) return { threads: listed, projectKeys: null, scopeKeys: null };
-  const projectKeys = focused
+  const ownProjectKeys = focused
     ? agentWorkProjectKeys(focused)
     : new Set(
         pinnedProject
@@ -85,12 +85,15 @@ export function useSidebarAgentThreads<T extends EnvironmentThreadShell>(
       );
   const scopeProjects = focused
     ? new Set(focused.workProjects.map((project) => `${project.environmentId}:${project.id}`))
-    : projectKeys;
-  const scopeKeys = groups
-    .filter((group) =>
-      group.memberProjectRefs.some((ref) => scopeProjects.has(scopedProjectKey(ref))),
-    )
-    .map((group) => group.projectKey);
+    : ownProjectKeys;
+  const scopeGroups = groups.filter((group) =>
+    group.memberProjectRefs.some((ref) => scopeProjects.has(scopedProjectKey(ref))),
+  );
+  const scopeKeys = scopeGroups.map((group) => group.projectKey);
+  const projectKeys = new Set([
+    ...ownProjectKeys,
+    ...scopeGroups.flatMap((group) => group.memberProjectRefs.map(scopedProjectKey)),
+  ]);
   const laneKeys = new Set(
     (focused?.lanes ?? []).map((lane) => `${lane.environmentId}:${lane.threadId}`),
   );
