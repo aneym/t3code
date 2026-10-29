@@ -448,7 +448,7 @@ const decodeAsAdvertised = <Tools extends Record<string, Tool.Any>>(
 ): Toolkit.Toolkit<Tools> =>
   Toolkit.make(
     ...Object.values(toolkit.tools).map((tool) =>
-      tool.setParameters(Schema.toCodecJson(tool.parametersSchema)),
+      tool.setParameters(Schema.toCodecJson(tool.parametersSchema)).annotate(Tool.Strict, true),
     ),
   ) as unknown as Toolkit.Toolkit<Tools>;
 
