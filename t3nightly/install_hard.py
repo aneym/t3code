@@ -264,16 +264,22 @@ def install(run):
             except (OSError, subprocess.SubprocessError) as error:
                 run.step("advisory-backup-check-failed", error=str(error))
     moment = datetime.now(timezone.utc).isoformat()
-    serving_version = run.server_version() or previous
-    expected_digest = observed["candidateRuntime.digest"] if serving_version == args.version else observed["oldRuntime.digest"]
-    serving_binary = serving_process(run, serving_version, expected_digest)
+    serving_version = run.server_version() or "unavailable"
+    serving_digest = ""
+    try:
+        expected_digest = observed["candidateRuntime.digest"] if serving_version == args.version else observed["oldRuntime.digest"]
+        serving_digest = file_digest(serving_process(run, serving_version, expected_digest))
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        run.step("hard-serving-unverified", error_type=type(error).__name__)
+        outcome = "failed"
+        serving_version = "unverified"
     receipt = {
         "schema": INSTALL_SCHEMA, "release": args.version, "runId": uuid.uuid4().hex,
         "host": host, "platform": manifest["targets"][host]["platform"], "arch": manifest["targets"][host]["arch"],
         "candidateDigest": manifest["digest"], "rehearsalDigest": rehearsal["digest"] if rehearsal else "",
         "artifactManifestDigest": observed["artifactManifestDigest"], "service": run.service_label,
         "oldRuntime": {"version": previous, "digest": observed["oldRuntime.digest"]},
-        "servingRuntime": {"version": serving_version, "digest": file_digest(serving_binary)},
+        "servingRuntime": {"version": serving_version, "digest": serving_digest},
         "installWindow": run.report.get("installWindow"), "hotSwap": {**(run.report.get("hotSwap") or {}), "forwardRepairRequired": run.report.get("forwardRepairRequired", False)},
         "backup": backup, "chat": post["proof"], "outcome": outcome, "reapedSshLaunch": run.reaped,
         "startedAt": run.report["started_at"], "finishedAt": moment,
