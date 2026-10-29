@@ -21,6 +21,7 @@ export function LabsSettingsPanel() {
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
+        <LinkedEnvironmentsLoadBalancingRow />
         <SimlockHostsRow />
       </SettingsSection>
       <LegacyFeaturesSection />
@@ -144,6 +145,30 @@ function LinkedEnvironmentsRow() {
             updateSettings({ linkedEnvironmentsEnabled: Boolean(checked) })
           }
           aria-label="Linked environments"
+        />
+      }
+    />
+  );
+}
+
+function LinkedEnvironmentsLoadBalancingRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  if (!settings.linkedEnvironmentsEnabled) return null;
+  return (
+    <SettingsRow
+      serverScoped
+      title="Linked machines in load balancing"
+      settingKeys={["loadBalancingIncludeLinkedEnvironments"]}
+      description="Clients that balance load add a route to each machine linked here with full access, so new threads can start there. Turning it off stops new routes; routes already added stay until removed in Connections."
+      control={
+        <ScopedSwitch
+          settingKeys={["loadBalancingIncludeLinkedEnvironments"]}
+          checked={settings.loadBalancingIncludeLinkedEnvironments}
+          onCheckedChange={(checked) =>
+            updateSettings({ loadBalancingIncludeLinkedEnvironments: Boolean(checked) })
+          }
+          aria-label="Linked machines in load balancing"
         />
       }
     />

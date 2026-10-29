@@ -1,4 +1,4 @@
-import { type PeerLinkSummary, WS_METHODS } from "@t3tools/contracts";
+import { type EnvironmentId, type PeerLinkSummary, WS_METHODS } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -29,6 +29,14 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
       tag: WS_METHODS.peerLinksUnlink,
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
+    }),
+    pairClient: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:peer-links:pair-client",
+      tag: WS_METHODS.peerLinksPairClient,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.environmentId]),
+      },
     }),
     // An agent's link card. One answer per card at a time.
     answerRequest: createEnvironmentRpcCommand(runtime, {
@@ -66,4 +74,17 @@ export function peerLinkHealth(link: PeerLinkSummary, now: DateTime.Utc): PeerLi
   if (link.lastError !== null) return { kind: "failing", detail: link.lastError };
   const days = Math.ceil(Duration.toDays(DateTime.distance(now, link.expiresAt)));
   return { kind: "reachable", expiresInDays: days <= EXPIRY_WARNING_DAYS ? days : null };
+}
+
+export function linkedRoutesToJoin(
+  links: ReadonlyArray<PeerLinkSummary>,
+  knownEnvironmentIds: ReadonlySet<EnvironmentId>,
+): ReadonlyArray<PeerLinkSummary> {
+  return links.filter(
+    (link) =>
+      link.access === "full-access" &&
+      link.status === "reachable" &&
+      link.lastError === null &&
+      !knownEnvironmentIds.has(link.environmentId),
+  );
 }
