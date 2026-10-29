@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -121,14 +122,14 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
     }: DesktopSyncIpcMethod<E, R>) {
       yield* Effect.annotateCurrentSpan({ channel });
       const context = yield* Effect.context<R>();
-      const runSync = Effect.runSyncWith(context);
+      const runSyncExit = Effect.runSyncExitWith(context);
 
       yield* Effect.acquireRelease(
         Effect.try({
           try: () => {
             ipcMain.removeAllListeners(channel);
             ipcMain.on(channel, (event) => {
-              event.returnValue = runSync(
+              const exit = runSyncExit(
                 Effect.gen(function* () {
                   yield* Effect.annotateCurrentSpan({ channel });
                   return yield* handler();
@@ -137,6 +138,14 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
                   Effect.withSpan("desktop.ipc.invokeSync"),
                 ),
               );
+              if (Exit.isFailure(exit)) {
+                runSyncExit(
+                  Effect.logError("sync IPC handler failed", exit.cause).pipe(
+                    Effect.annotateLogs({ channel }),
+                  ),
+                );
+              }
+              event.returnValue = Exit.isSuccess(exit) ? exit.value : null;
             });
           },
           catch: (cause) =>
