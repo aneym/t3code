@@ -223,7 +223,7 @@ function AgentRow(props: {
   const content = (
     <>
       <AgentFace agent={agent} />
-      <span className="min-w-0 flex-1 truncate">{agent.name}</span>
+      <span className="min-w-[min(8ch,100%)] flex-1 truncate">{agent.name}</span>
       <span className="flex shrink-0 text-xs text-sidebar-muted-foreground group-focus-within/agent-row:hidden group-hover/agent-row:hidden">
         {agent.thread !== null ? (
           <AgentStatus thread={agent.thread} />
@@ -234,7 +234,7 @@ function AgentRow(props: {
         ) : null}
       </span>
       {props.machines === "" ? null : (
-        <span className="hidden shrink-0 text-xs text-sidebar-muted-foreground group-focus-within/agent-row:inline group-hover/agent-row:inline">
+        <span className="hidden min-w-0 shrink-[999] truncate text-xs text-sidebar-muted-foreground group-focus-within/agent-row:block group-hover/agent-row:block">
           {props.machines}
         </span>
       )}
@@ -299,7 +299,7 @@ function AgentRow(props: {
             {...attributes}
             {...listeners}
             aria-label={`Reorder ${agent.name}`}
-            className="inline-flex h-6 w-0 shrink-0 touch-none cursor-grab items-center justify-center overflow-hidden rounded-md text-sidebar-muted-foreground opacity-0 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-focus-within/agent-row:w-6 group-focus-within/agent-row:opacity-100 group-hover/agent-row:w-6 group-hover/agent-row:opacity-100 active:cursor-grabbing"
+            className="inline-flex h-6 w-5 shrink-0 touch-none cursor-grab items-center justify-center overflow-hidden rounded-md text-sidebar-muted-foreground opacity-0 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-focus-within/agent-row:opacity-100 group-hover/agent-row:opacity-100 active:cursor-grabbing"
           >
             <GripVerticalIcon aria-hidden className="size-3.5" />
           </button>
