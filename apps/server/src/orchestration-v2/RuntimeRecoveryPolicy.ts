@@ -29,10 +29,6 @@ export function isNonterminalTurnItemStatus(status: string): boolean {
   return status === "pending" || status === "running" || status === "waiting";
 }
 
-export function isNonterminalNodeStatus(status: string): boolean {
-  return status === "pending" || status === "running" || status === "waiting";
-}
-
 export function isAppOwnedDelegation(task: {
   readonly origin: OrchestrationV2Subagent["origin"];
   readonly childThreadId: ThreadId | null;
