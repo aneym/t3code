@@ -35,6 +35,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import { toProject } from "./projectPresentation.ts";
 import { projectMetaUpdate } from "./projectMetaUpdate.ts";
+import { projectNotEmptyMessage } from "./projectNotEmptyMessage.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
@@ -82,9 +83,7 @@ export class ProjectNotEmptyError extends Schema.TaggedError<ProjectNotEmptyErro
   { projectId: ProjectId, blockingThreadIds: Schema.optional(Schema.Array(ThreadId)) },
 ) {
   override get message(): string {
-    return this.blockingThreadIds?.length
-      ? `Project not empty: archive unarchived threads ${this.blockingThreadIds.join(", ")}.`
-      : "Project not empty: use force=true to delete archived threads.";
+    return projectNotEmptyMessage(this.blockingThreadIds);
   }
 }
 
