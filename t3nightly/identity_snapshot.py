@@ -41,10 +41,19 @@ def copy(source, destination, timeout):
     os.chmod(destination, 0o600)
 
 
+def merge(fresh, destination):
+    with closing(sqlite3.connect(destination)) as connection:
+        connection.execute("ATTACH DATABASE ? AS fresh", (fresh.resolve().as_uri() + "?mode=ro",))
+        with connection:
+            for table, key in IDENTITY_KEYS.items():
+                connection.execute(f"INSERT INTO main.{table} SELECT {key} FROM fresh.{table} WHERE {key} NOT IN (SELECT {key} FROM main.{table})")
+        connection.execute("DETACH DATABASE fresh")
+
+
 def take(destination, *, home, timeout=1200):
     destination = checked_path(destination, home)
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    source = Path(home) / "userdata/statev2.sqlite"
+    source = Path(home).resolve() / "userdata/statev2.sqlite"
     with tempfile.TemporaryDirectory(prefix=".identity-build-", dir=destination.parent) as raw:
         staged = Path(raw) / "statev2.sqlite"
         root = str(Path(__file__).resolve().parent.parent)
@@ -75,12 +84,19 @@ def for_version(version, *, home, timeout=1200):
             if old != destination:
                 checked_path(old, home).unlink()
         reused = destination.is_file()
-        if not reused:
-            remaining = timeout - (time.monotonic() - started)
-            if remaining <= 0:
-                raise TimeoutError("identity snapshot deadline exceeded")
+        remaining = timeout - (time.monotonic() - started)
+        if remaining <= 0:
+            raise TimeoutError("identity snapshot deadline exceeded")
+        if reused:
+            fresh = checked_path(root / f"identity-fresh-{digest}.sqlite", home)
+            try:
+                take(fresh, home=home, timeout=remaining)
+                merge(fresh, destination)
+            finally:
+                fresh.unlink(missing_ok=True)
+        else:
             take(destination, home=home, timeout=remaining)
-        print(json.dumps({"identitySnapshot": "reused" if reused else "created", "seconds": round(time.monotonic() - started, 6), "bytes": destination.stat().st_size}), file=sys.stderr, flush=True)
+        print(json.dumps({"identitySnapshot": "extended" if reused else "created", "seconds": round(time.monotonic() - started, 6), "bytes": destination.stat().st_size}), file=sys.stderr, flush=True)
     return destination
 
 
