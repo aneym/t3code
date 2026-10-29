@@ -130,6 +130,40 @@ def logging_holder(launch, lock):
     return pid if holds(pid, launch / "server.log") else None
 
 
+def process_parent(pid):
+    if sys.platform == "darwin":
+        result = subprocess.run(["ps", "-o", "ppid=", "-p", pid], capture_output=True, text=True, check=False, timeout=15)
+        value = result.stdout.strip()
+        return value if value.isdigit() else None
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1]
+    except (FileNotFoundError, IndexError):
+        return None
+
+
+def under_service(pid):
+    current = process_parent(pid)
+    for _ in range(64):
+        if current is None or int(current) <= 1:
+            return False
+        if "__service-launcher" in process_argv(current):
+            return True
+        current = process_parent(current)
+    return True
+
+
+def qualifies(run, launch, pid, lock):
+    started = process_started(pid)
+    argv = process_argv(pid)
+    if started is None or process_uid(pid) != os.getuid() or not serves_home(argv, run.home) or under_service(pid):
+        return None
+    on_service_port = pid in port_listeners(run.args.port)
+    lock_owner = holds(pid, lock) and owns_lock(pid, lock)
+    if not (on_service_port or lock_owner):
+        return None
+    return {"pid": pid, "argv": argv, "launchDir": str(launch), "started": started}
+
+
 def identify(run, launch):
     try:
         marker = (launch / "managed").read_text().strip()
@@ -138,18 +172,11 @@ def identify(run, launch):
     if marker != "managed":
         return None
     lock = run.db.parent / "server-owner.sqlite"
-    pid = launched_pid(launch) or logging_holder(launch, lock)
-    if pid is None:
-        return None
-    started = process_started(pid)
-    argv = process_argv(pid)
-    if started is None or process_uid(pid) != os.getuid() or not serves_home(argv, run.home):
-        return None
-    on_service_port = pid in port_listeners(run.args.port)
-    lock_owner = holds(pid, lock) and owns_lock(pid, lock)
-    if not (on_service_port or lock_owner):
-        return None
-    return {"pid": pid, "argv": argv, "launchDir": str(launch), "started": started}
+    for pid in dict.fromkeys(candidate for candidate in (launched_pid(launch), logging_holder(launch, lock)) if candidate):
+        stray = qualifies(run, launch, pid, lock)
+        if stray:
+            return stray
+    return None
 
 
 def managed_strays(run):
