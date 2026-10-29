@@ -45,6 +45,8 @@ export * from "./guestStream.ts";
 export * from "./applicationEvent.ts";
 export * from "./orchestratorMcp.ts";
 export * from "./orchestratorMcpScheduledTask.ts";
+export * from "./orchestratorMcpThreadList.ts";
+export * from "./orchestratorMcpThreadSend.ts";
 export * from "./peerLink.ts";
 export * from "./threadMetadataMcp.ts";
 export * from "./threadPullRequest.ts";

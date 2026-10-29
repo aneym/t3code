@@ -2,16 +2,13 @@ import {
   AuthAccessWriteScope,
   type AuthMcpApprovalDecision,
   type AuthMcpAuthorizationRequest,
-  type AuthMcpAuthorizationServerMetadata,
   type AuthMcpClientRegistration,
-  type AuthMcpProtectedResourceMetadata,
   AuthMcpRegistrationError,
   AuthMcpTokenError,
   type AuthMcpTokenRequest,
   type AuthMcpTokenResult,
   type AuthMcpClientAccess,
   type AuthEnvironmentScope,
-  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   MCP_PEER_LINK_SOFTWARE_ID,
   mcpClientScopes,
@@ -32,6 +29,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import type { McpOAuthUrls } from "./mcpOAuthMetadata.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
   base64UrlDecodeUtf8,
@@ -53,46 +51,6 @@ const DEFAULT_CLIENT_NAME = "MCP client";
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const CODE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const CODE_VERIFIER_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/;
-
-const MCP_OAUTH_SCOPES = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
-
-export interface McpOAuthUrls {
-  readonly issuer: string;
-  readonly resource: string;
-}
-
-export const requestUrls = (request: HttpServerRequest.HttpServerRequest): McpOAuthUrls => {
-  const origin = Option.match(HttpServerRequest.toURL(request), {
-    onNone: () => "http://localhost",
-    onSome: (url) => url.origin,
-  });
-  return { issuer: origin, resource: `${origin}/mcp` };
-};
-
-export const protectedResourceMetadata = (
-  urls: McpOAuthUrls,
-): AuthMcpProtectedResourceMetadata => ({
-  resource: urls.resource,
-  authorization_servers: [urls.issuer],
-  scopes_supported: MCP_OAUTH_SCOPES,
-  bearer_methods_supported: ["header"],
-  resource_name: "T3 Code",
-});
-
-export const authorizationServerMetadata = (
-  urls: McpOAuthUrls,
-): AuthMcpAuthorizationServerMetadata => ({
-  issuer: urls.issuer,
-  authorization_endpoint: `${urls.issuer}/oauth/mcp/authorize`,
-  token_endpoint: `${urls.issuer}/oauth/mcp/token`,
-  registration_endpoint: `${urls.issuer}/oauth/mcp/register`,
-  response_types_supported: ["code"],
-  grant_types_supported: ["authorization_code"],
-  code_challenge_methods_supported: ["S256"],
-  token_endpoint_auth_methods_supported: ["none"],
-  scopes_supported: MCP_OAUTH_SCOPES,
-  authorization_response_iss_parameter_supported: true,
-});
 
 const parseRedirect = (value: string): URL | undefined => {
   // URL.hash misses empty fragments, which RFC 6749 §3.1.2 also forbids.
@@ -573,6 +531,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     label: client.label,
                     access: client.access,
                     linked: client.peerLink,
+                    ownerCli: client.ownerCli,
                   },
                   capabilities: new Set<McpInvocationContext.McpCapability>([
                     "orchestration",

@@ -28,6 +28,7 @@ import {
   OrchestratorProjectionError,
 } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSend from "../orchestration-v2/ThreadSend.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -179,16 +180,14 @@ const makeHarness = (options: HarnessOptions = {}) => {
     switch (options.continuation ?? "queued") {
       case "fails":
         return Effect.fail(
-          new ThreadManagementService.ThreadManagementThreadArchivedError({
+          new ThreadSend.ThreadManagementThreadArchivedError({
             threadId,
           }),
         );
       case "dies":
         return Effect.die(new Error("send defect"));
       default:
-        return Effect.succeed({
-          delivery: "queued",
-        } as ThreadManagementService.ThreadManagementSendResult);
+        return Effect.succeed({ delivery: "queued" } as never);
     }
   });
   const getById = vi.fn((id: ProjectId) =>

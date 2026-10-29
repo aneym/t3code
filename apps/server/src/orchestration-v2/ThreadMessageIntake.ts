@@ -10,6 +10,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as AttachmentClaims from "./AttachmentClaims.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import type * as ThreadSend from "./ThreadSend.ts";
 
 // These failures precede commitCommand; generic dispatch errors can follow commits and remain ambiguous.
 function dispatchWasNotAccepted(
@@ -25,6 +26,7 @@ function dispatchWasNotAccepted(
     case "OrchestratorSubagentThreadReadOnlyError":
     case "OrchestratorThreadAboveModeLimitError":
     case "ThreadManagementProviderInstanceDisabledError":
+    case "ThreadManagementSendConflictError":
       return true;
     default:
       return false;
@@ -192,7 +194,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
 });
 
 export const sendToThread = Effect.fn("ThreadMessageIntake.sendToThread")(function* (
-  input: ThreadManagement.ThreadManagementSendInput,
+  input: ThreadSend.ThreadSendInput,
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const claimed = yield* AttachmentClaims.claimPendingAttachments(input);

@@ -22,6 +22,7 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as ServerConfig from "../config.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import type * as ThreadSend from "../orchestration-v2/ThreadSend.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
@@ -47,9 +48,8 @@ const boxProject = ProjectId.make("project:box");
 const boxThread = ThreadId.make("thread:box-auto");
 const boxRun = RunId.make("run:box-auto");
 
-/** What B's thread service was asked to do. */
 interface Seen {
-  readonly sends: ReadonlyArray<ThreadManagement.ThreadManagementSendInput>;
+  readonly sends: ReadonlyArray<ThreadSend.ThreadSendInput>;
   readonly waits: ReadonlyArray<ThreadManagement.ThreadManagementWaitInput>;
   readonly launches: ReadonlyArray<ThreadLaunch.ThreadLaunchInput>;
   readonly projects: ReadonlyArray<ProjectService.ProjectCreateInput>;
@@ -69,11 +69,6 @@ const nothingSeen: Seen = {
 /** The box user's own thread, which no link started. */
 const usersThread = ThreadId.make("thread:box-users-own");
 
-/**
- * B's threads: one `auto` thread in `boxProject` that the laptop's link
- * started, whose run finishes on the third wait, and the box user's own.
- * Every send and wait is recorded.
- */
 const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
   const base = { ...liveThreadShell(boxThread, { runtimeMode: "auto" }), projectId: boxProject };
   const linked = Ref.get(linkSession).pipe(
@@ -95,7 +90,7 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
     listProjectThreads: () => linked.pipe(Effect.map((shell) => [shell] as never)),
     sendToThread: (input) =>
       Ref.update(seen, (current) => ({ ...current, sends: [...current.sends, input] })).pipe(
-        Effect.as({ run: run("running"), delivery: "started" } as never),
+        Effect.as({ run: run("running"), delivery: "started", dispatch: { sequence: 1 } } as never),
       ),
     dispatch: (command) =>
       Ref.update(seen, (current) => ({
