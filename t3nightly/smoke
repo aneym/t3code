@@ -48,6 +48,7 @@ class Context:
         self.server = None
         self.origin = None
         self.ready = False
+        self.seed = sys.platform == "darwin" and not args.no_seed
 
     def log(self, name):
         return str(self.logs / ("%s.log" % name))
@@ -92,7 +93,10 @@ def boot(ctx, deadline):
     home = ctx.agent_homes / AGENT_HANDLE
     home.mkdir(parents=True)
     (home / "agent.json").write_text(json.dumps({"display_name": AGENT_NAME, "role": "orch"}) + "\n")
-    seed_home(ctx, deadline)
+    if ctx.seed:
+        seed_home(ctx, deadline)
+    else:
+        ctx.home.mkdir(parents=True)
     descriptor = serve(ctx, deadline)
     if descriptor.get("serverVersion") != ctx.version:
         raise CheckFailed("server reports %s, expected %s" % (descriptor.get("serverVersion"), ctx.version))
@@ -100,7 +104,7 @@ def boot(ctx, deadline):
     if code != 0:
         raise CheckFailed("t3 project add exited %d" % code)
     ctx.ready = True
-    return "served %s on %s from a seeded home" % (ctx.version, ctx.origin)
+    return "served %s on %s from %s home" % (ctx.version, ctx.origin, "a seeded" if ctx.seed else "an empty")
 
 
 def timed(name, limit, body, ctx):
@@ -135,6 +139,7 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--tree", default=os.environ.get("T3NIGHTLY_TREE"), help="same-tag t3code tree with dependencies installed")
     parser.add_argument("--only", help="comma-separated step names to run after boot")
+    parser.add_argument("--no-seed", action="store_true", help="start from an empty home; always on outside macOS, which has no safe live-DB snapshot")
     parser.add_argument("--record", action="store_true", help="also write the verdict where release approval reads it")
     parser.add_argument("--verdict", help="visual-verdict.md the release approval uses (default: the t3-nightly lane path)")
     args = parser.parse_args()
