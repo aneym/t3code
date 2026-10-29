@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from t3nightly.connector_artifact import ensure_connector, uninstall
+from t3nightly.install_policy import isolated, window
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Install or uninstall the independently pinned connector alongside a T3 service.")
+    parser.add_argument("action", choices=("install", "uninstall"))
+    parser.add_argument("--home", type=Path, required=True)
+    parser.add_argument("--service-label", required=True)
+    parser.add_argument("--port", type=int, default=3773)
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--connector-artifact", default="")
+    parser.add_argument("--rpc-tree", default="")
+    parser.add_argument("--override-reason", default="")
+    parser.add_argument("--receipt", type=Path, required=True)
+    args = parser.parse_args()
+    home = args.home.expanduser().resolve()
+    events = []
+    try:
+        policy = window(args.version, reason=args.override_reason, sandbox=isolated(home, args.port, args.service_label))
+        run = SimpleNamespace(args=args, home=home, service_label=args.service_label, step=lambda name, **fields: events.append({"step": name, **fields}))
+        if args.action == "install":
+            if not args.connector_artifact:
+                raise ValueError("install requires --connector-artifact")
+            ensure_connector(run)
+        else:
+            uninstall(run)
+        result = {"installWindow": policy, "events": events, "outcome": "passed"}
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        result = {"events": events, "outcome": "failed", "error": str(error)}
+    args.receipt.parent.mkdir(parents=True, exist_ok=True)
+    args.receipt.write_text(json.dumps(result, indent=2) + "\n")
+    return 0 if result["outcome"] == "passed" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -24,7 +24,20 @@ def main():
     parser.add_argument("--health-s", type=int, default=180)
     parser.add_argument("--force-rollback", action="store_true", help="non-release proof: the candidate writes, the installer rolls back, and the old runtime reads those rows")
     parser.add_argument("--compatibility-probe", action="store_true", help="non-release evidence for migration-ineligible historical builds; never yields eligible provenance")
+    parser.add_argument("--hot-swap", action="store_true")
+    parser.add_argument("--rpc-tree", type=Path)
+    parser.add_argument("--launcher-artifact", default="")
+    parser.add_argument("--connector-artifact", default="")
+    parser.add_argument("--drain-s", type=int, default=300)
+    parser.add_argument("--inject", choices=("none", "warm-death", "post-flip"), default="none")
+    parser.add_argument("--live-home", action="append", default=[])
     args = parser.parse_args()
+    if args.hot_swap:
+        if not args.rpc_tree or not 0 <= args.drain_s <= 1200:
+            parser.error("--hot-swap requires --rpc-tree and --drain-s in 0..1200")
+        from t3nightly.rehearsal_hot_swap import HotSwapRehearsal
+
+        return HotSwapRehearsal(args).main()
     return Rehearsal(args).main()
 
 

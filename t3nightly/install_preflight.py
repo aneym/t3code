@@ -24,7 +24,7 @@ def preflight_smoke(args, name, digest):
 
 @contextmanager
 def checked_assets(args):
-    if not args.hard:
+    if not (args.hard or args.seamless):
         require_approval(args.version, verdict_path(args.version, args.verdict), Path(args.assets).expanduser() / "shots" if args.assets else None)
     platform = "darwin-arm64" if sys.platform == "darwin" else "linux-x64"
     name = f"t3-{args.version}-{platform}.tar.gz"

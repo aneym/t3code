@@ -107,14 +107,14 @@ def run_action(stage, config, log):
         owner = json.loads((config.lane / "lane.json").read_text()).get("t3", {})
         if owner.get("host") == "studio" and owner.get("thread_id"):
             args.extend(["--ignore-thread", owner["thread_id"]])
-        args.extend(["--load-max", "8", "--wait"])
+        args.extend(["--load-max", "8", "--wait", "--override-reason", config.override_reason])
         if not (Path.home() / ".t3nightly/launcher-granted").exists():
             args.append("--no-pin-launcher")
         return command(args, log)
     if stage == "seed-remote-runtimes":
         return seed(config, log, dry_run=os.environ.get("T3NIGHTLY_DRY_RUN") == "1")
     if stage == "desktop-swap":
-        code = command([str(tools / "desktop-swap"), str(config.run / "desktop" / f"T3-Code-{config.version}-arm64.zip"), "--verdict", str(config.verdict)], log)
+        code = command([str(tools / "desktop-swap"), str(config.run / "desktop" / f"T3-Code-{config.version}-arm64.zip"), "--verdict", str(config.verdict), "--override-reason", config.override_reason], log)
         if not code:
             print("Desktop installed; quit and reopen T3 Dev yourself. The driver does not quit apps.", flush=True)
         return code
@@ -226,10 +226,10 @@ def fast_install(config, log):
         state.mkdir(parents=True, exist_ok=True)
         env = {**os.environ, "AGENT_LANE": "t3-nightly", "AGENT_THREAD_ID": "mcp:a2795f2f-43aa-40c5-890c-98de1291379a"}
         prefix = ["ionice", "-c3", "nice", "-n", "19"]
-    words = [*prefix, sys.executable, str(config.tools / "install"), "--hard", "--version", config.version, "--assets", str(config.build_out()),
+    words = [*prefix, sys.executable, str(config.tools / "install"), "--seamless", "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")), "--version", config.version, "--assets", str(config.build_out()),
              "--manifest", str(config.manifest), "--artifact-manifest", str(config.artifact()), "--receipt", str(config.receipt("rehearsal")),
              "--receipt-host", config.host, "--install-receipt", str(config.receipt("install")), "--state-dir", str(state),
-             "--chat-project", str(config.chat_project()), "--load-max", "64", "--health-s", "300",
+             "--chat-project", str(config.chat_project()), "--load-max", "64", "--health-s", "300", "--override-reason", config.override_reason,
              "--smoke-verdict", str(config.run / f"e2e-{config.host}" / "smoke-verdict.json"), "--rollback-proof", str(config.receipt("rollback-proof"))]
     if config.host == "ax42":
         words.extend(["--service-label", "t3code.service", "--backups", str(backups)])
@@ -246,7 +246,7 @@ def fast_install(config, log):
 
 def fast_swap(config, log):
     archive = config.run / "desktop" / f"T3-Code-{config.version}-arm64.zip"
-    code = command([sys.executable, str(config.tools / "desktop-swap"), str(archive), "--fast-evidence", str(config.run)], log)
+    code = command([sys.executable, str(config.tools / "desktop-swap"), str(archive), "--fast-evidence", str(config.run), "--override-reason", config.override_reason], log)
     if code:
         return code
     app = Path("/Applications/T3 Dev.app")
@@ -272,7 +272,7 @@ def fast_publish(config, log):
         rows.append(f"{hashlib.file_digest(target.open('rb'), 'sha256').hexdigest()}  {target.name}\n")
     (publish / "SHA256SUMS").write_text("".join(rows))
     code = command([sys.executable, str(config.tools / "publish-feed"), str(publish), "--desktop-dir", str(config.run / "desktop"),
-                    "--feed-dir", "/Volumes/StudioExt/t3nightly-feed", "--fast-evidence", str(config.run)], log)
+                    "--feed-dir", "/Volumes/StudioExt/t3nightly-feed", "--fast-evidence", str(config.run), "--override-reason", config.override_reason], log)
     if code:
         return code
     evidence = fast_evidence(config.run, config.version)

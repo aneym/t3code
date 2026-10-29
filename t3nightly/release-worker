@@ -44,7 +44,7 @@ def perform(args):
         str(tools / "install"), "--version", args.version, "--assets", str(args.run),
         "--state-dir", str((args.run / "install").resolve()),
         "--backups", str((Path.home() / ".t3nightly/backups").resolve()), "--verdict", str(args.run / "visual-verdict.md"),
-        "--load-max", "8", "--wait",
+        "--load-max", "8", "--wait", "--override-reason", args.override_reason,
     ], sys.stdout)
     report = args.run / "install/last.json"
     if code or not report.is_file():
@@ -60,6 +60,7 @@ def main():
     parser.add_argument("--tree", type=Path, required=True)
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--override-reason", default="")
     args = parser.parse_args()
     archive = args.run / f"t3-{args.version}-linux-x64.tar.gz"
     if args.action == "outputs":

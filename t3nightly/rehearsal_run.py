@@ -83,14 +83,17 @@ class Rehearsal:
                 command.append("--compatibility-probe")
             if self.args.force_rollback:
                 command.append("--force-rollback")
+        if getattr(self.args, "hot_swap", False):
+            command[command.index("--hard")] = "--seamless"
+            command.extend(["--rpc-tree", str(self.args.rpc_tree.resolve()), "--drain-s", str(self.args.drain_s)])
         if self.args.verdict:
             command.extend(["--verdict", str(self.args.verdict)])
         installer_home = Path.home() if (self.engine / "install_hard.py").is_file() else sandbox.os_home
         environment = dict(os.environ, HOME=str(installer_home), LOAD_GUARD_STATE=str(Path.home() / ".agent-rails/state/load-guard"))
         with (sandbox.evidence / "installer.log").open("w") as output:
-            result = subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=260, check=False)
+            result = subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=260 + getattr(self.args, "drain_s", 0), check=False)
         report = json.loads((sandbox.evidence / "installer-state/last.json").read_text())
-        if self.args.force_rollback:
+        if self.args.force_rollback or (getattr(self.args, "hot_swap", False) and self.args.inject != "none"):
             if report["outcome"] != "rolled-back":
                 raise RuntimeError(f"forced rollback did not roll back: {report['outcome']}; see installer.log")
             sandbox.wait_ready(sandbox.old.name, 30)
@@ -130,7 +133,7 @@ class Rehearsal:
             tick = time.monotonic()
             self.install()
             self.mark("install", tick)
-            if self.args.force_rollback:
+            if self.args.force_rollback or (getattr(self.args, "hot_swap", False) and self.args.inject != "none"):
                 self.phase = "rollback-verify"
                 tick = time.monotonic()
                 proof = self.rollback_proof(workload)

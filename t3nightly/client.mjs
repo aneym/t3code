@@ -116,9 +116,13 @@ const queueProjection = mode === "queue-drain"
   : null;
 
 const programs = {
+  "hot-swap-probe": Effect.fnUntraced(function* () {
+    const { monitor } = yield* Effect.promise(() => import("./hot_swap_probe.mjs"));
+    return yield* Effect.promise(() => monitor({ opts, Effect, Stream, bearerSession, layers }));
+  }),
   "restart-rpc": Effect.fnUntraced(function* () {
     const { session } = yield* bearerSession();
-    const methods = { prepare: "server.prepareRestart", abort: "server.abortRestart", import: "server.importRestartHandoff", status: "server.getRestartStatus" };
+    const methods = { prepare: "server.prepareRestart", abort: "server.abortRestart", import: "server.importRestartHandoff", status: "server.getRestartStatus", update: "server.updateServer" };
     const method = methods[opts.operation];
     if (!method) throw new Error("unsupported restart operation");
     const request = JSON.parse(readFileSync(opts["request-file"], "utf8"));
