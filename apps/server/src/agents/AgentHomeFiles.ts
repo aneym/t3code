@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
+import { lanesUnder, type createLaneReader } from "./AgentLaneFiles.ts";
 
 const agentFile = async (root: string, handle: string) => {
   if (!AGENT_HOME_HANDLE_PATTERN.test(handle)) throw new Error("Invalid agent handle");
@@ -45,12 +46,17 @@ export const homeFromDocument = (
   root: string,
   handle: string,
   doc: Record<string, unknown>,
+  lanes: ReadonlyArray<{ name: string; threadId: string; host: string | null }> = [],
 ): AgentHome =>
   decodeHome({
     handle,
     workspaceRoot: NodePath.join(root, handle),
     displayName: text(doc.display_name),
     role: text(doc.role),
+    projects: Array.isArray(doc.projects)
+      ? doc.projects.filter((name): name is string => typeof name === "string")
+      : [],
+    lanes,
     binding: binding(doc.t3),
     previous: binding(
       typeof doc.t3 === "object" && doc.t3 !== null
@@ -80,18 +86,22 @@ export const isLaneThread = async (root: string, threadId: string) => {
   );
   return owners.includes(true);
 };
-export const readHomes = async (root: string) => {
+export const readHomes = async (root: string, readLanes: ReturnType<typeof createLaneReader>) => {
   const entries = await NodeFSP.readdir(root, { withFileTypes: true }).catch(
     (error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return [];
       throw error;
     },
   );
+  const lanes = await readLanes();
   const homes: AgentHome[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !AGENT_HOME_HANDLE_PATTERN.test(entry.name)) continue;
     try {
-      homes.push(homeFromDocument(root, entry.name, await readDocument(root, entry.name)));
+      const doc = await readDocument(root, entry.name);
+      homes.push(
+        homeFromDocument(root, entry.name, doc, lanesUnder(lanes, text(doc.lane) ?? entry.name)),
+      );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT")
         console.warn(`Skipping invalid agent home ${entry.name}`);
@@ -103,21 +113,30 @@ export const writeBinding = async (
   root: string,
   handle: string,
   doc: Record<string, unknown>,
-  next: Record<string, unknown>,
+  next: Record<string, unknown> | null,
   readText: string,
+  projects?: ReadonlyArray<string>,
 ) => {
   const old =
     typeof doc.t3 === "object" && doc.t3 !== null ? (doc.t3 as Record<string, unknown>) : null;
-  if (old) {
+  if (old && next) {
     const { previous: _previous, reason: _reason, ...previous } = old;
     next.previous = previous;
   }
   const target = await agentFile(root, handle);
   const temporary = `${target}.${crypto.randomUUID()}.tmp`;
   try {
-    await NodeFSP.writeFile(temporary, JSON.stringify({ ...doc, t3: next }, null, 2) + "\n", {
-      mode: (await NodeFSP.stat(target)).mode,
-    });
+    await NodeFSP.writeFile(
+      temporary,
+      JSON.stringify(
+        { ...doc, ...(next ? { t3: next } : {}), ...(projects ? { projects } : {}) },
+        null,
+        2,
+      ) + "\n",
+      {
+        mode: (await NodeFSP.stat(target)).mode,
+      },
+    );
     if ((await NodeFSP.readFile(target, "utf8")) !== readText)
       throw new Error("agent.json changed while binding; try again");
     await NodeFSP.rename(temporary, target);

@@ -19,6 +19,8 @@ export interface RailsAgent {
   readonly environmentIds: ReadonlyArray<EnvironmentId>;
   readonly target: ScopedThreadRef | null;
   readonly remoteHost: string | null;
+  readonly projects: ReadonlyArray<string>;
+  readonly lanes: ReadonlyArray<ScopedThreadRef>;
   readonly thread: EnvironmentThreadShell | null;
 }
 
@@ -32,6 +34,23 @@ export function railsAgentFaceUrl(handle: string): string {
 
 export function railsAgentThreadKey(thread: EnvironmentThreadShell): string {
   return `${thread.environmentId}:${thread.id}`;
+}
+
+function environmentForHost(
+  environments: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>,
+  host: string | null,
+): EnvironmentId | undefined {
+  if (host === null) return undefined;
+  const wanted = host.toLowerCase();
+  const exact = environments.find((env) => env.label.toLowerCase() === wanted);
+  if (exact) return exact.environmentId;
+  const named = environments.filter((env) =>
+    env.label
+      .toLowerCase()
+      .split(/[^a-z0-9-]+/)
+      .includes(wanted),
+  );
+  return named.length === 1 ? named[0]?.environmentId : undefined;
 }
 
 function bindingTime(home: EnvironmentAgentHome): number {
@@ -60,8 +79,7 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
     const binding = winner?.binding;
     const targetEnvironmentId = binding
       ? (environments.find((env) => env.environmentId === binding.environmentId)?.environmentId ??
-        environments.find((env) => env.label.toLowerCase() === binding.host?.toLowerCase())
-          ?.environmentId ??
+        environmentForHost(environments, binding.host) ??
         (binding.environmentId === null && binding.host === null ? winner?.environmentId : null))
       : null;
     const target =
@@ -82,16 +100,11 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
       homeProjectRefs.find((ref) => ref.environmentId === preferred?.environmentId) ??
       homeProjectRefs[0] ??
       null;
-    const project = projects.find(
-      (entry) =>
-        entry.environmentId === projectRef?.environmentId && entry.id === projectRef.projectId,
-    );
     agents.push({
       handle,
       name:
         preferred?.displayName ??
         ordered.find((home) => home.displayName)?.displayName ??
-        project?.title ??
         handle.replace(
           /(^|-)([a-z])/g,
           (_, dash: string, letter: string) => `${dash ? " " : ""}${letter.toUpperCase()}`,
@@ -101,6 +114,14 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
       environmentIds: ordered.map((home) => home.environmentId),
       target,
       remoteHost,
+      projects: [...new Set(ordered.flatMap((home) => home.projects))],
+      lanes: ordered.flatMap((home) =>
+        home.lanes.flatMap((lane) => {
+          const environmentId =
+            lane.host === null ? home.environmentId : environmentForHost(environments, lane.host);
+          return environmentId ? [{ environmentId, threadId: lane.threadId }] : [];
+        }),
+      ),
       thread: target
         ? (threads.find(
             (thread) =>
@@ -121,16 +142,4 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
     };
   }, [targetKey]);
   return agents;
-}
-
-export function useWithoutAgentMainThreads<T extends EnvironmentThreadShell>(
-  threads: ReadonlyArray<T>,
-  _scopedProjectKeys: ReadonlySet<string> | null,
-): ReadonlyArray<T> {
-  const mainThreadKeys = new Set(
-    useRailsAgents().flatMap((agent) =>
-      agent.target ? [`${agent.target.environmentId}:${agent.target.threadId}`] : [],
-    ),
-  );
-  return threads.filter((thread) => !mainThreadKeys.has(railsAgentThreadKey(thread)));
 }

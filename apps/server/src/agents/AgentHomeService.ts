@@ -26,6 +26,7 @@ import {
   watchHomes,
   writeBinding,
 } from "./AgentHomeFiles.ts";
+import { createLaneReader } from "./AgentLaneFiles.ts";
 
 export class AgentHomeService extends Context.Service<
   AgentHomeService,
@@ -46,12 +47,13 @@ export const layer = Layer.effect(
     const environment = yield* ServerEnvironment;
     const threads = yield* ThreadManagementService;
     const scheduledTasks = yield* ScheduledTaskService;
+    const readLanes = createLaneReader(path.join(root, "..", "lanes"));
     const snapshots = yield* SubscriptionRef.make<AgentHomesSnapshot>({ homes: [] });
     const refreshLock = yield* Semaphore.make(1);
     const locks = new Map<string, Semaphore.Semaphore>();
     const refresh = Effect.fn("AgentHomeService.refresh")(function* () {
       const snapshot = yield* Effect.tryPromise({
-        try: () => readHomes(root),
+        try: () => readHomes(root, readLanes),
         catch: (cause) => new AgentHomeError({ message: "Unable to read agent homes", cause }),
       });
       const current = yield* SubscriptionRef.get(snapshots);
@@ -100,19 +102,33 @@ export const layer = Layer.effect(
           });
           const descriptor = yield* environment.getDescriptor;
           const environmentId = input.threadEnvironmentId ?? descriptor.environmentId;
-          if (
-            (input.onlyIfUnbound && home.binding) ||
-            (home.binding?.threadId === input.threadId &&
-              (home.binding.environmentId === null || home.binding.environmentId === environmentId))
-          )
-            return { home, changed: false };
-          if (yield* Effect.promise(() => isLaneThread(root, input.threadId)))
+          const threadId = input.threadId;
+          const projects = input.projects?.map((name) => name.trim()).filter(Boolean);
+          if (threadId === undefined && projects === undefined)
+            return yield* new AgentHomeError({
+              handle: input.handle,
+              message: "Give a thread, projects, or both",
+            });
+          const bindThread =
+            threadId !== undefined &&
+            !(input.onlyIfUnbound && home.binding) &&
+            !(
+              home.binding !== null &&
+              home.binding.threadId === threadId &&
+              (home.binding.environmentId === null || home.binding.environmentId === environmentId)
+            );
+          const setProjects =
+            projects !== undefined &&
+            (projects.length !== home.projects.length ||
+              projects.some((name, index) => name !== home.projects[index]));
+          if (!bindThread && !setProjects) return { home, changed: false };
+          if (bindThread && (yield* Effect.promise(() => isLaneThread(root, threadId))))
             return yield* new AgentHomeError({
               handle: input.handle,
               message: "Lane threads cannot be agent main threads",
             });
-          if (environmentId === descriptor.environmentId) {
-            const projection = yield* threads.getThreadRecords(input.threadId, []).pipe(
+          if (bindThread && environmentId === descriptor.environmentId) {
+            const projection = yield* threads.getThreadRecords(threadId, []).pipe(
               Effect.mapError(
                 () =>
                   new AgentHomeError({
@@ -131,7 +147,7 @@ export const layer = Layer.effect(
               ),
             );
             const shell = yield* threads
-              .getThreadShell(input.threadId)
+              .getThreadShell(threadId)
               .pipe(
                 Effect.mapError(
                   (cause) => new AgentHomeError({ message: "Unable to read target thread", cause }),
@@ -141,7 +157,7 @@ export const layer = Layer.effect(
               return yield* new AgentHomeError({
                 message: "Target thread does not exist on this environment",
               });
-            const boundToAutomation = tasks.some((task) => task.threadId === input.threadId);
+            const boundToAutomation = tasks.some((task) => task.threadId === threadId);
             const automationOnly =
               shell.pinnedAt == null &&
               (shell.automationTaskId != null || boundToAutomation) &&
@@ -167,14 +183,17 @@ export const layer = Layer.effect(
                 root,
                 input.handle,
                 doc,
-                {
-                  thread_id: input.threadId,
-                  environment_id: environmentId,
-                  host: input.host ?? descriptor.label.toLowerCase(),
-                  at,
-                  by: input.by ?? "t3",
-                },
+                bindThread
+                  ? {
+                      thread_id: threadId,
+                      environment_id: environmentId,
+                      host: input.host ?? descriptor.label.toLowerCase(),
+                      at,
+                      by: input.by ?? "t3",
+                    }
+                  : null,
                 text,
+                setProjects ? projects : undefined,
               ),
             catch: (cause) =>
               new AgentHomeError({

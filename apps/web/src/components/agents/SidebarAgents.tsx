@@ -14,12 +14,8 @@ import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AgentFace } from "./AgentFace";
 import type { RailsAgent } from "./railsAgents";
-import {
-  AGENTS_SECTION_STORAGE_KEY,
-  type AgentProjectScope,
-  agentFocusAction,
-  sidebarAgentJumpKey,
-} from "./sidebarAgentLists";
+import { agentFocusAction, useAgentFocusHandle } from "./agentFocus";
+import { AGENTS_SECTION_STORAGE_KEY, sidebarAgentJumpKey } from "./sidebarAgentLists";
 import { useSidebarPins } from "./sidebarPins";
 
 export function SidebarAgents({
@@ -27,15 +23,16 @@ export function SidebarAgents({
   pinned,
   hidden,
   jumpLabelByKey,
-  projectScope,
+  clearProjectScope,
 }: {
   readonly onNavigate: () => void;
   readonly pinned: ReadonlyArray<RailsAgent>;
   readonly hidden: ReadonlyArray<RailsAgent>;
   readonly jumpLabelByKey: ReadonlyMap<string, string> | null;
-  readonly projectScope: AgentProjectScope;
+  readonly clearProjectScope: () => void;
 }) {
   const { toggle, showMenu } = useSidebarPins();
+  const [focused, setFocused] = useAgentFocusHandle();
   const routeTarget = useThreadRouteTarget();
   const environmentLabelById = new Map(
     useEnvironmentIdentities().map((environment) => [environment.environmentId, environment.label]),
@@ -56,7 +53,7 @@ export function SidebarAgents({
       .filter((label, index, all) => all.indexOf(label) === index)
       .join(" · "),
     onNavigate,
-    focus: agentFocusAction(agent, projectScope),
+    focus: agentFocusAction(agent, focused, setFocused, clearProjectScope),
     onContextMenu: (position: { x: number; y: number }) => {
       void showMenu(agent.handle, agent.name, position);
     },
@@ -144,6 +141,7 @@ function AgentRow(props: {
   };
   const rowClassName = cn(
     "flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-sm outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset",
+    props.focus?.active && "pr-8",
     props.active
       ? "bg-sidebar-row-active text-sidebar-foreground"
       : cn(
@@ -248,8 +246,8 @@ function AgentRowButton({ action }: { readonly action: AgentRowAction }) {
             aria-pressed={action.active}
             onClick={action.onClick}
             className={cn(
-              "inline-flex size-6 items-center justify-center rounded-md opacity-0 hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/agent-row:opacity-100",
-              action.active ? "text-sidebar-foreground" : "text-sidebar-muted-foreground",
+              "inline-flex size-6 items-center justify-center rounded-md hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/agent-row:opacity-100",
+              action.active ? "text-sidebar-foreground" : "text-sidebar-muted-foreground opacity-0",
             )}
           >
             <Icon aria-hidden className="size-3.5" />

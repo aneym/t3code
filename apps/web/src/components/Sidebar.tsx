@@ -138,12 +138,16 @@ import { useAutomationThreadKeys } from "../hooks/useAutomations";
 import { SidebarAutomationJobs } from "./automations/SidebarAutomationJobs";
 import { SidebarAgents } from "./agents/SidebarAgents";
 import {
-  sidebarAgentJumpKey,
+  openSidebarJumpAgent,
   sidebarJumpKeys,
   sidebarJumpLabels,
   useSidebarAgentLists,
 } from "./agents/sidebarAgentLists";
-import { useWithoutAgentMainThreads } from "./agents/railsAgents";
+import {
+  useAgentFocusHandle,
+  useSidebarAgentThreads,
+  withoutAgentHomes,
+} from "./agents/agentFocus";
 import { useAgentMainThreadMenu } from "./agents/agentMainThreadMenu";
 import { SHELF_MORE_ROW_CLASS_NAME } from "./sidebar/shelfMoreRow";
 import { environmentProjects } from "../state/projects";
@@ -217,6 +221,7 @@ import {
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { useStableCallback } from "../hooks/useStableCallback";
 import {
+  completeSidebarRouteReveal,
   resolveSidebarRouteReveal,
   type SidebarRouteReveal,
   useActiveRowReveal,
@@ -385,6 +390,7 @@ function routeThreadOnly(
 function useSidebarThreads(input: {
   readonly projectScopeKey: string | null;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
+  readonly settledScopeKeys: ReadonlySet<string> | null;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly threads: readonly EnvironmentThreadShell[];
@@ -398,6 +404,7 @@ function useSidebarThreads(input: {
   const {
     projectScopeKey,
     scopedProjectKeys,
+    settledScopeKeys,
     serverConfigs,
     optimisticDrop,
     threads,
@@ -461,7 +468,7 @@ function useSidebarThreads(input: {
     partition;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
-    scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
+    scopes: olderSettledScopes([...serverConfigs.keys()], settledScopeKeys),
     expanded: settledShelfExpanded,
     visibleCount: settledVisibleCount,
   });
@@ -1008,9 +1015,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
 
+  const [, setAgentFocus] = useAgentFocusHandle();
   // A selection made under one scope can hold threads the next scope hides.
   const setProjectScopeKeys = (keys: readonly string[]) => {
     clearSelection();
+    completeSidebarRouteReveal(routeReveal);
+    setAgentFocus(null);
     setPersistedProjectScopeKeys(keys);
   };
   // A scope whose project is gone reads as all projects once every snapshot has
@@ -1035,6 +1045,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ),
         );
   const threads = useQuietThreadShells();
+  const agentWork = useSidebarAgentThreads(threads);
   const routeRowThreadKey =
     routeThreadRef === null
       ? null
@@ -1060,7 +1071,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
     delegatedUnderParent,
-    findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
+    findThread: (key) => agentWork.threads.find((candidate) => threadShellKey(candidate) === key),
   });
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
@@ -1212,7 +1223,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     scopedProjectKeys,
     serverConfigs,
     optimisticDrop,
-    threads: useWithoutAgentMainThreads(threads, scopedProjectKeys),
+    threads: agentWork.threads,
+    settledScopeKeys: agentWork.projectKeys ?? scopedProjectKeys,
     delegatedUnderParent,
     routeRowThreadKey,
     folderGroups: boringSidebarEnabled
@@ -1314,15 +1326,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       params: buildThreadRouteParams(threadRef),
     });
   };
-  const openJumpAgent = (jumpKey: string | null) => {
-    const agent = sidebarAgents.jumpable.find((entry) => sidebarAgentJumpKey(entry) === jumpKey);
-    if (!agent) return false;
-    if (agent.thread) navigateToThread(scopeThreadRef(agent.thread.environmentId, agent.thread.id));
-    else if (agent.target) navigateToThread(agent.target);
-    else if (agent.projectRef) void handleNewThread(agent.projectRef);
-    else return false;
-    return true;
-  };
+  const openJumpAgent = (jumpKey: string | null) =>
+    openSidebarJumpAgent(sidebarAgents.jumpable, jumpKey, navigateToThread, handleNewThread);
 
   const handleThreadFileDrop = async (threadRef: ScopedThreadRef, files: File[]) => {
     const dropId = queuePendingFileDrop({ threadRef, files });
@@ -2831,7 +2836,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               hasProjects={projectGroups.length > 0}
               projectScope={
                 <SidebarProjectScopePicker
-                  groups={projectGroups}
+                  groups={withoutAgentHomes(projectGroups)}
                   scopeKey={projectScopeKeys.length === 1 ? (projectScopeKeys[0] ?? null) : null}
                   scopedProject={
                     scopedProjectGroups.length === 1 ? (scopedProjectGroups[0] ?? null) : null
@@ -2866,11 +2871,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               pinned={sidebarAgents.pinned}
               hidden={sidebarAgents.hidden}
               jumpLabelByKey={showJumpHints ? jumpLabelByKey : null}
-              projectScope={{
-                key: projectScopeKeys.length === 1 ? (projectScopeKeys[0] ?? null) : null,
-                groups: projectGroups,
-                set: (key) => setProjectScopeKeys(key === null ? [] : [key]),
-              }}
+              clearProjectScope={() => setProjectScopeKeys([])}
             />
           </SidebarGroup>
         }
