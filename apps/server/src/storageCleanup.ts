@@ -528,34 +528,62 @@ const make = Effect.gen(function* () {
     return (name?.startsWith("(") ? null : name) !== branch;
   });
 
-  // info/exclude and .lane hold per-checkout state (agent ledgers, local config), unlike regenerable .gitignore output.
+  // info/exclude, .lane and nested repositories hold per-checkout state that cleanup cannot regenerate.
   const personalStateReason = Effect.fn("StorageCleanup.personalStateReason")(function* (
     cwd: string,
   ) {
-    const commonDir = yield* git.execute({
-      operation: "StorageCleanup.commonDir",
-      cwd,
-      args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    });
+    if (yield* fs.exists(path.join(cwd, ".lane"))) return "has excluded local state (.lane/)";
+    const inspect = (operation: string, args: string[], maxOutputBytes = 64 * 1024) =>
+      git.execute({ operation, cwd, args, env: { LC_ALL: "C" }, maxOutputBytes });
+    const commonDir = yield* inspect("StorageCleanup.commonDir", [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]);
     const excludeFile = path.join(commonDir.stdout.trim(), "info", "exclude");
-    const excluded = yield* git.execute({
-      operation: "StorageCleanup.excludedFiles",
-      cwd,
-      args: [
+    const patterns = (yield* fs.exists(excludeFile))
+      ? (yield* fs.readFileString(excludeFile))
+          .split(/\r?\n/)
+          .some((line) => line.trim() !== "" && !line.startsWith("#"))
+      : false;
+    if (patterns) {
+      const excluded = yield* inspect("StorageCleanup.excludedFiles", [
         "ls-files",
         "--others",
         "--ignored",
         "--directory",
         "--no-empty-directory",
         "-z",
-        "--exclude=.lane",
-        ...((yield* fs.exists(excludeFile)) ? [`--exclude-from=${excludeFile}`] : []),
-      ],
-      maxOutputBytes: 64 * 1024,
-    });
-    if (excluded.stdoutTruncated) return "excluded files exceed the inspection limit";
-    const file = excluded.stdout.split("\0").find((entry) => entry !== "");
-    return file === undefined ? null : `has excluded local state (${file})`;
+        `--exclude-from=${excludeFile}`,
+      ]);
+      if (excluded.stdoutTruncated) return "excluded files exceed the inspection limit";
+      const file = excluded.stdout.split("\0").find((entry) => entry !== "");
+      if (file !== undefined) return `has excluded local state (${file})`;
+    }
+    // Top-level nested repositories list as directories; git clean names deeper ones it would skip.
+    const untracked = yield* inspect("StorageCleanup.untrackedDirectories", [
+      "ls-files",
+      "--others",
+      "--directory",
+      "-z",
+    ]);
+    if (untracked.stdoutTruncated) return "untracked files exceed the inspection limit";
+    for (const entry of untracked.stdout.split("\0")) {
+      if (entry.endsWith("/") && (yield* fs.exists(path.join(cwd, entry, ".git"))))
+        return `has a nested repository (${entry})`;
+    }
+    const clean = yield* inspect(
+      "StorageCleanup.nestedRepositories",
+      ["clean", "-fdxn"],
+      1024 * 1024,
+    );
+    if (clean.stdoutTruncated) return "untracked files exceed the inspection limit";
+    const nested = clean.stdout
+      .split("\n")
+      .find((line) => line.startsWith("Would skip repository "));
+    return nested === undefined
+      ? null
+      : `has a nested repository (${nested.slice("Would skip repository ".length)}/)`;
   });
 
   const localChangesReason = Effect.fn("StorageCleanup.localChangesReason")(function* (
@@ -584,8 +612,6 @@ const make = Effect.gen(function* () {
       if (/^[RC]|^.[RC]/.test(records[i]!)) i++;
     }
     if (count > 0) return `has uncommitted changes (${count} ${count === 1 ? "file" : "files"})`;
-    const personal = yield* personalStateReason(cwd);
-    if (personal !== null) return personal;
     if (rules.worktreeKeepWhen !== "any-local-files") return null;
     const ignored = yield* git.execute({
       operation: "StorageCleanup.ignoredFiles",
@@ -938,6 +964,8 @@ const make = Effect.gen(function* () {
                   ? "not merged"
                   : "has commits beyond the default branch",
           );
+        const personal = yield* personalStateReason(worktreePath);
+        if (personal !== null) return keep(personal);
         // Re-read this path's threads and sessions so new activity cancels removal; full per-worktree snapshots take seconds.
         const blockedSinceCheck = Effect.fnUntraced(function* () {
           const latestProjects = yield* projectStore.listShells();
@@ -1029,11 +1057,16 @@ const make = Effect.gen(function* () {
           )
         )
           return keep("settings changed since check");
+        const submodules = yield* submoduleRemoval(worktreePath, settings);
+        if (submodules.reason !== null) return keep(submodules.reason);
+        const finalPersonal = yield* personalStateReason(worktreePath);
+        if (finalPersonal !== null) return keep(finalPersonal);
+        // Last, after every slow inspection: a snooze or unarchive here still cancels removal.
+        const blockedAtRemoval = yield* blockedSinceCheck();
+        if (blockedAtRemoval !== null) return keep(blockedAtRemoval);
         // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
         if (settings.worktreeKeepWhen === "tracked-changes")
           yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
-        const submodules = yield* submoduleRemoval(worktreePath, settings);
-        if (submodules.reason !== null) return keep(submodules.reason);
         if (submodules.force) {
           const changes = yield* localChangesReason(worktreePath, settings);
           if (changes !== null) return keep(changes);

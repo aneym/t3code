@@ -194,8 +194,8 @@ to **Uncommitted changes**, which protects tracked edits and untracked files but
 files such as `.env` and build output. **Any local files** also protects ignored files other than
 `node_modules`. **Edited tracked files** protects only tracked edits and allows untracked and
 ignored files to be deleted. Whatever that setting says, cleanup keeps a worktree that holds files
-excluded through the repository's `.git/info/exclude` or a `.lane` folder, and the worktree of a
-snoozed thread. Merge and unchanged cleanup also wait until the thread is settled or archived.
+excluded through the repository's `.git/info/exclude`, a `.lane` folder, or a nested Git repository
+of its own, and the worktree of a snoozed thread. Merge and unchanged cleanup also wait until the thread is settled or archived.
 Branches and thread history stay; starting another turn recreates the checkout.
 Merge cleanup requires a merged pull request whose commits are included in the remote default
 branch. A squash or rebase merge on GitHub also counts when the pull request targeted the default

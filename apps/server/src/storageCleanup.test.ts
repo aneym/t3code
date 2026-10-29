@@ -1905,29 +1905,54 @@ const pushLandedFeature = (fixture: Effect.Success<ReturnType<typeof cleanupFixt
   });
 
 it.live.each([
-  { state: "excluded", policy: "uncommitted-changes", directory: "notes" },
-  { state: "lane", policy: "tracked-changes", directory: ".lane" },
-] as const)("keeps $state local state in a settled, landed checkout", ({ policy, directory }) =>
+  {
+    state: "excluded",
+    policy: "uncommitted-changes",
+    directory: "notes",
+    reason: "Has excluded local state (notes/)",
+  },
+  {
+    state: "lane",
+    policy: "tracked-changes",
+    directory: ".lane",
+    reason: "Has excluded local state (.lane/)",
+  },
+  {
+    state: "nested repository",
+    policy: "tracked-changes",
+    directory: "scratch/.lane",
+    repository: "scratch",
+    reason: "Has a nested repository (scratch/)",
+  },
+  {
+    state: "deeper nested repository",
+    policy: "tracked-changes",
+    directory: "deep/scratch",
+    repository: "deep/scratch",
+    reason: "Has a nested repository (deep/scratch/)",
+  },
+] as const)("keeps $state local state in a settled, landed checkout", (row) =>
   runCleanupTest(
     Effect.gen(function* () {
       const fixture = yield* cleanupFixture(landedRules);
       yield* pushLandedFeature(fixture);
-      fixture.setPolicy(policy);
+      fixture.setPolicy(row.policy);
       fixture.setThreads([
         shell({ branch: "feature", worktreePath: fixture.worktree, settledAt: at(-2 * DAY_MS) }),
       ]);
-      if (directory === "notes")
+      if (row.directory === "notes")
         yield* fixture.fs.writeFileString(`${fixture.repo}/.git/info/exclude`, "notes/\n");
-      yield* fixture.fs.makeDirectory(`${fixture.worktree}/${directory}`);
-      yield* fixture.fs.writeFileString(`${fixture.worktree}/${directory}/ledger.md`, "state\n");
+      const ledger = `${fixture.worktree}/${row.directory}/ledger.md`;
+      yield* fixture.fs.makeDirectory(`${fixture.worktree}/${row.directory}`, { recursive: true });
+      if ("repository" in row)
+        yield* fixture.command(`${fixture.worktree}/${row.repository}`, ["init", "-q"]);
+      yield* fixture.fs.writeFileString(ledger, "state\n");
 
       expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
         outcome: "kept",
-        reason: `Has excluded local state (${directory}/)`,
+        reason: row.reason,
       });
-      expect(yield* fixture.fs.readFileString(`${fixture.worktree}/${directory}/ledger.md`)).toBe(
-        "state\n",
-      );
+      expect(yield* fixture.fs.readFileString(ledger)).toBe("state\n");
     }),
   ),
 );
