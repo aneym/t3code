@@ -3783,7 +3783,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const startCommit = yield* executeGit(
         "GitVcsDriver.createWorktree.resolveStartCommit",
         input.cwd,
-        ["rev-parse", "--verify", "--quiet", "--end-of-options", `${input.refName}^{commit}`],
+        [
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          "--end-of-options",
+          `${input.refName === "-" ? "@{-1}" : input.refName}^{commit}`,
+        ],
         { allowNonZeroExit: true },
       ).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : null)));
       // Kept apart from the checkout so the shared-config lock only covers the tracking write.
