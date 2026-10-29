@@ -128,8 +128,15 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
       homeProjectRefs.find((ref) => ref.environmentId === preferred?.environmentId) ??
       homeProjectRefs[0] ??
       null;
-    const listedProjects = [...new Set(ordered.flatMap((home) => home.projects))];
-    const declared = listedProjects.length > 0 ? listedProjects : [handle];
+    const workProjects = (
+      preferred ? [preferred, ...ordered.filter((home) => home !== preferred)] : ordered
+    ).flatMap((home) =>
+      declaredWorkProjects(
+        home.projects.length > 0 ? home.projects : [handle],
+        projects,
+        home.environmentId,
+      ),
+    );
     agents.push({
       handle,
       name:
@@ -144,7 +151,11 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
       environmentIds: ordered.map((home) => home.environmentId),
       target,
       remoteHost,
-      workProjects: declaredWorkProjects(declared, projects, preferred?.environmentId),
+      workProjects: [
+        ...new Map(
+          workProjects.map((project) => [`${project.environmentId}:${project.id}`, project]),
+        ).values(),
+      ],
       lanes: ordered.flatMap((home) =>
         home.lanes.flatMap((lane) => {
           const environmentId =

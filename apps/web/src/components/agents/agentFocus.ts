@@ -13,7 +13,10 @@ import { useEffect } from "react";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useClientSettings } from "../../hooks/useSettings";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { buildPhysicalToLogicalProjectKeyMap } from "../../sidebarProjectGrouping";
+import {
+  buildPhysicalToLogicalProjectKeyMap,
+  type SidebarProjectSnapshot,
+} from "../../sidebarProjectGrouping";
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { threadFamilies } from "../../state/threads";
@@ -43,7 +46,12 @@ function agentWorkProjectKeys(agent: RailsAgent) {
 
 export function useSidebarAgentThreads<T extends EnvironmentThreadShell>(
   threads: ReadonlyArray<T>,
-): { readonly threads: ReadonlyArray<T>; readonly projectKeys: ReadonlySet<string> | null } {
+  groups: ReadonlyArray<SidebarProjectSnapshot>,
+): {
+  readonly threads: ReadonlyArray<T>;
+  readonly projectKeys: ReadonlySet<string> | null;
+  readonly scopeKeys: ReadonlyArray<string> | null;
+} {
   const agents = useRailsAgents();
   const projects = useProjects();
   const [handle] = useAgentFocusHandle();
@@ -67,7 +75,7 @@ export function useSidebarAgentThreads<T extends EnvironmentThreadShell>(
   const pinnedProject = focused
     ? undefined
     : projects.find((project) => handle !== null && sidebarProjectPinKey(project) === handle);
-  if (!focused && !pinnedProject) return { threads: listed, projectKeys: null };
+  if (!focused && !pinnedProject) return { threads: listed, projectKeys: null, scopeKeys: null };
   const projectKeys = focused
     ? agentWorkProjectKeys(focused)
     : new Set(
@@ -75,6 +83,14 @@ export function useSidebarAgentThreads<T extends EnvironmentThreadShell>(
           ? [scopedProjectKey(scopeProjectRef(pinnedProject.environmentId, pinnedProject.id))]
           : [],
       );
+  const scopeProjects = focused
+    ? new Set(focused.workProjects.map((project) => `${project.environmentId}:${project.id}`))
+    : projectKeys;
+  const scopeKeys = groups
+    .filter((group) =>
+      group.memberProjectRefs.some((ref) => scopeProjects.has(scopedProjectKey(ref))),
+    )
+    .map((group) => group.projectKey);
   const laneKeys = new Set(
     (focused?.lanes ?? []).map((lane) => `${lane.environmentId}:${lane.threadId}`),
   );
@@ -86,6 +102,7 @@ export function useSidebarAgentThreads<T extends EnvironmentThreadShell>(
         laneKeys.has(`${thread.environmentId}:${thread.lineage.rootThreadId}`),
     ),
     projectKeys,
+    scopeKeys,
   };
 }
 
@@ -124,4 +141,10 @@ export function useAgentFocusAction(setProjectScope: (keys: readonly string[]) =
       },
     };
   };
+}
+
+export function agentScopeProjectKeys(groups: ReadonlyArray<SidebarProjectSnapshot>) {
+  return groups.length === 0
+    ? null
+    : new Set(groups.flatMap((group) => group.memberProjectRefs.map(scopedProjectKey)));
 }

@@ -144,6 +144,7 @@ import {
   useSidebarAgentLists,
 } from "./agents/sidebarAgentLists";
 import {
+  agentScopeProjectKeys,
   useAgentFocusHandle,
   useSidebarAgentThreads,
   withoutAgentHomes,
@@ -1025,28 +1026,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   // A scope whose project is gone reads as all projects once every snapshot has
   // loaded. The stored keys are left alone, so the scope returns with its project.
-  const chosenProjectScopeKeys = resolveSidebarProjectScopeKeys({
-    groups: projectGroups,
-    keys: persistedProjectScopeKeys,
-    settings: projectGroupingSettings,
-    canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
-  });
+  const threads = useQuietThreadShells();
+  const agentWork = useSidebarAgentThreads(threads, projectGroups);
+  const agentFocused = agentWork.projectKeys !== null;
+  const chosenProjectScopeKeys =
+    agentWork.scopeKeys ??
+    resolveSidebarProjectScopeKeys({
+      groups: projectGroups,
+      keys: persistedProjectScopeKeys,
+      settings: projectGroupingSettings,
+      canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
+    });
   const chosenProjectGroups = projectGroups.filter((project) =>
     chosenProjectScopeKeys.includes(project.projectKey),
   );
-  const chosenScopeProjectKeys =
-    chosenProjectGroups.length === 0
-      ? null
-      : new Set(
-          chosenProjectGroups.flatMap((project) =>
-            project.memberProjectRefs.map(
-              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-            ),
-          ),
-        );
-  const threads = useQuietThreadShells();
-  const agentWork = useSidebarAgentThreads(threads);
-  const agentFocused = agentWork.projectKeys !== null;
+  const chosenScopeProjectKeys = agentScopeProjectKeys(chosenProjectGroups);
   const routeRowThreadKey =
     routeThreadRef === null
       ? null
@@ -1070,7 +1064,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     reveal: routeReveal,
     routeKey: routeRowThreadKey,
     isSearching: isSearchingThreads,
-    scopedProjectKeys: chosenScopeProjectKeys,
+    scopedProjectKeys: agentFocused ? null : chosenScopeProjectKeys,
     delegatedUnderParent,
     findThread: (key) => agentWork.threads.find((candidate) => threadShellKey(candidate) === key),
   });
