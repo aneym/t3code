@@ -119,13 +119,15 @@ def retain(sandbox_dir):
             if path in keep:
                 report["kept"].append(path.name)
                 continue
-            if not home.is_dir() or home.is_symlink():
+            removable = [tree for tree in (home, path / "evidence/installer-state/rollback-runtime") if tree.is_dir() and not tree.is_symlink()]
+            if not removable:
                 continue
             began = rehearsal_start(path)
             shielded = protected and (began is None or max(protected) >= began - 5)
             if (target and target.is_relative_to(path)) or shielded or held({str(path), str(alias / path.name)}, references):
                 report["held"].append(path.name)
             else:
-                shutil.rmtree(home)
+                for tree in removable:
+                    shutil.rmtree(tree)
                 report["dropped"].append(path.name)
     return report
