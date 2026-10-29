@@ -34,20 +34,33 @@ export function makeWorktreeIntegrationCheck(git: GitVcsDriver.GitVcsDriver["Ser
       headSha,
     ]);
     const mergeBase = bases?.trim() ?? "";
-    if (!/^[0-9a-f]{40,64}$/.test(mergeBase)) return false;
-    const treeDiff = ["diff-tree", "-r", "-z", "--no-renames", "--ignore-submodules=none"];
+    const objectId = /^[0-9a-f]{40,64}$/;
+    if (!objectId.test(mergeBase)) return false;
+    const trees = yield* run("StorageCleanup.contentTrees", [
+      "rev-parse",
+      `${mergeBase}^{tree}`,
+      `${headSha}^{tree}`,
+    ]);
+    const [mergeBaseTree, headTree] = trees?.trim().split(/\r?\n/) ?? [];
+    if (!objectId.test(mergeBaseTree ?? "") || !objectId.test(headTree ?? "")) return false;
+    if (mergeBaseTree === headTree) return true;
     const listPaths = Effect.fn("StorageCleanup.contentPaths")(function* (from: string) {
       const listed = yield* run("StorageCleanup.contentPaths", [
-        ...treeDiff,
+        "-c",
+        "core.quotePath=true",
+        "diff-tree",
+        "-r",
+        "--no-renames",
+        "--ignore-submodules=none",
         "--name-only",
         from,
         headSha,
       ]);
-      return listed === null ? null : listed.split("\0").filter((entry) => entry.length > 0);
+      const paths = listed?.split("\n").filter((entry) => entry.length > 0) ?? null;
+      return paths?.every((entry) => /^[\x20-\x7e]+$/.test(entry)) ? paths : null;
     });
     const branchPaths = yield* listPaths(mergeBase);
-    if (branchPaths === null) return false;
-    if (branchPaths.length === 0) return true;
+    if (branchPaths === null || branchPaths.length === 0) return false;
     const unlanded = yield* listPaths(baseSha);
     if (unlanded === null) return false;
     const differs = new Set(unlanded);
