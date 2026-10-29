@@ -96,10 +96,14 @@ const MAX_STDERR_EXCERPT_LENGTH = 300;
 const GIT_PROGRESS_LINE_PATTERN = /^[\w ]+:\s+\d+% \(\d+\/\d+\)/;
 const STDERR_CREDENTIAL_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1***@"],
-  [/\b((?:proxy-)?authorization)\s*:.*$/gi, "$1: ***"],
-  [/\b(bearer|basic|token)\s+[\w.~+/=-]{8,}/gi, "$1 ***"],
-  [/\b(gh[opsur]_|github_pat_|glpat-|xox[abpr]-)[\w-]+/g, "$1***"],
-  [/([?&](?:access_token|token|password|secret|key)=)[^&\s]+/gi, "$1***"],
+  [/\b((?:proxy-)?authorization)\s*[:=].*$/gi, "$1: ***"],
+  [/\b(bearer|basic)\s+\S+/gi, "$1 ***"],
+  [/\b(token|password|passwd|secret|api[_-]?key)(\s*[:=]\s*|\s+)\S+/gi, "$1$2***"],
+  [/\b(gh[opsur]_|github_pat_|glpat-|xox[abpr]-|sk-|AKIA)[\w-]+/g, "$1***"],
+  [
+    /([?&;][^=&\s]*(?:key|token|secret|password|auth|sig|signature|credential)[^=&\s]*=)[^&\s]+/gi,
+    "$1***",
+  ],
 ];
 
 function gitStderrExcerpt(stderr: string): string | null {

@@ -3724,6 +3724,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const removeCreatedBranch = Effect.fn("removeCreatedBranch")(function* (
+    cwd: string,
+    branch: string,
+    commit: string,
+  ) {
+    const checkout = yield* executeGit("GitVcsDriver.createWorktree.inspectCreatedBranch", cwd, [
+      "for-each-ref",
+      "--format=%(worktreepath)",
+      `refs/heads/${branch}`,
+    ]);
+    if (checkout.stdout.trim() !== "") return;
+    yield* executeGit("GitVcsDriver.createWorktree.removeCreatedBranch", cwd, [
+      "update-ref",
+      "-d",
+      `refs/heads/${branch}`,
+      commit,
+    ]);
+    yield* executeGit(
+      "GitVcsDriver.createWorktree.removeCreatedBranchConfig",
+      cwd,
+      ["config", "--remove-section", `branch.${branch}`],
+      { allowNonZeroExit: true, writesSharedConfig: true },
+    );
+  }, Effect.ignore);
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -3751,6 +3776,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       worktreePath = path.join(parentDir, repoName, sanitizedBranch);
     }
+    let createdBranchCommit: string | null = null;
     if (input.newRefName) {
       // Kept apart from the checkout so the shared-config lock only covers the tracking write.
       yield* createBranchAt(
@@ -3758,6 +3784,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { cwd: input.cwd, branch: input.newRefName, startPoint: input.refName },
         "git worktree add failed",
       );
+      createdBranchCommit = yield* executeGit(
+        "GitVcsDriver.createWorktree.readCreatedBranch",
+        input.cwd,
+        ["rev-parse", "--verify", "--quiet", `refs/heads/${input.newRefName}`],
+        { allowNonZeroExit: true },
+      ).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : null)));
     }
     const args = ["worktree", "add", "--", worktreePath, input.newRefName ?? input.refName];
     const progress = options?.progress;
@@ -3787,11 +3819,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : {}),
       },
     ).pipe(
-      Effect.onError(() =>
-        input.newRefName
-          ? deleteLocalBranch({ cwd: input.cwd, refName: input.newRefName, force: true }).pipe(
-              Effect.ignore,
-            )
+      Effect.tapError((error) =>
+        input.newRefName && createdBranchCommit !== null && error.exitCode !== undefined
+          ? removeCreatedBranch(input.cwd, input.newRefName, createdBranchCommit)
           : Effect.void,
       ),
     );
