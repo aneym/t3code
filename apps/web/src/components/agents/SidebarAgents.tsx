@@ -1,7 +1,6 @@
-import { rememberAgentFirstOpen } from "./agentFirstOpen";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { CircleCheckIcon, CircleDashedIcon, PinOffIcon, PinIcon } from "lucide-react";
+import { CircleDashedIcon, PinOffIcon, PinIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
@@ -11,12 +10,9 @@ import { useEnvironmentIdentities } from "../../state/environments";
 import { cn } from "~/lib/utils";
 import { deriveProjectIdentity } from "../../projectIdentity";
 import { ProjectMonogram } from "../ProjectMonogram";
-import {
-  hasUnseenCompletion,
-  resolveSidebarThreadStatus,
-  resolveThreadLastVisitedAt,
-} from "../Sidebar.logic";
+import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 import { SidebarSection } from "../sidebar/SidebarSection";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { type RailsAgent, railsAgentFaceUrl, useRailsAgents } from "./railsAgents";
 
@@ -120,7 +116,6 @@ function AgentRow(props: {
   const { agent } = props;
   const handleNewThread = useNewThreadHandler();
   const navigate = useNavigate();
-  const environments = useEnvironmentIdentities();
   const { openMenu } = useThreadActionMenu({
     threadRef:
       agent.thread === null
@@ -158,6 +153,10 @@ function AgentRow(props: {
       {agent.thread === null ? (
         agent.target ? (
           <span className="text-xs text-sidebar-muted-foreground">Loading</span>
+        ) : agent.remoteHost ? (
+          <span className="shrink-0 text-xs text-sidebar-muted-foreground">
+            On {agent.remoteHost}
+          </span>
         ) : null
       ) : (
         <span className="flex shrink-0 group-focus-within/agent-row:invisible group-hover/agent-row:invisible">
@@ -191,19 +190,17 @@ function AgentRow(props: {
           type="button"
           className={rowClassName}
           onClick={() => {
+            if (agent.remoteHost) {
+              toastManager.add({
+                type: "info",
+                title: `${agent.name}'s main thread is on ${agent.remoteHost}`,
+                description: `Connect ${agent.remoteHost} to open it here.`,
+              });
+              return;
+            }
             props.onNavigate();
             if (agent.projectRef === null) return;
-            void handleNewThread(agent.projectRef).then((opened) => {
-              if (opened && agent.projectRef)
-                rememberAgentFirstOpen(
-                  opened.threadId,
-                  agent,
-                  agent.projectRef.environmentId,
-                  environments
-                    .find((env) => env.environmentId === agent.projectRef?.environmentId)
-                    ?.label.toLowerCase() ?? agent.projectRef.environmentId,
-                );
-            });
+            void handleNewThread(agent.projectRef);
           }}
         >
           {content}
@@ -264,7 +261,6 @@ function AgentFace(props: { readonly handle: string; readonly name: string }) {
 
 function AgentStatus({ thread }: { readonly thread: EnvironmentThreadShell }) {
   const status = resolveSidebarThreadStatus(thread);
-  const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, undefined);
   if (status === "working") {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 text-xs text-sidebar-muted-foreground">
@@ -283,14 +279,6 @@ function AgentStatus({ thread }: { readonly thread: EnvironmentThreadShell }) {
     return (
       <span className="text-xs text-sidebar-muted-foreground">
         {status === "limited" ? "Limited" : "Error"}
-      </span>
-    );
-  }
-  if (hasUnseenCompletion({ ...thread, lastVisitedAt })) {
-    return (
-      <span className="inline-flex shrink-0 items-center gap-1 text-xs text-sidebar-muted-foreground">
-        <CircleCheckIcon aria-hidden className="size-3.5" />
-        Done
       </span>
     );
   }

@@ -1319,7 +1319,12 @@ export function useComposerSend(input: ComposerSendInput) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        if (isLocalDraftThread) void bindAgentFirstOpen(threadIdForSend, environmentId);
+        if (isLocalDraftThread)
+          void bindAgentFirstOpen(
+            threadIdForSend,
+            environmentId,
+            activeProject?.workspaceRoot ?? null,
+          );
         setKeepFullHistory(routeThreadKey, false);
         clearUsageLimitsFor(routeThreadKey);
         if (turnUsesAttachmentUploads) {

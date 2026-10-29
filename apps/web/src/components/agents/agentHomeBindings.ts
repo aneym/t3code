@@ -8,7 +8,9 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useEnvironmentIds } from "../../state/environments";
+import { environmentSummaries } from "../../state/presentation";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 
 export const bindAgentHome = createEnvironmentRpcCommand(connectionAtomRuntime, {
@@ -37,4 +39,9 @@ const allHomes = environmentAtomList("web-agents:all-homes", environmentHomes);
 export function useAgentHomes(): ReadonlyArray<EnvironmentAgentHome> {
   const ids = useEnvironmentIds().toSorted();
   return useAtomValue(allHomes(environmentIdsKey(ids))).flat();
+}
+
+export function readAgentHomes(): ReadonlyArray<EnvironmentAgentHome> {
+  const ids = appAtomRegistry.get(environmentSummaries.environmentIdsAtom).toSorted();
+  return appAtomRegistry.get(allHomes(environmentIdsKey(ids))).flat();
 }
