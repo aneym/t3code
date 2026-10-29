@@ -40,7 +40,6 @@ const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
-const MAX_HOME_RETRIES = 25;
 const HOME_RETRY_INTERVAL_MS = 5_000;
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
@@ -418,7 +417,6 @@ export class Launcher {
   #stopRequested = false;
   #stopping = false;
   #done = false;
-  #homeRetries = 0;
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
@@ -542,7 +540,6 @@ export class Launcher {
 
   async #startChild(version: string, role: ChildRole, update?: ServiceUpdateRecord): Promise<void> {
     if (this.#stopping) return;
-    if (role === "trial") this.#homeRetries = 0;
     if (!(await runtimeExists(this.#baseDir, version))) {
       throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
     }
@@ -730,7 +727,6 @@ export class Launcher {
       await this.#handleStateDirOwned();
       return;
     }
-    this.#homeRetries = 0;
     if (child.role === "trial") {
       this.#clearTimer();
       const pending = this.#state.update;
@@ -775,14 +771,12 @@ export class Launcher {
       HOME_RETRY_INTERVAL_MS,
     );
     process.stderr.write(
-      "[service-launcher] Another T3 Code server owns this T3 home. Stop it, then restart this service.\n",
+      "[service-launcher] Another T3 Code server owns this T3 home. This service starts once it stops.\n",
     );
   }
 
   async #retryOwnedHome(acquire: boolean): Promise<boolean> {
-    if (this.#child !== null || this.#stopping || this.#homeRetries >= MAX_HOME_RETRIES)
-      return false;
-    this.#homeRetries += 1;
+    if (this.#child !== null || this.#stopping) return false;
     if (!(await freeOwnedHome(this.#baseDir, acquire))) return false;
     this.#clearTimer();
     await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
