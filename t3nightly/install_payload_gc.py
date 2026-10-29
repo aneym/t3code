@@ -2,10 +2,13 @@ import fcntl
 import json
 import os
 import sqlite3
+import time
 from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
 
 from t3nightly.install_storage import record_payload
+
+INCOMPLETE_IDLE_S = 6 * 3600
 
 
 def contained(root, path):
@@ -74,39 +77,56 @@ def collect_snapshots(root, current, state):
                 discard_snapshot(root, path, state, "discard-stale-read-snapshot")
 
 
+def backup_marker(root, path):
+    marker = contained(root, path / "payload.json")
+    if not marker.exists():
+        return None
+    try:
+        data = json.loads(marker.read_text())
+    except InterruptedError:
+        raise
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def complete_backup(root, path, version):
     contained(root, path)
-    marker = contained(root, path / "payload.json")
-    if marker.exists():
-        try:
-            return json.loads(marker.read_text()) == {
-                "version": version,
-                "complete": True,
-            }
-        except (OSError, ValueError):
-            return False
+    marker = backup_marker(root, path)
+    if marker is not None:
+        return marker.get("version") == version and marker.get("complete") is True
     db = contained(root, path / "statev2.sqlite")
-    if not db.is_file():
+    if not db.is_file() or db.stat().st_size == 0:
         return False
     try:
         with closing(sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True)) as connection:
+            if connection.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0:
+                return False
             return connection.execute("PRAGMA quick_check").fetchone() == ("ok",)
     except sqlite3.DatabaseError:
         return False
 
 
-def backup_candidates(root, version):
+def idle(path):
+    newest = max(
+        (child.lstat().st_mtime for child in path.rglob("*")),
+        default=path.lstat().st_mtime,
+    )
+    return time.time() - max(newest, path.lstat().st_mtime) >= INCOMPLETE_IDLE_S
+
+
+def backup_version(path):
+    return path.name.partition("-")[2]
+
+
+def backup_candidates(root):
     return sorted(
-        (
-            path
-            for path in root.iterdir()
-            if path.is_dir() and path.name.partition("-")[2] == version
-        ),
+        (path for path in root.iterdir() if path.is_dir() and backup_version(path)),
         key=lambda path: path.name,
     )
 
 
-def prune_backups(root, version, keep, current, state):
+def prune_backups(root, keep, current, home, state):
     if keep < 1:
         raise ValueError("backup keep must be at least one")
     with payload_lock(root, root / "retention") as acquired:
@@ -114,16 +134,19 @@ def prune_backups(root, version, keep, current, state):
             return
         with ExitStack() as locks:
             complete = []
-            held = 0
-            for path in backup_candidates(root, version):
+            for path in backup_candidates(root):
                 if path == current:
                     continue
                 if not locks.enter_context(payload_lock(root, path)):
-                    held += 1
                     continue
-                if complete_backup(root, path, version):
+                owner = (backup_marker(root, path) or {}).get("home")
+                if owner is not None and owner != str(home):
+                    continue
+                if complete_backup(root, path, backup_version(path)):
                     complete.append(path)
-            count = len(complete) + held + 1
+                elif path.name < current.name and idle(path):
+                    discard(root, path, state, "discard-incomplete-rollback-backup")
+            count = len(complete) + 1
             for path in complete:
                 if count <= keep:
                     break

@@ -32,11 +32,12 @@ def payload_locations(state, home, version, backups):
     if not version or Path(version).name != version or version in (".", ".."):
         raise ValueError("invalid installer version path")
     key = hashlib.sha256(str(Path(home).absolute()).encode()).hexdigest()[:16]
-    root = private_directory(EXTERNAL / "t3nightly-install-data" / key / version)
+    base = EXTERNAL / "t3nightly-install-data" / key
+    root = private_directory(base / version)
     snapshots = private_directory(root / "snapshots")
     requested = Path(backups).expanduser().absolute()
     default = Path.home() / ".t3nightly/backups"
-    retained = root / "backups" if requested == default else requested
+    retained = base / "backups" if requested == default else requested
     return snapshots, private_directory(retained)
 
 

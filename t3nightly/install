@@ -31,7 +31,7 @@ def parse():
         "--systemd-dropin", default="~/.config/systemd/user/t3code.service.d"
     )
     parser.add_argument("--backups", default="~/.t3nightly/backups")
-    parser.add_argument("--backup-keep", type=int, default=1)
+    parser.add_argument("--backup-keep", type=int, default=2)
     parser.add_argument("--load-max", type=float, default=1.5)
     parser.add_argument("--merge-repo", default="")
     parser.add_argument("--merge-fresh-s", type=int, default=2700)

@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from contextlib import closing
+from contextlib import ExitStack, closing
 from pathlib import Path
 
 from .io_priority import background_command
@@ -99,16 +99,20 @@ def take(dest, *, home=None, timeout=1200):
         raise FileNotFoundError("no database to snapshot at %s" % source)
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     started = time.monotonic()
-    with tempfile.TemporaryDirectory(prefix=".snapshot-", dir=snapshot_root(home)) as raw:
+    with ExitStack() as stack:
+        raw = stack.enter_context(tempfile.TemporaryDirectory(prefix=".snapshot-", dir=snapshot_root(home)))
         staged = Path(raw) / "statev2.sqlite"
         try:
             clone_database(source, staged, timeout)
             method = "apfs-clone" if sys.platform == "darwin" else "reflink"
+        except InterruptedError:
+            raise
         except (OSError, subprocess.CalledProcessError) as error:
             if sys.platform == "darwin":
                 raise RuntimeError("APFS snapshot clone failed; refusing a live database backup") from error
             for path in Path(raw).iterdir():
                 path.unlink()
+            staged = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix=".snapshot-", dir=destination.parent))) / "statev2.sqlite"
             command = background_command([sys.executable, "-m", "t3nightly.live_snapshot", str(source), str(staged), str(timeout)])
             print("snapshot clone unavailable (%s); stepwise sqlite backup: %s" % (type(error).__name__, " ".join(command[:6])), file=sys.stderr, flush=True)
             env = dict(os.environ)
