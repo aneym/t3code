@@ -191,10 +191,12 @@ const rearm = Effect.fnUntraced(function* (
       !found.byTaskId.has(entry.id) &&
       !found.byItemId.has(entry.id),
   );
-  const pairedMonitors =
-    unmatchedMonitors.length === found.unstartedMonitors.length
-      ? new Map(unmatchedMonitors.map((entry, index) => [entry, found.unstartedMonitors[index]]))
-      : new Map<Work, Launch | undefined>();
+  const newestMonitors = found.unstartedMonitors.slice(-unmatchedMonitors.length);
+  const pairedMonitors = new Map(
+    newestMonitors.length === unmatchedMonitors.length
+      ? unmatchedMonitors.map((entry, index) => [entry, newestMonitors[index]])
+      : [],
+  );
   const rearmed: Array<Work> = [];
   for (const entry of work) {
     if (entry.rearm !== undefined || entry.id === undefined) {
