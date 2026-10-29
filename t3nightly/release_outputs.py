@@ -13,6 +13,7 @@ from .release_continuation import require_studio_proof
 from .release_timeline import latest_rows
 from .release_signatures import verify_archive, verify_desktop_zip
 from .release_transport import ssh
+from .release_windows import WINDOWS_STAGES, windows_output
 
 
 def exists(config, name):
@@ -218,4 +219,6 @@ def fast_output(stage, config):
         return (run / "desktop-swap.json").is_file()
     if stage == "F":
         return json.loads((run / "final-receipt.json").read_text())["published"] == config.version
+    if stage in WINDOWS_STAGES:
+        return windows_output(stage, config)
     return stage in ("LM", "LR", "H", "AS")

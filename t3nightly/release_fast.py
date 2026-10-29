@@ -13,7 +13,7 @@ from .release_timeline import Timeline, utc_now
 from .run_retention import finish_runs
 
 HANG_GUARD = 10
-LIVE_NODES = {"IM", "IL", "S", "F", "LM", "LR", "H", "AS"}
+LIVE_NODES = {"IM", "IL", "S", "F", "LM", "LR", "H", "AS", "W", "FW"}
 
 
 def stage_spec(node, args):

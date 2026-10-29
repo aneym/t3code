@@ -81,6 +81,8 @@ FAST_GRAPH = (
     FastNode("LR", "land-receipts", "studio", ("IM", "IL"), 60, (), gating=False),
     FastNode("H", "health-watch", "studio", ("F",), 600, (), gating=False),
     FastNode("AS", "advisory-suites", "studio", ("F",), 3600, (), gating=False),
+    FastNode("W", "desktop-windows", "studio", ("A",), 1500, ("build-host:pc",), gating=False),
+    FastNode("FW", "publish-windows", "studio", ("F", "W"), 30, ("feed",), gating=False),
 )
 
 FAST_DEADLINE = 900
