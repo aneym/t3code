@@ -95,7 +95,11 @@ export interface AgentProjectScope {
 }
 
 const folderName = (workspaceRoot: string) =>
-  workspaceRoot.replace(/\/+$/, "").split("/").at(-1)?.toLowerCase() ?? "";
+  workspaceRoot
+    .replace(/[\\/]+$/, "")
+    .split(/[\\/]/)
+    .at(-1)
+    ?.toLowerCase() ?? "";
 
 export function agentFocusAction(
   agent: RailsAgent,
