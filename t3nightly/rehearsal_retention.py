@@ -119,7 +119,7 @@ def retain(sandbox_dir):
             if path in keep:
                 report["kept"].append(path.name)
                 continue
-            removable = [tree for tree in (home, path / "evidence/installer-state/rollback-runtime") if tree.is_dir() and not tree.is_symlink()]
+            removable = [tree for tree in (home, path / "evidence/installer-state/rollback-runtime") if tree.is_dir() and tree.resolve() == tree and tree.is_relative_to(root)]
             if not removable:
                 continue
             began = rehearsal_start(path)
