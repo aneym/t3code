@@ -1861,6 +1861,13 @@ it.live.each([
     reason: "Has a nested repository (vendor/)",
   },
   {
+    state: "repository inside an untracked directory",
+    policy: "tracked-changes",
+    directory: "scratch/repo",
+    repository: "scratch/repo",
+    reason: "Has a nested repository (scratch/repo/)",
+  },
+  {
     state: "unregistered gitlink",
     policy: "tracked-changes",
     directory: "embedded",
