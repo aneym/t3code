@@ -62,7 +62,13 @@ import {
   pendingRestartCancelledBackgroundWork,
   restartCancelledBackgroundWorkNote,
 } from "./RestartBackgroundNote.ts";
-import { batchedProviderText, foldedQueuedTurnItems } from "./QueuedRunBatch.ts";
+import {
+  batchedProviderPrompt,
+  unacceptedAttemptItems,
+  unacceptedContinuationChain,
+  unacceptedSourceOf,
+  unpromptedHistory,
+} from "./QueuedRunBatch.ts";
 
 export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStartError>()(
   "ProviderTurnStartError",
@@ -795,32 +801,28 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const foldedItems = foldedQueuedTurnItems(projection.turnItems, run);
-      const userText = batchedProviderText(
-        [message, ...foldedItems].map((part) => ({
-          ...part,
-          text: projectComposerContextForProvider({
-            text: part.text,
-            records: part.context?.records ?? [],
-          }),
-        })),
-      );
-      const attachments = [
-        ...message.attachments,
-        ...foldedItems.flatMap((item) => item.attachments),
-      ];
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
-      const continuationSource = projection.runs.find(
-        (source) => source.id === run.restartContinuationOfRunId,
+      const unacceptedChain = unacceptedContinuationChain(projection, run);
+      const unacceptedSource = unacceptedChain.at(-1);
+      const {
+        text: userText,
+        attachments,
+        foldedItems,
+      } = batchedProviderPrompt(
+        message,
+        unacceptedSource ?? run,
+        unacceptedSource === undefined
+          ? projection.turnItems
+          : unacceptedAttemptItems(
+              yield* projectionStore.getTurnStartHistory(input.threadId, [unacceptedSource.id]),
+              unacceptedSource,
+            ),
       );
       const noteContinuation =
-        (continuationSource !== undefined &&
-          !projection.providerTurns.some(
-            (turn) => turn.runAttemptId === continuationSource.activeAttemptId,
-          )) ||
+        unacceptedSourceOf(projection, run) !== undefined ||
         isRestartNoteContinuation(
           run,
           projection.runs,
@@ -1061,12 +1063,12 @@ export const layer: Layer.Layer<
             coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
             strategy: "full_thread_summary",
             runs: projection.runs,
-            items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
-              (item) =>
-                item.runId === null ||
-                projection.runs.some(
-                  (source) => source.id === item.runId && source.ordinal < run.ordinal,
-                ),
+            items: unpromptedHistory(
+              yield* projectionStore.getTurnStartHistory(input.threadId),
+              projection.runs,
+              run,
+              unacceptedChain,
+              foldedItems,
             ),
             createdAt,
           });
