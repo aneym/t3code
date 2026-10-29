@@ -1,4 +1,5 @@
 import { pipe } from "effect/Function";
+import { withCodexThreadSubscriptions } from "./CodexThreadSubscriptions.ts";
 import { codexMcpAppResourceUri } from "./CodexMcpApps.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
@@ -7028,8 +7029,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
               ),
           ),
-          // Dropping this connection's subscription lets the shared app-server
-          // shut the native thread (and its MCP servers) down once it is idle.
           unloadThread: Effect.fn("CodexAdapterV2.unloadThread")(
             function* (unloadInput) {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
@@ -7752,7 +7751,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ),
           ),
         };
-        return runtime;
+        return yield* withCodexThreadSubscriptions(runtime);
       },
       (effect, input) =>
         effect.pipe(
