@@ -21,6 +21,7 @@ import type {
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
 
 const MAX_COMMAND_LENGTH = 1000;
+const SETTLED = new Set(["completed", "failed"]);
 const BASH_OUTPUT_PATH = /Output is being written to: (\S+\.output)\.?(?!\S)/;
 
 interface Launch {
@@ -63,7 +64,11 @@ function launches(items: ReadonlyArray<OrchestrationV2TurnItem>) {
     byItemId.set(item.id, launch);
     const taskId = launchedTaskId(item);
     if (taskId !== undefined) byTaskId.set(taskId, launch);
-    else if (item.type === "dynamic_tool" && item.toolName === "Monitor")
+    else if (
+      item.type === "dynamic_tool" &&
+      item.toolName === "Monitor" &&
+      !SETTLED.has(item.status)
+    )
       unstartedMonitors.push(launch);
   }
   return { byTaskId, byItemId, taskDirs, unstartedMonitors };
@@ -186,10 +191,10 @@ const rearm = Effect.fnUntraced(function* (
       !found.byTaskId.has(entry.id) &&
       !found.byItemId.has(entry.id),
   );
-  const orphanMonitor =
-    unmatchedMonitors.length === 1 && found.unstartedMonitors.length === 1
-      ? found.unstartedMonitors[0]
-      : undefined;
+  const pairedMonitors =
+    unmatchedMonitors.length === found.unstartedMonitors.length
+      ? new Map(unmatchedMonitors.map((entry, index) => [entry, found.unstartedMonitors[index]]))
+      : new Map<Work, Launch | undefined>();
   const rearmed: Array<Work> = [];
   for (const entry of work) {
     if (entry.rearm !== undefined || entry.id === undefined) {
@@ -201,9 +206,7 @@ const rearm = Effect.fnUntraced(function* (
       action = subagentRearm(entry, driver);
     } else if (entry.kind === "shell" || entry.kind === "monitor") {
       const launch =
-        found.byTaskId.get(entry.id) ??
-        found.byItemId.get(entry.id) ??
-        (entry.kind === "monitor" ? orphanMonitor : undefined);
+        found.byTaskId.get(entry.id) ?? found.byItemId.get(entry.id) ?? pairedMonitors.get(entry);
       const outputPath =
         launch?.outputPath ??
         (driver === "claudeAgent"
