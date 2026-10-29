@@ -17,6 +17,7 @@ from .release_approval import approved
 from .release_continuation import require_studio_proof
 from .build_artifacts import tree_digest
 from .release_graph import SUCCESS_OUTCOMES
+from .release_land_receipts import publish as publish_landings
 from .release_manifest import digest, freeze, history_digest, load
 from .release_outputs import fast_evidence
 from .release_ownership import ownership
@@ -238,6 +239,8 @@ def fast_install(config, log):
     if code and outcome in SUCCESS_OUTCOMES:
         outcome = "failed"
     (config.outcome()).write_text(json.dumps({"outcome": outcome, "installerExit": code}) + "\n")
+    if config.host == "studio" and outcome in SUCCESS_OUTCOMES:
+        publish_landings(config, log)
     return 0
 
 
