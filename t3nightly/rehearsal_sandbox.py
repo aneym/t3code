@@ -14,6 +14,7 @@ import urllib.request
 from contextlib import closing
 from pathlib import Path
 
+from .codex_isolation import isolated_codex_home
 from .install_strays import port_listeners
 from .release_manifest import history_digest
 
@@ -137,7 +138,7 @@ class Sandbox:
 
     def service_environment(self):
         paths = [str(self.cli.parent)] + [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if ".t3" not in entry]
-        environment = {"HOME": str(self.home), "PATH": os.pathsep.join(paths), "T3CODE_HOME": str(self.home), "T3CODE_NO_BROWSER": "1", "TMPDIR": str(self.home / "runtime/tmp"),
+        environment = {"HOME": str(self.home), "PATH": os.pathsep.join(paths), "T3CODE_HOME": str(self.home), "T3CODE_NO_BROWSER": "1", "TMPDIR": str(self.home / "runtime/tmp"), "CODEX_HOME": str(self.home / "codex-home"),
                        "T3CODE_HOST": "127.0.0.1", "T3CODE_PORT": str(self.port)}
         if any(".t3" in value and not value.startswith(str(self.home)) for value in environment.values()):
             raise ValueError("sandbox service environment contains a live T3 path")
@@ -150,6 +151,7 @@ class Sandbox:
         (self.home / "userdata/logs").mkdir(parents=True)
         (self.home / "runtime/versions").mkdir(parents=True)
         (self.home / "runtime/tmp").mkdir(mode=0o700)
+        isolated_codex_home(self.home / "codex-home")
         self.os_home.mkdir()
         old_version = self.old.name
         for destination in (self.home / "runtime/versions" / old_version, self.cli.parent):

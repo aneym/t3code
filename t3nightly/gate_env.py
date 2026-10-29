@@ -9,6 +9,7 @@ import time
 import urllib.request
 from pathlib import Path
 
+from .codex_isolation import isolated_codex_home
 from .gate_proc import CheckFailed, Deadline, clean_env, run, spawn, stop_group
 from .gate_seed import CACHE_ROOT, populate_home
 from .io_priority import background_command
@@ -132,6 +133,7 @@ def start_server(ctx, deadline):
         ],
         ctx.log("server"),
         cwd=str(ctx.project),
+        env=clean_env({"CODEX_HOME": str(isolated_codex_home(Path(ctx.work) / "codex-home"))}),
     )
     while True:
         if ctx.server.poll() is not None:
