@@ -402,57 +402,75 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "queued-input.reconcile":
+            return threads
+              .dispatch({
+                type: "runtime-request.delivery.fail",
+                commandId: CommandId.make(`${effect.commandId}:queued-input-compensate`),
+                threadId: effect.threadId,
+                requestId: effect.request.requestIds[0]!,
+                queuedInputDeliveryEffectId: effect.id,
+              })
+              .pipe(
+                Effect.asVoid,
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
           case "runtime-request.respond": {
             const requestId = effect.request.requestId;
-            return (
-              effect.request.queuedInputDelivery === true
-                ? threads.completeQueuedInputDelivery(
-                    { threadId: effect.threadId, commandId: effect.commandId, requestId },
-                    runtimeRequests.respond,
-                  )
-                : runtimeRequests.respond({
-                    threadId: effect.threadId,
-                    providerSessionId: effect.request.providerSessionId,
-                    requestId,
-                    ...(effect.request.decision === undefined
-                      ? {}
-                      : { decision: effect.request.decision }),
-                    ...(effect.request.feedback === undefined
-                      ? {}
-                      : { feedback: effect.request.feedback }),
-                    ...(effect.request.answers === undefined
-                      ? {}
-                      : { answers: effect.request.answers }),
-                  })
-            ).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
-              Effect.tapCause((cause) =>
-                willRetry || Cause.hasInterruptsOnly(cause)
-                  ? Effect.void
-                  : threads
-                      .dispatch({
-                        type: "runtime-request.delivery.fail",
-                        commandId: CommandId.make(`${effect.commandId}:delivery-failed`),
-                        threadId: effect.threadId,
-                        requestId,
-                      })
-                      .pipe(
-                        Effect.catchCause((recordCause) =>
-                          Effect.logWarning("Failed to record answer delivery failure", {
-                            effectId: effect.id,
-                            cause: recordCause,
-                          }),
+            return runtimeRequests
+              .respond({
+                threadId: effect.threadId,
+                providerSessionId: effect.request.providerSessionId,
+                requestId,
+                ...(effect.request.decision === undefined
+                  ? {}
+                  : { decision: effect.request.decision }),
+                ...(effect.request.feedback === undefined
+                  ? {}
+                  : { feedback: effect.request.feedback }),
+                ...(effect.request.answers === undefined
+                  ? {}
+                  : { answers: effect.request.answers }),
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+                Effect.tapCause((cause) =>
+                  (effect.request.type === "runtime-request.respond" &&
+                    effect.request.queuedInputDelivery === true) ||
+                  willRetry ||
+                  Cause.hasInterruptsOnly(cause)
+                    ? Effect.void
+                    : threads
+                        .dispatch({
+                          type: "runtime-request.delivery.fail",
+                          commandId: CommandId.make(`${effect.commandId}:delivery-failed`),
+                          threadId: effect.threadId,
+                          requestId,
+                        })
+                        .pipe(
+                          Effect.catchCause((recordCause) =>
+                            Effect.logWarning("Failed to record answer delivery failure", {
+                              effectId: effect.id,
+                              cause: recordCause,
+                            }),
+                          ),
                         ),
-                      ),
-              ),
-            );
+                ),
+              );
           }
           case "provider-thread.rollback":
             return checkpointRollback
@@ -829,6 +847,9 @@ export const layerWithOptions = (
 
           const error = Cause.pretty(exit.cause);
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
+          const terminalQueuedInput =
+            effect.request.type === "runtime-request.respond" &&
+            effect.request.queuedInputDelivery === true;
           yield* Effect.logWarning("Orchestration effect execution failed", {
             effectId: effect.id,
             effectType: effect.request.type,
@@ -840,7 +861,7 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
+            : terminalQueuedInput || effect.attemptCount >= maxAttempts
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))

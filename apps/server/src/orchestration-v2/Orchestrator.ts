@@ -1,8 +1,6 @@
 import { commandThreadId } from "./CommandThread.ts";
-import {
-  watchPendingInputQueueDelivery,
-  makeQueuedInputCompletion,
-} from "./PendingInputQueueDelivery.ts";
+import { watchPendingInputQueueDelivery } from "./PendingInputQueueDelivery.ts";
+import { makeQueuedInputRestorer } from "./QueuedInputCompensation.ts";
 import {
   completionDeliveryRun,
   completionDeliveryMessage,
@@ -339,12 +337,6 @@ export interface OrchestratorV2DispatchResult {
 }
 
 export interface OrchestratorV2Shape {
-  readonly prepareQueuedInputDelivery: Effect.Success<
-    ReturnType<typeof makeQueuedInputCompletion>
-  >["prepare"];
-  readonly completeQueuedInputDelivery: Effect.Success<
-    ReturnType<typeof makeQueuedInputCompletion>
-  >["complete"];
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
   readonly recoverDelegatedTask: (threadId: ThreadId, sourceRunId: RunId) => Effect.Effect<void>;
@@ -12340,6 +12332,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }),
     );
 
+  const restoreQueuedInputDelivery = yield* makeQueuedInputRestorer();
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
     command: OrchestrationV2ServerCommand,
   ): Effect.fn.Return<
@@ -12661,7 +12654,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchCheckpointRollbackFail(command, events);
         break;
       case "runtime-request.delivery.fail":
-        yield* dispatchRuntimeRequestDeliveryFail(command, events);
+        if (
+          yield* restoreQueuedInputDelivery(command, events, effects, dispatchRunInterrupt).pipe(
+            mapDispatchError(command),
+          )
+        )
+          yield* dispatchRuntimeRequestDeliveryFail(command, events);
         break;
       case "thread.background-work.settle":
         yield* dispatchBackgroundWorkSettle(command, events, effects);
@@ -12798,6 +12796,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (planned) =>
           planned.events.length > 0 ||
           command.type === "thread.background-work.settle" ||
+          command.type === "runtime-request.delivery.fail" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
@@ -13032,7 +13031,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.forkDetach,
     );
 
-  yield* watchPendingInputQueueDelivery();
+  yield* watchPendingInputQueueDelivery(dispatchRuntimeRequestRespond);
 
   // A child whose run ends while its background tasks or its own subagents still run has no
   // result yet. When that work settles there is no run update to finalize it, so these events
@@ -13221,10 +13220,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const shellProjectionError = (cause: unknown) =>
     new OrchestratorProjectionError({ threadId: ThreadId.make("thread:shell"), cause });
 
-  const queuedInputDelivery = yield* makeQueuedInputCompletion(dispatchRuntimeRequestRespond);
   return OrchestratorV2.of({
-    prepareQueuedInputDelivery: queuedInputDelivery.prepare,
-    completeQueuedInputDelivery: queuedInputDelivery.complete,
     resumeQueuedRuns,
     recoverDelegatedTasks,
     recoverDelegatedTask,

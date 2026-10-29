@@ -3428,6 +3428,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
   /** Delivering the answer to request `requestId` failed on its last attempt. */
   Schema.Struct({
     type: Schema.Literal("runtime-request.delivery.fail"),
+    queuedInputDeliveryEffectId: Schema.optional(Schema.String),
     commandId: CommandId,
     threadId: ThreadId,
     requestId: RuntimeRequestId,

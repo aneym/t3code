@@ -1,4 +1,8 @@
 import {
+  OrchestrationV2RunJson as OrchestrationV2Run,
+  OrchestrationV2ConversationMessageJson as OrchestrationV2ConversationMessage,
+  OrchestrationV2ExecutionNodeJson as OrchestrationV2ExecutionNode,
+  OrchestrationV2RunAttemptJson as OrchestrationV2RunAttempt,
   CheckpointId,
   CheckpointScopeId,
   CommandId,
@@ -20,6 +24,20 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("queued-input.reconcile"),
+    targetRunId: RunId,
+    responseEffectIds: Schema.Array(Schema.String),
+    requestIds: Schema.Array(RuntimeRequestId),
+    members: Schema.Array(
+      Schema.Struct({
+        run: OrchestrationV2Run,
+        message: OrchestrationV2ConversationMessage,
+        node: Schema.NullOr(OrchestrationV2ExecutionNode),
+        attempt: Schema.NullOr(OrchestrationV2RunAttempt),
+      }),
+    ),
+  }),
   Schema.Struct({
     type: Schema.Literal("provider-runtime.restart-reapproval"),
     sourceRunIds: Schema.Array(RunId),
@@ -125,6 +143,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
 export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
+  "queued-input.reconcile",
   "provider-runtime.restart-reapproval",
   "provider-runtime.restart-handoff",
   "provider-runtime.continue",
