@@ -1,3 +1,4 @@
+import fcntl
 import json
 import os
 import re
@@ -58,16 +59,24 @@ def live_references():
         if not proc.name.isdigit() or proc.name == str(own):
             continue
         try:
+            mine = proc.stat().st_uid == os.getuid()
             references.append((proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace"))
             references.append(os.readlink(proc / "cwd"))
-        except OSError:
+        except FileNotFoundError:
             continue
+        except OSError:
+            if mine:
+                raise
     return references
 
 
-def held(path, references):
-    text = str(path)
-    return any(text + "/" in reference or reference.endswith(text) or f"{text} " in reference for reference in references)
+def held(spellings, references):
+    return any(text + "/" in reference or reference.endswith(text) or f"{text} " in reference for text in spellings for reference in references)
+
+
+def newest_passing(dirs):
+    passing = [(str(result.get("finishedAt") or ""), path) for path in dirs if (result := finished(path)) and result.get("result") == "PASS"]
+    return max(passing)[1] if passing else None
 
 
 def retain(sandbox_dir):
@@ -75,22 +84,25 @@ def retain(sandbox_dir):
     sandbox_dir = Path(sandbox_dir).resolve()
     if sandbox_dir.parent != root or not sandbox_dir.name.startswith(PREFIX):
         return {"skipped": "sandbox is outside the nightly root"}
-    dirs = sorted(path for path in root.iterdir() if path.name.startswith(PREFIX) and path.is_dir() and not path.is_symlink())
-    passing = [(str(result.get("finishedAt") or ""), path) for path in dirs if (result := finished(path)) and result.get("result") == "PASS"]
-    keep = set()
-    if passing:
-        newest = max(passing)[1]
-        keep = {newest} | ({root / rollback_name(newest.name)} if rollback_name(newest.name) else set())
-    target = installer_target(root)
-    references = live_references()
-    report = {"kept": sorted(path.name for path in keep if path.exists()), "dropped": [], "held": []}
-    for path in dirs:
-        home = path / "home"
-        if path in keep or not home.is_dir() or home.is_symlink():
-            continue
-        if (target and target.is_relative_to(path)) or held(path, references):
-            report["held"].append(path.name)
-        else:
-            shutil.rmtree(home)
-            report["dropped"].append(path.name)
+    alias = Path(os.path.abspath(Path.home() / ".t3nightly"))
+    with (root / "rehearsal-retention.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        dirs = sorted(path for path in root.iterdir() if path.name.startswith(PREFIX) and path.is_dir() and not path.is_symlink())
+        target = installer_target(root)
+        references = live_references()
+        report = {"kept": [], "dropped": [], "held": []}
+        for path in dirs:
+            home = path / "home"
+            newest = newest_passing(dirs)
+            keep = {newest, root / rollback_name(newest.name)} if newest and rollback_name(newest.name) else {newest}
+            if path in keep:
+                report["kept"].append(path.name)
+                continue
+            if not home.is_dir() or home.is_symlink():
+                continue
+            if (target and target.is_relative_to(path)) or held({str(path), str(alias / path.name)}, references):
+                report["held"].append(path.name)
+            else:
+                shutil.rmtree(home)
+                report["dropped"].append(path.name)
     return report
