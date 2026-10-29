@@ -173,7 +173,7 @@ export function queuedMessageSender(part: QueuedRunBatchPart): string {
     : `${part.createdBy} (${part.creationSource})`;
 }
 
-function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): string {
+export function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): string {
   if (parts.length < 2) return parts[0]?.text ?? "";
   return [
     `These ${parts.length} messages were queued separately while you were working. They are listed with their senders: task completions first, then queued messages in the order they were sent. Handle each one accordingly.`,

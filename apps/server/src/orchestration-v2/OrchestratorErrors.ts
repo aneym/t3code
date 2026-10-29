@@ -1,5 +1,6 @@
 import {
   CommandId,
+  ThreadOrganizeRefusalReason,
   ThreadId,
   ProviderInstanceId,
   RuntimeMode,
@@ -13,6 +14,7 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
     commandId: CommandId,
     commandType: Schema.String,
     cause: Schema.optional(Schema.Defect()),
+    reason: Schema.optional(ThreadOrganizeRefusalReason),
   },
 ) {
   override get message(): string {
@@ -104,6 +106,7 @@ export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedErr
     commandId: CommandId,
     commandType: Schema.String,
     detail: Schema.String,
+    reason: Schema.optional(ThreadOrganizeRefusalReason),
   },
 ) {
   override get message(): string {

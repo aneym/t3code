@@ -1,4 +1,4 @@
-import { queuedRunRows, type QueuedRowThumbnail } from "./queuedRunRows";
+import { queuedRunRows } from "./queuedRunRows";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   deriveThreadQueueWorkflowState,
