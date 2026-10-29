@@ -1860,6 +1860,14 @@ it.live.each([
     tracked: "vendor/README.md",
     reason: "Has a nested repository (vendor/)",
   },
+  {
+    state: "unregistered gitlink",
+    policy: "tracked-changes",
+    directory: "embedded",
+    repository: "embedded",
+    gitlink: true,
+    reason: "Has a nested repository (embedded/)",
+  },
 ] as const)("keeps $state local state in a settled, landed checkout", (row) =>
   runCleanupTest(
     Effect.gen(function* () {
@@ -1881,6 +1889,21 @@ it.live.each([
       if ("repository" in row)
         yield* fixture.command(`${fixture.worktree}/${row.repository}`, ["init", "-q"]);
       yield* fixture.fs.writeFileString(ledger, "state\n");
+      if ("gitlink" in row) {
+        const embedded = `${fixture.worktree}/${row.directory}`;
+        yield* fixture.command(embedded, ["add", "ledger.md"]);
+        yield* fixture.command(embedded, [
+          "-c",
+          "user.name=Cleanup test",
+          "-c",
+          "user.email=cleanup@example.test",
+          "commit",
+          "-qm",
+          "embedded history",
+        ]);
+        yield* fixture.command(fixture.worktree, ["add", row.directory]);
+        yield* fixture.command(fixture.worktree, ["commit", "-qm", "embed repository"]);
+      }
 
       expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
         outcome: "kept",

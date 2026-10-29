@@ -221,7 +221,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       if (entry.endsWith("/") && (yield* fs.exists(path.join(cwd, entry, ".git"))))
         return `has a nested repository (${entry})`;
     }
-    // Git hides a nested repository inside a directory the parent also tracks.
+    // Git hides a nested repository inside a tracked directory or an unregistered gitlink.
     const tracked = yield* git.execute({
       operation: "StorageCleanup.trackedDirectories",
       cwd,
@@ -229,9 +229,30 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       maxOutputBytes: 4 * 1024 * 1024,
     });
     if (tracked.stdoutTruncated) return "tracked directories exceed the inspection limit";
+    const registered = yield* git.execute({
+      operation: "StorageCleanup.registeredSubmodules",
+      cwd,
+      args: [
+        "config",
+        "--file",
+        ".gitmodules",
+        "--null",
+        "--get-regexp",
+        "^submodule\\..*\\.path$",
+      ],
+      allowNonZeroExit: true,
+      maxOutputBytes: 64 * 1024,
+    });
+    if (registered.stdoutTruncated) return "submodule inspection exceeded the limit";
+    const submodules = new Set(
+      registered.stdout
+        .split("\0")
+        .map((record) => record.slice(record.indexOf("\n") + 1))
+        .filter(Boolean),
+    );
     for (const line of tracked.stdout.split("\0")) {
-      if (!line.startsWith("tree ")) continue;
-      const entry = line.slice("tree ".length);
+      const [type, entry] = [line.slice(0, line.indexOf(" ")), line.slice(line.indexOf(" ") + 1)];
+      if (type !== "tree" && !(type === "commit" && !submodules.has(entry))) continue;
       if (yield* fs.exists(path.join(cwd, entry, ".git")))
         return `has a nested repository (${entry}/)`;
     }
