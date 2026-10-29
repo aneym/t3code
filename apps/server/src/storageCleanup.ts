@@ -47,6 +47,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { makeWorktreeIntegrationCheck } from "./worktreeIntegration.ts";
+import { makeWorktreeTrash, WORKTREE_TRASH_FOLDER } from "./worktreeTrash.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -460,7 +461,11 @@ const make = Effect.gen(function* () {
       // Worktrees can be <root>/<repository>/<branch> or explicitly <root>/<name>.
       for (const projectDirectory of yield* directories(root, root)) {
         yield* Effect.gen(function* () {
-          if (referenced.has(pathKey(projectDirectory))) return;
+          if (
+            referenced.has(pathKey(projectDirectory)) ||
+            path.basename(projectDirectory) === WORKTREE_TRASH_FOLDER
+          )
+            return;
           const gitPath = path.join(projectDirectory, ".git");
           if (yield* fs.exists(gitPath)) {
             if ((yield* fs.stat(gitPath)).type === "File") yield* report(projectDirectory);
@@ -748,87 +753,10 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => "submodules could not be inspected"),
   );
 
-  const cleanupGit = Effect.fn("StorageCleanup.cleanupGit")(function* (
-    cwd: string,
-    args: string[],
-    command: string,
-  ) {
-    const result = yield* git.execute({
-      operation: "StorageCleanup.cleanupGit",
-      cwd,
-      args,
-      allowNonZeroExit: true,
-      timeoutMs: 300_000,
-    });
-    if (result.exitCode !== 0)
-      return yield* new GitCommandError({
-        operation: "StorageCleanup.cleanupGit",
-        command,
-        cwd,
-        detail: result.stderr.trim().split(/\r?\n/)[0]?.slice(0, 1000) || "command failed",
-      });
-  });
-
-  const trashDir = path.join(config.baseDir, "worktree-trash");
-  const trashFailure = (cwd: string, detail: string) =>
-    new GitCommandError({ operation: "StorageCleanup.trash", command: "rename", cwd, detail });
-  // Never follow a linked trash folder: the purge would delete wherever it points.
-  const trashRoot = Effect.fnUntraced(function* () {
-    const real = yield* fs.realPath(trashDir);
-    return real === path.join(yield* fs.realPath(config.baseDir), path.basename(trashDir))
-      ? real
-      : null;
-  });
-  // Prepared before the final activity check so the rename follows it directly.
-  const prepareTrash = Effect.fn("StorageCleanup.prepareTrash")(function* (
-    repositoryCwd: string,
-    worktreePath: string,
-  ) {
-    yield* fs.makeDirectory(trashDir, { recursive: true });
-    const root = yield* trashRoot();
-    if (root === null)
-      return yield* trashFailure(repositoryCwd, `worktree trash is a link: ${trashDir}`);
-    const target = path.join(
-      root,
-      `${yield* Clock.currentTimeMillis}-${path.basename(worktreePath)}`,
-    );
-    if (yield* fs.exists(target))
-      return yield* trashFailure(repositoryCwd, `trash entry already exists: ${target}`);
-    return target;
-  });
-  // A same-filesystem rename keeps a missed case recoverable until the trash purge.
-  const moveToTrash = Effect.fn("StorageCleanup.moveToTrash")(function* (
-    repositoryCwd: string,
-    worktreePath: string,
-    target: string,
-  ) {
-    yield* fs.rename(worktreePath, target);
-    // The folder is gone, so Git only drops the worktree's metadata.
-    yield* cleanupGit(
-      repositoryCwd,
-      ["worktree", "remove", "--force", "--force", "--", worktreePath],
-      "git worktree remove",
-    ).pipe(Effect.tapError(() => fs.rename(target, worktreePath).pipe(Effect.ignore)));
-  });
-
-  const purgeTrash = Effect.fn("StorageCleanup.purgeTrash")(function* (now: number) {
-    if (!(yield* fs.exists(trashDir))) return;
-    const root = yield* trashRoot();
-    if (root === null)
-      return yield* Effect.logWarning("worktree trash is a link; not purging", { trashDir });
-    for (const name of yield* fs.readDirectory(root)) {
-      const movedAt = /^(\d+)-/.exec(name)?.[1];
-      if (movedAt !== undefined && Number(movedAt) < now - DAY_MS)
-        yield* fs.remove(path.join(root, name), { recursive: true });
-    }
-  });
-
-  const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
+  const trash = yield* makeWorktreeTrash;
+  const managedRoots = Effect.fn("StorageCleanup.managedRoots")(function* (
     serverSettings: ServerSettings,
-    now: number,
-    entries: StorageCleanupReportEntry[],
   ) {
-    if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
     const roots: Array<string> = [];
     for (const directory of managedWorktreesDirectories(
       serverSettings,
@@ -840,8 +768,18 @@ const make = Effect.gen(function* () {
         Effect.flatMap((exists) => (exists ? fs.realPath(directory) : Effect.succeed(null))),
         Effect.orElseSucceed(() => null),
       );
-      if (root !== null && !isFilesystemRoot(root, path)) roots.push(root);
+      if (root !== null && !isFilesystemRoot(root, path) && !roots.includes(root)) roots.push(root);
     }
+    return roots;
+  });
+
+  const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
+    serverSettings: ServerSettings,
+    now: number,
+    entries: StorageCleanupReportEntry[],
+  ) {
+    if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
+    const roots = yield* managedRoots(serverSettings);
     const deletedRows = yield* sql<{ payload_json: string; workspaceRoot: string }>`
           SELECT t.payload_json, p.workspace_root AS "workspaceRoot"
           FROM orchestration_v2_projection_threads t
@@ -923,8 +861,13 @@ const make = Effect.gen(function* () {
         const realParent = yield* fs.realPath(path.dirname(worktreePath));
         if (realPath !== path.join(realParent, path.basename(worktreePath)))
           return keep("worktree is a symbolic link");
-        if (!roots.some((root) => inside(root, realPath)))
-          return keep("outside the managed worktree folder");
+        const managedRoot = roots
+          .filter((root) => inside(root, realPath))
+          .reduce<string | null>(
+            (best, root) => (best === null || root.length > best.length ? root : best),
+            null,
+          );
+        if (managedRoot === null) return keep("outside the managed worktree folder");
         if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects]))
           return keep("contains a project checkout");
         if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File")
@@ -1127,11 +1070,14 @@ const make = Effect.gen(function* () {
         if (yield* fs.exists(path.join(adminDir, "locked"))) return keep("worktree is locked");
         const finalPersonal = yield* personalStateReason(worktreePath);
         if (finalPersonal !== null) return keep(finalPersonal);
-        const trashTarget = yield* prepareTrash(project.workspaceRoot, worktreePath);
+        const trashEntry = yield* trash.prepare(managedRoot, worktreePath);
         // Last, after every slow inspection: a snooze or unarchive here still cancels removal.
         const blockedAtRemoval = yield* blockedSinceCheck();
-        if (blockedAtRemoval !== null) return keep(blockedAtRemoval);
-        yield* moveToTrash(project.workspaceRoot, worktreePath, trashTarget);
+        if (blockedAtRemoval !== null) {
+          yield* trash.discard(trashEntry);
+          return keep(blockedAtRemoval);
+        }
+        yield* trash.move({ root: managedRoot, entry: trashEntry, worktreePath, adminDir });
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
         // Preserve branch/path so ProviderTurnStartService can recreate the checkout on resume.
@@ -1204,7 +1150,8 @@ const make = Effect.gen(function* () {
     const serverSettings = yield* settingsService.getSettings;
     const settings = serverSettings.storageCleanup;
     const entries: StorageCleanupReportEntry[] = [];
-    yield* purgeTrash(now).pipe(
+    yield* managedRoots(serverSettings).pipe(
+      Effect.flatMap((roots) => trash.purge(roots, now)),
       Effect.catch((error) => Effect.logWarning("worktree trash purge failed", { error })),
     );
     yield* cleanWorktrees(serverSettings, now, entries).pipe(
