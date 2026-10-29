@@ -3726,24 +3726,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const removeCreatedBranch = Effect.fn("removeCreatedBranch")(
     function* (cwd: string, branch: string, commit: string) {
-      const checkout = yield* executeGit("GitVcsDriver.createWorktree.inspectCreatedBranch", cwd, [
+      const ref = `refs/heads/${branch}`;
+      const current = yield* executeGit("GitVcsDriver.createWorktree.inspectCreatedBranch", cwd, [
         "for-each-ref",
-        "--format=%(worktreepath)",
-        `refs/heads/${branch}`,
+        "--format=%(objectname) %(worktreepath)",
+        ref,
       ]);
-      if (checkout.stdout.trim() !== "") return;
-      yield* executeGit("GitVcsDriver.createWorktree.removeCreatedBranch", cwd, [
-        "update-ref",
-        "-d",
-        `refs/heads/${branch}`,
-        commit,
-      ]);
+      if (current.stdout.trim() !== commit) return;
       yield* executeGit(
         "GitVcsDriver.createWorktree.removeCreatedBranchConfig",
         cwd,
         ["config", "--remove-section", `branch.${branch}`],
         { allowNonZeroExit: true, writesSharedConfig: true },
       );
+      yield* executeGit("GitVcsDriver.createWorktree.removeCreatedBranch", cwd, [
+        "update-ref",
+        "-d",
+        ref,
+        commit,
+      ]);
     },
     (effect) => Effect.ignore(effect),
   );
@@ -3777,18 +3778,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
     let createdBranchCommit: string | null = null;
     if (input.newRefName) {
+      const startCommit = yield* executeGit(
+        "GitVcsDriver.createWorktree.resolveStartCommit",
+        input.cwd,
+        ["rev-parse", "--verify", "--quiet", "--end-of-options", `${input.refName}^{commit}`],
+        { allowNonZeroExit: true },
+      ).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : null)));
       // Kept apart from the checkout so the shared-config lock only covers the tracking write.
       yield* createBranchAt(
         "GitVcsDriver.createWorktree.createBranch",
         { cwd: input.cwd, branch: input.newRefName, startPoint: input.refName },
         "git worktree add failed",
       );
-      createdBranchCommit = yield* executeGit(
-        "GitVcsDriver.createWorktree.readCreatedBranch",
-        input.cwd,
-        ["rev-parse", "--verify", "--quiet", `refs/heads/${input.newRefName}`],
-        { allowNonZeroExit: true },
-      ).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : null)));
+      createdBranchCommit = startCommit;
     }
     const args = ["worktree", "add", "--", worktreePath, input.newRefName ?? input.refName];
     const progress = options?.progress;
