@@ -12,6 +12,7 @@ import {
   isCompactionCommandMessage,
   parseGoalCommand,
   RunId,
+  THREAD_SESSION_RESTART_REASON,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -162,6 +163,19 @@ export const layer: Layer.Layer<
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+
+    const hasPendingBackgroundTasks = Effect.fn(
+      "ProviderTurnStartService.hasPendingBackgroundTasks",
+    )(
+      function* (threadId: ThreadId, providerThreadId: OrchestrationV2ProviderThread["id"]) {
+        const records = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
+        const current = records.providerThreads.find(
+          (candidate) => candidate.id === providerThreadId,
+        );
+        return (current?.pendingBackgroundTasks?.length ?? 0) > 0;
+      },
+      Effect.orElseSucceed(() => true),
+    );
 
     const recreateMissingWorktree = Effect.fn("ProviderTurnStartService.recreateMissingWorktree")(
       function* (input: {
@@ -718,14 +732,15 @@ export const layer: Layer.Layer<
         if (!repaired.committed) return;
       }
       if (
-        (providerThread.pendingBackgroundTasks?.length ?? 0) === 0 &&
+        ThreadSessionRestarts.threadSessionRestartRequested(projection.thread.id) &&
+        !(yield* hasPendingBackgroundTasks(projection.thread.id, providerThread.id)) &&
         ThreadSessionRestarts.takeThreadSessionRestart(projection.thread.id)
       ) {
         yield* providerSessions
           .detach({
             providerSessionId,
             threadId: projection.thread.id,
-            detail: ThreadSessionRestarts.THREAD_SESSION_RESTART_DETAIL,
+            detail: THREAD_SESSION_RESTART_REASON,
           })
           .pipe(Effect.ignoreCause({ log: true }));
       }

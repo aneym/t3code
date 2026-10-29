@@ -22,7 +22,6 @@ import {
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
-import { isActiveRun } from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSessionRestarts from "../../../orchestration-v2/ThreadSessionRestarts.ts";
 import { ThreadToolkit } from "./tools.ts";
 
@@ -344,7 +343,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         appliesAt:
           backgroundTasks > 0
             ? ("after_background_tasks" as const)
-            : projection.runs.some(isActiveRun)
+            : projection.runs.some((run) => run.status === "running" || run.status === "waiting")
               ? ("after_current_turn" as const)
               : ("next_turn" as const),
         backgroundTasks,

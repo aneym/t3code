@@ -2755,6 +2755,9 @@ export const OrchestrationV2StoredEventJson = Schema.Struct({
 });
 export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJson.Type;
 
+export const THREAD_SESSION_RESTART_REASON =
+  "Session restarted to reload MCP servers and settings.";
+
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("thread.stop"),
