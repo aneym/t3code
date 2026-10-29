@@ -15,6 +15,7 @@ from .release_ownership import ownership, release_local, verify_tree
 from .release_outputs import completed, valid_output, remote_archive_exists
 from .release_timeline import Timeline
 from .release_transport import remote_disk_free
+from .run_retention import finish_runs
 
 
 INSTALLS = {"install-ax42", "install-studio", "desktop-swap"}
@@ -138,7 +139,10 @@ def drive(config, graph):
                     else:
                         done.add(stage.name)
     finally:
-        release_local(config)
+        try:
+            release_local(config)
+        finally:
+            finish_runs(config.run, config.remote_run, f"{config.remote_root}/tools")
     if failure:
         print(f"release stopped; completed: {', '.join(sorted(done))}", file=sys.stderr)
     return failure
