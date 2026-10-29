@@ -374,8 +374,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               message: "snooze requires snoozedUntil.",
             });
           }
-          command = { ...common, type: "thread.snooze", snoozedUntil: input.snoozedUntil };
-          break;
+          return yield* threads.snoozeThread({ ...common, snoozedUntil: input.snoozedUntil }).pipe(
+            Effect.map((result) =>
+              result.snoozesWhenQueueDrains
+                ? { snoozesWhenQueueDrains: true as const }
+                : { sequence: result.sequence },
+            ),
+            Effect.mapError(dispatchFailure),
+          );
         case "unsnooze":
         case "unsettle":
           command = { ...common, type: `thread.${input.action}`, reason: "user" };

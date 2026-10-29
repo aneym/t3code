@@ -1,3 +1,4 @@
+import { readRejection, tagRejection } from "./RejectionReason.ts";
 import {
   rootProviderThreadsForProvider,
   isHandoffSourceRun,
@@ -80,6 +81,7 @@ import {
   RuntimeMode,
   ThreadLinkedPullRequest,
   ThreadId,
+  ThreadOrganizeRefusalReason,
   TurnItemId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -191,6 +193,7 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
     commandId: CommandId,
     commandType: Schema.String,
     cause: Schema.optional(Schema.Defect()),
+    reason: Schema.optional(ThreadOrganizeRefusalReason),
   },
 ) {
   override get message(): string {
@@ -284,6 +287,7 @@ export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedErr
     commandId: CommandId,
     commandType: Schema.String,
     detail: Schema.String,
+    reason: Schema.optional(ThreadOrganizeRefusalReason),
   },
 ) {
   override get message(): string {
@@ -2860,6 +2864,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} is deleted.`,
+        reason: "thread_deleted",
       });
     }
     if (
@@ -2997,6 +3002,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} is archived.`,
+        reason: "thread_archived",
       });
     }
     // Reject reorder after unpin so a raced request cannot restore a cleared pin.
@@ -3082,17 +3088,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (request) => request.kind !== "user_input" || request.responseCapability.type !== "message",
       );
       const blocker = blockingRequestExists
-        ? "is waiting on an approval or question. Answer it before settling."
+        ? ({
+            reason: "thread_has_pending_request",
+            text: "is waiting on an approval or question. Answer it before settling.",
+          } as const)
         : runningRunExists
-          ? "is still running. Stop it before settling."
+          ? ({
+              reason: "thread_running",
+              text: "is still running. Stop it before settling.",
+            } as const)
           : queuedMessageExists
-            ? "has a queued message. Send it or remove it from the queue before settling."
+            ? ({
+                reason: "thread_has_queued_run",
+                text: "has a queued message. Send it or remove it from the queue before settling.",
+              } as const)
             : null;
       if (blocker !== null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Thread ${command.threadId} ${blocker}`,
+          cause: `Thread ${command.threadId} ${blocker.text}`,
+          reason: blocker.reason,
         });
       }
 
@@ -3211,6 +3227,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause: `Thread ${command.threadId} snooze wake time ${command.snoozedUntil} is not in the future.`,
+          reason: "snooze_time_not_future",
         });
       }
       if (projection.runtimeRequests.some((request) => request.status === "pending")) {
@@ -3218,6 +3235,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause: `Thread ${command.threadId} has a pending approval or user-input request and cannot be snoozed.`,
+          reason: "thread_has_pending_request",
         });
       }
       const queuedRuns = projection.runs.filter((run) => run.status === "queued");
@@ -3235,12 +3253,97 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
           .map((message) => message.id),
       );
-      if (queuedRuns.some((run) => !automaticMessageIds.has(run.userMessageId))) {
+      const sentRuns = queuedRuns.filter((run) => !automaticMessageIds.has(run.userMessageId));
+      const heldRun = sentRuns.find((run) => run.queueHeld === true);
+      if (heldRun !== undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has a queued message held by ${heldRun.queueHoldReason ?? "a stop"}; resume or unqueue it before snoozing.`,
+          reason: "thread_queue_held",
+        });
+      }
+      if (sentRuns.length > 0) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: `Thread ${command.threadId} has a queued run and cannot be snoozed.`,
+          reason: "thread_has_queued_run",
         });
+      }
+      if (command.whenQueueDrains !== undefined) {
+        const { afterSequence, requestedAt } = command.whenQueueDrains;
+        const requestedMs = Date.parse(requestedAt);
+        const { messages: userMessages } = yield* loadProjectionForCommand(command, ["messages"], {
+          turnItemTypes: [],
+          messageRoles: ["user"],
+        });
+        const organizedSince = yield* Stream.mergeAll(
+          (
+            [
+              "thread.snoozed",
+              "thread.unsnoozed",
+              "thread.settled",
+              "thread.unsettled",
+              "thread.pinned",
+              "thread.unpinned",
+              "thread.archived",
+              "thread.unarchived",
+            ] as const
+          ).map((eventType) =>
+            eventSink.read({ threadId: command.threadId, afterSequence, eventType }),
+          ),
+          { concurrency: 1 },
+        ).pipe(
+          Stream.filter((stored) => !stored.commandId?.startsWith("server:snooze-after-queue:")),
+          Stream.runHead,
+          mapDispatchError(command),
+        );
+        const sentMessages = userMessages.filter(
+          (message) =>
+            message.notification === undefined && message.delegatedCompletion === undefined,
+        );
+        const tiedMessageIds = new Set(
+          sentMessages
+            .filter((message) => DateTime.toEpochMillis(message.createdAt) === requestedMs)
+            .map((message) => message.id),
+        );
+        const tiedMessageIdsSeenBefore =
+          tiedMessageIds.size === 0
+            ? new Set<string>()
+            : yield* eventSink
+                .read({
+                  threadId: command.threadId,
+                  afterSequence: 0,
+                  eventType: "message.updated",
+                })
+                .pipe(
+                  Stream.takeWhile((stored) => stored.sequence <= afterSequence),
+                  Stream.runFold(
+                    () => new Set<string>(),
+                    (seen, stored) =>
+                      stored.event.type === "message.updated" &&
+                      tiedMessageIds.has(stored.event.payload.id)
+                        ? seen.add(stored.event.payload.id)
+                        : seen,
+                  ),
+                  mapDispatchError(command),
+                );
+        const tiedMessageSentSince = [...tiedMessageIds].some(
+          (id) => !tiedMessageIdsSeenBefore.has(id),
+        );
+        if (
+          sentMessages.some((message) => DateTime.toEpochMillis(message.createdAt) > requestedMs) ||
+          tiedMessageSentSince ||
+          Option.isSome(organizedSince)
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} was organized or sent new work after the snooze was requested, so the deferred snooze was dropped.`,
+            reason: "snooze_superseded",
+          });
+        }
       }
       snoozedUntil = parsedSnoozedUntil.value;
     }
@@ -12811,13 +12914,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     if (Option.isSome(existingReceipt)) {
       const receipt = existingReceipt.value;
-      if (receipt.status === "rejected") {
-        return yield* new OrchestratorCommandPreviouslyRejectedError({
-          commandId: command.commandId,
-          commandType: command.type,
-          detail: receipt.error ?? "Previously rejected.",
-        });
-      }
       const dispatchThreadId = commandThreadId(command);
       // Receipts only prove execution for the thread they were recorded against.
       if (receipt.threadId !== dispatchThreadId) {
@@ -12826,6 +12922,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: command.type,
           receiptThreadId: receipt.threadId,
           commandThreadId: dispatchThreadId,
+        });
+      }
+      if (receipt.status === "rejected") {
+        return yield* new OrchestratorCommandPreviouslyRejectedError({
+          commandId: command.commandId,
+          commandType: command.type,
+          ...readRejection(receipt.error),
         });
       }
       const storedEvents = yield* eventSink.readByCommandId({ commandId: command.commandId }).pipe(
@@ -12894,7 +12997,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               threadId: commandThreadId(command),
               commandType: command.type,
               rejectedAt,
-              error: cause instanceof Error ? cause.message : String(cause),
+              error:
+                cause._tag === "OrchestratorDispatchError" && typeof cause.cause === "string"
+                  ? tagRejection(cause.reason, cause.cause)
+                  : cause instanceof Error
+                    ? cause.message
+                    : String(cause),
             })
             .pipe(
               Effect.mapError(
@@ -12984,7 +13092,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* new OrchestratorCommandPreviouslyRejectedError({
         commandId: command.commandId,
         commandType: command.type,
-        detail: committed.receipt.error ?? "Previously rejected.",
+        ...readRejection(committed.receipt.error),
       });
     }
     if (command.type === "message.dispatch")

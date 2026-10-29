@@ -111,6 +111,7 @@ const isModeRefusal = (error: OrchestratorMcpFailure) =>
 const isFinal = (error: OrchestratorMcpFailure) =>
   error.code === "capability_denied" ||
   error.code === "thread_not_found" ||
+  error.code === "thread_deleted" ||
   error.code === "run_not_found";
 
 const make = Effect.gen(function* () {

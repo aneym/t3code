@@ -35,6 +35,7 @@ import {
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
+  ThreadOrganizeRefusalReason,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -799,6 +800,7 @@ export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFa
   "OrchestratorMcpFailure",
   {
     code: Schema.Literals([
+      ...ThreadOrganizeRefusalReason.literals,
       "capability_denied",
       "parent_not_active",
       "provider_unavailable",
