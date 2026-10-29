@@ -1,20 +1,16 @@
-import { rememberAgentFirstOpen } from "./agentFirstOpen";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { CircleCheckIcon, CircleDashedIcon, PinOffIcon, PinIcon } from "lucide-react";
+import { CircleDashedIcon, PinOffIcon, PinIcon } from "lucide-react";
 
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useThreadActionMenu } from "../../hooks/useThreadActionMenu";
 import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
 import { useEnvironmentIdentities } from "../../state/environments";
 import { cn } from "~/lib/utils";
-import {
-  hasUnseenCompletion,
-  resolveSidebarThreadStatus,
-  resolveThreadLastVisitedAt,
-} from "../Sidebar.logic";
+import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 import { SidebarSection } from "../sidebar/SidebarSection";
 import { JumpHintBadge } from "../sidebar/SidebarThreadRow";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AgentFace } from "./AgentFace";
 import type { RailsAgent } from "./railsAgents";
@@ -125,7 +121,6 @@ function AgentRow(props: {
   const { agent } = props;
   const handleNewThread = useNewThreadHandler();
   const navigate = useNavigate();
-  const environments = useEnvironmentIdentities();
   const { openMenu } = useThreadActionMenu({
     threadRef:
       agent.thread === null
@@ -163,6 +158,10 @@ function AgentRow(props: {
       {agent.thread === null ? (
         agent.target ? (
           <span className="text-xs text-sidebar-muted-foreground">Loading</span>
+        ) : agent.remoteHost ? (
+          <span className="shrink-0 text-xs text-sidebar-muted-foreground">
+            On {agent.remoteHost}
+          </span>
         ) : null
       ) : (
         <span className="flex shrink-0 group-focus-within/agent-row:invisible group-hover/agent-row:invisible">
@@ -195,19 +194,17 @@ function AgentRow(props: {
           type="button"
           className={rowClassName}
           onClick={() => {
+            if (agent.remoteHost) {
+              toastManager.add({
+                type: "info",
+                title: `${agent.name}'s main thread is on ${agent.remoteHost}`,
+                description: `Connect ${agent.remoteHost} to open it here.`,
+              });
+              return;
+            }
             props.onNavigate();
             if (agent.projectRef === null) return;
-            void handleNewThread(agent.projectRef).then((opened) => {
-              if (opened && agent.projectRef)
-                rememberAgentFirstOpen(
-                  opened.threadId,
-                  agent,
-                  agent.projectRef.environmentId,
-                  environments
-                    .find((env) => env.environmentId === agent.projectRef?.environmentId)
-                    ?.label.toLowerCase() ?? agent.projectRef.environmentId,
-                );
-            });
+            void handleNewThread(agent.projectRef);
           }}
         >
           {content}
@@ -266,7 +263,6 @@ function AgentRowButton({ action }: { readonly action: AgentRowAction }) {
 
 function AgentStatus({ thread }: { readonly thread: EnvironmentThreadShell }) {
   const status = resolveSidebarThreadStatus(thread);
-  const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, undefined);
   if (status === "working") {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 text-xs text-sidebar-muted-foreground">
@@ -285,14 +281,6 @@ function AgentStatus({ thread }: { readonly thread: EnvironmentThreadShell }) {
     return (
       <span className="text-xs text-sidebar-muted-foreground">
         {status === "limited" ? "Limited" : "Error"}
-      </span>
-    );
-  }
-  if (hasUnseenCompletion({ ...thread, lastVisitedAt })) {
-    return (
-      <span className="inline-flex shrink-0 items-center gap-1 text-xs text-sidebar-muted-foreground">
-        <CircleCheckIcon aria-hidden className="size-3.5" />
-        Done
       </span>
     );
   }
