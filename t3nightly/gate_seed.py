@@ -105,7 +105,7 @@ def cache_entries(root):
 
 def populate_home(ctx, deadline, build):
     started = time.monotonic()
-    pinned_seed = os.environ.get("T3NIGHTLY_GATE_SEED")
+    pinned_seed = os.environ.get("T3NIGHTLY_GATE_SEED", "latest")
     if pinned_seed == "latest":
         CACHE_ROOT.mkdir(parents=True, exist_ok=True)
         pinned_seed = next(
@@ -127,6 +127,8 @@ def populate_home(ctx, deadline, build):
         destination.mkdir(parents=True, exist_ok=True)
         clone = "-c" if platform.system() == "Darwin" else "--reflink=auto"
         code, _ = run(["cp", clone, str(database), str(destination / "statev2.sqlite")], ctx.log("boot"), deadline)
+        if code:
+            code, _ = run(["cp", str(database), str(destination / "statev2.sqlite")], ctx.log("boot"), deadline)
         if code:
             raise CheckFailed("explicit gate seed copy exited %d" % code)
         with open(ctx.log("boot"), "a") as log:
