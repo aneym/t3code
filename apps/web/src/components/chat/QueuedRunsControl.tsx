@@ -121,25 +121,28 @@ export function QueuedRunsControl({
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
   const items = [
-    ...queued.map(({ run, text, attachments, context, message }, serverIndex) => ({
-      key: run.id,
-      message,
-      runId: run.id,
-      messageId: run.userMessageId,
-      serverIndex,
-      text,
-      // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
-      editable: context?.guest === undefined,
-      attachments,
-      thumbnails: attachments
-        .filter((attachment) => attachment.type === "image")
-        .map<QueuedRowThumbnail>((attachment) => ({
-          key: attachment.id,
-          name: attachment.name,
-          url: queuedImageUrlById.get(attachment.id) ?? null,
-        })),
-      pending: false,
-    })),
+    ...queued.map(
+      ({ run, text, attachments, context, message, isBackgroundResult }, serverIndex) => ({
+        key: run.id,
+        message,
+        runId: run.id,
+        messageId: run.userMessageId,
+        serverIndex,
+        text,
+        // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
+        editable: context?.guest === undefined && !isBackgroundResult,
+        isBackgroundResult,
+        attachments,
+        thumbnails: attachments
+          .filter((attachment) => attachment.type === "image")
+          .map<QueuedRowThumbnail>((attachment) => ({
+            key: attachment.id,
+            name: attachment.name,
+            url: queuedImageUrlById.get(attachment.id) ?? null,
+          })),
+        pending: false,
+      }),
+    ),
     ...optimisticQueued.map((message) => ({
       key: message.id,
       message: undefined,
@@ -148,6 +151,7 @@ export function QueuedRunsControl({
       serverIndex: null,
       text: message.text,
       editable: true,
+      isBackgroundResult: false,
       attachments: [] as ReadonlyArray<ContractChatAttachment>,
       thumbnails: (message.attachments ?? [])
         .filter(isImageAttachment)
@@ -161,7 +165,12 @@ export function QueuedRunsControl({
   ];
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
-    if (!canSend || steerInFlightRef.current) return;
+    if (
+      !canSend ||
+      steerInFlightRef.current ||
+      queued.find((entry) => entry.run.id === queuedRunId)?.isBackgroundResult
+    )
+      return;
     steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
     if (workflow?.canSendNow) {
@@ -182,7 +191,7 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !canSend) return false;
+      if (!next || !canSend || next.isBackgroundResult) return false;
       if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
       return true;
     },
@@ -191,6 +200,7 @@ export function QueuedRunsControl({
       const latest = queued.at(-1);
       if (
         !latest ||
+        latest.isBackgroundResult ||
         latest.context?.guest !== undefined ||
         props.editingRunId !== null ||
         props.editBlockedReason !== null ||
@@ -261,14 +271,16 @@ export function QueuedRunsControl({
                 timestampFormat={props.timestampFormat}
                 onOpenThread={props.onOpenThread}
               >
-                {canSend && !isEditing ? (
+                {canSend && !isEditing && !item.isBackgroundResult ? (
                   <>
                     <Tooltip>
                       <TooltipTrigger render={<span className="flex shrink-0" />}>
                         <Button
                           size="xs"
                           variant="ghost-muted"
-                          disabled={item.runId === null || busyRunId !== null}
+                          disabled={
+                            item.runId === null || busyRunId !== null || item.isBackgroundResult
+                          }
                           onClick={() => {
                             if (item.runId !== null) {
                               void sendQueuedMessage(item.runId);
@@ -344,7 +356,9 @@ export function QueuedRunsControl({
                             size="icon-xs"
                             variant="ghost-muted"
                             aria-label="Remove queued message"
-                            disabled={item.runId === null || busyRunId !== null}
+                            disabled={
+                              item.runId === null || busyRunId !== null || item.isBackgroundResult
+                            }
                             onClick={() => {
                               if (item.runId !== null) void remove(item.runId);
                             }}

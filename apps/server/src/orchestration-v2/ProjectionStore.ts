@@ -4,6 +4,7 @@ import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
+import { runCompletionDeliveryRows } from "./RunCompletionDeliveryReads.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -589,10 +590,13 @@ export interface ProjectionStoreV2Shape {
       readonly scopeId: CheckpointScopeId;
     },
   ) => Effect.Effect<ProjectionCheckpointRollbackContext, ProjectionStoreV2Error>;
-  readonly getRunMessage: (
+  readonly getRunCompletionDeliveries: (
     threadId: ThreadId,
     runId: RunId,
-  ) => Effect.Effect<OrchestrationV2ConversationMessage | undefined, ProjectionStoreV2Error>;
+  ) => Effect.Effect<
+    { messages: ReadonlyArray<OrchestrationV2ConversationMessage>; providerAccepted: boolean },
+    ProjectionStoreV2Error
+  >;
   readonly canStartQueuedRun: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
@@ -5142,23 +5146,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
-    const getRunMessage: ProjectionStoreV2Shape["getRunMessage"] = (threadId, runId) =>
-      sql
-        .withTransaction(
-          Effect.gen(function* () {
-            yield* requireThread(threadId);
-            const rows = yield* sql<PayloadRow>`
-          SELECT message.payload_json FROM orchestration_v2_projection_messages AS message
-          JOIN orchestration_v2_projection_runs AS run
-            ON message.message_id = json_extract(run.payload_json, '$.userMessageId')
-          WHERE run.thread_id = ${threadId} AND run.run_id = ${runId}
-            AND message.thread_id = ${threadId}`;
-            return rows[0] === undefined
-              ? undefined
-              : yield* decodeMessagePayload(rows[0].payload_json);
-          }),
-        )
-        .pipe(Effect.mapError(controlReadError(threadId)));
+    const getRunCompletionDeliveries: ProjectionStoreV2Shape["getRunCompletionDeliveries"] = (
+      threadId,
+      runId,
+    ) =>
+      runCompletionDeliveryRows(sql, threadId, runId).pipe(
+        Effect.flatMap((rows) =>
+          Effect.map(decodeRows(decodeMessagePayload, threadId)(rows), (messages) => ({
+            messages,
+            providerAccepted: rows.some((row) => row.accepted === 1),
+          })),
+        ),
+        Effect.mapError(controlReadError(threadId)),
+      );
 
     const canStartQueuedRun: ProjectionStoreV2Shape["canStartQueuedRun"] = (threadId) =>
       sql
@@ -6803,7 +6803,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointContext: readOnReader(getCheckpointContext),
       getCheckpointCaptureContext: readOnReader(getCheckpointCaptureContext),
       getCheckpointRollbackContext: readOnReader(getCheckpointRollbackContext),
-      getRunMessage: readOnReader(getRunMessage),
+      getRunCompletionDeliveries: readOnReader(getRunCompletionDeliveries),
       canStartQueuedRun: readOnReader(canStartQueuedRun),
       getPendingNativeUserInputs: readOnReader(getPendingNativeUserInputs),
       hasUnpairedRunInterruptRequest: readOnReader(hasUnpairedRunInterruptRequest),

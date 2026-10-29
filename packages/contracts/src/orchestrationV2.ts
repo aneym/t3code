@@ -609,6 +609,7 @@ export type OrchestrationV2DelegatedCompletionTaskDelivery =
   typeof OrchestrationV2DelegatedCompletionTaskDelivery.Type;
 
 export const OrchestrationV2DelegatedCompletionDelivery = Schema.Struct({
+  blockedByRunId: Schema.optional(RunId),
   generation: PositiveInt,
   messageId: MessageId,
   taskIds: Schema.Array(NodeId),

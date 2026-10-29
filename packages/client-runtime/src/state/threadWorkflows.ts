@@ -26,6 +26,7 @@ export interface QueuedThreadRun {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly messageId: Message["id"];
+  readonly isBackgroundResult: boolean;
   readonly context?: Message["context"];
   /** Carries the attribution a sent message shows: automation, agent sender, or guest. */
   readonly message?: Message;
@@ -123,8 +124,18 @@ export function getUserQueuedThreadRuns(
       )
       .map((message) => message.id),
   );
+  const completionMessageIds = new Set(
+    projection.messages
+      .filter((message) => message.delegatedCompletion !== undefined)
+      .map((message) => message.id),
+  );
   return projection.runs.filter(
-    (run) => run.status === "queued" && !automaticCompletionMessageIds.has(run.userMessageId),
+    (run) =>
+      run.status === "queued" &&
+      (!automaticCompletionMessageIds.has(run.userMessageId) ||
+        (run.queueHeld === true &&
+          run.queueHoldReason === "blocked" &&
+          completionMessageIds.has(run.userMessageId))),
   );
 }
 
@@ -150,10 +161,14 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       left.ordinal - right.ordinal,
   ).map((run) => {
     const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+    const isBackgroundResult = message?.delegatedCompletion !== undefined;
     return {
       run,
+      isBackgroundResult,
       // A queued guest message shows the guest's words; the agent still gets the attributed text.
-      text: message?.context?.guest?.text ?? message?.text ?? "Queued message",
+      text: isBackgroundResult
+        ? "Background result waiting"
+        : (message?.context?.guest?.text ?? message?.text ?? "Queued message"),
       attachments: message?.attachments ?? [],
       messageId: run.userMessageId,
       ...(message?.context ? { context: message.context } : {}),

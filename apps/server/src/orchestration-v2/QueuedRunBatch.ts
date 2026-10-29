@@ -44,7 +44,6 @@ function batchableMessage(
   if (
     message === undefined ||
     message.notification !== undefined ||
-    message.delegatedCompletion !== undefined ||
     message.workflowScript === true ||
     message.scheduledTaskId !== undefined ||
     message.idleCompaction !== undefined ||
@@ -57,6 +56,17 @@ function batchableMessage(
   return message;
 }
 
+function changesConversation(
+  projection: Pick<OrchestrationV2ThreadProjection, "messages">,
+  run: OrchestrationV2Run,
+): boolean {
+  const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+  return (
+    message !== undefined &&
+    (message.idleCompaction !== undefined || message.text.trimStart().startsWith("/"))
+  );
+}
+
 export function queuedRunBatch(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
   first: OrchestrationV2Run,
@@ -64,18 +74,20 @@ export function queuedRunBatch(
   if (batchableMessage(projection, first) === undefined) return [];
   const members: Array<QueuedRunBatchMember> = [];
   for (const run of queuedRunsInDeliveryOrder(projection)) {
-    if (run.id === first.id) continue;
+    if (members.length + 1 >= MAX_BATCH_SIZE) break;
+    if (run.id === first.id || run.queueHeld === true) continue;
     const message = batchableMessage(projection, run);
-    if (
-      message === undefined ||
-      run.providerInstanceId !== first.providerInstanceId ||
-      !modelSelectionsEqual(run.modelSelection, first.modelSelection) ||
-      run.workspacePreparation?.type !== first.workspacePreparation?.type ||
-      members.length + 1 >= MAX_BATCH_SIZE
-    ) {
-      break;
+    if (message === undefined) {
+      if (changesConversation(projection, run)) break;
+      continue;
     }
-    members.push({ run, message });
+    if (
+      run.providerInstanceId === first.providerInstanceId &&
+      modelSelectionsEqual(run.modelSelection, first.modelSelection) &&
+      run.workspacePreparation?.type === first.workspacePreparation?.type
+    ) {
+      members.push({ run, message });
+    }
   }
   return members;
 }
@@ -84,11 +96,16 @@ function foldedQueuedTurnItems(
   turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
   run: Pick<OrchestrationV2Run, "id" | "userMessageId">,
 ): ReadonlyArray<UserTurnItem> {
+  const firstItem = turnItems.find(
+    (item) => item.type === "user_message" && item.messageId === run.userMessageId,
+  );
   return turnItems
     .filter(
       (item): item is UserTurnItem =>
         item.type === "user_message" &&
         item.runId === run.id &&
+        firstItem !== undefined &&
+        item.nodeId === firstItem.nodeId &&
         item.inputIntent === "queued_turn" &&
         item.messageId !== run.userMessageId,
     )
@@ -196,7 +213,7 @@ function batchSender(part: QueuedRunBatchPart): string {
 function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): string {
   if (parts.length < 2) return parts[0]?.text ?? "";
   return [
-    `These ${parts.length} messages were queued separately while you were working. They are listed in the order they were sent, with their senders. Handle each one accordingly.`,
+    `These ${parts.length} messages were queued separately while you were working. They are listed with their senders: task completions first, then queued messages in the order they were sent. Handle each one accordingly.`,
     ...parts.map(
       (part, index) =>
         `Message ${index + 1} of ${parts.length}, from ${batchSender(part)}:\n${part.text}`,
