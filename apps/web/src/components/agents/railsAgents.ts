@@ -44,6 +44,7 @@ function declaredWorkProjects(
   declared: ReadonlyArray<string>,
   projects: ReadonlyArray<EnvironmentProject>,
   environmentId: EnvironmentId | undefined,
+  matchFolder: boolean,
 ): ReadonlyArray<EnvironmentProject> {
   const local = projects.filter(
     (project) =>
@@ -53,7 +54,8 @@ function declaredWorkProjects(
     const wanted = name.toLowerCase();
     const matches = local.filter(
       (project) =>
-        project.title.toLowerCase() === wanted || folderName(project.workspaceRoot) === wanted,
+        project.title.toLowerCase() === wanted ||
+        (matchFolder && folderName(project.workspaceRoot) === wanted),
     );
     return matches.length === 1 ? matches : [];
   });
@@ -70,8 +72,8 @@ function environmentForHost(
 ): EnvironmentId | undefined {
   if (host === null) return undefined;
   const wanted = host.toLowerCase();
-  const exact = environments.find((env) => env.label.toLowerCase() === wanted);
-  if (exact) return exact.environmentId;
+  const exact = environments.filter((env) => env.label.toLowerCase() === wanted);
+  if (exact.length > 0) return exact.length === 1 ? exact[0]?.environmentId : undefined;
   const named = environments.filter((env) =>
     env.label
       .toLowerCase()
@@ -135,6 +137,7 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
         home.projects.length > 0 ? home.projects : [handle],
         projects,
         home.environmentId,
+        home.projects.length > 0,
       ),
     );
     agents.push({
