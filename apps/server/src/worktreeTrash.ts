@@ -323,7 +323,10 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       Effect.flatMap((gitdir) => fs.realPath(path.resolve(adminDir, gitdir.trim()))),
       Effect.orElseSucceed(() => null),
     );
-    if (registered !== (yield* fs.realPath(path.join(worktreePath, ".git"))))
+    if (
+      (yield* isLink(path.join(worktreePath, ".git"))) ||
+      registered !== (yield* fs.realPath(path.join(worktreePath, ".git")))
+    )
       return "Git registers this worktree at another path";
     if (yield* fs.exists(path.join(adminDir, "locked"))) return "worktree is locked";
     const entry = yield* prepare(root, worktreePath);
