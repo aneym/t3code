@@ -10,6 +10,7 @@ from .release_graph import FAST_DEADLINE, FAST_GRAPH, SUCCESS_OUTCOMES, critical
 from .release_job_runner import TERM_GRACE_S
 from .release_jobs import HostJobs, TERMINAL, status, submit, write_status
 from .release_timeline import Timeline, utc_now
+from .run_retention import finish_runs
 
 HANG_GUARD = 10
 LIVE_NODES = {"IM", "IL", "S", "F", "LM", "LR", "H", "AS"}
@@ -152,7 +153,10 @@ def main(argv):
                                          gating=node.gating, **stage_spec(node, args)) for node in FAST_GRAPH]}, indent=2))
         return 0
     if args.dry_run or args.coordinator:
-        return drive_fast(args)
+        try:
+            return drive_fast(args)
+        finally:
+            finish_runs(args.run, args.remote_run, args.remote_tools, dry_run=args.dry_run)
     coordinator = args.run / "coordinator"
     previous = status(coordinator)
     if previous.get("outcome") in {"failed", "timed-out", "environment-blocked"}:
