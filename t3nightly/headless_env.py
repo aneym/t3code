@@ -27,10 +27,10 @@ def write_script(path, lines):
 
 
 def real_claude(bin_dir):
-    installed = Path.home() / ".local/bin/claude"
-    if installed.is_file() and os.access(installed, os.X_OK):
-        return installed.resolve()
     own = (bin_dir / "claude").resolve()
+    installed = (Path.home() / ".local/bin/claude").resolve()
+    if installed.is_file() and os.access(installed, os.X_OK) and installed != own and installed.parent != bin_dir:
+        return installed
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         found = shutil.which("claude", path=entry) if entry else None
         if found and Path(found).resolve() != own and Path(entry).resolve() != bin_dir:
@@ -57,14 +57,24 @@ def provider_env(work):
     return {"CODEX_HOME": str(isolated_codex_home(Path(work) / "codex-home")), "GIT_TERMINAL_PROMPT": "0"}
 
 
-def pin_settings(settings_path, work, refusals):
+def pin_settings(settings_path, work, refusals, keep=()):
     path = Path(settings_path)
     settings = json.loads(path.read_text()) if path.is_file() else {}
     settings["cursorKeychainUsageEnabled"] = False
     if sys.platform == "darwin":
         wrapper = headless_bin(Path(work) / "headless-bin", Path(refusals).resolve()) / "claude"
-        instance = settings.setdefault("providerInstances", {}).setdefault("claudeAgent", {"driver": "claudeAgent"})
-        instance.setdefault("config", {})["binaryPath"] = str(wrapper)
+        instances = settings.get("providerInstances")
+        instances = settings["providerInstances"] = instances if isinstance(instances, dict) else {}
+        if not isinstance(instances.get("claudeAgent"), dict):
+            instances["claudeAgent"] = {"driver": "claudeAgent"}
+        kept = {str(Path(item)) for item in keep}
+        for instance_id, instance in instances.items():
+            default = "claudeAgent" if instance_id == "claudeAgent" else None
+            if not isinstance(instance, dict) or instance.get("driver", default) != "claudeAgent":
+                continue
+            config = instance["config"] = instance["config"] if isinstance(instance.get("config"), dict) else {}
+            if config.get("binaryPath") not in kept:
+                config["binaryPath"] = str(wrapper)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2) + "\n")
     return settings

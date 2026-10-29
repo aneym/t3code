@@ -162,9 +162,10 @@ class Sandbox:
         with closing(sqlite3.connect(f"file:{self.args.seed.resolve()}?mode=ro", uri=True)) as source, closing(sqlite3.connect(self.db)) as target:
             source.backup(target)
         self.check_seed()
-        settings = {"providerInstances": {self.args.provider: {"driver": "claudeAgent", "displayName": "Rehearsal", "enabled": True, "environment": [], "config": {"binaryPath": str(provider_wrapper(self.args.provider_binary, self.evidence, self.home / "runtime/claude-provider"))}}}}
+        wrapper = str(provider_wrapper(self.args.provider_binary, self.evidence, self.home / "runtime/claude-provider"))
+        settings = {"providerInstances": {self.args.provider: {"driver": "claudeAgent", "displayName": "Rehearsal", "enabled": True, "environment": [], "config": {"binaryPath": wrapper}}}}
         (self.home / "userdata/settings.json").write_text(json.dumps(settings) + "\n")
-        pin_settings(self.home / "userdata/settings.json", self.home / "runtime", self.evidence / "security-refusals.log")
+        pin_settings(self.home / "userdata/settings.json", self.home / "runtime", self.evidence / "security-refusals.log", keep=[wrapper])
         self.project.mkdir()
         subprocess.run(["git", "init", "-q", str(self.project)], check=True, timeout=10)
         subprocess.run(["git", "-C", str(self.project), "-c", "user.name=Rehearsal", "-c", "user.email=rehearsal@local", "commit", "--allow-empty", "-qm", "Initialize sandbox"], check=True, timeout=10)
