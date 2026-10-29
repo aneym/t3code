@@ -234,7 +234,7 @@ function AgentRow(props: {
         ) : null}
       </span>
       {props.machines === "" ? null : (
-        <span className="ml-auto hidden min-w-0 shrink-[999] truncate text-xs text-sidebar-muted-foreground group-focus-within/agent-row:block group-hover/agent-row:block">
+        <span className="hidden min-w-0 flex-1 truncate text-right text-xs text-sidebar-muted-foreground group-focus-within/agent-row:block group-hover/agent-row:block">
           {props.machines}
         </span>
       )}
