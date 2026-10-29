@@ -8,11 +8,12 @@ import { type RailsAgent, railsAgentFaceUrl } from "./railsAgents";
 export function AgentFace({
   agent,
 }: {
-  readonly agent: Pick<RailsAgent, "handle" | "name" | "iconProject">;
+  readonly agent: Pick<RailsAgent, "handle" | "name" | "workProjects">;
 }) {
   const [failed, setFailed] = useState(false);
-  if (agent.iconProject) {
-    return <ProjectFavicon project={agent.iconProject} className="size-5 shrink-0" />;
+  const project = agent.workProjects[0];
+  if (project) {
+    return <ProjectFavicon project={project} className="size-5 shrink-0" />;
   }
   if (failed) {
     const identity = deriveProjectIdentity(agent.name);

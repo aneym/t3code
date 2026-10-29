@@ -18,7 +18,6 @@ import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { threadFamilies } from "../../state/threads";
 import {
-  isDeclaredProject,
   type RailsAgent,
   railsAgentHandle,
   railsAgentThreadKey,
@@ -33,12 +32,12 @@ export function useAgentFocusHandle() {
   return useLocalStorage(AGENT_FOCUS_STORAGE_KEY, null, agentFocusSchema);
 }
 
-function agentWorkProjectKeys(agent: RailsAgent, projects: ReadonlyArray<EnvironmentProject>) {
+function agentWorkProjectKeys(agent: RailsAgent) {
   return new Set([
     ...agent.homeProjectRefs.map(scopedProjectKey),
-    ...projects
-      .filter((project) => isDeclaredProject(agent.projects, project))
-      .map((project) => scopedProjectKey(scopeProjectRef(project.environmentId, project.id))),
+    ...agent.workProjects.map((project) =>
+      scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+    ),
   ]);
 }
 
@@ -70,7 +69,7 @@ export function useSidebarAgentThreads<T extends EnvironmentThreadShell>(
     : projects.find((project) => handle !== null && sidebarProjectPinKey(project) === handle);
   if (!focused && !pinnedProject) return { threads: listed, projectKeys: null };
   const projectKeys = focused
-    ? agentWorkProjectKeys(focused, projects)
+    ? agentWorkProjectKeys(focused)
     : new Set(
         pinnedProject
           ? [scopedProjectKey(scopeProjectRef(pinnedProject.environmentId, pinnedProject.id))]
@@ -109,7 +108,6 @@ export function useAgentFocusAction(setProjectScope: (keys: readonly string[]) =
       active,
       onClick: () => {
         if (active) return setProjectScope([]);
-        const work = agentWorkProjectKeys(agent, projects);
         const groupKeys = buildPhysicalToLogicalProjectKeyMap({
           projects,
           settings,
@@ -117,13 +115,9 @@ export function useAgentFocusAction(setProjectScope: (keys: readonly string[]) =
         });
         setProjectScope([
           ...new Set(
-            projects
-              .filter(
-                (project) =>
-                  railsAgentHandle(project.workspaceRoot) === null &&
-                  work.has(scopedProjectKey(scopeProjectRef(project.environmentId, project.id))),
-              )
-              .flatMap((project) => groupKeys.get(derivePhysicalProjectKey(project)) ?? []),
+            agent.workProjects.flatMap(
+              (project) => groupKeys.get(derivePhysicalProjectKey(project)) ?? [],
+            ),
           ),
         ]);
         setFocused(agent.handle);

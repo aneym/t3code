@@ -1046,6 +1046,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
   const threads = useQuietThreadShells();
   const agentWork = useSidebarAgentThreads(threads);
+  const agentFocused = agentWork.projectKeys !== null;
   const routeRowThreadKey =
     routeThreadRef === null
       ? null
@@ -1220,7 +1221,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     activeKeysById,
   } = useSidebarThreads({
     projectScopeKey,
-    scopedProjectKeys,
+    scopedProjectKeys: agentFocused ? null : scopedProjectKeys,
     serverConfigs,
     optimisticDrop,
     threads: agentWork.threads,
@@ -1228,11 +1229,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     delegatedUnderParent,
     routeRowThreadKey,
     folderGroups: boringSidebarEnabled
-      ? scopedProjectGroups.length === 0
+      ? scopedProjectGroups.length === 0 || agentFocused
         ? projectGroups
         : scopedProjectGroups
       : null,
-    keepEmptyFolders: scopedProjectGroups.length > 0,
+    keepEmptyFolders: scopedProjectGroups.length > 0 && !agentFocused,
   });
   const sidebarAgents = useSidebarAgentLists(scopedProjectKeys);
   const jumpKeys = sidebarJumpKeys(sidebarAgents.jumpable, orderedThreadKeys);
@@ -2834,10 +2835,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               projectScope={
                 <SidebarProjectScopePicker
                   groups={withoutAgentHomes(projectGroups)}
-                  scopeKey={projectScopeKeys.length === 1 ? (projectScopeKeys[0] ?? null) : null}
-                  scopedProject={
-                    scopedProjectGroups.length === 1 ? (scopedProjectGroups[0] ?? null) : null
-                  }
+                  scopeKeys={projectScopeKeys}
+                  allSelected={projectScopeKeys.length === 0 && !agentFocused}
+                  scopedProjects={scopedProjectGroups}
                   setScopeKey={(key) => setProjectScopeKeys(key === null ? [] : [key])}
                   openSettings={openProjectSettings}
                   anchor={headerSearchRef}

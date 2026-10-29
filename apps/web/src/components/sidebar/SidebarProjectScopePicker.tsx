@@ -33,8 +33,9 @@ import { SidebarPinnedProjectSwapper } from "./SidebarPinnedProjectSwapper";
 
 export function SidebarProjectScopePicker({
   groups,
-  scopeKey,
-  scopedProject,
+  scopeKeys,
+  allSelected,
+  scopedProjects,
   setScopeKey,
   openSettings,
   anchor,
@@ -42,8 +43,9 @@ export function SidebarProjectScopePicker({
   machines,
 }: {
   groups: readonly SidebarProjectSnapshot[];
-  scopeKey: string | null;
-  scopedProject: SidebarProjectSnapshot | null;
+  scopeKeys: readonly string[];
+  allSelected: boolean;
+  scopedProjects: readonly SidebarProjectSnapshot[];
   setScopeKey: (key: string | null) => void;
   openSettings: (project: SidebarProjectSnapshot) => void;
   anchor: RefObject<HTMLDivElement | null>;
@@ -60,16 +62,20 @@ export function SidebarProjectScopePicker({
   const { canPin, togglePin, reorderPins } = useProjectPins(groups);
   const pinned = pinnedProjectGroups(groups);
   const triggerProject =
-    scopedProject && !pinned.slice(0, 5).some((project) => project.projectKey === scopeKey)
-      ? scopedProject
-      : null;
+    scopedProjects.find(
+      (scoped) => !pinned.slice(0, 5).some((project) => project.projectKey === scoped.projectKey),
+    ) ?? null;
   const ordered = [...pinned, ...groups.filter((group) => projectGroupPinOrder(group) === null)];
   const byKey = new Map(groups.map((group) => [group.projectKey, group]));
   const items = [
     { value: "all", label: "All projects" },
     ...ordered.map((group) => ({ value: group.projectKey, label: group.displayName })),
   ];
-  const selected = items.find((item) => item.value === (scopeKey ?? "all")) ?? items[0]!;
+  const selected = allSelected
+    ? items[0]!
+    : scopeKeys.length === 1
+      ? (items.find((item) => item.value === scopeKeys[0]) ?? null)
+      : null;
   const filtered = filterSidebarProjectScopeItems({
     items,
     query: menu.query,
@@ -111,7 +117,8 @@ export function SidebarProjectScopePicker({
     <>
       <SidebarPinnedProjectSwapper
         projects={pinned}
-        scopeKey={scopeKey}
+        scopeKeys={scopeKeys}
+        allSelected={allSelected}
         setScopeKey={setScopeKey}
         reorder={reorderPins}
         canPin={canPin}
@@ -143,8 +150,8 @@ export function SidebarProjectScopePicker({
           render={
             <SidebarHeaderIconButton
               label={
-                scopedProject
-                  ? `Filter threads by project: ${scopedProject.displayName}`
+                scopedProjects.length > 0
+                  ? `Filter threads by project: ${scopedProjects.map((project) => project.displayName).join(", ")}`
                   : "Filter threads by project"
               }
             />
