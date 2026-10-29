@@ -25,7 +25,7 @@ from .release_readiness import readiness
 from .release_rollback_proof import fast_rollback_proof
 from .release_seed_remotes import seed
 from .release_transport import command, git_tree, prepare_remote, remote_worker, require, transfer
-from .release_windows import windows_build
+from .release_windows import WINDOWS_STAGES, run_windows
 
 
 def checksums(config):
@@ -342,11 +342,8 @@ def run_fast_action(stage, config, log):
         return fast_swap(config, log)
     if stage == "F":
         return fast_publish(config, log)
-    if stage == "W":
-        return windows_build(config, head, log)
-    if stage == "FW":
-        return command([sys.executable, str(config.tools / "publish-windows"), config.version,
-                        "--windows-dir", str(config.run / "desktop-win/publish")], log)
+    if stage in WINDOWS_STAGES:
+        return run_windows(stage, config, head, log)
     if stage == "LR":
         publish_landings(config, log)
         return 0

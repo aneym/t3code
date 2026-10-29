@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tarfile
@@ -11,6 +12,8 @@ from pathlib import Path
 
 from .release_assemble import PACKAGE_FILES
 
+WINDOWS_STAGES = ("W", "FW")
+FEED = Path("/Volumes/StudioExt/t3nightly-feed")
 HOST = os.environ.get("T3NIGHTLY_WINDOWS_HOST", "pc")
 ROOT = "C:/t3b/fast"
 CONFIG = Path(os.environ.get("T3NIGHTLY_PUBLIC_CONFIG", Path.home() / ".config/t3nightly/public-config.env"))
@@ -25,12 +28,18 @@ def ssh_words(remote):
 def secrets():
     if not CONFIG.is_file():
         return []
-    values = []
+    values = {value for key, value in public_config().items() if SECRET_KEY.search(key) and len(value) >= 6}
+    return sorted(values, key=len, reverse=True)
+
+
+def public_config():
+    values = {}
     for line in CONFIG.read_text().splitlines():
-        key, _, value = line.partition("=")
-        if SECRET_KEY.search(key) and len(value.strip()) >= 6:
-            values.append(value.strip().strip("'\""))
-    return sorted(set(values), key=len, reverse=True)
+        key, sep, value = line.strip().removeprefix("export ").partition("=")
+        if sep and re.fullmatch(r"[A-Z0-9_]+", key):
+            words = shlex.split(value, comments=True)
+            values[key] = " ".join(words)
+    return values
 
 
 def stream(words, log):
@@ -75,7 +84,9 @@ def windows_build(config, head, log):
     source_tarball(tree, head, config.version, stage / "src.tgz")
     manifest = subprocess.run([str(config.tools / "fork-build-manifest"), config.version], cwd=tree, capture_output=True, text=True, check=True).stdout
     (stage / "fork-build.json").write_text(manifest)
-    shutil.copy2(CONFIG, stage / "public-config.env")
+    target = stage / "public-config.json"
+    with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as handle:
+        json.dump(public_config(), handle)
     shutil.copy2(config.tools / "win-build.ps1", stage / "win-build.ps1")
     remote = f"{ROOT}/{config.number}"
     try:
@@ -84,7 +95,7 @@ def windows_build(config, head, log):
         if stream(["scp", "-q", "-o", "BatchMode=yes", *[str(path) for path in sorted(stage.iterdir())], f"{HOST}:{remote}/"], log):
             return 1
     finally:
-        (stage / "public-config.env").unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
     script = f"{remote}/win-build.ps1".replace("/", "\\")
     if stream(ssh_words(f"powershell -NoProfile -ExecutionPolicy Bypass -File {script} -Version {config.version} -Dir {remote.replace('/', chr(92))}"), log):
         return 1
@@ -109,6 +120,10 @@ def windows_assets(directory, version):
         raise ValueError(f"windows feed does not match {version}")
     name = manifest_field(text, "path")
     expected = manifest_field(text, "sha512")
+    urls = re.findall(r"^\s*-\s*url:\s*['\"]?([^'\"\n]+?)['\"]?\s*$", text, re.MULTILINE)
+    hashes = re.findall(r"^\s+sha512:\s*['\"]?([^'\"\n]+?)['\"]?\s*$", text, re.MULTILINE)
+    if urls != [name] or hashes != [expected]:
+        raise ValueError("nightly.yml files[] must list exactly the installer named by path, with the same sha512")
     if not name.endswith(".exe") or "/" in name or "\\" in name:
         raise ValueError(f"unexpected windows installer path {name}")
     exe = directory / name
@@ -166,7 +181,25 @@ def publish_windows(directory, version, feed):
         live = manifest_field(root.read_text(), "path")
         kept = {entry["version"] for entry in releases}
         for path in [*feed.glob("*.exe"), *feed.glob("*.exe.blockmap")]:
-            found = VERSION.search(path.name)
-            if path.name not in (live, f"{live}.blockmap") and found and found.group(0) not in kept:
+            found = re.fullmatch(rf"T3-Code-({VERSION.pattern})-x64\.exe(?:\.blockmap)?", path.name)
+            if path.name not in (live, f"{live}.blockmap") and found and found.group(1) not in kept:
                 path.unlink()
     return {"published": version, "windows": assets[0].name, "live": live}
+
+
+def run_windows(stage, config, head, log):
+    if stage == "W":
+        return windows_build(config, head, log)
+    try:
+        log.write(json.dumps(publish_windows(config.run / "desktop-win/publish", config.version, FEED)) + "\n")
+    except (OSError, ValueError, KeyError) as error:
+        log.write(f"publish-windows: {error}\n")
+        return 1
+    return 0
+
+
+def windows_output(stage, config):
+    if stage == "W":
+        return bool(windows_assets(config.run / "desktop-win/publish", config.version))
+    rows = json.loads((FEED / "releases.json").read_text())["releases"]
+    return any(row["version"] == config.version and "win-x64" in row.get("desktop", []) for row in rows)

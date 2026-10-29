@@ -13,7 +13,7 @@ from .release_continuation import require_studio_proof
 from .release_timeline import latest_rows
 from .release_signatures import verify_archive, verify_desktop_zip
 from .release_transport import ssh
-from .release_windows import windows_assets
+from .release_windows import WINDOWS_STAGES, windows_output
 
 
 def exists(config, name):
@@ -219,9 +219,6 @@ def fast_output(stage, config):
         return (run / "desktop-swap.json").is_file()
     if stage == "F":
         return json.loads((run / "final-receipt.json").read_text())["published"] == config.version
-    if stage == "W":
-        return bool(windows_assets(run / "desktop-win/publish", config.version))
-    if stage == "FW":
-        rows = json.loads(Path("/Volumes/StudioExt/t3nightly-feed/releases.json").read_text())["releases"]
-        return any(row["version"] == config.version and "win-x64" in row.get("desktop", []) for row in rows)
+    if stage in WINDOWS_STAGES:
+        return windows_output(stage, config)
     return stage in ("LM", "LR", "H", "AS")
