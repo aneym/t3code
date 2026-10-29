@@ -11,10 +11,18 @@ function waitForExit(child: NodeChildProcess.ChildProcess): Promise<void> {
 
 export class ChildTerminator {
   readonly #stopDeadline = new AbortController();
+  readonly #terminating = new Set<NodeChildProcess.ChildProcess>();
+  #beforeSignal: Promise<void> = Promise.resolve();
 
-  startStopDeadline(onDeadline: () => void): void {
-    this.#stopDeadline.signal.addEventListener("abort", onDeadline, { once: true });
+  startStopDeadline(onDeadline: () => void, beforeSignal: () => Promise<void>): Promise<void> {
+    const forceStop = () => {
+      for (const child of this.#terminating) child.kill("SIGKILL");
+      onDeadline();
+    };
+    this.#stopDeadline.signal.addEventListener("abort", forceStop, { once: true });
     setTimeout(() => this.#stopDeadline.abort(), STOP_GRACE_MS).unref();
+    this.#beforeSignal = beforeSignal();
+    return this.#beforeSignal;
   }
 
   async terminate(
@@ -22,14 +30,17 @@ export class ChildTerminator {
     signal: NodeJS.Signals = "SIGTERM",
   ): Promise<void> {
     if (child.exitCode !== null || child.signalCode !== null) return;
-    child.kill(signal);
+    this.#terminating.add(child);
     const force = AbortSignal.any([this.#stopDeadline.signal, AbortSignal.timeout(STOP_GRACE_MS)]);
     const kill = () => child.kill("SIGKILL");
-    if (force.aborted) kill();
-    else force.addEventListener("abort", kill, { once: true });
     try {
+      await this.#beforeSignal;
+      child.kill(signal);
+      if (force.aborted) kill();
+      else force.addEventListener("abort", kill, { once: true });
       await waitForExit(child);
     } finally {
+      this.#terminating.delete(child);
       force.removeEventListener("abort", kill);
     }
   }

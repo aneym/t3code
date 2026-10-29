@@ -392,6 +392,8 @@ function sendMessage(
 
 const stopMarkerPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
+const writeStopMarker = (baseDir: string) =>
+  NodeFSP.writeFile(stopMarkerPath(baseDir), "", { mode: 0o600 }).catch(() => undefined);
 const restartPendingPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
 
@@ -459,37 +461,34 @@ export class Launcher {
   }
 
   async stop(signal: NodeJS.Signals): Promise<void> {
-    // Write synchronously on signal receipt; a terminating child needs the marker in its finalizer.
-    try {
-      NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
-    } catch {}
     if (this.#stopRequested || this.#stopping) {
       await this.#completion.promise.catch(() => undefined);
       return;
     }
     this.#stopRequested = true;
-    this.#clearTimer();
-    let stopped: Promise<void> | undefined;
-    const finish = () =>
-      (stopped ??= (async () => {
+    const marker = this.#terminator.startStopDeadline(
+      () => {
+        if (this.#done) return;
         this.#stopping = true;
-        this.#clearTimer();
-        const child = this.#child?.process;
-        this.#child = null;
-        if (child !== undefined) await this.#terminator.terminate(child, signal);
-        this.#done = true;
-        this.#completion.resolve();
-      })());
-    this.#terminator.startStopDeadline(() => {
-      if (this.#done) return;
-      killCopyHelpers();
-      void finish().then(() => {
+        this.#child?.process.kill("SIGKILL");
+        killCopyHelpers();
         process.removeAllListeners("SIGTERM");
         process.kill(process.pid, "SIGTERM");
-      });
-    });
+      },
+      () => writeStopMarker(this.#baseDir),
+    );
+    this.#clearTimer();
     // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
-    this.#enqueue(finish);
+    this.#enqueue(async () => {
+      this.#stopping = true;
+      this.#clearTimer();
+      const child = this.#child?.process;
+      this.#child = null;
+      if (child !== undefined) await this.#terminator.terminate(child, signal);
+      await marker;
+      this.#done = true;
+      this.#completion.resolve();
+    });
     await this.#completion.promise.catch(() => undefined);
   }
 
