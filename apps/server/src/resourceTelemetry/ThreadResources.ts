@@ -3,6 +3,7 @@ import type { ResourceTelemetryProcess, ResourceTelemetryThread } from "@t3tools
 export function aggregateThreadResources(
   processes: ReadonlyArray<ResourceTelemetryProcess>,
   owners: ReadonlyMap<number, { readonly threadId: string; readonly terminalId?: string }>,
+  serverThreadId?: string,
 ): ReadonlyArray<ResourceTelemetryThread> {
   const byPid = new Map(processes.map((process) => [process.identity.pid, process]));
   const rows = new Map<string, ResourceTelemetryThread>();
@@ -15,6 +16,7 @@ export function aggregateThreadResources(
     while (current && !seen.has(current.identity.pid)) {
       seen.add(current.identity.pid);
       owner = owners.get(current.identity.pid);
+      if (owner && !owner.terminalId && owner.threadId === serverThreadId) owner = undefined;
       if (owner?.terminalId) break;
       const name = current.name.toLowerCase();
       if (
