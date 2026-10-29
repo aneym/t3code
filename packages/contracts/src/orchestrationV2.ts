@@ -2845,6 +2845,9 @@ export type OrchestrationV2DomainEventJson = typeof OrchestrationV2DomainEventJs
 export const THREAD_SESSION_RESTART_REASON =
   "Session restarted to reload MCP servers and settings.";
 
+const threadCommand = <const Type extends string>(type: Type) =>
+  Schema.Struct({ type: Schema.Literal(type), commandId: CommandId, threadId: ThreadId });
+
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("thread.stop"),
@@ -2885,32 +2888,16 @@ export const OrchestrationV2Command = Schema.Union([
       }),
     ),
   }),
-  Schema.Struct({
-    type: Schema.Literal("thread.archive"),
-    commandId: CommandId,
-    threadId: ThreadId,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("thread.guest-share.close"),
-    commandId: CommandId,
-    threadId: ThreadId,
-  }),
+  threadCommand("thread.archive"),
+  threadCommand("thread.guest-share.close"),
   Schema.Struct({
     type: Schema.Literal("thread.guest-message.dismiss"),
     commandId: CommandId,
     threadId: ThreadId,
     guestMessageId: GuestMessageId,
   }),
-  Schema.Struct({
-    type: Schema.Literal("thread.unarchive"),
-    commandId: CommandId,
-    threadId: ThreadId,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("thread.delete"),
-    commandId: CommandId,
-    threadId: ThreadId,
-  }),
+  threadCommand("thread.unarchive"),
+  threadCommand("thread.delete"),
   Schema.Struct({
     type: Schema.Literal("thread.settle"),
     commandId: CommandId,
@@ -2958,11 +2945,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     orderKey: Schema.optional(TrimmedNonEmptyString),
   }),
-  Schema.Struct({
-    type: Schema.Literal("thread.unpin"),
-    commandId: CommandId,
-    threadId: ThreadId,
-  }),
+  threadCommand("thread.unpin"),
   Schema.Struct({
     type: Schema.Literal("thread.pin.reorder"),
     commandId: CommandId,
@@ -2985,11 +2968,7 @@ export const OrchestrationV2Command = Schema.Union([
     opened: Schema.optional(Schema.Boolean),
     searchQuery: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
   }),
-  Schema.Struct({
-    type: Schema.Literal("thread.mark-unread"),
-    commandId: CommandId,
-    threadId: ThreadId,
-  }),
+  threadCommand("thread.mark-unread"),
   Schema.Struct({
     type: Schema.Literal("thread.metadata.update"),
     commandId: CommandId,
@@ -3189,11 +3168,8 @@ export const OrchestrationV2Command = Schema.Union([
     queuedRunId: RunId,
     targetRunId: RunId,
   }),
-  Schema.Struct({
-    type: Schema.Literal("queue.resume"),
-    commandId: CommandId,
-    threadId: ThreadId,
-  }),
+  threadCommand("queue.send-all"),
+  threadCommand("queue.resume"),
   Schema.Struct({
     type: Schema.Literal("queued-run.start"),
     commandId: CommandId,

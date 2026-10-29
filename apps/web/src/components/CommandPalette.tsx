@@ -1,3 +1,4 @@
+import { useQueueActions } from "./chat/useSendAllQueuedAction";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -1146,7 +1147,7 @@ function OpenCommandPaletteDialog(props: {
     if (firstOption) startNewProject(firstOption.environmentId, null);
   };
 
-  const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+  const actionItems = useQueueActions(activeThread);
 
   if (projects.length > 0) {
     const activeProjectTitle =
@@ -1275,7 +1276,7 @@ function OpenCommandPaletteDialog(props: {
     }
   }
 
-  if (activeThreadReferenceCopyTarget !== null) {
+  if (activeThreadReferenceCopyTarget) {
     actionItems.push({
       kind: "action",
       value: "action:copy-thread-reference",
@@ -1293,7 +1294,7 @@ function OpenCommandPaletteDialog(props: {
   }
 
   if (
-    activeThread !== null &&
+    activeThread &&
     threadPullRequestLinkMode(activeThreadServerConfig?.environment.capabilities) !== "unsupported"
   ) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
@@ -1320,7 +1321,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (activeThread !== null && canShareActiveThreadWithGuest) {
+  if (activeThread && canShareActiveThreadWithGuest) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
     actionItems.push({
       kind: "action",
@@ -1334,7 +1335,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (activeThread !== null) {
+  if (activeThread) {
     const thread = activeThread;
     actionItems.push({
       kind: "action",

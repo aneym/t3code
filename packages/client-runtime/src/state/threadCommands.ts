@@ -31,6 +31,7 @@ import {
   markThreadUnread,
   mergeThreadBack,
   promoteQueuedRun,
+  sendAllQueuedRuns,
   resumeThreadQueue,
   retryWorkspacePreparation,
   linkThreadPullRequest,
@@ -320,6 +321,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     resumeThreadQueue: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:resume-queue",
       execute: resumeThreadQueue,
+      scheduler,
+      concurrency,
+    }),
+    sendAllQueuedRuns: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:send-all-queued",
+      execute: sendAllQueuedRuns,
       scheduler,
       concurrency,
     }),

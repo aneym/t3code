@@ -399,3 +399,38 @@ export const layer: Layer.Layer<CommandPolicyV2> = Layer.succeed(CommandPolicyV2
   ensureRollback,
   ensureContextHandoff,
 });
+
+export function resolveQueueSendAllTarget(
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "runs" | "messages" | "providerThreads" | "providerSessions" | "providerTurns"
+  >,
+): OrchestrationV2Run | string | undefined {
+  const active = projection.runs.findLast((run) =>
+    ["preparing", "starting", "running", "waiting"].includes(run.status),
+  );
+  if (active === undefined) return undefined;
+  const message = projection.messages.find((candidate) => candidate.id === active.userMessageId);
+  if (
+    message !== undefined &&
+    isNativeMaintenanceCommand(message) &&
+    message.text.trim().toLowerCase() === "/compact"
+  )
+    return active;
+  const thread = projection.providerThreads.find(
+    (candidate) => candidate.id === active.providerThreadId,
+  );
+  const session = projection.providerSessions.find(
+    (candidate) => candidate.id === thread?.providerSessionId,
+  );
+  if (
+    active.status === "running" &&
+    projection.providerTurns.some(
+      (turn) => turn.runAttemptId === active.activeAttemptId && turn.status === "running",
+    ) &&
+    (session?.capabilities.turns.supportsActiveSteering ||
+      session?.capabilities.turns.supportsSteeringByInterruptRestart)
+  )
+    return active;
+  return "The current turn cannot accept queued messages yet.";
+}

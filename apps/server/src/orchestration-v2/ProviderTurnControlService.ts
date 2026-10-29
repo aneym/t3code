@@ -1,3 +1,4 @@
+import { batchedProviderText, foldedQueuedTurnItems } from "./QueuedRunBatch.ts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
@@ -349,6 +350,17 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          const batch = yield* projections.getThreadRecords(input.threadId, ["turnItems"], {
+            turnItemTypes: ["user_message"],
+            turnItemRunIds: [run.id],
+          });
+          const parts = [
+            message,
+            ...foldedQueuedTurnItems(batch.turnItems, {
+              id: run.id,
+              userMessageId: message.id,
+            }).filter((item) => item.parentItemId !== null),
+          ];
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -357,11 +369,16 @@ export const layer: Layer.Layer<
               providerTurnId: loaded.providerTurn.id,
               message: {
                 messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
-                }),
-                attachments: message.attachments,
+                text: batchedProviderText(
+                  parts.map((part) => ({
+                    ...part,
+                    text: projectComposerContextForProvider({
+                      text: part.text,
+                      records: part.context?.records ?? [],
+                    }),
+                  })),
+                ),
+                attachments: parts.flatMap((part) => part.attachments),
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,
                 ...(message.scheduledTaskId === undefined

@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { QueueSettings } from "./QueueSettings";
 import { AutomationPlacementSetting } from "./AutomationPlacementSetting";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
@@ -544,6 +545,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? ["Continue threads after restarts"]
       : []),
+    ...(settings.queueSendAll !== DEFAULT_UNIFIED_SETTINGS.queueSendAll
+      ? ["Send all queued messages"]
+      : []),
     ...(settings.batchQueuedMessages !== DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages
       ? ["Send queued messages together"]
       : []),
@@ -669,6 +673,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       batchQueuedMessages: DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages,
+      queueSendAll: DEFAULT_UNIFIED_SETTINGS.queueSendAll,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -1270,34 +1275,7 @@ export function ChatSettingsPanel() {
           }
         />
         <AutomationPlacementSetting />
-        <SettingsRow
-          {...searchableSetting("batch-queued-messages")}
-          serverScoped
-          settingKeys={["batchQueuedMessages"]}
-          description="When a turn ends, start up to 20 compatible queued messages on the thread together as one turn instead of one turn each."
-          resetAction={
-            settings.batchQueuedMessages !== DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages ? (
-              <SettingResetButton
-                label="send queued messages together"
-                onClick={() =>
-                  updateSettings({
-                    batchQueuedMessages: DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <ScopedSwitch
-              settingKeys={["batchQueuedMessages"]}
-              checked={settings.batchQueuedMessages}
-              onCheckedChange={(checked) =>
-                updateSettings({ batchQueuedMessages: Boolean(checked) })
-              }
-              aria-label="Send queued messages together"
-            />
-          }
-        />
+        <QueueSettings />
       </SettingsSection>
     </SettingsPageContainer>
   );
