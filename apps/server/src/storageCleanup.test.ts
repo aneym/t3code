@@ -600,6 +600,28 @@ it.live("keeps an ignored submodule file saved while the last thread checks run"
   ),
 );
 
+it.live("keeps files inside a submodule that was never initialized", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, worktree, command, setPolicy } = yield* cleanupFixture();
+      setPolicy("any-local-files");
+      const head = (yield* command(repo, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* fs.writeFileString(
+        `${worktree}/.gitmodules`,
+        `[submodule "module"]\n\tpath = module\n\turl = ${repo}\n`,
+      );
+      yield* command(worktree, ["update-index", "--add", "--cacheinfo", `160000,${head},module`]);
+      yield* command(worktree, ["add", ".gitmodules"]);
+      yield* command(worktree, ["commit", "-m", "module"]);
+      yield* command(repo, ["merge", "--ff-only", "feature"]);
+      yield* fs.makeDirectory(`${worktree}/module`);
+      yield* fs.writeFileString(`${worktree}/module/notes.txt`, "notes\n");
+      expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+      expect(yield* fs.readFileString(`${worktree}/module/notes.txt`)).toBe("notes\n");
+    }),
+  ),
+);
+
 it.live("keeps unpushed submodule history after checkout and deinitialization", () =>
   runCleanupTest(
     Effect.gen(function* () {

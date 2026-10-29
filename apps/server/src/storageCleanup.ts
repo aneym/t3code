@@ -584,8 +584,6 @@ const make = Effect.gen(function* () {
       if (admin.stdoutTruncated || admin.stderrTruncated)
         return "submodule inspection exceeded the limit";
       const modules = path.join(admin.stdout.replace(/\n$/, ""), "modules");
-      const stored = yield* fs.exists(modules);
-      if (!stored && !(yield* fs.exists(path.join(cwd, ".gitmodules")))) return null;
       const populated = yield* inspect([
         "submodule",
         "foreach",
@@ -642,7 +640,7 @@ const make = Effect.gen(function* () {
         const changes = yield* localChangesReason(submodule, rules);
         if (changes !== null) return `submodule ${changes}`;
       }
-      if ((stored || paths.length > 0) && rules.worktreeKeepWhen !== "tracked-changes") {
+      if (rules.worktreeKeepWhen !== "tracked-changes") {
         const root = yield* fs.realPath(cwd);
         // Git status and foreach omit files inside deinitialized gitlink directories.
         const populatedPaths = new Set(paths.map(pathKey));
