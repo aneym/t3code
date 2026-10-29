@@ -606,9 +606,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         : yield* readThreadEnvironments(unread.map((process) => process.pid));
     const next = new Map<string, ThreadId | null>();
     for (const process of processes) {
-      const threadId = cached.get(key(process)) ?? read.get(process.pid) ?? null;
-      next.set(key(process), threadId);
-      if (threadId !== null) owners.set(process.pid, { threadId });
+      const threadId = cached.has(key(process)) ? cached.get(key(process)) : read.get(process.pid);
+      if (threadId !== undefined) next.set(key(process), threadId);
+      if (threadId) owners.set(process.pid, { threadId });
     }
     yield* Ref.set(resourceThreadsRef, next);
     for (const registration of (yield* Ref.get(stateRef)).terminalProcesses.values()) {

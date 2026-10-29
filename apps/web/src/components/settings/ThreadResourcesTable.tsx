@@ -22,6 +22,16 @@ export function ThreadResourcesTable({
       : sort === "processCount"
         ? row.processCount
         : row.cpuPercent;
+  const threadById = new Map(
+    threads
+      .filter((entry) => entry.environmentId === environmentId)
+      .map((entry) => [entry.id as string, entry]),
+  );
+  const projectById = new Map(
+    projects
+      .filter((entry) => entry.environmentId === environmentId)
+      .map((entry) => [entry.id as string, entry]),
+  );
   const ranked = rows.toSorted((a, b) => value(b) - value(a) || a.key.localeCompare(b.key));
   const total = rows.reduce((sum, row) => sum + value(row), 0);
   return (
@@ -53,14 +63,8 @@ export function ThreadResourcesTable({
           </thead>
           <tbody>
             {ranked.map((row) => {
-              const thread = threads.find(
-                (entry) => entry.environmentId === environmentId && entry.id === row.threadId,
-              );
-              const project =
-                thread &&
-                projects.find(
-                  (entry) => entry.environmentId === environmentId && entry.id === thread.projectId,
-                );
+              const thread = row.threadId ? threadById.get(row.threadId) : undefined;
+              const project = thread && projectById.get(thread.projectId);
               return (
                 <tr key={row.key} className="border-t border-border/60">
                   <td className="max-w-64 py-3">

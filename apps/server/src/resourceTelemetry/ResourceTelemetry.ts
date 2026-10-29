@@ -300,15 +300,17 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
           sampleIntervalMs: nativeHealth.sampleIntervalMs,
           processes: merged.processes,
           groups: merged.groups,
-          threads: aggregateThreadResources(
-            merged.processes,
-            Option.isSome(portDiscovery) && (yield* Ref.get(liveState)).retainCount > 0
-              ? yield* portDiscovery.value.resourceOwners(
-                  merged.processes.map((entry) => entry.identity),
-                )
-              : new Map(),
-            Option.getOrUndefined(serverThreadId),
-          ),
+          ...(Option.isSome(portDiscovery) && (yield* Ref.get(liveState)).retainCount > 0
+            ? {
+                threads: aggregateThreadResources(
+                  merged.processes,
+                  yield* portDiscovery.value.resourceOwners(
+                    merged.processes.map((entry) => entry.identity),
+                  ),
+                  Option.getOrUndefined(serverThreadId),
+                ),
+              }
+            : {}),
           power: Option.match(desktopSnapshot, {
             onNone: () => unknownPower(readAt),
             onSome: (desktop) => desktop.power,
