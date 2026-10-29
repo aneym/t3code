@@ -35,6 +35,7 @@ import {
 } from "./threadCommon.ts";
 import { finishRun, readFullText, readThreadOnly, readTimeline } from "./threadRun.ts";
 import { threadSendCommand } from "./threadSend.ts";
+import { threadConfigureCommand } from "./threadConfigure.ts";
 import { threadUpdateCommand } from "./threadUpdate.ts";
 
 const TITLE_MAX_CHARS = 80;
@@ -166,7 +167,7 @@ const threadListCommand = Command.make("list", {
   ),
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("List a project's threads, newest first."),
+  Command.withDescription("List project threads, newest first."),
   Command.withHandler((flags) =>
     withOwnerMcpTools(
       "thread",
@@ -225,9 +226,7 @@ const threadStartCommand = Command.make("start", {
     Flag.optional,
   ),
   worktree: Flag.String("worktree").pipe(
-    Flag.withDescription(
-      "Run in a new git worktree based on this branch, tag, or commit, instead of the project folder.",
-    ),
+    Flag.withDescription("Run in a new git worktree based on this branch, tag, or commit."),
     Flag.optional,
   ),
   branch: Flag.String("branch").pipe(
@@ -548,7 +547,6 @@ const threadMoveCommand = Command.make("move", {
 );
 
 export const threadCommand = Command.make("thread").pipe(
-  Command.withDescription("Start, message, and read threads on the running server."),
   Command.withSubcommands([
     threadListCommand,
     threadStartCommand,
@@ -559,6 +557,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadInterruptCommand,
     threadShowCommand,
     threadUpdateCommand,
+    threadConfigureCommand,
     ...(
       ["archive", "unarchive", "settle", "unsettle", "pin", "unpin", "snooze", "unsnooze"] as const
     ).map(threadOrganizeCommand),
