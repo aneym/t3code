@@ -244,7 +244,7 @@ export const legacyRestartHandoffs = Effect.fn("RestartHandoffImport.legacyResta
       if (DateTime.isLessThan(event.occurredAt, startedAt)) continue;
       if (event.type !== "run.created" && event.type !== "run.updated") continue;
       const run = event.payload;
-      if (run.status !== "queued") {
+      if (run.status !== "queued" && run.startedAt !== null) {
         const ran = ranAfterCapture.get(event.threadId) ?? new Set<RunId>();
         ran.add(run.id);
         ranAfterCapture.set(event.threadId, ran);
