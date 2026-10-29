@@ -15,4 +15,4 @@ export const runCompletionDeliveryRows = (
     WHERE m.run_id = ${runId} AND m.thread_id = ${threadId} AND m.role = 'user'
       AND json_extract(m.payload_json, '$.delegatedCompletion') IS NOT NULL
       AND EXISTS (SELECT 1 FROM orchestration_v2_projection_runs WHERE thread_id = ${threadId}
-        AND json_extract(payload_json, '$.userMessageId') = m.message_id)`;
+        AND CAST(json_extract(payload_json, '$.userMessageId') AS TEXT) = m.message_id)`;
