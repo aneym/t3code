@@ -39,8 +39,13 @@ function LinkedEnvironmentRoutes(props: { readonly environmentId: EnvironmentId 
 
   const apply = useEffectEvent(async () => {
     if (plan.newlySeen.length > 0) {
+      const newlySeen = plan.newlySeen;
       await savePreferences({
-        loadBalancingSeenLinkedEnvironmentIds: [...plan.seen, ...plan.newlySeen],
+        transform: (current) => ({
+          loadBalancingSeenLinkedEnvironmentIds: [
+            ...new Set([...(current.loadBalancingSeenLinkedEnvironmentIds ?? []), ...newlySeen]),
+          ],
+        }),
       });
     }
     for (const link of plan.join) {
