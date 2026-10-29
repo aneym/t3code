@@ -3349,6 +3349,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["branch", "--no-track", "--", input.branch, startPoint],
       { fallbackErrorDetail },
     );
+  });
+
+  const trackStartPoint = Effect.fn("trackStartPoint")(function* (
+    operation: string,
+    input: GitVcsDriver.GitCreateBranchInput,
+  ) {
+    const startPoint = input.startPoint === "-" ? "@{-1}" : input.startPoint;
     const startRef = yield* executeGit(
       `${operation}.resolveStartPoint`,
       input.cwd,
@@ -3374,6 +3381,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   )(function* (input) {
     yield* refuseOptionLikeRefName("GitVcsDriver.createBranch", input.cwd, input.startPoint);
     yield* createBranchAt("GitVcsDriver.createBranch", input, "git branch create failed");
+    yield* trackStartPoint("GitVcsDriver.createBranch", input);
   });
 
   const readBranchBase: GitVcsDriver.GitVcsDriver["Service"]["readBranchBase"] = Effect.fn(
@@ -3733,12 +3741,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ref,
       ]);
       if (current.stdout.trim() !== commit) return;
-      yield* executeGit(
-        "GitVcsDriver.createWorktree.removeCreatedBranchConfig",
-        cwd,
-        ["config", "--remove-section", `branch.${branch}`],
-        { allowNonZeroExit: true, writesSharedConfig: true },
-      );
       yield* executeGit("GitVcsDriver.createWorktree.removeCreatedBranch", cwd, [
         "update-ref",
         "-d",
@@ -3826,6 +3828,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : Effect.void,
       ),
     );
+    if (input.newRefName) {
+      yield* trackStartPoint("GitVcsDriver.createWorktree.createBranch", {
+        cwd: input.cwd,
+        branch: input.newRefName,
+        startPoint: input.refName,
+      });
+    }
 
     if (progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);
@@ -4210,11 +4219,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const localBranchAlreadyExists = yield* branchExists(input.cwd, input.localBranch);
     const targetRef = `${input.remoteName}/${input.remoteBranch}`;
     if (!localBranchAlreadyExists) {
-      return yield* createBranchAt(
+      const branchInput = { cwd: input.cwd, branch: input.localBranch, startPoint: targetRef };
+      yield* createBranchAt(
         "GitVcsDriver.fetchRemoteBranch.materialize",
-        { cwd: input.cwd, branch: input.localBranch, startPoint: targetRef },
+        branchInput,
         "git branch create failed",
       );
+      return yield* trackStartPoint("GitVcsDriver.fetchRemoteBranch.materialize", branchInput);
     }
     yield* runGit(
       "GitVcsDriver.fetchRemoteBranch.materialize",
