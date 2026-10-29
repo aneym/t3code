@@ -85,6 +85,9 @@ def run(cmd, log, deadline, cap=None, cwd=None, env=None, secret_out=None):
                         timeout,
                     )
                 )
+            except BaseException:
+                stop_group(proc, grace=5)
+                raise
         finally:
             if secret is not None:
                 secret.close()
