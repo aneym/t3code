@@ -25,13 +25,18 @@ export const completeSetupScript = Effect.fn("WorktreeSetupCompletion.completeSe
     if (exitCode !== 0) {
       const snapshot = yield* tracker.get(threadId);
       const tail = snapshot?.stages.find((stage) => stage.id === "setup-script")?.tail ?? [];
-      reason = tail
+      const lines = tail
         .flatMap((line) => NodeUtil.stripVTControlCharacters(line).split(/[\r\n]+/))
         .map((line) => line.trim())
         .filter((line) => line.length > 0 && !line.includes("__T3_SETUP_DONE__"))
-        .slice(-3)
         .join("\n");
-      reason = tailText(redactProviderFailureText(reason), 500);
+      reason = tailText(
+        redactProviderFailureText(lines)
+          .split(/[\r\n]+/)
+          .slice(-3)
+          .join("\n"),
+        500,
+      );
     }
     const detail = `exited with ${exitCode ?? "no exit code"}`;
     yield* tracker.stage(threadId, "setup-script", {
