@@ -6,6 +6,7 @@ import * as Schedule from "effect/Schedule";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { forkParked } from "../serverActivation.ts";
+import * as SessionStore from "./SessionStore.ts";
 
 const AUTH_SESSION_RETENTION_GRACE = Duration.days(1);
 const PRUNE_BATCH_SIZE = 500;
@@ -17,6 +18,7 @@ type PrunedKind = "revoked" | "expired";
 const deleteBatch = Effect.fn("authSessionRetention.deleteBatch")(function* (
   kind: PrunedKind,
   cutoff: string,
+  connected: ReadonlyArray<string>,
 ) {
   const sql = yield* SqlClient.SqlClient;
   const rows = yield* sql<{ sessionId: string }>`
@@ -28,6 +30,7 @@ const deleteBatch = Effect.fn("authSessionRetention.deleteBatch")(function* (
           ? sql`revoked_at < ${cutoff}`
           : sql`revoked_at IS NULL AND expires_at < ${cutoff}`
       }
+      ${connected.length > 0 ? sql`AND NOT ${sql.in("session_id", connected)}` : sql``}
       LIMIT ${PRUNE_BATCH_SIZE}
     )
     RETURNING session_id AS "sessionId"
@@ -38,10 +41,11 @@ const deleteBatch = Effect.fn("authSessionRetention.deleteBatch")(function* (
 const pruneKind = Effect.fn("authSessionRetention.pruneKind")(function* (
   kind: PrunedKind,
   cutoff: string,
+  connected: ReadonlyArray<string>,
 ) {
   let total = 0;
   while (true) {
-    const deleted = yield* deleteBatch(kind, cutoff);
+    const deleted = yield* deleteBatch(kind, cutoff, connected);
     total += deleted;
     if (deleted < PRUNE_BATCH_SIZE) return total;
     yield* Effect.sleep(PRUNE_BATCH_PAUSE);
@@ -54,8 +58,12 @@ const pruneAuthSessions = Effect.fn("authSessionRetention.prune")(function* () {
       milliseconds: Duration.toMillis(AUTH_SESSION_RETENTION_GRACE),
     }),
   );
-  const revoked = yield* pruneKind("revoked", cutoff);
-  const expired = yield* pruneKind("expired", cutoff);
+  const sessions = yield* SessionStore.SessionStore;
+  const connected = (yield* sessions.listActive())
+    .filter((session) => session.connected)
+    .map((session) => session.sessionId);
+  const revoked = yield* pruneKind("revoked", cutoff, []);
+  const expired = yield* pruneKind("expired", cutoff, connected);
   yield* Effect.annotateCurrentSpan({
     "auth_sessions.pruned_revoked": revoked,
     "auth_sessions.pruned_expired": expired,
