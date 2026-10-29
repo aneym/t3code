@@ -13,6 +13,7 @@ import urllib.request
 from contextlib import closing
 from pathlib import Path
 
+from .install_strays import port_listeners
 from .release_manifest import history_digest
 
 AGENT_LB_URL = "http://127.0.0.1:2455"
@@ -110,7 +111,7 @@ class Sandbox:
             state = json.loads((self.home / "userdata/server-runtime.json").read_text())
         except (OSError, ValueError):
             return False
-        return state.get("port") == self.port
+        return state.get("port") == self.port and str(state.get("pid")) in port_listeners(self.port)
 
     def wait_ready(self, version, seconds):
         wait_for(lambda: self.version() == version and self.published(), seconds, f"sandbox runtime {version} to publish its runtime state")

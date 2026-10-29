@@ -1,7 +1,9 @@
+import fcntl
 import os
 import re
 import select
 import signal
+import struct
 import subprocess
 import sys
 import time
@@ -11,6 +13,8 @@ MAX_REAPS = 3
 TERM_WAIT_S = 30
 KILL_WAIT_S = 5
 LAUNCH_SKEW_S = 10
+SQLITE_SHARED_FIRST = 0x40000002
+SQLITE_SHARED_SIZE = 510
 
 
 def port_listeners(port):
@@ -75,8 +79,16 @@ def holds(pid, path):
 
 def owns_lock(pid, path):
     if sys.platform == "darwin":
-        result = subprocess.run(["/usr/sbin/lsof", "-t", str(path)], capture_output=True, text=True, check=False, timeout=15)
-        return set(result.stdout.split()) == {pid}
+        try:
+            descriptor = os.open(path, os.O_RDONLY)
+        except FileNotFoundError:
+            return False
+        try:
+            query = struct.pack("qqihh", SQLITE_SHARED_FIRST, SQLITE_SHARED_SIZE, 0, fcntl.F_RDLCK, os.SEEK_SET)
+            _, _, holder, kind, _ = struct.unpack("qqihh", fcntl.fcntl(descriptor, fcntl.F_GETLK, query))
+        finally:
+            os.close(descriptor)
+        return kind == fcntl.F_WRLCK and str(holder) == pid
     try:
         info = os.stat(path)
         locks = Path("/proc/locks").read_text().splitlines()
