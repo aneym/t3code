@@ -42,6 +42,7 @@ import {
   toolOutcome,
 } from "../telemetry/ProviderDimensions.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+import { decodeAsAdvertised, validateAdvertisedParameters } from "./advertisedParameters.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -441,16 +442,6 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
   );
   return screenshotPath;
 });
-
-/** Decode with the advertised JSON codec, which permits null for optional fields that the raw schema rejects. */
-const decodeAsAdvertised = <Tools extends Record<string, Tool.Any>>(
-  toolkit: Toolkit.Toolkit<Tools>,
-): Toolkit.Toolkit<Tools> =>
-  Toolkit.make(
-    ...Object.values(toolkit.tools).map((tool) =>
-      tool.setParameters(Schema.toCodecJson(tool.parametersSchema)).annotate(Tool.Strict, true),
-    ),
-  ) as unknown as Toolkit.Toolkit<Tools>;
 
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
 
@@ -997,30 +988,31 @@ const withToolAnalytics =
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, recordingServer));
   });
 
-/** `McpServer.registerToolkit` advertises the full codec schema; agents get the compact one. */
-const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(function* <
-  Tools extends Record<string, Tool.Any>,
+const withAdvertisedParameters = Effect.fn("McpHttpServer.withAdvertisedSchemas")(function* <
   A,
   E,
   R,
->(toolkit: Toolkit.Toolkit<Tools>, registration: Effect.Effect<A, E, R>) {
+>(
+  registration: Effect.Effect<A, E, R>,
+  toolkit?: { readonly tools: Readonly<Record<string, Tool.Any>> },
+) {
   const server = yield* McpServer.McpServer;
-  const tools: Record<string, Tool.Any> = toolkit.tools;
   const advertisingServer = McpServer.McpServer.of({
     ...server,
     addTool: Effect.fn("McpServer.addTool")(function (options) {
-      const tool = tools[options.tool.name];
-      return server.addTool(
-        tool === undefined
-          ? options
-          : {
-              ...options,
-              tool: new McpSchema.Tool({
-                ...options.tool,
-                inputSchema: advertisedJsonSchema(tool),
-              }),
-            },
-      );
+      const original = toolkit?.tools[options.tool.name];
+      const tool =
+        original === undefined
+          ? options.tool
+          : new McpSchema.Tool({ ...options.tool, inputSchema: advertisedJsonSchema(original) });
+      return server.addTool({
+        ...options,
+        tool,
+        handle: (payload) =>
+          validateAdvertisedParameters(tool.name, tool.inputSchema, payload).pipe(
+            Effect.andThen(() => options.handle(payload)),
+          ),
+      });
     }),
   });
   return yield* registration.pipe(Effect.provideService(McpServer.McpServer, advertisingServer));
@@ -1038,7 +1030,7 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
 ) => {
   const registration = Layer.effectDiscard(
     withToolAnalytics(
-      withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+      withAdvertisedParameters(McpServer.registerToolkit(decodeAsAdvertised(toolkit)), toolkit),
     ),
   ).pipe(Layer.provide(McpServer.McpServer.layer));
   // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off - the auth middleware provides it per request.
@@ -1054,7 +1046,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolAnalytics(register)).pipe(
+  Layer.effectDiscard(withToolAnalytics(withAdvertisedParameters(register))).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 
