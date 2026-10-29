@@ -1,3 +1,4 @@
+import * as ThreadConfigurationService from "../../ThreadConfigurationService.ts";
 import {
   OrchestratorMcpEnvironmentTarget,
   ScheduledTaskId,
@@ -8,8 +9,6 @@ import {
   OrchestrationV2ContextTransfer,
   TrimmedNonEmptyString,
   ModelSelection,
-  RuntimeMode,
-  ProviderInteractionMode,
   RuntimeRequestId,
   ProviderUserInputAnswers,
   IsoDateTime,
@@ -144,12 +143,6 @@ const PendingRequestTool = Tool.make("t3_pending_request", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
-const threadConfiguration = Schema.Struct({
-  threadId: ThreadId,
-  modelSelection: ModelSelection,
-  runtimeMode: RuntimeMode,
-  interactionMode: ProviderInteractionMode,
-});
 const ThreadConfigureTool = Tool.make("t3_thread_configure", {
   ...commandTool,
   description:
@@ -158,8 +151,13 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     modelSelection: Schema.optional(ModelSelection),
+    effort: Schema.optional(Schema.String),
   }),
-  success: Schema.Union([threadConfiguration, OrchestrationV2DispatchCommandResult]),
+  success: ThreadConfigurationService.ThreadConfiguration,
+  dependencies: [
+    ...commandTool.dependencies,
+    ThreadConfigurationService.ThreadConfigurationService,
+  ],
 }).annotate(Tool.Destructive, true);
 const ThreadMoveTool = Tool.make("t3_thread_move", {
   ...commandTool,

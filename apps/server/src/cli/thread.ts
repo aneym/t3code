@@ -1,3 +1,4 @@
+import { titleFromMessage } from "./threadTitle.ts";
 import {
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListResult,
@@ -37,8 +38,6 @@ import { finishRun, readFullText, readThreadOnly, readTimeline } from "./threadR
 import { threadSendCommand } from "./threadSend.ts";
 import { threadConfigureCommand } from "./threadConfigure.ts";
 import { threadUpdateCommand } from "./threadUpdate.ts";
-
-const TITLE_MAX_CHARS = 80;
 
 const ProjectListResult = Schema.Struct({
   projects: Schema.Array(
@@ -102,13 +101,6 @@ const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   return containing.project;
 });
 
-const titleFromMessage = (message: string) => {
-  const firstLine = message.trim().split("\n")[0]?.trim() ?? "";
-  return firstLine.length > TITLE_MAX_CHARS
-    ? `${firstLine.slice(0, TITLE_MAX_CHARS - 1).trimEnd()}…`
-    : firstLine;
-};
-
 const launchWorkspaceStrategy = (input: {
   readonly worktree: Option.Option<string>;
   readonly branch: Option.Option<string>;
@@ -167,7 +159,7 @@ const threadListCommand = Command.make("list", {
   ),
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("List project threads, newest first."),
+  Command.withDescription("List a project's threads, newest first."),
   Command.withHandler((flags) =>
     withOwnerMcpTools(
       "thread",
@@ -226,7 +218,9 @@ const threadStartCommand = Command.make("start", {
     Flag.optional,
   ),
   worktree: Flag.String("worktree").pipe(
-    Flag.withDescription("Run in a new git worktree based on this branch, tag, or commit."),
+    Flag.withDescription(
+      "Run in a new git worktree based on this branch, tag, or commit, instead of the project folder.",
+    ),
     Flag.optional,
   ),
   branch: Flag.String("branch").pipe(
@@ -547,6 +541,7 @@ const threadMoveCommand = Command.make("move", {
 );
 
 export const threadCommand = Command.make("thread").pipe(
+  Command.withDescription("Start, message, and read threads on the running server."),
   Command.withSubcommands([
     threadListCommand,
     threadStartCommand,

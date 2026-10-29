@@ -8,7 +8,7 @@ import {
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { modelSelectionCommandType } from "@t3tools/shared/model";
+import * as ThreadConfigurationService from "../../ThreadConfigurationService.ts";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -193,32 +193,17 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     ),
   ),
   t3_thread_configure: McpToolAccess.either(
-    (input) => input.modelSelection === undefined,
+    (input) => input.modelSelection === undefined && input.effort === undefined,
     McpToolAccess.reads((input) =>
       Effect.gen(function* () {
-        const {
-          projection: { thread },
-        } = yield* readThread(input.threadId);
-        return {
-          threadId: thread.id,
-          modelSelection: thread.modelSelection,
-          runtimeMode: thread.runtimeMode,
-          interactionMode: thread.interactionMode,
-        };
+        const service = yield* ThreadConfigurationService.ThreadConfigurationService;
+        return yield* service.configure(yield* McpInvocationContext.McpInvocationContext, input);
       }),
     ),
     writesThread((input) =>
       Effect.gen(function* () {
-        const modelSelection = yield* required(input.modelSelection, "modelSelection");
-        const {
-          threads,
-          projection: { thread },
-        } = yield* readThread(input.threadId);
-        const type = modelSelectionCommandType(thread.providerInstanceId, modelSelection);
-        const result = yield* threads
-          .dispatch({ type, threadId: thread.id, commandId: yield* newCommandId(), modelSelection })
-          .pipe(Effect.mapError(dispatchFailure));
-        return { sequence: result.sequence };
+        const service = yield* ThreadConfigurationService.ThreadConfigurationService;
+        return yield* service.configure(yield* McpInvocationContext.McpInvocationContext, input);
       }),
     ),
   ),
