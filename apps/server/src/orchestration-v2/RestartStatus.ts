@@ -4,7 +4,9 @@ import {
   ServerPrepareRestartError,
   type ServerRestartStatus,
 } from "@t3tools/contracts";
+import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Effect from "effect/Effect";
+import { cancelledBeforeStart } from "./RestartBackgroundNote.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -58,6 +60,17 @@ export const restartStatus = Effect.fn("RestartStatus.read")(
         if (source?.status === "completed") return { sourceRunId, state: "completed" };
         if (source !== undefined && endedOnItsOwn(source.status))
           return { sourceRunId, state: "completed", reason: source.status };
+        if (
+          source?.status === "cancelled" &&
+          projection.runs.some(
+            (run) =>
+              run.id !== source.id &&
+              run.status !== "queued" &&
+              !cancelledBeforeStart(run) &&
+              runRanAfter(run, source),
+          )
+        )
+          return { sourceRunId, state: "completed", reason: "superseded" };
         return { sourceRunId, state: "pending" };
       });
       const queueIds = new Set([
