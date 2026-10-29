@@ -38,8 +38,6 @@ import { finishRun, readFullText, readThreadOnly, readTimeline } from "./threadR
 import { threadSendCommand } from "./threadSend.ts";
 import { threadUpdateCommand } from "./threadUpdate.ts";
 
-const TITLE_MAX_CHARS = 80;
-
 const ProjectListResult = Schema.Struct({
   projects: Schema.Array(
     Schema.Struct({ id: ProjectId, title: Schema.String, workspaceRoot: Schema.String }),
@@ -68,7 +66,6 @@ const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools
   return projects;
 });
 
-/** A project id, or a path inside a project's folder (deepest project wins). */
 const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   tools: OwnerMcpTools,
   identifier: string,
@@ -104,9 +101,7 @@ const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
 
 const titleFromMessage = (message: string) => {
   const firstLine = message.trim().split("\n")[0]?.trim() ?? "";
-  return firstLine.length > TITLE_MAX_CHARS
-    ? `${firstLine.slice(0, TITLE_MAX_CHARS - 1).trimEnd()}…`
-    : firstLine;
+  return firstLine.length > 80 ? `${firstLine.slice(0, 80 - 1).trimEnd()}…` : firstLine;
 };
 
 const launchWorkspaceStrategy = (input: {

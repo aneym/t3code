@@ -61,7 +61,12 @@ export function sendAllQueuedMembers(projection: QueueProjection) {
     );
   for (const run of ordered) {
     const message = batchableQueuedMessage(projection, run, true);
-    if (message === undefined || message.delegatedCompletion !== undefined) continue;
+    if (
+      message === undefined ||
+      message.delegatedCompletion !== undefined ||
+      (message.creationSource === "server" && message.id.startsWith("async-answer:"))
+    )
+      continue;
     const first = members[0]?.run;
     if (first !== undefined && !compatibleQueuedRuns(first, run)) continue;
     members.push({ run, message });

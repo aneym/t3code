@@ -90,7 +90,6 @@ import {
   THREAD_SESSION_RESTART_REASON,
   ThreadLinkedPullRequest,
   ThreadId,
-  ThreadOrganizeRefusalReason,
   TurnItemId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -178,7 +177,11 @@ import {
   nextRunOrdinal,
   wakeWorkStartedAt,
 } from "./QueuedRunOrder.ts";
-import { isBlockedCompletionRun, makeQueuedRunSendAll, sendAllStartRun } from "./QueuedRunSendAll.ts";
+import {
+  isBlockedCompletionRun,
+  makeQueuedRunSendAll,
+  sendAllStartRun,
+} from "./QueuedRunSendAll.ts";
 import { makeQueuedSteerRecovery } from "./QueuedSteerRecovery.ts";
 import { queuedRunBatch, queuedRunBatchEvents } from "./QueuedRunBatch.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
@@ -1303,15 +1306,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             yield* offerDelegatedCompletionDelivery(threadId, run.id);
           }
         }
-        const held = view.runs.filter((run) =>
-          releasesQueueHoldAtRunEnd(
-            run,
-            run.queueHoldReason === "restart"
-              ? view.runs.find((candidate) => candidate.id === options?.endedRunId)
-              : ended,
-            view,
-            options?.endedRunId === undefined,
-          ) && !(ended?.retainBlockedCompletionHolds && isBlockedCompletionRun(view, run)),
+        const held = view.runs.filter(
+          (run) =>
+            releasesQueueHoldAtRunEnd(
+              run,
+              run.queueHoldReason === "restart"
+                ? view.runs.find((candidate) => candidate.id === options?.endedRunId)
+                : ended,
+              view,
+              options?.endedRunId === undefined,
+            ) && !(ended?.retainBlockedCompletionHolds && isBlockedCompletionRun(view, run)),
         );
         if (held.length > 0) {
           const now = yield* DateTime.now;
