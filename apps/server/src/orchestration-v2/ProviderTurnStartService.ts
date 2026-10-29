@@ -727,7 +727,7 @@ export const layer: Layer.Layer<
         });
         if (!repaired.committed) return;
       }
-      yield* prepareThreadSession({ projection, run, providerThread });
+      yield* prepareThreadSession({ projection, providerThread });
       const sessionResult = yield* Effect.result(
         providerSessions.open({
           threadId: projection.thread.id,

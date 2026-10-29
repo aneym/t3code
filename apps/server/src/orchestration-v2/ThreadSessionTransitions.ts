@@ -3,7 +3,6 @@ import {
   ProviderInstanceId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
-  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   THREAD_SESSION_RESTART_REASON,
 } from "@t3tools/contracts";
@@ -51,7 +50,9 @@ export const makeThreadSelectionPlanner = Effect.gen(function* () {
     const plan = yield* switches.plan(input);
     if (plan.releaseProviderSessionIds.length === 0) return plan;
     const { runs } = yield* store.getThreadRecords(input.projection.thread.id, ["runs"]);
-    return runs.some((run) => ["preparing", "starting", "running", "waiting"].includes(run.status))
+    return runs.some((run) =>
+      ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
+    )
       ? { ...plan, releaseProviderSessionIds: [] }
       : plan;
   });
@@ -61,11 +62,7 @@ export const makeThreadSessionPreparation = Effect.gen(function* () {
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const store = yield* ProjectionStore.ProjectionStoreV2;
   return Effect.fn("ThreadSessionTransitions.prepareSession")(function* (input: {
-    readonly projection: Pick<
-      OrchestrationV2ThreadProjection,
-      "thread" | "providerSessions" | "providerThreads" | "runs"
-    >;
-    readonly run: OrchestrationV2Run;
+    readonly projection: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly providerThread: OrchestrationV2ProviderThread;
   }) {
     const { projection, providerThread } = input;
