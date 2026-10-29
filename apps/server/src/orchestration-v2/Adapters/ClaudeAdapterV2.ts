@@ -3912,6 +3912,7 @@ interface ClaudeLiveQueryContext {
   receivedInit: boolean;
   permissionMode: PermissionMode;
   stopping: boolean;
+  rootTurnOpen: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
 }
 
@@ -10005,6 +10006,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             receivedInit: false,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
+            rootTurnOpen: false,
             subagentsFromEarlierProcesses: new Set(
               [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
                 (subagent) => subagent.task.status === "running",
@@ -10039,6 +10041,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     context.permissionMode = message.permissionMode;
                   }
+                  if (message.type === "result") context.rootTurnOpen = false;
+                  else if (isClaudeRootTurnFrame(message)) context.rootTurnOpen = true;
                   const handled = handleSdkMessage({ query: querySession, message });
                   return restartNotice === null
                     ? handled
@@ -10359,7 +10363,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   yield* handleSdkMessage({ query: querySession.query, message: lastResult });
                   return;
                 }
-                if (hasOpaqueTaskNotification && !context.nativeWakeStarted) {
+                if (
+                  context.nativeWakeStarted ? !querySession.rootTurnOpen : hasOpaqueTaskNotification
+                ) {
                   const completedAt = yield* DateTime.now;
                   yield* finalizeActiveTurn({ context, status: "completed", completedAt });
                 } else if (!context.nativeWakeStarted) {
