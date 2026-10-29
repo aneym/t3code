@@ -1,6 +1,8 @@
 import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
+  ProjectMutationError,
+  type CommandId,
   requiredScopesForProjectMutation,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -18,13 +20,13 @@ import * as ProjectService from "./ProjectService.ts";
 import { projectMutationOperation } from "./ProjectMutation.ts";
 
 const failProjectMutation = Effect.fn("environment.projects.failMutation")(function* (
+  commandId: CommandId,
   cause: ProjectService.ProjectServiceError | ServerRuntimeStartup.ServerRuntimeStartupError,
 ) {
-  if (
-    cause._tag === "ProjectNotFoundError" ||
-    cause._tag === "ProjectConflictError" ||
-    cause._tag === "ProjectNotEmptyError"
-  ) {
+  if (cause._tag === "ProjectNotEmptyError") {
+    return yield* new ProjectMutationError({ commandId, message: cause.message });
+  }
+  if (cause._tag === "ProjectNotFoundError" || cause._tag === "ProjectConflictError") {
     return yield* failEnvironmentInvalidRequest("invalid_command");
   }
   return yield* failEnvironmentInternal("project_mutation_failed", cause);
@@ -57,9 +59,10 @@ export const layer = HttpApiBuilder.group(
             yield* requireEnvironmentScope(scope);
           }
           const operation = projectMutationOperation(projects, args.payload);
-          return yield* startup
-            .enqueueCommand(operation)
-            .pipe(traceLocalHandlerWork, Effect.catch(failProjectMutation));
+          return yield* startup.enqueueCommand(operation).pipe(
+            traceLocalHandlerWork,
+            Effect.catch((cause) => failProjectMutation(args.payload.commandId, cause)),
+          );
         }),
       );
   }),

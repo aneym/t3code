@@ -3,6 +3,7 @@ import {
   CommandId,
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
+  ProjectMutationError,
   type ProjectMutation,
   type ProjectSnapshot,
   ProjectId,
@@ -50,7 +51,6 @@ type ProjectMutationTarget = {
 };
 
 type ProjectCommandExecutionMode = "live" | "offline";
-type ProjectCliDispatchCommand = ProjectMutation;
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
@@ -158,6 +158,7 @@ export class ProjectAlreadyExistsError extends Schema.TaggedError<ProjectAlready
 }
 
 export const ProjectCommandError = Schema.Union([
+  ProjectMutationError,
   ProjectCommandIdGenerationError,
   ProjectLiveServerDeclaredResponseError,
   ProjectLiveServerUndeclaredStatusError,
@@ -168,8 +169,10 @@ export const ProjectCommandError = Schema.Union([
   ProjectAlreadyExistsError,
 ]);
 export type ProjectCommandError = typeof ProjectCommandError.Type;
+const isProjectMutationError = Schema.is(ProjectMutationError);
 
 function projectCommandErrorFromLiveServerRequest(cause: unknown): ProjectCommandError {
+  if (isProjectMutationError(cause)) return cause;
   if (isEnvironmentHttpCommonError(cause)) {
     return new ProjectLiveServerDeclaredResponseError({
       operation: "callLiveServer",
@@ -291,7 +294,6 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
   const normalizedWorkspaceRoot =
     normalizedWorkspaceRootResult._tag === "Success" ? normalizedWorkspaceRootResult.success : null;
 
-  // A stored workspace path still identifies its project after the directory is gone.
   const exactWorkspaceMatch = activeProjects.find(
     (project) => project.workspaceRoot === (normalizedWorkspaceRoot ?? trimmedIdentifier),
   );
@@ -331,7 +333,7 @@ const fetchLiveOrchestrationSnapshot = Effect.fn("project.fetchLiveOrchestration
 );
 
 const dispatchLiveOrchestrationCommand = Effect.fn("project.dispatchLiveOrchestrationCommand")(
-  function* (origin: string, bearerToken: string, command: ProjectCliDispatchCommand) {
+  function* (origin: string, bearerToken: string, command: ProjectMutation) {
     const client = yield* makeLiveServerClient(origin);
     yield* client.projects.mutate({
       headers: { authorization: `Bearer ${bearerToken}` },
@@ -386,7 +388,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
   run: (input: {
     readonly snapshot: ProjectSnapshot;
     readonly dispatch: (
-      command: ProjectCliDispatchCommand,
+      command: ProjectMutation,
     ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
     readonly mode: ProjectCommandExecutionMode;
   }) => Effect.Effect<
@@ -427,7 +429,6 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
       Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
     );
 
-    // An unreachable server may still be running; never write behind it.
     yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath).pipe(
       Effect.provide(ProcessRunner.layer),
     );
@@ -471,7 +472,7 @@ const projectAddCommand = Command.make("add", {
       }: {
         readonly snapshot: ProjectSnapshot;
         readonly dispatch: (
-          command: ProjectCliDispatchCommand,
+          command: ProjectMutation,
         ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
       }) {
         const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(flags.workspaceRoot);
@@ -507,7 +508,9 @@ const projectRemoveCommand = Command.make("remove", {
     Argument.withDescription("Project id or workspace root to remove."),
   ),
   force: Flag.Boolean("force").pipe(
-    Flag.withDescription("Delete the project and all of its threads."),
+    Flag.withDescription(
+      "Delete archived threads with the project; unarchived threads block removal.",
+    ),
     Flag.withDefault(false),
   ),
 }).pipe(
@@ -521,7 +524,7 @@ const projectRemoveCommand = Command.make("remove", {
       }: {
         readonly snapshot: ProjectSnapshot;
         readonly dispatch: (
-          command: ProjectCliDispatchCommand,
+          command: ProjectMutation,
         ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
       }) {
         const project = yield* findActiveProjectTarget({
@@ -557,7 +560,7 @@ const projectRenameCommand = Command.make("rename", {
       }: {
         readonly snapshot: ProjectSnapshot;
         readonly dispatch: (
-          command: ProjectCliDispatchCommand,
+          command: ProjectMutation,
         ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
       }) {
         const project = yield* findActiveProjectTarget({

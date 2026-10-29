@@ -6,7 +6,7 @@ import {
   type ProjectCreatePayload,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
@@ -77,10 +77,12 @@ export class ProjectConflictError extends Schema.TaggedError<ProjectConflictErro
 
 export class ProjectNotEmptyError extends Schema.TaggedError<ProjectNotEmptyError>()(
   "ProjectNotEmptyError",
-  { projectId: ProjectId },
+  { projectId: ProjectId, blockingThreadIds: Schema.optional(Schema.Array(ThreadId)) },
 ) {
   override get message(): string {
-    return `Project ${this.projectId} is not empty.`;
+    return this.blockingThreadIds?.length
+      ? `Project not empty: archive unarchived threads ${this.blockingThreadIds.join(", ")}.`
+      : "Project not empty: use force=true to delete archived threads.";
   }
 }
 
@@ -459,12 +461,14 @@ export const make = Effect.gen(function* () {
       (thread) => thread.archivedAt === null && thread.deletedAt === null,
     );
     if (unarchivedThreads.length > 0) {
-      return yield* new ProjectNotEmptyError({ projectId });
+      return yield* new ProjectNotEmptyError({
+        projectId,
+        blockingThreadIds: unarchivedThreads.map((thread) => thread.id),
+      });
     }
     if (projectThreads.length > 0 && input.force !== true) {
       return yield* new ProjectNotEmptyError({ projectId });
     }
-    // Delete children durably before the project so a failed cascade can be retried.
     yield* Effect.forEach(
       projectThreads,
       (thread) =>
@@ -480,7 +484,6 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  // Best-effort cleanup releases disabled instances kept alive by overrides; crashes have no replay to revisit deletion.
   const clearProjectSettingsOverrides = (projectId: ProjectId) =>
     serverSettings.updateSettings({ projectSettingsOverrides: { [projectId]: null } }).pipe(
       Effect.asVoid,
@@ -495,7 +498,6 @@ export const make = Effect.gen(function* () {
   const deleteProject: ProjectService["Service"]["delete"] = Effect.fn("ProjectService.delete")(
     function* (input) {
       const { projectId } = input;
-      // Read deleted rows so retries replay receipts and other command ids fail as not found.
       const existing = yield* readRow(projectId, { includeDeleted: true });
       if (Option.isNone(existing)) {
         return yield* new ProjectNotFoundError({ projectId });
