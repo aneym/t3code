@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
@@ -23,10 +24,23 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
  * hold; the miss only names a live thread the caller could read by its full id.
  */
 export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")(function* (
-  threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getThreadShell">,
+  threads: Pick<
+    ThreadManagement.ThreadManagementService["Service"],
+    "getThreadShell" | "getThreadRecords"
+  >,
   threadId: ThreadId,
   message: string,
 ) {
+  const deletedAt = yield* threads.getThreadRecords(threadId, []).pipe(
+    Effect.map((records) => records.thread.deletedAt),
+    Effect.orElseSucceed(() => null),
+  );
+  if (deletedAt !== null) {
+    return yield* new OrchestratorMcpFailure({
+      code: "thread_deleted",
+      message: `Thread ${threadId} was deleted at ${DateTime.formatIso(deletedAt)}. Drop it from your records or rebind them to a live thread.`,
+    });
+  }
   const prefixed = ThreadId.make(`mcp:${threadId}`);
   const shell = yield* threads.getThreadShell(prefixed).pipe(Effect.orElseSucceed(() => null));
   return yield* new OrchestratorMcpFailure({
@@ -49,15 +63,19 @@ export const dispatchFailure = (
 ) =>
   error._tag === "ThreadManagementProviderInstanceDisabledError"
     ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
-    : (error._tag === "OrchestratorDispatchError" ||
-          error._tag === "OrchestratorCommandRejectedError") &&
-        typeof error.cause === "string" &&
-        error.cause.length > 0
-      ? new OrchestratorMcpFailure({
-          code: "orchestration_error",
-          message: Array.from(error.cause).slice(0, 1000).join(""),
-        })
-      : unavailable();
+    : error._tag === "OrchestratorCommandPreviouslyRejectedError" && error.reason !== undefined
+      ? new OrchestratorMcpFailure({ code: error.reason, message: error.message })
+      : (error._tag === "OrchestratorDispatchError" ||
+            error._tag === "OrchestratorCommandRejectedError") &&
+          typeof error.cause === "string" &&
+          error.cause.length > 0
+        ? new OrchestratorMcpFailure({
+            code:
+              (error._tag === "OrchestratorDispatchError" ? error.reason : undefined) ??
+              "orchestration_error",
+            message: Array.from(error.cause).slice(0, 1000).join(""),
+          })
+        : unavailable();
 
 export interface CallerLimits {
   readonly runtimeMode: RuntimeMode;
@@ -97,10 +115,11 @@ export const loadCaller = Effect.fn("mcp.loadCaller")(function* () {
     .getThreadShell(scope.thread.threadId)
     .pipe(Effect.mapError(unavailable));
   if (caller === null || caller.deletedAt !== null) {
-    return yield* new OrchestratorMcpFailure({
-      code: "thread_not_found",
-      message: "The calling thread was not found.",
-    });
+    return yield* threadNotFound(
+      threads,
+      scope.thread.threadId,
+      "The calling thread was not found.",
+    );
   }
   return {
     scope,
@@ -112,11 +131,22 @@ export const loadCaller = Effect.fn("mcp.loadCaller")(function* () {
 
 export const assertTargetWithinLimits = (
   limits: CallerLimits,
-  target: { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode },
+  target: {
+    readonly id?: ThreadId;
+    readonly runtimeMode: RuntimeMode;
+    readonly interactionMode: ProviderInteractionMode;
+  },
 ) =>
   resolveRuntimeMode(limits.runtimeMode, target.runtimeMode).pipe(
     Effect.andThen(resolveInteractionMode(limits.interactionMode, target.interactionMode)),
     Effect.asVoid,
+    Effect.mapError(
+      (error) =>
+        new OrchestratorMcpFailure({
+          code: error.code,
+          message: `Thread ${target.id ?? "target"} runs ${target.runtimeMode}/${target.interactionMode}, above this caller's ${limits.runtimeMode}/${limits.interactionMode} ceiling. Act from that thread's owner (the t3 CLI) or a caller allowed that mode.`,
+        }),
+    ),
   );
 
 /** Background subagents retain credentials until provider exit; archived threads and other instances cannot act. */
@@ -192,13 +222,10 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
       turnItemTypes: ["user_input_request"],
     })
     .pipe(
-      Effect.mapError((error) =>
+      Effect.catch((error) =>
         error._tag === "ThreadManagementThreadNotFoundError"
-          ? new OrchestratorMcpFailure({
-              code: "thread_not_found",
-              message: "The thread was not found.",
-            })
-          : unavailable(),
+          ? threadNotFound(context.threads, targetId, "The thread was not found.")
+          : Effect.fail(unavailable()),
       ),
     );
   return { ...context, projection };

@@ -185,6 +185,9 @@ export interface EventSinkV2Shape {
   readonly read: (input?: {
     readonly afterSequence?: number;
     readonly throughSequence?: number;
+    readonly threadId?: ThreadId;
+    readonly eventType?: OrchestrationV2DomainEvent["type"];
+    readonly limit?: number;
   }) => Stream.Stream<OrchestrationV2StoredEvent, EventSinkV2Error>;
   readonly stream: (input?: {
     readonly threadId?: ThreadId;
