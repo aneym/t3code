@@ -20,6 +20,7 @@ export interface RailsAgent {
   readonly target: ScopedThreadRef | null;
   readonly remoteHost: string | null;
   readonly projects: ReadonlyArray<string>;
+  readonly lanes: ReadonlyArray<ScopedThreadRef>;
   readonly thread: EnvironmentThreadShell | null;
 }
 
@@ -114,6 +115,13 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
       target,
       remoteHost,
       projects: [...new Set(ordered.flatMap((home) => home.projects))],
+      lanes: ordered.flatMap((home) =>
+        home.lanes.flatMap((lane) => {
+          const environmentId =
+            lane.host === null ? home.environmentId : environmentForHost(environments, lane.host);
+          return environmentId ? [{ environmentId, threadId: lane.threadId }] : [];
+        }),
+      ),
       thread: target
         ? (threads.find(
             (thread) =>
@@ -134,16 +142,4 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
     };
   }, [targetKey]);
   return agents;
-}
-
-export function useWithoutAgentMainThreads<T extends EnvironmentThreadShell>(
-  threads: ReadonlyArray<T>,
-  _scopedProjectKeys: ReadonlySet<string> | null,
-): ReadonlyArray<T> {
-  const mainThreadKeys = new Set(
-    useRailsAgents().flatMap((agent) =>
-      agent.target ? [`${agent.target.environmentId}:${agent.target.threadId}`] : [],
-    ),
-  );
-  return threads.filter((thread) => !mainThreadKeys.has(railsAgentThreadKey(thread)));
 }

@@ -16,7 +16,7 @@ const shared = {
 export const AgentToolkit = Toolkit.make(
   Tool.make("t3_agent_list", {
     ...shared,
-    description: "List agent homes and their main thread bindings.",
+    description: "List agent homes, their main thread bindings and the open lanes under each.",
     success: AgentHomesSnapshot,
   })
     .annotate(Tool.Readonly, true)

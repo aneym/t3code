@@ -16,12 +16,20 @@ export const AgentHomeBinding = Schema.Struct({
 });
 export type AgentHomeBinding = typeof AgentHomeBinding.Type;
 
+export const AgentLane = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  threadId: ThreadId,
+  host: Schema.NullOr(Schema.String),
+});
+export type AgentLane = typeof AgentLane.Type;
+
 export const AgentHome = Schema.Struct({
   handle: AgentHandle,
   workspaceRoot: TrimmedNonEmptyString,
   displayName: Schema.NullOr(Schema.String),
   role: Schema.NullOr(Schema.String),
   projects: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  lanes: Schema.Array(AgentLane).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   binding: Schema.NullOr(AgentHomeBinding),
   previous: Schema.NullOr(AgentHomeBinding),
 });
