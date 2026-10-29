@@ -473,6 +473,8 @@ export function applyServerSettingsPatch(
                     worktreeOnMerge: next.storageCleanup.worktreeOnMerge,
                     worktreeOnDelete: next.storageCleanup.worktreeOnDelete,
                     worktreeUnchanged: next.storageCleanup.worktreeUnchanged,
+                    worktreeRequireIntegrated: next.storageCleanup.worktreeRequireIntegrated,
+                    worktreeContentIntegration: next.storageCleanup.worktreeContentIntegration,
                     ...(current.worktreeCleanup?.mode === "custom"
                       ? current.worktreeCleanup.rules
                       : {}),
