@@ -1,5 +1,8 @@
 // @effect-diagnostics globalTimers:off -- Capture timeouts and Electron overlay animation timers run at native callback boundaries outside Effect fibers.
 
+import { isDesktopIsolated } from "../app/desktopIsolation.ts";
+import { probeGlobalShortcut } from "./probeGlobalShortcut.ts";
+
 import { pipe } from "effect/Function";
 import {
   DEFAULT_CLIENT_SETTINGS,
@@ -724,21 +727,6 @@ function observedPairMessage(
   return base;
 }
 
-function probeGlobalShortcut(accelerator: string): DesktopSnapShotShortcutAvailability {
-  try {
-    if (!Electron.globalShortcut.register(accelerator, () => undefined)) {
-      return {
-        available: false,
-        message: "This shortcut is already used by the system or another app.",
-      };
-    }
-    Electron.globalShortcut.unregister(accelerator);
-    return { available: true, message: null };
-  } catch {
-    return { available: false, message: "The system could not register this shortcut." };
-  }
-}
-
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const permissions = yield* MacPermissions.MacPermissions;
@@ -1042,6 +1030,12 @@ export const make = Effect.gen(function* () {
   const checkShortcut = Effect.fn("desktop.snapShot.checkShortcut")(function* (
     shortcut: SnapShotShortcut,
   ) {
+    if (isDesktopIsolated()) {
+      return {
+        available: false,
+        message: "SnapShot shortcuts are disabled in isolated instances.",
+      };
+    }
     const mode = captureMode(environment.platform);
     if (mode === "unavailable") {
       return { available: false, message: "SnapShots are not supported on this platform." };
@@ -1109,6 +1103,7 @@ export const make = Effect.gen(function* () {
     requestedPermissionMessage: string | null,
     forceShortcut = false,
   ) {
+    if (isDesktopIsolated()) settings = { ...settings, snapShotEnabled: false };
     const previousSettings = yield* Ref.get(settingsRef);
     yield* Ref.set(settingsRef, settings);
 

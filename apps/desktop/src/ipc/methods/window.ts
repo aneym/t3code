@@ -42,6 +42,7 @@ import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+import { isDesktopIsolated } from "../../app/desktopIsolation.ts";
 import {
   extractDistroFromUncPath,
   resolveWslPickFolderDefaultPath,
@@ -77,6 +78,7 @@ export const getRelayTelemetryEnabled = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
   result: Schema.Boolean,
   handler: Effect.fn("desktop.ipc.window.getRelayTelemetryEnabled")(function* () {
+    if (isDesktopIsolated()) return false;
     return isRelayTracingEnabled(yield* HostProcess.Environment);
   }),
 });
