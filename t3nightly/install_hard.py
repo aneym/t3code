@@ -191,6 +191,9 @@ def install(run):
         elif stopped:
             try:
                 service(run, "start")
+                stopped = False
+                serving(run, previous, observed["oldRuntime.digest"])
+                outcome = "rolled-back"
             except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as restart:
                 run.step("hard-restart-failed", error=str(restart))
     finally:
