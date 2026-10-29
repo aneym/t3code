@@ -46,6 +46,14 @@ def process_start(proc):
 DAEMONS = {"sshd", "sshd-session", "systemd", "(sd-pam)", "gpg-agent", "caddy"}
 
 
+def ignored_commands():
+    path = Path.home() / ".config/t3nightly/retention-ignore"
+    try:
+        return {line.strip() for line in path.read_text().splitlines() if line.strip()}
+    except FileNotFoundError:
+        return set()
+
+
 def ancestors():
     chain, pid = set(), os.getppid()
     while pid > 1 and pid not in chain:
@@ -61,8 +69,8 @@ def ignorable(proc, lineage):
     try:
         if int(proc.name) in lineage or (proc / "comm").read_text().strip() in DAEMONS:
             return True
-        command = (proc / "cmdline").read_bytes()
-        return bool(command) and b"t3nightly" not in command
+        command = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
+        return bool(command) and command in ignored_commands()
     except OSError:
         return False
 

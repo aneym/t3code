@@ -128,14 +128,13 @@ def retain(root, active_run, *, dry_run=False):
                 report["skipped"] = "serving version unavailable or absent from runs"
             else:
                 previous = sorted({value for value in versions.values() if version_key(value) < version_key(serving)}, key=version_key)[-2:]
-                recent = sorted(versions, key=lambda name: os.stat(name, dir_fd=descriptor, follow_symlinks=False).st_mtime)[-3:]
-                keep = {serving, *previous, *(versions[name] for name in recent)}
+                keep = {serving, *previous}
                 report["protectedVersions"] = sorted(keep, key=version_key)
                 values, uncertain = references()
                 report["uncertainProcesses"] = len(uncertain)
                 for name in sorted(dirs):
                     version = versions.get(name)
-                    if name == active_name or version is None or version in keep:
+                    if name == active_name or version is None or version in keep or version_key(version) >= version_key(serving):
                         report["kept"].append(name)
                     elif uncertain or held({str(root / name), str(Path.home() / ".t3nightly/runs" / name)}, values):
                         report["held"].append(name)
