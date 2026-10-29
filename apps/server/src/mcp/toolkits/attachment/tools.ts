@@ -8,6 +8,8 @@ import {
   ThreadId,
   OrchestrationV2RunStatus,
   OrchestratorMcpFailure,
+  OrchestratorMcpThreadSendInput,
+  ThreadSendDelivery,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
@@ -52,6 +54,7 @@ const AttachmentSendTool = Tool.make("t3_thread_send_attachments", {
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     message: Schema.optional(Schema.String.check(Schema.isMaxLength(120000))),
+    mode: OrchestratorMcpThreadSendInput.fields.mode,
     attachments: Schema.Array(McpAttachmentInput).check(
       Schema.isMinLength(1),
       Schema.isMaxLength(8),
@@ -62,6 +65,7 @@ const AttachmentSendTool = Tool.make("t3_thread_send_attachments", {
     messageId: MessageId,
     runId: RunId,
     status: OrchestrationV2RunStatus,
+    ...ThreadSendDelivery.fields,
   }),
 })
   .annotate(Tool.Destructive, true)

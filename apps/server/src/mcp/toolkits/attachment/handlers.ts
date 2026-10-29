@@ -102,7 +102,7 @@ export const layer = McpToolAccess.toLayer(
               ...(caller === undefined ? {} : { senderThreadId: caller.id }),
               text: input.message ?? "",
               attachments,
-              mode: "auto",
+              mode: input.mode ?? "auto",
               createdBy: "agent",
               creationSource: "mcp",
             }).pipe(
@@ -120,6 +120,9 @@ export const layer = McpToolAccess.toLayer(
               messageId,
               runId: result.run.id,
               status: result.run.status,
+              delivery: result.delivery,
+              ...(result.holdReason === undefined ? {} : { holdReason: result.holdReason }),
+              ...(result.next === undefined ? {} : { next: result.next }),
             };
           }),
       ),

@@ -78,7 +78,6 @@ import Migration0071 from "./Migrations/071_PeerLinkFence.ts";
 import Migration0072 from "./Migrations/072_WaitingLinkRequestIndex.ts";
 import Migration0073 from "./Migrations/073_ProjectionThreadAutomationPlacement.ts";
 import Migration0074 from "./Migrations/074_ProjectionProjectsPinOrder.ts";
-import { runForkMigrations } from "./ForkMigrations.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -224,7 +223,6 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     ...previewMigrations,
     ...(yield* run({ loader: makeMigrationLoader(toMigrationInclusive) })),
   ];
-  if (toMigrationInclusive === undefined) yield* runForkMigrations();
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")

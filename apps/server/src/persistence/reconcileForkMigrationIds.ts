@@ -11,10 +11,6 @@ export const reconcileForkMigrationIds = Effect.fn("reconcileForkMigrationIds")(
   if (tables.length === 0) return;
   yield* sql`
     DELETE FROM effect_sql_migrations
-    WHERE migration_id = 75 AND name = 'CompletionDeliveryIndexes'
-  `;
-  yield* sql`
-    DELETE FROM effect_sql_migrations
     WHERE migration_id IN (70, 71) AND name IN ${sql.in(forkMigrationNames)}
   `;
 });

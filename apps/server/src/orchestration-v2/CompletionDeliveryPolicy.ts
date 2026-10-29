@@ -3,7 +3,10 @@ import type {
   OrchestrationV2DelegatedCompletionDelivery,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
+  ThreadId,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import type * as ProjectionStore from "./ProjectionStore.ts";
 
 export const completionDeliveryRun = (
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "runs">,
@@ -22,12 +25,12 @@ export const completionDeliveryMessage = (
     ? undefined
     : projection.messages.find((candidate) => candidate.id === delivery.messageId);
 
-export function completionDeliveryOutcome(status: OrchestrationV2Run["status"], accepted: boolean) {
+function completionDeliveryOutcome(status: OrchestrationV2Run["status"], accepted: boolean) {
   return accepted || status === "completed"
-    ? "delivered"
+    ? ("delivered" as const)
     : status === "cancelled"
-      ? "retry"
-      : "retryLater";
+      ? ("retry" as const)
+      : ("retryLater" as const);
 }
 
 export function completionBlockedBy(
@@ -52,3 +55,32 @@ export function completionQueueBlocked(
     !projection.runs.some((run) => run.status === "completed" && run.ordinal > blockedBy.ordinal)
   );
 }
+
+export const readCompletionDeliveries = Effect.fn("Orchestrator.readCompletionDeliveries")(
+  function* (
+    store: ProjectionStore.ProjectionStoreV2["Service"],
+    threadId: ThreadId,
+    run: Pick<OrchestrationV2Run, "id" | "status">,
+  ) {
+    const records = yield* store.getThreadRecords(threadId, ["messages"], {
+      messageRunIds: [run.id],
+      messageRoles: ["user"],
+    });
+    const messages = records.messages.filter(
+      (message) => message.delegatedCompletion !== undefined,
+    );
+    let accepted = false;
+    if (messages.length > 0) {
+      const { runs, providerTurns } = yield* store.getThreadRecords(
+        threadId,
+        ["runs", "providerTurns"],
+        {
+          runIds: [run.id],
+        },
+      );
+      const attemptId = runs[0]?.activeAttemptId;
+      accepted = attemptId != null && providerTurns.some((turn) => turn.runAttemptId === attemptId);
+    }
+    return { messages, outcome: completionDeliveryOutcome(run.status, accepted) };
+  },
+);
