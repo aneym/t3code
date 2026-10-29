@@ -1,3 +1,4 @@
+import { queuedRunRows, type QueuedRowThumbnail } from "./queuedRunRows";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
@@ -27,7 +28,7 @@ import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
 import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { isImageAttachment, type ChatMessage } from "../../types";
+import type { ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -41,12 +42,6 @@ export interface EditQueuedRunRequest {
   readonly messageId: MessageId;
   readonly text: string;
   readonly attachments: ReadonlyArray<ContractChatAttachment>;
-}
-
-interface QueuedRowThumbnail {
-  readonly key: string;
-  readonly name: string;
-  readonly url: string | null;
 }
 
 // A longer queue shows its first messages and a button that shows the rest.
@@ -120,49 +115,7 @@ export function QueuedRunsControl({
   const optimisticQueued = props.optimisticMessages.filter(
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
-  const items = [
-    ...queued.map(
-      ({ run, text, attachments, context, message, isBackgroundResult }, serverIndex) => ({
-        key: run.id,
-        message,
-        runId: run.id,
-        messageId: run.userMessageId,
-        serverIndex,
-        text,
-        // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
-        editable: context?.guest === undefined && !isBackgroundResult,
-        isBackgroundResult,
-        attachments,
-        thumbnails: attachments
-          .filter((attachment) => attachment.type === "image")
-          .map<QueuedRowThumbnail>((attachment) => ({
-            key: attachment.id,
-            name: attachment.name,
-            url: queuedImageUrlById.get(attachment.id) ?? null,
-          })),
-        pending: false,
-      }),
-    ),
-    ...optimisticQueued.map((message) => ({
-      key: message.id,
-      message: undefined,
-      runId: null,
-      messageId: null,
-      serverIndex: null,
-      text: message.text,
-      editable: true,
-      isBackgroundResult: false,
-      attachments: [] as ReadonlyArray<ContractChatAttachment>,
-      thumbnails: (message.attachments ?? [])
-        .filter(isImageAttachment)
-        .map<QueuedRowThumbnail>((attachment) => ({
-          key: attachment.id,
-          name: attachment.name,
-          url: attachment.previewUrl ?? null,
-        })),
-      pending: true,
-    })),
-  ];
+  const items = queuedRunRows(queued, optimisticQueued, queuedImageUrlById);
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
     if (

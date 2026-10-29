@@ -14,6 +14,8 @@ export function threadSendHint(
     case "blocked":
       return "Waits for the blocking condition to clear and a run to complete; mode auto starts now.";
     case undefined:
-      return "Waits for the user to resume; mode auto starts now.";
+      return thread.createdBy === "agent"
+        ? "Releases when a run ends on this thread; mode auto starts now."
+        : "Waits for the user to resume; mode auto starts now.";
   }
 }

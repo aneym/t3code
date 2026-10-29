@@ -1417,7 +1417,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             yield* offerDelegatedCompletionDelivery(threadId, run.id);
           }
         }
-        const held = view.runs.filter((run) => releasesQueueHoldAtRunEnd(run, ended, view));
+        const held = view.runs.filter((run) =>
+          releasesQueueHoldAtRunEnd(
+            run,
+            run.queueHoldReason === "restart"
+              ? view.runs.find((candidate) => candidate.id === options.endedRunId)
+              : ended,
+            view,
+          ),
+        );
         if (held.length > 0) {
           const now = yield* DateTime.now;
           yield* writeSystemEvents(

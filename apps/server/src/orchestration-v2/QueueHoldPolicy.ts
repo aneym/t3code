@@ -67,7 +67,8 @@ function releasesStopHold(
 }
 
 export function stoppedQueueHold(run: OrchestrationV2Run, now: DateTime.Utc): Hold | undefined {
-  if (run.queueHeld === true && run.queueHoldReason !== "restart") return undefined;
+  if (run.queueHeld === true && run.queueHoldReason !== "restart" && run.queueHoldReason !== "stop")
+    return undefined;
   return { queueHeld: true, queueHoldReason: "stop", queueHeldAt: now };
 }
 

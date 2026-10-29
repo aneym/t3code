@@ -1,3 +1,4 @@
+import { threadQueueEntryControls } from "./threadQueueEntryControls";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -40,7 +41,6 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
   REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
   buildCancelQueuedRunCommand,
-  resolveThreadQueueRowControls,
 } from "./threadQueueControlPresentation";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
@@ -235,16 +235,12 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, text, attachments, context, message, isBackgroundResult }, index) => {
-        const controls = resolveThreadQueueRowControls({
-          busy: busyRunId !== null,
-          canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
-          canSendNow: workflow?.canSendNow ?? false,
-          editBlocked: editBlockedReason !== null,
-          isEditing: editing?.runId === run.id,
-          isGuestMessage: context?.guest !== undefined,
-          isBackgroundResult,
-          text,
+      {queuedRuns.map(({ run, attachments, context, message }, index) => {
+        const controls = threadQueueEntryControls(queuedRuns[index]!, {
+          busyRunId,
+          workflow,
+          editBlockedReason,
+          editingRunId: editing?.runId,
         });
         const title =
           controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
