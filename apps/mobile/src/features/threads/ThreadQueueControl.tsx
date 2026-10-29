@@ -1,4 +1,7 @@
-import { canSendAllQueued } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  canSendAllQueued,
+  describeSendAllQueued,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import { QueuedRunSender } from "./QueuedRunSender";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
@@ -156,8 +159,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       contentContainerClassName="px-5 pb-6"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
     >
-      {queueSendAll && canSendAllQueued(workflow, editing !== null) ? (
-        <View className="py-3">
+      {queueSendAll && workflow && canSendAllQueued(workflow, editing !== null) ? (
+        <View className="gap-2 py-3">
+          <Text className="text-sm text-foreground-muted">{describeSendAllQueued(workflow)}</Text>
           <Button
             label="Send all"
             disabled={resuming || busyRunId !== null}
