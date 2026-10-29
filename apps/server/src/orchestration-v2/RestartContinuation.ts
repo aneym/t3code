@@ -184,6 +184,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     readonly prepared?: boolean;
     readonly epoch?: string;
     readonly humanReply?: string;
+    readonly attempt?: number;
   }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
@@ -303,9 +304,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       .dispatch({
         type: "message.dispatch",
         commandId: CommandId.make(
-          input.epoch === undefined
-            ? `command:restart-continuation:${input.sourceRunId}`
-            : `command:restart-handoff:${input.epoch}:${input.sourceRunId}`,
+          `${
+            input.epoch === undefined
+              ? `command:restart-continuation:${input.sourceRunId}`
+              : `command:restart-handoff:${input.epoch}:${input.sourceRunId}`
+          }${input.attempt === undefined ? "" : `:attempt:${input.attempt}`}`,
         ),
         threadId: input.threadId,
         messageId,

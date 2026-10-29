@@ -20,6 +20,7 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
     handoff: Pick<ServerRestartHandoff, "runIds" | "pausedRunIds">;
     humanReply?: string;
     willRetry: boolean;
+    attempt: number;
   }) {
     const threads = yield* ThreadManagementService.ThreadManagementService;
     for (const sourceRunId of input.handoff.runIds) {
@@ -80,6 +81,7 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
           sourceRunId,
           prepared: true,
           epoch: input.epoch,
+          attempt: input.attempt,
           ...(input.humanReply === undefined ? {} : { humanReply: input.humanReply }),
         });
       }).pipe(

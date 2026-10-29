@@ -129,11 +129,16 @@ export const layerExecutor: Layer.Layer<
                 ? { humanReply: request.text }
                 : {}),
               willRetry,
+              attempt: effect.attemptCount,
             }).pipe(Effect.provideContext(restartContext), Effect.mapError(restartFailed));
           }
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
-            return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
+            return continueRestartedRun({
+              threadId: effect.threadId,
+              sourceRunId,
+              attempt: effect.attemptCount,
+            }).pipe(
               Effect.provideContext(restartContext),
               Effect.tapError(() =>
                 willRetry
