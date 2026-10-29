@@ -970,8 +970,6 @@ const make = Effect.gen(function* () {
           )
         )
           return keep("settings changed since check");
-        const submodules = yield* submoduleKeepReason(worktreePath, settings);
-        if (submodules !== null) return keep(submodules);
         // Runs right before the move; the status check goes last so it sees edits made meanwhile.
         const removal = yield* trash.remove(managedRoot, worktreePath, project.workspaceRoot, () =>
           Effect.gen(function* () {
@@ -986,6 +984,8 @@ const make = Effect.gen(function* () {
               return "commit changed since check";
             const personal = yield* trash.personalStateReason(worktreePath);
             if (personal !== null) return personal;
+            const submodules = yield* submoduleKeepReason(worktreePath, settings);
+            if (submodules !== null) return submodules;
             return yield* localChangesReason(worktreePath, settings);
           }),
         );

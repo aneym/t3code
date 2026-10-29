@@ -575,6 +575,31 @@ it.live("keeps nested submodule files protected by the current keep rule", () =>
   ),
 );
 
+it.live("keeps an ignored submodule file saved while the last thread checks run", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, submodule, setPolicy, setBeforeGit, setBeforeProjects } =
+        yield* submoduleCleanupFixture();
+      setPolicy("any-local-files");
+      let armed = false;
+      setBeforeGit((operation) =>
+        Effect.sync(() => {
+          if (operation === "StorageCleanup.adminDir") armed = true;
+        }),
+      );
+      setBeforeProjects(() => {
+        if (!armed) return Effect.void;
+        armed = false;
+        return fs.writeFileString(`${submodule}/.env`, "local secret\n").pipe(Effect.orDie);
+      });
+      expect(
+        (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+      ).toMatchObject({ outcome: "kept" });
+      expect(yield* fs.readFileString(`${submodule}/.env`)).toBe("local secret\n");
+    }),
+  ),
+);
+
 it.live("keeps unpushed submodule history after checkout and deinitialization", () =>
   runCleanupTest(
     Effect.gen(function* () {
