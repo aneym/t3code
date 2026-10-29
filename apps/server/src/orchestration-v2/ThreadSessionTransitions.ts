@@ -7,12 +7,8 @@ import {
   type OrchestrationV2ThreadProjection,
   THREAD_SESSION_RESTART_REASON,
 } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as EventSink from "./EventSink.ts";
 
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -62,8 +58,6 @@ export const makeThreadSelectionPlanner = Effect.gen(function* () {
 });
 
 export const makeThreadSessionPreparation = Effect.gen(function* () {
-  const eventSink = yield* EventSink.EventSinkV2;
-  const ids = yield* IdAllocator.IdAllocatorV2;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const store = yield* ProjectionStore.ProjectionStoreV2;
   return Effect.fn("ThreadSessionTransitions.prepareSession")(function* (input: {
@@ -74,64 +68,7 @@ export const makeThreadSessionPreparation = Effect.gen(function* () {
     readonly run: OrchestrationV2Run;
     readonly providerThread: OrchestrationV2ProviderThread;
   }) {
-    const { projection, run, providerThread } = input;
-    const previousRun = projection.runs.findLast(
-      (candidate) =>
-        candidate.ordinal < run.ordinal &&
-        candidate.delegatedTaskId === undefined &&
-        candidate.providerThreadId !== null &&
-        candidate.startedAt !== null,
-    );
-    const previousThread = projection.providerThreads.find(
-      (candidate) => candidate.id === previousRun?.providerThreadId,
-    );
-    const replacedSession = projection.providerSessions.find(
-      (session) =>
-        session.id === previousThread?.providerSessionId &&
-        session.providerInstanceId !== run.providerInstanceId &&
-        session.status !== "stopped" &&
-        session.status !== "error",
-    );
-    const replacedSessionBusy = projection.providerThreads.some(
-      (candidate) =>
-        candidate.providerSessionId === replacedSession?.id &&
-        (candidate.ownerNodeId !== null || (candidate.pendingBackgroundTasks?.length ?? 0) > 0),
-    );
-    if (
-      providerThread.ownerNodeId === null &&
-      replacedSession !== undefined &&
-      !replacedSessionBusy &&
-      run.activeAttemptId !== null
-    ) {
-      const now = yield* DateTime.now;
-      const reason = "Provider or model selection changed.";
-      const detached = yield* eventSink.writeIfRunCurrent({
-        threadId: projection.thread.id,
-        runId: run.id,
-        activeAttemptId: run.activeAttemptId,
-        expectedStatus: "starting",
-        events: [
-          {
-            id: yield* ids.allocate.event({ threadId: projection.thread.id }),
-            type: "provider-session.detached",
-            threadId: projection.thread.id,
-            driver: replacedSession.driver,
-            providerInstanceId: replacedSession.providerInstanceId,
-            occurredAt: now,
-            payload: { providerSessionId: replacedSession.id, detachedAt: now, reason },
-          },
-        ],
-      });
-      if (detached.committed) {
-        yield* sessions
-          .detach({
-            providerSessionId: replacedSession.id,
-            threadId: projection.thread.id,
-            detail: reason,
-          })
-          .pipe(Effect.ignoreCause({ log: true }));
-      }
-    }
+    const { projection, providerThread } = input;
     if (!ThreadSessionRestarts.threadSessionRestartRequested(projection.thread.id)) return;
     const hasPendingBackgroundTasks = yield* store
       .getThreadRecords(projection.thread.id, ["providerThreads"])
