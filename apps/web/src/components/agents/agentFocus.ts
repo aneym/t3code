@@ -16,6 +16,7 @@ import {
   railsAgentThreadKey,
   useRailsAgents,
 } from "./railsAgents";
+import { sidebarProjectPinKey } from "./sidebarPins";
 
 const AGENT_FOCUS_STORAGE_KEY = "t3code:sidebar-agent-focus";
 const agentFocusSchema = Schema.NullOr(Schema.String);
@@ -68,9 +69,20 @@ export function useSidebarAgentThreads<T extends EnvironmentThreadShell>(
       for (const release of releases) release();
     };
   }, [laneKey]);
-  if (!focused) return { threads: listed, projectKeys: null };
-  const projectKeys = agentWorkProjectKeys(focused, projects);
-  const laneKeys = new Set(focused.lanes.map((lane) => `${lane.environmentId}:${lane.threadId}`));
+  const pinnedProject = focused
+    ? undefined
+    : projects.find((project) => handle !== null && sidebarProjectPinKey(project) === handle);
+  if (!focused && !pinnedProject) return { threads: listed, projectKeys: null };
+  const projectKeys = focused
+    ? agentWorkProjectKeys(focused, projects)
+    : new Set(
+        pinnedProject
+          ? [scopedProjectKey(scopeProjectRef(pinnedProject.environmentId, pinnedProject.id))]
+          : [],
+      );
+  const laneKeys = new Set(
+    (focused?.lanes ?? []).map((lane) => `${lane.environmentId}:${lane.threadId}`),
+  );
   return {
     threads: listed.filter(
       (thread) =>

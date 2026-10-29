@@ -21,10 +21,10 @@ const parseLane = (name: string, raw: string): LaneRecord | null => {
   const doc: unknown = JSON.parse(raw);
   if (typeof doc !== "object" || doc === null || Array.isArray(doc)) return null;
   const data = doc as Record<string, unknown>;
-  if (data.closed_at != null || data.retired_at != null) return null;
+  const open = data.closed_at == null && data.retired_at == null;
   const t3 =
     typeof data.t3 === "object" && data.t3 !== null ? (data.t3 as Record<string, unknown>) : {};
-  const threadId = text(t3.thread_id);
+  const threadId = open ? text(t3.thread_id) : null;
   return {
     name,
     parent: text(data.parent) ?? text(data.report_to),
@@ -51,13 +51,11 @@ export const createLaneReader = (lanesDir: string) => {
         const cached = cache.get(name);
         if (cached?.mtimeMs === stat.mtimeMs) return cached.record;
         const record = await NodeFSP.readFile(file, "utf8")
-          .then(
-            (raw) => parseLane(name, raw),
-            () => null,
-          )
-          .catch(() => null);
-        cache.set(name, { mtimeMs: stat.mtimeMs, record });
-        return record;
+          .then((raw) => ({ ok: true as const, value: parseLane(name, raw) }))
+          .catch(() => ({ ok: false as const, value: null }));
+        if (record.ok) cache.set(name, { mtimeMs: stat.mtimeMs, record: record.value });
+        else cache.delete(name);
+        return record.value;
       }),
     );
     return records.filter((record): record is LaneRecord => record !== null);
