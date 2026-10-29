@@ -216,19 +216,22 @@ def fast_e2e(config, log):
 
 def fast_install(config, log):
     config.install_state().mkdir(parents=True, exist_ok=True)
-    state = config.install_state()
+    state, env, prefix = config.install_state(), None, []
     if config.host == "ax42":
-        state = (config.home / ".t3nightly" / "backups").resolve().parent / "fast-install" / config.version
+        backups = (config.home / ".t3nightly" / "backups").resolve()
+        state = backups.parent / "fast-install" / config.version
         state.mkdir(parents=True, exist_ok=True)
-    words = [sys.executable, str(config.tools / "install"), "--hard", "--version", config.version, "--assets", str(config.build_out()),
+        env = {**os.environ, "AGENT_LANE": "t3-nightly", "AGENT_THREAD_ID": "mcp:a2795f2f-43aa-40c5-890c-98de1291379a"}
+        prefix = ["ionice", "-c3", "nice", "-n", "19"]
+    words = [*prefix, sys.executable, str(config.tools / "install"), "--hard", "--version", config.version, "--assets", str(config.build_out()),
              "--manifest", str(config.manifest), "--artifact-manifest", str(config.artifact()), "--receipt", str(config.receipt("rehearsal")),
              "--receipt-host", config.host, "--install-receipt", str(config.receipt("install")), "--state-dir", str(state),
              "--chat-project", str(config.chat_project()), "--load-max", "64", "--health-s", "300",
              "--smoke-verdict", str(config.run / f"e2e-{config.host}" / "smoke-verdict.json")]
     if config.host == "ax42":
-        words.extend(["--service-label", "t3code.service"])
+        words.extend(["--service-label", "t3code.service", "--backups", str(backups)])
     config.receipt("install").unlink(missing_ok=True)
-    code = command(words, log)
+    code = command(words, log, env=env)
     outcome = "failed"
     if config.receipt("install").is_file():
         outcome = json.loads(config.receipt("install").read_text())["outcome"]
