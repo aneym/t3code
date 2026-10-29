@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from t3nightly.headless_env import provider_env
+from t3nightly.headless_env import pin_settings, provider_env
 from t3nightly.io_priority import background_command
 from t3nightly.live_snapshot import for_run
 from t3nightly.stage_owners import ensure_owners
@@ -113,10 +113,11 @@ def main():
     env = dict(os.environ, PATH=f"{NODE_BIN}:{os.environ.get('PATH', '')}", T3CODE_NO_BROWSER="1")
     for key in [key for key in env if key.startswith(("T3CODE_", "T3_", "VITE_")) and key != "T3CODE_NO_BROWSER"]:
         env.pop(key)
-    env.update(provider_env(home / "provider", out / "security-refusals.log", env["PATH"]))
+    env.update(provider_env(home / "provider"))
     tasks = None
     if not args.keep_db or not (home / "userdata" / "statev2.sqlite").exists():
         tasks = seed(worktree, home, env, log, args.version)
+    pin_settings(home / "userdata" / "settings.json", home / "provider", out / "security-refusals.log")
     process, pairing, (server_port, web_port) = start_dev(worktree, home, env, log)
     try:
         origin = f"http://localhost:{web_port}"

@@ -1,3 +1,4 @@
+import json
 import os
 import shlex
 import shutil
@@ -29,9 +30,12 @@ def real_claude(bin_dir):
     installed = Path.home() / ".local/bin/claude"
     if installed.is_file() and os.access(installed, os.X_OK):
         return installed.resolve()
-    search = os.pathsep.join(entry for entry in os.environ.get("PATH", "").split(os.pathsep) if Path(entry) != bin_dir)
-    found = shutil.which("claude", path=search)
-    return Path(found) if found else None
+    own = (bin_dir / "claude").resolve()
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        found = shutil.which("claude", path=entry) if entry else None
+        if found and Path(found).resolve() != own and Path(entry).resolve() != bin_dir:
+            return Path(found)
+    raise RuntimeError("no claude binary to pin for headless provider runs")
 
 
 def headless_bin(root, refusals):
@@ -45,15 +49,22 @@ def headless_bin(root, refusals):
         f"exit {NOT_FOUND}",
     ])
     binary = real_claude(root)
-    if binary is not None:
-        write_script(root / "claude", ["#!/bin/sh", *claude_lb_lines(root), f"exec {shlex.quote(str(binary))} \"$@\""])
+    write_script(root / "claude", ["#!/bin/sh", *claude_lb_lines(root), f"exec {shlex.quote(str(binary))} \"$@\""])
     return root
 
 
-def provider_env(work, refusals=None, path=None):
-    work = Path(work)
-    env = {"CODEX_HOME": str(isolated_codex_home(work / "codex-home")), "GIT_TERMINAL_PROMPT": "0"}
+def provider_env(work):
+    return {"CODEX_HOME": str(isolated_codex_home(Path(work) / "codex-home")), "GIT_TERMINAL_PROMPT": "0"}
+
+
+def pin_settings(settings_path, work, refusals):
+    path = Path(settings_path)
+    settings = json.loads(path.read_text()) if path.is_file() else {}
+    settings["cursorKeychainUsageEnabled"] = False
     if sys.platform == "darwin":
-        root = headless_bin(work / "headless-bin", Path(refusals or work / "security-refusals.log").resolve())
-        env["PATH"] = os.pathsep.join([str(root), os.environ.get("PATH", "") if path is None else path])
-    return env
+        wrapper = headless_bin(Path(work) / "headless-bin", Path(refusals).resolve()) / "claude"
+        instance = settings.setdefault("providerInstances", {}).setdefault("claudeAgent", {"driver": "claudeAgent"})
+        instance.setdefault("config", {})["binaryPath"] = str(wrapper)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(settings, indent=2) + "\n")
+    return settings

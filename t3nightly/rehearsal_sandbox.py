@@ -15,7 +15,7 @@ from contextlib import closing
 from pathlib import Path
 
 from .codex_isolation import isolated_codex_home
-from .headless_env import AGENT_LB_URL, claude_lb_lines, headless_bin
+from .headless_env import AGENT_LB_URL, claude_lb_lines, headless_bin, pin_settings
 from .install_strays import port_listeners
 from .release_manifest import history_digest
 
@@ -137,8 +137,7 @@ class Sandbox:
         return json.loads(result.stdout) if "--json" in args else result.stdout
 
     def service_environment(self):
-        headless = [str(headless_bin(self.home / "runtime/headless-bin", self.evidence / "security-refusals.log"))] if sys.platform == "darwin" else []
-        paths = [*headless, str(self.cli.parent)] + [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if ".t3" not in entry]
+        paths = [str(self.cli.parent)] + [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if ".t3" not in entry]
         environment = {"HOME": str(self.home), "PATH": os.pathsep.join(paths), "T3CODE_HOME": str(self.home), "T3CODE_NO_BROWSER": "1", "TMPDIR": str(self.home / "runtime/tmp"), "CODEX_HOME": str(self.home / "codex-home"), "GIT_TERMINAL_PROMPT": "0",
                        "T3CODE_HOST": "127.0.0.1", "T3CODE_PORT": str(self.port)}
         if any(".t3" in value and not value.startswith(str(self.home)) for value in environment.values()):
@@ -163,8 +162,9 @@ class Sandbox:
         with closing(sqlite3.connect(f"file:{self.args.seed.resolve()}?mode=ro", uri=True)) as source, closing(sqlite3.connect(self.db)) as target:
             source.backup(target)
         self.check_seed()
-        settings = {"cursorKeychainUsageEnabled": False, "providerInstances": {self.args.provider: {"driver": "claudeAgent", "displayName": "Rehearsal", "enabled": True, "environment": [], "config": {"binaryPath": str(provider_wrapper(self.args.provider_binary, self.evidence, self.home / "runtime/claude-provider"))}}}}
+        settings = {"providerInstances": {self.args.provider: {"driver": "claudeAgent", "displayName": "Rehearsal", "enabled": True, "environment": [], "config": {"binaryPath": str(provider_wrapper(self.args.provider_binary, self.evidence, self.home / "runtime/claude-provider"))}}}}
         (self.home / "userdata/settings.json").write_text(json.dumps(settings) + "\n")
+        pin_settings(self.home / "userdata/settings.json", self.home / "runtime", self.evidence / "security-refusals.log")
         self.project.mkdir()
         subprocess.run(["git", "init", "-q", str(self.project)], check=True, timeout=10)
         subprocess.run(["git", "-C", str(self.project), "-c", "user.name=Rehearsal", "-c", "user.email=rehearsal@local", "commit", "--allow-empty", "-qm", "Initialize sandbox"], check=True, timeout=10)

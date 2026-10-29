@@ -4,7 +4,7 @@ import sys
 import time
 from pathlib import Path
 
-from .headless_env import provider_env
+from .headless_env import pin_settings, provider_env
 from .preview_identity import process_start, stop_recorded
 from .preview_output import shared_origin
 
@@ -118,8 +118,10 @@ def start_server(worktree, log, pairing_path, record_process, timeout=240):
         redactor = detached_redactor(reader, log, pairing_path, worktree)
         os.close(reader)
         reader = None
+        provider = worktree / ".t3" / "provider"
+        pin_settings(worktree / ".t3" / "userdata" / "settings.json", provider, provider / "security-refusals.log")
         proc = subprocess.Popen(["vp", "run", "dev", "--share", "--home-dir", str(worktree / ".t3")],
-                                cwd=str(worktree), env=dict(command_env(), **provider_env(worktree / ".t3" / "provider")),
+                                cwd=str(worktree), env=dict(command_env(), **provider_env(provider)),
                                 stdin=subprocess.DEVNULL, stdout=writer, stderr=subprocess.STDOUT, start_new_session=True)
         os.close(writer)
         writer = None
