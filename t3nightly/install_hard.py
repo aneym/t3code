@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .identity_snapshot import finish as finish_identities
 from .install_backup import capture
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_process import service_binary, serving_process
@@ -244,4 +245,6 @@ def install(run):
     path.parent.mkdir(parents=True, exist_ok=True)
     write(path, receipt)
     run.step("hard-install-receipt", path=str(path), outcome=outcome)
+    if outcome in ("installed", "current"):
+        finish_identities(args.version, home=run.home)
     return run.finish(outcome, f"hard install {outcome}: {previous} -> {args.version}")
