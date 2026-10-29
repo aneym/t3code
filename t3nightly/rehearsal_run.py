@@ -165,10 +165,14 @@ class Rehearsal:
             path = self.sandbox.evidence / "result.json"
             path.write_text(json.dumps(result, indent=2) + "\n")
             try:
-                result = {**result, "retention": retain(self.sandbox.home.parent)}
-            except (OSError, subprocess.SubprocessError) as error:
-                result = {**result, "retention": {"error": str(error)}}
-            path.write_text(json.dumps(result, indent=2) + "\n")
+                retention = retain(self.sandbox.home.parent)
+            except Exception as error:
+                retention = {"error": f"{type(error).__name__}: {error}"}
+            try:
+                path.with_name("retention.json").write_text(json.dumps(retention, indent=2) + "\n")
+            except OSError:
+                pass
+            result = {**result, "retention": retention}
         print(json.dumps(result, indent=2), flush=True)
         return 0 if result["result"] in ("PASS", "COMPATIBILITY-PROBE", "ROLLBACK-PROOF") else 1
 

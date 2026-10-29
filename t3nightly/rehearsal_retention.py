@@ -1,11 +1,13 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 PREFIX = "rehearsal-fast-"
+NAME = re.compile(r"rehearsal-fast-(?P<number>[^-]+)-(?P<host>[^-]+)(?:-attempt\d+)?")
 
 
 def nightly_root():
@@ -21,8 +23,8 @@ def finished(path):
 
 
 def rollback_name(name):
-    prefix, _, host = name.rpartition("-")
-    return f"{prefix}-rollback-{host}"
+    match = NAME.fullmatch(name)
+    return f"{PREFIX}{match['number']}-rollback-{match['host']}" if match else None
 
 
 def installer_target(root):
@@ -36,10 +38,12 @@ def installer_target(root):
 def live_references():
     own = os.getpid()
     if sys.platform == "darwin":
-        listing = subprocess.run(["ps", "-axww", "-o", "pid=,args="], capture_output=True, text=True, timeout=30, check=False).stdout
+        listing = subprocess.run(["ps", "-axww", "-o", "pid=,args="], capture_output=True, text=True, timeout=30, check=True).stdout
         rows = [line.strip().partition(" ") for line in listing.splitlines()]
         references = [args for pid, _, args in rows if pid != str(own)]
-        cwds = subprocess.run(["lsof", "-a", "-d", "cwd", "-u", str(os.getuid()), "-Fpn"], capture_output=True, text=True, timeout=60, check=False).stdout
+        cwds = subprocess.run(["lsof", "-a", "-d", "cwd", "-u", str(os.getuid()), "-Fpn"], capture_output=True, text=True, timeout=60, check=True).stdout
+        if not listing.strip() or not cwds.strip():
+            raise RuntimeError("process inspection returned nothing")
         pid = None
         for line in cwds.splitlines():
             if line.startswith("p"):
@@ -48,6 +52,8 @@ def live_references():
                 references.append(line[1:])
         return references
     references = []
+    if not Path("/proc/self/cwd").exists():
+        raise RuntimeError("process inspection unavailable")
     for proc in Path("/proc").iterdir():
         if not proc.name.isdigit() or proc.name == str(own):
             continue
@@ -70,11 +76,11 @@ def retain(sandbox_dir):
     if sandbox_dir.parent != root or not sandbox_dir.name.startswith(PREFIX):
         return {"skipped": "sandbox is outside the nightly root"}
     dirs = sorted(path for path in root.iterdir() if path.name.startswith(PREFIX) and path.is_dir() and not path.is_symlink())
-    passing = [(result.get("finishedAt", ""), path) for path in dirs if (result := finished(path)) and result.get("result") == "PASS"]
+    passing = [(str(result.get("finishedAt") or ""), path) for path in dirs if (result := finished(path)) and result.get("result") == "PASS"]
     keep = set()
     if passing:
         newest = max(passing)[1]
-        keep = {newest, root / rollback_name(newest.name)}
+        keep = {newest} | ({root / rollback_name(newest.name)} if rollback_name(newest.name) else set())
     target = installer_target(root)
     references = live_references()
     report = {"kept": sorted(path.name for path in keep if path.exists()), "dropped": [], "held": []}
