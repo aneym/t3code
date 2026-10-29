@@ -31,30 +31,58 @@ NODE
 user_systemctl() {
   XDG_RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" systemctl --user "$@" 2>/dev/null || true
 }
+canonical_dir() {
+  [ -z "$1" ] || (cd "$1" 2>/dev/null && pwd -P) || true
+}
+service_home() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    sed -n -E '/<key>T3CODE_HOME<.key>/{n;s|^[[:space:]]*<string>(.*)</string>[[:space:]]*$|\\1|p;q;}' "$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist" 2>/dev/null |
+      sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\\&/g'
+    return 0
+  fi
+  sed -n 's/^Environment=T3CODE_HOME=//p' "$HOME/.config/systemd/user/${SYSTEMD_UNIT}" 2>/dev/null | head -n 1 |
+    sed -E -e 's/[[:space:]]+$//' -e '/^".*"$/{s/^"//;s/"$//;s/[\\](["\\])/\\1/g;}' -e 's/%%/%/g'
+}
 service_state() {
   if [ "$(uname -s)" = "Darwin" ]; then
-    grep -qsF "<string>$DEFAULT_SERVER_HOME</string>" "$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist" || return 0
-    if launchctl print "gui/$(id -u)/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
-      printf 'up'
-      return 0
-    fi
-    SERVICE_DISABLED="$(launchctl print-disabled "gui/$(id -u)" 2>/dev/null)" || return 0
-    case "$SERVICE_DISABLED" in
-      *'"${LAUNCHD_LABEL}" => disabled'* | *'"${LAUNCHD_LABEL}" => true'*) ;;
-      *) printf 'not loaded' ;;
+    SERVICE_PRINT=0
+    launchctl print "gui/$(id -u)/${LAUNCHD_LABEL}" >/dev/null 2>&1 || SERVICE_PRINT=$?
+    case "$SERVICE_PRINT" in
+      0) printf 'up' ;;
+      112) ;;
+      113)
+        SERVICE_DISABLED="$(launchctl print-disabled "gui/$(id -u)" 2>/dev/null)" || {
+          printf 'unknown'
+          return 0
+        }
+        case "$SERVICE_DISABLED" in
+          *'"${LAUNCHD_LABEL}" => disabled'* | *'"${LAUNCHD_LABEL}" => true'*) ;;
+          *) printf 'not loaded' ;;
+        esac
+        ;;
+      *) printf 'unknown' ;;
     esac
     return 0
   fi
-  grep -qsxF "Environment=T3CODE_HOME=$DEFAULT_SERVER_HOME" "$HOME/.config/systemd/user/${SYSTEMD_UNIT}" || return 0
   SERVICE_ACTIVE="$(user_systemctl is-active ${SYSTEMD_UNIT})"
   case "$SERVICE_ACTIVE" in
     active | activating | deactivating | reloading | refreshing) printf 'up' ;;
-    *) if [ "$(user_systemctl is-enabled ${SYSTEMD_UNIT})" = "enabled" ]; then printf '%s' "$SERVICE_ACTIVE"; fi ;;
+    inactive | failed)
+      case "$(user_systemctl is-enabled ${SYSTEMD_UNIT})" in
+        enabled | enabled-runtime) printf '%s' "$SERVICE_ACTIVE" ;;
+        '') printf 'unknown' ;;
+      esac
+      ;;
+    *) printf 'unknown' ;;
   esac
 }
 adopt_service_server() {
+  SERVICE_HOME="$(canonical_dir "$(service_home)")"
+  if [ -z "$SERVICE_HOME" ] || [ "$SERVICE_HOME" != "$(canonical_dir "$DEFAULT_SERVER_HOME")" ]; then
+    return 0
+  fi
   SERVICE_DEADLINE=$(($(date +%s) + ${SERVICE_WAIT_SECONDS}))
-  while SERVICE_STATE="$(service_state)" && [ "$SERVICE_STATE" = "up" ]; do
+  while SERVICE_STATE="$(service_state)" && { [ "$SERVICE_STATE" = "up" ] || [ "$SERVICE_STATE" = "unknown" ]; }; do
     SERVICE_RUNTIME="$(resolve_default_runtime_port 2>/dev/null || true)"
     REMOTE_PORT="\${SERVICE_RUNTIME#* }"
     if [ -n "$SERVICE_RUNTIME" ] && wait_ready 1000; then
@@ -66,7 +94,11 @@ adopt_service_server() {
       return 0
     fi
     if [ "$(date +%s)" -ge "$SERVICE_DEADLINE" ]; then
-      printf 'The T3 Code background service on this host did not start serving within ${SERVICE_WAIT_SECONDS} seconds. Run \`t3 service restart\` on this host, then reconnect.\\n' >&2
+      if [ "$SERVICE_STATE" = "unknown" ]; then
+        printf 'T3 Code has a background service installed on this host, but its state could not be read. Run \`t3 service status\` on this host, then reconnect.\\n' >&2
+      else
+        printf 'The T3 Code background service on this host did not start serving within ${SERVICE_WAIT_SECONDS} seconds. Run \`t3 service restart\` on this host, then reconnect.\\n' >&2
+      fi
       exit 1
     fi
     sleep 1
