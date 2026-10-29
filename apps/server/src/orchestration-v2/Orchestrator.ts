@@ -1070,7 +1070,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "contextTransfers",
         ],
         {
-          turnItemTypes: ["user_message", "error"],
+          turnItemTypes: ["user_message", "error", "run_interrupt_request"],
           messageRoles: ["user"],
           omitSettledLeafNodes: true,
         },
@@ -1408,18 +1408,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       if ((yield* effectOutbox.restartPrepared) !== undefined) return;
       if (options?.endedRunId !== undefined) {
-        const before = yield* readCommandProjection(threadId);
-        const latest = latestExecutedRun(before.runs);
+        const view = yield* readCommandProjection(threadId);
+        const latest = latestExecutedRun(view.runs);
         const ended = latest?.id === options.endedRunId ? latest : undefined;
-        for (const run of ended?.status === "completed" ? before.runs : []) {
+        for (const run of ended?.status === "completed" ? view.runs : []) {
           const delivery = run.delegatedCompletion?.delivery;
-          if (delivery != null && completionDeliveryMessage(before, delivery) === undefined) {
+          if (delivery != null && completionDeliveryMessage(view, delivery) === undefined) {
             yield* offerDelegatedCompletionDelivery(threadId, run.id);
           }
         }
-        const held = before.runs.filter((run) =>
-          releasesQueueHoldAtRunEnd(run, ended, before.thread.createdBy === "agent"),
-        );
+        const held = view.runs.filter((run) => releasesQueueHoldAtRunEnd(run, ended, view));
         if (held.length > 0) {
           const now = yield* DateTime.now;
           yield* writeSystemEvents(
@@ -10339,7 +10337,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         continue;
       }
-      const hold = stoppedQueueHold(run);
+      const hold = stoppedQueueHold(run, input.now);
       if (hold === undefined) continue;
       yield* emitEvent({
         type: "run.updated",

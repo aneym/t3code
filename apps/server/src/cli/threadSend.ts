@@ -22,6 +22,7 @@ import {
   waitFlag,
 } from "./threadCommon.ts";
 import { finishRun } from "./threadRun.ts";
+import { ThreadQueueHeldError } from "./ThreadQueueHeldError.ts";
 
 const decodeRequestId = Schema.decodeUnknownEffect(OrchestratorMcpClientRequestId);
 
@@ -50,7 +51,7 @@ const receiptText = (sent: OrchestratorMcpThreadSendResult) =>
 
 const deliveryText = (sent: OrchestratorMcpThreadSendResult) =>
   sent.delivery === "held"
-    ? `Held (${sent.holdReason ?? "manual"}).${receiptText(sent)} ${sent.next ?? "Resume the queue to deliver this message."}`
+    ? `Held (${sent.holdReason ?? "manual"}).${receiptText(sent)} ${sent.next ?? "Send with mode auto to start now."}`
     : `${sent.delivery === "queued" ? "Queued" : "Sent"}.${receiptText(sent)}`;
 
 export const threadSendCommand = Command.make("send", {
@@ -89,6 +90,7 @@ export const threadSendCommand = Command.make("send", {
           );
           if (sent.delivery === "held") {
             yield* flags.json ? printJson(sent) : Console.log(deliveryText(sent));
+            if (flags.wait) return yield* new ThreadQueueHeldError({ threadId });
             return;
           }
           if (flags.wait) {

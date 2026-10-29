@@ -1,4 +1,4 @@
-import { QueueHoldReason } from "./queueHoldReason.ts";
+import { QueueHoldState, QueueHoldStateJson } from "./queueHoldReason.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
@@ -677,8 +677,7 @@ export const OrchestrationV2Run = Schema.Struct({
   activeAttemptId: Schema.NullOr(RunAttemptId),
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
-  queueHeld: Schema.optional(Schema.Boolean),
-  queueHoldReason: Schema.optional(QueueHoldReason),
+  ...QueueHoldState.fields,
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -2256,6 +2255,7 @@ export type OrchestrationV2AppThreadJson = typeof OrchestrationV2AppThreadJson.T
 
 export const OrchestrationV2RunJson = OrchestrationV2Run.mapFields((fields) => ({
   ...fields,
+  ...QueueHoldStateJson.fields,
   requestedAt: Schema.DateTimeUtcFromString,
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),

@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import type * as Orchestrator from "./Orchestrator.ts";
+import { threadSendHint } from "./ThreadSendHint.ts";
 import type {
   ProjectionRecordField,
   ProjectionRecordFilter,
@@ -307,7 +308,7 @@ export const makeSendToThread = <LoadError, DispatchError>(
       ...(delivery === "held"
         ? {
             holdReason: run.queueHoldReason ?? null,
-            next: 'Use mode "auto" to run a message without waiting on the held queue, or explicitly resume the queue.',
+            next: threadSendHint(run.queueHoldReason, projection.thread),
           }
         : {}),
     };
