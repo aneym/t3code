@@ -14,6 +14,7 @@ from .gate_proc import CheckFailed, run
 
 CACHE_ROOT = Path.home() / ".t3nightly" / "gate-seed"
 MAX_AGE = 6 * 60 * 60
+LATEST_MAX_AGE = 3 * 24 * 60 * 60
 IMPORTS = re.compile(
     r"^\s*(?:import|export)\s+[^;]*?\bfrom\s*[\"']([^\"'\n]+)[\"']|"
     r"^\s*import\s*[\"']([^\"'\n]+)[\"']|"
@@ -81,6 +82,13 @@ def seed_key(tree, run_key):
     return digest.hexdigest()
 
 
+def seed_age(path):
+    try:
+        return time.time() - path.stat().st_mtime
+    except FileNotFoundError:
+        return float("inf")
+
+
 def cache_entries(root):
     entries = []
     for path in root.iterdir():
@@ -104,7 +112,9 @@ def populate_home(ctx, deadline, build):
             (
                 str(path)
                 for path in cache_entries(CACHE_ROOT)
-                if (path / "userdata/statev2.sqlite").is_file() and (path / "seed.json").is_file()
+                if (path / "userdata/statev2.sqlite").is_file()
+                and (path / "seed.json").is_file()
+                and 0 <= seed_age(path) < LATEST_MAX_AGE
             ),
             None,
         )
