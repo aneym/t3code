@@ -6,6 +6,7 @@ import * as Schedule from "effect/Schedule";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { forkParked } from "../serverActivation.ts";
+import { mcpClientSubject } from "./McpClientSubjects.ts";
 import * as SessionStore from "./SessionStore.ts";
 
 const AUTH_SESSION_RETENTION_GRACE = Duration.days(1);
@@ -25,7 +26,8 @@ const deleteBatch = Effect.fn("authSessionRetention.deleteBatch")(function* (
     DELETE FROM auth_sessions
     WHERE session_id IN (
       SELECT session_id FROM auth_sessions
-      WHERE ${
+      WHERE subject = ${mcpClientSubject(true)}
+      AND ${
         kind === "revoked"
           ? sql`revoked_at < ${cutoff}`
           : sql`revoked_at IS NULL AND expires_at < ${cutoff}`
