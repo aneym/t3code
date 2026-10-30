@@ -9,7 +9,8 @@ def ensure_owners(database, count):
     cursor.row_factory = sqlite3.Row
     templates = list(cursor.execute(
         "select * from orchestration_v2_projection_threads where deleted_at is null "
-        "and json_extract(payload_json, '$.archivedAt') is null order by thread_id"
+        "and json_extract(payload_json, '$.archivedAt') is null "
+        "and json_extract(payload_json, '$.lineage.parentThreadId') is null order by thread_id"
     ))
     if count and not templates:
         raise RuntimeError("staging needs a stopped sandbox thread to provision automation owners")
