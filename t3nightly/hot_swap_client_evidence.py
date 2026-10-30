@@ -11,12 +11,12 @@ def client_checks(rehearsal, hot):
     hot["checks"]["presentation"] = {"status": "passed" if presentation_pass else "failed", "states": probe.get("presentations", []), "violations": probe.get("presentationViolations", []), "handoffAcknowledgments": acknowledgments, "acknowledgmentObserved": bool(acknowledgments)}
     if rehearsal.args.stock_client:
         stock = probe.get("stockClient", {})
-        hint = next((row for row in stock.get("events", []) if row["type"] == "handoff"), None)
+        hint = next(iter(probe.get("handoffEvents", [])), None)
         new = next((row for row in probe.get("servedVersions", []) if row["version"] == rehearsal.version), None)
         elapsed = new["atMs"] - hint["atMs"] if new and hint else None
         bounded = isinstance(elapsed, int) and 0 <= elapsed <= 30_000
         passed = stock.get("ready") is True and stock.get("handoffClientIdSent") is False and stock.get("confirmationSent") is False and bounded
-        hot["checks"]["stock-client"] = {"status": "passed" if passed else "failed", "client": stock, "handoffToNEWms": elapsed, "deadlineMs": 30_000, "flipGapMs": probe.get("flipGapMs"), "confirmationRequired": False}
+        hot["checks"]["stock-client"] = {"status": "passed" if passed else "failed", "client": stock, "capableClientHint": hint, "handoffToNEWms": elapsed, "deadlineMs": 30_000, "flipGapMs": probe.get("flipGapMs"), "confirmationRequired": False}
     continuation_path = rehearsal.sandbox.evidence / "active-continuation.json"
     if continuation_path.is_file():
         continuation = json.loads(continuation_path.read_text())
