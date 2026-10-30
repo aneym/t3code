@@ -58,6 +58,7 @@ def store_root():
 
 
 def publish(source, move=False):
+    source = Path(source).resolve()
     root = store_root()
     key = tree_digest(source)
     target = root / key
