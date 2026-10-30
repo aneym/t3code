@@ -15,6 +15,7 @@ class HotSwapRehearsal(Rehearsal):
         before = json.loads((sandbox.evidence / "before.json").read_text())
         self.probe_thread = before["work"]["active-turn"]["threadId"]
         self.stream_id = unquote(self.probe_thread.removeprefix("thread:"))
+        self.probe_run = before["work"]["active-turn"]["runId"]
         self.probe_path = sandbox.evidence / "connection-probe.json"
         self.stop_path = sandbox.evidence / "probe.stop"
         environment = sandbox.version()
@@ -29,6 +30,7 @@ class HotSwapRehearsal(Rehearsal):
             self.probe_process = subprocess.Popen(command, stdout=self.probe_log, stderr=subprocess.STDOUT)
             wait_for(self.probe_ready, 60, "persistent probe WS snapshot")
             self.hot["walBefore"] = self.wal()
+            self.hot["providerTurnBefore"] = sandbox.query("SELECT r.run_id,r.status,t.provider_turn_id,t.status FROM orchestration_v2_projection_runs r JOIN orchestration_v2_projection_provider_turns t ON r.thread_id=t.thread_id WHERE r.run_id=?", (self.probe_run,))
             config = sandbox.home / "runtime/launcher-config.json"
             if config.is_file() and self.args.queue_mode != "none":
                 ingress = json.loads(config.read_text())
@@ -36,6 +38,13 @@ class HotSwapRehearsal(Rehearsal):
                 self.pressure_process = subprocess.Popen(pressure, stdout=self.probe_log, stderr=subprocess.STDOUT)
             try:
                 super().install()
+                self.hot["providerTurnAfter"] = sandbox.query("SELECT r.run_id,r.status,t.provider_turn_id,t.status FROM orchestration_v2_projection_runs r JOIN orchestration_v2_projection_provider_turns t ON r.thread_id=t.thread_id WHERE r.run_id=?", (self.probe_run,))
+                if self.args.inject == "none" and not self.args.force_rollback:
+                    before_running = any(row[1] == "running" and row[3] == "running" for row in self.hot["providerTurnBefore"])
+                    after_running = any(row[1] == "running" and row[3] == "running" for row in self.hot["providerTurnAfter"])
+                    self.hot["checks"]["provider-turn-across-freeze"] = {"status": "passed" if before_running and after_running else "failed", "runId": self.probe_run}
+                    if not before_running or not after_running:
+                        raise ValueError("real provider turn was not running across the capable cutover")
             except BaseException:
                 self.stop_probe()
                 raise
