@@ -1,4 +1,5 @@
 import {
+  type ForwardedThreadSender,
   type AuthMcpClientAccess,
   type EnvironmentId,
   McpCapabilityUnavailableError,
@@ -40,6 +41,7 @@ export interface McpClientCaller {
    * session as `linkOrigin`, and it changes only that work (`linkOrigin.ts`).
    */
   readonly linked?: boolean | undefined;
+  readonly sender?: ForwardedThreadSender | undefined;
   readonly ownerCli?: boolean | undefined;
   /**
    * Narrower modes the client asked for on this request (`T3-Mode-Limit`):

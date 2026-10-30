@@ -19,9 +19,7 @@ import {
   DeviceToolError,
   OrchestratorMcpFailure,
   PreviewAutomationError,
-  ProviderInteractionMode,
   type RunId,
-  RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -44,6 +42,7 @@ import {
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import { decodeAsAdvertised, validateAdvertisedParameters } from "./advertisedParameters.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import { withPeerRequestContext } from "./peerRequestContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -156,35 +155,6 @@ const normalizeMcpHttpResponse = (
 
 const looksLikeProviderToken = (token: string) => token.length > 0 && !token.includes(".");
 
-const decodeModeLimit = Schema.decodeUnknownOption(
-  Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
-);
-const parseModeLimit = (value: string) => {
-  const [runtimeMode, interactionMode, ...rest] = value.trim().split("/");
-  return rest.length === 0 ? decodeModeLimit({ runtimeMode, interactionMode }) : Option.none();
-};
-
-const invalidModeLimit = HttpServerResponse.jsonUnsafe(
-  {
-    error: "invalid_mode_limit",
-    message: "T3-Mode-Limit must be <runtimeMode>/<interactionMode>, e.g. auto/default.",
-  },
-  { status: 400, headers: { "cache-control": "no-store" } },
-);
-
-/** Applies a client's requested mode limit; undefined when the header is malformed. */
-const withModeLimit = (
-  invocation: McpInvocationContext.McpInvocationScope,
-  request: HttpServerRequest.HttpServerRequest,
-): McpInvocationContext.McpInvocationScope | undefined => {
-  const header = request.headers[McpInvocationContext.MODE_LIMIT_HEADER];
-  if (header === undefined || invocation.client === undefined) return invocation;
-  const limit = parseModeLimit(header);
-  return Option.isNone(limit)
-    ? undefined
-    : { ...invocation, client: { ...invocation.client, narrowedTo: limit.value } };
-};
-
 // The Linked environments beta is off here: links wait until it is on again.
 const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
   {
@@ -224,8 +194,9 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         offerOAuth: Option.isSome(clients) && !looksLikeProviderToken(token),
       });
     }
-    const limited = withModeLimit(invocation, request);
-    if (limited === undefined) return invalidModeLimit;
+    const context = withPeerRequestContext(invocation, request);
+    if (context.error !== undefined) return context.error;
+    const limited = context.invocation;
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     return yield* httpEffect.pipe(

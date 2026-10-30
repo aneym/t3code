@@ -9,6 +9,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 
+import { mcpMessageSender } from "./messageSender.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import { type McpInvocationScope, threadLinkFor } from "./McpInvocationContext.ts";
@@ -50,11 +51,10 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
   readonly threadManagement: ThreadManagementService.ThreadManagementService["Service"];
   readonly crypto: Crypto.Crypto;
   readonly scope: McpInvocationScope;
-  readonly parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined;
   readonly target: Pick<OrchestrationV2ThreadProjection, "thread">;
   readonly request: OrchestratorMcpThreadSendInput;
 }) {
-  const { threadManagement, scope, parent, target, request } = input;
+  const { threadManagement, scope, target, request } = input;
   const mode = request.mode ?? "queue";
   const requestKey =
     request.clientRequestId ?? (yield* input.crypto.randomUUIDv4().pipe(Effect.orDie));
@@ -72,7 +72,7 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
       projectId: target.thread.projectId,
       commandId,
       threadId: request.threadId,
-      ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
+      ...mcpMessageSender(scope),
       messageId,
       text: request.message,
       attachments: [],

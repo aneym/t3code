@@ -1,4 +1,6 @@
 import {
+  FORWARDED_SENDER_HEADER,
+  ForwardedThreadSender,
   type EnvironmentId,
   OrchestratorMcpFailure,
   type PeerLinkError,
@@ -40,6 +42,7 @@ export class PeerMcpClient extends Context.Service<
       readonly tool: string;
       readonly arguments: Record<string, unknown>;
       readonly limits: PeerCallLimits;
+      readonly sender?: ForwardedThreadSender;
       readonly success: S;
     }) => Effect.Effect<S["Type"], OrchestratorMcpFailure>;
   }
@@ -57,6 +60,7 @@ const ToolCallResponse = Schema.Struct({
   ),
   error: Schema.optional(Schema.Struct({ code: Schema.Number, message: Schema.String })),
 });
+const encodeSender = Schema.encodeSync(Schema.fromJsonString(ForwardedThreadSender));
 const decodeToolCallResponse = Schema.decodeUnknownEffect(Schema.fromJsonString(ToolCallResponse));
 const decodeFailure = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -158,6 +162,9 @@ const make = Effect.gen(function* () {
         .resolve(input.environmentId)
         .pipe(Effect.mapError(fromLinkError));
       const limitHeader = {
+        ...(input.sender === undefined
+          ? {}
+          : { [FORWARDED_SENDER_HEADER]: encodeSender(input.sender) }),
         [McpInvocationContext.MODE_LIMIT_HEADER]: `${input.limits.runtimeMode}/${input.limits.interactionMode}`,
       };
       const sessionKey = `${input.environmentId} ${resolved.url}`;

@@ -1,4 +1,5 @@
 import {
+  messageSender,
   parseGoalCommand,
   type NodeId,
   type OrchestrationV2ConversationMessage,
@@ -137,7 +138,12 @@ export function queuedRunBatchEvents(input: {
       createdBy: message.createdBy,
       creationSource: message.creationSource,
     };
-    const { context: _context, senderThreadId: _sender, ...base } = item;
+    const {
+      context: _context,
+      senderThreadId: _sender,
+      senderEnvironmentId: _environment,
+      ...base
+    } = item;
     return [
       {
         ...from,
@@ -174,9 +180,7 @@ export function queuedRunBatchEvents(input: {
         payload: {
           ...base,
           ...(message.context ? { context: message.context } : {}),
-          ...(message.senderThreadId === undefined
-            ? {}
-            : { senderThreadId: message.senderThreadId }),
+          ...messageSender(message),
         },
       },
     ];

@@ -1,3 +1,4 @@
+import { mcpMessageSender } from "../../messageSender.ts";
 import {
   ATTACHMENT_UPLOAD_URL_TTL_MS,
   type ChatAttachment,
@@ -82,7 +83,8 @@ export const layer = McpToolAccess.toLayer(
         (input) => [input.threadId],
         (input) =>
           Effect.gen(function* () {
-            const { caller, projection } = yield* readThread(input.threadId, ["messages"]);
+            const scope = yield* McpInvocationContext.McpInvocationContext;
+            const { projection } = yield* readThread(input.threadId, ["messages"]);
             if (projection.thread.archivedAt !== null)
               return yield* new OrchestratorMcpFailure({
                 code: "invalid_request",
@@ -99,7 +101,7 @@ export const layer = McpToolAccess.toLayer(
               threadId: projection.thread.id,
               commandId,
               messageId,
-              ...(caller === undefined ? {} : { senderThreadId: caller.id }),
+              ...mcpMessageSender(scope),
               text: input.message ?? "",
               attachments,
               mode: input.mode ?? "auto",

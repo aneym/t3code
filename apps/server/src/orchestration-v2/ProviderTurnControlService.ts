@@ -1,5 +1,6 @@
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
+  messageSender,
   MessageId,
   type NodeId,
   ProviderSessionId,
@@ -367,9 +368,7 @@ export const layer: Layer.Layer<
                 ...(message.scheduledTaskId === undefined
                   ? {}
                   : { scheduledTaskId: message.scheduledTaskId }),
-                ...(message.senderThreadId === undefined
-                  ? {}
-                  : { senderThreadId: message.senderThreadId }),
+                ...messageSender(message),
               },
             })
             .pipe(

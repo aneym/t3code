@@ -1,4 +1,5 @@
 import {
+  messageSender,
   CommandId,
   type RunId,
   isProviderAvailable,
@@ -856,7 +857,7 @@ function timelineItem(input: {
     messageId,
     createdBy: message?.createdBy ?? null,
     creationSource: message?.creationSource ?? null,
-    ...(message?.senderThreadId === undefined ? {} : { senderThreadId: message.senderThreadId }),
+    ...messageSender(message),
     type: input.row.item.type,
     status: input.row.item.status,
     title: input.row.item.title,
@@ -2832,7 +2833,6 @@ const make = Effect.gen(function* () {
         threadManagement,
         crypto,
         scope,
-        parent,
         target,
         request: input,
       });
