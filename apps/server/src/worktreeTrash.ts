@@ -284,22 +284,26 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       args: ["config", "--path", "core.excludesFile"],
       allowNonZeroExit: true,
     });
+    const env = yield* HostProcess.Environment;
+    const home =
+      env.HOME ||
+      ((yield* HostProcess.isWindows)
+        ? env.HOMEDRIVE && env.HOMEPATH
+          ? path.join(env.HOMEDRIVE, env.HOMEPATH)
+          : env.USERPROFILE
+        : undefined);
     const globalExclude =
-      configured.stdout.trim() ||
-      path.join(
-        process.env.XDG_CONFIG_HOME || path.join(process.env.HOME ?? "", ".config"),
-        "git",
-        "ignore",
-      );
+      configured.stdout.replace(/\r?\n$/, "") ||
+      (env.XDG_CONFIG_HOME
+        ? path.join(env.XDG_CONFIG_HOME, "git", "ignore")
+        : home
+          ? path.join(home, ".config", "git", "ignore")
+          : null);
     for (const excludeFile of [
       path.join(commonDir.stdout.trim(), "info", "exclude"),
-      path.resolve(cwd, globalExclude),
+      ...(globalExclude === null ? [] : [path.resolve(cwd, globalExclude)]),
     ]) {
       if (!(yield* fs.exists(excludeFile))) continue;
-      const patterns = (yield* fs.readFileString(excludeFile))
-        .split(/\r?\n/)
-        .some((line) => line.trim() !== "" && !line.startsWith("#"));
-      if (!patterns) continue;
       const excluded = yield* inspect("StorageCleanup.excludedFiles", [
         "ls-files",
         "--others",

@@ -1802,6 +1802,19 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("keeps notes excluded by a personal ignore file whose name ends in a space", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        const personal = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-ignore-" });
+        yield* fs.writeFileString(`${personal}/ignore `, "notes.md\n");
+        yield* command(worktree, ["config", "core.excludesFile", `${personal}/ignore `]);
+        yield* fs.writeFileString(`${worktree}/notes.md`, "notes\n");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/notes.md`)).toBe("notes\n");
+      }),
+    ),
+  );
   it.live("keeps a worktree another repository checked out at the same path", () =>
     runCleanupTest(
       Effect.gen(function* () {
