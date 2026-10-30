@@ -149,15 +149,31 @@ def seed_database(seed, destination):
     return {"method": method, "snapshot": str(cached), "sha256": key}
 
 
+def bind_runtime(home, version, shared, destination):
+    home, shared, destination = Path(home), Path(shared).resolve(), Path(destination)
+    if shared.parent != store_root():
+        raise ValueError("rehearsal version source is not in the shared runtime store")
+    method = clone_tree(shared, destination) if sys.platform == "darwin" else "symlink"
+    if method == "symlink":
+        destination.symlink_to(shared, target_is_directory=True)
+    refs = home / "runtime/rehearsal-runtime-refs.json"
+    if refs.is_symlink():
+        raise ValueError("rehearsal runtime reference receipt must not be a symlink")
+    value = json.loads(refs.read_text()) if refs.exists() else {}
+    value[version] = str(shared)
+    refs.write_text(json.dumps(value) + "\n")
+    return method
+
+
 def prepare(sandbox):
     root = store_root()
     runtime = sandbox.home / "runtime"
     (runtime / "rehearsal-storage.json").write_text(json.dumps({"schema": 1, "store": str(root)}) + "\n")
     shared = publish(sandbox.old)
-    (runtime / "versions" / sandbox.old.name).symlink_to(shared, target_is_directory=True)
+    version_method = bind_runtime(sandbox.home, sandbox.old.name, shared, runtime / "versions" / sandbox.old.name)
     launcher_method = clone_tree(shared, sandbox.cli.parent)
     seed = seed_database(sandbox.args.seed, sandbox.db)
     (runtime / "rehearsal-seed.json").write_text(json.dumps(seed) + "\n")
-    receipt = {"runtime": str(shared), "versionMethod": "symlink", "launcherMethod": launcher_method, "seed": seed}
+    receipt = {"runtime": str(shared), "versionMethod": version_method, "launcherMethod": launcher_method, "seed": seed}
     (sandbox.evidence / "storage.json").write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt
