@@ -185,11 +185,13 @@ def install(run):
             attempts += 1
 
     try:
-        if previous == args.version:
+        from .launcher_artifact import changed
+
+        if previous == args.version and not changed(run):
             precheck(run, previous, observed["candidateRuntime.digest"])
             outcome = "current"
         else:
-            staged = stage_runtime(run.home, args.version, args.assets)
+            staged = run.runtime(previous) if previous == args.version else stage_runtime(run.home, args.version, args.assets)
             if file_digest(staged) != observed["candidateRuntime.digest"]:
                 raise ValueError("staged candidate runtime changed after provenance check")
             run.step("hard-retain-runtime", version=previous, path=str(retain_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")))
