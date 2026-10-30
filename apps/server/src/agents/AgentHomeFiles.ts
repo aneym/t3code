@@ -32,7 +32,7 @@ const readDocument = async (root: string, handle: string) =>
 const decodeBinding = Schema.decodeSync(AgentHomeBinding);
 const decodeHome = Schema.decodeSync(AgentHome);
 const text = (value: unknown) => (typeof value === "string" ? value : null);
-const binding = (value: unknown): AgentHomeBinding | null => {
+const decodeMainBinding = (value: unknown): AgentHomeBinding | null => {
   if (value === undefined || value === null) return null;
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid agent binding");
   const data = value as Record<string, unknown>;
@@ -46,11 +46,20 @@ const binding = (value: unknown): AgentHomeBinding | null => {
     by: text(data.by),
   });
 };
+const binding = (value: unknown, strict: boolean): AgentHomeBinding | null => {
+  try {
+    return decodeMainBinding(value);
+  } catch (error) {
+    if (strict) throw error;
+    return null;
+  }
+};
 export const homeFromDocument = (
   root: string,
   handle: string,
   doc: Record<string, unknown>,
   lanes: ReadonlyArray<{ name: string; threadId: string; host: string | null }> = [],
+  strict = false,
 ): AgentHome =>
   decodeHome({
     handle,
@@ -61,11 +70,12 @@ export const homeFromDocument = (
       ? doc.projects.filter((name): name is string => typeof name === "string")
       : [],
     lanes,
-    binding: binding(doc.t3),
+    binding: binding(doc.t3, strict),
     previous: binding(
       typeof doc.t3 === "object" && doc.t3 !== null
         ? (doc.t3 as Record<string, unknown>).previous
         : doc.t3_previous,
+      false,
     ),
   });
 export const isLaneThread = async (root: string, threadId: string) => {
@@ -114,6 +124,7 @@ export const readHomes = async (
           entry.name,
           doc,
           lanesUnder(lanes, text(doc.lane) ?? entry.name, isLocal),
+          strict,
         ),
       );
     } catch (error) {
