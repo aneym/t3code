@@ -7,7 +7,7 @@ import { CONNECTOR_UNIT_PATH_ENV } from "./serviceConnectorUnit.ts";
 import { quoteSystemdValue } from "./cloud/bootServiceRender.ts";
 
 export async function connectorServiceInstalled(baseDir: string, manager: "launchd" | "systemd") {
-  const path =
+  const requested =
     NodeProcess.env[CONNECTOR_UNIT_PATH_ENV] ??
     (manager === "launchd"
       ? NodePath.join(
@@ -17,14 +17,21 @@ export async function connectorServiceInstalled(baseDir: string, manager: "launc
           "com.t3tools.t3code-connector.service.plist",
         )
       : NodePath.join(NodeOS.homedir(), ".config", "systemd", "user", "t3code-connector.service"));
+  if (!NodePath.isAbsolute(requested) || requested !== NodePath.resolve(requested)) return false;
+  let path: string;
+  try {
+    path = await NodeFSP.realpath(requested);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== "ENOENT") return false;
+    path = NodePath.resolve(requested);
+  }
   const parent = NodePath.dirname(path);
   if (
-    !NodePath.isAbsolute(path) ||
-    (manager === "launchd"
+    manager === "launchd"
       ? !path.endsWith(".plist") || NodePath.basename(parent) !== "LaunchAgents"
       : !path.endsWith(".service") ||
         NodePath.basename(parent) !== "user" ||
-        NodePath.basename(NodePath.dirname(parent)) !== "systemd")
+        NodePath.basename(NodePath.dirname(parent)) !== "systemd"
   )
     return false;
   try {
