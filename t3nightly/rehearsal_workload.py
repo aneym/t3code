@@ -1,4 +1,5 @@
 import json
+import shlex
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -51,8 +52,10 @@ class Workload:
         return self.sandbox.query("SELECT t.provider_turn_id FROM orchestration_v2_projection_provider_turns t JOIN orchestration_v2_projection_runs r ON t.thread_id=r.thread_id WHERE r.run_id=? AND r.status='running' AND t.status='running'", (item["runId"],))
 
     def prepare(self):
-        gate = self.sandbox.home / "release-gate"
-        prompt = f"Use Bash in the foreground with a {HOLD_S * 1000} ms timeout to run exactly: python3 -c \"import os,time; [time.sleep(1) for _ in iter(lambda: os.path.exists('{gate}'), True)]\"\nDo not background it. Do no other work. After it completes reply RELEASED."
+        helper = self.sandbox.home / "runtime/rehearsal_waiter.py"
+        records = self.sandbox.home.parent / "gate-waiters"
+        command = shlex.join(["python3", str(helper), "--home", str(self.sandbox.home), "--records", str(records), "--seconds", str(HOLD_S)])
+        prompt = f"Use Bash in the foreground with a {HOLD_S * 1000} ms timeout to run exactly: {command}\nDo not background it. Do no other work. After it completes reply RELEASED."
         for name in ("active-turn", "snoozed-thread"):
             if name == "active-turn":
                 self.held = time.monotonic()
