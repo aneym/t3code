@@ -81,13 +81,13 @@ def build_manifest(config, head, scratch):
     tag = f"v{config.nightly}"
     sha = git(config.repo, "rev-parse", f"{tag}^{{commit}}", text=True).strip()
     gitdir = scratch / "manifest.git"
-    (gitdir / "objects/info").mkdir(parents=True)
-    (gitdir / "refs/tags").mkdir(parents=True)
-    (gitdir / "objects/info/alternates").write_text(f"{common / 'objects'}\n")
-    (gitdir / "refs/tags" / tag).write_text(f"{sha}\n")
-    (gitdir / "HEAD").write_text(f"{head}\n")
-    env = {**os.environ, "GIT_DIR": str(gitdir)}
     try:
+        (gitdir / "objects/info").mkdir(parents=True)
+        (gitdir / "refs/tags").mkdir(parents=True)
+        (gitdir / "objects/info/alternates").write_text(f"{common / 'objects'}\n")
+        (gitdir / "refs/tags" / tag).write_text(f"{sha}\n")
+        (gitdir / "HEAD").write_text(f"{head}\n")
+        env = {**os.environ, "GIT_DIR": str(gitdir)}
         return subprocess.run([str(config.tools / "fork-build-manifest"), config.version], cwd=scratch, env=env, capture_output=True, text=True, check=True).stdout
     finally:
         shutil.rmtree(gitdir, ignore_errors=True)
