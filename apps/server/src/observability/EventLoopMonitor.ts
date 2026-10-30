@@ -1,12 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off - only node:perf_hooks exposes the event loop delay histogram, and node:os the load average.
 import * as NodeOS from "node:os";
 import * as NodePerfHooks from "node:perf_hooks";
+import * as NodeV8 from "node:v8";
 
 import type { ServerEventLoopStall } from "@t3tools/contracts";
-import { RotatingFileSink } from "@t3tools/shared/logging";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { makeAsyncRotatingFileSink, RotatingFileSink } from "@t3tools/shared/logging";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Path from "effect/Path";
@@ -132,6 +135,118 @@ const recordGauges = Effect.fnUntraced(function* (readings: EventLoopReadings) {
 
 const encodeStallLine = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
+const makeMemoryDiagnostics = Effect.fn("EventLoopMonitor.makeMemoryDiagnostics")(function* () {
+  if ((yield* HostProcess.Environment).T3CODE_MEMORY_DIAGNOSTICS !== "1") return;
+  const fs = yield* FileSystem.FileSystem;
+  const platform = yield* HostProcess.Platform;
+  const read = (file: string) => fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
+  const gc = new Map<number, { count: number; totalMs: number; maxMs: number }>();
+  yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      const observer = new NodePerfHooks.PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          const kind = (entry as NodePerfHooks.PerformanceEntry & { detail: { kind: number } })
+            .detail.kind;
+          const previous = gc.get(kind) ?? { count: 0, totalMs: 0, maxMs: 0 };
+          gc.set(kind, {
+            count: previous.count + 1,
+            totalMs: previous.totalMs + entry.duration,
+            maxMs: Math.max(previous.maxMs, entry.duration),
+          });
+        }
+      });
+      observer.observe({ entryTypes: ["gc"] });
+      return observer;
+    }),
+    (observer) => Effect.sync(() => observer.disconnect()),
+  );
+  const counters = (text: string) =>
+    Object.fromEntries(
+      text.split("\n").flatMap((line) => {
+        const match = /^(\w+):?\s+(\d+)(?:\s+(kB))?$/.exec(line);
+        return match ? [[match[1]!, Number(match[2]) * (match[3] ? 1024 : 1)]] : [];
+      }),
+    );
+  const cgroup =
+    platform === "linux"
+      ? (yield* read("/proc/self/cgroup"))
+          .split("\n")
+          .find((line) => line.startsWith("0::"))
+          ?.slice(3)
+      : undefined;
+  const sample = Effect.fn("EventLoopMonitor.memorySample")(function* () {
+    const startedAt = NodePerfHooks.performance.now();
+    const memory = process.memoryUsage();
+    const heap = NodeV8.getHeapStatistics();
+    const usage = process.resourceUsage();
+    const gcByKind = Object.fromEntries([...gc].map(([kind, value]) => [kind, { ...value }]));
+    let linux;
+    if (platform === "linux") {
+      const status = counters(yield* read("/proc/self/status"));
+      const scheduler = (yield* read("/proc/self/schedstat")).trim().split(/\s+/).map(Number);
+      const pending = [process.pid];
+      const visited = new Set<number>();
+      let childRssBytes = 0;
+      let childHwmBytes = 0;
+      let childCount = 0;
+      while (pending.length > 0 && visited.size < 256) {
+        const pid = pending.shift()!;
+        if (visited.has(pid)) continue;
+        visited.add(pid);
+        if (pid !== process.pid) {
+          const child = counters(yield* read(`/proc/${pid}/status`));
+          if (child.VmRSS !== undefined) {
+            childCount++;
+            childRssBytes += child.VmRSS;
+            childHwmBytes += child.VmHWM ?? 0;
+          }
+        }
+        for (const value of (yield* read(`/proc/${pid}/task/${pid}/children`))
+          .trim()
+          .split(/\s+/)) {
+          const child = Number(value);
+          if (Number.isInteger(child) && child > 0 && !visited.has(child)) pending.push(child);
+        }
+      }
+      const groupBase = cgroup === undefined ? undefined : `/sys/fs/cgroup${cgroup}`;
+      const groupStat =
+        groupBase === undefined ? {} : counters(yield* read(`${groupBase}/memory.stat`));
+      const groupCurrent =
+        groupBase === undefined ? "" : yield* read(`${groupBase}/memory.current`);
+      const groupPeak = groupBase === undefined ? "" : yield* read(`${groupBase}/memory.peak`);
+      linux = {
+        rssAnonBytes: status.RssAnon,
+        swapBytes: status.VmSwap,
+        processHwmBytes: status.VmHWM,
+        runQueueWaitNs: scheduler.length === 3 ? scheduler[1] : undefined,
+        schedulerRuntimeNs: scheduler.length === 3 ? scheduler[0] : undefined,
+        childCount,
+        childRssBytes,
+        childHwmBytes,
+        childrenTruncated: pending.length > 0,
+        cgroupCurrentBytes: groupCurrent.trim() ? Number(groupCurrent) : undefined,
+        cgroupPeakBytes: groupPeak.trim() ? Number(groupPeak) : undefined,
+        cgroupAnonBytes: groupStat.anon,
+        cgroupFileBytes: groupStat.file,
+        cgroupKernelBytes: groupStat.kernel,
+      };
+    }
+    return {
+      pid: process.pid,
+      uptimeSeconds: process.uptime(),
+      ...memory,
+      totalHeapSizeBytes: heap.total_heap_size,
+      mallocedMemoryBytes: heap.malloced_memory,
+      v8ExternalMemoryBytes: heap.external_memory,
+      gcByKind,
+      resourceUsage: usage,
+      linux,
+      sampleDurationMs: NodePerfHooks.performance.now() - startedAt,
+    };
+  });
+  return sample;
+});
+
 export interface StallLogOptions {
   readonly filePath: string;
   readonly maxBytes: number;
@@ -145,6 +260,7 @@ const layerWith = (
     EventLoopMonitor,
     Effect.gen(function* () {
       const sample = yield* makeSampler;
+      const memorySample = yield* makeMemoryDiagnostics();
       // Clients sample on connect as well as the timer, and the sampler resets shared state.
       const sampling = yield* Semaphore.make(1);
       const warmedUp = yield* Ref.make(false);
@@ -166,6 +282,27 @@ const layerWith = (
           }).pipe(Effect.as(undefined)),
         ),
       );
+      if (memorySample !== undefined) {
+        const path = yield* Path.Path;
+        const memorySink = yield* makeAsyncRotatingFileSink({
+          filePath: path.join(path.dirname(stallLog.filePath), "memory-diagnostics.ndjson"),
+          maxBytes: 1024 * 1024,
+          maxFiles: 1,
+        }).pipe(Effect.orElseSucceed(() => undefined));
+        if (memorySink !== undefined) {
+          yield* Effect.gen(function* () {
+            const readings = yield* memorySample();
+            const now = yield* DateTime.now;
+            const line = yield* encodeStallLine({ time: DateTime.formatIso(now), ...readings });
+            yield* memorySink.write(`${line}\n`);
+          }).pipe(
+            Effect.ignore,
+            Effect.andThen(Effect.sleep("5 seconds")),
+            Effect.forever,
+            Effect.forkScoped,
+          );
+        }
+      }
       const tick = Effect.gen(function* () {
         const readings = yield* sample;
         yield* recordGauges(readings);
@@ -197,11 +334,12 @@ const layerWith = (
           involuntaryContextSwitches: usage.involuntaryContextSwitches,
           rssMb: Math.round(rssBytes / 1024 / 1024),
         };
+        const memory = memorySample === undefined ? undefined : yield* memorySample();
         yield* Effect.logWarning(`event loop stalled for ${delayMaxMs} ms`).pipe(
           Effect.withSpan("server.eventLoop.stall", { root: true, level: "Warn", attributes }),
         );
         if (stallSink !== undefined) {
-          yield* encodeStallLine({ time: detectedAt, ...attributes }).pipe(
+          yield* encodeStallLine({ time: detectedAt, ...attributes, memory }).pipe(
             Effect.flatMap((line) => Effect.try(() => stallSink.write(`${line}\n`))),
             Effect.catch(() =>
               Effect.logWarning("event loop stall log write failed", {
