@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type { PlatformError } from "effect/PlatformError";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
@@ -16,6 +17,16 @@ const ENTRY = /^(\d{13})-[^/\\]+\.worktree$/;
 const RECOVERY_REQUIRED = "recovery-required";
 const RECOVERY_FAILED = "recovery-failed.txt";
 const RETENTION_MS = 86_400_000;
+export const PENDING_OPERATIONS = [
+  "MERGE_HEAD",
+  "MERGE_AUTOSTASH",
+  "CHERRY_PICK_HEAD",
+  "REVERT_HEAD",
+  "rebase-merge",
+  "rebase-apply",
+  "sequencer",
+  "BISECT_LOG",
+];
 
 export const makeWorktreeTrash = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -54,7 +65,8 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       Effect.ignore,
     );
 
-  const move = Effect.fn("WorktreeTrash.move")(function* (input: {
+  const move = Effect.fn("WorktreeTrash.move")(function* <E, R>(input: {
+    readonly blocked: () => Effect.Effect<string | null, E, R>;
     readonly root: string;
     readonly entry: string;
     readonly worktreePath: string;
@@ -79,7 +91,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
         .filter((part) => part.moved)
         .map((part) => `Move ${part.to} back to ${part.from}`)
         .join("\n");
-    yield* Effect.acquireUseRelease(
+    const blocked = yield* Effect.acquireUseRelease(
       Effect.succeed(parts),
       () =>
         Effect.uninterruptible(
@@ -101,12 +113,16 @@ export const makeWorktreeTrash = Effect.gen(function* () {
               .join("\n");
             for (const entry of entries)
               yield* fs.writeFileString(path.join(entry, RECOVERY_FAILED), `${pending}\n`);
+            const reason = yield* input.blocked();
+            if (reason !== null) return reason;
+            if (yield* fs.exists(path.join(input.adminDir, "locked"))) return "worktree is locked";
             for (const part of parts) {
               yield* fs.rename(part.from, part.to);
               part.moved = true;
             }
             const movedAtSeconds = (yield* Clock.currentTimeMillis) / 1000;
             for (const entry of entries) yield* fs.utimes(entry, movedAtSeconds, movedAtSeconds);
+            return null;
           }),
         ),
       (_, exit) =>
@@ -178,73 +194,157 @@ export const makeWorktreeTrash = Effect.gen(function* () {
           }),
         ),
       );
+    if (blocked !== null) yield* Effect.forEach(entries, discard, { discard: true });
+    return blocked;
   });
 
-  const checkoutStateReason = Effect.fnUntraced(function* (cwd: string) {
+  const isRepository = Effect.fnUntraced(function* (directory: string) {
+    if (yield* fs.exists(path.join(directory, ".git"))) return true;
+    for (const name of ["HEAD", "objects", "refs"])
+      if (!(yield* fs.exists(path.join(directory, name)))) return false;
+    return true;
+  });
+
+  // Effect's stat follows links; readLink succeeds only on a link.
+  const isLink = (target: string) =>
+    fs.readLink(target).pipe(
+      Effect.as(true),
+      Effect.catchIf(
+        (error) =>
+          error.cause instanceof Error && "code" in error.cause && error.cause.code === "EINVAL",
+        () => Effect.succeed(false),
+      ),
+    );
+
+  // Walks the files Git listings hide (ignored, gitlinked, partly tracked); node_modules is disposable.
+  const nestedRepository = Effect.fnUntraced(function* (
+    cwd: string,
+    submodules: ReadonlySet<string>,
+  ) {
+    const root = yield* fs.realPath(cwd);
+    const pending = [root];
+    while (pending.length > 0) {
+      const directory = pending.pop()!;
+      for (const name of yield* fs.readDirectory(directory)) {
+        if (name === ".git" || name === "node_modules") continue;
+        const child = path.join(directory, name);
+        if (submodules.has(child) || (yield* isLink(child))) continue;
+        if ((yield* fs.stat(child)).type !== "Directory") continue;
+        if (yield* isRepository(child)) return `${path.relative(root, child)}/`;
+        pending.push(child);
+      }
+    }
+    return null;
+  });
+
+  const checkoutStateReason = Effect.fnUntraced(function* (
+    cwd: string,
+    submodules: ReadonlySet<string>,
+  ) {
     if (yield* fs.exists(path.join(cwd, ".lane"))) return "has excluded local state (.lane/)";
     const git = yield* GitVcsDriver.GitVcsDriver;
     const inspect = (operation: string, args: string[]) =>
       git.execute({ operation, cwd, args, maxOutputBytes: 64 * 1024 });
+    const topLevel = yield* inspect("StorageCleanup.topLevel", ["rev-parse", "--show-toplevel"]);
+    if ((yield* fs.realPath(topLevel.stdout.trim())) !== (yield* fs.realPath(cwd)))
+      return "Git work tree points elsewhere";
+    const operations = yield* inspect("StorageCleanup.pendingOperations", [
+      "rev-parse",
+      "--path-format=absolute",
+      ...PENDING_OPERATIONS.flatMap((name) => ["--git-path", name]),
+    ]);
+    for (const operation of operations.stdout.split("\n"))
+      if (operation !== "" && (yield* fs.exists(operation)))
+        return `has a Git operation in progress (${path.basename(operation)})`;
+    const index = yield* git.execute({
+      operation: "StorageCleanup.indexFlags",
+      cwd,
+      args: ["-c", "core.fsmonitor=false", "ls-files", "-v", "-z"],
+      maxOutputBytes: 16 * 1024 * 1024,
+    });
+    if (index.stdoutTruncated) return "index exceeds the inspection limit";
+    const sparse = yield* git.execute({
+      operation: "StorageCleanup.sparseCheckout",
+      cwd,
+      args: ["config", "--bool", "core.sparseCheckout"],
+      allowNonZeroExit: true,
+    });
+    for (const line of index.stdout.split("\0")) {
+      const tag = line.slice(0, 1);
+      const file = line.slice(2);
+      if (tag !== "" && tag === tag.toLowerCase()) return `has a file marked unchanged (${file})`;
+      if (
+        tag === "S" &&
+        (sparse.stdout.trim() !== "true" ||
+          (yield* fs.exists(path.join(cwd, file))) ||
+          (yield* fs.readLink(path.join(cwd, file)).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          )))
+      )
+        return `has a skip-worktree file outside sparse checkout (${file})`;
+    }
     const commonDir = yield* inspect("StorageCleanup.commonDir", [
       "rev-parse",
       "--path-format=absolute",
       "--git-common-dir",
     ]);
-    const excludeFile = path.join(commonDir.stdout.trim(), "info", "exclude");
-    const patterns = (yield* fs.exists(excludeFile))
-      ? (yield* fs.readFileString(excludeFile))
-          .split(/\r?\n/)
-          .some((line) => line.trim() !== "" && !line.startsWith("#"))
-      : false;
-    if (patterns) {
-      const excluded = yield* inspect("StorageCleanup.excludedFiles", [
+    if (yield* fs.exists(path.join(commonDir.stdout.trim(), "info", "grafts")))
+      return "repository has grafts";
+    const replaced = yield* inspect("StorageCleanup.replaceRefs", [
+      "for-each-ref",
+      "--count=1",
+      "refs/replace/",
+    ]);
+    if (replaced.stdout.trim() !== "") return "repository has replace refs";
+    const personal = yield* git.execute({
+      operation: "StorageCleanup.personalIgnoredFiles",
+      cwd,
+      args: [
+        "-c",
+        "core.fsmonitor=false",
         "ls-files",
         "--others",
         "--ignored",
-        "--directory",
-        "--no-empty-directory",
         "-z",
-        `--exclude-from=${excludeFile}`,
-      ]);
-      if (excluded.stdoutTruncated) return "excluded files exceed the inspection limit";
-      const file = excluded.stdout.split("\0").find((entry) => entry !== "");
-      if (file !== undefined) return `has excluded local state (${file})`;
-    }
-    const untracked = yield* inspect("StorageCleanup.untrackedDirectories", [
-      "ls-files",
-      "--others",
-      "--directory",
-      "-z",
-    ]);
-    if (untracked.stdoutTruncated) return "untracked files exceed the inspection limit";
-    for (const entry of untracked.stdout.split("\0")) {
-      if (entry.endsWith("/") && (yield* fs.exists(path.join(cwd, entry, ".git"))))
-        return `has a nested repository (${entry})`;
-    }
-    return null;
+        "--exclude-standard",
+        "--exclude-per-directory=/",
+      ],
+      maxOutputBytes: 16 * 1024 * 1024,
+    });
+    if (personal.stdoutTruncated) return "excluded files exceed the inspection limit";
+    const file = personal.stdout.split("\0").find((entry) => entry !== "");
+    if (file !== undefined) return `has excluded local state (${file})`;
+    const nested = yield* nestedRepository(cwd, submodules);
+    return nested === null ? null : `has a nested repository (${nested})`;
   });
 
   const personalStateReason = Effect.fn("StorageCleanup.personalStateReason")(function* (
     cwd: string,
   ) {
     const git = yield* GitVcsDriver.GitVcsDriver;
-    const own = yield* checkoutStateReason(cwd);
-    if (own !== null || !(yield* fs.exists(path.join(cwd, ".gitmodules")))) return own;
-    const populated = yield* git.execute({
-      operation: "StorageCleanup.submodules",
-      cwd,
-      args: [
-        "submodule",
-        "foreach",
-        "--recursive",
-        "--quiet",
-        'printf "%s\\0" "$toplevel/$sm_path"',
-      ],
-      maxOutputBytes: 64 * 1024,
-    });
-    if (populated.stdoutTruncated) return "submodule inspection exceeded the limit";
-    for (const submodule of populated.stdout.split("\0").filter(Boolean)) {
-      const reason = yield* checkoutStateReason(submodule);
+    const submodules = new Set<string>();
+    if (yield* fs.exists(path.join(cwd, ".gitmodules"))) {
+      const populated = yield* git.execute({
+        operation: "StorageCleanup.submodules",
+        cwd,
+        args: [
+          "submodule",
+          "foreach",
+          "--recursive",
+          "--quiet",
+          'printf "%s\\0" "$toplevel/$sm_path"',
+        ],
+        maxOutputBytes: 64 * 1024,
+      });
+      if (populated.stdoutTruncated) return "submodule inspection exceeded the limit";
+      for (const submodule of populated.stdout.split("\0").filter(Boolean))
+        submodules.add(yield* fs.realPath(submodule));
+    }
+    const own = yield* checkoutStateReason(cwd, submodules);
+    if (own !== null) return own;
+    for (const submodule of submodules) {
+      const reason = yield* checkoutStateReason(submodule, submodules);
       if (reason !== null) return `submodule ${reason}`;
     }
     return null;
@@ -253,25 +353,53 @@ export const makeWorktreeTrash = Effect.gen(function* () {
   const remove = Effect.fn("WorktreeTrash.remove")(function* <E, R>(
     root: string,
     worktreePath: string,
-    blocked: () => Effect.Effect<string | null, E, R>,
+    repository: string,
+    blocked: (
+      identity: Effect.Effect<string | null, GitCommandError | PlatformError>,
+    ) => Effect.Effect<string | null, E, R>,
   ) {
     const git = yield* GitVcsDriver.GitVcsDriver;
-    const adminDir = (yield* git.execute({
-      operation: "StorageCleanup.adminDir",
-      cwd: worktreePath,
-      args: ["rev-parse", "--absolute-git-dir"],
-    })).stdout.trim();
-    if (yield* fs.exists(path.join(adminDir, "locked"))) return "worktree is locked";
-    const personal = yield* personalStateReason(worktreePath);
-    if (personal !== null) return personal;
+    const gitDir = git
+      .execute({
+        operation: "StorageCleanup.adminDir",
+        cwd: worktreePath,
+        args: ["rev-parse", "--absolute-git-dir"],
+      })
+      .pipe(Effect.map((result) => result.stdout.trim()));
+    const adminDir = yield* gitDir;
+    const commonDir = (cwd: string) =>
+      git
+        .execute({
+          operation: "StorageCleanup.repository",
+          cwd,
+          args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        })
+        .pipe(Effect.flatMap((result) => fs.realPath(result.stdout.trim())));
+    const identityReason = Effect.gen(function* () {
+      if ((yield* gitDir) !== adminDir) return "Git registers this worktree at another path";
+      if ((yield* commonDir(worktreePath)) !== (yield* commonDir(repository)))
+        return "worktree belongs to another repository";
+      const registered = yield* fs.readFileString(path.join(adminDir, "gitdir")).pipe(
+        Effect.flatMap((gitdir) => fs.realPath(path.resolve(adminDir, gitdir.trim()))),
+        Effect.orElseSucceed(() => null),
+      );
+      if (
+        (yield* isLink(path.join(worktreePath, ".git"))) ||
+        registered !== (yield* fs.realPath(path.join(worktreePath, ".git")))
+      )
+        return "Git registers this worktree at another path";
+      return (yield* fs.exists(path.join(adminDir, "locked"))) ? "worktree is locked" : null;
+    });
+    const early = yield* identityReason;
+    if (early !== null) return early;
     const entry = yield* prepare(root, worktreePath);
-    const reason = yield* blocked();
-    if (reason !== null) {
-      yield* discard(entry);
-      return reason;
-    }
-    yield* move({ root, entry, worktreePath, adminDir });
-    return null;
+    return yield* move({
+      blocked: () => blocked(identityReason),
+      root,
+      entry,
+      worktreePath,
+      adminDir,
+    });
   });
 
   const managedRoots = Effect.fn("StorageCleanup.managedRoots")(function* (

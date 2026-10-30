@@ -46,7 +46,7 @@ import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { makeWorktreeIntegrationCheck } from "./worktreeIntegration.ts";
-import { makeWorktreeTrash, WORKTREE_TRASH_FOLDER } from "./worktreeTrash.ts";
+import { makeWorktreeTrash, PENDING_OPERATIONS, WORKTREE_TRASH_FOLDER } from "./worktreeTrash.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -540,6 +540,8 @@ const make = Effect.gen(function* () {
       operation: "StorageCleanup.localChanges",
       cwd,
       args: [
+        "-c",
+        "core.fsmonitor=false",
         "status",
         "--porcelain=v1",
         "-z",
@@ -562,7 +564,16 @@ const make = Effect.gen(function* () {
     const ignored = yield* git.execute({
       operation: "StorageCleanup.ignoredFiles",
       cwd,
-      args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+      args: [
+        "-c",
+        "core.fsmonitor=false",
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "-z",
+      ],
       maxOutputBytes: 64 * 1024,
     });
     if (ignored.stdoutTruncated) return "ignored files exceed the inspection limit";
@@ -585,8 +596,6 @@ const make = Effect.gen(function* () {
       if (admin.stdoutTruncated || admin.stderrTruncated)
         return "submodule inspection exceeded the limit";
       const modules = path.join(admin.stdout.replace(/\n$/, ""), "modules");
-      const stored = yield* fs.exists(modules);
-      if (!stored && !(yield* fs.exists(path.join(cwd, ".gitmodules")))) return null;
       const populated = yield* inspect([
         "submodule",
         "foreach",
@@ -615,6 +624,23 @@ const make = Effect.gen(function* () {
         if ((yield* fs.stat(directory)).type !== "Directory")
           return "submodule repository could not be inspected";
         if (yield* fs.exists(path.join(directory, "HEAD"))) {
+          for (const operation of PENDING_OPERATIONS)
+            if (yield* fs.exists(path.join(directory, operation)))
+              return `submodule has a Git operation in progress (${operation})`;
+          if (yield* fs.exists(path.join(directory, "info", "grafts")))
+            return "submodule repository has grafts";
+          const replaced = yield* inspect([
+            "--git-dir",
+            directory,
+            "for-each-ref",
+            "--count=1",
+            "refs/replace/",
+          ]);
+          if (replaced.stdoutTruncated || replaced.stdout.trim() !== "")
+            return "submodule repository has replace refs";
+          const linked = path.join(directory, "worktrees");
+          if ((yield* fs.exists(linked)) && (yield* fs.readDirectory(linked)).length > 0)
+            return "submodule has another linked worktree";
           const unpushed = yield* inspect([
             "--git-dir",
             directory,
@@ -643,40 +669,38 @@ const make = Effect.gen(function* () {
         const changes = yield* localChangesReason(submodule, rules);
         if (changes !== null) return `submodule ${changes}`;
       }
-      if ((stored || paths.length > 0) && rules.worktreeKeepWhen !== "tracked-changes") {
-        const root = yield* fs.realPath(cwd);
-        // Git status and foreach omit files inside deinitialized gitlink directories.
-        const populatedPaths = new Set(paths.map(pathKey));
-        const unchecked: string[] = [];
-        for (const repository of [root, ...paths]) {
-          const index = yield* inspect(
-            ["-C", repository, "ls-files", "--stage", "-z"],
-            16 * 1024 * 1024,
-          );
-          if (index.stdoutTruncated || index.stderrTruncated)
-            return "submodule inspection exceeded the limit";
-          for (const entry of index.stdout.split("\0")) {
-            if (!entry.startsWith("160000 ")) continue;
-            const submodule = path.resolve(repository, entry.slice(entry.indexOf("\t") + 1));
-            if (!inside(root, submodule)) return "submodules could not be inspected";
-            if (!populatedPaths.has(pathKey(submodule)) && (yield* fs.exists(submodule)))
-              unchecked.push(submodule);
-          }
+      const root = yield* fs.realPath(cwd);
+      // Git status and foreach omit files inside deinitialized gitlink directories.
+      const populatedPaths = new Set(paths.map(pathKey));
+      const unchecked: string[] = [];
+      for (const repository of [root, ...paths]) {
+        const index = yield* inspect(
+          ["-C", repository, "ls-files", "--stage", "-z"],
+          16 * 1024 * 1024,
+        );
+        if (index.stdoutTruncated || index.stderrTruncated)
+          return "submodule inspection exceeded the limit";
+        for (const entry of index.stdout.split("\0")) {
+          if (!entry.startsWith("160000 ")) continue;
+          const submodule = path.resolve(repository, entry.slice(entry.indexOf("\t") + 1));
+          if (!inside(root, submodule)) return "submodules could not be inspected";
+          if (!populatedPaths.has(pathKey(submodule)) && (yield* fs.exists(submodule)))
+            unchecked.push(submodule);
         }
-        let inspected = unchecked.length;
-        while (unchecked.length > 0) {
-          if (inspected > 10_000) return "submodule inspection exceeded the limit";
-          const target = unchecked.pop()!;
-          if (
-            (yield* fs.realPath(target)) !== path.resolve(target) ||
-            (yield* fs.stat(target)).type !== "Directory"
-          )
-            return "submodule has local files";
-          if (path.basename(target) === "node_modules") continue;
-          const names = yield* fs.readDirectory(target);
-          inspected += names.length;
-          for (const name of names) unchecked.push(path.join(target, name));
-        }
+      }
+      let inspected = unchecked.length;
+      while (unchecked.length > 0) {
+        if (inspected > 10_000) return "submodule inspection exceeded the limit";
+        const target = unchecked.pop()!;
+        if (
+          (yield* fs.realPath(target)) !== path.resolve(target) ||
+          (yield* fs.stat(target)).type !== "Directory"
+        )
+          return "submodule has local files";
+        if (path.basename(target) === "node_modules") continue;
+        const names = yield* fs.readDirectory(target);
+        inspected += names.length;
+        for (const name of names) unchecked.push(path.join(target, name));
       }
       return null;
     },
@@ -889,8 +913,6 @@ const make = Effect.gen(function* () {
                   ? "not merged"
                   : "has commits beyond the default branch",
           );
-        const personal = yield* trash.personalStateReason(worktreePath);
-        if (personal !== null) return keep(personal);
         // Re-read this path's threads and sessions so new activity cancels removal; full per-worktree snapshots take seconds.
         const blockedSinceCheck = Effect.fnUntraced(function* () {
           const latestProjects = yield* projectStore.listShells();
@@ -962,6 +984,8 @@ const make = Effect.gen(function* () {
         });
         const blocked = yield* blockedSinceCheck();
         if (blocked !== null) return keep(blocked);
+        const personal = yield* trash.personalStateReason(worktreePath);
+        if (personal !== null) return keep(personal);
         const bytes = yield* measureWorktree(worktreePath);
         const blockedWhileMeasuring = yield* blockedSinceCheck();
         if (blockedWhileMeasuring !== null) return keep(blockedWhileMeasuring);
@@ -985,12 +1009,31 @@ const make = Effect.gen(function* () {
           )
         )
           return keep("settings changed since check");
-        const submodules = yield* submoduleKeepReason(worktreePath, settings);
-        if (submodules !== null) return keep(submodules);
-        const removal = yield* trash.remove(managedRoot, worktreePath, () => {
-          // Last, after every slow inspection: a snooze or unarchive here still cancels removal.
-          return blockedSinceCheck();
-        });
+        // Runs right before the move; the status check goes last so it sees edits made meanwhile.
+        const removal = yield* trash.remove(
+          managedRoot,
+          worktreePath,
+          project.workspaceRoot,
+          (identity) =>
+            Effect.gen(function* () {
+              const blocked = yield* blockedSinceCheck();
+              if (blocked !== null) return blocked;
+              const moved = yield* identity;
+              if (moved !== null) return moved;
+              if (yield* branchChanged(worktreePath, thread.branch))
+                return "repository or branch changed since check";
+              if (
+                (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
+                head.commitSha
+              )
+                return "commit changed since check";
+              const personal = yield* trash.personalStateReason(worktreePath);
+              if (personal !== null) return personal;
+              const submodules = yield* submoduleKeepReason(worktreePath, settings);
+              if (submodules !== null) return submodules;
+              return yield* localChangesReason(worktreePath, settings);
+            }),
+        );
         if (removal !== null) return keep(removal);
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);

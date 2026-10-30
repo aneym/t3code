@@ -195,7 +195,7 @@ files such as `.env` and build output. **Any local files** also protects ignored
 `node_modules`. **Edited tracked files** protects only tracked edits and allows untracked and
 ignored files to be deleted. Whatever that setting says, cleanup keeps a worktree that holds files
 excluded through the repository's `.git/info/exclude`, a `.lane` folder, or a nested Git repository
-at its top level, and the worktree of a snoozed thread. Merge and unchanged cleanup also wait until
+anywhere outside `node_modules`, and the worktree of a snoozed thread. Merge and unchanged cleanup also wait until
 the thread is settled or archived. A removed worktree moves to a `.worktree-trash` folder inside
 its worktree folder for a day before it is deleted, so you can copy files back out of its
 `checkout` folder. If cleanup cannot put a worktree back after a failed removal, it leaves a

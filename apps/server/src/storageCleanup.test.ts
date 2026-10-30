@@ -275,6 +275,8 @@ const cleanupFixture = (
     let onLiveCheck: Effect.Effect<void> = Effect.void;
     let outboxStatus: string | null = null;
     let fullStatusCalls = 0;
+    let beforeGit: (operation: string) => Effect.Effect<void> = () => Effect.void;
+    let beforeProjects: () => Effect.Effect<void> = () => Effect.void;
     let snapshotReads = 0;
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
@@ -282,6 +284,7 @@ const cleanupFixture = (
     const context = yield* Layer.build(StorageCleanup.layer).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, {
         ...git,
+        execute: (input) => Effect.andThen(beforeGit(input.operation), git.execute(input)),
         statusDetailsLocal: (...args) => {
           fullStatusCalls++;
           return git.statusDetailsLocal(...args);
@@ -294,11 +297,15 @@ const cleanupFixture = (
       Effect.provideService(ProjectStore.ProjectStoreV2, {
         list: () => Effect.sync(() => projectRoots.map((workspaceRoot) => ({ workspaceRoot }))),
         listShells: () =>
-          Effect.sync(() =>
-            projectRoots.map((workspaceRoot, index) => ({
-              id: ProjectId.make(`project-${index + 1}`),
-              workspaceRoot,
-            })),
+          beforeProjects().pipe(
+            Effect.andThen(
+              Effect.sync(() =>
+                projectRoots.map((workspaceRoot, index) => ({
+                  id: ProjectId.make(`project-${index + 1}`),
+                  workspaceRoot,
+                })),
+              ),
+            ),
           ),
       } as unknown as ProjectStore.ProjectStoreV2["Service"]),
       Effect.provideService(ProjectionStore.ProjectionStoreV2, {
@@ -447,6 +454,12 @@ const cleanupFixture = (
         openSessionCwd = cwd;
       },
       fullStatusCalls: () => fullStatusCalls,
+      setBeforeGit: (next: typeof beforeGit) => {
+        beforeGit = next;
+      },
+      setBeforeProjects: (next: typeof beforeProjects) => {
+        beforeProjects = next;
+      },
       snapshotReads: () => snapshotReads,
       activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {
         events = domainEvents;
@@ -587,6 +600,78 @@ it.live("keeps nested submodule files protected by the current keep rule", () =>
   ),
 );
 
+it.live("keeps a tracked edit made while the last identity checks run", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, setBeforeGit, setBeforeProjects } = yield* cleanupFixture();
+      let armed = false;
+      let finalRead = false;
+      setBeforeProjects(() =>
+        Effect.sync(() => {
+          if (armed) finalRead = true;
+        }),
+      );
+      setBeforeGit((operation) => {
+        if (operation === "StorageCleanup.adminDir") armed = true;
+        if (!finalRead || operation !== "StorageCleanup.repository") return Effect.void;
+        finalRead = false;
+        return fs.writeFileString(`${worktree}/tracked.txt`, "edited\n").pipe(Effect.orDie);
+      });
+      expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+      expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+    }),
+  ),
+);
+
+it.live("keeps an ignored submodule file saved while the last thread checks run", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, submodule, setPolicy, setBeforeGit, setBeforeProjects } =
+        yield* submoduleCleanupFixture();
+      setPolicy("any-local-files");
+      let armed = false;
+      setBeforeGit((operation) =>
+        Effect.sync(() => {
+          if (operation === "StorageCleanup.adminDir") armed = true;
+        }),
+      );
+      setBeforeProjects(() => {
+        if (!armed) return Effect.void;
+        armed = false;
+        return fs.writeFileString(`${submodule}/.env`, "local secret\n").pipe(Effect.orDie);
+      });
+      expect(
+        (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+      ).toMatchObject({ outcome: "kept" });
+      expect(yield* fs.readFileString(`${submodule}/.env`)).toBe("local secret\n");
+    }),
+  ),
+);
+
+it.live.each(["any-local-files", "tracked-changes"] as const)(
+  "keeps files inside a submodule that was never initialized (%s)",
+  (policy) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command, setPolicy } = yield* cleanupFixture();
+        setPolicy(policy);
+        const head = (yield* command(repo, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* fs.writeFileString(
+          `${worktree}/.gitmodules`,
+          `[submodule "module"]\n\tpath = module\n\turl = ${repo}\n`,
+        );
+        yield* command(worktree, ["update-index", "--add", "--cacheinfo", `160000,${head},module`]);
+        yield* command(worktree, ["add", ".gitmodules"]);
+        yield* command(worktree, ["commit", "-m", "module"]);
+        yield* command(repo, ["merge", "--ff-only", "feature"]);
+        yield* fs.makeDirectory(`${worktree}/module`);
+        yield* fs.writeFileString(`${worktree}/module/notes.txt`, "notes\n");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/module/notes.txt`)).toBe("notes\n");
+      }),
+    ),
+);
+
 it.live("keeps unpushed submodule history after checkout and deinitialization", () =>
   runCleanupTest(
     Effect.gen(function* () {
@@ -628,6 +713,72 @@ it.live("keeps unpushed submodule history after checkout and deinitialization", 
       expect(
         (yield* service.runNow).entries.find((entry) => entry.path === worktree),
       ).toMatchObject({ outcome: "kept", reason: expect.stringContaining("remote-tracking") });
+      expect(
+        (yield* command(worktree, ["--git-dir", childGit, "show", `${local}:tracked.txt`])).stdout,
+      ).toBe("unpublished work\n");
+    }),
+  ),
+);
+
+it.live("keeps a deinitialized submodule whose paused merge holds an autostash", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, submodule, child, command } = yield* submoduleCleanupFixture();
+      const childGit = (yield* command(child, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+      const empty = (yield* command(child, [
+        "commit-tree",
+        "HEAD^{tree}",
+        "-p",
+        "HEAD",
+        "-m",
+        "empty",
+      ])).stdout.trim();
+      yield* fs.writeFileString(`${child}/tracked.txt`, "edited\n");
+      yield* command(child, ["merge", "--no-ff", "--no-commit", "--autostash", empty]);
+      yield* command(submodule, ["submodule", "deinit", "child"]);
+      expect(
+        (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+      ).toMatchObject({ outcome: "kept", reason: expect.stringContaining("MERGE_") });
+      expect(yield* fs.exists(`${childGit}/MERGE_AUTOSTASH`)).toBe(true);
+    }),
+  ),
+);
+
+it.live("keeps a deinitialized submodule that owns another linked worktree", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, submodule, child, command } = yield* submoduleCleanupFixture();
+      const linked = `${yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-linked-" })}/side`;
+      yield* command(child, ["worktree", "add", "-b", "side", linked]);
+      yield* fs.writeFileString(`${linked}/tracked.txt`, "staged\n");
+      yield* command(linked, ["add", "tracked.txt"]);
+      yield* command(submodule, ["submodule", "deinit", "child"]);
+      expect(
+        (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+      ).toMatchObject({ outcome: "kept", reason: expect.stringContaining("linked worktree") });
+      expect((yield* command(linked, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe(
+        "tracked.txt",
+      );
+    }),
+  ),
+);
+
+it.live("keeps unpushed history a deinitialized submodule hides with grafts", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, submodule, child, command } = yield* submoduleCleanupFixture();
+      const childGit = (yield* command(child, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+      const remote = (yield* command(child, ["rev-parse", "origin/main"])).stdout.trim();
+      yield* command(child, ["checkout", "-b", "local-only"]);
+      yield* fs.writeFileString(`${child}/tracked.txt`, "unpublished work\n");
+      yield* command(child, ["commit", "-am", "local work"]);
+      const local = (yield* command(child, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* command(child, ["checkout", "-q", "--detach", remote]);
+      yield* fs.writeFileString(`${childGit}/info/grafts`, `${remote} ${local}\n`);
+      yield* command(submodule, ["submodule", "deinit", "child"]);
+      expect(
+        (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+      ).toMatchObject({ outcome: "kept" });
       expect(
         (yield* command(worktree, ["--git-dir", childGit, "show", `${local}:tracked.txt`])).stdout,
       ).toBe("unpublished work\n");
@@ -1738,9 +1889,13 @@ describe("storage cleanup reports and local file policies", () => {
         const { service, worktree } = yield* cleanupFixture().pipe(
           Effect.provideService(FileSystem.FileSystem, {
             ...fs,
-            readDirectory: (directory) => fs.readDirectory(`${directory}/missing-directory`),
+            readDirectory: (directory) =>
+              fs.readDirectory(
+                directory.endsWith("node_modules") ? `${directory}/missing-directory` : directory,
+              ),
           }),
         );
+        yield* fs.makeDirectory(`${worktree}/node_modules/package`, { recursive: true });
         const report = yield* service.runNow;
         expect(report.entries[0]).toMatchObject({ outcome: "removed", bytes: null, files: null });
         expect(report.bytesFreed).toBe(0);
@@ -1833,6 +1988,366 @@ describe("storage cleanup reports and local file policies", () => {
         expect(removed.entries[0]).toMatchObject({ outcome: "removed" });
         expect(removed.entries[0]?.bytes).toBeGreaterThan(0);
         expect(walked).toContain(root);
+      }),
+    ),
+  );
+  it.live("keeps a tracked edit saved during the last inspections", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, setBeforeGit } = yield* cleanupFixture();
+        setBeforeGit((operation) =>
+          operation === "StorageCleanup.adminDir"
+            ? fs.writeFileString(`${worktree}/tracked.txt`, "edited\n").pipe(Effect.orDie)
+            : Effect.void,
+        );
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+      }),
+    ),
+  );
+  it.live("keeps a tracked edit saved while the trash entry is prepared", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let worktreePath = "";
+        const { service, worktree } = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (target, data, options) =>
+              (target.endsWith("recovery-failed.txt") && worktreePath !== ""
+                ? fs.writeFileString(`${worktreePath}/tracked.txt`, "edited\n")
+                : Effect.void
+              ).pipe(Effect.andThen(fs.writeFileString(target, data, options))),
+          }),
+        );
+        worktreePath = worktree;
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+      }),
+    ),
+  );
+  it.live("keeps local state created while the trash entry is prepared", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let worktreePath = "";
+        const { service, worktree, command } = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (target, data, options) =>
+              (target.endsWith("recovery-failed.txt") && worktreePath !== ""
+                ? fs
+                    .makeDirectory(`${worktreePath}/.lane`, { recursive: true })
+                    .pipe(Effect.andThen(fs.writeFileString(`${worktreePath}/.lane/notes`, "x")))
+                : Effect.void
+              ).pipe(Effect.andThen(fs.writeFileString(target, data, options))),
+          }),
+        );
+        const exclude = yield* command(worktree, [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-path",
+          "info/exclude",
+        ]);
+        yield* fs.writeFileString(exclude.stdout.trim(), ".lane/\n");
+        worktreePath = worktree;
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/.lane/notes`)).toBe("x");
+      }),
+    ),
+  );
+  it.live("keeps a tracked edit saved while the last thread checks run", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let worktreePath = "";
+        let prepared = false;
+        const { service, worktree, setBeforeProjects } = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (target, data, options) => {
+              if (target.endsWith("recovery-failed.txt") && worktreePath !== "") prepared = true;
+              return fs.writeFileString(target, data, options);
+            },
+          }),
+        );
+        worktreePath = worktree;
+        setBeforeProjects(() =>
+          prepared
+            ? fs.writeFileString(`${worktree}/tracked.txt`, "edited\n").pipe(Effect.orDie)
+            : Effect.void,
+        );
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+      }),
+    ),
+  );
+  it.live.each(["excluded local state", "a worktree lock"])(
+    "keeps %s added while the last thread checks run",
+    (state) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          let worktreePath = "";
+          let prepared = false;
+          const { service, worktree, command, setBeforeProjects } = yield* cleanupFixture().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              writeFileString: (target, data, options) => {
+                if (target.endsWith("recovery-failed.txt") && worktreePath !== "") prepared = true;
+                return fs.writeFileString(target, data, options);
+              },
+            }),
+          );
+          const exclude = yield* command(worktree, [
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "info/exclude",
+          ]);
+          yield* fs.writeFileString(exclude.stdout.trim(), ".lane/\n");
+          const adminDir = (yield* command(worktree, [
+            "rev-parse",
+            "--absolute-git-dir",
+          ])).stdout.trim();
+          worktreePath = worktree;
+          const add =
+            state === "a worktree lock"
+              ? fs.writeFileString(`${adminDir}/locked`, "")
+              : fs
+                  .makeDirectory(`${worktree}/.lane`, { recursive: true })
+                  .pipe(Effect.andThen(fs.writeFileString(`${worktree}/.lane/notes`, "x")));
+          setBeforeProjects(() => {
+            if (!prepared) return Effect.void;
+            prepared = false;
+            return add.pipe(Effect.asVoid, Effect.orDie);
+          });
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+          expect(yield* fs.exists(`${worktree}/tracked.txt`)).toBe(true);
+        }),
+      ),
+  );
+  it.live("keeps a checkout moved away and replaced by a clone while the last checks run", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let worktreePath = "";
+        let prepared = false;
+        const { service, repo, worktree, command, setBeforeProjects } =
+          yield* cleanupFixture().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              writeFileString: (target, data, options) => {
+                if (target.endsWith("recovery-failed.txt") && worktreePath !== "") prepared = true;
+                return fs.writeFileString(target, data, options);
+              },
+            }),
+          );
+        const moved = `${yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-moved-" })}/feature`;
+        worktreePath = worktree;
+        setBeforeProjects(() => {
+          if (!prepared) return Effect.void;
+          prepared = false;
+          return Effect.gen(function* () {
+            yield* fs.rename(worktree, moved);
+            yield* fs.writeFileString(`${moved}/tracked.txt`, "staged\n");
+            yield* command(moved, ["add", "tracked.txt"]);
+            yield* command(repo, ["clone", "-q", "-b", "feature", repo, worktree]);
+          }).pipe(Effect.asVoid, Effect.orDie);
+        });
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect((yield* command(moved, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe(
+          "tracked.txt",
+        );
+      }),
+    ),
+  );
+  it.live("keeps an edited checkout whose Git work tree points elsewhere", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command } = yield* cleanupFixture();
+        yield* command(repo, ["merge", "--ff-only", "feature"]);
+        const clean = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-clean-" }),
+        );
+        yield* fs.writeFileString(`${clean}/tracked.txt`, "original\n");
+        yield* fs.writeFileString(`${clean}/.gitignore`, ".env\ndist/\nnode_modules/\n");
+        yield* command(repo, ["config", "extensions.worktreeConfig", "true"]);
+        yield* command(worktree, ["config", "--worktree", "core.worktree", clean]);
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "edited\n");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+      }),
+    ),
+  );
+  it.live.each(["copied", "linked"])(
+    "keeps the original checkout when a copy with a %s .git sits at the thread path",
+    (gitFile) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, repo, worktree, command } = yield* cleanupFixture();
+          yield* command(repo, ["merge", "--ff-only", "feature"]);
+          const original = `${worktree}-original`;
+          yield* fs.remove(worktree, { recursive: true });
+          yield* command(repo, ["worktree", "prune"]);
+          yield* command(repo, ["worktree", "add", original, "feature"]);
+          yield* fs.makeDirectory(worktree);
+          for (const name of ["tracked.txt", ".gitignore"])
+            yield* fs.copyFile(`${original}/${name}`, `${worktree}/${name}`);
+          yield* gitFile === "linked"
+            ? fs.symlink(`${original}/.git`, `${worktree}/.git`)
+            : fs.copyFile(`${original}/.git`, `${worktree}/.git`);
+          yield* fs.writeFileString(`${original}/tracked.txt`, "edited\n");
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+          expect((yield* command(original, ["status", "--porcelain"])).stdout).toContain(
+            "tracked.txt",
+          );
+        }),
+      ),
+  );
+  it.live.each(["--assume-unchanged", "--skip-worktree"])(
+    "keeps a tracked edit hidden with %s",
+    (flag) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, command } = yield* cleanupFixture();
+          yield* command(worktree, ["update-index", flag, "tracked.txt"]);
+          yield* fs.writeFileString(`${worktree}/tracked.txt`, "edited\n");
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+          expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+        }),
+      ),
+  );
+  it.live("keeps a tracked edit a stale file system monitor hides", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        const monitor = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-fsmonitor-" });
+        yield* fs.writeFileString(`${monitor}/hook`, '#!/bin/sh\nprintf "t\\0"\n');
+        yield* fs.chmod(`${monitor}/hook`, 0o755);
+        yield* command(worktree, ["config", "core.fsmonitor", `${monitor}/hook`]);
+        yield* command(worktree, ["update-index", "--fsmonitor"]);
+        yield* command(worktree, ["update-index", "--refresh"]);
+        yield* command(worktree, ["update-index", "--refresh"]);
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "edited\n");
+        expect((yield* command(worktree, ["status", "--porcelain"])).stdout).toBe("");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+      }),
+    ),
+  );
+  it.live("keeps edits saved by a paused merge's autostash", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        const empty = (yield* command(worktree, [
+          "commit-tree",
+          "HEAD^{tree}",
+          "-p",
+          "HEAD",
+          "-m",
+          "empty",
+        ])).stdout.trim();
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "edited\n");
+        yield* command(worktree, ["merge", "--no-ff", "--no-commit", "--autostash", empty]);
+        expect((yield* command(worktree, ["status", "--porcelain"])).stdout).toBe("");
+        expect((yield* service.runNow).entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: expect.stringContaining("MERGE_"),
+        });
+        yield* command(worktree, ["merge", "--abort"]);
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+      }),
+    ),
+  );
+  it.live("removes a skipped file's checkout only under sparse checkout", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        yield* command(worktree, ["update-index", "--skip-worktree", "tracked.txt"]);
+        yield* fs.remove(`${worktree}/tracked.txt`);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        yield* command(worktree, ["config", "core.sparseCheckout", "true"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+      }),
+    ),
+  );
+  it.live.each(["grafts", "replace refs"])("keeps a checkout whose repository has %s", (state) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command } = yield* cleanupFixture();
+        const head = (yield* command(repo, ["rev-parse", "HEAD"])).stdout.trim();
+        if (state === "grafts") yield* fs.writeFileString(`${repo}/.git/info/grafts`, `${head}\n`);
+        else {
+          const other = yield* command(repo, ["commit-tree", "HEAD^{tree}", "-m", "replacement"]);
+          yield* command(repo, ["update-ref", `refs/replace/${head}`, other.stdout.trim()]);
+        }
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.exists(`${worktree}/tracked.txt`)).toBe(true);
+      }),
+    ),
+  );
+  it.live("keeps notes excluded by a personal ignore file", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command } = yield* cleanupFixture();
+        const personal = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-ignore-" });
+        yield* fs.writeFileString(`${personal}/.gitignore`, "cache/notes.md\ndist/notes.md\n");
+        yield* command(worktree, ["config", "core.excludesFile", `${personal}/.gitignore`]);
+        yield* fs.writeFileString(
+          `${worktree}/.gitignore`,
+          ".env\ndist/\nnode_modules/\ncache/*/\n",
+        );
+        yield* command(worktree, ["commit", "-am", "ignore cache"]);
+        yield* command(repo, ["merge", "--ff-only", "feature"]);
+        yield* fs.makeDirectory(`${worktree}/cache/build`, { recursive: true });
+        yield* fs.writeFileString(`${worktree}/cache/build/output`, "generated\n");
+        yield* fs.writeFileString(`${worktree}/cache/notes.md`, "notes\n");
+        yield* fs.writeFileString(`${worktree}/.env`, "local\n");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/cache/notes.md`)).toBe("notes\n");
+        yield* fs.remove(`${worktree}/cache/notes.md`);
+        yield* fs.makeDirectory(`${worktree}/dist`);
+        yield* fs.writeFileString(`${worktree}/dist/notes.md`, "notes\n");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/dist/notes.md`)).toBe("notes\n");
+        yield* fs.remove(`${worktree}/dist/notes.md`);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+      }),
+    ),
+  );
+  it.live("keeps notes excluded by a personal ignore file whose name ends in a space", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        const personal = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-ignore-" });
+        yield* fs.writeFileString(`${personal}/ignore `, "notes.md\n");
+        yield* command(worktree, ["config", "core.excludesFile", `${personal}/ignore `]);
+        yield* fs.writeFileString(`${worktree}/notes.md`, "notes\n");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/notes.md`)).toBe("notes\n");
+      }),
+    ),
+  );
+  it.live("keeps a worktree another repository checked out at the same path", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command } = yield* cleanupFixture();
+        yield* command(repo, ["merge", "--ff-only", "feature"]);
+        yield* fs.remove(worktree, { recursive: true });
+        yield* command(repo, ["worktree", "prune"]);
+        const other = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-other-" }),
+        );
+        yield* command(other, ["init", "-b", "main"]);
+        yield* command(other, ["config", "user.email", "cleanup@example.test"]);
+        yield* command(other, ["config", "user.name", "Cleanup test"]);
+        yield* fs.writeFileString(`${other}/tracked.txt`, "original\n");
+        yield* command(other, ["add", "."]);
+        yield* command(other, ["commit", "-m", "initial"]);
+        yield* command(other, ["worktree", "add", "-b", "feature", worktree]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.exists(`${worktree}/tracked.txt`)).toBe(true);
       }),
     ),
   );
@@ -2214,7 +2729,7 @@ it.live.each([
     state: "excluded",
     policy: "uncommitted-changes",
     directory: "notes",
-    reason: "Has excluded local state (notes/)",
+    reason: "Has excluded local state (notes/ledger.md)",
   },
   {
     state: "lane",
@@ -2229,6 +2744,60 @@ it.live.each([
     repository: "scratch",
     reason: "Has a nested repository (scratch/)",
   },
+  {
+    state: "nested repository with parent-tracked files",
+    policy: "tracked-changes",
+    directory: "vendor",
+    repository: "vendor",
+    tracked: "vendor/README.md",
+    reason: "Has a nested repository (vendor/)",
+  },
+  {
+    state: "repository inside an untracked directory",
+    policy: "tracked-changes",
+    directory: "scratch/repo",
+    repository: "scratch/repo",
+    reason: "Has a nested repository (scratch/repo/)",
+  },
+  {
+    state: "bare repository",
+    policy: "tracked-changes",
+    directory: "backup.git",
+    bare: "backup.git",
+    reason: "Has a nested repository (backup.git/)",
+  },
+  {
+    state: "bare repository with a parent-tracked HEAD",
+    policy: "tracked-changes",
+    directory: "backup.git",
+    bare: "backup.git",
+    trackHead: true,
+    reason: "Has a nested repository (backup.git/)",
+  },
+  {
+    state: "bare repository with an ignored HEAD",
+    policy: "tracked-changes",
+    directory: "scratch/backup.git",
+    bare: "scratch/backup.git",
+    ignore: "scratch/.gitignore",
+    reason: "Has a nested repository (scratch/backup.git/)",
+  },
+  {
+    state: "repository under an uninitialized submodule",
+    policy: "tracked-changes",
+    directory: "module/scratch/repo",
+    repository: "module/scratch/repo",
+    submodule: "module",
+    reason: "Has a nested repository (module/scratch/repo/)",
+  },
+  {
+    state: "unregistered gitlink",
+    policy: "tracked-changes",
+    directory: "embedded",
+    repository: "embedded",
+    gitlink: true,
+    reason: "Has a nested repository (embedded/)",
+  },
 ] as const)("keeps $state local state in a settled, landed checkout", (row) =>
   runCleanupTest(
     Effect.gen(function* () {
@@ -2240,11 +2809,57 @@ it.live.each([
       ]);
       if (row.directory === "notes")
         yield* fixture.fs.writeFileString(`${fixture.repo}/.git/info/exclude`, "notes/\n");
+      if ("submodule" in row) {
+        const head = (yield* fixture.command(fixture.worktree, [
+          "rev-parse",
+          "HEAD",
+        ])).stdout.trim();
+        yield* fixture.fs.writeFileString(
+          `${fixture.worktree}/.gitmodules`,
+          `[submodule "${row.submodule}"]\n\tpath = ${row.submodule}\n\turl = ${fixture.repo}\n`,
+        );
+        yield* fixture.command(fixture.worktree, [
+          "update-index",
+          "--add",
+          "--cacheinfo",
+          `160000,${head},${row.submodule}`,
+        ]);
+        yield* fixture.command(fixture.worktree, ["add", ".gitmodules"]);
+        yield* fixture.command(fixture.worktree, ["commit", "-qm", "register submodule"]);
+      }
       const ledger = `${fixture.worktree}/${row.directory}/ledger.md`;
       yield* fixture.fs.makeDirectory(`${fixture.worktree}/${row.directory}`, { recursive: true });
+      if ("tracked" in row) {
+        yield* fixture.fs.writeFileString(`${fixture.worktree}/${row.tracked}`, "tracked\n");
+        yield* fixture.command(fixture.worktree, ["add", row.tracked]);
+        yield* fixture.command(fixture.worktree, ["commit", "-qm", "track vendor"]);
+      }
       if ("repository" in row)
         yield* fixture.command(`${fixture.worktree}/${row.repository}`, ["init", "-q"]);
+      if ("bare" in row)
+        yield* fixture.command(`${fixture.worktree}/${row.directory}`, ["init", "-q", "--bare"]);
+      if ("ignore" in row)
+        yield* fixture.fs.writeFileString(`${fixture.worktree}/${row.ignore}`, "HEAD\n");
+      if ("trackHead" in row) {
+        yield* fixture.command(fixture.worktree, ["add", "-f", `${row.directory}/HEAD`]);
+        yield* fixture.command(fixture.worktree, ["commit", "-qm", "track bare HEAD"]);
+      }
       yield* fixture.fs.writeFileString(ledger, "state\n");
+      if ("gitlink" in row) {
+        const embedded = `${fixture.worktree}/${row.directory}`;
+        yield* fixture.command(embedded, ["add", "ledger.md"]);
+        yield* fixture.command(embedded, [
+          "-c",
+          "user.name=Cleanup test",
+          "-c",
+          "user.email=cleanup@example.test",
+          "commit",
+          "-qm",
+          "embedded history",
+        ]);
+        yield* fixture.command(fixture.worktree, ["add", row.directory]);
+        yield* fixture.command(fixture.worktree, ["commit", "-qm", "embed repository"]);
+      }
 
       expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
         outcome: "kept",
