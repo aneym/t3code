@@ -142,7 +142,9 @@ def create_home(sandbox):
             raise ValueError("rehearsal refused before creating home: older homes are still live or unsafe to prune: " + json.dumps(report["held"]))
         target = run / "rehearsal-target.json"
         staged = target.with_suffix(".next")
-        staged.write_text(json.dumps({"home": str(sandbox.home), "label": sandbox.label, "port": sandbox.port}) + "\n")
+        from .rehearsal_units import record
+
+        staged.write_text(json.dumps(record(sandbox)) + "\n")
         os.replace(staged, target)
         sandbox.home.mkdir(mode=0o700)
         receipt = {"at": report["at"], "beforeHomes": before, "afterPruneHomes": after_prune, "afterCreationHomes": len(homes()), "retention": report, "disk": disk}

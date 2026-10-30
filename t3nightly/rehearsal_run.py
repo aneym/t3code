@@ -188,18 +188,17 @@ class Rehearsal:
         for number in watched:
             signal.signal(number, interrupted)
         result = {"result": "FAIL", "releaseEligible": False}
+        mask = None
         try:
             try:
                 result = self.execute()
             except BaseException as error:
                 result.update(result="FAIL", releaseEligible=False, phase=self.phase, error=f"{type(error).__name__}: {error}")
             finally:
-                for number in watched:
-                    signal.signal(number, signal.SIG_IGN)
                 try:
-                    result = self.collect_report(result)
-                except BaseException as error:
-                    result.update(result="FAIL", releaseEligible=False, receiptError=f"{type(error).__name__}: {error}")
+                    mask = signal.pthread_sigmask(signal.SIG_BLOCK, watched)
+                    for number in watched:
+                        signal.signal(number, signal.SIG_IGN)
                 finally:
                     try:
                         self.sandbox.close()
@@ -218,11 +217,10 @@ class Rehearsal:
                                 reservation.close()
             return self.report(result)
         finally:
+            if mask is not None:
+                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
             for number, handler in previous.items():
                 signal.signal(number, handler)
-
-    def collect_report(self, result):
-        return result
 
     def report(self, result):
         result = {**result, "timings": self.timings, "elapsedSeconds": round(time.monotonic() - self.clock, 3), "startedAt": self.started, "finishedAt": now()}
