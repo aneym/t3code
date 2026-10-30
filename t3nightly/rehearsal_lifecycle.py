@@ -57,7 +57,7 @@ def remove_databases(home):
     report = {"at": now(), "deleted": [], "bytes": 0}
     if home.is_dir():
         report["homeKiBBefore"] = int(subprocess.run(["du", "-sk", str(home)], capture_output=True, text=True, check=True, timeout=120).stdout.split()[0])
-    for directory in (home / "userdata", home / "codex-home", home / "claude-home"):
+    for directory in (home / "userdata", home / "codex-home", home / "claude-home", home / "snapshots"):
         if directory.is_symlink():
             raise ValueError("scratch database directory became a symlink")
         for path in directory.rglob("*"):
