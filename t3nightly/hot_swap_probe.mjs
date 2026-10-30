@@ -5,7 +5,7 @@ import nodeHttp from "node:http";
 export async function monitor(context) {
   const { opts, Effect, Stream, layers } = context;
   const started = performance.now();
-  const data = { httpSamples: 0, refusedConnections: 0, httpFailures: 0, maxHttpGapMs: 0, flipGapMs: null, servedVersions: [], httpObservations: [], keepAlive: { requests: 0, reused: 0, failures: 0, versions: [], sockets: [] }, wsConnections: 0, wsFailures: 0, snapshots: [], sequences: [], resnapshots: 0, ready: false, presentations: [], presentationViolations: [], handoffCalls: [], handoffReplies: [], handoffEvents: [] };
+  const data = { httpSamples: 0, refusedConnections: 0, httpFailures: 0, maxHttpGapMs: 0, flipGapMs: null, servedVersions: [], httpObservations: [], keepAlive: { requests: 0, reused: 0, failures: 0, errors: [], versions: [], sockets: [] }, wsConnections: 0, wsFailures: 0, snapshots: [], sequences: [], resnapshots: 0, ready: false, presentations: [], presentationViolations: [], handoffCalls: [], handoffReplies: [], handoffSettlements: [], handoffEvents: [], sessions: [], subscriptions: [], receivedEvents: [] };
   let lastOk = started;
   let lastSequence;
   const elapsed = () => Math.round(performance.now() - started);
@@ -73,7 +73,7 @@ export async function monitor(context) {
             response.on("error", () => { data.keepAlive.failures++; resolve(); });
           });
           request.on("timeout", () => request.destroy(new Error("keep-alive deadline")));
-          request.on("error", () => { data.keepAlive.failures++; resolve(); });
+          request.on("error", (error) => { data.keepAlive.failures++; data.keepAlive.errors.push({ atMs: elapsed(), code: error.code ?? null, reusedSocket: request.reusedSocket }); resolve(); });
         });
         await delay(100);
       }
