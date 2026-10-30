@@ -31,6 +31,7 @@ def main():
     parser.add_argument("--connector-artifact", default="")
     parser.add_argument("--drain-s", type=int, default=300)
     parser.add_argument("--inject", choices=("none", "warm-death", "post-flip"), default="none")
+    parser.add_argument("--require-hot-swap", action="store_true")
     parser.add_argument("--queue-mode", choices=("none", "capacity", "budget"), default="none")
     parser.add_argument("--live-home", action="append", default=[])
     args = parser.parse_args()

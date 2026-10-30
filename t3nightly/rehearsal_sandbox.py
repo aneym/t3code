@@ -206,6 +206,12 @@ class Sandbox:
         subprocess.run(["git", "-C", str(self.project), "-c", "user.name=Rehearsal", "-c", "user.email=rehearsal@local", "commit", "--allow-empty", "-qm", "Initialize sandbox"], check=True, timeout=10)
         self.boot()
         self.wait_ready(old_version, health_seconds)
+        if getattr(self.args, "require_hot_swap", False):
+            with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/.well-known/t3/environment", timeout=5) as response:
+                environment = json.load(response)
+            (self.evidence / "capability-preflight.json").write_text(json.dumps(environment, indent=2) + "\n")
+            if environment.get("capabilities", {}).get("serverHotSwap") is not True:
+                raise ValueError("serverHotSwap is not advertised by the sandbox; refusing before any update or fallback; inspect capability-preflight.json and production connector unit path")
         self.t3("project", "add", str(self.project))
 
     def check_seed(self):
@@ -277,9 +283,15 @@ class Sandbox:
                     uninstall(connector_run(self))
             finally:
                 if sys.platform == "darwin":
-                    subprocess.run(["launchctl", "bootout", "--wait", f"{self.domain}/{self.label}"], capture_output=True, check=True, timeout=120)
+                    inspection = subprocess.run(["launchctl", "print", f"{self.domain}/{self.label}"], capture_output=True, text=True, timeout=15)
+                    if inspection.returncode == 0:
+                        subprocess.run(["launchctl", "bootout", "--wait", f"{self.domain}/{self.label}"], capture_output=True, check=True, timeout=120)
+                    elif "Could not find service" not in inspection.stderr:
+                        raise ValueError("cannot inspect private sandbox launch agent during teardown")
                 else:
-                    subprocess.run(["systemctl", "--user", "stop", f"{self.label}.service"], check=True, timeout=60)
+                    inspection = subprocess.run(["systemctl", "--user", "show", f"{self.label}.service", "--property=LoadState", "--value"], capture_output=True, text=True, timeout=15)
+                    if inspection.stdout.strip() != "not-found":
+                        subprocess.run(["systemctl", "--user", "stop", f"{self.label}.service"], check=True, timeout=60)
                     self.systemd_unit.unlink(missing_ok=True)
                     if self.systemd_dropin.exists():
                         shutil.rmtree(self.systemd_dropin)
