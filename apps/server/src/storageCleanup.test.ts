@@ -2179,7 +2179,7 @@ it.live.each([
     state: "excluded",
     policy: "uncommitted-changes",
     directory: "notes",
-    reason: "Has excluded local state (notes/ledger.md)",
+    reason: "Has excluded local state (notes/)",
   },
   {
     state: "lane",

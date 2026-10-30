@@ -278,43 +278,22 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       "refs/replace/",
     ]);
     if (replaced.stdout.trim() !== "") return "repository has replace refs";
-    const configured = yield* git.execute({
-      operation: "StorageCleanup.excludesFile",
-      cwd,
-      args: ["config", "--path", "core.excludesFile"],
-      allowNonZeroExit: true,
-    });
-    const env = yield* HostProcess.Environment;
-    const home =
-      env.HOME ||
-      ((yield* HostProcess.isWindows)
-        ? env.HOMEDRIVE && env.HOMEPATH
-          ? path.join(env.HOMEDRIVE, env.HOMEPATH)
-          : env.USERPROFILE
-        : undefined);
-    const globalExclude =
-      configured.stdout.replace(/\r?\n$/, "") ||
-      (env.XDG_CONFIG_HOME
-        ? path.join(env.XDG_CONFIG_HOME, "git", "ignore")
-        : home
-          ? path.join(home, ".config", "git", "ignore")
-          : null);
-    for (const excludeFile of [
-      path.join(commonDir.stdout.trim(), "info", "exclude"),
-      ...(globalExclude === null ? [] : [path.resolve(cwd, globalExclude)]),
-    ]) {
-      if (!(yield* fs.exists(excludeFile))) continue;
-      const excluded = yield* inspect("StorageCleanup.excludedFiles", [
-        "ls-files",
-        "--others",
-        "--ignored",
-        "-z",
-        `--exclude-from=${excludeFile}`,
-      ]);
-      if (excluded.stdoutTruncated) return "excluded files exceed the inspection limit";
-      const file = excluded.stdout.split("\0").find((entry) => entry !== "");
-      if (file !== undefined) return `has excluded local state (${file})`;
-    }
+    const ignoredBy = (sources: string) =>
+      git.execute({
+        operation: "StorageCleanup.ignoredFiles",
+        cwd,
+        args: ["ls-files", "--others", "--ignored", "--directory", "-z", sources],
+        maxOutputBytes: 16 * 1024 * 1024,
+      });
+    const everySource = yield* ignoredBy("--exclude-standard");
+    const repositoryOnly = yield* ignoredBy("--exclude-per-directory=.gitignore");
+    if (everySource.stdoutTruncated || repositoryOnly.stdoutTruncated)
+      return "ignored files exceed the inspection limit";
+    const disposable = new Set(repositoryOnly.stdout.split("\0"));
+    const personal = everySource.stdout
+      .split("\0")
+      .find((entry) => entry !== "" && !disposable.has(entry));
+    if (personal !== undefined) return `has excluded local state (${personal})`;
     const nested = yield* nestedRepository(cwd, submodules);
     return nested === null ? null : `has a nested repository (${nested})`;
   });
