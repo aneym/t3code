@@ -2,6 +2,7 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
+  EnvironmentId,
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   EventId,
@@ -40,7 +41,8 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import * as ThreadSettlementService from "./ThreadSettlementService.ts";
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
+import * as Settlement from "./ThreadSettlementService.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -130,9 +132,17 @@ function persistedLink(
 }
 
 describe("isAutoSettlementCandidate", () => {
+  it("protects agent main threads until unbound", () => {
+    const thread = shell();
+    const bindings = new Set([thread.id]);
+    expect(Settlement.isAutoSettlementCandidate(thread, NOW_MS, bindings)).toBe(false);
+    bindings.clear();
+    expect(Settlement.isAutoSettlementCandidate(thread, NOW_MS, bindings)).toBe(true);
+  });
+
   it("settles a thread whose only background work is a command left running", () => {
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      Settlement.isAutoSettlementCandidate(
         shell({
           pendingBackgroundTasks: [
             { taskId: "dev", kind: "command", description: "vp run dev --share" },
@@ -145,17 +155,14 @@ describe("isAutoSettlementCandidate", () => {
 
   it("never settles, or keeps snoozed, a thread whose guest is waiting on the owner", () => {
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
-        shell({ pendingGuestMessageCount: 1 }),
-        NOW_MS,
-      ),
+      Settlement.isAutoSettlementCandidate(shell({ pendingGuestMessageCount: 1 }), NOW_MS),
     ).toBe(false);
     const snoozed = shell({
       snoozedUntil: at(60 * 60 * 1_000),
       snoozedAt: at(-60 * 60 * 1_000),
       pendingGuestMessageCount: 1,
     });
-    expect(ThreadSettlementService.isSnoozed(snoozed, NOW_MS)).toBe(false);
+    expect(Settlement.isSnoozed(snoozed, NOW_MS)).toBe(false);
   });
 
   it("keeps snoozed threads parked until a fresh failure or timer wake", () => {
@@ -163,36 +170,33 @@ describe("isAutoSettlementCandidate", () => {
       snoozedUntil: at(60 * 60 * 1_000),
       snoozedAt: at(-60 * 60 * 1_000),
     });
-    expect(ThreadSettlementService.isAutoSettlementCandidate(snoozed, NOW_MS)).toBe(false);
+    expect(Settlement.isAutoSettlementCandidate(snoozed, NOW_MS)).toBe(false);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      Settlement.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-30 * 60 * 1_000) }),
         NOW_MS,
       ),
     ).toBe(true);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      Settlement.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-2 * 60 * 60 * 1_000) }),
         NOW_MS,
       ),
     ).toBe(false);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      Settlement.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: snoozed.snoozedAt }),
         NOW_MS,
       ),
     ).toBe(false);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      Settlement.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: null }),
         NOW_MS,
       ),
     ).toBe(false);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
-        shell({ ...snoozed, snoozedUntil: at(-1) }),
-        NOW_MS,
-      ),
+      Settlement.isAutoSettlementCandidate(shell({ ...snoozed, snoozedUntil: at(-1) }), NOW_MS),
     ).toBe(true);
   });
 });
@@ -215,15 +219,15 @@ describe("resolveAutoSettlementAt", () => {
       autoSettleOnMerge: true,
       autoSettleKeepPullRequests: true,
     };
-    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+    expect(Settlement.resolveAutoSettlementAt(input)).toBeNull();
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({
+      Settlement.resolveAutoSettlementAt({
         ...input,
         autoSettleKeepPullRequests: false,
       }),
     ).toEqual(at(-4 * DAY_MS));
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({
+      Settlement.resolveAutoSettlementAt({
         ...input,
         pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
       }),
@@ -242,16 +246,16 @@ describe("resolveAutoSettlementAt", () => {
       autoSettleOnMerge: true,
       autoSettleKeepPullRequests: false,
     };
-    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-4 * DAY_MS));
+    expect(Settlement.resolveAutoSettlementAt(input)).toEqual(at(-4 * DAY_MS));
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({
+      Settlement.resolveAutoSettlementAt({
         ...input,
         autoSettleKeepPullRequests: true,
       }),
     ).toBeNull();
     // The open link outranks a merged lookup, so only inactivity can settle it.
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({
+      Settlement.resolveAutoSettlementAt({
         ...input,
         pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
         autoSettleAfterDays: null,
@@ -261,7 +265,7 @@ describe("resolveAutoSettlementAt", () => {
 
   it("keeps an idle thread whose persisted link was never synced", () => {
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({
+      Settlement.resolveAutoSettlementAt({
         thread: shell({
           latestUserMessageAt: at(-4 * DAY_MS),
           pullRequests: [persistedLink(null, at(-5 * DAY_MS))],
@@ -289,13 +293,9 @@ describe("resolveAutoSettlementAt", () => {
       autoSettleAfterDays: 2,
       autoSettleOnMerge: true,
     };
-    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-3 * DAY_MS));
-    expect(
-      ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleAfterDays: 5 }),
-    ).toBeNull();
-    expect(
-      ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleAfterDays: null }),
-    ).toBeNull();
+    expect(Settlement.resolveAutoSettlementAt(input)).toEqual(at(-3 * DAY_MS));
+    expect(Settlement.resolveAutoSettlementAt({ ...input, autoSettleAfterDays: 5 })).toBeNull();
+    expect(Settlement.resolveAutoSettlementAt({ ...input, autoSettleAfterDays: null })).toBeNull();
   });
 
   it("anchors an empty thread's inactivity at its creation time", () => {
@@ -306,15 +306,15 @@ describe("resolveAutoSettlementAt", () => {
       autoSettleAfterDays: 2,
       autoSettleOnMerge: false,
     };
-    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-3 * DAY_MS));
+    expect(Settlement.resolveAutoSettlementAt(input)).toEqual(at(-3 * DAY_MS));
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({
+      Settlement.resolveAutoSettlementAt({
         ...input,
         thread: shell({ createdAt: at(-DAY_MS) }),
       }),
     ).toBeNull();
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({
+      Settlement.resolveAutoSettlementAt({
         ...input,
         thread: { ...input.thread, lastSnoozeWakeAt: at(-DAY_MS) },
       }),
@@ -335,10 +335,10 @@ describe("resolveAutoSettlementAt", () => {
       autoSettleAfterDays: 1,
       autoSettleOnMerge: false,
     };
-    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
-    expect(
-      ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + DAY_MS }),
-    ).toEqual(at(-1_000));
+    expect(Settlement.resolveAutoSettlementAt(input)).toBeNull();
+    expect(Settlement.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + DAY_MS })).toEqual(
+      at(-1_000),
+    );
   });
 
   it("settles on merge only after the user's last action and preserves the activity time", () => {
@@ -356,18 +356,16 @@ describe("resolveAutoSettlementAt", () => {
       autoSettleAfterDays: null,
       autoSettleOnMerge: true,
     };
-    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-90 * 60 * 1_000));
+    expect(Settlement.resolveAutoSettlementAt(input)).toEqual(at(-90 * 60 * 1_000));
+    expect(Settlement.resolveAutoSettlementAt({ ...input, autoSettleOnMerge: false })).toBeNull();
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleOnMerge: false }),
-    ).toBeNull();
-    expect(
-      ThreadSettlementService.resolveAutoSettlementAt({
+      Settlement.resolveAutoSettlementAt({
         ...input,
         pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-3 * 60 * 60 * 1_000)) },
       }),
     ).toBeNull();
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({
+      Settlement.resolveAutoSettlementAt({
         ...input,
         thread: shell(),
         pullRequest: { state: "closed", closedAt: DateTime.formatIso(at(-1)) },
@@ -390,9 +388,9 @@ describe("resolveAutoSettlementAt", () => {
       autoSettleAfterDays: null,
       autoSettleOnMerge: true,
     };
-    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-29 * 60 * 1_000));
+    expect(Settlement.resolveAutoSettlementAt(input)).toEqual(at(-29 * 60 * 1_000));
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({
+      Settlement.resolveAutoSettlementAt({
         ...input,
         thread: { ...woken, latestUserAuthoredMessageAt: at(-30 * 60 * 1_000) },
       }),
@@ -431,9 +429,9 @@ describe("resolveAutoSettlementAt", () => {
       autoSettleAfterDays: null,
       autoSettleOnMerge: true,
     };
-    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+    expect(Settlement.resolveAutoSettlementAt(input)).toBeNull();
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({
+      Settlement.resolveAutoSettlementAt({
         ...input,
         thread: {
           ...input.thread,
@@ -449,11 +447,11 @@ const PROJECT_ID = ProjectId.make("settlement-project");
 
 describe("autoSettlementSettingsKey", () => {
   it("distinguishes a project that inherits the threshold from one that disables it", () => {
-    const inherits = ThreadSettlementService.autoSettlementSettingsKey({
+    const inherits = Settlement.autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleOnMerge: true } },
     });
-    const never = ThreadSettlementService.autoSettlementSettingsKey({
+    const never = Settlement.autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: {
         [PROJECT_ID]: { sidebarAutoSettleOnMerge: true, sidebarAutoSettleAfterDays: null },
@@ -651,6 +649,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   });
 
   const layerDependencies = Layer.mergeAll(
+    Layer.succeed(ServerEnvironmentIdentity, {
+      getEnvironmentId: Effect.succeed(EnvironmentId.make("settlement-test")),
+    }),
     Layer.mock(ProjectStore.ProjectStoreV2)({
       listShells: () => Ref.get(snapshots).pipe(Effect.map((snapshot) => snapshot.projects)),
     }),
@@ -727,15 +728,14 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       number: 42,
       mergedAt: NOW,
     }),
-    layer: Layer.effect(
-      ThreadSettlementService.ThreadSettlementServiceV2,
-      ThreadSettlementService.make,
-    ).pipe(Layer.provide(layerDependencies)),
+    layer: Layer.effect(Settlement.ThreadSettlementServiceV2, Settlement.make).pipe(
+      Layer.provide(layerDependencies),
+    ),
   };
 });
 
 const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
-  reactor: ThreadSettlementService.ThreadSettlementServiceV2["Service"],
+  reactor: Settlement.ThreadSettlementServiceV2["Service"],
   activation: Deferred.Deferred<void>,
   snapshotReads: Queue.Queue<number>,
 ) {
@@ -779,7 +779,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         });
 
         yield* Effect.gen(function* () {
-          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          const service = yield* Settlement.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([
             thread.id,
@@ -805,7 +805,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
           },
         });
         yield* Effect.gen(function* () {
-          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          const service = yield* Settlement.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([
             thread.id,
@@ -833,7 +833,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
           },
         });
         yield* Effect.gen(function* () {
-          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          const service = yield* Settlement.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           const commands = yield* Ref.get(fixture.commands);
           expect(commands.map((command) => command.threadId)).toEqual([thread.id]);
@@ -881,7 +881,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         });
 
         yield* Effect.gen(function* () {
-          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          const reactor = yield* Settlement.ThreadSettlementServiceV2;
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
           yield* fixture.updateSettings({ sidebarAutoSettleAfterDays: 4 });
           yield* Deferred.await(periodicLookupStarted);
@@ -946,7 +946,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         });
 
         yield* Effect.gen(function* () {
-          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          const reactor = yield* Settlement.ThreadSettlementServiceV2;
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
           yield* fixture.updateSettings({ sidebarAutoSettleAfterDays: 4 });
@@ -1029,7 +1029,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         });
 
         yield* Effect.gen(function* () {
-          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          const reactor = yield* Settlement.ThreadSettlementServiceV2;
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
           yield* fixture.publishEvent(backgroundEnded(slow.id));
           yield* Deferred.await(slowLookupStarted);
@@ -1085,7 +1085,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         };
 
         yield* Effect.gen(function* () {
-          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          const reactor = yield* Settlement.ThreadSettlementServiceV2;
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
           yield* fixture.publishEvent(runEnded);
           yield* Queue.take(fixture.snapshotReads);
@@ -1147,7 +1147,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
           });
 
           yield* Effect.gen(function* () {
-            const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+            const reactor = yield* Settlement.ThreadSettlementServiceV2;
             yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
             assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
             assert.deepStrictEqual(yield* Ref.get(fixture.invalidatedCwds), []);
@@ -1210,7 +1210,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         });
 
         yield* Effect.gen(function* () {
-          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          const reactor = yield* Settlement.ThreadSettlementServiceV2;
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
 
@@ -1287,7 +1287,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         });
 
         yield* Effect.gen(function* () {
-          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          const service = yield* Settlement.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           yield* fixture.publishEvent(settledEvent(settled));
           yield* fixture.publishEvent(settledEvent(marker));
@@ -1310,7 +1310,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         });
 
         yield* Effect.gen(function* () {
-          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          const service = yield* Settlement.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           yield* fixture.publishEvent(settledEvent(shared));
           yield* fixture.publishEvent(settledEvent(missing));
@@ -1341,7 +1341,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         });
 
         yield* Effect.gen(function* () {
-          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          const service = yield* Settlement.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           yield* fixture.publishEvent(settledEvent(settled));
           yield* fixture.publishEvent(settledEvent(marker));
@@ -1363,7 +1363,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         });
 
         yield* Effect.gen(function* () {
-          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          const service = yield* Settlement.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           yield* fixture.publishEvent(settledEvent(repeated));
           yield* fixture.publishEvent(settledEvent(repeated));
@@ -1393,7 +1393,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         });
 
         yield* Effect.gen(function* () {
-          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          const service = yield* Settlement.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           yield* fixture.publishEvent(settledEvent(thread));
           yield* fixture.publishEvent(settledEvent(thread));
@@ -1416,10 +1416,10 @@ describe("isSnoozed", () => {
       latestRunCompletedAt: at(-DAY_MS),
     });
 
-    expect(ThreadSettlementService.isSnoozed(thread, NOW_MS)).toBe(true);
-    expect(ThreadSettlementService.isAutoSettlementCandidate(thread, NOW_MS)).toBe(false);
+    expect(Settlement.isSnoozed(thread, NOW_MS)).toBe(true);
+    expect(Settlement.isAutoSettlementCandidate(thread, NOW_MS)).toBe(false);
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({
+      Settlement.resolveAutoSettlementAt({
         thread,
         pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
         nowMs: NOW_MS,

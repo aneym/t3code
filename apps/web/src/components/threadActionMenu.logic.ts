@@ -270,9 +270,8 @@ function agentMainThreadMenuItems(
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const item = (agent: (typeof agents)[number], label: string) => ({
     id: `agent-main:${agent.handle}` as const,
-    label,
+    label: agent.isCurrent ? `Unbind ${agent.name}'s main thread` : label,
     checked: agent.isCurrent,
-    disabled: agent.isCurrent,
   });
   if (agents.length === 1) {
     const [agent] = agents;

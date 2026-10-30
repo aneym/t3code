@@ -24,7 +24,7 @@ export interface AgentMainThreadOption {
 
 export async function assignAgentHomes(input: {
   readonly handle: string;
-  readonly target: ScopedThreadRef;
+  readonly target: ScopedThreadRef | null;
   readonly environmentIds: ReadonlyArray<EnvironmentId>;
   readonly host?: string;
   readonly onlyIfUnbound?: boolean;
@@ -35,8 +35,8 @@ export async function assignAgentHomes(input: {
       environmentId,
       input: {
         handle: input.handle,
-        threadId: input.target.threadId,
-        threadEnvironmentId: input.target.environmentId,
+        threadId: input.target?.threadId ?? null,
+        threadEnvironmentId: input.target?.environmentId,
         ...(input.host ? { host: input.host } : {}),
         by: input.onlyIfUnbound ? "t3-first-open" : "t3-menu",
         ...(input.onlyIfUnbound ? { onlyIfUnbound: true } : {}),
@@ -47,6 +47,7 @@ export async function assignAgentHomes(input: {
       if (input.onlyIfUnbound) break;
     } else if (
       input.onlyIfUnbound &&
+      input.target !== null &&
       (result.value.home.binding?.threadId !== input.target.threadId ||
         result.value.home.binding.environmentId !== input.target.environmentId)
     ) {
@@ -100,9 +101,11 @@ export function useAgentMainThreadMenu() {
         environments
           .find((entry) => entry.environmentId === thread.environmentId)
           ?.label.toLowerCase() ?? thread.environmentId;
+      const unbind =
+        agent.target?.environmentId === thread.environmentId && agent.target.threadId === thread.id;
       const failed = await assignAgentHomes({
         handle,
-        target: { environmentId: thread.environmentId, threadId: thread.id },
+        target: unbind ? null : { environmentId: thread.environmentId, threadId: thread.id },
         environmentIds: agent.environmentIds,
         host,
       });
@@ -115,7 +118,12 @@ export function useAgentMainThreadMenu() {
                 .map((id) => environments.find((entry) => entry.environmentId === id)?.label ?? id)
                 .join(", "),
             }
-          : { type: "success", title: `${thread.title} is now ${agent.name}'s main thread` },
+          : {
+              type: "success",
+              title: unbind
+                ? `${agent.name} is now unbound`
+                : `${thread.title} is now ${agent.name}'s main thread`,
+            },
       );
     },
   };
