@@ -33,9 +33,11 @@ const decodeBinding = Schema.decodeSync(AgentHomeBinding);
 const decodeHome = Schema.decodeSync(AgentHome);
 const text = (value: unknown) => (typeof value === "string" ? value : null);
 const binding = (value: unknown): AgentHomeBinding | null => {
-  if (typeof value !== "object" || value === null) return null;
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid agent binding");
   const data = value as Record<string, unknown>;
-  if (typeof data.thread_id !== "string" || !data.thread_id.trim()) return null;
+  if (typeof data.thread_id !== "string" || !data.thread_id.trim())
+    throw new Error("Agent binding requires a nonempty string thread_id");
   return decodeBinding({
     threadId: data.thread_id,
     environmentId: text(data.environment_id),
@@ -63,7 +65,7 @@ export const homeFromDocument = (
     previous: binding(
       typeof doc.t3 === "object" && doc.t3 !== null
         ? (doc.t3 as Record<string, unknown>).previous
-        : null,
+        : doc.t3_previous,
     ),
   });
 export const isLaneThread = async (root: string, threadId: string) => {
@@ -115,10 +117,10 @@ export const readHomes = async (
         ),
       );
     } catch (error) {
-      if (strict || (error as NodeJS.ErrnoException).code !== "ENOENT")
-        console.warn(
-          `Unable to read agent home ${entry.name}; ${strict ? "settlement refused" : "home skipped"}`,
-        );
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      console.warn(
+        `Unable to read agent home ${entry.name}; ${strict ? "settlement refused" : "home skipped"}`,
+      );
       if (strict) throw error;
     }
   }
@@ -134,21 +136,22 @@ export const writeBinding = async (
 ) => {
   const old =
     typeof doc.t3 === "object" && doc.t3 !== null ? (doc.t3 as Record<string, unknown>) : null;
-  if (old && next !== undefined) {
-    next ??= {};
-    const { previous: _previous, reason: _reason, ...previous } = old;
-    next.previous = binding(old) === null ? old.previous : previous;
-  }
+  const { t3: _binding, ...withoutBinding } = doc;
+  const { previous: _previous, reason: _reason, ...previous } = old ?? {};
+  const prior = old ? previous : doc.t3_previous;
+  if (next) next.previous = prior;
+  const updated =
+    next === undefined
+      ? doc
+      : next === null
+        ? { ...withoutBinding, t3_previous: prior }
+        : { ...withoutBinding, t3: next };
   const target = await agentFile(root, handle);
   const temporary = `${target}.${crypto.randomUUID()}.tmp`;
   try {
     await NodeFSP.writeFile(
       temporary,
-      JSON.stringify(
-        { ...doc, ...(next !== undefined ? { t3: next } : {}), ...(projects ? { projects } : {}) },
-        null,
-        2,
-      ) + "\n",
+      JSON.stringify({ ...updated, ...(projects ? { projects } : {}) }, null, 2) + "\n",
       {
         mode: (await NodeFSP.stat(target)).mode,
       },
