@@ -1,18 +1,17 @@
+import { FoldedMessageHeader, useScheduledTaskTitle } from "./FoldedMessageHeader";
+import { SenderThreadButton } from "./SenderThreadButton";
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
 import {
-  type EnvironmentId,
+  messageSenderRef,
   type MessageId,
-  type ScheduledTaskId,
   type ServerProviderSkill,
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import { useQuietThreadShell } from "../../state/entities";
-import { useEnvironmentQuery } from "../../state/query";
-import { serverEnvironment } from "../../state/server";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { memo, use, useState, type ReactNode } from "react";
 import {
@@ -28,16 +27,14 @@ import {
 import ChatMarkdown from "../ChatMarkdown";
 import {
   CalendarClockIcon,
-  ChevronDownIcon,
   DownloadIcon,
   EyeIcon,
-  type LucideIcon,
   MessagesSquareIcon,
   Redo2Icon,
   PencilIcon,
 } from "lucide-react";
 import { Link as LinkIconNode } from "lucide";
-import { Button, InlineButton } from "../ui/button";
+import { Button } from "../ui/button";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
 import { AttachmentImage } from "../media/AttachmentImage";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
@@ -176,6 +173,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           expanded && "w-full",
         )}
       >
+        {/* Outside the fold so a collapsed message still has a heading to navigate to. */}
         <MessageAuthorHeading>Automation</MessageAuthorHeading>
         <FoldedMessageHeader
           icon={CalendarClockIcon}
@@ -235,45 +233,6 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   );
 }
 
-export function useScheduledTaskTitle(
-  environmentId: EnvironmentId,
-  scheduledTaskId: ScheduledTaskId | undefined,
-): string | undefined {
-  const tasksQuery = useEnvironmentQuery(
-    scheduledTaskId ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
-  );
-  return tasksQuery.data?.tasks.find((task) => task.id === scheduledTaskId)?.title;
-}
-
-export function FoldedMessageHeader(props: {
-  icon: LucideIcon;
-  label: string;
-  summary: string;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const Icon = props.icon;
-  return (
-    <button
-      type="button"
-      aria-expanded={props.expanded}
-      data-scroll-anchor-ignore
-      onClick={props.onToggle}
-      className="flex w-full min-w-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring"
-    >
-      <Icon className="size-4 shrink-0 stroke-2 text-muted-foreground" />
-      <span className="max-w-1/2 shrink-0 truncate text-muted-foreground">{props.label}</span>
-      <span className="min-w-0 flex-1 truncate">{props.summary}</span>
-      <ChevronDownIcon
-        className={cn(
-          "size-3.5 shrink-0 text-muted-foreground transition-transform",
-          props.expanded && "rotate-180",
-        )}
-      />
-    </button>
-  );
-}
-
 function UserMessageProjectedStatus({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const status = row.projectedItem?.item.status;
   if (
@@ -326,9 +285,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const [expanded, setExpanded] = useState(false);
   const revealFoldRef = findRevealRef(() => setExpanded(true));
   const senderShell = useQuietThreadShell(
-    folded && senderThreadId
-      ? { environmentId: ctx.activeThreadEnvironmentId, threadId: senderThreadId }
-      : null,
+    folded ? messageSenderRef(row.message, ctx.activeThreadEnvironmentId) : null,
   );
   const senderLabel = senderShell?.title.trim() || "Agent";
   const resolvedContext = resolveUserMessageContext({ ...row.message, text: userMessage.text });
@@ -715,9 +672,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
           <div className="flex shrink-0 items-center gap-2">
             {folded && senderThreadId ? (
-              <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
-                Open thread
-              </InlineButton>
+              <SenderThreadButton
+                environmentId={ctx.activeThreadEnvironmentId}
+                sender={row.message}
+                onOpenThread={ctx.onOpenThread}
+              />
             ) : null}
             <Tooltip>
               <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>

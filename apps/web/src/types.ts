@@ -4,6 +4,7 @@ import type {
   ChatImageAttachment as ContractChatImageAttachment,
   ChatUnknownAttachment as ContractChatUnknownAttachment,
   MessageId,
+  MessageSender,
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2PlanArtifact,
@@ -14,7 +15,6 @@ import type {
   RunId,
   RuntimeMode,
   ScheduledTaskId,
-  ThreadId,
 } from "@t3tools/contracts";
 import type {
   EnvironmentProject,
@@ -71,7 +71,7 @@ export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
   return videoMimeType(attachment) !== null;
 }
 
-export interface ChatMessage {
+export interface ChatMessage extends MessageSender {
   readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
   readonly id: MessageId;
   readonly role: "user" | "assistant" | "system";
@@ -82,7 +82,6 @@ export interface ChatMessage {
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
-  readonly senderThreadId?: ThreadId;
   readonly idleCompaction?: import("@t3tools/contracts").OrchestrationV2IdleCompaction;
   readonly createdAt: string;
   readonly updatedAt: string;

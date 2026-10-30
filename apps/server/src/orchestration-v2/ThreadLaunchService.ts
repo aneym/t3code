@@ -4,6 +4,8 @@ import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  messageSender,
+  type MessageSender,
   CommandId,
   type ChatAttachment,
   type MessageId,
@@ -69,10 +71,9 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly startFromOrigin?: boolean | undefined;
     };
 
-export interface ThreadLaunchInitialMessage {
+export interface ThreadLaunchInitialMessage extends MessageSender {
   readonly messageId?: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
-  readonly senderThreadId?: ThreadId;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
@@ -956,9 +957,7 @@ const make = Effect.gen(function* () {
               ...(input.initialMessage.scheduledTaskId === undefined
                 ? {}
                 : { scheduledTaskId: input.initialMessage.scheduledTaskId }),
-              ...(input.initialMessage.senderThreadId === undefined
-                ? {}
-                : { senderThreadId: input.initialMessage.senderThreadId }),
+              ...messageSender(input.initialMessage),
               attachments: input.initialMessage.attachments,
               ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),

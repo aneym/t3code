@@ -1,6 +1,7 @@
 import type { ThreadStructure, ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
+  messageSender,
   type AssetResource,
   type OrchestrationV2Checkpoint,
   type OrchestrationV2ExecutionNode,
@@ -652,7 +653,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
           ? {
               createdBy: item.createdBy,
               creationSource: item.creationSource,
-              ...(item.senderThreadId !== undefined ? { senderThreadId: item.senderThreadId } : {}),
+              ...messageSender(item),
               ...(item.idleCompaction !== undefined ? { idleCompaction: item.idleCompaction } : {}),
               ...(item.scheduledTaskId !== undefined
                 ? { scheduledTaskId: item.scheduledTaskId }

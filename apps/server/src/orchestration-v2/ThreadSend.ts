@@ -1,4 +1,6 @@
 import {
+  messageSender,
+  type MessageSender,
   type ChatAttachment,
   CommandId,
   MessageId,
@@ -34,13 +36,12 @@ type ThreadSendMode = "auto" | "queue" | "steer" | "restart";
 
 const UNACCEPTED_RUN_ABANDONED_AFTER = Duration.minutes(2);
 
-export interface ThreadSendInput {
+export interface ThreadSendInput extends MessageSender {
   readonly projectId: ProjectId;
   readonly commandId: CommandId;
   readonly threadId: ThreadId;
   readonly messageId: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
-  readonly senderThreadId?: ThreadId;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
@@ -267,7 +268,7 @@ export const makeSendToThread = <LoadError, DispatchError>(
       threadId: input.threadId,
       messageId: input.messageId,
       ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
-      ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
+      ...messageSender(input),
       text: input.text,
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),

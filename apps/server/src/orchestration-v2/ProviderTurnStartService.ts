@@ -1,6 +1,7 @@
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
+  messageSender,
   CommandId,
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
@@ -1554,9 +1555,7 @@ export const layer: Layer.Layer<
           ...(message.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: message.scheduledTaskId }),
-          ...(message.senderThreadId === undefined
-            ? {}
-            : { senderThreadId: message.senderThreadId }),
+          ...messageSender(message),
         },
         modelSelection: run.modelSelection,
         runtimePolicy: resolvedRuntimePolicy,

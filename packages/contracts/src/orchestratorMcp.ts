@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { OrchestratorMcpThreadTimelineItem } from "./orchestratorMcpTimeline.ts";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { AuthMcpClientAccess } from "./auth.ts";
@@ -7,7 +8,6 @@ import {
   ContextTransferId,
   EnvironmentId,
   IsoDateTime,
-  MessageId,
   NodeId,
   NonNegativeInt,
   PositiveInt,
@@ -34,7 +34,6 @@ import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
-  OrchestrationV2TurnItemStatus,
   ThreadOrganizeRefusalReason,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
@@ -412,27 +411,6 @@ export const OrchestratorMcpThreadRun = Schema.Struct({
   completedAt: Schema.NullOr(IsoDateTime),
 });
 export type OrchestratorMcpThreadRun = typeof OrchestratorMcpThreadRun.Type;
-
-export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
-  position: NonNegativeInt,
-  visibility: Schema.Literals(["local", "inherited", "synthetic"]),
-  sourceThreadId: ThreadId,
-  itemId: TurnItemId,
-  subagentId: Schema.optional(NodeId),
-  runId: Schema.NullOr(RunId),
-  messageId: Schema.NullOr(MessageId),
-  createdBy: Schema.NullOr(OrchestrationV2Actor),
-  creationSource: Schema.NullOr(OrchestrationV2CreationSource),
-  senderThreadId: Schema.optional(ThreadId),
-  type: Schema.String,
-  status: OrchestrationV2TurnItemStatus,
-  title: Schema.NullOr(Schema.String),
-  text: Schema.NullOr(Schema.String),
-  textTruncated: Schema.Boolean,
-  nextTextOffset: Schema.optional(Schema.NullOr(NonNegativeInt)),
-  updatedAt: IsoDateTime,
-});
-export type OrchestratorMcpThreadTimelineItem = typeof OrchestratorMcpThreadTimelineItem.Type;
 
 export const OrchestratorMcpThreadReadResult = Schema.Struct({
   thread: OrchestratorMcpThreadDetail,

@@ -1,3 +1,4 @@
+import { mcpMessageSender } from "../../messageSender.ts";
 import {
   CommandId,
   MessageId,
@@ -222,7 +223,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             : {
                 initialMessage: {
                   messageId,
-                  ...(caller === undefined ? {} : { senderThreadId: caller.id }),
+                  ...mcpMessageSender(scope),
                   text: input.message ?? "",
                   attachments,
                 },

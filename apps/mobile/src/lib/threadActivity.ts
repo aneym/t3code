@@ -37,6 +37,7 @@ import {
   type T3McpToolPresentation,
 } from "@t3tools/shared/t3McpToolPresentation";
 import type {
+  MessageSender,
   ChatAttachment,
   MessageId,
   OrchestrationV2Actor,
@@ -52,7 +53,13 @@ import type {
   ScheduledTaskId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { idleCompactionOf, isCompactionCommandMessage, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  messageSender,
+  idleCompactionOf,
+  isCompactionCommandMessage,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   classifyToolActivity,
   collectToolFilePaths,
@@ -123,7 +130,7 @@ export interface ThreadFeedActivity {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
 }
 
-export interface ThreadFeedMessage {
+export interface ThreadFeedMessage extends MessageSender {
   readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
   readonly id: MessageId;
   readonly role: "user" | "assistant";
@@ -135,7 +142,6 @@ export interface ThreadFeedMessage {
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
-  readonly senderThreadId?: ThreadId;
   readonly idleCompaction?: import("@t3tools/contracts").OrchestrationV2IdleCompaction;
   readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
   readonly sourceThreadId: ThreadId;
@@ -2139,7 +2145,7 @@ export function buildThreadFeed(
                 createdBy: item.createdBy,
                 creationSource: item.creationSource,
                 ...(item.scheduledTaskId ? { scheduledTaskId: item.scheduledTaskId } : {}),
-                ...(item.senderThreadId ? { senderThreadId: item.senderThreadId } : {}),
+                ...messageSender(item),
                 ...(item.idleCompaction ? { idleCompaction: item.idleCompaction } : {}),
               }
             : {}),

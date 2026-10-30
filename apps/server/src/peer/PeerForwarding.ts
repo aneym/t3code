@@ -156,6 +156,9 @@ const make = Effect.gen(function* () {
       tool: toolName,
       arguments: args,
       limits,
+      ...(scope.thread === undefined
+        ? {}
+        : { sender: { threadId: scope.thread.threadId, environmentId: scope.environmentId } }),
       success: success as Schema.Decoder<A>,
     });
     return callerRequestId !== undefined &&

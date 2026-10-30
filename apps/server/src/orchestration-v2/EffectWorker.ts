@@ -1,4 +1,4 @@
-import { CommandId, THREAD_SESSION_RESTART_REASON } from "@t3tools/contracts";
+import { messageSender, CommandId, THREAD_SESSION_RESTART_REASON } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -327,9 +327,7 @@ export const layerExecutor: Layer.Layer<
                         ...(message.scheduledTaskId === undefined
                           ? {}
                           : { scheduledTaskId: message.scheduledTaskId }),
-                        ...(message.senderThreadId === undefined
-                          ? {}
-                          : { senderThreadId: message.senderThreadId }),
+                        ...messageSender(message),
                       })
                       .pipe(
                         // A disabled instance cannot retry this completed turn; its result stands.

@@ -1,4 +1,6 @@
 import {
+  messageSender,
+  senderEnvironmentLabel,
   parseGoalCommand,
   type NodeId,
   type OrchestrationV2ConversationMessage,
@@ -137,7 +139,13 @@ export function queuedRunBatchEvents(input: {
       createdBy: message.createdBy,
       creationSource: message.creationSource,
     };
-    const { context: _context, senderThreadId: _sender, ...base } = item;
+    const {
+      context: _context,
+      senderThreadId: _sender,
+      senderEnvironmentId: _environment,
+      senderEnvironmentLabel: _label,
+      ...base
+    } = item;
     return [
       {
         ...from,
@@ -174,9 +182,7 @@ export function queuedRunBatchEvents(input: {
         payload: {
           ...base,
           ...(message.context ? { context: message.context } : {}),
-          ...(message.senderThreadId === undefined
-            ? {}
-            : { senderThreadId: message.senderThreadId }),
+          ...messageSender(message),
         },
       },
     ];
@@ -188,17 +194,30 @@ export interface QueuedRunBatchPart {
   readonly createdBy: OrchestrationV2ConversationMessage["createdBy"];
   readonly creationSource: OrchestrationV2ConversationMessage["creationSource"];
   readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
+  readonly senderEnvironmentId?: OrchestrationV2ConversationMessage["senderEnvironmentId"];
+  readonly senderEnvironmentLabel?: OrchestrationV2ConversationMessage["senderEnvironmentLabel"];
 }
 
 export function queuedMessageSender(part: QueuedRunBatchPart): string {
-  if (part.senderThreadId !== undefined) return `an agent in thread ${part.senderThreadId}`;
+  if (part.senderThreadId !== undefined) {
+    const environment =
+      part.senderEnvironmentId === undefined
+        ? ""
+        : ` on environment ${part.senderEnvironmentId} (${senderEnvironmentLabel(part.senderEnvironmentId, part.senderEnvironmentLabel)})`;
+    return `an agent in thread ${part.senderThreadId}${environment}`;
+  }
   return part.createdBy === "user"
     ? `the user (${part.creationSource})`
     : `${part.createdBy} (${part.creationSource})`;
 }
 
 function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): string {
-  if (parts.length < 2) return parts[0]?.text ?? "";
+  if (parts.length < 2) {
+    const part = parts[0];
+    return part?.senderEnvironmentId === undefined
+      ? (part?.text ?? "")
+      : `Message from ${queuedMessageSender(part)}:\n${part.text}`;
+  }
   return [
     `These ${parts.length} messages were queued separately while you were working. They are listed with their senders: task completions first, then queued messages in the order they were sent. Handle each one accordingly.`,
     ...parts.map(

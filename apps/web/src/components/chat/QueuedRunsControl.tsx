@@ -1,3 +1,5 @@
+import { messageSenderRef } from "@t3tools/contracts";
+import { SenderThreadButton } from "./SenderThreadButton";
 import { queuedRunRows, type QueuedRowThumbnail } from "./queuedRunRows";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
@@ -38,7 +40,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { GuestMessageName } from "./guestMessageStyle";
 import { TimelineRowTimestamp } from "./TimelineRowParts";
-import { FoldedMessageHeader, useScheduledTaskTitle } from "./TimelineUserMessageRow";
+import { FoldedMessageHeader, useScheduledTaskTitle } from "./FoldedMessageHeader";
 
 export interface EditQueuedRunRequest {
   readonly runId: RunId;
@@ -379,9 +381,7 @@ function QueuedMessage(props: {
   const [expanded, setExpanded] = useState(false);
   const taskTitle = useScheduledTaskTitle(props.environmentId, scheduledTaskId);
   const senderShell = useQuietThreadShell(
-    attribution === "agent" && senderThreadId
-      ? { environmentId: props.environmentId, threadId: senderThreadId }
-      : null,
+    attribution === "agent" ? messageSenderRef(props.message, props.environmentId) : null,
   );
   const fold =
     attribution === "automation"
@@ -467,9 +467,11 @@ function QueuedMessage(props: {
         {props.message ? (
           <span className="me-1 flex items-center gap-2 px-1 opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/queued:opacity-100">
             {attribution === "agent" && senderThreadId ? (
-              <InlineButton tone="muted" onClick={() => props.onOpenThread(senderThreadId)}>
-                Open thread
-              </InlineButton>
+              <SenderThreadButton
+                environmentId={props.environmentId}
+                sender={props.message}
+                onOpenThread={props.onOpenThread}
+              />
             ) : null}
             {scheduledTaskId ? (
               <InlineButton
