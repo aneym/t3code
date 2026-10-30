@@ -279,7 +279,8 @@ function AgentRow(props: {
           aria-describedby={props.muted ? undefined : attributes["aria-describedby"]}
           aria-roledescription={props.muted ? undefined : attributes["aria-roledescription"]}
           className={rowClassName}
-          onClick={() => {
+          onClick={(event) => {
+            if (event.detail > 1) return;
             if (agent.remoteHost) {
               toastManager.add({
                 type: "info",
