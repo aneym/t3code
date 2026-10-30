@@ -16,6 +16,7 @@ def claude_lb_lines(bin_dir):
     return [
         "unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN CLAUDE_LB_GUARD",
         f"export ANTHROPIC_BASE_URL={AGENT_LB_URL} ANTHROPIC_AUTH_TOKEN={LB_TOKEN} CLAUDE_GUARD_OFF=1 DISABLE_AUTOUPDATER=1",
+        "export NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost",
         f"export PATH={shlex.quote(str(bin_dir))}:\"$PATH\"",
     ]
 
