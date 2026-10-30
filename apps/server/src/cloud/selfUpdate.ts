@@ -1,3 +1,4 @@
+import { hotSwapContext } from "../serviceChildTransport.ts";
 import {
   ServerSelfUpdateError,
   type ServerSelfUpdateCapability,
@@ -265,7 +266,10 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         runtimePath: paths.entryPath,
       });
       return { targetVersion, method: "boot-service" as const, updateId };
-    }).pipe(Effect.onError(() => Ref.set(inFlight, false)));
+    }).pipe(
+      Effect.onError(() => Ref.set(inFlight, false)),
+      Effect.tap(() => (hotSwapContext() === undefined ? Effect.void : Ref.set(inFlight, false))),
+    );
   });
 
   return ServerSelfUpdate.of({

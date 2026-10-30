@@ -3,7 +3,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
 
 import packageJson from "../../package.json" with { type: "json" };
 import {
@@ -14,49 +13,15 @@ import {
   type ServiceLauncherParentMessage,
 } from "./serviceProtocol.ts";
 
-export class ServiceLauncherClientError extends Schema.TaggedError<ServiceLauncherClientError>()(
-  "ServiceLauncherClientError",
-  {
-    operation: Schema.Literals([
-      "decode-context",
-      "version-mismatch",
-      "unmanaged",
-      "send",
-      "disconnect",
-      "timeout",
-    ]),
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    switch (this.operation) {
-      case "decode-context":
-        return "The service launcher supplied invalid startup context.";
-      case "version-mismatch":
-        return "The service launcher started a different t3 version.";
-      case "unmanaged":
-        return "This server is not managed by the launcher.";
-      case "send":
-        return "Could not send a request to the service launcher.";
-      case "disconnect":
-        return "The service launcher disconnected before acknowledging the request.";
-      case "timeout":
-        return "The service launcher did not respond within 30 seconds.";
-    }
-  }
-}
-
-export class ServiceLauncherRejectedError extends Schema.TaggedError<ServiceLauncherRejectedError>()(
-  "ServiceLauncherRejectedError",
-  {
-    targetVersion: Schema.String,
-    reason: Schema.String,
-  },
-) {
-  override get message(): string {
-    return this.reason;
-  }
-}
+export {
+  ServiceLauncherClientError,
+  ServiceLauncherRejectedError,
+} from "./serviceLauncherErrors.ts";
+import {
+  ServiceLauncherClientError,
+  ServiceLauncherRejectedError,
+} from "./serviceLauncherErrors.ts";
+import { hotSwapContext, prepareServiceRouting } from "../serviceChildTransport.ts";
 
 interface ServiceLauncherProcess {
   readonly connected: boolean;
@@ -246,7 +211,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
   return ServiceLauncherClient.of({
     managed,
     requestUpdate,
-    prepareTrial,
+    prepareTrial: hotSwapContext() === undefined ? prepareTrial : prepareServiceRouting(),
   });
 });
 

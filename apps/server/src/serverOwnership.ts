@@ -28,6 +28,7 @@ import {
   compareExactServiceVersions,
   serviceStateActiveVersion,
 } from "./cloud/serviceProtocol.ts";
+import { assertServiceOwnershipGrant } from "./serviceOwnershipGrant.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -185,6 +186,7 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
   statePath: string,
 ) {
   const stateDir = NodePath.dirname(statePath);
+  yield* assertServiceOwnershipGrant(stateDir);
   const crypto = yield* Crypto.Crypto;
   const launcher = yield* ServiceLauncherHostProcess;
   const ownerId = yield* crypto

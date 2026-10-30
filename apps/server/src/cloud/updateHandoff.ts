@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
+import { hotSwapContext } from "../serviceChildTransport.ts";
 import {
   SERVICE_STATE_FILE,
   SERVICE_STOP_MARKER_FILE,
@@ -27,7 +28,7 @@ export const pendingServiceUpdateExists = Effect.gen(function* () {
 });
 
 export const pendingUpdateHandoffExists = Effect.gen(function* () {
-  if (!(yield* pendingServiceUpdateExists)) {
+  if (hotSwapContext() === undefined && !(yield* pendingServiceUpdateExists)) {
     return false;
   }
   const config = yield* ServerConfig.ServerConfig;
