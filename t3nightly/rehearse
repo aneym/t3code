@@ -32,9 +32,14 @@ def main():
     parser.add_argument("--drain-s", type=int, default=300)
     parser.add_argument("--inject", choices=("none", "warm-death", "post-flip"), default="none")
     parser.add_argument("--require-hot-swap", action="store_true")
+    parser.add_argument("--focused", action="store_true", help="normal capable swap and continuation/client evidence only; no launcher crash injection")
     parser.add_argument("--queue-mode", choices=("none", "capacity", "budget"), default="none")
     parser.add_argument("--live-home", action="append", default=[])
     args = parser.parse_args()
+    if args.focused:
+        if not args.hot_swap or args.inject != "none" or args.queue_mode != "none" or args.force_rollback:
+            parser.error("--focused requires a normal --hot-swap without faults, pressure or forced rollback")
+        args.require_hot_swap = True
     if args.hot_swap:
         if not args.rpc_tree or not 0 <= args.drain_s <= 1200:
             parser.error("--hot-swap requires --rpc-tree and --drain-s in 0..1200")
