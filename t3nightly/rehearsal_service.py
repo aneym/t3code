@@ -27,7 +27,13 @@ def boot(sandbox, argv, log):
         copy2(Path(__file__).with_name("hot_swap_fault.cjs"), fault)
         environment.update(NODE_OPTIONS="--require=" + json.dumps(str(fault)), T3_REHEARSAL_FAULT=sandbox.args.inject, T3_REHEARSAL_FAULT_RECEIPT=str(sandbox.evidence / "fault-injected.json"))
     text = render(sandbox.args.rpc_tree.resolve(), sandbox.home, sandbox.unit, argv, log, environment)
-    (sandbox.home / "service.env").write_text("\n".join(f'{key}={json.dumps(value)}' for key, value in environment.items()) + "\n")
+    lines = []
+    for key, value in environment.items():
+        quote = "'" if "'" not in value else '"'
+        if quote in value or any(char in value for char in "\n\r\x00"):
+            raise ValueError("sandbox service environment cannot be encoded without changing its value")
+        lines.append(f"{key}={quote}{value}{quote}")
+    (sandbox.home / "service.env").write_text("\n".join(lines) + "\n")
     (sandbox.home / "service.env").chmod(0o600)
     if sys.platform == "darwin":
         unit = plistlib.loads(text.encode())
