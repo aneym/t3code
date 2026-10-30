@@ -14,6 +14,7 @@ import {
   MCP_PEER_LINK_SOFTWARE_ID,
   mcpClientScopes,
   type PeerIdentity,
+  boundedPeerIdentity,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Clock from "effect/Clock";
@@ -191,6 +192,7 @@ const make = Effect.gen(function* () {
     peerLink: boolean,
     peer?: PeerIdentity,
   ) => {
+    peer = peer === undefined ? undefined : boundedPeerIdentity(peer);
     const body = base64UrlEncode(
       JSON.stringify({ v: 1, n: name, r: redirectUris, ...(peerLink ? { p: 1, e: peer } : {}) }),
     );
@@ -275,7 +277,7 @@ const make = Effect.gen(function* () {
         redirectUris,
         peerLink,
         ...(peerLink && metadata.peer_environment !== undefined
-          ? { peer: metadata.peer_environment }
+          ? { peer: boundedPeerIdentity(metadata.peer_environment) }
           : {}),
       };
     },

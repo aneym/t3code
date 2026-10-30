@@ -1,3 +1,4 @@
+import { AuthMcpClientRegistration } from "./mcpClientRegistration.ts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -20,7 +21,6 @@ import {
   AuthMcpApprovalRedirect,
   AuthMcpAuthorizationRequest,
   AuthMcpAuthorizationServerMetadata,
-  AuthMcpClientRegistration,
   AuthMcpProtectedResourceMetadata,
   AuthMcpRegisteredClient,
   AuthMcpRegistrationError,
@@ -78,8 +78,7 @@ const OptionalBearerHeaders = Schema.Struct({
 });
 
 const OrchestrationProtocolHeaders = Schema.Struct({
-  authorization: Schema.optionalKey(Schema.String),
-  dpop: Schema.optionalKey(Schema.String),
+  ...OptionalBearerHeaders.fields,
   [ORCHESTRATION_PROTOCOL_HEADER]: Schema.Literal(ORCHESTRATION_PROTOCOL_VERSION_TEXT),
 });
 

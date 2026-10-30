@@ -38,3 +38,13 @@ export const messageSenderRef = (
         environmentId: value.senderEnvironmentId ?? environmentId,
         threadId: value.senderThreadId,
       };
+
+export const senderEnvironmentLabel = (environmentId: EnvironmentId, label?: string): string =>
+  Array.from((label ?? "").replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "").trim())
+    .slice(0, 80)
+    .join("") || environmentId;
+
+export const boundedPeerIdentity = (peer: PeerIdentity): PeerIdentity => ({
+  environmentId: peer.environmentId,
+  label: senderEnvironmentLabel(peer.environmentId, peer.label),
+});

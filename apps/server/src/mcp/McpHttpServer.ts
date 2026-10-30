@@ -1,4 +1,3 @@
-import { withPeerRequestContext } from "./peerRequestContext.ts";
 import { AgentToolkit } from "./toolkits/agent/tools.ts";
 import * as AgentHandlers from "./toolkits/agent/handlers.ts";
 import * as Cause from "effect/Cause";
@@ -43,6 +42,7 @@ import {
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import { decodeAsAdvertised, validateAdvertisedParameters } from "./advertisedParameters.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import { withPeerRequestContext } from "./peerRequestContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";

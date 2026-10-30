@@ -4408,6 +4408,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly scheduledTaskId?: OrchestrationV2ConversationMessage["scheduledTaskId"];
     readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
     readonly senderEnvironmentId?: OrchestrationV2ConversationMessage["senderEnvironmentId"];
+    readonly senderEnvironmentLabel?: OrchestrationV2ConversationMessage["senderEnvironmentLabel"];
     readonly idleCompaction?: OrchestrationV2ConversationMessage["idleCompaction"];
     readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
     readonly forceRestart: boolean;

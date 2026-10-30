@@ -1,4 +1,3 @@
-export { AuthMcpClientRegistration, MCP_PEER_LINK_SOFTWARE_ID } from "./mcpClientRegistration.ts";
 import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 

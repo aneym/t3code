@@ -1,5 +1,6 @@
 import {
   messageSender,
+  senderEnvironmentLabel,
   parseGoalCommand,
   type NodeId,
   type OrchestrationV2ConversationMessage,
@@ -202,7 +203,7 @@ export function queuedMessageSender(part: QueuedRunBatchPart): string {
     const environment =
       part.senderEnvironmentId === undefined
         ? ""
-        : ` on environment ${part.senderEnvironmentId}${part.senderEnvironmentLabel ? ` (${part.senderEnvironmentLabel})` : ""}`;
+        : ` on environment ${part.senderEnvironmentId} (${senderEnvironmentLabel(part.senderEnvironmentId, part.senderEnvironmentLabel)})`;
     return `an agent in thread ${part.senderThreadId}${environment}`;
   }
   return part.createdBy === "user"

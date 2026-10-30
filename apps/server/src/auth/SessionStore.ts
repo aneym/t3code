@@ -8,6 +8,7 @@ import {
   AuthWebSocketTicketUse,
   type RuntimeMode,
   type PeerIdentity,
+  boundedPeerIdentity,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -643,7 +644,10 @@ const make = Effect.gen(function* () {
         ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
         ...(input?.runtimeModeCeiling ? { rtc: input.runtimeModeCeiling } : {}),
         ...(input?.peerLink === true
-          ? { plk: 1 as const, ...(input.peer === undefined ? {} : { peer: input.peer }) }
+          ? {
+              plk: 1 as const,
+              ...(input.peer === undefined ? {} : { peer: boundedPeerIdentity(input.peer) }),
+            }
           : {}),
         iat: issuedAt.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
