@@ -179,7 +179,7 @@ class Rehearsal:
         result = {**result, "timings": self.timings, "elapsedSeconds": round(time.monotonic() - self.clock, 3), "startedAt": self.started, "finishedAt": now()}
         path = self.sandbox.evidence / "result.json"
         try:
-            if getattr(self.args, "hot_swap", False):
+            if self.sandbox.home.parent.name.startswith("rehearsal-hot-swap-"):
                 from .hot_swap_retention import retain as hot_retain
 
                 retention = hot_retain(self.sandbox.home.parent)
@@ -187,6 +187,13 @@ class Rehearsal:
                 retention = retain(self.sandbox.home.parent)
         except Exception as error:
             retention = {"error": f"{type(error).__name__}: {error}"}
+        if self.sandbox.home.parent.name.startswith("rehearsal-hot-swap-"):
+            from .rehearsal_store_gc import prune
+
+            try:
+                retention["sharedStore"] = prune()
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                retention["sharedStore"] = {"error": str(error)}
         result = {**result, "retention": retention}
         if self.sandbox.evidence.exists():
             try:

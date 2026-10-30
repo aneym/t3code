@@ -69,7 +69,6 @@ def parse():
     parser.add_argument("--chat-provider", default="claudeAgent")
     parser.add_argument("--chat-model", default="claude-sonnet-4-6")
     parser.add_argument("--chat-timeout", type=int, default=90)
-    parser.add_argument("--restart-source-bridge", action="store_true")
     parser.add_argument("--rpc-tree", default="")
     parser.add_argument("--drain-s", type=int, default=300)
     parser.add_argument("--node", default="node")
@@ -102,7 +101,7 @@ if __name__ == "__main__":
                 (Path(args.state_dir).expanduser() / "last.json").read_text()
             )["previous"]
             args.allow_downgrade = True
-        from t3nightly.install_policy import enforce
+        from t3nightly.install_policy import admit, enforce
 
         policy = enforce(args)
         with checked_assets(args) as assets:
@@ -117,7 +116,7 @@ if __name__ == "__main__":
                 )
                 sys.exit(0)
             run = Run(args)
-            run.report["installWindow"] = policy
+            admit(run, policy)
             from t3nightly.install_resources import installer_owner
 
             with installer_owner(run), payload_lifecycle(run):

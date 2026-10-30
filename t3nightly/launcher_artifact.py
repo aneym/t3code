@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 import re
+import uuid
 from pathlib import Path
 
 from .install_provenance import file_digest
@@ -112,11 +113,13 @@ def rollback_launcher(run):
     if backup is None:
         return
     target = run.home / "runtime/launcher"
-    failed = target.with_name(".launcher-watchdog-failed")
-    if failed.exists():
-        raise ValueError("launcher watchdog evidence already exists")
+    failed = target.with_name(".launcher-watchdog-failed-" + uuid.uuid4().hex)
     os.replace(target, failed)
-    os.replace(backup, target)
+    try:
+        os.replace(backup, target)
+    except OSError:
+        os.replace(failed, target)
+        raise
     pin = run.home / "runtime/launcher-pin.json"
     previous = getattr(run, "launcher_previous_pin", None)
     pin.write_text(previous or json.dumps({"protocol": 3, "digest": file_digest(target / "t3"), "source": "watchdog-last-known-good", "lastKnownGood": str(target)}) + "\n")
@@ -125,7 +128,7 @@ def rollback_launcher(run):
     if old_config is not None:
         config.write_text(old_config)
     elif config.exists():
-        config.rename(config.with_suffix(".watchdog-failed.json"))
+        config.rename(config.with_name(".launcher-config-watchdog-failed-" + uuid.uuid4().hex + ".json"))
     run.step("launcher-watchdog-rollback", digest=file_digest(target / "t3"), failed=str(failed))
     run.launcher_lkg = None
 
@@ -162,8 +165,10 @@ def watchdog(run, version):
             return
         time.sleep(0.25)
     service(run, "stop")
-    rollback_launcher(run)
-    service(run, "start")
+    try:
+        rollback_launcher(run)
+    finally:
+        service(run, "start")
     deadline = time.monotonic() + run.args.health_s
     while time.monotonic() < deadline:
         if run.server_version() == version:

@@ -101,7 +101,7 @@ def retain(sandbox_dir):
                         raise ValueError("sandbox home identity changed")
                 for path in paths:
                     trees = [path / "home", path / "evidence/installer-state/rollback-runtime"]
-                    trees = [tree for tree in trees if tree.is_dir() and not tree.is_symlink()]
+                    trees = [tree for tree in trees if tree.is_dir() and not tree.is_symlink() and tree.resolve().is_relative_to(path.resolve())]
                     size = sum(kib(tree) for tree in trees)
                     for tree in trees:
                         shutil.rmtree(tree)

@@ -12,7 +12,7 @@ A candidate server prunes runtime versions that nothing references and that are 
 
 ## Live admission
 
-Every installer mode, IM/IL stage, desktop swap and Windows feed activation checks UTC admission. Admission is restricted to the minute beginning at 08:00Z or 18:00Z; an admitted cutover may finish later. `--override-reason "..."` records the reason in the install receipt and appends an override record to `~/.agent-rails/lanes/t3-fast-release/STATE.md`. It is checked again immediately before cutover. Recovery of an admitted cutover does not wait for another window.
+Every installer mode, IM/IL stage, desktop swap and Windows feed activation checks UTC admission. Admission is restricted to the minute beginning at 08:00Z or 18:00Z; an admitted cutover may finish later. `--override-reason "..."` records the reason in the install receipt and appends an override record to `~/.agent-rails/lanes/t3-fast-release/STATE.md`. The installer records the admission and timestamp once, then checks that recorded grant (maximum age two hours) before mutation; it does not re-enter the one-minute window after staging/baseline checks. Graph stages delegate admission to their concrete installer, so an override is appended once.
 
 After admission, live service-control, launcher-restart, update-RPC and installer-dispatch subprocesses receive `T3NIGHTLY_INSTALL_WINDOW=1` for the agent restart guard. Inherited marker values are discarded and rebuilt from the gate receipt; read-only modes cannot grant it, and isolated rehearsal commands do not need or receive it. The marker is a child-process environment value, never a persistent service setting.
 
@@ -46,6 +46,14 @@ Hot-swap runs keep only the newest two timestamped `rehearsal-hot-swap-*` home g
 
 Each finalization appends `{at, deleted, kib, run}` plus kept/held details to `~/.agent-rails/lanes/t3-hot-swap-cutover/rehearsal-retention.jsonl`. Loaded or uncertain older homes can temporarily exceed the limit; their receipts explain why and a later finalization retries them.
 
-Immutable runtime trees are hashed into `~/.t3nightly/rehearsal-runtimes/<sha256>` once per host. Version and rollback paths are symlinks to that store. Launchers require a real path, so macOS uses APFS clones and Linux hardlinks. Candidate archives are still signature-verified before entering the store; tree hashes detect content drift. The store is not pruned with a home, so no retained/running sibling loses its binary. Shared-store garbage collection is separate from home retention.
+Immutable runtime trees are hashed into `~/.t3nightly/rehearsal-runtimes/<sha256>` once per host. Version and rollback paths are symlinks to that store. Launchers require a real path, so macOS uses APFS clones and Linux hardlinks. Candidate archives are still signature-verified before entering the store; tree hashes detect content drift. After hot-swap finalization, unreferenced digest directories and seed snapshots are pruned under `.store.lock`. Retained-home runtime links and seed receipts protect shared entries. An active rehearsal reservation defers collection, so preparing/running siblings cannot lose their bytes.
 
 Sanitized seeds are read-only SQLite-backed-up into stable content-addressed snapshots, then APFS-cloned or reflinked into the private writable DB. Unsupported filesystems copy only the DB, never hardlink it. `evidence/storage.json` records the actual runtime, launcher and seed methods. No live DB is used or changed.
+
+## Review recovery boundaries
+
+A hard-install candidate is marked routed only after its first serving check succeeds. Failure before serving stops any failed launcher and reactivates the retained old runtime. After serving, a compatible binary may roll back by launcher IPC or by maintenance stop/restore-runtime/start on an older launcher; neither branch restores the DB. Incompatible post-routing state requires forward repair.
+
+Launcher watchdog recovery always attempts service start in a `finally` block, even if restoring LKG bytes fails; failed launcher/config evidence names are unique. Connector pins are written before activation, so failed activation remains uninstallable. macOS live connector plists use `~/Library/LaunchAgents`; Linux connectors are enabled at install and disabled at uninstall. Sandbox connector removal tolerates an already-unloaded connector, and main sandbox teardown still runs after any connector cleanup error.
+
+Retention dispatch follows the rehearsal directory name, not the `--hot-swap` flag: fast-release homes keep their existing base policy. Every candidate removal is resolved beneath its owning run before deletion, including nested rollback trees.
