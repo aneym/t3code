@@ -181,7 +181,7 @@ def fast_evidence(run, version):
         install = fast_install(receipts / f"install-{host}.json", manifest, artifact, rehearsal, host)
         if release_identity(manifest) != release_identity(release):
             raise ValueError(f"{host}: candidate {manifest['digest']} is not the same release source as {release['digest']}")
-        rows[host] = {"candidate": manifest["digest"], "engine": manifest["engine"]["commit"], "artifact": artifact["digest"], "archive": artifact["archive"]["sha256"], "runtime": artifact["runtime"]["sha256"],
+        rows[host] = {"candidate": manifest["digest"], "engine": manifest["engine"]["commit"], "frozenAt": manifest["frozenAt"], "artifact": artifact["digest"], "archive": artifact["archive"]["sha256"], "runtime": artifact["runtime"]["sha256"],
                       "rehearsal": rehearsal["digest"], "install": install["digest"], "outcome": install["outcome"]}
     desktop = fast_artifact(run / "desktop/artifact-desktop-darwin-arm64.json", version, "darwin-arm64", "desktop")
     swap = json.loads((run / "desktop-swap.json").read_text())
