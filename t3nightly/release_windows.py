@@ -55,11 +55,12 @@ def stream(words, log):
     return process.wait()
 
 
-def source_tarball(tree, head, version, target):
-    actual = subprocess.run(["git", "-C", str(tree), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-    if actual != head:
-        raise RuntimeError(f"candidate tree is at {actual}, not {head}")
-    archive = subprocess.run(["git", "-C", str(tree), "archive", "--format=tar", head], capture_output=True, check=True).stdout
+def git(repo, *words, **kwargs):
+    return subprocess.run(["git", "-C", str(repo), *words], capture_output=True, check=True, **kwargs).stdout
+
+
+def source_tarball(repo, head, version, target):
+    archive = git(repo, "archive", "--format=tar", head)
     with tarfile.open(fileobj=io.BytesIO(archive)) as source, tarfile.open(target, "w:gz") as bundle:
         stamped = set(PACKAGE_FILES)
         for member in source.getmembers():
@@ -67,7 +68,7 @@ def source_tarball(tree, head, version, target):
                 continue
             bundle.addfile(member, source.extractfile(member) if member.isfile() else None)
         for name in PACKAGE_FILES:
-            value = json.loads((tree / name).read_text())
+            value = json.loads(git(repo, "show", f"{head}:{name}"))
             value["version"] = version
             data = (json.dumps(value, indent=2) + "\n").encode()
             info = tarfile.TarInfo(name)
@@ -75,15 +76,30 @@ def source_tarball(tree, head, version, target):
             bundle.addfile(info, io.BytesIO(data))
 
 
+def build_manifest(config, head, scratch):
+    common = Path(git(config.repo, "rev-parse", "--path-format=absolute", "--git-common-dir", text=True).strip())
+    tag = f"v{config.nightly}"
+    sha = git(config.repo, "rev-parse", f"{tag}^{{commit}}", text=True).strip()
+    gitdir = scratch / "manifest.git"
+    (gitdir / "objects/info").mkdir(parents=True)
+    (gitdir / "refs/tags").mkdir(parents=True)
+    (gitdir / "objects/info/alternates").write_text(f"{common / 'objects'}\n")
+    (gitdir / "refs/tags" / tag).write_text(f"{sha}\n")
+    (gitdir / "HEAD").write_text(f"{head}\n")
+    env = {**os.environ, "GIT_DIR": str(gitdir)}
+    try:
+        return subprocess.run([str(config.tools / "fork-build-manifest"), config.version], cwd=scratch, env=env, capture_output=True, text=True, check=True).stdout
+    finally:
+        shutil.rmtree(gitdir, ignore_errors=True)
+
+
 def windows_build(config, head, log):
     out = config.run / "desktop-win"
     shutil.rmtree(out, ignore_errors=True)
     stage = out / "stage"
     stage.mkdir(parents=True)
-    tree = config.candidate_tree()
-    source_tarball(tree, head, config.version, stage / "src.tgz")
-    manifest = subprocess.run([str(config.tools / "fork-build-manifest"), config.version], cwd=tree, capture_output=True, text=True, check=True).stdout
-    (stage / "fork-build.json").write_text(manifest)
+    source_tarball(config.repo, head, config.version, stage / "src.tgz")
+    (stage / "fork-build.json").write_text(build_manifest(config, head, out))
     target = stage / "public-config.json"
     with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as handle:
         json.dump(public_config(), handle)
