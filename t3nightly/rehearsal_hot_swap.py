@@ -191,9 +191,9 @@ class HotSwapRehearsal(Rehearsal):
             (self.sandbox.evidence / "hot-swap.md").write_text("# Isolated hot-swap rehearsal\n\n```json\n" + json.dumps(hot, indent=2) + "\n```\n")
         return {**result, "hotSwap": hot}
 
-    def collect_report(self, result):
+    def execute(self):
         try:
-            return self.collect_hot(result)
+            return self.collect_hot(super().execute())
         finally:
             self.stop_probe()
 
