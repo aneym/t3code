@@ -46,7 +46,10 @@ def ensure_connector(run):
         else:
             shutil.copytree(source, destination, symlinks=True)
     label, path = identity(run)
-    environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "T3CODE_HOME": str(run.home)}
+    paths = [entry for entry in os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep) if not str(Path(entry).resolve()).startswith("/Volumes/")]
+    environment = {"PATH": os.pathsep.join(paths), "T3CODE_HOME": str(run.home)}
+    if run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal.")):
+        environment["HOME"] = str(run.home)
     if not run.args.rpc_tree:
         raise ValueError("connector unit installation requires --rpc-tree for production renderers")
     text = render(Path(run.args.rpc_tree).resolve(), run.home, path, [str(destination / "t3"), "__service-connector"], run.home / "userdata/logs/connector.log", environment, kind="connector")
