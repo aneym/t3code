@@ -65,6 +65,7 @@ class Sandbox:
         self.port = args.port
         self.domain = f"gui/{os.getuid()}"
         self.started = False
+        self.home_created = False
         self.unit = self.home / f"{self.label}.plist"
         self.cli = self.home / "runtime/launcher/t3"
         self.db = self.home / "userdata/statev2.sqlite"
@@ -168,6 +169,7 @@ class Sandbox:
             create_home(self)
         else:
             self.home.mkdir(parents=True, mode=0o700)
+        self.home_created = True
         self.evidence.mkdir(parents=True, mode=0o700)
         if getattr(self.args, "hot_swap", False):
             (self.home.parent / "rehearsal-target.json").write_text(json.dumps({"home": str(self.home), "label": self.label, "port": self.port}) + "\n")
@@ -287,7 +289,8 @@ class Sandbox:
             from .rehearsal_lifecycle import remove_databases
 
             try:
-                cleanup(self.home, self.home.parent / "gate-waiters")
+                if self.home_created:
+                    cleanup(self.home, self.home.parent / "gate-waiters")
             finally:
-                if self.home.parent.name.startswith("rehearsal-hot-swap-"):
+                if self.home_created and self.home.parent.name.startswith("rehearsal-hot-swap-"):
                     remove_databases(self.home)
