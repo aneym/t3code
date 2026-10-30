@@ -23,7 +23,7 @@ def run_key(path):
 
 def reserve(sandbox):
     run = sandbox.home.parent
-    if run.parent != root() or not run_key(run):
+    if run.parent != root() or not (run_key(run) or run.name.startswith("rehearsal-fast-")):
         return None
     run.mkdir(parents=True, exist_ok=True, mode=0o700)
     handle = (run / ".rehearsal-active.lock").open("a")
