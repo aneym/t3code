@@ -22,11 +22,12 @@ def main():
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--remote-run", required=True)
     parser.add_argument("--remote-tools", required=True)
+    parser.add_argument("--linux-host", default="ax42")
     parser.add_argument("--base", default="")
     args = parser.parse_args()
     home = Path.home()
     os.environ["PATH"] = os.pathsep.join([str(home / ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", os.environ.get("PATH", "/usr/bin:/bin")])
-    config = FastConfig(args.version, args.topic, args.run.resolve(), args.host, args.remote_run, args.remote_tools, args.base)
+    config = FastConfig(args.version, args.topic, args.run.resolve(), args.host, args.remote_run, args.remote_tools, args.base, args.linux_host)
     config.run.mkdir(parents=True, exist_ok=True)
     print(json.dumps({"stage": args.stage, "host": args.host, "run": str(config.run)}), flush=True)
     try:

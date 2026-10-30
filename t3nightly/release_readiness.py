@@ -62,7 +62,7 @@ def resolve_topic(repo, topic):
 
 
 def remote_probe(config, seed, old, log):
-    words = ["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", "ax42", "python3", "-", config.remote_tools, seed, old or "-", config.version, CHAT_PROJECT]
+    words = ["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", config.linux_host, "python3", "-", config.remote_tools, seed, old or "-", config.version, CHAT_PROJECT]
     result = subprocess.run(words, input=REMOTE_PROBE, capture_output=True, text=True, timeout=25, check=False)
     if result.returncode:
         log.write(result.stderr)

@@ -24,13 +24,13 @@ def require(words, log, cwd=None):
         raise RuntimeError(f"command failed ({code}): {words[0]}")
 
 
-def ssh(words, log):
-    return command(["ssh", "-o", "BatchMode=yes", "ax42", shlex.join([str(word) for word in words])], log)
+def ssh(words, log, linux_host):
+    return command(["ssh", "-o", "BatchMode=yes", linux_host, shlex.join([str(word) for word in words])], log)
 
 
-def remote_disk_free(log):
+def remote_disk_free(log, linux_host):
     result = subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", "ax42", "df -Pk /"],
+        ["ssh", "-o", "BatchMode=yes", linux_host, "df -Pk /"],
         capture_output=True, text=True, check=False,
     )
     if result.returncode:
@@ -53,7 +53,7 @@ def remote_worker(config, action, log):
         "python3", f"{config.remote_root}/tools/release-worker", action,
         "--repo", config.remote_repo, "--tree", config.remote_tree,
         "--run", config.remote_run, "--version", config.version,
-    ], log)
+    ], log, config.linux_host)
 
 
 def transfer(source, destination, log, *, metadata_only=False):
@@ -66,12 +66,12 @@ def prepare_remote(config, log):
     bundle = config.run / "candidate.bundle"
     tag = "v" + config.version.split(".aneym.", 1)[0]
     require(["git", "bundle", "create", str(bundle), "HEAD", f"^{tag}"], log, config.candidate)
-    if ssh(["mkdir", "-p", config.remote_run], log):
+    if ssh(["mkdir", "-p", config.remote_run], log, config.linux_host):
         return 1
-    transfer(str(config.tools) + "/", f"ax42:{config.remote_root}/tools/", log)
-    transfer(bundle, f"ax42:{config.remote_run}/candidate.bundle", log)
+    transfer(str(config.tools) + "/", f"{config.linux_host}:{config.remote_root}/tools/", log)
+    transfer(bundle, f"{config.linux_host}:{config.remote_run}/candidate.bundle", log)
     (config.run / "candidate-head").write_text(assembly["head"] + "\n")
-    transfer(config.run / "candidate-head", f"ax42:{config.remote_run}/candidate-head", log)
+    transfer(config.run / "candidate-head", f"{config.linux_host}:{config.remote_run}/candidate-head", log)
     return remote_worker(config, "build", log)
 
 

@@ -82,7 +82,7 @@ def completed(config, graph):
 
 
 def remote_archive_exists(config, log):
-    return ssh(["test", "-f", f"{config.remote_run}/{config.archive('linux-x64')}"], log) == 0
+    return ssh(["test", "-f", f"{config.remote_run}/{config.archive('linux-x64')}"], log, config.linux_host) == 0
 
 
 def valid_output(config, name):
