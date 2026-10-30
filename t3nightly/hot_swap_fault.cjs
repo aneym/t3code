@@ -1,4 +1,11 @@
 const fs = require("node:fs");
+if (process.argv.includes("__service-launcher") && process.env.T3_REHEARSAL_BAD_LAUNCHER) {
+  const digest = require("node:crypto").createHash("sha256").update(fs.readFileSync(process.execPath)).digest("hex");
+  if (digest === process.env.T3_REHEARSAL_BAD_LAUNCHER) {
+    fs.appendFileSync(process.env.T3_REHEARSAL_LAUNCHER_DEATHS, JSON.stringify({ pid: process.pid, at: new Date().toISOString(), exit: 88 }) + "\n");
+    process.exit(88);
+  }
+}
 let context;
 try { context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT || "null"); } catch {}
 const mode = process.env.T3_REHEARSAL_FAULT;

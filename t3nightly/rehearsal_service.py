@@ -34,6 +34,9 @@ def boot(sandbox, argv, log):
         if getattr(sandbox.args, "queue_mode", "none") != "none":
             config = json.loads((sandbox.home / "runtime/launcher-config.json").read_text())
             hold = 2000 if sandbox.args.queue_mode == "capacity" else config["holdBudgetMs"] + 1000
+        if getattr(sandbox.args, "watchdog_bad_launcher", ""):
+            environment["T3_REHEARSAL_BAD_LAUNCHER"] = sandbox.args.watchdog_bad_launcher
+            environment["T3_REHEARSAL_LAUNCHER_DEATHS"] = str(sandbox.evidence / "launcher-deaths.jsonl")
         environment["T3_REHEARSAL_VALIDATED_HOLD_MS"] = str(hold)
         environment["T3_REHEARSAL_IPC_RECEIPT"] = str(sandbox.evidence / "launcher-ipc.jsonl")
         environment.update(NODE_OPTIONS="--require=" + json.dumps(str(fault)), T3_REHEARSAL_FAULT="" if sandbox.args.inject == "none" else sandbox.args.inject, T3_REHEARSAL_FAULT_RECEIPT=str(sandbox.evidence / "fault-injected.json"))
