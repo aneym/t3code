@@ -30,6 +30,7 @@ class Config:
     tools: Path
     feed: Path
     approval: Path | None
+    linux_host: str = "ax42"
     owned_trees: dict[Path, str] = field(default_factory=dict, compare=False)
 
     @property
@@ -61,6 +62,7 @@ class Config:
             "repo": str(self.repo), "candidate": str(self.candidate),
             "lane": str(self.lane), "remote_repo": self.remote_repo,
             "remote_root": self.remote_root, "feed": str(self.feed),
+            **({"linux_host": self.linux_host} if self.linux_host != "ax42" else {}),
         }
 
     def bind(self):
@@ -81,6 +83,7 @@ class FastConfig:
     remote_run: str
     remote_tools: str
     base: str = ""
+    linux_host: str = "ax42"
 
     @property
     def number(self):
@@ -116,7 +119,7 @@ class FastConfig:
 
     def on(self, host):
         run = Path(self.remote_run) if host == "ax42" and self.host == "studio" else self.run
-        return FastConfig(self.version, self.topic, run, host, self.remote_run, self.remote_tools, self.base)
+        return FastConfig(self.version, self.topic, run, host, self.remote_run, self.remote_tools, self.base, self.linux_host)
 
     def tree(self, stage):
         return HOSTS[self.host]["trees"] / f"aneym-fast-{stage}"
@@ -161,6 +164,7 @@ def parse():
     parser.add_argument("--candidate", type=Path)
     parser.add_argument("--repo", type=Path, default=Path("/Volumes/StudioExt/repos/t3code"))
     parser.add_argument("--lane", type=Path, default=Path.home() / ".agent-rails/lanes/t3-nightly")
+    parser.add_argument("--linux-host", default="ax42", help="Linux SSH destination (default: ax42)")
     parser.add_argument("--remote-repo", default="/home/jobs/repos/t3code")
     parser.add_argument("--remote-root", default="/home/jobs/t3nightly")
     parser.add_argument("--feed", type=Path, default=Path("/Volumes/StudioExt/t3nightly-feed"))
@@ -178,5 +182,6 @@ def parse():
         candidate.expanduser().resolve(), Path.home() / ".t3nightly/runs" / args.version,
         args.lane.expanduser().resolve(), args.remote_repo, args.remote_root,
         Path(__file__).resolve().parent, args.feed.expanduser().resolve(), args.verdict.expanduser().resolve() if args.verdict else None,
+        linux_host=args.linux_host,
     )
     return config, args

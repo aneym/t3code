@@ -100,10 +100,11 @@ def status(directory):
 
 
 class HostJobs:
-    def __init__(self, local_run, remote_run, remote_tools, dry_run=False):
+    def __init__(self, local_run, remote_run, remote_tools, dry_run=False, linux_host="ax42"):
         self.local_run = Path(local_run)
         self.remote_run = remote_run
         self.remote_tools = remote_tools
+        self.linux_host = linux_host
         self.dry_run = dry_run
 
     def directory(self, node):
@@ -122,7 +123,7 @@ class HostJobs:
         if node.host == "studio":
             return submit(directory, spec) if operation == "submit" else status(directory)
         argv = [f"{self.remote_tools}/release-job", operation, directory]
-        result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", "ax42",
+        result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", self.linux_host,
                                  shlex.join(argv)], input=json.dumps(spec) if spec else None,
                                 capture_output=True, text=True, timeout=20, check=False)
         if result.returncode:

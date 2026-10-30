@@ -22,7 +22,7 @@ def stage_spec(node, args):
     python = sys.executable if node.host == "studio" else "python3"
     command = [python, f"{tools}/release-fast-stage", "--stage", node.id, "--host", node.host,
                "--version", args.version, "--topic", args.topic, "--run", root,
-               "--remote-run", args.remote_run, "--remote-tools", args.remote_tools, "--base", args.base]
+               "--remote-run", args.remote_run, "--remote-tools", args.remote_tools, "--linux-host", args.linux_host, "--base", args.base]
     install = node.id in ("IM", "IL")
     return {"label": f"com.agent-rails.t3fast-{args.version}-{node.id}",
             "command": command, "host": node.host,
@@ -40,11 +40,12 @@ def remote_engine():
 
 def drive_fast(args):
     args.run.mkdir(parents=True, exist_ok=True)
-    jobs = HostJobs(args.run, args.remote_run, args.remote_tools, args.dry_run)
+    jobs = HostJobs(args.run, args.remote_run, args.remote_tools, args.dry_run, linux_host=args.linux_host)
     timeline = Timeline(args.run / "timeline.jsonl")
     inputs = {"version": args.version, "topic": args.topic,
               "remoteRun": args.remote_run, "remoteTools": args.remote_tools, "dryRun": args.dry_run,
-              "rehearseOnly": args.rehearse_only}
+              "rehearseOnly": args.rehearse_only,
+              **({"linuxHost": args.linux_host} if args.linux_host != "ax42" else {})}
     binding = args.run / "fast-inputs.json"
     try:
         with binding.open("x") as handle:
@@ -139,6 +140,7 @@ def main(argv):
     parser.add_argument("--run", type=Path)
     parser.add_argument("--remote-run")
     parser.add_argument("--remote-tools")
+    parser.add_argument("--linux-host", default="ax42", help="Linux SSH destination (default: ax42)")
     parser.add_argument("--base", default="", help="base ref to build on instead of the serving release head; must contain it")
     args = parser.parse_args(argv)
     if not re.fullmatch(r"\d+\.\d+\.\d+-nightly\.\d+\.\d+\.aneym\.\d+", args.version):
@@ -156,7 +158,7 @@ def main(argv):
         try:
             return drive_fast(args)
         finally:
-            finish_runs(args.run, args.remote_run, args.remote_tools, dry_run=args.dry_run)
+            finish_runs(args.run, args.remote_run, args.remote_tools, dry_run=args.dry_run, linux_host=args.linux_host)
     coordinator = args.run / "coordinator"
     previous = status(coordinator)
     if previous.get("outcome") in {"failed", "timed-out", "environment-blocked"}:
@@ -167,7 +169,7 @@ def main(argv):
     command = [sys.executable, str(Path(__file__).resolve().with_name("release")),
                "--fast", "--version", args.version, "--topic", args.topic,
                "--run", str(args.run), "--remote-run", args.remote_run,
-               "--remote-tools", args.remote_tools, "--base", args.base, "--coordinator", *(["--rehearse-only"] if args.rehearse_only else [])]
+               "--remote-tools", args.remote_tools, "--linux-host", args.linux_host, "--base", args.base, "--coordinator", *(["--rehearse-only"] if args.rehearse_only else [])]
     spec = {"label": f"com.agent-rails.t3fast-{args.version}-coordinator-{coordinator.name}", "host": "studio",
             "command": command, "budget": sum(node.budget for node in FAST_GRAPH) * HANG_GUARD + 60,
             "resources": ["fast-release-run"], "lockRoot": str(Path.home() / ".t3nightly/resource-locks")}

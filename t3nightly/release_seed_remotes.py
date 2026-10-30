@@ -3,15 +3,12 @@ import shlex
 from .release_transport import require
 
 
-HOSTS = ("ax42", "pc-wsl")
-
-
 def commands(config):
     archive = config.run / config.archive("linux-x64")
     runtime = f'"$HOME/.t3/runtime/versions/{config.version}"'
     upload = f"/tmp/t3-runtime-{config.version}.tar.gz"
     rows = []
-    for host in HOSTS:
+    for host in (config.linux_host, "pc-wsl"):
         cleanup = shlex.quote(f'rm -rf "$staging" "{upload}"')
         script = "set -eu; " + "; ".join((
             'staging="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"',

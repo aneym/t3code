@@ -56,7 +56,7 @@ def execute(stage, config, log):
                 raise RuntimeError(
                     f"disk guard: {path} has under {floor >> 30} GiB free"
                 )
-        if remote_disk_free(log) < REMOTE_MIN_FREE:
+        if remote_disk_free(log, config.linux_host) < REMOTE_MIN_FREE:
             raise RuntimeError("disk guard: ax42 / has under 25 GiB free")
     if stage.name in HEAVY and stage.host == "studio" and stage.name not in INSTALLS:
         with heavy_owner(config.run, stage.name, log) as admitted:
@@ -142,7 +142,7 @@ def drive(config, graph):
         try:
             release_local(config)
         finally:
-            finish_runs(config.run, config.remote_run, f"{config.remote_root}/tools")
+            finish_runs(config.run, config.remote_run, f"{config.remote_root}/tools", linux_host=config.linux_host)
     if failure:
         print(f"release stopped; completed: {', '.join(sorted(done))}", file=sys.stderr)
     return failure

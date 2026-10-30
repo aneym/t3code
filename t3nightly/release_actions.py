@@ -61,12 +61,12 @@ def run_action(stage, config, log):
     if stage == "linux-cli":
         code = prepare_remote(config, log)
         if not code:
-            transfer(f"ax42:{config.remote_run}/{config.archive('linux-x64')}", str(config.run) + "/", log)
+            transfer(f"{config.linux_host}:{config.remote_run}/{config.archive('linux-x64')}", str(config.run) + "/", log)
         return code
     if stage == "gate":
         code = remote_worker(config, "gate", log)
         for folder in ("gate", "suite"):
-            transfer(f"ax42:{config.remote_run}/{folder}", str(config.run) + "/", log)
+            transfer(f"{config.linux_host}:{config.remote_run}/{folder}", str(config.run) + "/", log)
         return code
     if stage == "stage-review":
         return command([str(tools / "stage-review"), "--version", config.version, "--worktree", str(config.tree("mac-cli")), "--out", str(config.run / "shots")], log)
@@ -88,15 +88,15 @@ def run_action(stage, config, log):
         log.write(f"Approved real Studio continuation proof: {path}\n")
         return 0
     if stage == "install-ax42":
-        transfer(config.verdict, f"ax42:{config.remote_run}/visual-verdict.md", log)
-        transfer(str(config.run / "shots") + "/", f"ax42:{config.remote_run}/shots/", log)
-        transfer(config.run / "SHA256SUMS", f"ax42:{config.remote_run}/SHA256SUMS", log)
-        transfer(str(Path(config.verdict).parent / "smoke") + "/", f"ax42:{config.remote_run}/smoke/", log)
+        transfer(config.verdict, f"{config.linux_host}:{config.remote_run}/visual-verdict.md", log)
+        transfer(str(config.run / "shots") + "/", f"{config.linux_host}:{config.remote_run}/shots/", log)
+        transfer(config.run / "SHA256SUMS", f"{config.linux_host}:{config.remote_run}/SHA256SUMS", log)
+        transfer(str(Path(config.verdict).parent / "smoke") + "/", f"{config.linux_host}:{config.remote_run}/smoke/", log)
         code = remote_worker(config, "install", log)
         if not code:
             destination = config.run / "ax42-install"
             destination.mkdir(exist_ok=True)
-            transfer(f"ax42:{config.remote_run}/install/", str(destination) + "/", log, metadata_only=True)
+            transfer(f"{config.linux_host}:{config.remote_run}/install/", str(destination) + "/", log, metadata_only=True)
             (destination / "remote-payloads.json").write_text(json.dumps({
                 "retained_on": "ax42", "directory": f"{config.remote_run}/install",
                 "copied": "JSON receipts and logs only; database payloads remain on ax42",
@@ -168,7 +168,7 @@ def fast_assemble(config, log):
         remote = config.on("ax42").run
         names = ("candidate.json", "assembly.json", "candidate.bundle", "readiness.json")
         require(["rsync", "-a", f"--rsync-path=mkdir -p {shlex.quote(str(remote))}/receipts && rsync", "--",
-                 *(str(config.run / name) for name in names), f"ax42:{remote}/"], log)
+                 *(str(config.run / name) for name in names), f"{config.linux_host}:{remote}/"], log)
         return 0
     finally:
         ownership("release", tree, log)
@@ -261,7 +261,7 @@ def fast_publish(config, log):
     remote, local = config.on("ax42"), config.run / "ax42"
     local.mkdir(exist_ok=True)
     for path in (remote.build_out() / remote.archive(), remote.artifact(), remote.manifest, remote.receipt("rehearsal"), remote.receipt("install")):
-        transfer(f"ax42:{path}", str(local) + "/", log)
+        transfer(f"{config.linux_host}:{path}", str(local) + "/", log)
     publish = config.run / "publish"
     publish.mkdir(exist_ok=True)
     rows = []

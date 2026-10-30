@@ -152,7 +152,7 @@ def retain(root, active_run, *, dry_run=False):
     return report
 
 
-def finish_runs(run, remote_run, remote_tools, *, dry_run=False):
+def finish_runs(run, remote_run, remote_tools, *, dry_run=False, linux_host="ax42"):
     run = Path(run)
     local_root = run.parent.parent if run.name.startswith("fast") else run.parent
     remote = Path(remote_run)
@@ -167,7 +167,7 @@ def finish_runs(run, remote_run, remote_tools, *, dry_run=False):
         command.append("--dry-run")
     try:
         command = ["env", f"PYTHONPATH={Path(remote_tools).parent}", *command]
-        result = subprocess.run(["ssh", "-o", "BatchMode=yes", "ax42", shlex.join(command)], capture_output=True, text=True, check=True, timeout=180)
+        result = subprocess.run(["ssh", "-o", "BatchMode=yes", linux_host, shlex.join(command)], capture_output=True, text=True, check=True, timeout=180)
         results["ax42"] = json.loads(result.stdout)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         results["ax42"] = {"error": str(error)}
