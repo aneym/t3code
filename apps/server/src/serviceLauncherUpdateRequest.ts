@@ -61,6 +61,7 @@ export async function acceptServiceUpdate(
     await reject("The requested target runtime is missing or incomplete.");
     return;
   }
+  // Failed checks must refuse updates rather than stop the server with unknown backup capacity.
   const backupBlocker = await databaseBackupBlocker(
     baseDir,
     message.dbPath,

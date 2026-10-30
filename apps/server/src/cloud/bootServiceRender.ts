@@ -1,11 +1,14 @@
 import type * as Duration from "effect/Duration";
 const BOOT_SERVICE_NAME = "t3code";
 export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
+// `.service` suffix keeps the label distinct from the desktop app's bundle id
+// (com.t3tools.t3code), so launchd and TCC records never collide.
 export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
 
+/** systemd expands `%` specifiers, including in unquoted append-log paths. */
 function escapeSystemdSpecifiers(value: string): string {
   return value.replaceAll("%", "%%");
 }
@@ -33,6 +36,7 @@ export function bootServiceBaseDirOf(contents: string): string | undefined {
   return plist === undefined ? undefined : unescapeXmlText(plist);
 }
 
+/** The executable an installed unit or plist starts: the launcher's runtime. */
 export function bootServiceProgramOf(contents: string): string | undefined {
   const systemd = /^ExecStart=("(?:\\.|[^"\\])*"|\S+)/m.exec(contents)?.[1];
   if (systemd !== undefined) return unquoteSystemdValue(systemd);
@@ -47,10 +51,13 @@ export interface BootServicePlan {
   readonly baseDir: string;
   readonly logPath: string;
   readonly unitPath: string;
+  /** The manager accepted a detached install; its outcome is written to `logPath`. */
   readonly handedOff?: boolean;
 }
 
+/** Service units cannot rely on the user's shell or PATH. */
 export function renderBootServiceUnit(plan: BootServicePlan): string {
+  // The user manager has no reliable network-online target; server networking retries itself.
   return [
     "[Unit]",
     "Description=T3 Code server",
@@ -63,13 +70,18 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
+    // Let the launcher mark the stop before it signals the server.
+    // Past TimeoutStopSec, systemd SIGKILLs the cgroup.
     "KillMode=mixed",
     "TimeoutStopSec=90s",
+    // Helpers share this cgroup; default OOMPolicy=stop would stop the unit if one is OOM-killed.
     "OOMPolicy=continue",
     "Restart=always",
     "RestartSec=5",
+    // Weights favor the server over the sibling agents slice during CPU or disk saturation.
     "CPUWeight=1000",
     "IOWeight=1000",
+    // systemd-oomd ignores this preference when the watched cgroup is root-owned, as user-1000.slice usually is.
     "ManagedOOMPreference=avoid",
     `StandardOutput=append:${escapeSystemdSpecifiers(plan.logPath)}`,
     `StandardError=append:${escapeSystemdSpecifiers(plan.logPath)}`,
@@ -84,10 +96,14 @@ function escapeXmlText(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+/** Launch agents cannot rely on the user's shell or PATH. */
 export function renderBootServicePlist(
   plan: BootServicePlan,
   options: { readonly homeDir: string; readonly environmentPath: string },
 ): string {
+  // Allow 90s stops for update handoffs.
+  // Interactive avoids background throttling.
+  // AbandonProcessGroup=false reaps agents only on launcher exit, preserving them across child updates.
   return [
     `<?xml version="1.0" encoding="UTF-8"?>`,
     `<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">`,
@@ -134,6 +150,7 @@ export interface BootServiceStep {
   readonly step: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  /** Non-zero exit is logged and ignored. */
   readonly optional?: boolean;
   readonly timeout?: Duration.Input;
 }

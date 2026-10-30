@@ -9,6 +9,7 @@ import {
 import { waitForServiceReadiness } from "./serviceLauncherReadiness.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalTimers:off
+// The launcher must survive unloadable server versions; use Node built-ins without Effect.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -36,7 +37,11 @@ import {
   candidateCanHotSwap,
   type LauncherIngressConfig,
 } from "./serviceLauncherConfig.ts";
-import { reserveServiceOwnership, clearOwnershipGrant } from "./serviceLauncherOwnership.ts";
+import {
+  reserveServiceOwnership,
+  clearOwnershipGrant,
+  sweepGrantTemps,
+} from "./serviceLauncherOwnership.ts";
 import { ServiceLauncherExitDeadline } from "./serviceLauncherExitDeadline.ts";
 import { readServiceEnvironment } from "./serviceEnvironment.ts";
 
@@ -48,6 +53,10 @@ import {
 } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
+/**
+ * Migrations count toward it and can scale with the database: tens of GB on a cold page cache
+ * take minutes. A missed window rolls back the database, so the next attempt pays the same cost.
+ */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
 
 type ChildRole = "active" | "trial";
@@ -117,6 +126,7 @@ export class Launcher {
     process.once("SIGINT", onSigint);
     try {
       process.send?.({ launcherStarted: 1 });
+      await sweepGrantTemps(this.#baseDir);
       this.#enqueue(() => this.#recover());
       await this.#completion.promise;
     } finally {
@@ -166,6 +176,7 @@ export class Launcher {
       });
       const marker = this.#guards.terminator.holdSignalsUntil(writeStopMarker(this.#baseDir));
       this.#clearTimer();
+      // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
       this.#enqueue(async () => {
         this.#stopping = true;
         this.#clearTimer();
@@ -188,6 +199,7 @@ export class Launcher {
   }
 
   async #recover(): Promise<void> {
+    // Clear old stop markers to preserve future tunnels; clear restart-pending only for the awaited version to avoid CLI races.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     const restartPending = restartPendingPath(this.#baseDir);
     const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
@@ -520,10 +532,7 @@ export class Launcher {
       await this.#returnToPrevious(pending, "rolled-back", reason, child);
     else {
       await this.#guards.terminator.terminate(child.process);
-      if (this.#child === child) {
-        this.#child = null;
-        await this.#startChild(this.#state.activeVersion, "active", pending);
-      }
+      await this.#handleExit(child, 78, null);
     }
   }
 
