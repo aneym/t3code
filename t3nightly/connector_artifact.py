@@ -14,7 +14,7 @@ from .release_signatures import verify_cli
 def identity(run):
     sandbox = run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal."))
     label = run.service_label.removesuffix(".service") + "-connector" if sandbox else "com.t3tools.t3code-connector.service" if sys.platform == "darwin" else "t3code-connector"
-    path = (run.home if sandbox else Path.home() / "Library/LaunchAgents") / f"{label}.plist" if sys.platform == "darwin" else Path.home() / ".config/systemd/user" / f"{label}.service"
+    path = (run.home if sandbox else Path.home()) / "Library/LaunchAgents" / f"{label}.plist" if sys.platform == "darwin" else Path.home() / ".config/systemd/user" / f"{label}.service"
     return label, path
 
 
