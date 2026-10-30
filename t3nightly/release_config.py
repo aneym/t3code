@@ -12,7 +12,7 @@ HOSTS = {
     "studio": {"repo": Path("/Volumes/StudioExt/repos/t3code"), "trees": Path("/Volumes/StudioExt/repos/t3code-wt"), "key": "darwin-arm64"},
     "ax42": {"repo": Path("/home/jobs/repos/t3code"), "trees": Path("/home/jobs/repos/t3code-wt"), "key": "linux-x64"},
 }
-CHAT_PROJECT = ".t3nightly/fast-chat-project"
+CHAT_PROJECT = ".t3/scratch"
 SEEDS = ".t3nightly/rehearsal-seeds"
 
 

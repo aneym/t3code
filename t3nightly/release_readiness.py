@@ -108,7 +108,7 @@ def readiness(config, log):
         checks[f"disk:{path}"] = free >= floor
     for name in (".local/bin/claude", ".vite-plus/bin/vp", ".config/t3nightly/public-config.env"):
         checks[f"studio:{name}"] = (config.home / name).exists()
-    checks["studio-chat-project"] = (config.chat_project() / ".git").exists()
+    checks["studio-chat-project"] = config.chat_project().is_dir()
     remote = remote_probe(config, seed, old, log)
     evidence["ax42"] = remote
     checks["ax42-reachable"] = bool(remote)
