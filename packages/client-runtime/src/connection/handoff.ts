@@ -53,7 +53,16 @@ export const makeHandoffWindow = Effect.fn("ConnectionHandoff.make")(function* (
           yield* session.client[WS_METHODS.serverProbe]({
             handoffClientId: clientId,
             handoffSequence: event.sequence,
-          }).pipe(Effect.ignore);
+          }).pipe(
+            Effect.andThen(() =>
+              session.client[WS_METHODS.serverProbe]({
+                handoffClientId: clientId,
+                handoffSequence: event.sequence,
+                handoffReplyReceived: true,
+              }),
+            ),
+            Effect.ignore,
+          );
           return event;
         }),
       ),
