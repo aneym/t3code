@@ -19,7 +19,7 @@ def clone_file(source, destination):
         return "apfs-clone" if sys.platform == "darwin" else "reflink"
     Path(destination).unlink(missing_ok=True)
     if sys.platform == "darwin":
-        raise ValueError("macOS rehearsal requires APFS clone support; full database copies are refused")
+        raise ValueError("macOS rehearsal requires APFS clone support; full database copies are refused: " + result.stderr.decode(errors="replace")[-1000:])
     shutil.copy2(source, destination)
     return "copy"
 
@@ -31,7 +31,7 @@ def clone_tree(source, destination):
             return "apfs-clone"
         if destination.exists():
             shutil.rmtree(destination)
-        raise ValueError("macOS rehearsal requires APFS clone support; full runtime copies are refused")
+        raise ValueError("macOS rehearsal requires APFS clone support; full runtime copies are refused: " + result.stderr.decode(errors="replace")[-1000:])
     methods = set()
 
     def link_or_clone(source_file, target_file):
