@@ -1302,7 +1302,7 @@ it.effect.each(["failed", "interrupted"] as const)(
         createdBy: "user",
         creationSource: "web",
       });
-      assert.equal(queued.delivery, "queued");
+      assert.equal(queued.delivery, "held");
       const projection = yield* threads.getThreadProjection(launched.threadId);
       const held = projection.runs.at(-1)!;
       assert.equal(held.status, "queued");

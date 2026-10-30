@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import { liveThreadShell } from "./McpToolAccess.testkit.ts";
+import { liveThreadShell, threadLookupMethods } from "./McpToolAccess.testkit.ts";
 import { readThread } from "./threadAccess.ts";
 
 const bareId = ThreadId.make("5d0b4a3e-8c1f-4a52-9d37-2f6c7e1b9a04");
@@ -23,10 +23,9 @@ const readBare = (existing: ReadonlyArray<ThreadId>) =>
     Effect.flip,
     Effect.provideService(McpInvocationContext.McpInvocationContext, client),
     Effect.provide(
-      Layer.mock(ThreadManagement.ThreadManagementService)({
-        getThreadShell: (threadId) =>
-          Effect.succeed(existing.includes(threadId) ? liveThreadShell(threadId) : null),
-      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)(
+        threadLookupMethods(existing.map((id) => liveThreadShell(id))),
+      ),
     ),
   );
 

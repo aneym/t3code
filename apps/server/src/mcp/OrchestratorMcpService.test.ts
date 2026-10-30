@@ -59,7 +59,11 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
-import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
+import {
+  idleThreadProjection,
+  liveThreadShell,
+  threadLookupMethods,
+} from "./McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -2645,8 +2649,7 @@ describe("OrchestratorMcpService thread lookup", () => {
         Layer.mergeAll(
           NodeServices.layer,
           Layer.mock(ThreadManagementService.ThreadManagementService)({
-            getThreadShell: (threadId) =>
-              Effect.succeed(shells.find((shell) => shell.id === threadId) ?? null),
+            ...threadLookupMethods(shells),
             sendToThread: () => Ref.update(sent, (count) => count + 1).pipe(Effect.as({} as never)),
           }),
           ServerSettings.layerTest(),
