@@ -43,7 +43,6 @@ export function useSidebarAgentsLayer({
       folderGroups: enabled ? (groups.length === 0 || focused ? projectGroups : groups) : null,
       keepEmptyFolders: groups.length > 0 && !focused,
     }),
-    projectGroups,
     jumpKeys: (keys: ReadonlyArray<string>) => sidebarJumpKeys(lists.jumpable, keys),
     jumpLabels: (keys: ReadonlyArray<string>) => sidebarJumpLabels(keys, keybindings),
     openJump: (
