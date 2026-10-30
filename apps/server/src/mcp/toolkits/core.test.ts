@@ -1,3 +1,7 @@
+import {
+  OrchestratorCommandRejectedError,
+  OrchestratorDispatchError,
+} from "../../orchestration-v2/OrchestratorDispatchError.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -28,11 +32,7 @@ import { McpAttachmentInput } from "./attachment/input.ts";
 import { McpSchema, McpServer } from "effect/ai";
 import { FetchHttpClient } from "effect/http";
 
-import {
-  OrchestratorCommandRejectedError,
-  OrchestratorDispatchError,
-  OrchestratorProjectionError,
-} from "../../orchestration-v2/Orchestrator.ts";
+import { OrchestratorProjectionError } from "../../orchestration-v2/Orchestrator.ts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";

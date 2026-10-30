@@ -1,3 +1,4 @@
+import { OrchestratorDispatchError } from "../../../orchestration-v2/OrchestratorDispatchError.ts";
 import {
   EnvironmentId,
   ProjectId,
@@ -161,7 +162,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     Effect.gen(function* () {
       const rejection = options.reject?.(command) ?? null;
       if (rejection !== null)
-        return yield* new Orchestrator.OrchestratorDispatchError({
+        return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: rejection,

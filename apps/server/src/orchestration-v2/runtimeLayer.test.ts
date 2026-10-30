@@ -1,3 +1,4 @@
+import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -902,7 +903,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           );
         } else {
           const error = yield* rollback.pipe(Effect.flip);
-          assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+          assert.instanceOf(error, OrchestratorDispatchError);
           assert.equal(
             error.cause,
             `Checkpoint ${checkpointId} is ${status} and cannot be restored.`,
@@ -2090,7 +2091,7 @@ it.layer(layerLegacyImportTest)("OrchestrationV2 legacy import", (it) => {
       );
       assert.instanceOf(projectionFailure, Orchestrator.OrchestratorProjectionError);
       assert.instanceOf(projectionFailure.cause, LegacyV1ThreadImporter.LegacyV1ThreadImportError);
-      assert.instanceOf(hydrationFailure, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(hydrationFailure, OrchestratorDispatchError);
       assert.instanceOf(hydrationFailure.cause, LegacyV1ThreadImporter.LegacyV1ThreadImportError);
 
       const projectionAfterFailure = yield* orchestrator.getThreadProjection(failureThreadId);
@@ -2159,7 +2160,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           expectedWorktreePath: null,
         })
         .pipe(Effect.flip);
-      assert.instanceOf(staleWorkspaceUpdate, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(staleWorkspaceUpdate, OrchestratorDispatchError);
       const projectionAfterStaleWorkspaceUpdate = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(projectionAfterStaleWorkspaceUpdate.thread.branch, "feature/v2");
       assert.equal(projectionAfterStaleWorkspaceUpdate.thread.worktreePath, "/tmp/t3-v2-worktree");
@@ -2188,7 +2189,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           branchPullRequest: pullRequest,
         })
         .pipe(Effect.flip);
-      assert.instanceOf(staleProjectWorkspace, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(staleProjectWorkspace, OrchestratorDispatchError);
       yield* moveProject(projectId, project.workspaceRoot, "2026-09-07T00:02:00.000Z");
       yield* orchestrator.dispatch({
         type: "thread.pull-request.sync",
@@ -2226,7 +2227,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           branchPullRequest: null,
         })
         .pipe(Effect.flip);
-      assert.instanceOf(stalePullRequestSync, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(stalePullRequestSync, OrchestratorDispatchError);
       yield* orchestrator.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("runtime-layer-lifecycle-runtime"),
@@ -2264,7 +2265,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ),
         })
         .pipe(Effect.flip);
-      assert.instanceOf(staleAutoSettle, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(staleAutoSettle, OrchestratorDispatchError);
       yield* orchestrator.dispatch({
         type: "thread.auto-settle",
         commandId: CommandId.make("runtime-layer-lifecycle-auto-settle"),
@@ -2289,7 +2290,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           snapshotAt: postUnsettleProjection.thread.updatedAt,
         })
         .pipe(Effect.flip);
-      assert.instanceOf(overriddenAutoSettle, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(overriddenAutoSettle, OrchestratorDispatchError);
 
       yield* orchestrator.dispatch({
         type: "thread.settle",
@@ -3999,7 +4000,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           expectedEmpty: true,
         })
         .pipe(Effect.flip);
-      assert.instanceOf(nonEmptyClaim, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(nonEmptyClaim, OrchestratorDispatchError);
 
       const error = yield* orchestrator
         .dispatch({
@@ -6713,7 +6714,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
           threadId,
         })
         .pipe(Effect.flip);
-      assert.instanceOf(markUnread, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(markUnread, OrchestratorDispatchError);
 
       const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO orchestration_v2_projection_turn_items (
@@ -6743,7 +6744,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
           visitedAt: "invalid-timestamp",
         })
         .pipe(Effect.flip);
-      assert.instanceOf(invalidVisit, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(invalidVisit, OrchestratorDispatchError);
     }),
   );
 

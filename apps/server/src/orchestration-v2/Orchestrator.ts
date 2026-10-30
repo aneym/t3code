@@ -1,3 +1,7 @@
+import {
+  OrchestratorCommandRejectedError,
+  OrchestratorDispatchError,
+} from "./OrchestratorDispatchError.ts";
 import { readRejection, tagRejection } from "./RejectionReason.ts";
 import { makePendingInputQueueRelease, isQueuedInputRelease } from "./PendingInputQueueRelease.ts";
 import {
@@ -205,35 +209,12 @@ const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
 );
 
-export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
-  "OrchestratorDispatchError",
-  {
-    commandId: CommandId,
-    commandType: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-    reason: Schema.optional(ThreadOrganizeRefusalReason),
-  },
-) {
-  override get message(): string {
-    return `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`;
-  }
-}
-
 export class OrchestratorThreadAlreadyExistsError extends Schema.TaggedError<OrchestratorThreadAlreadyExistsError>()(
   "OrchestratorThreadAlreadyExistsError",
   { commandId: CommandId, threadId: ThreadId },
 ) {
   override get message(): string {
     return `Thread ${this.threadId} already exists. Use a new thread id.`;
-  }
-}
-
-export class OrchestratorCommandRejectedError extends Schema.TaggedError<OrchestratorCommandRejectedError>()(
-  "OrchestratorCommandRejectedError",
-  { commandId: CommandId, commandType: Schema.String, cause: Schema.optional(Schema.Defect()) },
-) {
-  override get message(): string {
-    return `Orchestration command ${this.commandType} (${this.commandId}) was rejected before commit.`;
   }
 }
 
@@ -2930,6 +2911,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
       ),
     );
+    if (
+      command.type === "thread.model-selection.set" &&
+      command.expectedModelSelection &&
+      !modelSelectionsEqual(thread.modelSelection, command.expectedModelSelection)
+    )
+      return yield* new OrchestratorCommandRejectedError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Configuration changed; read it and retry.",
+      });
     if (thread.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,

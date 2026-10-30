@@ -1,3 +1,4 @@
+import { OrchestratorDispatchError } from "../orchestration-v2/OrchestratorDispatchError.ts";
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -23,10 +24,7 @@ import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerConfig from "../config.ts";
-import {
-  OrchestratorDispatchError,
-  OrchestratorProjectionError,
-} from "../orchestration-v2/Orchestrator.ts";
+import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSend from "../orchestration-v2/ThreadSend.ts";
 import * as ProjectService from "../project/ProjectService.ts";

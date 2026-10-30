@@ -1,3 +1,8 @@
+import {
+  OrchestrationV2DispatchCommandResult,
+  OrchestrationV2GetThreadProjectionInput,
+} from "./orchestrationDispatchResult.ts";
+import { ModelSelectionPrecondition } from "./modelSelectionPrecondition.ts";
 import { OrchestrationV2DelegatedCompletionCohort } from "./delegatedCompletionDelivery.ts";
 import { QueueHoldState, QueueHoldStateJson } from "./queueHoldReason.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
@@ -3085,7 +3090,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.model-selection.set"),
     commandId: CommandId,
     threadId: ThreadId,
-    modelSelection: ModelSelection,
+    ...ModelSelectionPrecondition.fields,
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
@@ -3598,17 +3603,6 @@ export const OrchestrationV2ThreadLaunchResult = Schema.Struct({
   sequence: Schema.optionalKey(NonNegativeInt),
 });
 export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaunchResult.Type;
-
-export const OrchestrationV2DispatchCommandResult = Schema.Struct({
-  sequence: NonNegativeInt,
-});
-export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
-
-export const OrchestrationV2GetThreadProjectionInput = Schema.Struct({
-  threadId: ThreadId,
-});
-export type OrchestrationV2GetThreadProjectionInput =
-  typeof OrchestrationV2GetThreadProjectionInput.Type;
 
 export const OrchestrationV2SubscribeShellInput = Schema.Struct({
   afterSequence: Schema.optionalKey(NonNegativeInt),

@@ -1,3 +1,4 @@
+import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
@@ -28,10 +29,7 @@ import {
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import {
-  OrchestratorCommandPreviouslyRejectedError,
-  OrchestratorDispatchError,
-} from "./Orchestrator.ts";
+import { OrchestratorCommandPreviouslyRejectedError } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
 

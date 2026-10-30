@@ -1,3 +1,4 @@
+import * as ThreadConfiguration from "./ThreadConfigurationService.ts";
 import { AgentToolkit } from "./toolkits/agent/tools.ts";
 import * as AgentHandlers from "./toolkits/agent/handlers.ts";
 import * as Cause from "effect/Cause";
@@ -45,7 +46,6 @@ import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import { decodeAsAdvertised, validateAdvertisedParameters } from "./advertisedParameters.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
-import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
@@ -56,7 +56,6 @@ import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
 import * as AttachmentHandlers from "./toolkits/attachment/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 import * as ThreadHandlers from "./toolkits/thread/handlers.ts";
-import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import * as OrchestratorHandlers from "./toolkits/orchestrator/handlers.ts";
@@ -1073,9 +1072,11 @@ export const layerPreviewToolkit = Layer.mergeAll(
 export const layerOrchestratorToolkit = toolkitRegistration(
   OrchestratorToolkit,
   OrchestratorHandlers.layer,
-).pipe(Layer.provide(OrchestratorMcpService.layer), Layer.provide(ThreadMetadataMcpService.layer));
+).pipe(Layer.provide(ThreadConfiguration.toolkitLayer));
 
-export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer);
+export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer).pipe(
+  Layer.provide(ThreadConfiguration.layer),
+);
 
 const layerWorktreeToolkitRegistration = toolkitRegistration(
   WorktreeToolkit,
@@ -1131,7 +1132,7 @@ export const layerMcpTransport = McpServer.layerHttp({
 export const layerTools = Layer.mergeAll(
   layerPreviewToolkit,
   layerOrchestratorToolkit,
-  layerThreadToolkit,
+  layerThreadToolkit.pipe(Layer.provide(ThreadConfiguration.toolkitLayer)),
   toolkitRegistration(AgentToolkit, AgentHandlers.layer),
   layerAttachmentToolkit,
   layerProjectRegistration,

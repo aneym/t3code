@@ -1,3 +1,4 @@
+import { OrchestratorDispatchError } from "../OrchestratorDispatchError.ts";
 import { vi } from "vite-plus/test";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { assert, describe, it } from "@effect/vitest";
@@ -1850,7 +1851,7 @@ describe("orchestration v2 provider switching", () => {
               yield* queue;
             } else {
               const error = yield* queue.pipe(Effect.flip);
-              assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+              assert.instanceOf(error, OrchestratorDispatchError);
               assert.instanceOf(error.cause, CommandPolicyCapabilityUnsupportedError);
               assert.equal(error.cause.capability, "queued_messages");
             }

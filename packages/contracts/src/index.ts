@@ -40,6 +40,7 @@ export * from "./pullRequest.ts";
 export * from "./pullRequestReviewGuide.ts";
 export * from "./orchestrationDispatch.ts";
 export * from "./orchestrationProject.ts";
+export * from "./orchestrationDispatchResult.ts";
 export * from "./orchestrationV2.ts";
 export * from "./delegatedCompletionDelivery.ts";
 export * from "./guestShare.ts";

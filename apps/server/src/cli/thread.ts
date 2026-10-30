@@ -1,3 +1,4 @@
+import { titleFromMessage } from "./threadTitle.ts";
 import {
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListResult,
@@ -35,9 +36,8 @@ import {
 } from "./threadCommon.ts";
 import { finishRun, readFullText, readThreadOnly, readTimeline } from "./threadRun.ts";
 import { threadSendCommand } from "./threadSend.ts";
+import { threadConfigureCommand } from "./threadConfigure.ts";
 import { threadUpdateCommand } from "./threadUpdate.ts";
-
-const TITLE_MAX_CHARS = 80;
 
 const ProjectListResult = Schema.Struct({
   projects: Schema.Array(
@@ -100,13 +100,6 @@ const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   }
   return containing.project;
 });
-
-const titleFromMessage = (message: string) => {
-  const firstLine = message.trim().split("\n")[0]?.trim() ?? "";
-  return firstLine.length > TITLE_MAX_CHARS
-    ? `${firstLine.slice(0, TITLE_MAX_CHARS - 1).trimEnd()}…`
-    : firstLine;
-};
 
 const launchWorkspaceStrategy = (input: {
   readonly worktree: Option.Option<string>;
@@ -559,6 +552,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadInterruptCommand,
     threadShowCommand,
     threadUpdateCommand,
+    threadConfigureCommand,
     ...(
       ["archive", "unarchive", "settle", "unsettle", "pin", "unpin", "snooze", "unsnooze"] as const
     ).map(threadOrganizeCommand),
