@@ -118,7 +118,7 @@ const queueProjection = mode === "queue-drain"
 const programs = {
   "hot-swap-probe": Effect.fnUntraced(function* () {
     const { monitor } = yield* Effect.promise(() => import("./hot_swap_probe.mjs"));
-    return yield* Effect.promise(() => monitor({ opts, Effect, Stream, bearerSession, layers }));
+    return yield* Effect.promise(() => monitor({ opts, Effect, Stream, Layer, load, src, effectRoot, layers, Model, Remote, Descriptor, Compatibility, RpcSession }));
   }),
   "restart-rpc": Effect.fnUntraced(function* () {
     const { session } = yield* bearerSession();

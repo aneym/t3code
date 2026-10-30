@@ -2,9 +2,10 @@ import { existsSync, renameSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import nodeHttp from "node:http";
 
-export async function monitor({ opts, Effect, Stream, bearerSession, layers }) {
+export async function monitor(context) {
+  const { opts, Effect, Stream, layers } = context;
   const started = performance.now();
-  const data = { httpSamples: 0, refusedConnections: 0, httpFailures: 0, maxHttpGapMs: 0, flipGapMs: null, servedVersions: [], keepAlive: { requests: 0, reused: 0, failures: 0, versions: [] }, wsConnections: 0, wsFailures: 0, snapshots: [], sequences: [], resnapshots: 0, ready: false };
+  const data = { httpSamples: 0, refusedConnections: 0, httpFailures: 0, maxHttpGapMs: 0, flipGapMs: null, servedVersions: [], keepAlive: { requests: 0, reused: 0, failures: 0, versions: [] }, wsConnections: 0, wsFailures: 0, snapshots: [], sequences: [], resnapshots: 0, ready: false, presentations: [], presentationViolations: [], handoffCalls: [], handoffEvents: [] };
   let lastOk = started;
   let lastSequence;
   const elapsed = () => Math.round(performance.now() - started);
@@ -63,32 +64,8 @@ export async function monitor({ opts, Effect, Stream, bearerSession, layers }) {
     } finally { agent.destroy(); }
   };
   const websocket = async () => {
-    while (!existsSync(opts.stop)) {
-      try {
-        await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-          const { session } = yield* bearerSession();
-          data.wsConnections++;
-          const stream = session.client["orchestration.subscribeThread"]({ threadId: opts.thread, ...(lastSequence === undefined ? {} : { afterSequence: lastSequence }) });
-          yield* stream.pipe(Stream.runForEach((item) => Effect.sync(() => {
-            if (item.kind === "snapshot") {
-              if (lastSequence !== undefined) data.resnapshots++;
-              data.snapshots.push(item.snapshotSequence);
-              lastSequence = item.snapshotSequence;
-              data.ready = true;
-            } else if (item.sequence !== undefined) {
-              if (!data.sequences.includes(item.sequence)) data.sequences.push(item.sequence);
-              lastSequence = Math.max(lastSequence ?? 0, item.sequence);
-            }
-            save();
-          })), Effect.raceFirst(Effect.promise(stopped)));
-        }).pipe(Effect.provide(layers))));
-      } catch (error) {
-        data.wsFailures++;
-        data.wsErrorType = error?.constructor?.name ?? "unknown";
-        save();
-        await delay(100);
-      }
-    }
+    const { supervise } = await import("./hot_swap_supervisor.mjs");
+    await supervise({ ...context, data, save, elapsed, stopped });
   };
   await Promise.all([http(), keepAlive(), websocket()]);
   data.maxHttpGapMs = Math.max(data.maxHttpGapMs, Math.round(performance.now() - lastOk));
