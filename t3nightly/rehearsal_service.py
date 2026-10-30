@@ -6,9 +6,9 @@ import re
 from pathlib import Path
 
 
-def render(tree, home, unit, program, log, environment, kind="server"):
+def render(tree, home, unit, program, log, environment, kind="server", connector_unit=None):
     request = home / ".service-render.json"
-    request.write_text(json.dumps({"tree": str(tree), "platform": sys.platform, "home": str(home), "unit": str(unit), "program": program, "log": str(log), "environment": environment, "kind": kind}))
+    request.write_text(json.dumps({"tree": str(tree), "platform": sys.platform, "home": str(home), "unit": str(unit), "program": program, "log": str(log), "environment": environment, "kind": kind, "connectorUnit": str(connector_unit) if connector_unit else None}))
     try:
         result = subprocess.run(["node", str(Path(__file__).with_name("render_service.mjs")), str(request)], capture_output=True, text=True, timeout=60)
         if result.returncode:
@@ -41,7 +41,9 @@ def boot(sandbox, argv, log):
         environment["T3_REHEARSAL_IPC_RECEIPT"] = str(sandbox.evidence / "launcher-ipc.jsonl")
         environment.update(NODE_OPTIONS="--require=" + json.dumps(str(fault)), T3_REHEARSAL_FAULT="" if sandbox.args.inject == "none" else sandbox.args.inject, T3_REHEARSAL_FAULT_RECEIPT=str(sandbox.evidence / "fault-injected.json"))
     unit_path = sandbox.unit if sys.platform == "darwin" else sandbox.systemd_unit
-    text = render(sandbox.args.rpc_tree.resolve(), sandbox.home, unit_path, argv, log, environment)
+    from .connector_artifact import identity
+
+    text = render(sandbox.args.rpc_tree.resolve(), sandbox.home, unit_path, argv, log, environment, connector_unit=identity(connector_run(sandbox))[1])
     lines = []
     for key, value in environment.items():
         quote = "'" if "'" not in value else '"'
