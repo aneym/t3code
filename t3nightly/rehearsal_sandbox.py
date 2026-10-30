@@ -41,8 +41,9 @@ def wait_for(fn, seconds, what):
 def provider_wrapper(binary, evidence, destination):
     provider_home = destination.parent.parent
     config = provider_home / "claude-home"
+    guard_home = provider_home if sys.platform == "darwin" else Path.home()
     config.mkdir(exist_ok=True, mode=0o700)
-    lines = ["#!/bin/sh", "export ENABLE_TOOL_SEARCH=false", f"export HOME={shlex.quote(str(provider_home))}", f"export CLAUDE_CONFIG_DIR={shlex.quote(str(config))}",
+    lines = ["#!/bin/sh", "export ENABLE_TOOL_SEARCH=false", f"export HOME={shlex.quote(str(guard_home))}", f"export CLAUDE_CONFIG_DIR={shlex.quote(str(config))}",
              f"export CLAUDE_CODE_TMPDIR={shlex.quote(str(destination.parent / 'tmp'))}"]
     if sys.platform == "darwin":
         lines.extend(claude_lb_lines(headless_bin(destination.parent / "headless-bin", evidence / "security-refusals.log")))

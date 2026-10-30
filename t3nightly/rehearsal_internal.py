@@ -16,6 +16,16 @@ def audit_tree(path):
             raise ValueError("macOS rehearsal dependency resolves onto a removable volume")
 
 
+def audit_seed(path):
+    with Path(path).open("rb") as source:
+        overlap = b""
+        while chunk := source.read(1024 * 1024):
+            content = overlap + chunk
+            if b"/Volumes/" in content:
+                raise ValueError("macOS rehearsal seed contains removable-volume paths; use an isolated seed without external project state")
+            overlap = content[-16:]
+
+
 def validate(sandbox):
     args = sandbox.args
     paths = [sandbox.home, sandbox.evidence, sandbox.old, args.seed, args.assets, args.candidate_manifest]
@@ -31,6 +41,7 @@ def validate(sandbox):
             paths.append(artifact["runtimeDir"])
     for path in paths:
         internal(path)
+    audit_seed(args.seed)
     trees = {sandbox.old.resolve()}
     if getattr(args, "rpc_tree", None):
         trees.add(Path(args.rpc_tree).resolve())
