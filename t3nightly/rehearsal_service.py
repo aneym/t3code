@@ -44,6 +44,7 @@ def boot(sandbox, argv, log):
     from .connector_artifact import identity
 
     text = render(sandbox.args.rpc_tree.resolve(), sandbox.home, unit_path, argv, log, environment, connector_unit=identity(connector_run(sandbox))[1])
+    (sandbox.evidence / "rendered-main.unit").write_text(text)
     lines = []
     for key, value in environment.items():
         quote = "'" if "'" not in value else '"'
@@ -57,6 +58,9 @@ def boot(sandbox, argv, log):
         from .connector_artifact import ensure_connector
 
         ensure_connector(connector_run(sandbox, baseline=bool(sandbox.args.old_launcher_artifact)))
+        connector_path = identity(connector_run(sandbox))[1]
+        if connector_path.is_file():
+            (sandbox.evidence / "rendered-connector.unit").write_bytes(connector_path.read_bytes())
     if sys.platform == "darwin":
         unit = plistlib.loads(text.encode())
         if unit["Label"] != sandbox.label:
