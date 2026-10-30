@@ -94,7 +94,7 @@ def backup_database(run, version, *, preparing=False):
     os.chmod(target, 0o700)
     marker = target / "payload.json.tmp"
     home = str(run.home.resolve())
-    marker.write_text(json.dumps({"version": version, "complete": True, "home": home}))
+    marker.write_text(json.dumps({"version": version, "complete": True, "home": home, "method": method}))
     os.replace(marker, target / "payload.json")
     prune_backups(root, run.args.backup_keep, target, home, run.state)
     record_payload(
