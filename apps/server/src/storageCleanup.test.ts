@@ -715,6 +715,29 @@ it.live("keeps a deinitialized submodule that owns another linked worktree", () 
   ),
 );
 
+it.live("keeps unpushed history a deinitialized submodule hides with grafts", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, submodule, child, command } = yield* submoduleCleanupFixture();
+      const childGit = (yield* command(child, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+      const remote = (yield* command(child, ["rev-parse", "origin/main"])).stdout.trim();
+      yield* command(child, ["checkout", "-b", "local-only"]);
+      yield* fs.writeFileString(`${child}/tracked.txt`, "unpublished work\n");
+      yield* command(child, ["commit", "-am", "local work"]);
+      const local = (yield* command(child, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* command(child, ["checkout", "-q", "--detach", remote]);
+      yield* fs.writeFileString(`${childGit}/info/grafts`, `${remote} ${local}\n`);
+      yield* command(submodule, ["submodule", "deinit", "child"]);
+      expect(
+        (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+      ).toMatchObject({ outcome: "kept" });
+      expect(
+        (yield* command(worktree, ["--git-dir", childGit, "show", `${local}:tracked.txt`])).stdout,
+      ).toBe("unpublished work\n");
+    }),
+  ),
+);
+
 it.live("keeps submodules when stored repository metadata is malformed", () =>
   runCleanupTest(
     Effect.gen(function* () {
@@ -1739,6 +1762,41 @@ describe("storage cleanup reports and local file policies", () => {
           expect(yield* fs.exists(`${worktree}/tracked.txt`)).toBe(true);
         }),
       ),
+  );
+  it.live("keeps a checkout moved away and replaced by a clone while the last checks run", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let worktreePath = "";
+        let prepared = false;
+        const { service, repo, worktree, command, setBeforeProjects } =
+          yield* cleanupFixture().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              writeFileString: (target, data, options) => {
+                if (target.endsWith("recovery-failed.txt") && worktreePath !== "") prepared = true;
+                return fs.writeFileString(target, data, options);
+              },
+            }),
+          );
+        const moved = `${yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-moved-" })}/feature`;
+        worktreePath = worktree;
+        setBeforeProjects(() => {
+          if (!prepared) return Effect.void;
+          prepared = false;
+          return Effect.gen(function* () {
+            yield* fs.rename(worktree, moved);
+            yield* fs.writeFileString(`${moved}/tracked.txt`, "staged\n");
+            yield* command(moved, ["add", "tracked.txt"]);
+            yield* command(repo, ["clone", "-q", "-b", "feature", repo, worktree]);
+          }).pipe(Effect.asVoid, Effect.orDie);
+        });
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect((yield* command(moved, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe(
+          "tracked.txt",
+        );
+      }),
+    ),
   );
   it.live("keeps an edited checkout whose Git work tree points elsewhere", () =>
     runCleanupTest(

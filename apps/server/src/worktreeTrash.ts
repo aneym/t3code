@@ -356,11 +356,14 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     blocked: () => Effect.Effect<string | null, E, R>,
   ) {
     const git = yield* GitVcsDriver.GitVcsDriver;
-    const adminDir = (yield* git.execute({
-      operation: "StorageCleanup.adminDir",
-      cwd: worktreePath,
-      args: ["rev-parse", "--absolute-git-dir"],
-    })).stdout.trim();
+    const gitDir = git
+      .execute({
+        operation: "StorageCleanup.adminDir",
+        cwd: worktreePath,
+        args: ["rev-parse", "--absolute-git-dir"],
+      })
+      .pipe(Effect.map((result) => result.stdout.trim()));
+    const adminDir = yield* gitDir;
     const commonDir = (cwd: string) =>
       git
         .execute({
@@ -369,20 +372,37 @@ export const makeWorktreeTrash = Effect.gen(function* () {
           args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
         })
         .pipe(Effect.flatMap((result) => fs.realPath(result.stdout.trim())));
-    if ((yield* commonDir(worktreePath)) !== (yield* commonDir(repository)))
-      return "worktree belongs to another repository";
-    const registered = yield* fs.readFileString(path.join(adminDir, "gitdir")).pipe(
-      Effect.flatMap((gitdir) => fs.realPath(path.resolve(adminDir, gitdir.trim()))),
-      Effect.orElseSucceed(() => null),
-    );
-    if (
-      (yield* isLink(path.join(worktreePath, ".git"))) ||
-      registered !== (yield* fs.realPath(path.join(worktreePath, ".git")))
-    )
-      return "Git registers this worktree at another path";
-    if (yield* fs.exists(path.join(adminDir, "locked"))) return "worktree is locked";
+    const identityReason = Effect.gen(function* () {
+      if ((yield* gitDir) !== adminDir) return "Git registers this worktree at another path";
+      if ((yield* commonDir(worktreePath)) !== (yield* commonDir(repository)))
+        return "worktree belongs to another repository";
+      const registered = yield* fs.readFileString(path.join(adminDir, "gitdir")).pipe(
+        Effect.flatMap((gitdir) => fs.realPath(path.resolve(adminDir, gitdir.trim()))),
+        Effect.orElseSucceed(() => null),
+      );
+      if (
+        (yield* isLink(path.join(worktreePath, ".git"))) ||
+        registered !== (yield* fs.realPath(path.join(worktreePath, ".git")))
+      )
+        return "Git registers this worktree at another path";
+      return (yield* fs.exists(path.join(adminDir, "locked"))) ? "worktree is locked" : null;
+    });
+    const early = yield* identityReason;
+    if (early !== null) return early;
     const entry = yield* prepare(root, worktreePath);
-    return yield* move({ blocked, root, entry, worktreePath, adminDir });
+    return yield* move({
+      blocked: () =>
+        blocked().pipe(
+          Effect.filterOrElse(
+            (reason) => reason !== null,
+            () => identityReason,
+          ),
+        ),
+      root,
+      entry,
+      worktreePath,
+      adminDir,
+    });
   });
 
   const managedRoots = Effect.fn("StorageCleanup.managedRoots")(function* (

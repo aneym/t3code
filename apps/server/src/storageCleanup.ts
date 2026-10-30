@@ -626,6 +626,17 @@ const make = Effect.gen(function* () {
           for (const operation of PENDING_OPERATIONS)
             if (yield* fs.exists(path.join(directory, operation)))
               return `submodule has a Git operation in progress (${operation})`;
+          if (yield* fs.exists(path.join(directory, "info", "grafts")))
+            return "submodule repository has grafts";
+          const replaced = yield* inspect([
+            "--git-dir",
+            directory,
+            "for-each-ref",
+            "--count=1",
+            "refs/replace/",
+          ]);
+          if (replaced.stdoutTruncated || replaced.stdout.trim() !== "")
+            return "submodule repository has replace refs";
           const linked = path.join(directory, "worktrees");
           if ((yield* fs.exists(linked)) && (yield* fs.readDirectory(linked)).length > 0)
             return "submodule has another linked worktree";
