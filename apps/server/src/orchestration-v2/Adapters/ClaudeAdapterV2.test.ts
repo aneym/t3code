@@ -566,17 +566,21 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.notEqual(rotatedKey, initialKey);
   });
 
-  it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
+  it("matches the read-only allowlist to agent-callable toolkit annotations", () => {
     const readOnlyToolNames = [
-      ...Object.values(OrchestratorToolkit.tools),
-      ...Object.values(ThreadToolkit.tools),
-      ...Object.values(WorktreeToolkit.tools),
-      ...Object.values(ProjectToolkit.tools),
-      ...Object.values(EnvironmentToolkit.tools),
-      ...Object.values(PreviewControlsToolkit.tools),
-      ...Object.values(HtmlToolkit.tools),
+      OrchestratorToolkit,
+      ThreadToolkit,
+      WorktreeToolkit,
+      ProjectToolkit,
+      EnvironmentToolkit,
+      PreviewControlsToolkit,
+      HtmlToolkit,
     ]
-      .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
+      .flatMap(({ tools }) => Object.values(tools))
+      .filter(
+        (tool) =>
+          tool.name !== "t3_worktree_export" && Context.get(tool.annotations, Tool.Readonly),
+      )
       .map((tool) => `mcp__t3-code__${tool.name}`)
       .sort();
 
