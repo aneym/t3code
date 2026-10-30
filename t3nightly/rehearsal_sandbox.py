@@ -161,6 +161,7 @@ class Sandbox:
         (self.home / "userdata/logs").mkdir(parents=True)
         (self.home / "runtime/versions").mkdir(parents=True)
         (self.home / "runtime/tmp").mkdir(mode=0o700)
+        shutil.copy2(Path(__file__).with_name("rehearsal_waiter.py"), self.home / "runtime/rehearsal_waiter.py")
         isolated_codex_home(self.home / "codex-home")
         self.os_home.mkdir()
         old_version = self.old.name
@@ -248,21 +249,26 @@ class Sandbox:
         return sha256(paths[0])
 
     def close(self):
-        if not self.started:
-            return
-        try:
-            if (self.home / "runtime/connector-pin.json").is_file():
-                from .rehearsal_service import connector_run
-                from .connector_artifact import uninstall
+        from .rehearsal_waiter import cleanup
 
-                uninstall(connector_run(self))
+        try:
+            if not self.started:
+                return
+            try:
+                if (self.home / "runtime/connector-pin.json").is_file():
+                    from .rehearsal_service import connector_run
+                    from .connector_artifact import uninstall
+
+                    uninstall(connector_run(self))
+            finally:
+                if sys.platform == "darwin":
+                    subprocess.run(["launchctl", "bootout", "--wait", f"{self.domain}/{self.label}"], capture_output=True, check=True, timeout=120)
+                else:
+                    subprocess.run(["systemctl", "--user", "stop", f"{self.label}.service"], check=True, timeout=60)
+                    self.systemd_unit.unlink(missing_ok=True)
+                    if self.systemd_dropin.exists():
+                        shutil.rmtree(self.systemd_dropin)
+                    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=30)
+                self.started = False
         finally:
-            if sys.platform == "darwin":
-                subprocess.run(["launchctl", "bootout", "--wait", f"{self.domain}/{self.label}"], capture_output=True, check=True, timeout=120)
-            else:
-                subprocess.run(["systemctl", "--user", "stop", f"{self.label}.service"], check=True, timeout=60)
-                self.systemd_unit.unlink(missing_ok=True)
-                if self.systemd_dropin.exists():
-                    shutil.rmtree(self.systemd_dropin)
-                subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=30)
-            self.started = False
+            cleanup(self.home, self.home.parent / "gate-waiters")

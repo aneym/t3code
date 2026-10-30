@@ -57,3 +57,7 @@ A hard-install candidate is marked routed only after its first serving check suc
 Launcher watchdog recovery always attempts service start in a `finally` block, even if restoring LKG bytes fails; failed launcher/config evidence names are unique. Connector pins are written before activation, so failed activation remains uninstallable. macOS live connector plists use `~/Library/LaunchAgents`; Linux connectors are enabled at install and disabled at uninstall. Sandbox connector removal tolerates an already-unloaded connector, and main sandbox teardown still runs after any connector cleanup error.
 
 Retention dispatch follows the rehearsal directory name, not the `--hot-swap` flag: fast-release homes keep their existing base policy. Every candidate removal is resolved beneath its owning run before deletion, including nested rollback trees.
+
+## Provider hold-process ownership
+
+Rehearsal provider turns invoke the installed `runtime/rehearsal_waiter.py` helper, not an inline unbounded loop. Each waiter acquires its own POSIX process group and records PID, PGID, process-start identity, home, gate and deadline in the run's `gate-waiters/` directory. It exits when released, when its home disappears, when teardown closes registration, or after its 600-second deadline. `Sandbox.close()` always closes waiter registration and terminates only those recorded identity-matched process groups in `finally`, including a failed run or service teardown failure. `gate-waiter-cleanup.json` preserves the terminated or already-exited PID/PGID receipts outside the home.
