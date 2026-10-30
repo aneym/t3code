@@ -272,31 +272,19 @@ class Sandbox:
     def close(self):
         from .rehearsal_waiter import cleanup
 
+        target = self.home.parent / "rehearsal-target.json"
+        if not self.home_created and target.is_file() and self.home.is_dir():
+            recorded = json.loads(target.read_text())
+            self.home_created = recorded.get("home") == str(self.home) and recorded.get("label") == self.label
         try:
-            if not self.started:
-                return
-            try:
-                if (self.home / "runtime/connector-pin.json").is_file():
-                    from .rehearsal_service import connector_run
-                    from .connector_artifact import uninstall
+            if self.home_created:
+                from .rehearsal_units import unload
 
-                    uninstall(connector_run(self))
-            finally:
-                if sys.platform == "darwin":
-                    inspection = subprocess.run(["launchctl", "print", f"{self.domain}/{self.label}"], capture_output=True, text=True, timeout=15)
-                    if inspection.returncode == 0:
-                        subprocess.run(["launchctl", "bootout", "--wait", f"{self.domain}/{self.label}"], capture_output=True, check=True, timeout=120)
-                    elif "Could not find service" not in inspection.stderr:
-                        raise ValueError("cannot inspect private sandbox launch agent during teardown")
-                else:
-                    inspection = subprocess.run(["systemctl", "--user", "show", f"{self.label}.service", "--property=LoadState", "--value"], capture_output=True, text=True, timeout=15)
-                    if inspection.stdout.strip() != "not-found":
-                        subprocess.run(["systemctl", "--user", "stop", f"{self.label}.service"], check=True, timeout=60)
-                    self.systemd_unit.unlink(missing_ok=True)
-                    if self.systemd_dropin.exists():
-                        shutil.rmtree(self.systemd_dropin)
-                    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=30)
-                self.started = False
+                try:
+                    unload(self.home, self.label + "-connector")
+                finally:
+                    unload(self.home, self.label)
+                    self.started = False
         finally:
             from .rehearsal_lifecycle import remove_databases
 

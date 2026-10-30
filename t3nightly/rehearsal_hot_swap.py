@@ -82,7 +82,7 @@ class HotSwapRehearsal(Rehearsal):
         self.probe_log.close()
         self.probe_process = None
 
-    def collect_report(self, result):
+    def collect_hot(self, result):
         hot = getattr(self, "hot", {"checks": {}})
         injection = self.sandbox.evidence / "fault-injected.json"
         if injection.exists():
@@ -158,6 +158,11 @@ class HotSwapRehearsal(Rehearsal):
             arrivals = [row for row in probe.get("httpObservations", []) if warm and drained and warm["at"] <= row["at"] <= drained["at"]]
             hot["checks"]["drain-arrivals"] = {"status": "passed" if arrivals and all(row["version"] == hot["oldVersion"] for row in arrivals) else "failed", "freshConnectionSamples": arrivals, "drainStart": warm, "drainEnd": drained, "maintenanceDrain": [step for step in steps if step["step"].startswith("restart-drain")]}
         hot["checks"].update({name: {"status": "awaiting-capable-server"} for name in ("drain-arrivals", "keep-alive-freeze", "launcher-crash", "queue-saturation", "warm-rollback", "pre-routing-rollback") if name not in hot["checks"]})
+        rollback_names = ("warm-rollback", "pre-routing-rollback", "post-routing-binary-rollback")
+        failed_rollback = any(hot["checks"].get(name, {}).get("status") == "failed" for name in rollback_names)
+        wrong_method = (self.args.force_rollback or self.args.inject != "none") and hot.get("install", {}).get("hotSwap", {}).get("method") != "launcher-ipc"
+        if failed_rollback or wrong_method:
+            result.update(result="FAIL", releaseEligible=False)
         receipt_path = self.sandbox.evidence / "rehearsal-receipt.json"
         if receipt_path.is_file():
             from .release_receipts import seal
@@ -166,9 +171,11 @@ class HotSwapRehearsal(Rehearsal):
             if self.args.queue_mode != "none":
                 receipt["result"] = "QUEUE-PROOF"
                 result["releaseEligible"] = False
+            if failed_rollback or wrong_method:
+                receipt["result"] = "FAIL"
+            elif hot.get("status") == "hot-swap-unsupported":
+                receipt["result"] = "HOT-SWAP-UNSUPPORTED"
             receipt["hotSwap"] = {key: hot[key] for key in ("status", "sequenceContinuity", "candidateMeasuredStartupMs", "previousMeasuredStartupMs", "checks") if key in hot}
-            if hot.get("install", {}).get("hotSwap", {}).get("method") == "maintenance":
-                receipt["result"] = "PASS"
             queue_failed = self.args.queue_mode != "none" and hot.get("checks", {}).get("queue-saturation", {}).get("status") != "passed"
             presentation_failed = self.args.queue_mode != "budget" and self.args.inject == "none" and hot.get("checks", {}).get("presentation", {}).get("status") != "passed"
             normal = self.args.inject == "none" and not self.args.force_rollback and self.args.queue_mode == "none"
@@ -184,14 +191,11 @@ class HotSwapRehearsal(Rehearsal):
             (self.sandbox.evidence / "hot-swap.md").write_text("# Isolated hot-swap rehearsal\n\n```json\n" + json.dumps(hot, indent=2) + "\n```\n")
         return {**result, "hotSwap": hot}
 
-    def report(self, result):
+    def collect_report(self, result):
         try:
-            result = self.collect_report(result)
-        except (OSError, ValueError, KeyError, IndexError, subprocess.SubprocessError) as error:
-            result = {**result, "result": "FAIL", "receiptError": str(error), "releaseEligible": False}
+            return self.collect_hot(result)
         finally:
             self.stop_probe()
-        return super().report(result)
 
     def rollback_proof(self, workload):
         state = self.sandbox.evidence / "installer-state"
@@ -206,7 +210,7 @@ class HotSwapRehearsal(Rehearsal):
             path.write_text(json.dumps({"injected": injected, "installer": installer, "postRollbackChat": post, "workload": evidence, "databaseIntegrity": self.sandbox.query("PRAGMA integrity_check")}, indent=2) + "\n")
             return path
         if installer.get("hotSwap", {}).get("method") != "launcher-ipc":
-            return super().rollback_proof(workload)
+            raise ValueError("hot-swap rollback proof requires launcher-ipc; maintenance/fallback cannot prove hot-swap-back")
         if installer.get("hotSwap", {}).get("rollback") != "launcher-ipc":
             raise ValueError("post-flip failure did not use a schema-compatible hot swap back")
         writes = json.loads((state / "candidate-writes.json").read_text())

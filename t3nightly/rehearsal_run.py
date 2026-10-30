@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -13,6 +14,10 @@ from .release_signatures import cli_binary, verify_archive
 from .rehearsal_retention import retain
 from .rehearsal_sandbox import Sandbox, sha256
 from .rehearsal_workload import Workload
+
+
+class RehearsalInterrupted(BaseException):
+    pass
 
 
 def now():
@@ -114,7 +119,7 @@ class Rehearsal:
         if sandbox.version() != self.version or sandbox.serving_digest() != self.candidate_digest:
             raise ValueError("serving version or service-owned executable digest mismatch")
 
-    def main(self):
+    def execute(self):
         result = {"result": "FAIL", "phase": self.phase}
         try:
             tick = time.monotonic()
@@ -151,7 +156,7 @@ class Rehearsal:
                 proof = self.rollback_proof(workload)
                 self.mark("rollback-verify", tick)
                 result = {"result": "ROLLBACK-PROOF", "releaseEligible": False, "proof": str(proof)}
-                return self.report(result)
+                return result
             self.phase = "verify"
             tick = time.monotonic()
             post, evidence = workload.verify()
@@ -167,23 +172,59 @@ class Rehearsal:
                 raise ValueError("; ".join(reasons))
             receipt_path = self.sandbox.evidence / "rehearsal-receipt.json"
             write(receipt_path, receipt)
-            result = {"result": "COMPATIBILITY-PROBE" if self.args.compatibility_probe else "PASS", "receipt": str(receipt_path), "releaseEligible": not reasons and not self.args.compatibility_probe, "provenanceRefusals": reasons}
+            result = {"result": "COMPATIBILITY-PROBE" if self.args.compatibility_probe else "PASS", "receipt": str(receipt_path), "releaseEligible": not reasons and not self.args.compatibility_probe and not getattr(self.args, "focused", False), "provenanceRefusals": reasons}
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, TimeoutError) as error:
             blocked = "environment-refused" if "sandbox" in str(error) or "live T3" in str(error) else "environment-blocked"
             result = {"result": blocked if self.phase in ("prepare", "baseline") else "FAIL", "phase": self.phase, "error": str(error)}
-        return self.report(result)
+        return result
+
+    def main(self):
+        watched = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+        previous = {number: signal.getsignal(number) for number in watched}
+
+        def interrupted(number, frame):
+            raise RehearsalInterrupted("rehearsal interrupted by " + signal.Signals(number).name)
+
+        for number in watched:
+            signal.signal(number, interrupted)
+        result = {"result": "FAIL", "releaseEligible": False}
+        try:
+            try:
+                result = self.execute()
+            except BaseException as error:
+                result.update(result="FAIL", releaseEligible=False, phase=self.phase, error=f"{type(error).__name__}: {error}")
+            finally:
+                for number in watched:
+                    signal.signal(number, signal.SIG_IGN)
+                try:
+                    result = self.collect_report(result)
+                except BaseException as error:
+                    result.update(result="FAIL", releaseEligible=False, receiptError=f"{type(error).__name__}: {error}")
+                finally:
+                    try:
+                        self.sandbox.close()
+                    except BaseException as error:
+                        result.update(result="FAIL", releaseEligible=False, teardownError=f"{type(error).__name__}: {error}")
+                    finally:
+                        reservation = getattr(self, "reservation", None)
+                        if reservation:
+                            from .rehearsal_lifecycle import finish
+
+                            try:
+                                finish(self.sandbox.home.parent)
+                            except BaseException as error:
+                                result.update(result="FAIL", releaseEligible=False, finishError=f"{type(error).__name__}: {error}")
+                            finally:
+                                reservation.close()
+            return self.report(result)
+        finally:
+            for number, handler in previous.items():
+                signal.signal(number, handler)
+
+    def collect_report(self, result):
+        return result
 
     def report(self, result):
-        try:
-            self.sandbox.close()
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-            result = {**result, "result": "FAIL", "teardownError": str(error)}
-        finally:
-            if getattr(self, "reservation", None):
-                from .rehearsal_lifecycle import finish
-
-                finish(self.sandbox.home.parent)
-                self.reservation.close()
         result = {**result, "timings": self.timings, "elapsedSeconds": round(time.monotonic() - self.clock, 3), "startedAt": self.started, "finishedAt": now()}
         path = self.sandbox.evidence / "result.json"
         try:

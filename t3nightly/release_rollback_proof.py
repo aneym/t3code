@@ -17,7 +17,9 @@ def proven(path, manifest, archive_sha):
         receipt = json.loads(Path(path).read_text())
     except (OSError, TypeError, ValueError):
         return False
-    return receipt.get("result") == "ROLLBACK-PROOF" and receipt.get("manifest") == identity_digest(manifest) and receipt.get("archive") == archive_sha
+    method = receipt.get("proof", {}).get("installer", {}).get("hotSwap", {}).get("method")
+    rollback = receipt.get("proof", {}).get("installer", {}).get("hotSwap", {}).get("rollback")
+    return method == "launcher-ipc" and rollback == "launcher-ipc" and receipt.get("result") == "ROLLBACK-PROOF" and receipt.get("manifest") == identity_digest(manifest) and receipt.get("archive") == archive_sha
 
 
 def fast_rollback_proof(config, log):
@@ -40,7 +42,8 @@ def fast_rollback_proof(config, log):
                     "--hot-swap", "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")),
                     *config.service_artifacts(), *config.target_artifacts()], log)
     result = json.loads((root / "evidence" / "result.json").read_text())
-    if code or result.get("result") != "ROLLBACK-PROOF":
+    method = result.get("hotSwap", {}).get("install", {}).get("hotSwap", {}).get("method")
+    if code or result.get("result") != "ROLLBACK-PROOF" or method != "launcher-ipc":
         return code or 1
     receipt = {"result": result["result"], "manifest": identity_digest(manifest), "archive": hashlib.sha256((config.build_out() / config.archive()).read_bytes()).hexdigest(),
                "proof": json.loads(Path(result["proof"]).read_text()), "timings": result.get("timings")}
