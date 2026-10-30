@@ -1,6 +1,6 @@
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import { writeConnectorConfig } from "./connectorConfig.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -75,7 +75,7 @@ export const makeLauncherEndpointRuntime = Effect.fn("ServiceEndpointRuntime.mak
         .makeDirectory(directory, { recursive: true })
         .pipe(
           Effect.andThen(
-            writeFileStringAtomically({ filePath: configPath, contents }).pipe(
+            writeConnectorConfig(configPath, contents).pipe(
               Effect.provideService(FileSystem.FileSystem, fs),
               Effect.provideService(Path.Path, path),
             ),
