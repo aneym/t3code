@@ -274,9 +274,11 @@ class Sandbox:
 
         try:
             target = self.home.parent / "rehearsal-target.json"
-            if not self.home_created and target.is_file() and self.home.is_dir():
+            process = self.home.parent / ".rehearsal-process.json"
+            if not self.home_created and target.is_file() and process.is_file() and self.home.is_dir():
                 recorded = json.loads(target.read_text())
-                self.home_created = recorded.get("home") == str(self.home) and recorded.get("label") == self.label
+                owner = json.loads(process.read_text())
+                self.home_created = owner.get("pid") == os.getpid() and recorded.get("home") == str(self.home) and recorded.get("label") == self.label
             if self.home_created:
                 from .rehearsal_units import unload
 
