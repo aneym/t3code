@@ -21,6 +21,7 @@ import * as Stream from "effect/Stream";
 import type { Tool } from "effect/ai";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as OrchestratorErrors from "../../../orchestration-v2/OrchestratorErrors.ts";
 import {
   type PullRequestTestThread,
   v2PullRequestThread,
@@ -161,7 +162,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     Effect.gen(function* () {
       const rejection = options.reject?.(command) ?? null;
       if (rejection !== null)
-        return yield* new Orchestrator.OrchestratorDispatchError({
+        return yield* new OrchestratorErrors.OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: rejection,

@@ -32,7 +32,7 @@ import {
   OrchestratorCommandRejectedError,
   OrchestratorDispatchError,
   OrchestratorProjectionError,
-} from "../../orchestration-v2/Orchestrator.ts";
+} from "../../orchestration-v2/OrchestratorErrors.ts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";

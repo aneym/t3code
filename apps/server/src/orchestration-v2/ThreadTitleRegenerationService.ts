@@ -18,7 +18,7 @@ import * as Schedule from "effect/Schedule";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
-import type { OrchestratorV2Error } from "./Orchestrator.ts";
+import type { OrchestratorV2Error } from "./OrchestratorErrors.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 

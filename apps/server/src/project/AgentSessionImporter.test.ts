@@ -23,6 +23,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as OrchestratorErrors from "../orchestration-v2/OrchestratorErrors.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
   CLAUDE_MODEL_SELECTION,
@@ -226,7 +227,8 @@ const makeImporter = Effect.fn(function* (
                 .getThreadRecords(threadId, fields)
                 .pipe(
                   Effect.mapError(
-                    (cause) => new Orchestrator.OrchestratorProjectionError({ threadId, cause }),
+                    (cause) =>
+                      new OrchestratorErrors.OrchestratorProjectionError({ threadId, cause }),
                   ),
                 ),
           }),

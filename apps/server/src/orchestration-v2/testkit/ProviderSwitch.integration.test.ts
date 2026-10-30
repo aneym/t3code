@@ -50,6 +50,7 @@ import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../Orchestrator.ts";
+import * as OrchestratorErrors from "../OrchestratorErrors.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
@@ -1850,7 +1851,7 @@ describe("orchestration v2 provider switching", () => {
               yield* queue;
             } else {
               const error = yield* queue.pipe(Effect.flip);
-              assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+              assert.instanceOf(error, OrchestratorErrors.OrchestratorDispatchError);
               assert.instanceOf(error.cause, CommandPolicyCapabilityUnsupportedError);
               assert.equal(error.cause.capability, "queued_messages");
             }

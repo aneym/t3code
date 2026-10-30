@@ -219,19 +219,6 @@ import {
   OrchestratorCommandIdConflictError,
   OrchestratorV2Error,
 } from "./OrchestratorErrors.ts";
-export {
-  OrchestratorDispatchError,
-  OrchestratorThreadAlreadyExistsError,
-  OrchestratorCommandRejectedError,
-  OrchestratorProjectionError,
-  OrchestratorDomainEventStreamError,
-  OrchestratorProviderAdapterError,
-  OrchestratorSubagentThreadReadOnlyError,
-  OrchestratorThreadAboveModeLimitError,
-  OrchestratorCommandPreviouslyRejectedError,
-  OrchestratorCommandIdConflictError,
-  OrchestratorV2Error,
-} from "./OrchestratorErrors.ts";
 const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
 
 export interface OrchestratorV2DispatchResult {
