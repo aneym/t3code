@@ -33,6 +33,7 @@ def main():
     parser.add_argument("--inject", choices=("none", "warm-death", "post-flip"), default="none")
     parser.add_argument("--require-hot-swap", action="store_true")
     parser.add_argument("--focused", action="store_true", help="normal capable swap and continuation/client evidence only; no launcher crash injection")
+    parser.add_argument("--stock-client", action="store_true", help="keep a legacy lifecycle subscriber connected without handoff identity or confirmation")
     parser.add_argument("--queue-mode", choices=("none", "capacity", "budget"), default="none")
     parser.add_argument("--live-home", action="append", default=[])
     args = parser.parse_args()
