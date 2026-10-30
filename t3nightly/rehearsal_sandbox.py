@@ -167,7 +167,7 @@ class Sandbox:
                 subprocess.run(["cp", "-c", "-R", str(self.old), str(destination)], check=True, timeout=120)
             else:
                 subprocess.run(["cp", "--reflink=auto", "-a", str(self.old), str(destination)], check=True, timeout=120)
-        if getattr(self.args, "hot_swap", False) and self.args.launcher_artifact:
+        if getattr(self.args, "hot_swap", False) and (self.args.launcher_artifact or self.args.old_launcher_artifact):
             from .rehearsal_service import pin_artifacts
 
             pin_artifacts(self)
