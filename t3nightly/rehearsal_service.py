@@ -47,6 +47,11 @@ def boot(sandbox, argv, log):
         lines.append(f"{key}={quote}{value}{quote}")
     (sandbox.home / "service.env").write_text("\n".join(lines) + "\n")
     (sandbox.home / "service.env").chmod(0o600)
+    sandbox.started = True
+    if sandbox.args.launcher_artifact or sandbox.args.old_launcher_artifact or sandbox.args.connector_artifact:
+        from .connector_artifact import ensure_connector
+
+        ensure_connector(connector_run(sandbox, baseline=bool(sandbox.args.old_launcher_artifact)))
     if sys.platform == "darwin":
         unit = plistlib.loads(text.encode())
         if unit["Label"] != sandbox.label:
@@ -64,11 +69,6 @@ def boot(sandbox, argv, log):
             output.write(text)
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=30)
         subprocess.run(["systemctl", "--user", "start", f"{sandbox.label}.service"], check=True, timeout=60)
-    sandbox.started = True
-    if sandbox.args.launcher_artifact or sandbox.args.old_launcher_artifact or sandbox.args.connector_artifact:
-        from .connector_artifact import ensure_connector
-
-        ensure_connector(connector_run(sandbox, baseline=bool(sandbox.args.old_launcher_artifact)))
     sandbox.unit_renderer = {"source": "apps/server/src/cloud/bootService.ts", "tree": str(sandbox.args.rpc_tree), "launcher": True, "stopSeconds": 90, "killMode": "mixed" if sys.platform == "linux" else None}
 
 
