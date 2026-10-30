@@ -155,14 +155,19 @@ class Sandbox:
     def service_environment(self):
         paths = [str(self.cli.parent)] + [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if ".t3" not in entry and not str(Path(entry).resolve()).startswith("/Volumes/")]
         environment = {"HOME": str(self.home), "PATH": os.pathsep.join(paths), "T3CODE_HOME": str(self.home), "T3CODE_NO_BROWSER": "1", "TMPDIR": str(self.home / "runtime/tmp"), "CODEX_HOME": str(self.home / "codex-home"), "GIT_TERMINAL_PROMPT": "0",
-                       "T3CODE_HOST": "127.0.0.1", "T3CODE_PORT": str(self.port)}
+                       "T3CODE_HOST": "127.0.0.1", "T3CODE_PORT": str(self.port), "ANDROID_HOME": str(self.home / "android-sdk"), "ANDROID_SDK_ROOT": str(self.home / "android-sdk"), "TMP": str(self.home / "runtime/tmp"), "TEMP": str(self.home / "runtime/tmp"), "CLAUDE_CODE_TMPDIR": str(self.home / "runtime/tmp"), "CLAUDE_CONFIG_DIR": str(self.home / "claude-home")}
         if any(".t3" in value and not value.startswith(str(self.home)) for value in environment.values()):
             raise ValueError("sandbox service environment contains a live T3 path")
         return environment
 
     def prepare(self, health_seconds):
         self.validate()
-        self.home.mkdir(parents=True, mode=0o700)
+        if self.home.parent.name.startswith("rehearsal-hot-swap-"):
+            from .hot_swap_retention import create_home
+
+            create_home(self)
+        else:
+            self.home.mkdir(parents=True, mode=0o700)
         self.evidence.mkdir(parents=True, mode=0o700)
         if getattr(self.args, "hot_swap", False):
             (self.home.parent / "rehearsal-target.json").write_text(json.dumps({"home": str(self.home), "label": self.label, "port": self.port}) + "\n")
@@ -279,4 +284,10 @@ class Sandbox:
                     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=30)
                 self.started = False
         finally:
-            cleanup(self.home, self.home.parent / "gate-waiters")
+            from .rehearsal_lifecycle import remove_databases
+
+            try:
+                cleanup(self.home, self.home.parent / "gate-waiters")
+            finally:
+                if self.home.parent.name.startswith("rehearsal-hot-swap-"):
+                    remove_databases(self.home)

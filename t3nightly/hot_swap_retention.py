@@ -28,6 +28,10 @@ def reserve(sandbox):
     run.mkdir(parents=True, exist_ok=True, mode=0o700)
     handle = (run / ".rehearsal-active.lock").open("a")
     fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    if run_key(run):
+        from .rehearsal_lifecycle import register
+
+        register(run)
     return handle
 
 
@@ -69,51 +73,79 @@ def kib(path):
     return int(result.stdout.split()[0])
 
 
-def retain(sandbox_dir):
-    parent = root()
-    run = Path(sandbox_dir).resolve()
-    report = {"at": datetime.now(timezone.utc).isoformat(), "deleted": [], "kib": 0, "run": run.name, "kept": [], "held": []}
-    if run.parent != parent or not run_key(run):
-        return {**report, "skipped": "outside timestamped hot-swap rehearsal root"}
+def receipt_line(report):
     receipt = Path.home() / ".agent-rails/lanes/t3-hot-swap-cutover/rehearsal-retention.jsonl"
     receipt.parent.mkdir(parents=True, exist_ok=True)
-    with (parent / "hot-swap-retention.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        groups = {}
-        for path in parent.iterdir():
-            if path.is_dir() and not path.is_symlink() and run_key(path) and (path / "home").is_dir():
-                groups.setdefault(run_key(path), []).append(path)
-        newest = sorted(groups, reverse=True)[:2]
-        for key, paths in sorted(groups.items(), reverse=True):
-            if key in newest:
-                report["kept"].extend(path.name for path in paths)
-                continue
-            handles = []
+    with receipt.open("a") as output:
+        output.write(json.dumps(report, separators=(",", ":")) + "\n")
+        output.flush()
+        os.fsync(output.fileno())
+
+
+def homes():
+    return sorted((path for path in root().iterdir() if path.is_dir() and not path.is_symlink() and run_key(path) and (path / "home").is_dir()), key=lambda path: (run_key(path), path.name))
+
+
+def prune_to(limit, run):
+    from .rehearsal_lifecycle import running
+
+    report = {"at": datetime.now(timezone.utc).isoformat(), "deleted": [], "kib": 0, "run": run.name, "kept": [], "held": []}
+    remaining = homes()
+    for path in list(remaining):
+        if len(remaining) <= limit:
+            break
+        with (path / ".rehearsal-active.lock").open("a") as handle:
             try:
-                for path in paths:
-                    handle = (path / ".rehearsal-active.lock").open("a")
-                    handles.append(handle)
-                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    if any(loaded(label) for label in labels(path)):
-                        raise ValueError("sandbox unit still loaded")
-                    home = path / "home"
-                    if home.is_symlink() or home.resolve() != home or home.stat().st_uid != os.getuid():
-                        raise ValueError("sandbox home identity changed")
-                for path in paths:
-                    trees = [path / "home", path / "evidence/installer-state/rollback-runtime"]
-                    trees = [tree for tree in trees if tree.is_dir() and not tree.is_symlink() and tree.resolve().is_relative_to(path.resolve())]
-                    size = sum(kib(tree) for tree in trees)
-                    for tree in trees:
-                        shutil.rmtree(tree)
-                    report["deleted"].append(str(path / "home"))
-                    report["kib"] += size
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if running(path):
+                    raise ValueError("recorded rehearsal process group is still running")
+                if any(loaded(label) for label in labels(path)):
+                    raise ValueError("sandbox unit still loaded")
+                home = path / "home"
+                if home.is_symlink() or home.resolve() != home or home.stat().st_uid != os.getuid():
+                    raise ValueError("sandbox home identity changed")
+                trees = [path / "home", path / "evidence/installer-state/rollback-runtime"]
+                trees = [tree for tree in trees if tree.is_dir() and not tree.is_symlink() and tree.resolve().is_relative_to(path.resolve())]
+                size = sum(kib(tree) for tree in trees)
+                for tree in trees:
+                    shutil.rmtree(tree)
+                remaining.remove(path)
+                report["deleted"].append(str(home))
+                report["kib"] += size
+                receipt_line({"at": report["at"], "deleted": [str(home)], "kib": size, "run": run.name})
             except (OSError, ValueError, subprocess.SubprocessError) as error:
-                report["held"].append({"runs": [path.name for path in paths], "reason": str(error)})
-            finally:
-                for handle in handles:
-                    handle.close()
-        with receipt.open("a") as output:
-            output.write(json.dumps(report, separators=(",", ":")) + "\n")
-            output.flush()
-            os.fsync(output.fileno())
+                report["held"].append({"run": path.name, "reason": str(error)})
+    report["kept"] = [path.name for path in remaining]
+    return report
+
+
+def create_home(sandbox):
+    from .rehearsal_lifecycle import disk_gate
+
+    run = sandbox.home.parent
+    if run.parent != root() or not run_key(run):
+        raise ValueError("hot-swap home creation requires its timestamped private run root")
+    disk = disk_gate(run / "root-df-before.json")
+    with (root() / "hot-swap-retention.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        before = len(homes())
+        report = prune_to(1, run)
+        after_prune = len(homes())
+        if after_prune > 1:
+            raise ValueError("rehearsal refused before creating home: older homes are still live or unsafe to prune: " + json.dumps(report["held"]))
+        sandbox.home.mkdir(mode=0o700)
+        receipt = {"at": report["at"], "beforeHomes": before, "afterPruneHomes": after_prune, "afterCreationHomes": len(homes()), "retention": report, "disk": disk}
+        (run / "home-creation.json").write_text(json.dumps(receipt, indent=2) + "\n")
+        receipt_line({**report, "phase": "before-create", "beforeHomes": before, "afterPruneHomes": after_prune, "afterCreationHomes": receipt["afterCreationHomes"]})
+    return receipt
+
+
+def retain(sandbox_dir):
+    run = Path(sandbox_dir).resolve()
+    if run.parent != root() or not run_key(run):
+        return {"skipped": "outside timestamped hot-swap rehearsal root"}
+    with (root() / "hot-swap-retention.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        report = prune_to(2, run)
+        receipt_line(report)
     return report

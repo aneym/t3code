@@ -28,6 +28,8 @@ def audit_seed(path):
 
 def validate(sandbox):
     args = sandbox.args
+    if str(Path(args.provider_binary).expanduser().resolve()).startswith("/Volumes/"):
+        raise ValueError("macOS rehearsal provider executable resolves onto a removable volume")
     paths = [sandbox.home, sandbox.evidence, sandbox.old, args.seed, args.assets, args.candidate_manifest]
     if getattr(args, "artifact_manifest", None):
         paths.append(args.artifact_manifest)
