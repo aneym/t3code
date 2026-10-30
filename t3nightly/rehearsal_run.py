@@ -35,6 +35,10 @@ class Rehearsal:
         print(json.dumps({"phase": phase, "seconds": self.timings[phase], "at": now()}), flush=True)
 
     def preflight(self):
+        if sys.platform == "darwin":
+            from .rehearsal_lifecycle import disk_gate
+
+            disk_gate(self.sandbox.home.parent / "root-df-before.json")
         platform, arch = TARGETS[self.args.target_host]
         if platform != sys.platform:
             raise ValueError("target host platform does not match this machine")
@@ -175,6 +179,9 @@ class Rehearsal:
             result = {**result, "result": "FAIL", "teardownError": str(error)}
         finally:
             if getattr(self, "reservation", None):
+                from .rehearsal_lifecycle import finish
+
+                finish(self.sandbox.home.parent)
                 self.reservation.close()
         result = {**result, "timings": self.timings, "elapsedSeconds": round(time.monotonic() - self.clock, 3), "startedAt": self.started, "finishedAt": now()}
         path = self.sandbox.evidence / "result.json"
