@@ -145,8 +145,8 @@ class HotSwapRehearsal(Rehearsal):
             probe = hot["probe"]
             ids = {row["clientId"] for row in probe.get("handoffCalls", []) if row["method"] == "subscribeServerLifecycle"}
             acknowledgments = [row for row in probe.get("handoffReplies", []) if row.get("sequence") is not None and row["clientId"] in ids and any(event["sequence"] == row["sequence"] for event in probe.get("handoffEvents", []))]
-            presentation_pass = bool(probe.get("presentations")) and not probe.get("presentationViolations") and bool(acknowledgments)
-            hot["checks"]["presentation"] = {"status": "passed" if presentation_pass else "failed", "states": probe.get("presentations", []), "violations": probe.get("presentationViolations", []), "handoffAcknowledgments": acknowledgments}
+            presentation_pass = bool(probe.get("presentations")) and not probe.get("presentationViolations") and bool(ids) and bool(probe.get("handoffEvents"))
+            hot["checks"]["presentation"] = {"status": "passed" if presentation_pass else "failed", "states": probe.get("presentations", []), "violations": probe.get("presentationViolations", []), "handoffAcknowledgments": acknowledgments, "acknowledgmentObserved": bool(acknowledgments)}
         if hot.get("walAfter"):
             hot["checks"]["wal-writes"] = {"status": "passed" if hot["walAfter"]["events"] > hot["walBefore"]["events"] and hot["databaseIntegrity"] == [("ok",)] else "failed"}
         if hot.get("probe", {}).get("keepAlive", {}).get("reused", 0):
