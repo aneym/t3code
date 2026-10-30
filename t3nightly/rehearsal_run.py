@@ -113,6 +113,10 @@ class Rehearsal:
         result = {"result": "FAIL", "phase": self.phase}
         try:
             tick = time.monotonic()
+            if getattr(self.args, "hot_swap", False):
+                from .hot_swap_retention import reserve
+
+                self.reservation = reserve(self.sandbox)
             self.preflight()
             self.mark("preflight", tick)
             self.phase = "prepare"
@@ -165,20 +169,29 @@ class Rehearsal:
         return self.report(result)
 
     def report(self, result):
-        self.sandbox.close()
+        try:
+            self.sandbox.close()
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            result = {**result, "result": "FAIL", "teardownError": str(error)}
+        finally:
+            if getattr(self, "reservation", None):
+                self.reservation.close()
         result = {**result, "timings": self.timings, "elapsedSeconds": round(time.monotonic() - self.clock, 3), "startedAt": self.started, "finishedAt": now()}
+        path = self.sandbox.evidence / "result.json"
         if self.sandbox.evidence.exists():
-            path = self.sandbox.evidence / "result.json"
             path.write_text(json.dumps(result, indent=2) + "\n")
-            try:
+        try:
+            if getattr(self.args, "hot_swap", False):
+                from .hot_swap_retention import retain as hot_retain
+
+                retention = hot_retain(self.sandbox.home.parent)
+            else:
                 retention = retain(self.sandbox.home.parent)
-            except Exception as error:
-                retention = {"error": f"{type(error).__name__}: {error}"}
-            try:
-                path.with_name("retention.json").write_text(json.dumps(retention, indent=2) + "\n")
-            except OSError:
-                pass
-            result = {**result, "retention": retention}
+        except Exception as error:
+            retention = {"error": f"{type(error).__name__}: {error}"}
+        if self.sandbox.evidence.exists():
+            path.with_name("retention.json").write_text(json.dumps(retention, indent=2) + "\n")
+        result = {**result, "retention": retention}
         print(json.dumps(result, indent=2), flush=True)
         return 0 if result["result"] in ("PASS", "COMPATIBILITY-PROBE", "ROLLBACK-PROOF") else 1
 

@@ -156,23 +156,30 @@ class Sandbox:
         self.validate()
         self.home.mkdir(parents=True, mode=0o700)
         self.evidence.mkdir(parents=True, mode=0o700)
+        if getattr(self.args, "hot_swap", False):
+            (self.home.parent / "rehearsal-target.json").write_text(json.dumps({"home": str(self.home), "label": self.label, "port": self.port}) + "\n")
         (self.home / "userdata/logs").mkdir(parents=True)
         (self.home / "runtime/versions").mkdir(parents=True)
         (self.home / "runtime/tmp").mkdir(mode=0o700)
         isolated_codex_home(self.home / "codex-home")
         self.os_home.mkdir()
         old_version = self.old.name
-        for destination in (self.home / "runtime/versions" / old_version, self.cli.parent):
-            if sys.platform == "darwin":
-                subprocess.run(["cp", "-c", "-R", str(self.old), str(destination)], check=True, timeout=120)
-            else:
-                subprocess.run(["cp", "--reflink=auto", "-a", str(self.old), str(destination)], check=True, timeout=120)
+        if getattr(self.args, "hot_swap", False):
+            from .rehearsal_storage import prepare
+
+            prepare(self)
+        else:
+            for destination in (self.home / "runtime/versions" / old_version, self.cli.parent):
+                if sys.platform == "darwin":
+                    subprocess.run(["cp", "-c", "-R", str(self.old), str(destination)], check=True, timeout=120)
+                else:
+                    subprocess.run(["cp", "--reflink=auto", "-a", str(self.old), str(destination)], check=True, timeout=120)
+            with closing(sqlite3.connect(f"file:{self.args.seed.resolve()}?mode=ro", uri=True)) as source, closing(sqlite3.connect(self.db)) as target:
+                source.backup(target)
         if getattr(self.args, "hot_swap", False) and (self.args.launcher_artifact or self.args.old_launcher_artifact):
             from .rehearsal_service import pin_artifacts
 
             pin_artifacts(self)
-        with closing(sqlite3.connect(f"file:{self.args.seed.resolve()}?mode=ro", uri=True)) as source, closing(sqlite3.connect(self.db)) as target:
-            source.backup(target)
         self.check_seed()
         wrapper = str(provider_wrapper(self.args.provider_binary, self.evidence, self.home / "runtime/claude-provider"))
         settings = {"providerInstances": {self.args.provider: {"driver": "claudeAgent", "displayName": "Rehearsal", "enabled": True, "environment": [], "config": {"binaryPath": wrapper}}}}

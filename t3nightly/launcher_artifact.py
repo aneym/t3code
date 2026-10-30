@@ -85,7 +85,12 @@ def ensure_launcher(run, version):
     staged = runtime / ".launcher-artifact-next"
     if staged.exists():
         raise ValueError("unfinished launcher artifact staging exists")
-    shutil.copytree(source, staged, symlinks=True)
+    from .rehearsal_storage import clone_tree, enabled, publish
+
+    if enabled(run.home):
+        clone_tree(publish(source), staged)
+    else:
+        shutil.copytree(source, staged, symlinks=True)
     run.launcher_previous_pin = pin.read_text() if pin.exists() else None
     config_path = runtime / "launcher-config.json"
     run.launcher_previous_config = config_path.read_text() if config_path.exists() else None
