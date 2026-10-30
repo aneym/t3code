@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .install_chat import identities, prove, retained
+from .install_chat import candidate_writes, identities, prove, retained
 from .install_copy import backup_database
 from .install_hard import connect_returns, install as hard_install
 from .install_provenance import file_digest, migration_history, validate
@@ -128,6 +128,7 @@ def install(run):
                 raise ValueError("managed T3 Connect link did not recover")
             post = prove(run, args.version, baseline)
             if args.force_rollback:
+                candidate_writes(run, args.version, post["proof"])
                 raise ValueError("forced isolated acceptance failure")
             outcome = "installed"
         except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as error:

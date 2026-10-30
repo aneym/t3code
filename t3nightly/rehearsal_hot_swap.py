@@ -30,9 +30,9 @@ class HotSwapRehearsal(Rehearsal):
             wait_for(self.probe_ready, 60, "persistent probe WS snapshot")
             self.hot["walBefore"] = self.wal()
             config = sandbox.home / "runtime/launcher-config.json"
-            if config.is_file() and self.args.inject == "none":
+            if config.is_file() and self.args.queue_mode != "none":
                 ingress = json.loads(config.read_text())
-                pressure = ["node", str(self.engine / "hot_swap_pressure.mjs"), f"http://127.0.0.1:{sandbox.port}", str(self.stop_path), str(sandbox.evidence / "pressure.json"), str(ingress["maxQueued"]), str(ingress["holdBudgetMs"])]
+                pressure = ["node", str(self.engine / "hot_swap_pressure.mjs"), f"http://127.0.0.1:{sandbox.port}", str(self.stop_path), str(sandbox.evidence / "pressure.json"), str(ingress["maxQueued"]), str(ingress["holdBudgetMs"]), str(sandbox.evidence / "launcher-ipc.jsonl"), self.version, self.args.queue_mode]
                 self.pressure_process = subprocess.Popen(pressure, stdout=self.probe_log, stderr=subprocess.STDOUT)
             try:
                 super().install()
@@ -75,14 +75,12 @@ class HotSwapRehearsal(Rehearsal):
 
     def collect_report(self, result):
         hot = getattr(self, "hot", {"checks": {}})
-        installer_path = self.sandbox.evidence / "installer-state/last.json"
-        if installer_path.is_file():
-            installer_before = json.loads(installer_path.read_text())
-            if installer_before.get("outcome") == "installed" and installer_before.get("hotSwap", {}).get("method") == "launcher-ipc":
-                from .rehearsal_crash import launcher_crash
-
-                hot["swapProbe"] = json.loads(self.probe_path.read_text())
-                hot["checks"]["launcher-crash"] = launcher_crash(self.sandbox)
+        injection = self.sandbox.evidence / "fault-injected.json"
+        if injection.exists():
+            hot["injected"] = json.loads(injection.read_text())
+        ipc = self.sandbox.evidence / "launcher-ipc.jsonl"
+        if ipc.exists():
+            hot["launcherIPC"] = [json.loads(line) for line in ipc.read_text().splitlines() if line.strip()]
         final_sequence = 0
         if getattr(self, "probe_path", None):
             final_sequence = self.sandbox.query("SELECT coalesce(max(sequence),0) FROM orchestration_events WHERE aggregate_kind='thread' AND stream_id=?", (self.stream_id,))[0][0]
@@ -103,6 +101,10 @@ class HotSwapRehearsal(Rehearsal):
         state = self.sandbox.evidence / "installer-state/last.json"
         if state.exists():
             installer = json.loads(state.read_text())
+            if installer.get("outcome") == "installed" and installer.get("hotSwap", {}).get("method") == "launcher-ipc":
+                from .rehearsal_crash import launcher_crash
+
+                hot["checks"]["launcher-crash"] = launcher_crash(self.sandbox)
             hot["install"] = installer
             fallback = installer.get("hotSwap", {}).get("method") != "launcher-ipc"
             hot["status"] = "hot-swap-unsupported" if fallback else "hot-swap"
@@ -118,7 +120,17 @@ class HotSwapRehearsal(Rehearsal):
                     receipt_path.write_text(json.dumps(seal(receipt), indent=2) + "\n")
         pressure = self.sandbox.evidence / "pressure.json"
         if pressure.is_file():
-            hot["checks"]["queue-saturation"] = {"status": "exercised", "traffic": json.loads(pressure.read_text())}
+            traffic = json.loads(pressure.read_text())
+            capacity_pass = traffic.get("servedNew", 0) > 0 and traffic.get("servedOld", 0) == 0 and traffic.get("reset", 0) > 0 and traffic.get("refused", 0) == 0
+            budget_pass = traffic.get("pastBudget", 0) > 0 and traffic.get("refused", 0) == 0
+            passed = traffic.get("status") == "complete" and (capacity_pass if self.args.queue_mode == "capacity" else budget_pass)
+            hot["checks"]["queue-saturation"] = {"status": "passed" if passed else "failed", "traffic": traffic}
+        if hot.get("probe"):
+            probe = hot["probe"]
+            ids = {row["clientId"] for row in probe.get("handoffCalls", []) if row["method"] == "subscribeServerLifecycle"}
+            acknowledgments = [row for row in probe.get("handoffCalls", []) if row["method"] == "server.probe" and row.get("sequence") is not None and row["clientId"] in ids]
+            presentation_pass = bool(probe.get("presentations")) and not probe.get("presentationViolations") and bool(acknowledgments)
+            hot["checks"]["presentation"] = {"status": "passed" if presentation_pass else "failed", "states": probe.get("presentations", []), "violations": probe.get("presentationViolations", []), "handoffAcknowledgments": acknowledgments}
         if hot.get("walAfter"):
             hot["checks"]["wal-writes"] = {"status": "passed" if hot["walAfter"]["events"] > hot["walBefore"]["events"] and hot["databaseIntegrity"] == [("ok",)] else "failed"}
         if hot.get("probe", {}).get("keepAlive", {}).get("reused", 0):
@@ -137,7 +149,9 @@ class HotSwapRehearsal(Rehearsal):
             receipt["hotSwap"] = {key: hot[key] for key in ("status", "sequenceContinuity", "candidateMeasuredStartupMs", "checks") if key in hot}
             if hot.get("install", {}).get("hotSwap", {}).get("method") == "maintenance":
                 receipt["result"] = "PASS"
-            if hot.get("status") == "hot-swap" and (probe.get("refusedConnections") or hot.get("sequenceContinuity") is not True or hot.get("databaseIntegrity") != [("ok",)]):
+            queue_failed = self.args.queue_mode != "none" and hot.get("checks", {}).get("queue-saturation", {}).get("status") != "passed"
+            presentation_failed = self.args.queue_mode != "budget" and self.args.inject == "none" and hot.get("checks", {}).get("presentation", {}).get("status") != "passed"
+            if hot.get("status") == "hot-swap" and (probe.get("refusedConnections") or hot.get("sequenceContinuity") is not True or hot.get("databaseIntegrity") != [("ok",)] or queue_failed or presentation_failed):
                 receipt["result"] = "FAIL"
                 result.update(result="FAIL", releaseEligible=False)
             receipt_path.write_text(json.dumps(seal(receipt), indent=2) + "\n")
@@ -171,8 +185,17 @@ class HotSwapRehearsal(Rehearsal):
             return super().rollback_proof(workload)
         if installer.get("hotSwap", {}).get("rollback") != "launcher-ipc":
             raise ValueError("post-flip failure did not use a schema-compatible hot swap back")
+        writes = json.loads((state / "candidate-writes.json").read_text())
+        shown = self.sandbox.t3("thread", "show", writes["threadId"], "--messages", "50", "--json")
+        if not any(message["role"] == "assistant" and message["text"].strip() == writes["nonce"] for message in shown["messages"]):
+            raise ValueError("hot-swap-back lost the candidate's persisted reply")
+        from datetime import datetime
+
+        observed_snooze = shown["thread"].get("snoozedUntil")
+        if not observed_snooze or datetime.fromisoformat(observed_snooze.replace("Z", "+00:00")) != datetime.fromisoformat(writes["snoozedUntil"].replace("Z", "+00:00")):
+            raise ValueError("hot-swap-back lost the candidate's snooze write")
         post, evidence = workload.verify(interrupted=True)
-        proof = {"installer": installer, "postRollbackChat": post, "workload": evidence, "databaseIntegrity": self.sandbox.query("PRAGMA integrity_check")}
+        proof = {"installer": installer, "candidateWrites": writes, "oldReadBack": shown, "databaseKept": True, "postRollbackChat": post, "workload": evidence, "databaseIntegrity": self.sandbox.query("PRAGMA integrity_check")}
         path = self.sandbox.evidence / "rollback-proof.json"
         path.write_text(json.dumps(proof, indent=2) + "\n")
         return path
