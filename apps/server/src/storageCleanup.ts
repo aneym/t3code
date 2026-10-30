@@ -995,23 +995,29 @@ const make = Effect.gen(function* () {
         )
           return keep("settings changed since check");
         // Runs right before the move; the status check goes last so it sees edits made meanwhile.
-        const removal = yield* trash.remove(managedRoot, worktreePath, project.workspaceRoot, () =>
-          Effect.gen(function* () {
-            const blocked = yield* blockedSinceCheck();
-            if (blocked !== null) return blocked;
-            if (yield* branchChanged(worktreePath, thread.branch))
-              return "repository or branch changed since check";
-            if (
-              (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
-              head.commitSha
-            )
-              return "commit changed since check";
-            const personal = yield* trash.personalStateReason(worktreePath);
-            if (personal !== null) return personal;
-            const submodules = yield* submoduleKeepReason(worktreePath, settings);
-            if (submodules !== null) return submodules;
-            return yield* localChangesReason(worktreePath, settings);
-          }),
+        const removal = yield* trash.remove(
+          managedRoot,
+          worktreePath,
+          project.workspaceRoot,
+          (identity) =>
+            Effect.gen(function* () {
+              const blocked = yield* blockedSinceCheck();
+              if (blocked !== null) return blocked;
+              const moved = yield* identity;
+              if (moved !== null) return moved;
+              if (yield* branchChanged(worktreePath, thread.branch))
+                return "repository or branch changed since check";
+              if (
+                (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
+                head.commitSha
+              )
+                return "commit changed since check";
+              const personal = yield* trash.personalStateReason(worktreePath);
+              if (personal !== null) return personal;
+              const submodules = yield* submoduleKeepReason(worktreePath, settings);
+              if (submodules !== null) return submodules;
+              return yield* localChangesReason(worktreePath, settings);
+            }),
         );
         if (removal !== null) return keep(removal);
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });

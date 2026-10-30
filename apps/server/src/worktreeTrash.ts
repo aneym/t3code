@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type { PlatformError } from "effect/PlatformError";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
@@ -353,7 +354,9 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     root: string,
     worktreePath: string,
     repository: string,
-    blocked: () => Effect.Effect<string | null, E, R>,
+    blocked: (
+      identity: Effect.Effect<string | null, GitCommandError | PlatformError>,
+    ) => Effect.Effect<string | null, E, R>,
   ) {
     const git = yield* GitVcsDriver.GitVcsDriver;
     const gitDir = git
@@ -391,13 +394,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     if (early !== null) return early;
     const entry = yield* prepare(root, worktreePath);
     return yield* move({
-      blocked: () =>
-        blocked().pipe(
-          Effect.filterOrElse(
-            (reason) => reason !== null,
-            () => identityReason,
-          ),
-        ),
+      blocked: () => blocked(identityReason),
       root,
       entry,
       worktreePath,

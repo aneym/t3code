@@ -575,6 +575,29 @@ it.live("keeps nested submodule files protected by the current keep rule", () =>
   ),
 );
 
+it.live("keeps a tracked edit made while the last identity checks run", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, setBeforeGit, setBeforeProjects } = yield* cleanupFixture();
+      let armed = false;
+      let finalRead = false;
+      setBeforeProjects(() =>
+        Effect.sync(() => {
+          if (armed) finalRead = true;
+        }),
+      );
+      setBeforeGit((operation) => {
+        if (operation === "StorageCleanup.adminDir") armed = true;
+        if (!finalRead || operation !== "StorageCleanup.repository") return Effect.void;
+        finalRead = false;
+        return fs.writeFileString(`${worktree}/tracked.txt`, "edited\n").pipe(Effect.orDie);
+      });
+      expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+      expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+    }),
+  ),
+);
+
 it.live("keeps an ignored submodule file saved while the last thread checks run", () =>
   runCleanupTest(
     Effect.gen(function* () {
