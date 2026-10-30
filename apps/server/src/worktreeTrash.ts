@@ -278,32 +278,38 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       "refs/replace/",
     ]);
     if (replaced.stdout.trim() !== "") return "repository has replace refs";
-    const ignored = yield* inspect("StorageCleanup.ignoredFiles", [
-      "ls-files",
-      "--others",
-      "--ignored",
-      "--exclude-standard",
-      "--directory",
-      "--no-empty-directory",
-      "-z",
-    ]);
-    if (ignored.stdoutTruncated) return "ignored files exceed the inspection limit";
-    if (ignored.stdout !== "") {
-      const sources = yield* git.execute({
-        operation: "StorageCleanup.ignoreSources",
-        cwd,
-        args: ["check-ignore", "--verbose", "--non-matching", "-z", "--stdin"],
-        stdin: ignored.stdout,
-        allowNonZeroExit: true,
-        maxOutputBytes: 64 * 1024 * 1024,
-      });
-      if (sources.stdoutTruncated) return "ignored files exceed the inspection limit";
-      const fields = sources.stdout.split("\0");
-      for (let index = 0; index + 3 < fields.length; index += 4) {
-        const source = fields[index]!;
-        if (source === "" || path.basename(source) !== ".gitignore")
-          return `has excluded local state (${fields[index + 3]})`;
-      }
+    const configured = yield* git.execute({
+      operation: "StorageCleanup.excludesFile",
+      cwd,
+      args: ["config", "--path", "core.excludesFile"],
+      allowNonZeroExit: true,
+    });
+    const globalExclude =
+      configured.stdout.trim() ||
+      path.join(
+        process.env.XDG_CONFIG_HOME || path.join(process.env.HOME ?? "", ".config"),
+        "git",
+        "ignore",
+      );
+    for (const excludeFile of [
+      path.join(commonDir.stdout.trim(), "info", "exclude"),
+      path.resolve(cwd, globalExclude),
+    ]) {
+      if (!(yield* fs.exists(excludeFile))) continue;
+      const patterns = (yield* fs.readFileString(excludeFile))
+        .split(/\r?\n/)
+        .some((line) => line.trim() !== "" && !line.startsWith("#"));
+      if (!patterns) continue;
+      const excluded = yield* inspect("StorageCleanup.excludedFiles", [
+        "ls-files",
+        "--others",
+        "--ignored",
+        "-z",
+        `--exclude-from=${excludeFile}`,
+      ]);
+      if (excluded.stdoutTruncated) return "excluded files exceed the inspection limit";
+      const file = excluded.stdout.split("\0").find((entry) => entry !== "");
+      if (file !== undefined) return `has excluded local state (${file})`;
     }
     const nested = yield* nestedRepository(cwd, submodules);
     return nested === null ? null : `has a nested repository (${nested})`;
