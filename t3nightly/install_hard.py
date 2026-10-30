@@ -46,7 +46,11 @@ def activate(run, version):
     from .launcher_artifact import ensure_launcher
 
     launcher = ensure_launcher(run, version)
-    if sys.platform == "darwin":
+    sandbox = run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal."))
+    if sandbox:
+        if launcher != run.home / "runtime/launcher/t3":
+            raise ValueError("sandbox renderer launcher path changed")
+    elif sys.platform == "darwin":
         with run.service_plist.open("rb") as handle:
             unit = plistlib.load(handle)
         unit["ProgramArguments"][0] = str(launcher)

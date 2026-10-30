@@ -55,12 +55,11 @@ def ensure_connector(run):
     text = render(Path(run.args.rpc_tree).resolve(), run.home, path, [str(destination / "t3"), "__service-connector"], run.home / "userdata/logs/connector.log", environment, kind="connector")
     if sys.platform == "darwin":
         unit = plistlib.loads(text.encode())
-        unit["Label"] = label
-        unit["EnvironmentVariables"]["T3_BOOT_SERVICE_UNIT"] = label + ".plist"
-        unit["EnvironmentVariables"].update(environment)
-        data = plistlib.dumps(unit)
+        if unit["Label"] != label:
+            raise ValueError("production renderer did not honor the connector unitPath")
+        data = text.encode()
     else:
-        data = text.replace("T3_BOOT_SERVICE_UNIT=t3code.service", f"T3_BOOT_SERVICE_UNIT={label}.service").encode()
+        data = text.encode()
     pin.write_text(json.dumps({**artifact, "unit": str(path), "label": label}) + "\n")
     pin.chmod(0o600)
     if path.exists() and path.read_bytes() == data:
