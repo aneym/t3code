@@ -1,3 +1,4 @@
+import errno
 import fcntl
 import hashlib
 import json
@@ -30,8 +31,20 @@ def clone_tree(source, destination):
             shutil.rmtree(destination)
         shutil.copytree(source, destination, symlinks=True)
         return "copy"
-    shutil.copytree(source, destination, symlinks=True, copy_function=os.link)
-    return "hardlink"
+    methods = set()
+
+    def link_or_clone(source_file, target_file):
+        try:
+            os.link(source_file, target_file)
+            methods.add("hardlink")
+        except OSError as error:
+            if error.errno != errno.EXDEV:
+                raise
+            methods.add(clone_file(source_file, target_file))
+        return target_file
+
+    shutil.copytree(source, destination, symlinks=True, copy_function=link_or_clone)
+    return "+".join(sorted(methods)) or "hardlink"
 
 
 def tree_digest(source):
@@ -61,6 +74,8 @@ def publish(source, move=False):
     source = Path(source).resolve()
     root = store_root()
     key = tree_digest(source)
+    if source.parent == root and source.name != key:
+        raise ValueError("shared rehearsal source content drifted")
     target = root / key
     with (root / ".store.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)

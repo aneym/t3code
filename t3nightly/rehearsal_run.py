@@ -178,8 +178,6 @@ class Rehearsal:
                 self.reservation.close()
         result = {**result, "timings": self.timings, "elapsedSeconds": round(time.monotonic() - self.clock, 3), "startedAt": self.started, "finishedAt": now()}
         path = self.sandbox.evidence / "result.json"
-        if self.sandbox.evidence.exists():
-            path.write_text(json.dumps(result, indent=2) + "\n")
         try:
             if getattr(self.args, "hot_swap", False):
                 from .hot_swap_retention import retain as hot_retain
@@ -189,9 +187,13 @@ class Rehearsal:
                 retention = retain(self.sandbox.home.parent)
         except Exception as error:
             retention = {"error": f"{type(error).__name__}: {error}"}
-        if self.sandbox.evidence.exists():
-            path.with_name("retention.json").write_text(json.dumps(retention, indent=2) + "\n")
         result = {**result, "retention": retention}
+        if self.sandbox.evidence.exists():
+            try:
+                path.write_text(json.dumps(result, indent=2) + "\n")
+                path.with_name("retention.json").write_text(json.dumps(retention, indent=2) + "\n")
+            except OSError as error:
+                result = {**result, "receiptError": str(error), "result": "FAIL"}
         print(json.dumps(result, indent=2), flush=True)
         return 0 if result["result"] in ("PASS", "COMPATIBILITY-PROBE", "ROLLBACK-PROOF") else 1
 
