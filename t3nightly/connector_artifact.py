@@ -39,7 +39,12 @@ def ensure_connector(run):
     pin = run.home / "runtime/connector-pin.json"
     destination = run.home / "runtime/connectors" / artifact["sha256"]
     if not destination.exists():
-        shutil.copytree(source, destination, symlinks=True)
+        from .rehearsal_storage import clone_tree, enabled, publish
+
+        if enabled(run.home):
+            clone_tree(publish(source), destination)
+        else:
+            shutil.copytree(source, destination, symlinks=True)
     label, path = identity(run)
     environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "T3CODE_HOME": str(run.home)}
     if not run.args.rpc_tree:
