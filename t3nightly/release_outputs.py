@@ -145,7 +145,8 @@ def fast_install(path, manifest, artifact, rehearsal, host):
 
 def host_evidence(run, version, host, build):
     key = "darwin-arm64" if host == "studio" else "linux-x64"
-    manifest = load(run / "candidate.json")
+    own = build / "candidate.json"
+    manifest = load(own if host == "ax42" and own.is_file() else run / "candidate.json")
     artifact = fast_artifact(build / f"artifact-{key}.json", version, key)
     archive = build / f"t3-{version}-{key}.tar.gz"
     if sha256(archive) != artifact["archive"]["sha256"]:
@@ -164,13 +165,23 @@ def fast_swap_ready(run, version, archive):
     return {"install": install["digest"], "desktop": desktop["digest"]}
 
 
+def release_identity(manifest):
+    source = {key: value for key, value in manifest["source"].items() if key != "commit"}
+    topics = [{key: value for key, value in topic.items() if key != "commit"} for topic in manifest["topics"]]
+    rest = {key: value for key, value in manifest.items() if key not in ("digest", "frozenAt", "engine", "source", "topics")}
+    return {**rest, "source": source, "topics": topics}
+
+
 def fast_evidence(run, version):
     run = Path(run)
     rows = {}
+    release = load(run / "candidate.json")
     for host, build in (("studio", run / "mac"), ("ax42", run / "ax42")):
         manifest, artifact, rehearsal, receipts = host_evidence(run, version, host, build)
         install = fast_install(receipts / f"install-{host}.json", manifest, artifact, rehearsal, host)
-        rows[host] = {"artifact": artifact["digest"], "archive": artifact["archive"]["sha256"], "runtime": artifact["runtime"]["sha256"],
+        if release_identity(manifest) != release_identity(release):
+            raise ValueError(f"{host}: candidate {manifest['digest']} is not the same release source as {release['digest']}")
+        rows[host] = {"candidate": manifest["digest"], "engine": manifest["engine"]["commit"], "artifact": artifact["digest"], "archive": artifact["archive"]["sha256"], "runtime": artifact["runtime"]["sha256"],
                       "rehearsal": rehearsal["digest"], "install": install["digest"], "outcome": install["outcome"]}
     desktop = fast_artifact(run / "desktop/artifact-desktop-darwin-arm64.json", version, "darwin-arm64", "desktop")
     swap = json.loads((run / "desktop-swap.json").read_text())
@@ -181,7 +192,7 @@ def fast_evidence(run, version):
     with (Path(swap["app"]) / "Contents/Info.plist").open("rb") as handle:
         if plistlib.load(handle).get("CFBundleShortVersionString") != version:
             raise ValueError("installed desktop app is not the released version")
-    return {"version": version, "candidate": manifest["digest"], "hosts": rows, "desktop": desktop["digest"], "desktopZip": desktop["archive"]["sha256"], "swap": swap["digest"]}
+    return {"version": version, "candidate": release["digest"], "sourceTree": release["source"]["tree"], "hosts": rows, "desktop": desktop["digest"], "desktopZip": desktop["archive"]["sha256"], "swap": swap["digest"]}
 
 
 def fast_output(stage, config):

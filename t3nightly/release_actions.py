@@ -260,7 +260,7 @@ def fast_swap(config, log):
 def fast_publish(config, log):
     remote, local = config.on("ax42"), config.run / "ax42"
     local.mkdir(exist_ok=True)
-    for path in (remote.build_out() / remote.archive(), remote.artifact(), remote.receipt("rehearsal"), remote.receipt("install")):
+    for path in (remote.build_out() / remote.archive(), remote.artifact(), remote.manifest, remote.receipt("rehearsal"), remote.receipt("install")):
         transfer(f"ax42:{path}", str(local) + "/", log)
     publish = config.run / "publish"
     publish.mkdir(exist_ok=True)
