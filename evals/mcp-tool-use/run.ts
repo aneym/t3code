@@ -1496,7 +1496,7 @@ const callCodex = Effect.fn("evaluateMcpToolUse.callCodex")(function* (
   const raw = yield* postModel("", body, config.proxy, true);
   const completed = raw
     .split("\n")
-    .filter((line) => line.startsWith("data: "))
+    .filter((line) => line.startsWith("data: ") && line !== "data: [DONE]")
     .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>)
     .find((event) => event.type === "response.completed");
   if (!completed)
