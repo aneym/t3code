@@ -91,6 +91,12 @@ def restart_session(run, previous):
 
 
 def restart_rpc(run, bearer, operation, payload, *, timeout=120):
+    environment = dict(os.environ)
+    environment.pop("T3NIGHTLY_INSTALL_WINDOW", None)
+    if operation == "update":
+        from .install_policy import command_environment
+
+        environment = command_environment(run)
     tree = Path(run.args.rpc_tree).expanduser().resolve()
     if not tree.is_dir():
         raise ValueError(
@@ -119,6 +125,7 @@ def restart_rpc(run, bearer, operation, payload, *, timeout=120):
                 str(path),
             ],
             capture_output=True,
+            env=environment,
             text=True,
             timeout=timeout,
             check=False,
