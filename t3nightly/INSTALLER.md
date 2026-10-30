@@ -61,3 +61,7 @@ Retention dispatch follows the rehearsal directory name, not the `--hot-swap` fl
 ## Provider hold-process ownership
 
 Rehearsal provider turns invoke the installed `runtime/rehearsal_waiter.py` helper, not an inline unbounded loop. Each waiter acquires its own POSIX process group and records PID, PGID, process-start identity, home, gate and deadline in the run's `gate-waiters/` directory. It exits when released, when its home disappears, when teardown closes registration, or after its 600-second deadline. `Sandbox.close()` always closes waiter registration and terminates only those recorded identity-matched process groups in `finally`, including a failed run or service teardown failure. `gate-waiter-cleanup.json` preserves the terminated or already-exited PID/PGID receipts outside the home.
+
+## Headless macOS storage
+
+macOS rehearsal home, artifacts, staging, seeds, evidence and RPC source/dependencies must resolve under internal `~/.t3nightly`. Runtime and RPC dependency symlinks resolving onto `/Volumes` are refused before boot. Stage artifacts into the shared internal store first; version links stay internal. Service and connector PATH exclude removable-volume entries. Provider HOME/config/tmp are private to the rehearsal, avoiding shell snapshots and cwd inherited from the agent's external checkout. Production renderers still supply the launcher/plist and separate connector unit. No TCC grant or GUI interaction is part of rehearsal setup.

@@ -20,6 +20,11 @@ def render(tree, home, unit, program, log, environment, kind="server"):
 
 def boot(sandbox, argv, log):
     environment = sandbox.service_environment()
+    if sys.platform == "darwin":
+        from .rehearsal_internal import internal
+
+        internal(sandbox.args.rpc_tree)
+
     if sandbox.args.inject != "none":
         from shutil import copy2
 
