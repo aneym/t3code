@@ -26,7 +26,7 @@ import * as ServerConfig from "../config.ts";
 import {
   OrchestratorDispatchError,
   OrchestratorProjectionError,
-} from "../orchestration-v2/Orchestrator.ts";
+} from "../orchestration-v2/OrchestratorErrors.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSend from "../orchestration-v2/ThreadSend.ts";
 import * as ProjectService from "../project/ProjectService.ts";

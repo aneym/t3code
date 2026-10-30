@@ -50,6 +50,7 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as Orchestrator from "./Orchestrator.ts";
+import type * as OrchestratorErrors from "./OrchestratorErrors.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
@@ -184,7 +185,7 @@ export class ThreadLaunchService extends Context.Service<
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
       Orchestrator.OrchestratorV2DispatchResult,
-      | Orchestrator.OrchestratorV2Error
+      | OrchestratorErrors.OrchestratorV2Error
       | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
     readonly prepareRun: (input: ThreadLaunchPreparationInput) => Effect.Effect<void>;

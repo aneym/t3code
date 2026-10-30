@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
-import * as Orchestrator from "./Orchestrator.ts";
+import * as OrchestratorErrors from "./OrchestratorErrors.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
@@ -14,7 +14,7 @@ import type * as ThreadSend from "./ThreadSend.ts";
 
 // These failures precede commitCommand; generic dispatch errors can follow commits and remain ambiguous.
 function dispatchWasNotAccepted(
-  error: Orchestrator.OrchestratorV2Error | ThreadManagement.ThreadManagementError,
+  error: OrchestratorErrors.OrchestratorV2Error | ThreadManagement.ThreadManagementError,
 ) {
   switch (error._tag) {
     case "OrchestratorCommandRejectedError":
@@ -32,7 +32,7 @@ function dispatchWasNotAccepted(
       return false;
   }
 }
-const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
+const isOrchestratorError = Schema.is(OrchestratorErrors.OrchestratorV2Error);
 const isThreadManagementError = Schema.is(ThreadManagement.ThreadManagementError);
 
 const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")(function* (

@@ -33,6 +33,7 @@ import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
+import * as OrchestratorErrors from "../OrchestratorErrors.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -200,7 +201,7 @@ export function runOrchestratorV2ProviderReplayScenario<
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
-  | Orchestrator.OrchestratorV2Error
+  | OrchestratorErrors.OrchestratorV2Error
   | OrchestratorV2ScenarioStepError
   | Error
   | MigrationError
