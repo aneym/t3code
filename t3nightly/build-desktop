@@ -49,15 +49,18 @@ ln -sf "$here/build-tool" "$tool_bin/xcrun"
   "$here/fork-build-manifest" "$version" > apps/server/dist/client/fork-build.json
 } 2>&1 | python3 "$here/release_redact.py"
 sign_dir="$(mktemp -d "$TMPDIR/sign.XXXXXX")"
-trap '"$here/mac-signing-done" "$sign_dir"' EXIT
+dist_dir="$(mktemp -d "$TMPDIR/dist.XXXXXX")"
+trap '"$here/mac-signing-done" "$sign_dir"; rm -rf "${dist_dir:?}"' EXIT
 if ! signing_env=$("$here/mac-signing" "$sign_dir"); then
   echo "build-desktop: mac signing setup failed" >&2
   exit 4
 fi
 eval "$signing_env"
 export T3CODE_CLI_MAC_SIGN_IDENTITY CSC_NAME CSC_KEYCHAIN APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID
-PATH="$tool_bin:$PATH" step desktop-build env T3CODE_DESKTOP_SKIP_BUILD=1 nice -n 10 vp run dist:desktop:artifact --platform mac --target dmg --arch arm64 --build-version "$version" --signed --verbose --output-dir "$out" 2>&1 | python3 "$here/release_redact.py"
+PATH="$tool_bin:$PATH" step desktop-build env T3CODE_DESKTOP_SKIP_BUILD=1 nice -n 10 vp run dist:desktop:artifact --platform mac --target dmg --arch arm64 --build-version "$version" --signed --verbose --output-dir "$dist_dir" 2>&1 | python3 "$here/release_redact.py"
 "$here/mac-signing-done" "$sign_dir"
+find "$dist_dir" -maxdepth 1 -type f ! -name '*.dmg' ! -name '*.dmg.blockmap' -exec mv {} "$out"/ \;
+rm -rf "${dist_dir:?}"
 trap - EXIT
 zip="$out/T3-Code-$version-arm64.zip"
 step verify python3 "$here/build_artifacts.py" desktop --archive "$zip" --out "$out" --version "$version" --platform darwin --arch arm64
