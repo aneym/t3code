@@ -33,8 +33,13 @@ def mark_candidate(run, manifest, rehearsal):
     config = json.loads((run.home / "runtime/launcher-config.json").read_text())
     if measured > config["measuredStartupMs"]:
         return False
-    marker = {"protocol": 1, "maintenance": False, "migration": False, "measuredStartupMs": measured, "candidateDigest": manifest["digest"], "runtimeDigest": file_digest(run.runtime(run.args.version))}
-    (run.runtime(run.args.version).parent / "hot-swap.json").write_text(json.dumps(marker) + "\n")
+    from .hot_swap_marker import write as write_marker
+
+    write_marker(run, run.args.version, measured, manifest)
+    previous_measured = qualification.get("previousMeasuredStartupMs")
+    previous = run.report.get("previous")
+    if manifest["compatibility"].get("binaryRollback") is True and previous and isinstance(previous_measured, int) and 0 < previous_measured <= config["measuredStartupMs"]:
+        write_marker(run, previous, previous_measured, manifest)
     return True
 
 
