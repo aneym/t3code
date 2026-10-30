@@ -259,6 +259,7 @@ function AgentRow(props: {
           "z-20 bg-sidebar bg-linear-to-b from-sidebar-row-active to-sidebar-row-active text-sidebar-foreground opacity-100 shadow-lg",
       )}
       onPointerDown={(event) => listeners?.onPointerDown?.(event)}
+      onDoubleClick={() => props.focus?.onClick()}
       onContextMenu={(event) => {
         event.preventDefault();
         showMenu({ x: event.clientX, y: event.clientY });
@@ -309,7 +310,11 @@ function AgentRow(props: {
           {content}
         </Link>
       )}
-      <span className="mr-1 flex shrink-0" onPointerDown={(event) => event.stopPropagation()}>
+      <span
+        className="mr-1 flex shrink-0"
+        onPointerDown={(event) => event.stopPropagation()}
+        onDoubleClick={(event) => event.stopPropagation()}
+      >
         {props.focus ? <AgentRowButton action={props.focus} /> : null}
         <AgentRowButton action={props.toggle} />
       </span>
