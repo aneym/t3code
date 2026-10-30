@@ -41,6 +41,11 @@ except Exception:
 row["oldRuntime"] = (home / ".t3/runtime/versions" / old / "t3").is_file()
 row["held"] = (home / ".t3nightly" / f"hold-install{version.rsplit('.', 1)[1]}").exists()
 row["files"] = {name: (home / name).exists() for name in (".local/bin/claude", ".vite-plus/bin/vp", ".cargo/bin/cargo", ".config/t3nightly/public-config.env", chat)}
+try:
+    with closing(sqlite3.connect(f"file:{home / '.t3/userdata/statev2.sqlite'}?mode=ro", uri=True)) as connection:
+        row["chatProject"] = connection.execute("SELECT 1 FROM projection_projects WHERE workspace_root=? AND deleted_at IS NULL", (str(home / chat),)).fetchone() is not None
+except sqlite3.Error:
+    row["chatProject"] = False
 print(json.dumps(row))
 '''
 
@@ -108,7 +113,11 @@ def readiness(config, log):
         checks[f"disk:{path}"] = free >= floor
     for name in (".local/bin/claude", ".vite-plus/bin/vp", ".config/t3nightly/public-config.env"):
         checks[f"studio:{name}"] = (config.home / name).exists()
-    checks["studio-chat-project"] = config.chat_project().is_dir()
+    try:
+        with closing(sqlite3.connect(f"file:{config.home / '.t3/userdata/statev2.sqlite'}?mode=ro", uri=True)) as connection:
+            checks["studio-chat-project"] = connection.execute("SELECT 1 FROM projection_projects WHERE workspace_root=? AND deleted_at IS NULL", (str(config.chat_project()),)).fetchone() is not None
+    except sqlite3.Error:
+        checks["studio-chat-project"] = False
     remote = remote_probe(config, seed, old, log)
     evidence["ax42"] = remote
     checks["ax42-reachable"] = bool(remote)
@@ -118,6 +127,7 @@ def readiness(config, log):
     checks["ax42-old-runtime"] = remote.get("oldRuntime") is True
     checks["ax42-not-held"] = remote.get("held") is False
     checks["ax42-disk"] = remote.get("disk", 0) >= REMOTE_FLOOR
+    checks["ax42-chat-project"] = remote.get("chatProject") is True
     for name, present in remote.get("files", {}).items():
         checks[f"ax42:{name}"] = present
     evidence["pressure"] = {"studioLoad": os.getloadavg()[0], "studioCpus": os.cpu_count(), "ax42Load": remote.get("load"), "ax42Cpus": remote.get("cpus")}
