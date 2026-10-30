@@ -32,3 +32,6 @@ def unload(home, label):
         shutil.rmtree(dropin)
     subprocess.run(["systemctl", "--user", "reset-failed", unit.name], capture_output=True, timeout=30)
     subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True, check=True, timeout=30)
+    inspection = subprocess.run(["systemctl", "--user", "show", unit.name, "--property=LoadState", "--value"], capture_output=True, text=True, timeout=15)
+    if inspection.returncode or inspection.stdout.strip() != "not-found":
+        raise ValueError("recorded rehearsal unit remained loaded after teardown")
