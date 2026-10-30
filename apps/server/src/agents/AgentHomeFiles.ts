@@ -92,6 +92,7 @@ export const readHomes = async (
   root: string,
   readLanes: ReturnType<typeof createLaneReader>,
   isLocal: (host: string) => boolean,
+  strict = false,
 ) => {
   const entries = await NodeFSP.readdir(root, { withFileTypes: true }).catch(
     (error: NodeJS.ErrnoException) => {
@@ -114,8 +115,11 @@ export const readHomes = async (
         ),
       );
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-        console.warn(`Skipping invalid agent home ${entry.name}`);
+      if (strict || (error as NodeJS.ErrnoException).code !== "ENOENT")
+        console.warn(
+          `Unable to read agent home ${entry.name}; ${strict ? "settlement refused" : "home skipped"}`,
+        );
+      if (strict) throw error;
     }
   }
   return { homes: homes.sort((a, b) => a.handle.localeCompare(b.handle)) };
@@ -133,7 +137,7 @@ export const writeBinding = async (
   if (old && next !== undefined) {
     next ??= {};
     const { previous: _previous, reason: _reason, ...previous } = old;
-    next.previous = previous;
+    next.previous = binding(old) === null ? old.previous : previous;
   }
   const target = await agentFile(root, handle);
   const temporary = `${target}.${crypto.randomUUID()}.tmp`;
@@ -206,18 +210,21 @@ export const watchHomes = (root: string, changed: () => void) => {
   };
 };
 
-export const readAgentMainThreads = async (environmentId: EnvironmentId) => {
+export const readAgentMainThreads = async (environmentId?: EnvironmentId) => {
   const root =
     process.env.T3CODE_AGENT_HOMES_DIR ?? NodePath.join(NodeOS.homedir(), ".agent-rails", "agents");
   const { homes } = await readHomes(
     root,
     async () => [],
     () => false,
+    true,
   );
   return new Set(
     homes.flatMap(({ binding }) =>
       binding !== null &&
-      (binding.environmentId === null || binding.environmentId === environmentId)
+      (environmentId === undefined ||
+        binding.environmentId === null ||
+        binding.environmentId === environmentId)
         ? [binding.threadId]
         : [],
     ),

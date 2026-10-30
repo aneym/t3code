@@ -1,3 +1,4 @@
+import { withPullRequestWatch } from "./ThreadPullRequestWatch.ts";
 import { readRejection, tagRejection } from "./RejectionReason.ts";
 import { makePendingInputQueueRelease, isQueuedInputRelease } from "./PendingInputQueueRelease.ts";
 import {
@@ -57,7 +58,6 @@ import {
   type OrchestrationV2LimitRecoveryUpdate,
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
-  type ThreadPullRequestWatch,
   type OrchestrationV2AppThread,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ContextSourcePoint,
@@ -654,16 +654,6 @@ function isLiveRun(run: OrchestrationV2Run): boolean {
 
 function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): boolean {
   return projection.runs.some(isLiveRun);
-}
-
-function withPullRequestWatch(
-  link: ThreadPullRequestLink,
-  watch: ThreadPullRequestWatch | undefined,
-): ThreadPullRequestLink {
-  const { watch: previous, endedWatch, ...rest } = link;
-  if (watch !== undefined) return { ...rest, watch };
-  const ended = previous ?? endedWatch;
-  return ended === undefined ? rest : { ...rest, endedWatch: ended };
 }
 
 function legacyPullRequestLink(
@@ -13411,6 +13401,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   yield* queuedInputRelease.watch(dispatchWithReceipt);
 
+  // A child whose run ends while its background tasks or its own subagents still run has no
+  // result yet. When that work settles there is no run update to finalize it, so these events
+  // do it. A background roster counts once it empties after it was seen non-empty.
   const providerThreadsWithBackgroundWork = new Set<string>();
   const settlesChildWork = (stored: OrchestrationV2StoredEvent) => {
     const { event } = stored;
@@ -13494,6 +13487,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 threadId,
                 Effect.gen(function* () {
                   const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
+                  // Only the current delivery's run can settle its cohort; revisiting historical delivery runs repeatedly reloads the thread.
                   const openDeliveryMessageIds = projection.runs.flatMap((run) =>
                     run.delegatedCompletion?.delivery == null
                       ? []
@@ -13619,6 +13613,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
               ),
             );
+          // Stop or an explicit recovery choice can commit after the sweep reads its candidate.
           if (
             thread.limitRecovery?.runId === input.limitRecovery.runId &&
             thread.limitRecovery.resetAt === input.limitRecovery.resetAt
@@ -13761,6 +13756,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       ),
+    // Start at the latest sequence; awareness needs no historical replay.
     streamDomainEvents: Stream.unwrap(
       eventSink
         .latestSequence()

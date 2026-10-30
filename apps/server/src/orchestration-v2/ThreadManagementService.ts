@@ -1,3 +1,4 @@
+import { makeSettlementCommands } from "./ThreadSettlementCommands.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -384,6 +385,7 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly byOwnAgent: boolean;
+    readonly byUser?: boolean;
   }) => Effect.Effect<
     { readonly sequence: number } | { readonly settlesWhenTurnEnds: true },
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
@@ -482,8 +484,6 @@ export function latestActiveRun(
     .filter(isActiveRun)
     .toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
-
-const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
 
 const make = Effect.gen(function* () {
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -855,39 +855,7 @@ const make = Effect.gen(function* () {
     return settledResult(yield* evaluate((yield* getProjectThreadRecords(input, ["runs"])).runs));
   });
 
-  const settleAfterRun: ThreadManagementServiceShape["settleAfterRun"] = Effect.fn(
-    "orchestrationV2.threadManagement.settleAfterRun",
-  )(function* (input) {
-    const { run } = yield* waitForThread({ ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS });
-    if (run?.status !== "completed") return;
-    yield* dispatch({
-      type: "thread.settle",
-      source: "mcp",
-      commandId: CommandId.make(`server:settle-after-run:${input.runId}`),
-      threadId: input.threadId,
-    });
-  });
-
-  const settleThread: ThreadManagementServiceShape["settleThread"] = Effect.fn(
-    "orchestrationV2.threadManagement.settleThread",
-  )(function* (input) {
-    const shell = input.byOwnAgent ? yield* orchestrator.getThreadShell(input.threadId) : null;
-    if (shell != null && shell.activeRunId !== null) {
-      yield* settleAfterRun({
-        projectId: shell.projectId,
-        threadId: shell.id,
-        runId: shell.activeRunId,
-      }).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(layerScope));
-      return { settlesWhenTurnEnds: true } as const;
-    }
-    const result = yield* dispatch({
-      type: "thread.settle",
-      source: "mcp",
-      commandId: input.commandId,
-      threadId: input.threadId,
-    });
-    return { sequence: result.sequence };
-  });
+  const { settleAfterRun, settleThread } = yield* makeSettlementCommands(dispatch, waitForThread);
 
   const snoozeAfterQueue = Effect.fn("orchestrationV2.threadManagement.snoozeAfterQueue")(
     function* (input: {
@@ -1064,6 +1032,7 @@ const make = Effect.gen(function* () {
       if (records.thread.deletedAt !== null) {
         return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "unavailable" });
       }
+      // Check mode limits under the lock so users cannot raise modes between validation and Stop.
       const limit = yield* DispatchModeLimit;
       const exceeded =
         limit === undefined ? undefined : exceededDispatchModeLimit(limit, records.thread);
@@ -1118,6 +1087,7 @@ const make = Effect.gen(function* () {
       if (runtime.value.stopTask === undefined) {
         return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "unsupported" });
       }
+      // Bounded so a provider that never answers cannot hold the thread lock.
       yield* runtime.value.stopTask({ providerThread, taskId }).pipe(
         Effect.timeout("15 seconds"),
         Effect.mapError(
@@ -1193,6 +1163,8 @@ const make = Effect.gen(function* () {
     for (const task of subagents) {
       if (task.origin !== "app_owned") continue;
       if (task.childThreadId === null) {
+        // A task in a linked environment ends here; its follower then stops it there.
+        // One with its result keeps it, but its thread there may run follow-up work.
         if (task.remoteChild === undefined) continue;
         const commandId = CommandId.make(`${input.commandId}:stop:${task.id}`);
         yield* dispatch(
@@ -1226,6 +1198,7 @@ const make = Effect.gen(function* () {
         continue;
       }
       const threadId = task.childThreadId;
+      // Follow-up tasks reuse a child thread; walk its subtree only once.
       if (stoppedChildThreadIds.has(threadId)) continue;
       stoppedChildThreadIds.add(threadId);
       yield* dispatch({
