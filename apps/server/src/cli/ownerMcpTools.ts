@@ -6,7 +6,7 @@ import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import { GlobalFlag } from "effect/cli";
 
-import { type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
+import { AcpMcpBridgeError, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { openOwnerCliSession } from "./ownerCliSession.ts";
 import { resolveCliAuthConfig } from "./config.ts";
@@ -46,7 +46,11 @@ export const reportCliErrors =
   (isExpected: (error: unknown) => error is { readonly message: string }) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
-      Effect.tapError((error) => (isExpected(error) ? Console.error(error.message) : Effect.void)),
+      Effect.tapError((error) =>
+        isExpected(error) || error instanceof AcpMcpBridgeError
+          ? Console.error(error.message)
+          : Effect.void,
+      ),
     );
 
 const decodeFailureText = Schema.decodeUnknownOption(Schema.fromJsonString(OrchestratorMcpFailure));
@@ -72,6 +76,9 @@ const toolFailureDetail = (result: typeof ToolResult.Type) => {
   });
 };
 
+const classifyBridgeError = (cause: AcpMcpBridgeError, origin: string) =>
+  cause.kind === "transport" ? new McpServerUnreachableError({ origin, cause }) : cause;
+
 const makeOwnerMcpTools = (session: McpToolSession, origin: string) => {
   const unexpected = (tool: string) =>
     new McpToolFailedError({
@@ -83,10 +90,13 @@ const makeOwnerMcpTools = (session: McpToolSession, origin: string) => {
       tool: string,
       args: Readonly<Record<string, unknown>>,
       schema: S,
-    ): Effect.fn.Return<S["Type"], McpServerUnreachableError | McpToolFailedError> {
+    ): Effect.fn.Return<
+      S["Type"],
+      McpServerUnreachableError | McpToolFailedError | AcpMcpBridgeError
+    > {
       const raw = yield* session
         .call(tool, args)
-        .pipe(Effect.mapError((cause) => new McpServerUnreachableError({ origin, cause })));
+        .pipe(Effect.mapError((cause) => classifyBridgeError(cause, origin)));
       const result = yield* decodeToolResult(raw).pipe(Effect.mapError(() => unexpected(tool)));
       if (result.isError === true) {
         return yield* new McpToolFailedError({ tool, detail: toolFailureDetail(result) });
@@ -114,7 +124,9 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
     const origin = runtimeState.value.origin;
     const session = yield* openOwnerCliSession(config, new URL("/mcp", origin).href, command).pipe(
       Effect.catchTags({
-        AcpMcpBridgeError: (cause) => Effect.fail(new McpServerUnreachableError({ origin, cause })),
+        AcpMcpBridgeError: (cause) => Effect.fail(classifyBridgeError(cause, origin)),
+        CliDatabaseMissingError: (cause) =>
+          Effect.fail(new McpServerUnreachableError({ origin, cause })),
       }),
     );
     return yield* run(makeOwnerMcpTools(session, origin));
