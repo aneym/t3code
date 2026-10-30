@@ -13,8 +13,9 @@ const receipt = process.env.T3_REHEARSAL_IPC_RECEIPT;
 if (context && typeof process.send === "function") {
   const original = process.send.bind(process);
   const record = (message, phase = message.type) => {
-    if (receipt && ["warm", "drained", "validated", "state-dir-owned", "validated-held", "validated-released"].includes(phase)) fs.appendFileSync(receipt, JSON.stringify({ at: new Date().toISOString(), phase, updateId: message.updateId ?? context.update?.id, version: context.childVersion, pid: process.pid }) + "\n");
+    if (receipt && ["warm", "drained", "validated", "state-dir-owned", "validated-held", "validated-released", "ingress-bound"].includes(phase)) fs.appendFileSync(receipt, JSON.stringify({ at: new Date().toISOString(), phase, updateId: message.updateId ?? context.update?.id, version: context.childVersion, pid: process.pid }) + "\n");
   };
+  process.on("message", (message) => { if (message?.type === "ingress-bound") record(message); });
   process.send = function (message, ...args) {
     record(message);
     if (context.hotSwap?.warm === true && context.update?.status === "pending") {
