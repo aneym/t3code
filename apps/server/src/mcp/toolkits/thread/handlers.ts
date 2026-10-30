@@ -363,8 +363,13 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const { threads, projection, caller } = yield* readThread(input.threadId);
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
       if (input.action === "settle") {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
         return yield* threads
-          .settleThread({ ...common, byOwnAgent: caller?.id === projection.thread.id })
+          .settleThread({
+            ...common,
+            byOwnAgent: caller?.id === projection.thread.id,
+            byUser: scope.client?.ownerCli === true,
+          })
           .pipe(Effect.mapError(dispatchFailure));
       }
       let command: OrchestrationV2Command;

@@ -1,3 +1,5 @@
+import { autoSettlementSettingsKey } from "./ThreadSettlementSettings.ts";
+export { autoSettlementSettingsKey } from "./ThreadSettlementSettings.ts";
 import {
   backgroundWorkHoldsCompletion,
   turnItemUpdateCanEndBackgroundWork,
@@ -19,6 +21,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
@@ -265,33 +268,6 @@ function autoSettlementConfigured(settings: import("@t3tools/contracts").ServerS
   );
 }
 
-/** @internal Exported for tests. */
-export function autoSettlementSettingsKey(
-  settings: import("@t3tools/contracts").ServerSettings,
-): string {
-  return JSON.stringify([
-    settings.sidebarAutoSettleOnMerge,
-    settings.sidebarAutoSettleAfterDays,
-    settings.sidebarAutoSettleKeepPullRequests,
-    Object.entries(settings.projectSettingsOverrides)
-      .filter(
-        ([, entry]) =>
-          entry.sidebarAutoSettleOnMerge !== undefined ||
-          entry.sidebarAutoSettleAfterDays !== undefined ||
-          entry.sidebarAutoSettleKeepPullRequests !== undefined,
-      )
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([projectId, entry]) => [
-        projectId,
-        entry.sidebarAutoSettleOnMerge ?? "inherit",
-        entry.sidebarAutoSettleAfterDays === undefined
-          ? "inherit"
-          : entry.sidebarAutoSettleAfterDays,
-        entry.sidebarAutoSettleKeepPullRequests ?? "inherit",
-      ]),
-  ]);
-}
-
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -300,20 +276,23 @@ export const make = Effect.gen(function* () {
   const git = yield* GitManager.GitManager;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
-  const environment = yield* ServerEnvironmentIdentity;
+  const environment = yield* Effect.serviceOption(ServerEnvironmentIdentity);
   const fileSystem = yield* FileSystem.FileSystem;
   // A shell merge or close sends no event, and the branch lookup caches an open pull request for
   // a minute, so these threads' next lookup reads the host fresh.
   const shellClosedThreads = new Set<ThreadId>();
   const terminals = yield* TerminalManager.TerminalManager;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  // Repeated thread.settled retains settledAt; run the action only once per settlement.
   const settleActionRunAt = new Map<ThreadId, number>();
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
     threadId?: ThreadId,
   ) {
-    const environmentId = yield* environment.getEnvironmentId;
+    const environmentId = Option.isSome(environment)
+      ? yield* environment.value.getEnvironmentId
+      : undefined;
     const settings = yield* settingsService.getSettings;
     if (!autoSettlementConfigured(settings)) {
       return;
@@ -324,12 +303,17 @@ export const make = Effect.gen(function* () {
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     const agentMainThreads = yield* Effect.promise(() => readAgentMainThreads(environmentId));
+    // Merge events resweep all candidates because unlinked threads settle through branch lookup.
     const candidates = threads.filter((thread) =>
       isAutoSettlementCandidate(thread, nowMs, agentMainThreads),
     );
 
     const settleThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
-      function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
+      function* (
+        thread: (typeof candidates)[number],
+        pullRequest: SettlementPullRequest | null,
+        bound: ReadonlySet<string>,
+      ) {
         const currentSettings = resolveProjectSettings(
           yield* settingsService.getSettings,
           thread.projectId,
@@ -344,8 +328,7 @@ export const make = Effect.gen(function* () {
           autoSettleKeepPullRequests: currentSettings.sidebarAutoSettleKeepPullRequests,
         });
         if (settledAt === null) return thread;
-        if ((yield* Effect.promise(() => readAgentMainThreads(environmentId))).has(thread.id))
-          return null;
+        if (bound.has(thread.id)) return null;
         const uuid = yield* crypto.randomUUIDv4();
         yield* orchestrator.dispatch({
           type: "thread.auto-settle",
@@ -371,7 +354,7 @@ export const make = Effect.gen(function* () {
 
     const lookupCandidates = (yield* Effect.forEach(
       candidates,
-      (thread) => settleThread(thread, null),
+      (thread) => settleThread(thread, null, agentMainThreads),
       { concurrency: 8 },
     ))
       .filter((thread) => thread !== null)
@@ -396,6 +379,7 @@ export const make = Effect.gen(function* () {
       { concurrency: 8, discard: true },
     );
     if (mergedPullRequest !== null) {
+      // Invalidate checkout caches on merge; cached open branches would delay settlement beyond this sweep.
       const cwds = [...new Set(lookupCwdByThreadId.values())];
       yield* Effect.forEach(cwds, (cwd) => git.invalidateStatus(cwd), {
         concurrency: 8,
@@ -449,6 +433,7 @@ export const make = Effect.gen(function* () {
       const thread = group[0]!;
       const reference = thread.linkedPullRequest ?? thread.branchPullRequest;
       if (reference != null) {
+        // Only matching PR links settle from this merge event; unrelated links require fresh lookup.
         const matchesMerge =
           mergedPullRequest !== null &&
           reference.projectId === mergedPullRequest.projectId &&
@@ -509,9 +494,13 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const pullRequest = yield* pullRequestFor(group);
           if (pullRequest === undefined) return;
-          yield* Effect.forEach(group, (thread) => settleThread(thread, pullRequest), {
-            discard: true,
-          });
+          yield* Effect.forEach(
+            group,
+            (thread) => settleThread(thread, pullRequest, agentMainThreads),
+            {
+              discard: true,
+            },
+          );
         }).pipe(
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
@@ -539,9 +528,12 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+  // A thread that just stopped must not wait behind a full sweep or another thread's host
+  // reads: clients hold it in Working only briefly, so a late settle makes it appear and then vanish.
   const fullSweeps = yield* makeDrainableWorker(() => runSweep(null));
   const threadSweeps = yield* FiberSet.make<void>();
   const threadSweepSlots = yield* Semaphore.make(8);
+  // One sweep per thread at a time; events during a running sweep coalesce into one more pass.
   const threadSweepStates = new Map<ThreadId, "queued" | "running" | "rerun">();
   const sweepThread = (
     threadId: ThreadId,
@@ -566,6 +558,7 @@ export const make = Effect.gen(function* () {
       return sweepThread(threadId).pipe(FiberSet.run(threadSweeps), Effect.asVoid);
     });
 
+  // Skip settle scripts in shared checkouts where other threads may still work.
   const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
     function* (threadId: ThreadId) {
       const settled = yield* projections.getThread(threadId);
@@ -573,6 +566,7 @@ export const make = Effect.gen(function* () {
       yield* terminals.closeIdle({ threadId });
       const worktreePath = settled.worktreePath;
       if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
+      // Recheck after closing and worktree I/O; re-engaged threads must not be cleaned up.
       const thread = yield* projections.getThread(threadId);
       if (thread.settledOverride !== "settled") return;
       const settledAtMs = toMillis(thread.settledAt);
@@ -611,6 +605,7 @@ export const make = Effect.gen(function* () {
       case "provider-session.detached":
       case "run.background-work-cancelled":
         return enqueueThread(event.threadId);
+      // Sweep only when the work can have ended: progress updates cannot settle anything.
       case "subagent.updated":
         return isOrchestrationV2WorkActive(event.payload.status)
           ? Effect.void
