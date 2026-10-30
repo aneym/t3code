@@ -42,7 +42,7 @@ export type AgentHomesSnapshot = typeof AgentHomesSnapshot.Type;
 
 export const AgentBindInput = Schema.Struct({
   handle: AgentHandle,
-  threadId: Schema.optional(ThreadId),
+  threadId: Schema.optional(Schema.NullOr(ThreadId)),
   projects: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   threadEnvironmentId: Schema.optional(EnvironmentId),
   host: Schema.optional(TrimmedNonEmptyString),

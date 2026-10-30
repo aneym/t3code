@@ -112,6 +112,7 @@ export const layer = Layer.effect(
             });
           const bindThread =
             threadId !== undefined &&
+            !(threadId === null && home.binding === null) &&
             !(input.onlyIfUnbound && home.binding) &&
             !(
               home.binding !== null &&
@@ -123,12 +124,16 @@ export const layer = Layer.effect(
             (projects.length !== home.projects.length ||
               projects.some((name, index) => name !== home.projects[index]));
           if (!bindThread && !setProjects) return { home, changed: false };
-          if (bindThread && (yield* Effect.promise(() => isLaneThread(root, threadId))))
+          if (
+            bindThread &&
+            threadId !== null &&
+            (yield* Effect.promise(() => isLaneThread(root, threadId)))
+          )
             return yield* new AgentHomeError({
               handle: input.handle,
               message: "Lane threads cannot be agent main threads",
             });
-          if (bindThread && environmentId === descriptor.environmentId) {
+          if (bindThread && threadId !== null && environmentId === descriptor.environmentId) {
             const projection = yield* threads.getThreadRecords(threadId, []).pipe(
               Effect.mapError(
                 () =>
@@ -185,14 +190,16 @@ export const layer = Layer.effect(
                 input.handle,
                 doc,
                 bindThread
-                  ? {
-                      thread_id: threadId,
-                      environment_id: environmentId,
-                      host: input.host ?? descriptor.label.toLowerCase(),
-                      at,
-                      by: input.by ?? "t3",
-                    }
-                  : null,
+                  ? threadId === null
+                    ? null
+                    : {
+                        thread_id: threadId,
+                        environment_id: environmentId,
+                        host: input.host ?? descriptor.label.toLowerCase(),
+                        at,
+                        by: input.by ?? "t3",
+                      }
+                  : undefined,
                 text,
                 setProjects ? projects : undefined,
               ),
