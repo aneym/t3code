@@ -68,7 +68,7 @@ import { providerInstanceEntriesFor } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { EMPTY_SERVER_PROVIDERS, environmentUpdatePermissionsAtom } from "../../state/server";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
@@ -100,8 +100,6 @@ import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
 import { StorageCleanupSections } from "./StorageSettings";
 import { UpdateTrackSwitchDialog } from "./UpdateTrackSwitchDialog";
 import { environmentIdsKey } from "~/state/environmentAtomList";
-import { environmentSessionStatesAtom } from "~/state/session";
-import { canUpdateServer } from "../ServerUpdateAction";
 import { useUpdateEverythingRun } from "../sidebar/updateEverythingRun";
 import { awaitsTrackSwitch, channelSwitchLabel } from "../sidebar/updateEverything.logic";
 import { isHostedByThisApp } from "../sidebar/useUpdateEverything";
@@ -155,8 +153,8 @@ function AboutVersionSection() {
   const [switchChannel, setSwitchChannel] = useState<DesktopUpdateChannel | null>(null);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
   const { environments } = useEnvironments();
-  const sessionStates = useAtomValue(
-    environmentSessionStatesAtom(
+  const updatePermissions = useAtomValue(
+    environmentUpdatePermissionsAtom(
       environmentIdsKey(environments.map(({ environmentId }) => environmentId)),
     ),
   );
@@ -175,7 +173,7 @@ function AboutVersionSection() {
     environments.filter(
       (environment, index) =>
         environment.connection.phase === "connected" &&
-        canUpdateServer(sessionStates[index]!) &&
+        updatePermissions[index]! &&
         awaitsTrackSwitch(
           {
             serverConfig: environment.serverConfig,

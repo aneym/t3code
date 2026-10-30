@@ -1,6 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ForkRelease } from "@t3tools/contracts";
-import { environmentSession } from "~/state/session";
 import { CheckIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -8,7 +7,7 @@ import { AsyncResult } from "effect/reactivity";
 import { APP_VERSION } from "~/branding";
 import { serverEnvironment } from "~/state/server";
 import { serverUpdateStateAtom } from "@t3tools/client-runtime/state/server";
-import { canUpdateServer, useServerUpdate } from "../ServerUpdateAction";
+import { useServerUpdate } from "../ServerUpdateAction";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import {
@@ -50,9 +49,7 @@ export function ForkReleaseSwitcher({
     onSwitchingChange?.(value);
   };
   const updateState = useAtomValue(serverUpdateStateAtom(environmentId));
-  const canUpdate = canUpdateServer(
-    useAtomValue(environmentSession.sessionStateAtom(environmentId)),
-  );
+  const canUpdate = useAtomValue(serverEnvironment.updateServer.permissionAtom(environmentId));
   const updateServer = useServerUpdate();
   const isDesktopManaged =
     environment?.environment.capabilities.serverSelfUpdate === "desktop-managed";

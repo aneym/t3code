@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { RpcPermissionGuard } from "../rpc/client.ts";
 import { createEnvironmentSessionAtoms } from "./session.ts";
 
 function makeCommandPermissions<R, E>(
@@ -88,4 +89,14 @@ export function createCommandPermissions<R, E>(
   const created = makeCommandPermissions(runtime, method);
   permissions.set(method, created);
   return created;
+}
+
+export function provideCommandPermissions<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  registry: AtomRegistry.AtomRegistry,
+) {
+  return Effect.provideService(RpcPermissionGuard, {
+    authorize: (environmentId, method, input) =>
+      createCommandPermissions(runtime, method).authorize(registry, environmentId, input),
+  });
 }

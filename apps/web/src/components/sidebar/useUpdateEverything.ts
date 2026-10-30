@@ -7,11 +7,10 @@ import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { useNpmReleasePublished } from "~/state/npmRelease";
 import { environmentIdsKey } from "~/state/environmentAtomList";
-import { environmentUpdateStatesAtom } from "~/state/server";
-import { environmentSessionStatesAtom } from "~/state/session";
+import { environmentUpdatePermissionsAtom, environmentUpdateStatesAtom } from "~/state/server";
 import { getProviderUpdateRunOutcome } from "../ProviderUpdateLaunchNotification.logic";
 import { useProviderUpdates } from "../ProviderUpdatesAction";
-import { canUpdateServer, type ServerUpdateOutcome, useServerUpdate } from "../ServerUpdateAction";
+import { type ServerUpdateOutcome, useServerUpdate } from "../ServerUpdateAction";
 import {
   type ChannelSwitchRelease,
   closeFinishedUpdateRun,
@@ -57,7 +56,7 @@ export function useUpdateEverything(
   const targetVersion = localUpdateVersion ?? APP_VERSION;
   const { environments } = useEnvironments();
   const environmentIds = environmentIdsKey(environments.map(({ environmentId }) => environmentId));
-  const sessionStates = useAtomValue(environmentSessionStatesAtom(environmentIds));
+  const updatePermissions = useAtomValue(environmentUpdatePermissionsAtom(environmentIds));
   const updateStates = useAtomValue(environmentUpdateStatesAtom(environmentIds));
   const machines = environments.map((environment, index) => ({
     environmentId: environment.environmentId,
@@ -65,7 +64,7 @@ export function useUpdateEverything(
     serverConfig: environment.serverConfig,
     connected: environment.connection.phase === "connected",
     hostedByThisApp: isHostedByThisApp(environment),
-    canMaintain: canUpdateServer(sessionStates[index]!),
+    canMaintain: updatePermissions[index]!,
     updateState: updateStates[index]!,
   }));
   // A track switch's target came from npm already.
