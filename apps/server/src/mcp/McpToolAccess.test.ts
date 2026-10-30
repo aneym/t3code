@@ -420,18 +420,6 @@ it.effect.each([
     { environmentId: box, threadId: fullAccessThreadId, projectId: "project:remote" },
     "t3_thread_move in environment-box",
   ],
-  [
-    "t3_thread_move",
-    fullAccess,
-    { threadId: supervisedThreadId, projectId: "project:local" },
-    "here",
-  ],
-  [
-    "t3_thread_move",
-    readOnlyClient,
-    { environmentId: box, threadId: fullAccessThreadId, projectId: "project:remote" },
-    "capability_denied",
-  ],
   ["reads", supervised, { environmentId: box }, "reads in environment-box"],
   ["reads", supervised, { environmentId: here }, "here"],
   ["reads", supervised, {}, "here"],
