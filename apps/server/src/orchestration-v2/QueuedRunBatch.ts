@@ -44,7 +44,6 @@ function batchableMessage(
   if (
     message === undefined ||
     message.notification !== undefined ||
-    message.delegatedCompletion !== undefined ||
     message.workflowScript === true ||
     message.scheduledTaskId !== undefined ||
     message.idleCompaction !== undefined ||
@@ -84,11 +83,16 @@ function foldedQueuedTurnItems(
   turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
   run: Pick<OrchestrationV2Run, "id" | "userMessageId">,
 ): ReadonlyArray<UserTurnItem> {
+  const firstItem = turnItems.find(
+    (item) => item.type === "user_message" && item.messageId === run.userMessageId,
+  );
   return turnItems
     .filter(
       (item): item is UserTurnItem =>
         item.type === "user_message" &&
         item.runId === run.id &&
+        firstItem !== undefined &&
+        item.nodeId === firstItem.nodeId &&
         item.inputIntent === "queued_turn" &&
         item.messageId !== run.userMessageId,
     )
@@ -186,7 +190,7 @@ export interface QueuedRunBatchPart {
   readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
 }
 
-function batchSender(part: QueuedRunBatchPart): string {
+export function queuedMessageSender(part: QueuedRunBatchPart): string {
   if (part.senderThreadId !== undefined) return `an agent in thread ${part.senderThreadId}`;
   return part.createdBy === "user"
     ? `the user (${part.creationSource})`
@@ -196,10 +200,10 @@ function batchSender(part: QueuedRunBatchPart): string {
 function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): string {
   if (parts.length < 2) return parts[0]?.text ?? "";
   return [
-    `These ${parts.length} messages were queued separately while you were working. They are listed in the order they were sent, with their senders. Handle each one accordingly.`,
+    `These ${parts.length} messages were queued separately while you were working. They are listed with their senders: task completions first, then queued messages in the order they were sent. Handle each one accordingly.`,
     ...parts.map(
       (part, index) =>
-        `Message ${index + 1} of ${parts.length}, from ${batchSender(part)}:\n${part.text}`,
+        `Message ${index + 1} of ${parts.length}, from ${queuedMessageSender(part)}:\n${part.text}`,
     ),
   ].join("\n\n");
 }

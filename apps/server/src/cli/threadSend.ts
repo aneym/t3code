@@ -22,6 +22,7 @@ import {
   waitFlag,
 } from "./threadCommon.ts";
 import { finishRun } from "./threadRun.ts";
+import { ThreadQueueHeldError } from "./ThreadQueueHeldError.ts";
 
 const decodeRequestId = Schema.decodeUnknownEffect(OrchestratorMcpClientRequestId);
 
@@ -47,6 +48,11 @@ const receiptText = (sent: OrchestratorMcpThreadSendResult) =>
     : ` Receipt ${sent.receipt.commandId} (sequence ${sent.receipt.sequence})${
         sent.receipt.replayed ? ", already delivered" : ""
       }.`;
+
+const deliveryText = (sent: OrchestratorMcpThreadSendResult) =>
+  sent.delivery === "held"
+    ? `Held (${sent.holdReason ?? "manual"}).${receiptText(sent)} ${sent.next ?? "Send with mode auto to start now."}`
+    : `${sent.delivery === "queued" ? "Queued" : "Sent"}.${receiptText(sent)}`;
 
 export const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
@@ -82,6 +88,11 @@ export const threadSendCommand = Command.make("send", {
             { threadId, message, mode: flags.mode, clientRequestId },
             OrchestratorMcpThreadSendResult,
           );
+          if (sent.delivery === "held") {
+            yield* flags.json ? printJson(sent) : Console.log(deliveryText(sent));
+            if (flags.wait) return yield* new ThreadQueueHeldError({ threadId });
+            return;
+          }
           if (flags.wait) {
             yield* flags.json
               ? printJsonToStderr({
@@ -90,7 +101,7 @@ export const threadSendCommand = Command.make("send", {
                   clientRequestId,
                   receipt: sent.receipt,
                 })
-              : Console.error(`Sent.${receiptText(sent)}`);
+              : Console.error(deliveryText(sent));
             return yield* finishRun(tools, {
               threadId,
               runId: sent.runId,
@@ -98,9 +109,7 @@ export const threadSendCommand = Command.make("send", {
               extra: { clientRequestId, receipt: sent.receipt },
             });
           }
-          yield* flags.json
-            ? printJson(sent)
-            : Console.log(`${sent.delivery === "queued" ? "Queued" : "Sent"}.${receiptText(sent)}`);
+          yield* flags.json ? printJson(sent) : Console.log(deliveryText(sent));
         }),
       );
     }).pipe(reportThreadErrors),

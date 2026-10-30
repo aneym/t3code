@@ -86,7 +86,11 @@ export const isLaneThread = async (root: string, threadId: string) => {
   );
   return owners.includes(true);
 };
-export const readHomes = async (root: string, readLanes: ReturnType<typeof createLaneReader>) => {
+export const readHomes = async (
+  root: string,
+  readLanes: ReturnType<typeof createLaneReader>,
+  isLocal: (host: string) => boolean,
+) => {
   const entries = await NodeFSP.readdir(root, { withFileTypes: true }).catch(
     (error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return [];
@@ -100,7 +104,12 @@ export const readHomes = async (root: string, readLanes: ReturnType<typeof creat
     try {
       const doc = await readDocument(root, entry.name);
       homes.push(
-        homeFromDocument(root, entry.name, doc, lanesUnder(lanes, text(doc.lane) ?? entry.name)),
+        homeFromDocument(
+          root,
+          entry.name,
+          doc,
+          lanesUnder(lanes, text(doc.lane) ?? entry.name, isLocal),
+        ),
       );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT")

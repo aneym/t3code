@@ -1,28 +1,27 @@
-import {
-  DndContext,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
+import { DndContext, KeyboardSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import {
   SortableContext,
-  horizontalListSortingStrategy,
   rectSortingStrategy,
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVerticalIcon, LayoutGridIcon, MoreHorizontalIcon } from "lucide-react";
+import { LayoutGridIcon, MoreHorizontalIcon } from "lucide-react";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { SidebarPointerSensor } from "../Sidebar.pointer";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "../../lib/utils";
 
 const chipClass =
   "inline-flex size-6 shrink-0 items-center justify-center rounded-sm opacity-55 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-pressed:bg-popover aria-pressed:opacity-100 aria-pressed:shadow-sm aria-pressed:ring-1 aria-pressed:ring-inset aria-pressed:ring-border";
+
+const pointerSensorOptions = { distance: 6, onAttach: () => {}, onFinish: () => {} };
+const keyboardSensorOptions = {
+  coordinateGetter: sortableKeyboardCoordinates,
+  keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space"] },
+};
 
 type PinnedProjectControls = {
   projects: readonly SidebarProjectSnapshot[];
@@ -52,16 +51,18 @@ function PinnedProjectChip({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={cn("group/pin relative", isDragging && "z-10")}
+      className={cn("relative", isDragging && "z-10")}
     >
       <Tooltip>
         <TooltipTrigger
           render={
             <button
               type="button"
+              {...(disabled ? {} : attributes)}
+              {...listeners}
               aria-label={project.displayName}
               aria-pressed={selected}
-              className={chipClass}
+              className={cn(chipClass, "touch-none")}
               style={{ borderRadius: 5 }}
               onClick={onSelect}
             />
@@ -71,16 +72,6 @@ function PinnedProjectChip({
         </TooltipTrigger>
         <TooltipPopup>{project.displayName}</TooltipPopup>
       </Tooltip>
-      <button
-        type="button"
-        aria-label={`Reorder ${project.displayName}`}
-        disabled={disabled}
-        className="absolute -bottom-1 left-1/2 flex h-2 w-4 -translate-x-1/2 touch-none items-center justify-center rounded bg-muted opacity-0 group-hover/pin:opacity-100 focus-visible:opacity-100"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVerticalIcon className="size-2.5" />
-      </button>
     </div>
   );
 }
@@ -94,8 +85,8 @@ function SortablePinnedProjectChips({
   expanded = false,
 }: PinnedProjectControls & { expanded?: boolean }) {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(SidebarPointerSensor, pointerSensorOptions),
+    useSensor(KeyboardSensor, keyboardSensorOptions),
   );
   return (
     <DndContext
@@ -107,9 +98,9 @@ function SortablePinnedProjectChips({
     >
       <SortableContext
         items={projects.map((project) => project.projectKey)}
-        strategy={expanded ? rectSortingStrategy : horizontalListSortingStrategy}
+        strategy={rectSortingStrategy}
       >
-        <div className={cn("flex items-center gap-0.5", expanded ? "flex-wrap gap-2" : "shrink-0")}>
+        <div className={expanded ? "flex flex-wrap gap-2" : "contents"}>
           {projects.map((project) => (
             <PinnedProjectChip
               key={project.projectKey}
@@ -140,7 +131,7 @@ export function SidebarPinnedProjectSwapper(props: PinnedProjectControls) {
       aria-label="Pinned projects"
       data-pinned-projects
       style={{ borderRadius: 7 }}
-      className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto rounded-md bg-muted p-0.5"
+      className="flex min-w-0 shrink flex-wrap items-center gap-0.5 rounded-md bg-muted p-0.5"
     >
       <Tooltip>
         <TooltipTrigger
@@ -176,13 +167,9 @@ export function SidebarPinnedProjectSwapper(props: PinnedProjectControls) {
           <PopoverPopup align="start" padding="compact" width="sm">
             <div className="flex flex-col gap-2">
               <div className="text-xs font-medium text-muted-foreground">
-                Drag the handles to reorder pinned projects
+                Drag to reorder pinned projects
               </div>
-              <div
-                role="toolbar"
-                aria-label="All pinned projects"
-                className="max-h-64 overflow-y-auto pb-1"
-              >
+              <div role="toolbar" aria-label="All pinned projects">
                 <SortablePinnedProjectChips {...props} expanded />
               </div>
             </div>

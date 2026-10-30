@@ -12,6 +12,7 @@ export function automationThreadsWithoutJobs(
     (thread) =>
       isAutomationOnlyThread(thread) &&
       thread.archivedAt === null &&
+      thread.settledOverride !== "settled" &&
       !automations.some(
         ({ environmentId, task }) =>
           environmentId === thread.environmentId &&

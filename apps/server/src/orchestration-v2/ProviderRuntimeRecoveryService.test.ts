@@ -495,6 +495,7 @@ it.effect("recovery closes a secret card's form but leaves a link card open", ()
         Layer.mock(EffectOutbox.EffectOutboxV2)({
           listByCommandId: () => Effect.succeed([]),
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          restartHandoffs: Effect.succeed([]),
         }),
       ),
     ),

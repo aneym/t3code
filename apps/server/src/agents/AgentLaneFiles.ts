@@ -62,9 +62,16 @@ export const createLaneReader = (lanesDir: string) => {
   };
 };
 
+export const localHostMatcher = (hostname: string) => {
+  const name = hostname.trim().toLowerCase().split(".")[0] ?? "";
+  const wanted = new Set([name, ...name.split(/[^a-z0-9]+/)].filter(Boolean));
+  return (host: string) => wanted.has(host.trim().toLowerCase());
+};
+
 export const lanesUnder = (
   records: ReadonlyArray<LaneRecord>,
   owner: string,
+  isLocal: (host: string) => boolean,
 ): ReadonlyArray<LaneThread> => {
   const children = new Map<string, LaneRecord[]>();
   for (const record of records) {
@@ -79,7 +86,12 @@ export const lanesUnder = (
       if (seen.has(child.name)) continue;
       seen.add(child.name);
       queue.push(child.name);
-      if (child.thread) threads.push(child.thread);
+      if (child.thread)
+        threads.push(
+          child.thread.host !== null && isLocal(child.thread.host)
+            ? { ...child.thread, host: null }
+            : child.thread,
+        );
     }
   }
   return threads.toSorted((a, b) => a.name.localeCompare(b.name));

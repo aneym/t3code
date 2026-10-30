@@ -146,6 +146,20 @@ export const PROCESS_BOUND_EFFECT_TYPES = [
   "runtime-request.respond",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
+export const RESTART_DRAIN_HELD_EFFECT_TYPES = [
+  "provider-turn.start",
+  "provider-runtime.continue",
+  "provider-runtime.restart-handoff",
+  "provider-runtime.restart-reapproval",
+] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+
+export const RESTART_RESUME_SPACING_MS = 2_000;
+
+export const RESTART_RESUME_EFFECT_TYPES = [
+  "provider-runtime.restart-handoff",
+  "provider-runtime.continue",
+] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+
 export const OrchestrationEffectStatusV2 = Schema.Literals([
   "pending",
   "running",

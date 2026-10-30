@@ -2483,7 +2483,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverImportRestartHandoff]: (input) =>
           providerRuntimeRecovery.importRestartHandoff(input),
         [WS_METHODS.serverPrepareRestart]: (input) =>
-          providerRuntimeRecovery.prepareRestart(input.epoch),
+          providerRuntimeRecovery.prepareRestart(input.epoch, input.drainTimeoutMs),
         [WS_METHODS.serverUpdateServer]: (input) => serverSelfUpdate.update(input),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
           ServerSelfUpdate.updateProgressStream(serverSelfUpdate, input),

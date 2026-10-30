@@ -329,6 +329,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["reasoning effort thinking bars graph word label level composer"],
   },
   {
+    id: "ultracode-rainbow",
+    title: "Ultracode colors",
+    to: "/settings/appearance",
+    searchTerms: ["ultracode rainbow ultrathink colors claude composer mode"],
+  },
+  {
     id: "math-rendering",
     title: "Render math",
     to: "/settings/appearance",
@@ -616,6 +622,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/chat",
     scope: "environment-defaults",
     searchTerms: ["automation sidebar placement webhook scheduled event"],
+  },
+  {
+    id: "queued-messages-answer-pending-input",
+    title: "Queued messages answer open questions",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["queue pending input ask question answer messages follow up"],
   },
   {
     id: "batch-queued-messages",

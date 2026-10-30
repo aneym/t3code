@@ -6,6 +6,106 @@ import * as Effect from "effect/Effect";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { field } from "../unknownField.ts";
 
+type Prefetch = { server: string; uri: string; response: unknown } | undefined;
+type Entry = { uri?: string; server: string; promise: Promise<Prefetch>; abort: AbortController };
+const pending = new WeakMap<object, Map<string, Entry>>();
+
+function toolParts(name: string) {
+  if (!name.startsWith("mcp__")) return undefined;
+  const [, server, ...parts] = name.replace(/^mcp__claude_ai_/u, "mcp__").split("__");
+  const tool = parts.join("__");
+  return server === undefined || tool.length === 0 ? undefined : { server, tool };
+}
+
+export function claudeMcpQueryMessages<T>(
+  query: Query,
+  messages: AsyncIterable<T>,
+): AsyncIterable<T> {
+  return {
+    [Symbol.asyncIterator]() {
+      const iterator = messages[Symbol.asyncIterator]();
+      return {
+        async next() {
+          const result = await iterator.next();
+          const message = result.value;
+          const calls = pending.get(query);
+          if (result.done) {
+            calls?.forEach((entry) => entry.abort.abort());
+            calls?.clear();
+          }
+          if (!result.done && field(message, "type") === "assistant") {
+            const content = field(field(message, "message"), "content");
+            for (const block of Array.isArray(content) ? content : []) {
+              const id = field(block, "id");
+              const name = field(block, "name");
+              const parts = typeof name === "string" ? toolParts(name) : undefined;
+              if (
+                field(block, "type") !== "tool_use" ||
+                typeof id !== "string" ||
+                !parts ||
+                !calls ||
+                calls.has(id) ||
+                calls.size >= 64
+              )
+                continue;
+              const { server, tool } = parts;
+              const abort = new AbortController();
+              const entry: Entry = { server, abort, promise: Promise.resolve(undefined) };
+              const prefetch = Effect.runPromise(
+                Effect.tryPromise({
+                  try: async (signal) => {
+                    const servers = await query.mcpServerStatus();
+                    if (signal.aborted) return undefined;
+                    const definition = findTool(serverTools(servers, server), tool);
+                    const uri = readMcpAppResourceUri(field(definition, "_meta"));
+                    if (uri === undefined || abort.signal.aborted) return undefined;
+                    entry.uri = uri;
+                    const response = await query.readMcpResource(server, uri);
+                    return { server, uri, response };
+                  },
+                  catch: () => undefined,
+                }).pipe(
+                  Effect.timeout("20 seconds"),
+                  Effect.orElseSucceed(() => undefined),
+                ),
+              );
+              entry.promise = prefetch;
+              calls.set(id, entry);
+              void Effect.runPromise(Effect.sleep("25 seconds"), { signal: abort.signal })
+                .then(() => {
+                  if (calls.get(id) === entry) calls.delete(id);
+                  abort.abort();
+                })
+                .catch(() => undefined);
+            }
+          }
+          return result;
+        },
+        ...(iterator.return
+          ? {
+              return: (...args: Parameters<NonNullable<typeof iterator.return>>) => {
+                const calls = pending.get(query);
+                calls?.forEach((entry) => entry.abort.abort());
+                calls?.clear();
+                return iterator.return!(...args);
+              },
+            }
+          : {}),
+        ...(iterator.throw
+          ? {
+              throw: (...args: Parameters<NonNullable<typeof iterator.throw>>) => {
+                const calls = pending.get(query);
+                calls?.forEach((entry) => entry.abort.abort());
+                calls?.clear();
+                return iterator.throw!(...args);
+              },
+            }
+          : {}),
+      };
+    },
+  };
+}
+
 export interface ClaudeMcpQuery<E> {
   readonly mcpServerStatus?: Effect.Effect<ReadonlyArray<unknown>, E>;
   readonly readMcpResource?: (server: string, uri: string) => Effect.Effect<unknown, E>;
@@ -16,7 +116,9 @@ export function claudeMcpQuerySession<E>(
   query: Query,
   makeError: (cause: unknown, method: string) => E,
 ): ClaudeMcpQuery<E> {
-  return {
+  const calls = new Map<string, Entry>();
+  pending.set(query, calls);
+  const session: ClaudeMcpQuery<E> = {
     mcpServerStatus: Effect.tryPromise({
       try: () => query.mcpServerStatus(),
       catch: (cause) => makeError(cause, "mcpServerStatus"),
@@ -48,6 +150,8 @@ export function claudeMcpQuerySession<E>(
         catch: (cause) => makeError(cause, "mcpCall"),
       }),
   };
+  pending.set(session.readMcpResource!, calls);
+  return session;
 }
 
 function serverTools(servers: ReadonlyArray<unknown>, server: string) {
@@ -56,6 +160,16 @@ function serverTools(servers: ReadonlyArray<unknown>, server: string) {
     "tools",
   );
   return Array.isArray(tools) ? tools : [];
+}
+
+function findTool(tools: ReadonlyArray<unknown>, name: string) {
+  const exact = tools.find((tool) => field(tool, "name") === name);
+  if (exact !== undefined) return exact;
+  const matches = tools.filter((tool) => {
+    const candidate = field(tool, "name");
+    return typeof candidate === "string" && candidate.replace(/[^a-zA-Z0-9_-]/gu, "_") === name;
+  });
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function resultUri(values: ReadonlyArray<unknown>) {
@@ -74,22 +188,35 @@ export const captureClaudeMcpApp = Effect.fn("ClaudeMcpApps.capture")(function* 
   readonly output: unknown;
   readonly toolResult: unknown;
 }) {
-  if (!input.toolName.startsWith("mcp__")) return undefined;
-  const [, server, ...parts] = input.toolName.replace(/^mcp__claude_ai_/u, "mcp__").split("__");
-  const tool = parts.join("__");
-  if (server === undefined || tool.length === 0 || input.query.readMcpResource === undefined)
-    return undefined;
+  const parts = toolParts(input.toolName);
+  if (parts === undefined || input.query.readMcpResource === undefined) return undefined;
+  const { server, tool } = parts;
+  const id = field(input.toolResult, "tool_use_id");
+  const calls = pending.get(input.query.readMcpResource);
+  const prefetch = typeof id === "string" ? calls?.get(id) : undefined;
+  if (typeof id === "string") calls?.delete(id);
+  prefetch?.abort.abort();
   let resourceUri = resultUri([input.output, input.toolResult]);
   if (resourceUri === undefined && input.query.mcpServerStatus !== undefined) {
     const servers = yield* input.query.mcpServerStatus.pipe(
       Effect.timeout("5 seconds"),
       Effect.orElseSucceed(() => []),
     );
-    const definition = serverTools(servers, server).find((entry) => field(entry, "name") === tool);
+    const definition = findTool(serverTools(servers, server), tool);
     resourceUri = readMcpAppResourceUri(field(definition, "_meta"));
   }
   if (resourceUri === undefined) return undefined;
-  return yield* input.query.readMcpResource(server, resourceUri).pipe(
+  const read =
+    prefetch?.server !== server || prefetch.uri !== resourceUri
+      ? input.query.readMcpResource(server, resourceUri)
+      : Effect.promise(() => prefetch.promise).pipe(
+          Effect.flatMap((value) =>
+            value?.server === server && value.uri === resourceUri
+              ? Effect.succeed(value.response)
+              : input.query.readMcpResource!(server, resourceUri),
+          ),
+        );
+  return yield* read.pipe(
     Effect.flatMap((response) => {
       const contents = field(response, "contents");
       return snapshotMcpApp({

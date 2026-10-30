@@ -65,6 +65,7 @@ type TraitsRenderInput = {
   triggerClassName?: string;
   isComposerOwned?: boolean;
   effortDisplay?: EffortDisplay;
+  ultracodeRainbow?: boolean;
   extraMenuContent?: ReactNode;
   extraMenuOwnsModeShortcut?: boolean;
   extraMenuHint?: string;
@@ -238,6 +239,7 @@ function renderTraitsControl(
     triggerClassName,
     isComposerOwned,
     effortDisplay,
+    ultracodeRainbow,
     extraMenuContent,
     extraMenuOwnsModeShortcut,
     extraMenuHint,
@@ -281,6 +283,7 @@ function renderTraitsControl(
       {...(triggerClassName !== undefined ? { triggerClassName } : {})}
       {...(isComposerOwned ? { isComposerOwned } : {})}
       {...(effortDisplay ? { effortDisplay } : {})}
+      {...(ultracodeRainbow ? { rainbow: ultracodeRainbow } : {})}
       {...(extraMenuContent ? { extraMenuContent } : {})}
       {...(extraMenuOwnsModeShortcut ? { extraMenuOwnsModeShortcut } : {})}
       {...(extraMenuHint ? { extraMenuHint } : {})}

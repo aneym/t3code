@@ -195,6 +195,17 @@ export function isRestartContinuationSource(
     : source.status === "cancelled";
 }
 
+export function restartNoteOwed(
+  source: Pick<OrchestrationV2Run, "status" | "activeAttemptId" | "restartCancelledBackgroundWork">,
+  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
+): boolean {
+  return (
+    source.status !== "cancelled" &&
+    isRestartNoteSource(source, providerTurns) &&
+    (source.restartCancelledBackgroundWork ?? []).some(isAwaitedWork)
+  );
+}
+
 /** Running does not prove prompt acceptance; carry continuation notes until a completed turn proves delivery. */
 export function restartContinuationNote(
   source: OrchestrationV2Run,

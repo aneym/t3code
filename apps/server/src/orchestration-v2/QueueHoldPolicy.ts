@@ -1,12 +1,20 @@
-import type { OrchestrationV2Run, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
-import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
+import {
+  resolveProviderInstanceEnabled,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
+  type ServerSettings,
+} from "@t3tools/contracts";
+import {
+  latestExecutedRun,
+  usageLimitBlockedRun,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 
-type Hold = Pick<OrchestrationV2Run, "queueHeld" | "queueHoldReason">;
+type Hold = Pick<OrchestrationV2Run, "queueHeld" | "queueHoldReason" | "queueHeldAt">;
 type Release = "restart" | "client" | "preparation";
 
 export function clearQueueHold(run: OrchestrationV2Run): OrchestrationV2Run {
-  const { queueHoldReason: _reason, ...rest } = run;
+  const { queueHoldReason: _reason, queueHeldAt: _heldAt, ...rest } = run;
   return { ...rest, queueHeld: false };
 }
 
@@ -22,9 +30,57 @@ export function canReleaseQueueHold(run: OrchestrationV2Run, release: Release): 
   }
 }
 
-export function stoppedQueueHold(run: OrchestrationV2Run): Hold | undefined {
-  if (run.queueHeld === true && run.queueHoldReason !== "restart") return undefined;
-  return { queueHeld: true, queueHoldReason: "stop" };
+export function releasesQueueHoldAtRunEnd(
+  run: OrchestrationV2Run,
+  ended: OrchestrationV2Run | null | undefined,
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "turnItems" | "runs">,
+  recovering = false,
+): boolean {
+  if (ended == null && recovering && run.queueHoldReason === "stop") {
+    ended = latestExecutedRun(projection.runs);
+  }
+  if (run.status !== "queued" || run.queueHeld !== true || ended == null) return false;
+  switch (run.queueHoldReason) {
+    case "stop":
+      return releasesStopHold(run, ended, projection);
+    case "restart":
+      return true;
+    case "blocked":
+      return ended.status === "completed";
+    case undefined:
+      return projection.thread.createdBy === "agent";
+  }
+}
+
+function releasesStopHold(
+  run: OrchestrationV2Run,
+  ended: OrchestrationV2Run,
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "turnItems">,
+): boolean {
+  if (
+    projection.thread.createdBy !== "agent" ||
+    !["completed", "failed", "interrupted", "cancelled", "rolled_back"].includes(ended.status) ||
+    ended.completedAt === null
+  )
+    return false;
+  let heldAt = run.queueHeldAt;
+  for (const item of projection.turnItems) {
+    if (
+      item.type === "run_interrupt_request" &&
+      item.startedAt !== null &&
+      run.queueHeldAt === undefined &&
+      (heldAt === undefined || DateTime.isGreaterThan(item.startedAt, heldAt))
+    ) {
+      heldAt = item.startedAt;
+    }
+  }
+  return heldAt !== undefined && DateTime.isGreaterThanOrEqualTo(ended.completedAt, heldAt);
+}
+
+export function stoppedQueueHold(run: OrchestrationV2Run, now: DateTime.Utc): Hold | undefined {
+  if (run.queueHeld === true && run.queueHoldReason !== "restart" && run.queueHoldReason !== "stop")
+    return undefined;
+  return { queueHeld: true, queueHoldReason: "stop", queueHeldAt: now };
 }
 
 export function recoveryQueueHold(
@@ -48,8 +104,22 @@ export function inheritedQueueHold(
     (run) => run.status === "queued" && run.queueHeld === true && !releasedRuns.includes(run),
   );
   if (remaining.some((run) => run.queueHoldReason === undefined)) return { queueHeld: true };
-  if (remaining.some((run) => run.queueHoldReason === "stop"))
-    return { queueHeld: true, queueHoldReason: "stop" };
+  const stopped = remaining.filter((run) => run.queueHoldReason === "stop");
+  if (stopped.length > 0) {
+    const queueHeldAt = stopped.reduce<OrchestrationV2Run["queueHeldAt"]>(
+      (latest, run) =>
+        run.queueHeldAt !== undefined &&
+        (latest === undefined || DateTime.isGreaterThan(run.queueHeldAt, latest))
+          ? run.queueHeldAt
+          : latest,
+      undefined,
+    );
+    return {
+      queueHeld: true,
+      queueHoldReason: "stop",
+      ...(queueHeldAt === undefined ? {} : { queueHeldAt }),
+    };
+  }
   if (blocked || remaining.some((run) => run.queueHoldReason === "blocked"))
     return { queueHeld: true, queueHoldReason: "blocked" };
   return remaining.length > 0 ? { queueHeld: true, queueHoldReason: "restart" } : {};
@@ -73,4 +143,18 @@ export function usageLimitHoldsQueue(
     usageLimitBlockedRun(projection.runs, projection.turnItems, latestSession?.lastError ?? null)
       ?.providerInstanceId === providerInstanceId
   );
+}
+
+export function providerInstanceDisabledForProject(
+  settings: Pick<ServerSettings, "projectSettingsOverrides" | "providerInstances">,
+  projectId: OrchestrationV2ThreadProjection["thread"]["projectId"],
+  providerInstanceId: OrchestrationV2Run["providerInstanceId"],
+): boolean {
+  const projectOverride =
+    settings.projectSettingsOverrides[projectId]?.providerInstances?.[providerInstanceId]?.enabled;
+  if (projectOverride !== undefined) return !projectOverride;
+  const machineInstance = Object.hasOwn(settings.providerInstances, providerInstanceId)
+    ? settings.providerInstances[providerInstanceId]
+    : undefined;
+  return machineInstance !== undefined && !resolveProviderInstanceEnabled(machineInstance);
 }

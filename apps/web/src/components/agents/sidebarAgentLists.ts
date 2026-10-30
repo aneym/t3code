@@ -55,12 +55,13 @@ export function useSidebarAgentLists(projectKeys: ReadonlySet<string> | null) {
       },
     ];
   });
+  const order = new Map([...new Set(pins.order)].map((handle, index) => [handle, index]));
   const shown = [
     ...pinned,
     ...agents
       .filter((agent) => !pinnedKeys.includes(agent.handle) && listed(agent))
       .toSorted(byName),
-  ];
+  ].toSorted((a, b) => (order.get(a.handle) ?? order.size) - (order.get(b.handle) ?? order.size));
   const hidden = agents.filter((agent) => inScope(agent) && !listed(agent)).toSorted(byName);
   return { pinned: shown, hidden, jumpable: expanded ? shown : [] };
 }

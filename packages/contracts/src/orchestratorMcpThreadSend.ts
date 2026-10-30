@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { CommandId, MessageId, NodeId, NonNegativeInt, RunId, ThreadId } from "./baseSchemas.ts";
 import { OrchestrationV2RunStatus } from "./orchestrationV2.ts";
+import { ThreadSendDelivery } from "./threadSendDelivery.ts";
 import {
   OrchestratorMcpClientRequestId,
   OrchestratorMcpEnvironmentTarget,
@@ -38,7 +39,7 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   runId: RunId,
   taskId: Schema.optional(NodeId),
   status: OrchestrationV2RunStatus,
-  delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
+  ...ThreadSendDelivery.fields,
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   receipt: Schema.optional(OrchestratorMcpThreadSendReceipt),
 });

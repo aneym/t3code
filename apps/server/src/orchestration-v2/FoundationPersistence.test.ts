@@ -21,6 +21,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -65,6 +66,7 @@ import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
+import * as RestartPreparation from "./RestartPreparation.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
@@ -2791,6 +2793,322 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         yield* outbox.succeed({ effectId: resumed.value.id, workerId: "activated" });
       }
     }),
+  );
+
+  const seedRunningRun = Effect.fnUntraced(function* (key: string) {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make(`thread:${key}`);
+    const run: OrchestrationV2Run = {
+      id: RunId.make(`run:${key}`),
+      threadId,
+      ordinal: 1,
+      providerInstanceId,
+      modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make(`message:${key}`),
+      rootNodeId: null,
+      activeAttemptId: RunAttemptId.make(`attempt:${key}`),
+      status: "running",
+      queuePosition: null,
+      requestedAt: now,
+      startedAt: now,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    yield* eventSink.write({
+      events: [
+        threadCreatedEvent({ id: `event:${key}:thread`, thread: makeThread(threadId, now), now }),
+        {
+          id: EventId.make(`event:${key}:run`),
+          type: "run.created",
+          threadId,
+          runId: run.id,
+          providerInstanceId,
+          occurredAt: now,
+          payload: run,
+        },
+      ],
+    });
+    return run;
+  });
+
+  it.effect("drains a running turn before a restart while new turn starts wait", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const run = yield* seedRunningRun("restart-drain");
+      const commandId = CommandId.make("command:restart-drain:queued");
+      yield* outbox.enqueue([
+        {
+          id: "effect:restart-drain:start",
+          commandId,
+          threadId: ThreadId.make("thread:restart-drain:queued"),
+          request: { type: "provider-turn.start", runId: RunId.make("run:restart-drain:queued") },
+        },
+        {
+          id: "effect:restart-drain:cleanup",
+          commandId,
+          threadId: ThreadId.make("thread:restart-drain:cleanup"),
+          request: { type: "terminal.cleanup" },
+        },
+      ]);
+      const prepare = yield* RestartPreparation.prepareRestart("epoch:drain", 60_000).pipe(
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("1 second");
+
+      const cleanup = yield* outbox.claimNext({ workerId: "drain-worker" });
+      assert.equal(Option.getOrUndefined(cleanup)?.id, "effect:restart-drain:cleanup");
+      assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId: "drain-worker" })));
+      assert.isTrue(Option.isNone(yield* outbox.nextClaimableAt));
+      yield* outbox.succeed({ effectId: "effect:restart-drain:cleanup", workerId: "drain-worker" });
+
+      const completedAt = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:restart-drain:completed"),
+            type: "run.updated",
+            threadId: run.threadId,
+            runId: run.id,
+            providerInstanceId,
+            occurredAt: completedAt,
+            payload: { ...run, status: "completed", completedAt },
+          },
+        ],
+      });
+      const receipt = yield* Fiber.join(prepare);
+      assert.deepEqual(receipt.drain, { drained: true, waitedMs: 1_000, activeRunIds: [] });
+      assert.deepEqual(receipt.threads, []);
+      assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId: "drain-worker" })));
+
+      yield* RestartPreparation.abortRestart("epoch:drain");
+      const released = yield* outbox.claimNext({ workerId: "drain-worker" });
+      assert.equal(Option.getOrUndefined(released)?.id, "effect:restart-drain:start");
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
+  it.effect("hands off turns still running at the drain deadline", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const run = yield* seedRunningRun("restart-drain-deadline");
+      const prepare = yield* RestartPreparation.prepareRestart("epoch:deadline", 5_000).pipe(
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("5 seconds");
+      const receipt = yield* Fiber.join(prepare);
+      assert.deepEqual(receipt.drain, { drained: false, waitedMs: 5_000, activeRunIds: [run.id] });
+      assert.deepEqual(
+        receipt.threads.map((thread) => thread.runIds),
+        [[run.id]],
+      );
+      assert.equal(yield* outbox.restartPrepared, "epoch:deadline");
+      assert.isUndefined(yield* outbox.restartDraining);
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
+  it.effect("keeps draining a turn whose steer is restarting it", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const run = yield* seedRunningRun("restart-drain-steer");
+      const prepare = yield* RestartPreparation.prepareRestart("epoch:steer", 60_000).pipe(
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("1 second");
+      const commandId = CommandId.make("command:restart-drain:steer");
+      const steeredAt = yield* DateTime.now;
+      yield* eventSink.writeWithEffects({
+        commandId,
+        events: [
+          {
+            id: EventId.make("event:restart-drain:steer"),
+            type: "run.updated",
+            threadId: run.threadId,
+            runId: run.id,
+            providerInstanceId,
+            occurredAt: steeredAt,
+            payload: { ...run, status: "starting" },
+          },
+        ],
+        effects: [
+          {
+            id: "effect:restart-drain:steer",
+            commandId,
+            threadId: run.threadId,
+            request: {
+              type: "provider-turn.restart",
+              providerSessionId: ProviderSessionId.make("session:restart-drain:steer"),
+              providerThreadId: ProviderThreadId.make("provider-thread:restart-drain:steer"),
+              providerTurnId: ProviderTurnId.make("provider-turn:restart-drain:steer"),
+              interruptedAttemptId: RunAttemptId.make("attempt:restart-drain-steer"),
+              runId: run.id,
+            },
+          },
+        ],
+      });
+      const steer = yield* outbox.claimNext({ workerId: "drain-worker" });
+      assert.equal(Option.getOrUndefined(steer)?.id, "effect:restart-drain:steer");
+      yield* TestClock.adjust("1 second");
+      assert.equal(yield* outbox.restartDraining, "epoch:steer");
+      assert.isUndefined(yield* outbox.restartPrepared);
+      yield* outbox.succeed({ effectId: "effect:restart-drain:steer", workerId: "drain-worker" });
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:restart-drain:steer-completed"),
+            type: "run.updated",
+            threadId: run.threadId,
+            runId: run.id,
+            providerInstanceId,
+            occurredAt: yield* DateTime.now,
+            payload: { ...run, status: "completed" },
+          },
+        ],
+      });
+      const receipt = yield* Fiber.join(prepare);
+      assert.deepEqual(receipt.drain, { drained: true, waitedMs: 2_000, activeRunIds: [] });
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
+  it.effect(
+    "queues a second prepare behind a drain and keeps it when the drain is interrupted",
+    () =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        yield* seedRunningRun("restart-drain-concurrent");
+        yield* outbox.enqueue([
+          {
+            id: "effect:restart-drain-concurrent:start",
+            commandId: CommandId.make("command:restart-drain-concurrent"),
+            threadId: ThreadId.make("thread:restart-drain-concurrent:queued"),
+            request: {
+              type: "provider-turn.start",
+              runId: RunId.make("run:restart-drain-concurrent:queued"),
+            },
+          },
+        ]);
+        const first = yield* RestartPreparation.prepareRestart("epoch:concurrent", 60_000).pipe(
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("1 second");
+        const second = yield* RestartPreparation.prepareRestart("epoch:concurrent").pipe(
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("1 second");
+        assert.equal(yield* outbox.restartDraining, "epoch:concurrent");
+        assert.isUndefined(yield* outbox.restartPrepared);
+        assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId: "drain-worker" })));
+        yield* Fiber.interrupt(first);
+        const receipt = yield* Fiber.join(second);
+        assert.isTrue(receipt.ready);
+        assert.equal(yield* outbox.restartPrepared, "epoch:concurrent");
+        assert.isUndefined(yield* outbox.restartDraining);
+        yield* RestartPreparation.abortRestart("epoch:concurrent");
+        const released = yield* outbox.claimNext({ workerId: "drain-worker" });
+        assert.equal(Option.getOrUndefined(released)?.id, "effect:restart-drain-concurrent:start");
+      }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
+  it.effect("keeps a ready restart when a later prepare of the same epoch fails", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const sql = yield* SqlClient.SqlClient;
+      const run = yield* seedRunningRun("restart-reprepare");
+      const ready = yield* RestartPreparation.prepareRestart("epoch:reprepare");
+      assert.deepEqual(
+        ready.threads.map((thread) => thread.runIds),
+        [[run.id]],
+      );
+      yield* outbox.enqueue([
+        {
+          id: "effect:restart-reprepare:busy",
+          commandId: CommandId.make("command:restart-reprepare"),
+          threadId: ThreadId.make("thread:restart-reprepare:busy"),
+          request: { type: "terminal.cleanup" },
+        },
+      ]);
+      yield* sql`
+        UPDATE orchestration_v2_effect_outbox SET status = 'running'
+        WHERE effect_id = 'effect:restart-reprepare:busy'
+      `;
+      const again = yield* RestartPreparation.prepareRestart("epoch:reprepare").pipe(
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.interrupt(again);
+      assert.equal(yield* outbox.restartPrepared, "epoch:reprepare");
+      assert.deepEqual(
+        (yield* outbox.restartHandoffs).map((effect) => effect.status),
+        ["pending"],
+      );
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
+  it.effect("spaces restart resumes so their sessions do not open together", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const now = yield* DateTime.now;
+      const commandId = CommandId.make("command:restart-stagger");
+      const resume = (index: number) => ({
+        id: `effect:restart-stagger:${index}`,
+        commandId,
+        threadId: ThreadId.make(`thread:restart-stagger:${index}`),
+        request:
+          index === 0
+            ? {
+                type: "provider-runtime.restart-handoff" as const,
+                epoch: "epoch:stagger",
+                handoff: {
+                  threadId: ThreadId.make("thread:restart-stagger:0"),
+                  runIds: [],
+                  queuedRunIds: [],
+                  requestIds: [],
+                  delegatedTaskIds: [],
+                  paused: false,
+                },
+              }
+            : {
+                type: "provider-runtime.continue" as const,
+                sourceRunId: RunId.make(`run:${index}`),
+              },
+      });
+      yield* outbox.enqueue([
+        resume(0),
+        resume(1),
+        resume(2),
+        {
+          id: "effect:restart-stagger:cleanup",
+          commandId,
+          threadId: ThreadId.make("thread:restart-stagger:cleanup"),
+          request: { type: "terminal.cleanup" },
+        },
+      ]);
+      const claimNow = Effect.gen(function* () {
+        const claimed: Array<string> = [];
+        while (true) {
+          const next = yield* outbox.claimNext({ workerId: "stagger-worker" });
+          if (Option.isNone(next)) return claimed;
+          claimed.push(next.value.id);
+          yield* outbox.succeed({ effectId: next.value.id, workerId: "stagger-worker" });
+        }
+      });
+      assert.deepEqual(yield* claimNow, [
+        "effect:restart-stagger:0",
+        "effect:restart-stagger:cleanup",
+      ]);
+      const nextAt = yield* outbox.nextClaimableAt;
+      assert.equal(
+        Option.map(nextAt, DateTime.toEpochMillis).pipe(Option.getOrUndefined),
+        DateTime.toEpochMillis(now) + 2_000,
+      );
+      yield* TestClock.adjust("2 seconds");
+      assert.deepEqual(yield* claimNow, ["effect:restart-stagger:1"]);
+      yield* TestClock.adjust("2 seconds");
+      assert.deepEqual(yield* claimNow, ["effect:restart-stagger:2"]);
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
   it.effect.each([

@@ -1,3 +1,4 @@
+import { queuedRunRows, type QueuedRowThumbnail } from "./queuedRunRows";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
@@ -27,7 +28,7 @@ import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
 import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { isImageAttachment, type ChatMessage } from "../../types";
+import type { ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -41,12 +42,6 @@ export interface EditQueuedRunRequest {
   readonly messageId: MessageId;
   readonly text: string;
   readonly attachments: ReadonlyArray<ContractChatAttachment>;
-}
-
-interface QueuedRowThumbnail {
-  readonly key: string;
-  readonly name: string;
-  readonly url: string | null;
 }
 
 // A longer queue shows its first messages and a button that shows the rest.
@@ -120,48 +115,15 @@ export function QueuedRunsControl({
   const optimisticQueued = props.optimisticMessages.filter(
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
-  const items = [
-    ...queued.map(({ run, text, attachments, context, message }, serverIndex) => ({
-      key: run.id,
-      message,
-      runId: run.id,
-      messageId: run.userMessageId,
-      serverIndex,
-      text,
-      // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
-      editable: context?.guest === undefined,
-      attachments,
-      thumbnails: attachments
-        .filter((attachment) => attachment.type === "image")
-        .map<QueuedRowThumbnail>((attachment) => ({
-          key: attachment.id,
-          name: attachment.name,
-          url: queuedImageUrlById.get(attachment.id) ?? null,
-        })),
-      pending: false,
-    })),
-    ...optimisticQueued.map((message) => ({
-      key: message.id,
-      message: undefined,
-      runId: null,
-      messageId: null,
-      serverIndex: null,
-      text: message.text,
-      editable: true,
-      attachments: [] as ReadonlyArray<ContractChatAttachment>,
-      thumbnails: (message.attachments ?? [])
-        .filter(isImageAttachment)
-        .map<QueuedRowThumbnail>((attachment) => ({
-          key: attachment.id,
-          name: attachment.name,
-          url: attachment.previewUrl ?? null,
-        })),
-      pending: true,
-    })),
-  ];
+  const items = queuedRunRows(queued, optimisticQueued, queuedImageUrlById);
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
-    if (!canSend || steerInFlightRef.current) return;
+    if (
+      !canSend ||
+      steerInFlightRef.current ||
+      queued.find((entry) => entry.run.id === queuedRunId)?.isBackgroundResult
+    )
+      return;
     steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
     if (workflow?.canSendNow) {
@@ -182,7 +144,7 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !canSend) return false;
+      if (!next || !canSend || next.isBackgroundResult) return false;
       if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
       return true;
     },
@@ -191,6 +153,7 @@ export function QueuedRunsControl({
       const latest = queued.at(-1);
       if (
         !latest ||
+        latest.isBackgroundResult ||
         latest.context?.guest !== undefined ||
         props.editingRunId !== null ||
         props.editBlockedReason !== null ||
@@ -261,14 +224,16 @@ export function QueuedRunsControl({
                 timestampFormat={props.timestampFormat}
                 onOpenThread={props.onOpenThread}
               >
-                {canSend && !isEditing ? (
+                {canSend && !isEditing && !item.isBackgroundResult ? (
                   <>
                     <Tooltip>
                       <TooltipTrigger render={<span className="flex shrink-0" />}>
                         <Button
                           size="xs"
                           variant="ghost-muted"
-                          disabled={item.runId === null || busyRunId !== null}
+                          disabled={
+                            item.runId === null || busyRunId !== null || item.isBackgroundResult
+                          }
                           onClick={() => {
                             if (item.runId !== null) {
                               void sendQueuedMessage(item.runId);
@@ -344,7 +309,9 @@ export function QueuedRunsControl({
                             size="icon-xs"
                             variant="ghost-muted"
                             aria-label="Remove queued message"
-                            disabled={item.runId === null || busyRunId !== null}
+                            disabled={
+                              item.runId === null || busyRunId !== null || item.isBackgroundResult
+                            }
                             onClick={() => {
                               if (item.runId !== null) void remove(item.runId);
                             }}

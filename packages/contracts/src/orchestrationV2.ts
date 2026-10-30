@@ -3,7 +3,8 @@ import {
   OrchestrationV2GetThreadProjectionInput,
 } from "./orchestrationDispatchResult.ts";
 import { ModelSelectionPrecondition } from "./modelSelectionPrecondition.ts";
-import { QueueHoldReason } from "./queueHoldReason.ts";
+import { OrchestrationV2DelegatedCompletionCohort } from "./delegatedCompletionDelivery.ts";
+import { QueueHoldState, QueueHoldStateJson } from "./queueHoldReason.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
@@ -613,22 +614,6 @@ export const OrchestrationV2DelegatedCompletionTaskDelivery = Schema.Struct({
 export type OrchestrationV2DelegatedCompletionTaskDelivery =
   typeof OrchestrationV2DelegatedCompletionTaskDelivery.Type;
 
-export const OrchestrationV2DelegatedCompletionDelivery = Schema.Struct({
-  generation: PositiveInt,
-  messageId: MessageId,
-  taskIds: Schema.Array(NodeId),
-});
-export type OrchestrationV2DelegatedCompletionDelivery =
-  typeof OrchestrationV2DelegatedCompletionDelivery.Type;
-
-export const OrchestrationV2DelegatedCompletionCohort = Schema.Struct({
-  disposition: Schema.Literals(["open", "stopped", "disposed"]),
-  nextGeneration: PositiveInt,
-  delivery: Schema.NullOr(OrchestrationV2DelegatedCompletionDelivery),
-});
-export type OrchestrationV2DelegatedCompletionCohort =
-  typeof OrchestrationV2DelegatedCompletionCohort.Type;
-
 export const OrchestrationV2RestartCancelledBackgroundWork = Schema.Struct({
   kind: Schema.Literals(["subagent", "shell", "monitor", "task"]),
   label: TrimmedNonEmptyString,
@@ -681,8 +666,7 @@ export const OrchestrationV2Run = Schema.Struct({
   activeAttemptId: Schema.NullOr(RunAttemptId),
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
-  queueHeld: Schema.optional(Schema.Boolean),
-  queueHoldReason: Schema.optional(QueueHoldReason),
+  ...QueueHoldState.fields,
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -693,6 +677,9 @@ export const OrchestrationV2Run = Schema.Struct({
   workStartedAt: Schema.optional(Schema.DateTimeUtc),
   restartCancelledBackgroundWork: Schema.optional(
     Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
+  ),
+  restartDeclined: Schema.optional(
+    Schema.Literals(["chain_limit", "provider_disabled", "native_maintenance", "dispatch_failed"]),
   ),
   sourcePlanRef: Schema.optional(
     Schema.Struct({
@@ -2258,6 +2245,7 @@ export type OrchestrationV2AppThreadJson = typeof OrchestrationV2AppThreadJson.T
 
 export const OrchestrationV2RunJson = OrchestrationV2Run.mapFields((fields) => ({
   ...fields,
+  ...QueueHoldStateJson.fields,
   requestedAt: Schema.DateTimeUtcFromString,
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
