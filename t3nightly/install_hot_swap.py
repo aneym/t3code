@@ -54,8 +54,10 @@ def wait_version(run, version, update_id=None):
 
 
 def swap(run, bearer, version, downgrade=False):
-    from .install_policy import recheck
+    from .install_policy import begin_recovery, recheck
 
+    if downgrade:
+        begin_recovery(run)
     recheck(run)
     result = restart_rpc(run, bearer, "update", {"targetVersion": version, "allowDowngrade": downgrade, "continueRunningThreads": True}, timeout=run.args.health_s)
     if result.get("targetVersion") != version or result.get("method") != "boot-service" or not result.get("updateId"):
