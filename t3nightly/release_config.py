@@ -136,6 +136,30 @@ class FastConfig:
         platform, arch = self.key.split("-")
         return (root or self.build_out()) / f"artifact-{platform}-{arch}.json"
 
+    def service_artifacts(self):
+        import json
+
+        directory = self.run / f"service-artifacts-{self.host}"
+        directory.mkdir(parents=True, exist_ok=True)
+        words = []
+        pin = self.home / ".t3/runtime/launcher-pin.json"
+        if pin.is_file():
+            artifact = json.loads(pin.read_text())
+            if artifact.get("hotSwapProtocol") == 1:
+                artifact.update(schema="t3nightly.launcher-artifact/1", runtimeDir=str(self.home / ".t3/runtime/launcher"))
+                path = directory / "old-launcher.json"
+                path.write_text(json.dumps(artifact) + "\n")
+                words += ["--old-launcher-artifact", str(path)]
+        return words
+
+    def target_artifacts(self):
+        words = []
+        for kind in ("launcher", "connector"):
+            path = self.build_out() / f"{kind}-artifact.json"
+            if path.is_file():
+                words += [f"--{kind}-artifact", str(path)]
+        return words
+
     def sandbox_root(self):
         return self.home / ".t3nightly" / f"rehearsal-fast-{self.number}-{self.host}"
 

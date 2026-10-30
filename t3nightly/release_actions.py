@@ -204,7 +204,9 @@ def fast_rehearse(config, log):
     code = command([sys.executable, str(config.tools / "rehearse"), "--old-runtime", plan["oldRuntime"], "--candidate-manifest", str(config.manifest),
                     "--assets", str(config.build_out()), "--artifact-manifest", str(config.artifact()), "--seed", plan["seed"],
                     "--home", plan["home"], "--evidence", plan["evidence"], "--label", plan["label"], "--port", str(plan["port"]),
-                    "--target-host", config.host, "--provider-binary", str(config.home / ".local/bin/claude"), "--health-s", "300"], log)
+                    "--target-host", config.host, "--provider-binary", str(config.home / ".local/bin/claude"), "--health-s", "300",
+                    "--hot-swap", "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")),
+                    *config.service_artifacts(), *config.target_artifacts()], log)
     if not code:
         config.receipt("rehearsal").parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(Path(plan["evidence"]) / "rehearsal-receipt.json", config.receipt("rehearsal"))
@@ -233,6 +235,7 @@ def fast_install(config, log):
              "--smoke-verdict", str(config.run / f"e2e-{config.host}" / "smoke-verdict.json"), "--rollback-proof", str(config.receipt("rollback-proof"))]
     if config.host == "ax42":
         words.extend(["--service-label", "t3code.service", "--backups", str(backups)])
+    words.extend(config.target_artifacts())
     config.receipt("install").unlink(missing_ok=True)
     code = command(words, log, env=env)
     outcome = "failed"

@@ -36,7 +36,9 @@ def fast_rollback_proof(config, log):
     code = command([sys.executable, str(config.tools / "rehearse"), "--old-runtime", plan["oldRuntime"], "--candidate-manifest", str(config.manifest),
                     "--assets", str(config.build_out()), "--artifact-manifest", str(config.artifact()), "--seed", plan["seed"],
                     "--home", str(root / "home"), "--evidence", str(root / "evidence"), "--label", f"{plan['label']}-rollback", "--port", str(port),
-                    "--target-host", config.host, "--provider-binary", str(config.home / ".local/bin/claude"), "--health-s", "300", "--force-rollback"], log)
+                    "--target-host", config.host, "--provider-binary", str(config.home / ".local/bin/claude"), "--health-s", "300", "--force-rollback",
+                    "--hot-swap", "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")),
+                    *config.service_artifacts(), *config.target_artifacts()], log)
     result = json.loads((root / "evidence" / "result.json").read_text())
     if code or result.get("result") != "ROLLBACK-PROOF":
         return code or 1
