@@ -35,14 +35,19 @@ while (!existsSync(stop) && Date.now() - started < 240000) {
   await delay(10);
 }
 if (data.trigger) {
+  data.drained = data.milestones.find((item) => item.phase === "drained" && item.updateId === data.trigger.updateId) ?? null;
   data.status = "HOLD-burst";
   save();
   await Promise.all(Array.from({ length: capacity + 2 }, (_, index) => one(index)));
+  data.milestones = readFileSync(milestones, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  data.released = data.milestones.find((item) => item.phase === "validated-released" && item.updateId === data.trigger.updateId) ?? null;
   data.status = "complete";
   data.servedNew = data.requests.filter((row) => row.outcome === "served" && row.version === expectedVersion).length;
   data.servedOld = data.requests.filter((row) => row.outcome === "served" && row.version !== expectedVersion).length;
   data.refused = data.requests.filter((row) => row.outcome === "ECONNREFUSED").length;
   data.reset = data.requests.filter((row) => row.outcome === "ECONNRESET").length;
+  data.queuedAcrossRelease = data.released ? data.requests.filter((row) => row.outcome === "served" && row.version === expectedVersion && row.connectedAt !== null && row.connectedAt <= data.released.at && row.finishedAt >= data.released.at).length : 0;
+  data.overflowBeforeRelease = data.released ? data.requests.filter((row) => row.outcome === "ECONNRESET" && row.finishedAt < data.released.at).length : 0;
   data.pastBudget = data.requests.filter((row) => row.durationMs >= budget - 200 && row.outcome !== "served").length;
 } else data.status = "HOLD-not-observed";
 save();
