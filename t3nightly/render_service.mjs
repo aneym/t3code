@@ -3,7 +3,8 @@ import { pathToFileURL } from "node:url";
 
 const request = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const production = await import(pathToFileURL(`${request.tree}/apps/server/src/cloud/bootService.ts`).href);
-const plan = { program: request.program, baseDir: request.home, logPath: request.log, unitPath: request.unit };
+const program = ["/usr/bin/env", ...Object.entries(request.environment).map(([key, value]) => `${key}=${value}`), ...request.program];
+const plan = { program, baseDir: request.home, logPath: request.log, unitPath: request.unit };
 const render = (plan) => request.platform === "darwin"
   ? production.renderBootServicePlist(plan, { homeDir: request.home, environmentPath: request.environment.PATH })
   : production.renderBootServiceUnit(plan);
