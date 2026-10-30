@@ -55,6 +55,8 @@ def running(run):
 def remove_databases(home):
     home = Path(home)
     report = {"at": now(), "deleted": [], "bytes": 0}
+    if home.is_dir():
+        report["homeKiBBefore"] = int(subprocess.run(["du", "-sk", str(home)], capture_output=True, text=True, check=True, timeout=120).stdout.split()[0])
     for directory in (home / "userdata", home / "codex-home", home / "claude-home"):
         if directory.is_symlink():
             raise ValueError("scratch database directory became a symlink")
@@ -66,6 +68,8 @@ def remove_databases(home):
             report["bytes"] += path.stat().st_size
             report["deleted"].append(str(path.relative_to(home)))
             path.unlink()
+    if home.is_dir():
+        report["homeKiBAfter"] = int(subprocess.run(["du", "-sk", str(home)], capture_output=True, text=True, check=True, timeout=120).stdout.split()[0])
     if home.parent.is_dir():
         (home.parent / "scratch-database-cleanup.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
