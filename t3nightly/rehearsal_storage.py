@@ -25,6 +25,8 @@ def clone_file(source, destination):
 
 
 def clone_tree(source, destination):
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
     if sys.platform == "darwin":
         result = subprocess.run(["cp", "-c", "-R", str(source), str(destination)], capture_output=True, timeout=240)
         if result.returncode == 0:
