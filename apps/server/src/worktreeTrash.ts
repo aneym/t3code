@@ -16,6 +16,16 @@ const ENTRY = /^(\d{13})-[^/\\]+\.worktree$/;
 const RECOVERY_REQUIRED = "recovery-required";
 const RECOVERY_FAILED = "recovery-failed.txt";
 const RETENTION_MS = 86_400_000;
+const PENDING_OPERATIONS = [
+  "MERGE_HEAD",
+  "MERGE_AUTOSTASH",
+  "CHERRY_PICK_HEAD",
+  "REVERT_HEAD",
+  "rebase-merge",
+  "rebase-apply",
+  "sequencer",
+  "BISECT_LOG",
+];
 
 export const makeWorktreeTrash = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -237,10 +247,18 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     const topLevel = yield* inspect("StorageCleanup.topLevel", ["rev-parse", "--show-toplevel"]);
     if ((yield* fs.realPath(topLevel.stdout.trim())) !== (yield* fs.realPath(cwd)))
       return "Git work tree points elsewhere";
+    const operations = yield* inspect("StorageCleanup.pendingOperations", [
+      "rev-parse",
+      "--path-format=absolute",
+      ...PENDING_OPERATIONS.flatMap((name) => ["--git-path", name]),
+    ]);
+    for (const operation of operations.stdout.split("\n"))
+      if (operation !== "" && (yield* fs.exists(operation)))
+        return `has a Git operation in progress (${path.basename(operation)})`;
     const index = yield* git.execute({
       operation: "StorageCleanup.indexFlags",
       cwd,
-      args: ["ls-files", "-v", "-z"],
+      args: ["-c", "core.fsmonitor=false", "ls-files", "-v", "-z"],
       maxOutputBytes: 16 * 1024 * 1024,
     });
     if (index.stdoutTruncated) return "index exceeds the inspection limit";
@@ -282,6 +300,8 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       operation: "StorageCleanup.personalIgnoredFiles",
       cwd,
       args: [
+        "-c",
+        "core.fsmonitor=false",
         "ls-files",
         "--others",
         "--ignored",

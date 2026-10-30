@@ -539,6 +539,8 @@ const make = Effect.gen(function* () {
       operation: "StorageCleanup.localChanges",
       cwd,
       args: [
+        "-c",
+        "core.fsmonitor=false",
         "status",
         "--porcelain=v1",
         "-z",
@@ -561,7 +563,16 @@ const make = Effect.gen(function* () {
     const ignored = yield* git.execute({
       operation: "StorageCleanup.ignoredFiles",
       cwd,
-      args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+      args: [
+        "-c",
+        "core.fsmonitor=false",
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "-z",
+      ],
       maxOutputBytes: 64 * 1024,
     });
     if (ignored.stdoutTruncated) return "ignored files exceed the inspection limit";
@@ -640,40 +651,38 @@ const make = Effect.gen(function* () {
         const changes = yield* localChangesReason(submodule, rules);
         if (changes !== null) return `submodule ${changes}`;
       }
-      if (rules.worktreeKeepWhen !== "tracked-changes") {
-        const root = yield* fs.realPath(cwd);
-        // Git status and foreach omit files inside deinitialized gitlink directories.
-        const populatedPaths = new Set(paths.map(pathKey));
-        const unchecked: string[] = [];
-        for (const repository of [root, ...paths]) {
-          const index = yield* inspect(
-            ["-C", repository, "ls-files", "--stage", "-z"],
-            16 * 1024 * 1024,
-          );
-          if (index.stdoutTruncated || index.stderrTruncated)
-            return "submodule inspection exceeded the limit";
-          for (const entry of index.stdout.split("\0")) {
-            if (!entry.startsWith("160000 ")) continue;
-            const submodule = path.resolve(repository, entry.slice(entry.indexOf("\t") + 1));
-            if (!inside(root, submodule)) return "submodules could not be inspected";
-            if (!populatedPaths.has(pathKey(submodule)) && (yield* fs.exists(submodule)))
-              unchecked.push(submodule);
-          }
+      const root = yield* fs.realPath(cwd);
+      // Git status and foreach omit files inside deinitialized gitlink directories.
+      const populatedPaths = new Set(paths.map(pathKey));
+      const unchecked: string[] = [];
+      for (const repository of [root, ...paths]) {
+        const index = yield* inspect(
+          ["-C", repository, "ls-files", "--stage", "-z"],
+          16 * 1024 * 1024,
+        );
+        if (index.stdoutTruncated || index.stderrTruncated)
+          return "submodule inspection exceeded the limit";
+        for (const entry of index.stdout.split("\0")) {
+          if (!entry.startsWith("160000 ")) continue;
+          const submodule = path.resolve(repository, entry.slice(entry.indexOf("\t") + 1));
+          if (!inside(root, submodule)) return "submodules could not be inspected";
+          if (!populatedPaths.has(pathKey(submodule)) && (yield* fs.exists(submodule)))
+            unchecked.push(submodule);
         }
-        let inspected = unchecked.length;
-        while (unchecked.length > 0) {
-          if (inspected > 10_000) return "submodule inspection exceeded the limit";
-          const target = unchecked.pop()!;
-          if (
-            (yield* fs.realPath(target)) !== path.resolve(target) ||
-            (yield* fs.stat(target)).type !== "Directory"
-          )
-            return "submodule has local files";
-          if (path.basename(target) === "node_modules") continue;
-          const names = yield* fs.readDirectory(target);
-          inspected += names.length;
-          for (const name of names) unchecked.push(path.join(target, name));
-        }
+      }
+      let inspected = unchecked.length;
+      while (unchecked.length > 0) {
+        if (inspected > 10_000) return "submodule inspection exceeded the limit";
+        const target = unchecked.pop()!;
+        if (
+          (yield* fs.realPath(target)) !== path.resolve(target) ||
+          (yield* fs.stat(target)).type !== "Directory"
+        )
+          return "submodule has local files";
+        if (path.basename(target) === "node_modules") continue;
+        const names = yield* fs.readDirectory(target);
+        inspected += names.length;
+        for (const name of names) unchecked.push(path.join(target, name));
       }
       return null;
     },

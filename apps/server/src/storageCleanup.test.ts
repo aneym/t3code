@@ -600,26 +600,28 @@ it.live("keeps an ignored submodule file saved while the last thread checks run"
   ),
 );
 
-it.live("keeps files inside a submodule that was never initialized", () =>
-  runCleanupTest(
-    Effect.gen(function* () {
-      const { service, fs, repo, worktree, command, setPolicy } = yield* cleanupFixture();
-      setPolicy("any-local-files");
-      const head = (yield* command(repo, ["rev-parse", "HEAD"])).stdout.trim();
-      yield* fs.writeFileString(
-        `${worktree}/.gitmodules`,
-        `[submodule "module"]\n\tpath = module\n\turl = ${repo}\n`,
-      );
-      yield* command(worktree, ["update-index", "--add", "--cacheinfo", `160000,${head},module`]);
-      yield* command(worktree, ["add", ".gitmodules"]);
-      yield* command(worktree, ["commit", "-m", "module"]);
-      yield* command(repo, ["merge", "--ff-only", "feature"]);
-      yield* fs.makeDirectory(`${worktree}/module`);
-      yield* fs.writeFileString(`${worktree}/module/notes.txt`, "notes\n");
-      expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
-      expect(yield* fs.readFileString(`${worktree}/module/notes.txt`)).toBe("notes\n");
-    }),
-  ),
+it.live.each(["any-local-files", "tracked-changes"] as const)(
+  "keeps files inside a submodule that was never initialized (%s)",
+  (policy) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command, setPolicy } = yield* cleanupFixture();
+        setPolicy(policy);
+        const head = (yield* command(repo, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* fs.writeFileString(
+          `${worktree}/.gitmodules`,
+          `[submodule "module"]\n\tpath = module\n\turl = ${repo}\n`,
+        );
+        yield* command(worktree, ["update-index", "--add", "--cacheinfo", `160000,${head},module`]);
+        yield* command(worktree, ["add", ".gitmodules"]);
+        yield* command(worktree, ["commit", "-m", "module"]);
+        yield* command(repo, ["merge", "--ff-only", "feature"]);
+        yield* fs.makeDirectory(`${worktree}/module`);
+        yield* fs.writeFileString(`${worktree}/module/notes.txt`, "notes\n");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/module/notes.txt`)).toBe("notes\n");
+      }),
+    ),
 );
 
 it.live("keeps unpushed submodule history after checkout and deinitialization", () =>
@@ -1750,6 +1752,48 @@ describe("storage cleanup reports and local file policies", () => {
           expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
         }),
       ),
+  );
+  it.live("keeps a tracked edit a stale file system monitor hides", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        const monitor = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-fsmonitor-" });
+        yield* fs.writeFileString(`${monitor}/hook`, '#!/bin/sh\nprintf "t\\0"\n');
+        yield* fs.chmod(`${monitor}/hook`, 0o755);
+        yield* command(worktree, ["config", "core.fsmonitor", `${monitor}/hook`]);
+        yield* command(worktree, ["update-index", "--fsmonitor"]);
+        yield* command(worktree, ["update-index", "--refresh"]);
+        yield* command(worktree, ["update-index", "--refresh"]);
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "edited\n");
+        expect((yield* command(worktree, ["status", "--porcelain"])).stdout).toBe("");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+      }),
+    ),
+  );
+  it.live("keeps edits saved by a paused merge's autostash", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        const empty = (yield* command(worktree, [
+          "commit-tree",
+          "HEAD^{tree}",
+          "-p",
+          "HEAD",
+          "-m",
+          "empty",
+        ])).stdout.trim();
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "edited\n");
+        yield* command(worktree, ["merge", "--no-ff", "--no-commit", "--autostash", empty]);
+        expect((yield* command(worktree, ["status", "--porcelain"])).stdout).toBe("");
+        expect((yield* service.runNow).entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: expect.stringContaining("MERGE_"),
+        });
+        yield* command(worktree, ["merge", "--abort"]);
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("edited\n");
+      }),
+    ),
   );
   it.live("removes a skipped file's checkout only under sparse checkout", () =>
     runCleanupTest(
