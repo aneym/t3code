@@ -64,6 +64,12 @@ def stage_runtime(home, version, assets):
         staged = roots[0]
         verify_cli(staged / "t3")
         (staged / ".install-complete").write_text(version + "\n")
+        from .rehearsal_storage import enabled, publish
+
+        if enabled(home):
+            shared = publish(staged, move=True)
+            staged = Path(raw) / ".shared-runtime"
+            staged.symlink_to(shared, target_is_directory=True)
         activate(staged, versions / version)
     return versions / version / "t3"
 
@@ -100,9 +106,16 @@ def retain_runtime(home, version, store):
     verify_cli(source / "t3")
     store.mkdir(parents=True, exist_ok=True)
     retained = store / version
-    if retained.exists():
+    if retained.is_symlink():
+        retained.unlink()
+    elif retained.exists():
         shutil.rmtree(retained)
-    link_tree(source, retained)
+    from .rehearsal_storage import enabled
+
+    if enabled(home):
+        retained.symlink_to(source.resolve(), target_is_directory=True)
+    else:
+        link_tree(source, retained)
     return retained
 
 
@@ -114,6 +127,11 @@ def restore_runtime(home, version, store):
     verify_cli(retained / "t3")
     with tempfile.TemporaryDirectory(prefix=".restore-", dir=target.parent) as raw:
         staged = Path(raw) / version
-        link_tree(retained, staged)
+        from .rehearsal_storage import enabled
+
+        if enabled(home):
+            staged.symlink_to(retained.resolve(), target_is_directory=True)
+        else:
+            link_tree(retained, staged)
         os.replace(staged, target)
     return True

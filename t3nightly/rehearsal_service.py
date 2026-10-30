@@ -79,7 +79,9 @@ def serving_digest(sandbox):
         paths = [Path(f"/proc/{pid}/exe").resolve()]
     processes = subprocess.run(["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, check=True, timeout=10)
     parents = dict(line.split() for line in processes.stdout.splitlines() if len(line.split()) == 2)
-    if len(roots) != 1 or not descends(pid, roots[0], parents) or len(paths) != 1 or not paths[0].resolve().is_relative_to(sandbox.home / "runtime"):
+    from .rehearsal_storage import owns
+
+    if len(roots) != 1 or not descends(pid, roots[0], parents) or len(paths) != 1 or not owns(sandbox.home, paths[0]):
         raise ValueError("serving runtime is not a child of the sandbox launcher")
     if not any(descends(listener, roots[0], parents) for listener in port_listeners(sandbox.port)):
         raise ValueError("public port does not belong to the sandbox launcher")
