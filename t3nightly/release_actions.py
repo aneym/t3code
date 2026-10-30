@@ -293,7 +293,7 @@ def fast_advisory(config, log):
         target = out / (job["id"].replace("/", "-") + ".json")
         with (out / (target.stem + ".log")).open("a") as handle:
             return command([sys.executable, str(config.tools / "suite-worker"), "--plan", str(out / "plan.json"), "--job", job["id"],
-                            "--host", job["hosts"][0], "--out", str(target)], handle)
+                            "--host", job["hosts"][0], "--linux-host", config.linux_host, "--out", str(target)], handle)
 
     with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
         codes = list(pool.map(one, jobs))
@@ -305,7 +305,7 @@ def fast_health(config, log):
     def one(host):
         with (config.run / f"health-{host}.log").open("a") as handle:
             return command([sys.executable, str(config.tools / "release-observe"), "--host", host, "--expected-version", config.version,
-                            "--out", str(config.run / "health" / host)], handle)
+                            "--linux-host", config.linux_host, "--out", str(config.run / "health" / host)], handle)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         return max(pool.map(one, ("studio", "ax42")))

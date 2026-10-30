@@ -13,6 +13,7 @@ from t3nightly.release_observe import watch
 def main():
     parser = argparse.ArgumentParser(description="Record an advisory post-install health watch without mutating the service or database.")
     parser.add_argument("--host", required=True, choices=["studio", "ax42"])
+    parser.add_argument("--linux-host", default="ax42")
     parser.add_argument("--service")
     parser.add_argument("--port", type=int, default=3773)
     parser.add_argument("--database", default="~/.t3/userdata/statev2.sqlite")
@@ -23,7 +24,7 @@ def main():
     args = parser.parse_args()
     service = args.service or ("t3code.service" if args.host == "ax42" else "com.t3tools.t3code.service")
     try:
-        result = watch(args.host, service, args.port, args.database, args.expected_version, args.out, args.duration, args.interval)
+        result = watch(args.host, service, args.port, args.database, args.expected_version, args.out, args.duration, args.interval, linux_host=args.linux_host)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         print(json.dumps({"ok": False, "error": str(error)}), file=sys.stderr)
         return 2

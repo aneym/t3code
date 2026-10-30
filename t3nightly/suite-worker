@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--job", required=True)
     parser.add_argument("--host", required=True, choices=["ax42", "forge", "pc-wsl", "studio"])
+    parser.add_argument("--linux-host", default="ax42")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--step", action="append", help="run only this planned step; the result is explicitly partial")
     parser.add_argument("--repo")
@@ -21,7 +22,7 @@ def main():
     parser.add_argument("--keep-worktree", action="store_true")
     args = parser.parse_args()
     try:
-        result = run(args.plan, args.job, args.host, args.out, args.step, args.repo, args.worktree, args.keep_worktree)
+        result = run(args.plan, args.job, args.host, args.out, args.step, args.repo, args.worktree, args.keep_worktree, linux_host=args.linux_host)
     except (OSError, ValueError, RuntimeError, KeyError, TypeError, json.JSONDecodeError) as error:
         print(json.dumps({"ok": False, "error": str(error)}), file=sys.stderr)
         return 2

@@ -22,7 +22,7 @@ def stage_spec(node, args):
     python = sys.executable if node.host == "studio" else "python3"
     command = [python, f"{tools}/release-fast-stage", "--stage", node.id, "--host", node.host,
                "--version", args.version, "--topic", args.topic, "--run", root,
-               "--remote-run", args.remote_run, "--remote-tools", args.remote_tools, "--linux-host", args.linux_host, "--base", args.base]
+               "--remote-run", args.remote_run, "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base]
     install = node.id in ("IM", "IL")
     return {"label": f"com.agent-rails.t3fast-{args.version}-{node.id}",
             "command": command, "host": node.host,
@@ -143,6 +143,8 @@ def main(argv):
     parser.add_argument("--linux-host", default="ax42", help="Linux SSH destination (default: ax42)")
     parser.add_argument("--base", default="", help="base ref to build on instead of the serving release head; must contain it")
     args = parser.parse_args(argv)
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", args.linux_host):
+        parser.error("--linux-host must be an SSH alias or hostname")
     if not re.fullmatch(r"\d+\.\d+\.\d+-nightly\.\d+\.\d+\.aneym\.\d+", args.version):
         parser.error("version must be an upstream nightly plus .aneym.N")
     args.run = (args.run or Path.home() / ".t3nightly/runs" / args.version / "fast").resolve()
@@ -169,7 +171,7 @@ def main(argv):
     command = [sys.executable, str(Path(__file__).resolve().with_name("release")),
                "--fast", "--version", args.version, "--topic", args.topic,
                "--run", str(args.run), "--remote-run", args.remote_run,
-               "--remote-tools", args.remote_tools, "--linux-host", args.linux_host, "--base", args.base, "--coordinator", *(["--rehearse-only"] if args.rehearse_only else [])]
+               "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--coordinator", *(["--rehearse-only"] if args.rehearse_only else [])]
     spec = {"label": f"com.agent-rails.t3fast-{args.version}-coordinator-{coordinator.name}", "host": "studio",
             "command": command, "budget": sum(node.budget for node in FAST_GRAPH) * HANG_GUARD + 60,
             "resources": ["fast-release-run"], "lockRoot": str(Path.home() / ".t3nightly/resource-locks")}

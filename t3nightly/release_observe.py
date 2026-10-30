@@ -79,13 +79,13 @@ def atomic_write(path, value):
         os.close(directory)
 
 
-def probe(host, service, port, database) -> dict:
+def probe(host, service, port, database, linux_host="ax42") -> dict:
     words = ["python3", "-c", PROBE, service, str(port), database]
     if host == "studio":
         words[0] = sys.executable
         command = words
     else:
-        command = ["ssh", "-o", "BatchMode=yes", host, shlex.join(words)]
+        command = ["ssh", "-o", "BatchMode=yes", linux_host, shlex.join(words)]
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=20)
         if result.returncode:
@@ -150,7 +150,7 @@ def report(host, service, expected, out, started_at, started, rows, status):
     return result
 
 
-def watch(host, service, port, database, expected, out, duration=600, interval=10):
+def watch(host, service, port, database, expected, out, duration=600, interval=10, *, linux_host="ax42"):
     if duration < 0 or interval <= 0:
         raise ValueError("duration must be nonnegative and interval must be positive")
     out = Path(out)
@@ -164,7 +164,7 @@ def watch(host, service, port, database, expected, out, duration=600, interval=1
     report(host, service, expected, out, started_at, started, rows, "running")
     with samples_path.open("x") as handle:
         while True:
-            sample = probe(host, service, port, database)
+            sample = probe(host, service, port, database, linux_host)
             sample["at"] = now()
             sample["seconds"] = round(time.monotonic() - started, 3)
             sample["restartObserved"] = restart_observed(sample, previous)

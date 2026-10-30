@@ -25,12 +25,12 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def execute(host, words, log, timeout, cwd=None, env=None):
+def execute(host, words, log, timeout, cwd=None, env=None, *, linux_host="ax42"):
     command = words
     wait = timeout
     if host != "studio":
         remote = ["timeout", "--signal=TERM", f"{max(1, int(timeout))}s", *words]
-        command = ["ssh", "-o", "BatchMode=yes", host, shlex.join([str(word) for word in remote])]
+        command = ["ssh", "-o", "BatchMode=yes", linux_host if host == "ax42" else host, shlex.join([str(word) for word in remote])]
         wait += 5
     process = subprocess.Popen(
         command, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT,
@@ -48,38 +48,38 @@ def execute(host, words, log, timeout, cwd=None, env=None):
         return 124
 
 
-def prepare(host, repo, tree, source, log):
-    code = execute(host, ["git", "-C", repo, "worktree", "add", "--detach", tree, source["commit"]], log, 60)
+def prepare(host, repo, tree, source, log, linux_host):
+    code = execute(host, ["git", "-C", repo, "worktree", "add", "--detach", tree, source["commit"]], log, 60, linux_host=linux_host)
     if code:
         raise RuntimeError(f"cannot create advisory worktree on {host}; git exited {code}")
     script = "import json,pathlib,sys; root=pathlib.Path(sys.argv[1]); [(root / name).write_text(text) for name, text in json.loads(sys.argv[2]).items()]"
-    code = execute(host, ["python3", "-c", script, tree, json.dumps(source["stampedContents"])], log, 30)
+    code = execute(host, ["python3", "-c", script, tree, json.dumps(source["stampedContents"])], log, 30, linux_host=linux_host)
     if not code:
-        code = execute(host, ["git", "-C", tree, "add", "-u"], log, 30)
+        code = execute(host, ["git", "-C", tree, "add", "-u"], log, 30, linux_host=linux_host)
     if not code:
         check = f"test \"$(git -C {shlex.quote(tree)} write-tree)\" = {shlex.quote(source['stampedTree'])}"
-        code = execute(host, ["bash", "-c", check], log, 30)
+        code = execute(host, ["bash", "-c", check], log, 30, linux_host=linux_host)
     if code:
         raise RuntimeError(f"cannot materialize stamped source on {host}; command exited {code}")
 
 
-def install_dependencies(host, tree, log):
+def install_dependencies(host, tree, log, linux_host):
     if host == "studio":
         env = os.environ.copy()
         env["PATH"] = f"{tree}/node_modules/.bin:{Path.home()}/.vite-plus/bin:" + env.get("PATH", "/usr/local/bin:/usr/bin:/bin")
         env["CI"] = "true"
-        code = execute(host, ["vp", "install", "--frozen-lockfile"], log, 600, cwd=tree, env=env)
+        code = execute(host, ["vp", "install", "--frozen-lockfile"], log, 600, cwd=tree, env=env, linux_host=linux_host)
     else:
         command = f"cd {shlex.quote(tree)} && export PATH={path(tree)} CI=true && vp install --frozen-lockfile"
-        code = execute(host, ["bash", "-c", command], log, 600)
+        code = execute(host, ["bash", "-c", command], log, 600, linux_host=linux_host)
     if code:
         raise RuntimeError(f"dependency install failed on {host}; vp exited {code}")
 
 
-def cleanup(host, repo, tree, log):
-    code = execute(host, ["git", "-C", repo, "worktree", "remove", "--force", tree], log, 60)
+def cleanup(host, repo, tree, log, linux_host):
+    code = execute(host, ["git", "-C", repo, "worktree", "remove", "--force", tree], log, 60, linux_host=linux_host)
     if not code:
-        code = execute(host, ["rm", "-f", "--", tree], log, 15)
+        code = execute(host, ["rm", "-f", "--", tree], log, 15, linux_host=linux_host)
     return code
 
 
@@ -126,19 +126,19 @@ def remote_environment(step, tree, temp):
     return "export " + " ".join(exports)
 
 
-def unavailable(host, tree, tools_required, log):
+def unavailable(host, tree, tools_required, log, linux_host):
     missing = []
     for tool in tools_required:
         command = f"export PATH={path(tree)}; command -v {shlex.quote(tool)} >/dev/null"
         if tool == "rustfmt":
             command += " && rustfmt --version >/dev/null 2>&1"
-        code = execute(host, ["bash", "-c", command], log, 10)
+        code = execute(host, ["bash", "-c", command], log, 10, linux_host=linux_host)
         if code:
             missing.append(tool)
     return missing
 
 
-def run_step(host, step, tree, log_path, deadline):
+def run_step(host, step, tree, log_path, deadline, linux_host):
     temp = f"{tree}/.advisory-tmp"
     started = time.monotonic()
     row = {"id": step["id"], "name": step["name"], "startedAt": now()}
@@ -151,21 +151,21 @@ def run_step(host, step, tree, log_path, deadline):
             row["finishedAt"] = now()
             row["log"] = str(log_path)
             return row
-        setup = execute(host, ["mkdir", "-p", temp], log, 15)
+        setup = execute(host, ["mkdir", "-p", temp], log, 15, linux_host=linux_host)
         if setup:
             row.update(result="unavailable", exit=setup)
         else:
-            missing = unavailable(host, tree, step["tools"], log)
+            missing = unavailable(host, tree, step["tools"], log, linux_host)
             if missing:
                 row.update(result="unavailable", missingTools=missing, exit=None)
             else:
                 command = interpolate(step["command"], temp)
                 if host == "studio":
                     words = ["bash", "-eo", "pipefail", "-c", command]
-                    code = execute(host, words, log, deadline - time.monotonic(), cwd=tree, env=environment(step, tree, temp))
+                    code = execute(host, words, log, deadline - time.monotonic(), cwd=tree, env=environment(step, tree, temp), linux_host=linux_host)
                 else:
                     remote = f"cd {shlex.quote(tree)} && {remote_environment(step, tree, temp)} && bash -eo pipefail -c {shlex.quote(command)}"
-                    code = execute(host, ["bash", "-c", remote], log, deadline - time.monotonic())
+                    code = execute(host, ["bash", "-c", remote], log, deadline - time.monotonic(), linux_host=linux_host)
                 row.update(result="pass" if code == 0 else "fail", exit=code)
     row["seconds"] = round(time.monotonic() - started, 3)
     row["finishedAt"] = now()
@@ -173,7 +173,7 @@ def run_step(host, step, tree, log_path, deadline):
     return row
 
 
-def run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep=False):
+def run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep=False, *, linux_host="ax42"):
     value = load(plan_path)
     job = next((row for row in value["jobs"] if row["id"] == job_id), None)
     if job is None:
@@ -216,15 +216,15 @@ def run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep=
         try:
             with (logs / "worktree.log").open("w") as log:
                 attempted = True
-                prepare(host, repo, tree, value["source"], log)
-                install_dependencies(host, tree, log)
+                prepare(host, repo, tree, value["source"], log, linux_host)
+                install_dependencies(host, tree, log, linux_host)
             deadline = started + job["timeoutSeconds"]
             rows = []
             stopped = False
             for index, step in enumerate(steps, 1):
                 if stopped and "always()" not in (step["condition"] or ""):
                     continue
-                row = run_step(host, step, tree, logs / f"{index:02d}-{step['id']}.log", deadline)
+                row = run_step(host, step, tree, logs / f"{index:02d}-{step['id']}.log", deadline, linux_host)
                 rows.append(row)
                 stopped = stopped or row["result"] != "pass"
             outcomes = {row["result"] for row in rows}
@@ -239,7 +239,7 @@ def run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep=
     finally:
         if attempted and not keep:
             with (logs / "cleanup.log").open("w") as log:
-                result["cleanupExit"] = cleanup(host, repo, tree, log)
+                result["cleanupExit"] = cleanup(host, repo, tree, log, linux_host)
             if result["cleanupExit"]:
                 result["result"] = "unavailable"
                 result["error"] = f"worktree cleanup exited {result['cleanupExit']}"

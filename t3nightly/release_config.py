@@ -173,6 +173,8 @@ def parse():
     parser.add_argument("--verdict", type=Path)
     parser.add_argument("--until", choices=[stage.name for stage in GRAPH] + ["studio-continuation-proof"])
     args = parser.parse_args()
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", args.linux_host):
+        parser.error("--linux-host must be an SSH alias or hostname")
     if not re.fullmatch(r"\d+\.\d+\.\d+-nightly\.\d+\.\d+\.aneym\.\d+", args.version):
         parser.error("version must be an upstream nightly plus .aneym.N")
     number = args.version.rsplit(".", 1)[1]
