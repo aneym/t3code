@@ -56,7 +56,7 @@ class Sandbox:
         self.args = args
         self.home = args.home.expanduser().resolve()
         self.evidence = args.evidence.expanduser().resolve()
-        self.old = args.old_runtime.expanduser().resolve()
+        self.old = args.old_runtime.expanduser().absolute()
         self.label = args.label
         self.port = args.port
         self.domain = f"gui/{os.getuid()}"
