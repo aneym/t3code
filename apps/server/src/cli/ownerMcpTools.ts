@@ -113,7 +113,9 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
     }
     const origin = runtimeState.value.origin;
     const session = yield* openOwnerCliSession(config, new URL("/mcp", origin).href, command).pipe(
-      Effect.mapError((cause) => new McpServerUnreachableError({ origin, cause })),
+      Effect.catchTags({
+        AcpMcpBridgeError: (cause) => Effect.fail(new McpServerUnreachableError({ origin, cause })),
+      }),
     );
     return yield* run(makeOwnerMcpTools(session, origin));
   }).pipe(Effect.scoped);
