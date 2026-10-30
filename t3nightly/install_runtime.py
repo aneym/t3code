@@ -1,5 +1,6 @@
 import ctypes
 import errno
+import json
 import os
 import shutil
 import subprocess
@@ -64,12 +65,12 @@ def stage_runtime(home, version, assets):
         staged = roots[0]
         verify_cli(staged / "t3")
         (staged / ".install-complete").write_text(version + "\n")
-        from .rehearsal_storage import enabled, publish
+        from .rehearsal_storage import bind_runtime, enabled, publish
 
         if enabled(home):
             shared = publish(staged, move=True)
             staged = Path(raw) / ".shared-runtime"
-            staged.symlink_to(shared, target_is_directory=True)
+            bind_runtime(home, version, shared, staged)
         activate(staged, versions / version)
     return versions / version / "t3"
 
@@ -113,7 +114,13 @@ def retain_runtime(home, version, store):
     from .rehearsal_storage import enabled
 
     if enabled(home):
-        retained.symlink_to(source.resolve(), target_is_directory=True)
+        refs = Path(home) / "runtime/rehearsal-runtime-refs.json"
+        shared = Path(json.loads(refs.read_text())[version]) if refs.exists() else source.resolve()
+        from .rehearsal_storage import store_root
+
+        if shared.resolve().parent != store_root():
+            raise ValueError("retained rehearsal runtime reference escaped its shared store")
+        retained.symlink_to(shared, target_is_directory=True)
     else:
         link_tree(source, retained)
     return retained
@@ -130,7 +137,12 @@ def restore_runtime(home, version, store):
         from .rehearsal_storage import enabled
 
         if enabled(home):
-            staged.symlink_to(retained.resolve(), target_is_directory=True)
+            if sys.platform == "darwin":
+                from .rehearsal_storage import clone_tree
+
+                clone_tree(retained.resolve(), staged)
+            else:
+                staged.symlink_to(retained.resolve(), target_is_directory=True)
         else:
             link_tree(retained, staged)
         os.replace(staged, target)

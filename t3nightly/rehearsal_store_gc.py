@@ -28,6 +28,15 @@ def retain_references(root):
             continue
         if home.is_symlink():
             raise ValueError("retained rehearsal home is a symlink")
+        refs = home / "runtime/rehearsal-runtime-refs.json"
+        if refs.exists():
+            if refs.is_symlink():
+                raise ValueError("rehearsal runtime references must not be a symlink")
+            for raw in json.loads(refs.read_text()).values():
+                target = Path(raw).resolve()
+                if target.parent != root or not DIGEST.fullmatch(target.name):
+                    raise ValueError("retained clone source escaped the shared store")
+                references.add(target)
         for path in (home / "runtime").rglob("*"):
             if path.is_symlink():
                 target = path.resolve()
