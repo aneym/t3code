@@ -48,10 +48,10 @@ def boot(sandbox, argv, log):
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=30)
         subprocess.run(["systemctl", "--user", "start", f"{sandbox.label}.service"], check=True, timeout=60)
     sandbox.started = True
-    if sandbox.args.launcher_artifact or sandbox.args.connector_artifact:
+    if sandbox.args.launcher_artifact or sandbox.args.old_launcher_artifact or sandbox.args.connector_artifact:
         from .connector_artifact import ensure_connector
 
-        ensure_connector(connector_run(sandbox))
+        ensure_connector(connector_run(sandbox, baseline=bool(sandbox.args.old_launcher_artifact)))
     sandbox.unit_renderer = {"source": "apps/server/src/cloud/bootService.ts", "tree": str(sandbox.args.rpc_tree), "launcher": True, "stopSeconds": 90, "killMode": "mixed" if sys.platform == "linux" else None}
 
 
@@ -80,20 +80,28 @@ def serving_digest(sandbox):
     return sha256(paths[0])
 
 
-def connector_run(sandbox):
+def connector_run(sandbox, baseline=False):
     from types import SimpleNamespace
 
-    return SimpleNamespace(args=sandbox.args, home=sandbox.home, service_label=sandbox.label if sys.platform == "darwin" else sandbox.label + ".service", step=lambda name, **fields: print(json.dumps({"step": name, **fields}), flush=True))
+    args = SimpleNamespace(**vars(sandbox.args))
+    if baseline:
+        args.launcher_artifact = sandbox.args.old_launcher_artifact
+        args.connector_artifact = ""
+    return SimpleNamespace(args=args, home=sandbox.home, service_label=sandbox.label if sys.platform == "darwin" else sandbox.label + ".service", step=lambda name, **fields: print(json.dumps({"step": name, **fields}), flush=True))
 
 
 def pin_artifacts(sandbox):
     from .launcher_artifact import ensure_launcher
 
-    artifact = json.loads(Path(sandbox.args.launcher_artifact).read_text())
-    if artifact.get("ingress"):
-        artifact["ingress"] = {**artifact["ingress"], "port": sandbox.port, "host": "127.0.0.1"}
-    path = sandbox.evidence / "sandbox-launcher-artifact.json"
-    path.write_text(json.dumps(artifact) + "\n")
-    sandbox.args.launcher_artifact = str(path)
-    sandbox.args.port = sandbox.port
-    ensure_launcher(connector_run(sandbox), sandbox.old.name)
+    for name in ("launcher_artifact", "old_launcher_artifact"):
+        raw = getattr(sandbox.args, name)
+        if not raw:
+            continue
+        artifact = json.loads(Path(raw).read_text())
+        if artifact.get("ingress"):
+            artifact["ingress"] = {**artifact["ingress"], "port": sandbox.port, "host": "127.0.0.1"}
+        path = sandbox.evidence / f"sandbox-{name}.json"
+        path.write_text(json.dumps(artifact) + "\n")
+        setattr(sandbox.args, name, str(path))
+    if sandbox.args.old_launcher_artifact:
+        ensure_launcher(connector_run(sandbox, baseline=True), sandbox.old.name)

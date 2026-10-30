@@ -86,6 +86,9 @@ class Rehearsal:
         if getattr(self.args, "hot_swap", False):
             command[command.index("--hard")] = "--seamless"
             command.extend(["--rpc-tree", str(self.args.rpc_tree.resolve()), "--drain-s", str(self.args.drain_s)])
+            for name in ("launcher_artifact", "connector_artifact"):
+                if getattr(self.args, name):
+                    command.extend(["--" + name.replace("_", "-"), getattr(self.args, name)])
         if self.args.verdict:
             command.extend(["--verdict", str(self.args.verdict)])
         installer_home = Path.home() if (self.engine / "install_hard.py").is_file() else sandbox.os_home
