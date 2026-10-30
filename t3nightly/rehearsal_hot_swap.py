@@ -169,7 +169,7 @@ class HotSwapRehearsal(Rehearsal):
 
             receipt = json.loads(receipt_path.read_text())
             if self.args.queue_mode != "none":
-                receipt["releaseEligible"] = False
+                receipt["result"] = "QUEUE-PROOF"
                 result["releaseEligible"] = False
             receipt["hotSwap"] = {key: hot[key] for key in ("status", "sequenceContinuity", "candidateMeasuredStartupMs", "previousMeasuredStartupMs", "checks") if key in hot}
             if hot.get("install", {}).get("hotSwap", {}).get("method") == "maintenance":
