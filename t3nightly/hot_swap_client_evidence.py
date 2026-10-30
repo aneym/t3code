@@ -6,7 +6,7 @@ def client_checks(rehearsal, hot):
     if not probe:
         return
     ids = {row["clientId"] for row in probe.get("handoffCalls", []) if row["method"] == "subscribeServerLifecycle"}
-    acknowledgments = [row for row in probe.get("handoffReplies", []) if row.get("sequence") is not None and row["clientId"] in ids and any(event["sequence"] == row["sequence"] and event.get("sessionId") == row.get("sessionId") for event in probe.get("handoffEvents", []))]
+    acknowledgments = [row for row in probe.get("handoffReplies", []) if row.get("sequence") is not None and not row.get("confirmation") and row["clientId"] in ids and any(event["sequence"] == row["sequence"] and event.get("sessionId") == row.get("sessionId") for event in probe.get("handoffEvents", []))]
     presentation_pass = bool(probe.get("presentations")) and not probe.get("presentationViolations") and bool(ids) and bool(probe.get("handoffEvents"))
     hot["checks"]["presentation"] = {"status": "passed" if presentation_pass else "failed", "states": probe.get("presentations", []), "violations": probe.get("presentationViolations", []), "handoffAcknowledgments": acknowledgments, "acknowledgmentObserved": bool(acknowledgments)}
     if rehearsal.args.stock_client:
