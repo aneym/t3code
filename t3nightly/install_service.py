@@ -41,6 +41,7 @@ def service_identity(args, run):
             unit.get("Label") != label
             or not (
                 ("--base-dir" in argv and argv[argv.index("--base-dir") + 1] == str(run.home))
+                or (argv[:1] == ["/usr/bin/env"] and argv[-2:] == [str(run.home / "runtime/launcher/t3"), "__service-launcher"] and f"HOME={run.home}" in argv and f"T3CODE_HOME={run.home}" in argv and unit.get("EnvironmentVariables", {}).get("T3CODE_HOME") == str(run.home))
                 or (argv[1:] == ["__service-launcher"] and unit.get("EnvironmentVariables", {}).get("T3CODE_HOME") == str(run.home))
             )
         ):
