@@ -1,5 +1,4 @@
 import { autoSettlementSettingsKey } from "./ThreadSettlementSettings.ts";
-export { autoSettlementSettingsKey } from "./ThreadSettlementSettings.ts";
 import {
   backgroundWorkHoldsCompletion,
   turnItemUpdateCanEndBackgroundWork,

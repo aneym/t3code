@@ -55,6 +55,17 @@ const bind = Command.make("bind", {
   Command.withHandler((flags) =>
     withOwnerMcpTools("agent", flags, (tools) =>
       Effect.gen(function* () {
+        if (flags.unbind && Option.isSome(flags.thread)) {
+          const snapshot = yield* tools.call("t3_agent_list", {}, AgentHomesSnapshot);
+          if (
+            snapshot.homes.find((home) => home.handle === flags.agent)?.binding?.threadId !==
+            flags.thread.value
+          )
+            return yield* new McpToolFailedError({
+              tool: "t3_agent_bind",
+              detail: "Cannot unbind: the given thread is not the agent home’s current binding.",
+            });
+        }
         const result = yield* tools.call(
           "t3_agent_bind",
           {
