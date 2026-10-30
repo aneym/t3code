@@ -5,6 +5,7 @@ import * as NodeNet from "node:net";
 import * as Effect from "effect/Effect";
 import {
   decodeServiceLauncherContext,
+  unsupportedServiceHotSwap,
   decodeServiceLauncherParentMessage,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   type ServiceLauncherChildMessage,
@@ -19,7 +20,12 @@ export function hotSwapContext() {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Native IPC capability is inspected outside an Effect runtime.
   if (process.platform === "win32" || !process.connected || process.send === undefined)
     return undefined;
-  const context = decodeServiceLauncherContext(process.env[SERVICE_LAUNCHER_CONTEXT_ENV] ?? "");
+  const raw = process.env[SERVICE_LAUNCHER_CONTEXT_ENV] ?? "";
+  if (unsupportedServiceHotSwap(raw)) {
+    process.send({ type: "capability-rejected", reason: "unsupported-hot-swap" });
+    throw new Error("Unsupported service hot-swap capability; maintenance restart required.");
+  }
+  const context = decodeServiceLauncherContext(raw);
   attachedContext = context?.hotSwap === undefined ? undefined : context;
   return attachedContext;
 }

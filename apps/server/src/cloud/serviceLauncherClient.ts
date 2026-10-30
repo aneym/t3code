@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import packageJson from "../../package.json" with { type: "json" };
 import {
   decodeServiceLauncherContext,
+  unsupportedServiceHotSwap,
   decodeServiceLauncherParentMessage,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   type ServiceLauncherChildMessage,
@@ -84,6 +85,10 @@ const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup"
     const context = rawContext === undefined ? undefined : decodeServiceLauncherContext(rawContext);
 
     if (rawContext !== undefined && context === undefined) {
+      if (unsupportedServiceHotSwap(rawContext))
+        yield* Effect.sync(() =>
+          host.send({ type: "capability-rejected", reason: "unsupported-hot-swap" }),
+        );
       return yield* new ServiceLauncherClientError({ operation: "decode-context" });
     }
     if (context !== undefined && context.childVersion !== currentVersion) {
