@@ -2,6 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
+import { connectorServiceInstalled } from "./serviceConnectorInstallation.ts";
 
 export const HOT_SWAP_PROTOCOL = 1;
 
@@ -72,6 +73,7 @@ export async function readLauncherIngressConfig(
   )
     return undefined;
   if (qualification) {
+    if (!(await connectorServiceInstalled(baseDir, v.manager))) return undefined;
     // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone supervisor qualification has no Effect context.
     if (process.platform === "darwin" && v.manager === "launchd") {
       if (!(await succeeds("launchctl", ["print", `gui/${process.getuid?.()}`]))) return undefined;

@@ -15,13 +15,15 @@ export async function reserveServiceOwnership(baseDir: string, instanceId: strin
     throw cause;
   }
   const grantPath = NodePath.join(baseDir, "runtime", "ownership-grant.json");
-  const grant = await NodeFSP.open(grantPath, "w", 0o600).catch((cause: unknown) => {
+  const temporary = `${grantPath}.${process.pid}.pending`;
+  const grant = await NodeFSP.open(temporary, "w", 0o600).catch((cause: unknown) => {
     db.close();
     throw cause;
   });
   try {
     await grant.writeFile(JSON.stringify({ pid: process.pid, instanceId }));
     await grant.sync();
+    await NodeFSP.rename(temporary, grantPath);
   } catch (cause) {
     db.close();
     throw cause;
@@ -36,6 +38,8 @@ export async function reserveServiceOwnership(baseDir: string, instanceId: strin
         db.close();
       }
     },
-    clear: () => NodeFSP.rm(grantPath, { force: true }),
   };
 }
+
+export const clearOwnershipGrant = (baseDir: string) =>
+  NodeFSP.rm(NodePath.join(baseDir, "runtime", "ownership-grant.json"), { force: true });

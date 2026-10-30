@@ -3,6 +3,7 @@
 import type * as NodeChildProcess from "node:child_process";
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
+import * as NodePerfHooks from "node:perf_hooks";
 import type { LauncherIngressConfig } from "./serviceLauncherConfig.ts";
 
 export class ServiceLauncherIngress {
@@ -16,6 +17,9 @@ export class ServiceLauncherIngress {
   #address: string | undefined;
   #sequence = 0;
   #backpressure = false;
+  readonly #watched = new WeakSet<NodeChildProcess.ChildProcess>();
+  readonly #deadlines = new WeakMap<NodeNet.Socket, number>();
+  readonly #prefixes = new WeakMap<NodeNet.Socket, string>();
   readonly #budget: number;
   readonly #capacity: number;
   readonly #window: number;
@@ -42,6 +46,7 @@ export class ServiceLauncherIngress {
         this.#queue.delete(socket);
         socket.destroy();
       }, this.#budget);
+      this.#deadlines.set(socket, NodePerfHooks.performance.now() + this.#budget);
       this.#queue.set(socket, timer);
       socket.once("close", () => {
         clearTimeout(timer);
@@ -63,7 +68,8 @@ export class ServiceLauncherIngress {
   route(child?: NodeChildProcess.ChildProcess): void {
     this.#destination = child;
     this.#backpressure = false;
-    if (child !== undefined)
+    if (child !== undefined && !this.#watched.has(child)) {
+      this.#watched.add(child);
       child.once("exit", () => {
         if (this.#destination === child) this.#destination = undefined;
         for (const [id, transfer] of this.#pending)
@@ -73,6 +79,7 @@ export class ServiceLauncherIngress {
             this.#pending.delete(id);
           }
       });
+    }
     this.#flush();
   }
 
@@ -82,6 +89,26 @@ export class ServiceLauncherIngress {
     clearTimeout(transfer.timer);
     this.#pending.delete(transferId);
     transfer.socket.destroy();
+    this.#flush();
+  }
+
+  returnSocket(child: NodeChildProcess.ChildProcess, transferId: number, prefix?: string): void {
+    const transfer = this.#pending.get(transferId);
+    if (transfer?.child !== child) return;
+    clearTimeout(transfer.timer);
+    this.#pending.delete(transferId);
+    if (prefix !== undefined) this.#prefixes.set(transfer.socket, prefix);
+    if (this.#destination === child) this.#destination = undefined;
+    const remaining = (this.#deadlines.get(transfer.socket) ?? 0) - NodePerfHooks.performance.now();
+    if (remaining <= 0 || transfer.socket.destroyed) transfer.socket.destroy();
+    else {
+      const timer = setTimeout(() => {
+        this.#queue.delete(transfer.socket);
+        transfer.socket.destroy();
+      }, remaining);
+      transfer.socket.once("close", () => clearTimeout(timer));
+      this.#queue.set(transfer.socket, timer);
+    }
     this.#flush();
   }
 
@@ -102,7 +129,7 @@ export class ServiceLauncherIngress {
       this.#pending.set(transferId, { child, socket, timer: timeout });
       try {
         const writable = child.send(
-          { type: "socket", transferId },
+          { type: "socket", transferId, prefix: this.#prefixes.get(socket) },
           socket,
           { keepOpen: true },
           (error) => {

@@ -5,11 +5,13 @@ import {
   type EnvironmentTheme,
   type ServerConfig,
   type ServerConfigStreamEvent,
-  type ServerLifecycleLegacyThreadMigrationPayload,
-  type ServerLifecycleWelcomePayload,
   type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
+import {
+  type ServerLifecycleLegacyThreadMigrationPayload,
+  type ServerLifecycleWelcomePayload,
+} from "@t3tools/contracts/serverLifecycle";
 import {
   AVAILABLE_CONNECTION_STATE,
   presentConnectionState,

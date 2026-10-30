@@ -34,10 +34,14 @@ export class ChildTerminator {
   async terminate(
     child: NodeChildProcess.ChildProcess,
     signal: NodeJS.Signals = "SIGTERM",
+    graceMs = STOP_GRACE_MS,
   ): Promise<void> {
     if (child.exitCode !== null || child.signalCode !== null) return;
     this.#terminating.add(child);
-    const force = AbortSignal.any([this.#stopDeadline.signal, AbortSignal.timeout(STOP_GRACE_MS)]);
+    const force = AbortSignal.any([
+      this.#stopDeadline.signal,
+      AbortSignal.timeout(Math.max(1, Math.ceil(graceMs))),
+    ]);
     const kill = () => child.kill("SIGKILL");
     try {
       await this.#beforeSignal;

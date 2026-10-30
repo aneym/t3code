@@ -785,8 +785,6 @@ export const ServerConfigStreamEvent = Schema.Union([
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 
-export * from "./serverLifecycle.ts";
-
 export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,
 });

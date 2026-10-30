@@ -63,5 +63,9 @@ export const makeHandoffWindow = Effect.fn("ConnectionHandoff.make")(function* (
     if (hint._tag === "None") return yield* Effect.never;
     return true;
   });
-  return { active, setState, watch };
+  const pause = Effect.gen(function* () {
+    const remaining = (yield* Ref.get(deadline)) - (yield* Clock.currentTimeMillis);
+    if (remaining > 0) yield* Effect.sleep(Math.min(300, remaining));
+  });
+  return { active, setState, watch, pause };
 });

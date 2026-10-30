@@ -1,3 +1,4 @@
+import { acceptServiceUpdate } from "./serviceLauncherUpdateRequest.ts";
 import {
   terminalUpdate,
   sendMessage,
@@ -22,7 +23,6 @@ import type {
 } from "./cloud/serviceProtocol.ts";
 import { ServiceRestartGuards } from "./serviceRestartGuards.ts";
 import {
-  databaseBackupBlocker,
   databaseBackupDir,
   databaseRestorePending,
   backupDatabaseOnce,
@@ -30,22 +30,18 @@ import {
   discardDatabaseBackup,
   type BackupSpaceProbe,
 } from "./serviceLauncherDatabase.ts";
-export type { BackupSpaceProbe } from "./serviceLauncherDatabase.ts";
-export { databaseBackupBlocker } from "./serviceLauncherDatabase.ts";
 import { ServiceLauncherIngress, probeServiceChild } from "./serviceLauncherIngress.ts";
 import {
   readLauncherIngressConfig,
   candidateCanHotSwap,
   type LauncherIngressConfig,
 } from "./serviceLauncherConfig.ts";
-import { reserveServiceOwnership } from "./serviceLauncherOwnership.ts";
+import { reserveServiceOwnership, clearOwnershipGrant } from "./serviceLauncherOwnership.ts";
+import { ServiceLauncherExitDeadline } from "./serviceLauncherExitDeadline.ts";
 import { readServiceEnvironment } from "./serviceEnvironment.ts";
-import { isCliForkVersion } from "@t3tools/shared/cliRelease";
 
 import {
-  compareExactServiceVersions,
   decodeServiceLauncherChildMessage,
-  isExactServiceVersion,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
@@ -72,7 +68,6 @@ import {
   readServiceState,
   writeServiceState,
 } from "./serviceLauncherState.ts";
-export { readServiceState, writeServiceState } from "./serviceLauncherState.ts";
 
 export class Launcher {
   readonly #baseDir: string;
@@ -92,6 +87,7 @@ export class Launcher {
   #stopping = false;
   #done = false;
   readonly #guards = new ServiceRestartGuards();
+  readonly #exitDeadline = new ServiceLauncherExitDeadline();
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
@@ -120,9 +116,12 @@ export class Launcher {
     process.once("SIGTERM", onSigterm);
     process.once("SIGINT", onSigint);
     try {
+      process.send?.({ launcherStarted: 1 });
       this.#enqueue(() => this.#recover());
       await this.#completion.promise;
     } finally {
+      this.#exitDeadline.clear();
+      await clearOwnershipGrant(this.#baseDir);
       await this.#ingress.close();
       if (this.#warming !== null) await this.#guards.terminator.terminate(this.#warming.process);
       process.off("SIGTERM", onSigterm);
@@ -286,7 +285,11 @@ export class Launcher {
       child.once("error", onError);
       child.once("spawn", () => {
         child.removeListener("error", onError);
-        child.on("error", (error) => this.#enqueue(() => Promise.reject(error)));
+        child.on("error", () =>
+          this.#enqueue(async () => {
+            if (this.#warming?.process === child) await this.#dropWarm("candidate-ipc-error");
+          }),
+        );
         resolve();
       });
     });
@@ -303,11 +306,14 @@ export class Launcher {
       instanceId,
       process: child,
     };
+    process.send?.({ launcherChildSpawned: 1 });
     if (warm) this.#warming = managed;
     else this.#child = managed;
     child.on("message", (value) => {
       const message = decodeServiceLauncherChildMessage(value);
       if (message?.type === "socket-accepted") this.#ingress.ack(child, message.transferId);
+      else if (message?.type === "socket-returned")
+        this.#ingress.returnSocket(child, message.transferId, message.prefix);
       else if (message !== undefined) this.#enqueue(() => this.#handleMessage(managed, message));
     });
     child.once("exit", (code, signal) =>
@@ -370,19 +376,38 @@ export class Launcher {
         this.#ingressConfig === undefined ||
         message.host !== this.#ingressConfig.host ||
         message.port !== this.#ingressConfig.port
-      )
-        throw new Error("Child endpoint differs from launcher configuration.");
-      await this.#ingress.bind(message.host, message.port);
-      if (child !== this.#warming) {
-        const reservation = await reserveServiceOwnership(this.#baseDir, child.instanceId);
-        reservation.release();
+      ) {
+        await this.#handshakeFailed(child, "endpoint-mismatch");
+        return;
       }
-      await sendMessage(child.process, { type: "ingress-bound" });
+      try {
+        if (child !== this.#warming) {
+          const reservation = await reserveServiceOwnership(this.#baseDir, child.instanceId);
+          reservation.release();
+        }
+      } catch {
+        child.stateDirOwned = true;
+        await this.#guards.terminator.terminate(child.process);
+        await this.#handleExit(child, 78, null);
+        return;
+      }
+      await this.#ingress.bind(message.host, message.port);
+      try {
+        await sendMessage(child.process, { type: "ingress-bound" });
+      } catch {
+        await this.#handshakeFailed(child, "ingress-send-failed");
+      }
       return;
     }
     if (message.type === "listening") {
       if (child !== this.#child || child.role !== "active") return;
-      await probeServiceChild(message.port, child.instanceId);
+      try {
+        await probeServiceChild(message.port, child.instanceId);
+      } catch {
+        await this.#handshakeFailed(child, "listening-probe-failed");
+        return;
+      }
+      await clearOwnershipGrant(this.#baseDir);
       this.#ingress.route(child.process);
       this.#routedInstance = child.instanceId;
       return;
@@ -411,11 +436,15 @@ export class Launcher {
       this.#swap = { phase: "drain", willMigrate: false };
       const active = this.#child;
       if (active === null) throw new Error("Warm trial has no active child.");
-      await sendMessage(active.process, {
-        type: "drain",
-        updateId: pending.id,
-        drainTimeoutMs: this.#ingressConfig?.drainTimeoutMs ?? 0,
-      });
+      try {
+        await sendMessage(active.process, {
+          type: "drain",
+          updateId: pending.id,
+          drainTimeoutMs: this.#ingressConfig?.drainTimeoutMs ?? 0,
+        });
+      } catch {
+        await this.#dropWarm("drain-send-failed");
+      }
       return;
     }
     if (message.type === "drain-failed") {
@@ -433,7 +462,16 @@ export class Launcher {
         return;
       this.#swap.phase = "relinquish";
       this.#ingress.route();
-      await sendMessage(child.process, { type: "relinquish", updateId: pending.id });
+      this.#exitDeadline.arm(
+        child.process,
+        this.#ingressConfig?.holdBudgetMs ?? 1000,
+        this.#guards.terminator,
+      );
+      try {
+        await sendMessage(child.process, { type: "relinquish", updateId: pending.id });
+      } catch {
+        await this.#dropWarm("relinquish-send-failed", true);
+      }
       return;
     }
     if (message.type === "validated") {
@@ -447,6 +485,7 @@ export class Launcher {
         return;
       try {
         await probeServiceChild(message.port, child.instanceId, pending.id);
+        await clearOwnershipGrant(this.#baseDir);
       } catch {
         await this.#returnToPrevious(pending, "rolled-back", "identity-probe-failed", child);
         return;
@@ -470,71 +509,44 @@ export class Launcher {
     if (message.type === "prepared") await this.#handlePrepared(child, message.updateId);
   }
 
+  async #handshakeFailed(child: ManagedChild, reason: string): Promise<void> {
+    if (child === this.#warming) {
+      await this.#dropWarm(reason);
+      return;
+    }
+    if (child !== this.#child) return;
+    const pending = this.#state.update;
+    if (child.role === "trial" && pending?.status === "pending")
+      await this.#returnToPrevious(pending, "rolled-back", reason, child);
+    else {
+      await this.#guards.terminator.terminate(child.process);
+      if (this.#child === child) {
+        this.#child = null;
+        await this.#startChild(this.#state.activeVersion, "active", pending);
+      }
+    }
+  }
+
   async #handleUpdateRequest(
     child: ManagedChild,
     message: Extract<ServiceLauncherChildMessage, { readonly type: "request-update" }>,
   ): Promise<void> {
-    const reject = (reason: string) =>
-      sendMessage(child.process, { type: "update-rejected", reason });
-    if (child.role !== "active") {
-      await reject("Only the active server can request an update.");
-      return;
-    }
-    if (child.version !== this.#state.activeVersion) {
-      await reject("The requesting server is not the selected active version.");
-      return;
-    }
-    if (this.#state.update?.status === "pending") {
-      await reject("Another server update is already pending.");
-      return;
-    }
-    if (!isExactServiceVersion(message.targetVersion)) {
-      await reject("The requested target is not an exact version.");
-      return;
-    }
-    if (isCliForkVersion(child.version) !== isCliForkVersion(message.targetVersion)) {
-      await reject("The requested target is from a different distribution.");
-      return;
-    }
-    const comparison = compareExactServiceVersions(message.targetVersion, child.version);
-    if (comparison === 0 || (comparison < 0 && message.allowDowngrade !== true)) {
-      await reject("Remote updates must select a newer server version.");
-      return;
-    }
-    if (!NodePath.isAbsolute(message.dbPath)) {
-      await reject("The requested database path is not absolute.");
-      return;
-    }
-    if (!(await runtimeExists(this.#baseDir, message.targetVersion))) {
-      await reject("The requested target runtime is missing or incomplete.");
-      return;
-    }
-    const backupBlocker = await databaseBackupBlocker(
+    const pending = await acceptServiceUpdate(
       this.#baseDir,
-      message.dbPath,
+      this.#state,
+      child,
+      message,
       this.#backupSpaceProbe,
-    ).catch(
-      (error: unknown) =>
-        `Could not check that the database backup fits before updating: ${error instanceof Error ? error.message : String(error)}. The server was not stopped.`,
     );
-    if (!child.process.connected) return;
-    if (backupBlocker !== undefined) {
-      await reject(backupBlocker);
+    if (pending === undefined) return;
+    this.#state = { ...this.#state, update: pending };
+    this.#guards.resetRetries();
+    try {
+      await sendMessage(child.process, { type: "update-accepted", updateId: pending.id });
+    } catch {
+      await this.#dropWarm("ipc-send-failed");
       return;
     }
-
-    const pending: PendingServiceUpdate = {
-      id: NodeCrypto.randomUUID(),
-      fromVersion: child.version,
-      targetVersion: message.targetVersion,
-      dbPath: message.dbPath,
-      status: "pending",
-    };
-    const next: ServiceState = { ...this.#state, update: pending };
-    await writeServiceState(this.#statePath, next);
-    this.#state = next;
-    this.#guards.resetRetries();
-    await sendMessage(child.process, { type: "update-accepted", updateId: pending.id });
     this.#timer = setTimeout(() => this.#enqueue(() => this.#beginTrial(child)), HANDOFF_DELAY_MS);
   }
 
@@ -604,7 +616,10 @@ export class Launcher {
     this.#warming = null;
     this.#swap = undefined;
     this.#clearTimer();
-    if (resumeOld && this.#child !== null) this.#ingress.route(this.#child.process);
+    if (resumeOld && this.#child !== null) {
+      this.#exitDeadline.cancel(this.#child.process);
+      this.#ingress.route(this.#child.process);
+    }
     if (warm !== null) await this.#guards.terminator.terminate(warm.process);
     if (pending?.status !== "pending") return;
     if ((!resumeOld && phase === "relinquish") || this.#child === null) {
@@ -615,7 +630,9 @@ export class Launcher {
       return;
     }
     if (!resumeOld && this.#child !== null && phase === "drain")
-      await sendMessage(this.#child.process, { type: "abort-drain", updateId: pending.id });
+      await sendMessage(this.#child.process, { type: "abort-drain", updateId: pending.id }).catch(
+        () => undefined,
+      );
     const next: ServiceState = {
       ...this.#state,
       update: terminalUpdate({ pending, status: "rolled-back", reason }),

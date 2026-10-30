@@ -120,9 +120,17 @@ export function attachServiceIngress<T extends NodeHttp.Server>(server: T, publi
     const message = decodeServiceLauncherParentMessage(value);
     if (message?.type !== "socket" || !(socket instanceof NodeNet.Socket)) return;
     if (frozen) {
+      socket.pause();
+      const buffered: unknown = socket.read(socket.readableLength);
+      const prefix = Buffer.concat([
+        Buffer.from(message.prefix ?? "", "base64"),
+        Buffer.isBuffer(buffered) ? buffered : Buffer.alloc(0),
+      ]).toString("base64");
+      process.send?.({ type: "socket-returned", transferId: message.transferId, prefix });
       socket.destroy();
       return;
     }
+    if (message.prefix) socket.unshift(Buffer.from(message.prefix, "base64"));
     socket.on("error", () => socket.destroy());
     server.emit("connection", socket);
     process.send?.({ type: "socket-accepted", transferId: message.transferId }, (error) => {

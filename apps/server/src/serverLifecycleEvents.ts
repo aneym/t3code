@@ -1,4 +1,4 @@
-import type { ServerLifecycleStreamEvent } from "@t3tools/contracts";
+import type { ServerLifecycleStreamEvent } from "@t3tools/contracts/serverLifecycle";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -41,10 +41,10 @@ const make = Effect.gen(function* () {
           ...event,
           sequence: nextSequence,
         } satisfies ServerLifecycleStreamEvent;
-        const nextEvents = [
-          nextEvent,
-          ...current.events.filter((entry) => entry.type !== nextEvent.type),
-        ];
+        const nextEvents =
+          nextEvent.type === "handoff"
+            ? current.events
+            : [nextEvent, ...current.events.filter((entry) => entry.type !== nextEvent.type)];
         return [nextEvent, { sequence: nextSequence, events: nextEvents }] as const;
       }).pipe(Effect.tap((event) => PubSub.publish(pubsub, event))),
     snapshot: Ref.get(state),

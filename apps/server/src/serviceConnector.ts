@@ -22,10 +22,20 @@ export async function runServiceConnector(baseDir: string): Promise<void> {
         value !== null &&
         "executable" in value &&
         typeof value.executable === "string" &&
-        "token" in value &&
-        typeof value.token === "string"
-      )
-        config = { executable: value.executable, token: value.token };
+        "runtimeConfigPath" in value &&
+        typeof value.runtimeConfigPath === "string"
+      ) {
+        const runtime: unknown = JSON.parse(
+          await NodeFSP.readFile(value.runtimeConfigPath, "utf8"),
+        );
+        if (
+          typeof runtime === "object" &&
+          runtime !== null &&
+          "connectorToken" in runtime &&
+          typeof runtime.connectorToken === "string"
+        )
+          config = { executable: value.executable, token: runtime.connectorToken };
+      }
     } catch (cause) {
       if ((cause as NodeJS.ErrnoException).code !== "ENOENT") return;
     }
@@ -43,9 +53,7 @@ export async function runServiceConnector(baseDir: string): Promise<void> {
   const watcher = NodeFS.watch(directory, (_event, file) => {
     if (file === "connector-config.json") enqueue();
   });
-  const timer = setInterval(() => {
-    transitions = transitions.then(status).catch(() => undefined);
-  }, 5000);
+  const timer = setInterval(enqueue, 5000);
   enqueue();
   try {
     await new Promise<void>((resolve) => {
