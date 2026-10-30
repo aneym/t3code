@@ -171,8 +171,9 @@ class Sandbox:
             self.home.mkdir(parents=True, mode=0o700)
         self.home_created = True
         self.evidence.mkdir(parents=True, mode=0o700)
-        if getattr(self.args, "hot_swap", False):
-            (self.home.parent / "rehearsal-target.json").write_text(json.dumps({"home": str(self.home), "label": self.label, "port": self.port}) + "\n")
+        from .rehearsal_units import record
+
+        (self.home / ".rehearsal-unit.json").write_text(json.dumps(record(self)) + "\n")
         (self.home / "userdata/logs").mkdir(parents=True)
         (self.home / "runtime/versions").mkdir(parents=True)
         (self.home / "runtime/tmp").mkdir(mode=0o700)
