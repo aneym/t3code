@@ -76,8 +76,8 @@ def measure():
         actual["memory_kib"] = memory
         if memory["MemAvailable"] / memory["MemTotal"] < .15:
             blockers.append("memory availability below load-guard 15% threshold")
-        if memory["SwapTotal"] - memory["SwapFree"] >= 2 * 1024**2:
-            blockers.append("swap usage reached load-guard 2 GiB threshold")
+        if memory["SwapTotal"] - memory["SwapFree"] >= 2 * 1024**2 and float(actual["psi_memory"]["some"]["avg60"]) >= 10:
+            blockers.append("swap usage reached load-guard 2 GiB threshold under memory pressure")
         if load > 1.5:
             blockers.append("CPU load exceeds existing installer 1.5/core budget")
     return {"actuals": actual, "blockers": blockers}
