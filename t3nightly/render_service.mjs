@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { homedir } from "node:os";
 
 const request = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const production = await import(pathToFileURL(`${request.tree}/apps/server/src/cloud/bootService.ts`).href);
@@ -8,7 +9,7 @@ const program = sandbox ? ["/usr/bin/env", ...Object.entries(request.environment
 const plan = { program, baseDir: request.home, logPath: request.log, unitPath: request.unit };
 if (request.connectorUnit) plan.connectorUnitPath = request.connectorUnit;
 const render = (plan) => request.platform === "darwin"
-  ? production.renderBootServicePlist(plan, { homeDir: request.home, environmentPath: request.environment.PATH })
+  ? production.renderBootServicePlist(plan, { homeDir: sandbox ? request.home : homedir(), environmentPath: request.environment.PATH })
   : production.renderBootServiceUnit(plan);
 let text;
 if (request.kind === "connector") {
