@@ -27,6 +27,7 @@ def main():
     parser.add_argument("--hot-swap", action="store_true")
     parser.add_argument("--rpc-tree", type=Path)
     parser.add_argument("--launcher-artifact", default="")
+    parser.add_argument("--old-launcher-artifact", default="")
     parser.add_argument("--connector-artifact", default="")
     parser.add_argument("--drain-s", type=int, default=300)
     parser.add_argument("--inject", choices=("none", "warm-death", "post-flip"), default="none")
