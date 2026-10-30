@@ -63,6 +63,8 @@ export interface SshChildEnvironmentOptions {
   readonly authSecret?: string | null;
 }
 
+export const SSH_RUNTIME_TEMP_PREFIX = "t3code-ssh-runtime-";
+
 const SSH_ASKPASS_DIR_NAME = "t3code-ssh-askpass";
 
 function joinSshAskpassPath(
@@ -106,7 +108,7 @@ const getDefaultSshAskpassDirectory = Effect.fn("ssh/auth.getDefaultSshAskpassDi
   function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const parentDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-ssh-runtime-" });
+    const parentDirectory = yield* fs.makeTempDirectoryScoped({ prefix: SSH_RUNTIME_TEMP_PREFIX });
     return path.join(parentDirectory, SSH_ASKPASS_DIR_NAME);
   },
 );

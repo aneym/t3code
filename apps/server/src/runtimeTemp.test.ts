@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 
+import { sweepStaleRuntimeTempDirectories } from "./runtimeTemp.ts";
 import { acquireServerOwnership } from "./serverOwnership.ts";
 import * as ProcessRunner from "./processRunner.ts";
 
@@ -44,13 +45,17 @@ it.effect("startup sweeps only expired owned runtime directories", () =>
     const statePath = path.join(baseDir, "userdata", "server-runtime.json");
     yield* Effect.scoped(acquireServerOwnership(statePath));
     for (const entry of cases) {
+      assert.equal(yield* fs.exists(path.join(tmp, entry.name)), true, entry.name);
+    }
+    yield* sweepStaleRuntimeTempDirectories(baseDir);
+    for (const entry of cases) {
       assert.equal(yield* fs.exists(path.join(tmp, entry.name)), entry.keep, entry.name);
     }
     assert.equal(yield* fs.readFileString(path.join(outside, "keep")), "other server");
     assert.equal(yield* fs.readLink(path.join(tmp, "t3code-ssh-runtime-link")), outside);
     assert.equal(yield* fs.exists(path.join(tmp, "t3code-ssh-runtime-file")), true);
     yield* fs.remove(tmp, { recursive: true });
-    yield* Effect.scoped(acquireServerOwnership(statePath));
+    yield* sweepStaleRuntimeTempDirectories(baseDir);
     assert.equal(yield* fs.exists(tmp), false);
   }).pipe(
     Effect.scoped,

@@ -29,7 +29,6 @@ import {
   serviceStateActiveVersion,
 } from "./cloud/serviceProtocol.ts";
 import * as ProcessRunner from "./processRunner.ts";
-import { sweepStaleRuntimeTempDirectories } from "./runtimeTemp.ts";
 import {
   clearPersistedServerRuntimeState,
   isProcessAlive,
@@ -258,8 +257,6 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
   if (olderServiceHome !== undefined) {
     return yield* new OlderBootServiceError({ baseDir: olderServiceHome });
   }
-
-  yield* sweepStaleRuntimeTempDirectories(NodePath.dirname(stateDir));
 
   yield* Effect.gen(function* () {
     let lost = lock.replacedDuringAcquire;

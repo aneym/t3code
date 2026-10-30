@@ -1,8 +1,11 @@
+import { SSH_RUNTIME_TEMP_PREFIX } from "@t3tools/ssh/auth";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+
+import { REPLAY_RUNTIME_TEMP_PREFIX } from "./orchestration-v2/testkit/replayTemp.ts";
 
 export const sweepStaleRuntimeTempDirectories = Effect.fn("sweepStaleRuntimeTempDirectories")(
   function* (baseDir: string) {
@@ -18,8 +21,8 @@ export const sweepStaleRuntimeTempDirectories = Effect.fn("sweepStaleRuntimeTemp
     );
     for (const name of entries) {
       if (
-        !name.startsWith("t3code-ssh-runtime-") &&
-        !name.startsWith("t3-orchestration-v2-replay-")
+        !name.startsWith(SSH_RUNTIME_TEMP_PREFIX) &&
+        !name.startsWith(REPLAY_RUNTIME_TEMP_PREFIX)
       ) {
         continue;
       }
