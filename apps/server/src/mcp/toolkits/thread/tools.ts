@@ -164,7 +164,11 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 const ThreadMoveTool = Tool.make("t3_thread_move", {
   ...commandTool,
   description: "Move an existing thread to another project.",
-  parameters: Schema.Struct({ threadId: ThreadId, projectId: ProjectId }),
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    threadId: ThreadId,
+    projectId: ProjectId,
+  }),
 }).annotate(Tool.Destructive, true);
 
 export const ThreadRestartResult = Schema.Struct({
