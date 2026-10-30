@@ -50,7 +50,7 @@ ln -sf "$here/build-tool" "$tool_bin/xcrun"
 } 2>&1 | python3 "$here/release_redact.py"
 sign_dir="$(mktemp -d "$TMPDIR/sign.XXXXXX")"
 dist_dir="$(mktemp -d "$TMPDIR/dist.XXXXXX")"
-trap '"$here/mac-signing-done" "$sign_dir"; rm -rf "${dist_dir:?}"' EXIT
+trap 'rm -rf "${dist_dir:?}"; "$here/mac-signing-done" "$sign_dir"' EXIT
 if ! signing_env=$("$here/mac-signing" "$sign_dir"); then
   echo "build-desktop: mac signing setup failed" >&2
   exit 4
