@@ -139,7 +139,7 @@ export class ServiceLauncherIngress {
     const server = this.#server;
     this.#server = undefined;
     this.#address = undefined;
-    if (server !== undefined) await new Promise<void>((resolve) => server.close(() => resolve()));
+    server?.close();
   }
 }
 

@@ -1,6 +1,13 @@
+import {
+  terminalUpdate,
+  sendMessage,
+  stopMarkerPath,
+  writeStopMarker,
+  restartPendingPath,
+} from "./serviceLauncherMessages.ts";
+import { waitForServiceReadiness } from "./serviceLauncherReadiness.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalTimers:off
-// The launcher must survive unloadable server versions; use Node built-ins without Effect.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -10,7 +17,6 @@ import type {
   PendingServiceUpdate,
   ServiceLauncherChildMessage,
   ServiceLauncherContext,
-  ServiceLauncherParentMessage,
   ServiceState,
   ServiceUpdateRecord,
 } from "./cloud/serviceProtocol.ts";
@@ -43,18 +49,11 @@ import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
-  SERVICE_RESTART_PENDING_FILE,
-  SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
-/**
- * Migrations count toward it and can scale with the database: tens of GB on a cold page cache
- * take minutes. A missed window rolls back the database, so the next attempt pays the same cost.
- */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
 
-type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
 
 interface ManagedChild {
@@ -75,40 +74,6 @@ import {
 } from "./serviceLauncherState.ts";
 export { readServiceState, writeServiceState } from "./serviceLauncherState.ts";
 
-function terminalUpdate<S extends TerminalStatus>(input: {
-  readonly pending: PendingServiceUpdate;
-  readonly status: S;
-  readonly reason?: string;
-}): Exclude<ServiceUpdateRecord, PendingServiceUpdate> & { readonly status: S } {
-  return {
-    id: input.pending.id,
-    fromVersion: input.pending.fromVersion,
-    targetVersion: input.pending.targetVersion,
-    status: input.status,
-    ...(input.reason === undefined ? {} : { reason: input.reason }),
-  };
-}
-
-function sendMessage(
-  child: NodeChildProcess.ChildProcess,
-  message: ServiceLauncherParentMessage,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (!child.connected || child.send === undefined) {
-      reject(new Error("service child IPC is disconnected."));
-      return;
-    }
-    child.send(message, (error) => (error === null ? resolve() : reject(error)));
-  });
-}
-
-const stopMarkerPath = (baseDir: string) =>
-  NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
-const writeStopMarker = (baseDir: string) =>
-  NodeFSP.writeFile(stopMarkerPath(baseDir), "", { mode: 0o600 }).catch(() => undefined);
-const restartPendingPath = (baseDir: string) =>
-  NodePath.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
-
 export class Launcher {
   readonly #baseDir: string;
   readonly #statePath: string;
@@ -120,6 +85,8 @@ export class Launcher {
   readonly #ingressConfig: LauncherIngressConfig | undefined;
   #timer: NodeJS.Timeout | undefined;
   #transitions: Promise<void> = Promise.resolve();
+  #routedInstance: string | undefined;
+  readonly #maintenanceVersions = new Set<string>();
   #canRollbackCommitted = false;
   #stopRequested = false;
   #stopping = false;
@@ -153,10 +120,7 @@ export class Launcher {
     process.once("SIGTERM", onSigterm);
     process.once("SIGINT", onSigint);
     try {
-      this.#enqueue(async () => {
-        await this.#recover();
-        process.send?.({ launcherReady: 1 });
-      });
+      this.#enqueue(() => this.#recover());
       await this.#completion.promise;
     } finally {
       await this.#ingress.close();
@@ -203,7 +167,6 @@ export class Launcher {
       });
       const marker = this.#guards.terminator.holdSignalsUntil(writeStopMarker(this.#baseDir));
       this.#clearTimer();
-      // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
       this.#enqueue(async () => {
         this.#stopping = true;
         this.#clearTimer();
@@ -226,7 +189,6 @@ export class Launcher {
   }
 
   async #recover(): Promise<void> {
-    // Clear old stop markers to preserve future tunnels; clear restart-pending only for the awaited version to avoid CLI races.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     const restartPending = restartPendingPath(this.#baseDir);
     const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
@@ -256,7 +218,10 @@ export class Launcher {
     const instanceId = NodeCrypto.randomUUID();
     let reservation: Awaited<ReturnType<typeof reserveServiceOwnership>> | undefined;
     try {
-      if (this.#ingressConfig !== undefined)
+      if (
+        this.#ingressConfig !== undefined &&
+        !this.#maintenanceVersions.has(pending.targetVersion)
+      )
         reservation = await reserveServiceOwnership(this.#baseDir, instanceId);
       await backupDatabaseOnce(this.#baseDir, pending);
     } catch {
@@ -288,7 +253,7 @@ export class Launcher {
     const context: ServiceLauncherContext = {
       protocol: SERVICE_LAUNCHER_PROTOCOL,
       childVersion: version,
-      ...(this.#ingressConfig === undefined
+      ...(this.#ingressConfig === undefined || this.#maintenanceVersions.has(version)
         ? {}
         : {
             hotSwap: {
@@ -349,6 +314,17 @@ export class Launcher {
       this.#enqueue(() => this.#handleExit(managed, code, signal)),
     );
 
+    void waitForServiceReadiness(
+      this.#baseDir,
+      child,
+      version,
+      () =>
+        this.#child === managed &&
+        managed.role === "active" &&
+        (!managed.capable || this.#routedInstance === managed.instanceId),
+    ).then((ready) => {
+      if (ready && this.#child === managed && !this.#stopping) process.send?.({ launcherReady: 1 });
+    });
     this.#guards.watch(this.#baseDir, child, () => this.#child === managed);
     if (role === "trial") {
       this.#timer = setTimeout(
@@ -360,6 +336,34 @@ export class Launcher {
 
   async #handleMessage(child: ManagedChild, message: ServiceLauncherChildMessage): Promise<void> {
     if ((this.#child !== child && this.#warming !== child) || this.#stopping) return;
+    if (message.type === "capability-rejected") {
+      this.#maintenanceVersions.add(child.version);
+      const pending = this.#state.update;
+      this.#warming = null;
+      this.#swap = undefined;
+      this.#clearTimer();
+      const active = this.#child;
+      this.#child = null;
+      await this.#guards.terminator.terminate(child.process);
+      if (active !== null && active !== child)
+        await this.#guards.terminator.terminate(active.process);
+      await this.#ingress.close();
+      await NodeFSP.rm(NodePath.join(this.#baseDir, "runtime", "ownership-grant.json"), {
+        force: true,
+      });
+      if (pending?.status === "pending") await this.#startTrial(pending);
+      else await this.#startChild(child.version, "active", pending);
+      return;
+    }
+    if (message.type === "freeze-aborted") {
+      if (
+        child === this.#child &&
+        this.#state.update?.status === "pending" &&
+        this.#state.update.id === message.updateId
+      )
+        await this.#dropWarm(message.reason, true);
+      return;
+    }
     if (message.type === "ingress-ready") {
       child.capable = true;
       if (
@@ -380,6 +384,7 @@ export class Launcher {
       if (child !== this.#child || child.role !== "active") return;
       await probeServiceChild(message.port, child.instanceId);
       this.#ingress.route(child.process);
+      this.#routedInstance = child.instanceId;
       return;
     }
     if (message.type === "warm") {
@@ -504,7 +509,6 @@ export class Launcher {
       await reject("The requested target runtime is missing or incomplete.");
       return;
     }
-    // Failed checks must refuse updates rather than stop the server with unknown backup capacity.
     const backupBlocker = await databaseBackupBlocker(
       this.#baseDir,
       message.dbPath,
@@ -584,29 +588,33 @@ export class Launcher {
     await writeServiceState(this.#statePath, next);
     this.#state = next;
     child.role = "active";
-    if (child.capable) this.#ingress.route(child.process);
+    if (child.capable) {
+      this.#ingress.route(child.process);
+      this.#routedInstance = child.instanceId;
+    }
     this.#guards.resetRetries();
     await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
     await sendMessage(child.process, { type: "committed", updateId: committed.id });
   }
 
-  async #dropWarm(reason: string): Promise<void> {
+  async #dropWarm(reason: string, resumeOld = false): Promise<void> {
     const pending = this.#state.update;
     const warm = this.#warming;
     const phase = this.#swap?.phase;
     this.#warming = null;
     this.#swap = undefined;
     this.#clearTimer();
+    if (resumeOld && this.#child !== null) this.#ingress.route(this.#child.process);
     if (warm !== null) await this.#guards.terminator.terminate(warm.process);
     if (pending?.status !== "pending") return;
-    if (phase === "relinquish" || this.#child === null) {
+    if ((!resumeOld && phase === "relinquish") || this.#child === null) {
       const old = this.#child;
       this.#child = null;
       if (old !== null) await this.#guards.terminator.terminate(old.process);
       await this.#returnToPrevious(pending, "rolled-back", reason);
       return;
     }
-    if (this.#child !== null && phase === "drain")
+    if (!resumeOld && this.#child !== null && phase === "drain")
       await sendMessage(this.#child.process, { type: "abort-drain", updateId: pending.id });
     const next: ServiceState = {
       ...this.#state,

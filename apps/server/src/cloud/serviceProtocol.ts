@@ -48,6 +48,12 @@ export interface ServiceConnectorFacts {
 }
 
 export type ServiceLauncherChildMessage =
+  | { readonly type: "capability-rejected"; readonly reason: "unsupported-hot-swap" }
+  | {
+      readonly type: "freeze-aborted";
+      readonly updateId: string;
+      readonly reason: "freeze-timeout" | "freeze-failed";
+    }
   | { readonly type: "socket-accepted"; readonly transferId: number }
   | { readonly type: "ingress-ready"; readonly host: string; readonly port: number }
   | { readonly type: "warm"; readonly updateId: string; readonly willMigrate: boolean }
@@ -256,27 +262,25 @@ export function decodeServiceLauncherContext(value: string): ServiceLauncherCont
   if (parsed.childVersion !== selectedVersion) {
     return undefined;
   }
+  if (
+    parsed.hotSwap !== undefined &&
+    !(
+      isRecord(parsed.hotSwap) &&
+      typeof parsed.hotSwap.instanceId === "string" &&
+      typeof parsed.hotSwap.warm === "boolean" &&
+      parsed.hotSwap.protocol === 1 &&
+      typeof parsed.hotSwap.publicHost === "string" &&
+      typeof parsed.hotSwap.publicPort === "number" &&
+      typeof parsed.hotSwap.holdBudgetMs === "number"
+    )
+  )
+    return undefined;
   return {
     protocol: SERVICE_LAUNCHER_PROTOCOL,
     childVersion: parsed.childVersion,
-    ...(isRecord(parsed.hotSwap) &&
-    typeof parsed.hotSwap.instanceId === "string" &&
-    typeof parsed.hotSwap.warm === "boolean" &&
-    parsed.hotSwap.protocol === 1 &&
-    typeof parsed.hotSwap.publicHost === "string" &&
-    typeof parsed.hotSwap.publicPort === "number" &&
-    typeof parsed.hotSwap.holdBudgetMs === "number"
-      ? {
-          hotSwap: {
-            instanceId: parsed.hotSwap.instanceId,
-            warm: parsed.hotSwap.warm,
-            protocol: parsed.hotSwap.protocol,
-            publicHost: parsed.hotSwap.publicHost,
-            publicPort: parsed.hotSwap.publicPort,
-            holdBudgetMs: parsed.hotSwap.holdBudgetMs,
-          },
-        }
-      : {}),
+    ...(parsed.hotSwap === undefined
+      ? {}
+      : { hotSwap: parsed.hotSwap as NonNullable<ServiceLauncherContext["hotSwap"]> }),
     ...(update === undefined ? {} : { update }),
   };
 }
@@ -285,6 +289,14 @@ export function decodeServiceLauncherChildMessage(
   value: unknown,
 ): ServiceLauncherChildMessage | undefined {
   if (!isRecord(value)) return undefined;
+  if (value.type === "capability-rejected" && value.reason === "unsupported-hot-swap")
+    return { type: value.type, reason: value.reason };
+  if (
+    value.type === "freeze-aborted" &&
+    typeof value.updateId === "string" &&
+    (value.reason === "freeze-timeout" || value.reason === "freeze-failed")
+  )
+    return { type: value.type, updateId: value.updateId, reason: value.reason };
   if (value.type === "socket-accepted" && typeof value.transferId === "number")
     return { type: value.type, transferId: value.transferId };
   if (
@@ -358,4 +370,17 @@ export function decodeServiceLauncherParentMessage(
   return value.type === "committed" && typeof value.updateId === "string"
     ? { type: value.type, updateId: value.updateId }
     : undefined;
+}
+
+export function unsupportedServiceHotSwap(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return (
+      isRecord(parsed) &&
+      Object.hasOwn(parsed, "hotSwap") &&
+      decodeServiceLauncherContext(value) === undefined
+    );
+  } catch {
+    return false;
+  }
 }
