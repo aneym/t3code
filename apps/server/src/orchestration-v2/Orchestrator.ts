@@ -14,6 +14,10 @@ import {
 } from "./ProviderThreadHistory.ts";
 import { restartDispatchAllowed } from "./RestartDispatchPolicy.ts";
 import {
+  makeThreadSelectionPlanner,
+  OrchestratorProviderAdapterError,
+} from "./ThreadSessionTransitions.ts";
+import {
   canReleaseQueueHold,
   clearQueueHold,
   inheritedQueueHold,
@@ -246,6 +250,7 @@ export class OrchestratorProjectionError extends Schema.TaggedError<Orchestrator
 }
 
 const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
+const isOrchestratorProviderAdapterError = Schema.is(OrchestratorProviderAdapterError);
 
 export class OrchestratorDomainEventStreamError extends Schema.TaggedError<OrchestratorDomainEventStreamError>()(
   "OrchestratorDomainEventStreamError",
@@ -255,19 +260,6 @@ export class OrchestratorDomainEventStreamError extends Schema.TaggedError<Orche
 ) {
   override get message(): string {
     return "Failed while streaming orchestration domain events.";
-  }
-}
-
-export class OrchestratorProviderAdapterError extends Schema.TaggedError<OrchestratorProviderAdapterError>()(
-  "OrchestratorProviderAdapterError",
-  {
-    commandId: CommandId,
-    providerInstanceId: ProviderInstanceId,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return `Provider adapter failed while dispatching orchestration command ${this.commandId}.`;
   }
 }
 
@@ -970,6 +962,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const providerSessions = yield* ProviderSessionManagerV2;
   const providerSwitchService = yield* ProviderSwitchServiceV2;
+  const planThreadSelectionChange = yield* makeThreadSelectionPlanner;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const queuedInputRelease = yield* makePendingInputQueueRelease();
   const runtimePolicy = yield* RuntimePolicyV2;
@@ -1655,32 +1648,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         activeProviderThread.providerInstanceId !== queuedRun.providerInstanceId;
       const switchPlan =
         selectionChanged || switchFromActiveProvider
-          ? yield* providerSwitchService
-              .plan({
-                projection: switchFromActiveProvider
-                  ? {
-                      ...projection,
-                      thread: {
-                        ...projection.thread,
-                        modelSelection: {
-                          ...projection.thread.modelSelection,
-                          instanceId: activeProviderThread.providerInstanceId,
-                        },
+          ? yield* planThreadSelectionChange({
+              commandId,
+              startingRunId: queuedRun.id,
+              projection: switchFromActiveProvider
+                ? {
+                    ...projection,
+                    thread: {
+                      ...projection.thread,
+                      modelSelection: {
+                        ...projection.thread.modelSelection,
+                        instanceId: activeProviderThread.providerInstanceId,
                       },
-                    }
-                  : projection,
-                targetModelSelection: queuedRun.modelSelection,
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestratorDispatchError({
-                      commandId,
-                      commandType: "message.dispatch",
-                      cause,
-                    }),
-                ),
-              )
+                    },
+                  }
+                : projection,
+              targetModelSelection: queuedRun.modelSelection,
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorDispatchError({
+                    commandId,
+                    commandType: "message.dispatch",
+                    cause,
+                  }),
+              ),
+            )
           : null;
       const canResumeAcrossInstances =
         switchPlan?.instanceChanged === true &&
@@ -3237,24 +3230,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       : null;
     const providerSwitchPlan =
       command.type === "thread.model-selection.set" || command.type === "provider.switch"
-        ? yield* Effect.gen(function* () {
-            yield* providerAdapters.get(command.modelSelection.instanceId).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestratorProviderAdapterError({
+        ? yield* planThreadSelectionChange({
+            commandId: command.commandId,
+            projection: providerContext!,
+            targetModelSelection: command.modelSelection,
+          }).pipe(
+            Effect.mapError((cause) =>
+              isOrchestratorProviderAdapterError(cause)
+                ? cause
+                : new OrchestratorDispatchError({
                     commandId: command.commandId,
-                    providerInstanceId: command.modelSelection.instanceId,
+                    commandType: command.type,
                     cause,
                   }),
-              ),
-            );
-            return yield* providerSwitchService
-              .plan({
-                projection: providerContext!,
-                targetModelSelection: command.modelSelection,
-              })
-              .pipe(mapDispatchError(command));
-          })
+            ),
+          )
         : null;
 
     const now = yield* DateTime.now;
@@ -6162,13 +6152,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const isProviderSwitch =
       activeProviderThread !== undefined &&
       activeProviderThread.providerInstanceId !== modelSelection.instanceId;
-    // Account overlays share native history. Selection commands may already
-    // have updated the app thread, so classify against the native thread's owner.
-    const canResumeAcrossInstances =
-      isProviderSwitch &&
-      activeProviderThread.nativeThreadRef !== null &&
-      (yield* providerSwitchService
-        .plan({
+    const instanceSwitchPlan = isProviderSwitch
+      ? yield* planThreadSelectionChange({
+          commandId: command.commandId,
           projection: {
             ...projection,
             thread: {
@@ -6180,8 +6166,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             },
           },
           targetModelSelection: modelSelection,
-        })
-        .pipe(mapDispatchError(command))).transition.type === "restart_and_resume";
+        }).pipe(mapDispatchError(command))
+      : null;
+    const canResumeAcrossInstances =
+      instanceSwitchPlan?.transition.type === "restart_and_resume" &&
+      activeProviderThread?.nativeThreadRef != null;
 
     if (
       pendingForkTransfer === undefined &&
@@ -7409,7 +7398,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
-    if (canResumeAcrossInstances && activeProviderThread.providerSessionId !== null) {
+    if (
+      canResumeAcrossInstances &&
+      activeProviderThread.providerSessionId !== null &&
+      instanceSwitchPlan?.releaseProviderSessionIds.includes(activeProviderThread.providerSessionId)
+    ) {
       const previousProviderSessionId = activeProviderThread.providerSessionId;
       yield* emitEvent({
         type: "provider-session.detached",
@@ -8301,7 +8294,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       completionWake: command.completionWake,
       updatedAt: now,
     };
-    // Finalization already offered for ended parent runs; another offer would duplicate the wake.
     const parentRun =
       task.runId === null
         ? undefined

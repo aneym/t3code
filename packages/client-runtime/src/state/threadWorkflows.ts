@@ -75,11 +75,19 @@ function resolveThreadProviderSession(projection: Projection): ProviderSession |
   const activeProviderThread =
     providerThreadId === null
       ? null
-      : (projection.providerThreads.find((thread) => thread.id === providerThreadId) ?? null);
+      : (projection.providerThreads.find(
+          (thread) =>
+            thread.id === providerThreadId &&
+            (activeRun !== null ||
+              thread.providerInstanceId === projection.thread.modelSelection.instanceId),
+        ) ?? null);
   const attachedProviderThread =
     activeProviderThread ??
     projection.providerThreads.find(
-      (thread) => thread.appThreadId === projection.thread.id && thread.providerSessionId !== null,
+      (thread) =>
+        thread.appThreadId === projection.thread.id &&
+        thread.providerInstanceId === projection.thread.modelSelection.instanceId &&
+        thread.providerSessionId !== null,
     ) ??
     null;
   const sessionId = attachedProviderThread?.providerSessionId ?? null;
@@ -88,7 +96,10 @@ function resolveThreadProviderSession(projection: Projection): ProviderSession |
   }
   return (
     projection.providerSessions.findLast(
-      (session) => session.status !== "stopped" && session.status !== "error",
+      (session) =>
+        session.providerInstanceId === projection.thread.modelSelection.instanceId &&
+        session.status !== "stopped" &&
+        session.status !== "error",
     ) ?? null
   );
 }
