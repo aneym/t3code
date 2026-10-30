@@ -1,3 +1,4 @@
+import { sessionsLiveAtStart, type RecoverySession } from "./RuntimeRecoverySessions.ts";
 import * as Duration from "effect/Duration";
 import { drainBeforeRestart } from "./RestartDrain.ts";
 import {
@@ -80,10 +81,6 @@ import type {
   ProviderRuntimeRecoverySummary,
   ProviderRuntimeReconciliationSummary,
 } from "./ProviderRuntimeRecoverySummary.ts";
-export type {
-  ProviderRuntimeRecoverySummary,
-  ProviderRuntimeReconciliationSummary,
-} from "./ProviderRuntimeRecoverySummary.ts";
 
 export class ProviderRuntimeRecoveryService extends Context.Service<
   ProviderRuntimeRecoveryService,
@@ -119,21 +116,6 @@ export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
-  type RecoverySession = ProjectionStore.ProjectionRuntimeRecoveryState["providerSessions"][number];
-  const sessionsLiveAtStart = (
-    projection: ProjectionStore.ProjectionRuntimeRecoveryState,
-    stoppedThisPass: ReadonlyMap<string, RecoverySession>,
-  ) => {
-    const sessions = new Map(projection.providerSessions.map((session) => [session.id, session]));
-    for (const providerThread of projection.providerThreads) {
-      const stopped =
-        providerThread.providerSessionId === null
-          ? undefined
-          : stoppedThisPass.get(providerThread.providerSessionId);
-      if (stopped !== undefined) sessions.set(stopped.id, stopped);
-    }
-    return [...sessions.values()];
-  };
 
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
     function* (
@@ -406,6 +388,7 @@ export const make = Effect.gen(function* () {
             candidate.runId === run.id &&
             (candidate.nodeId === null || !messageRequestNodeIds.has(candidate.nodeId)) &&
             !isAppOwnedDelegationItem(candidate) &&
+            // A link card waits on the user, not the run, and answers by message.
             candidate.type !== "link_request" &&
             (candidate.status === "pending" ||
               candidate.status === "running" ||
@@ -504,6 +487,7 @@ export const make = Effect.gen(function* () {
           })),
         );
       }
+      // Native subagent threads have no runs to settle their runless root turns.
       events.push(
         ...(yield* endRunlessRootTurns({
           threadId: projection.thread.id,
@@ -523,6 +507,7 @@ export const make = Effect.gen(function* () {
         }
         if (providerThread.ownerNodeId === null) {
           for (const task of providerThread.pendingBackgroundTasks ?? []) {
+            // A subagent already recorded covers the shells it started.
             if (
               cancelledBackgroundNativeIds.has(task.taskId) ||
               (task.parentTaskId !== undefined &&
@@ -564,6 +549,7 @@ export const make = Effect.gen(function* () {
       for (const [providerThreadId, work] of cancelledBackgroundWork) {
         const noteRun = latestStartedRun(projection, providerThreadId);
         if (noteRun === undefined) continue;
+        // Use a separate event; stale run snapshots can overwrite intervening lifecycle changes.
         events.push({
           id: yield* allocateEventId(),
           type: "run.background-work-cancelled",

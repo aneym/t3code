@@ -1,4 +1,4 @@
-import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
+import type { ServerSelfUpdateOutcome } from "@t3tools/contracts/serverLifecycle";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -14,10 +14,6 @@ import {
   type ServiceLauncherParentMessage,
 } from "./serviceProtocol.ts";
 
-export {
-  ServiceLauncherClientError,
-  ServiceLauncherRejectedError,
-} from "./serviceLauncherErrors.ts";
 import {
   ServiceLauncherClientError,
   ServiceLauncherRejectedError,

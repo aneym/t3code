@@ -27,7 +27,13 @@ export const assertServiceOwnershipGrant = Effect.fn("serviceOwnershipGrant.asse
           ),
         );
       } catch (cause) {
-        if (context === undefined && (cause as NodeJS.ErrnoException).code === "ENOENT") return;
+        if (
+          context === undefined &&
+          ((cause as NodeJS.ErrnoException).code === "ENOENT" ||
+            cause instanceof SyntaxError ||
+            !("code" in Object(cause)))
+        )
+          return;
         throw cause;
       }
       if (
@@ -36,8 +42,10 @@ export const assertServiceOwnershipGrant = Effect.fn("serviceOwnershipGrant.asse
         !("pid" in grant) ||
         typeof grant.pid !== "number" ||
         !("instanceId" in grant)
-      )
+      ) {
+        if (context === undefined) return;
         throw new Error("Invalid ownership reservation.");
+      }
       try {
         process.kill(grant.pid, 0);
       } catch (cause) {

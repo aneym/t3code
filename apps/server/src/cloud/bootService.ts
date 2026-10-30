@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import { pinLauncherArtifact } from "./launcherArtifact.ts";
+import { bootServiceUnitCurrent } from "./bootServiceComparison.ts";
 import { writeConnectorService, connectorServiceManager } from "./bootServiceConnector.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
@@ -878,10 +879,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ? serviceStateActiveVersion(stateText.value)
       : undefined;
     const installedBaseDir = bootServiceBaseDirOf(unit);
-    const normalizeUnit = (contents: string) =>
-      detectedManager.kind === "launchd"
-        ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
-        : contents;
     const problems: BootServiceProblem[] =
       detectedManager.kind === "systemd" ? [...(yield* readSystemdProblems(true))] : [];
     if (yield* fs.exists(restartPendingPath)) problems.push("restart-pending");
@@ -893,7 +890,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       problems,
       current:
         problems.length === 0 &&
-        normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
+        (yield* bootServiceUnitCurrent(detectedManager, unit, plan, input.baseDir).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        )) &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&

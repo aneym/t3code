@@ -1,4 +1,4 @@
-import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
+import type { ServerSelfUpdateOutcome } from "@t3tools/contracts/serverLifecycle";
 
 // Bump for incompatible runtime layout changes; launchers survive self-updates. Protocol 3 requires standalone executables.
 export const SERVICE_LAUNCHER_PROTOCOL = 3 as const;
@@ -55,6 +55,7 @@ export type ServiceLauncherChildMessage =
       readonly reason: "freeze-timeout" | "freeze-failed";
     }
   | { readonly type: "socket-accepted"; readonly transferId: number }
+  | { readonly type: "socket-returned"; readonly transferId: number; readonly prefix?: string }
   | { readonly type: "ingress-ready"; readonly host: string; readonly port: number }
   | { readonly type: "warm"; readonly updateId: string; readonly willMigrate: boolean }
   | { readonly type: "drained"; readonly updateId: string }
@@ -86,7 +87,7 @@ export type ServiceLauncherParentMessage =
   | { readonly type: "drain"; readonly updateId: string; readonly drainTimeoutMs: number }
   | { readonly type: "relinquish"; readonly updateId: string }
   | { readonly type: "abort-drain"; readonly updateId: string }
-  | { readonly type: "socket"; readonly transferId: number }
+  | { readonly type: "socket"; readonly transferId: number; readonly prefix?: string }
   | {
       readonly type: "update-accepted";
       readonly updateId: string;
@@ -297,8 +298,15 @@ export function decodeServiceLauncherChildMessage(
     (value.reason === "freeze-timeout" || value.reason === "freeze-failed")
   )
     return { type: value.type, updateId: value.updateId, reason: value.reason };
-  if (value.type === "socket-accepted" && typeof value.transferId === "number")
-    return { type: value.type, transferId: value.transferId };
+  if (
+    (value.type === "socket-accepted" || value.type === "socket-returned") &&
+    typeof value.transferId === "number"
+  )
+    return {
+      type: value.type,
+      transferId: value.transferId,
+      ...(typeof value.prefix === "string" ? { prefix: value.prefix } : {}),
+    };
   if (
     value.type === "ingress-ready" &&
     typeof value.host === "string" &&
@@ -349,7 +357,11 @@ export function decodeServiceLauncherParentMessage(
   if (!isRecord(value)) return undefined;
   if (value.type === "ingress-bound") return { type: value.type };
   if (value.type === "socket" && typeof value.transferId === "number")
-    return { type: value.type, transferId: value.transferId };
+    return {
+      type: value.type,
+      transferId: value.transferId,
+      ...(typeof value.prefix === "string" ? { prefix: value.prefix } : {}),
+    };
   if (
     (value.type === "acquire" || value.type === "relinquish" || value.type === "abort-drain") &&
     typeof value.updateId === "string"

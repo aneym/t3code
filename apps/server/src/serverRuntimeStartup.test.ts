@@ -7,8 +7,8 @@ import {
   ProviderDriverKind,
   CommandId,
   EnvironmentId,
-  type ServerLifecycleStreamEvent,
 } from "@t3tools/contracts";
+import { type ServerLifecycleStreamEvent } from "@t3tools/contracts/serverLifecycle";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { HttpServer } from "effect/http";

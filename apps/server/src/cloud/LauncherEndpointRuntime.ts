@@ -16,8 +16,11 @@ import type {
 } from "./ManagedEndpointRuntime.ts";
 import { pendingUpdateHandoffExists } from "./updateHandoff.ts";
 import * as ServerConfig from "../config.ts";
+import { CLOUD_ENDPOINT_RUNTIME_CONFIG } from "./config.ts";
 
-const Config = Schema.NullOr(Schema.Struct({ executable: Schema.String, token: Schema.String }));
+const Config = Schema.NullOr(
+  Schema.Struct({ executable: Schema.String, runtimeConfigPath: Schema.String }),
+);
 
 const encodeConfig = Schema.encodeEffect(Schema.fromJsonString(Config));
 
@@ -36,7 +39,7 @@ export const makeLauncherEndpointRuntime = Effect.fn("ServiceEndpointRuntime.mak
   const relayClient = yield* RelayClient.RelayClient;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { baseDir } = yield* ServerConfig.ServerConfig;
+  const { baseDir, secretsDir } = yield* ServerConfig.ServerConfig;
   const directory = path.join(baseDir, "runtime");
   const configPath = path.join(directory, "connector-config.json");
   const readStatus = fs.readFileString(path.join(directory, "connector-status.json")).pipe(
@@ -66,7 +69,10 @@ export const makeLauncherEndpointRuntime = Effect.fn("ServiceEndpointRuntime.mak
       };
     const contents = yield* encodeConfig(
       config !== null && executable?.status === "available"
-        ? { executable: executable.executablePath, token: config.connectorToken }
+        ? {
+            executable: executable.executablePath,
+            runtimeConfigPath: path.join(secretsDir, `${CLOUD_ENDPOINT_RUNTIME_CONFIG}.bin`),
+          }
         : null,
     ).pipe(Effect.orDie);
     const previous = yield* fs.readFileString(configPath).pipe(Effect.orElseSucceed(() => ""));
@@ -116,7 +122,8 @@ export const makeLauncherEndpointRuntime = Effect.fn("ServiceEndpointRuntime.mak
         if (config === null) return;
         const status = yield* readStatus;
         yield* Queue.offer(readiness, undefined);
-        if (status.facts?.readyConnections === 0) yield* Queue.offer(recovery, config);
+        if (status.pid === null || status.facts?.readyConnections === 0)
+          yield* Queue.offer(recovery, config);
         else if (
           status.facts?.readyConnections !== null &&
           status.facts !== null &&

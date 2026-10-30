@@ -15,24 +15,26 @@ export async function runLauncherWatchdog(executable: string): Promise<void> {
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);
   try {
-    for (let attempt = 0; attempt < 2; attempt++) {
+    let restored = false;
+    for (;;) {
       if (stopped) return;
       const current = NodeChildProcess.spawn(executable, ["__service-launcher"], {
         stdio: ["inherit", "inherit", "inherit", "ipc"],
       });
       child = current;
-      let qualified = false;
+      let reachedLauncher = false;
       const timer = setTimeout(() => {
-        if (!qualified) void terminator.terminate(current);
-      }, 30_000);
+        if (!reachedLauncher) void terminator.terminate(current);
+      }, 300_000);
       current.on("message", (message: unknown) => {
         if (
           typeof message === "object" &&
           message !== null &&
-          "launcherReady" in message &&
-          message.launcherReady === 1
+          (("launcherStarted" in message && message.launcherStarted === 1) ||
+            ("launcherChildSpawned" in message && message.launcherChildSpawned === 1) ||
+            ("launcherReady" in message && message.launcherReady === 1))
         ) {
-          qualified = true;
+          reachedLauncher = true;
           clearTimeout(timer);
         }
       });
@@ -41,14 +43,17 @@ export async function runLauncherWatchdog(executable: string): Promise<void> {
         current.once("error", () => resolve(1));
       });
       clearTimeout(timer);
-      if (stopped || qualified || attempt === 1) {
-        process.exitCode = stopped ? 0 : code;
+      if (stopped || code === 0) {
+        process.exitCode = 0;
         return;
       }
-      const temporary = `${executable}.restore`;
-      await NodeFSP.copyFile(`${executable}.lkg`, temporary);
-      await NodeFSP.chmod(temporary, 0o755);
-      await NodeFSP.rename(temporary, executable);
+      if (!reachedLauncher && !restored) {
+        const temporary = `${executable}.restore`;
+        await NodeFSP.copyFile(`${executable}.lkg`, temporary);
+        await NodeFSP.chmod(temporary, 0o755);
+        await NodeFSP.rename(temporary, executable);
+        restored = true;
+      } else await new Promise<void>((resolve) => setTimeout(resolve, 5_000));
     }
   } finally {
     process.off("SIGTERM", stop);

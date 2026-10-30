@@ -1,3 +1,4 @@
+import { exitUnlessInterrupted } from "./supervisorAttempt.ts";
 import { makeHandoffWindow } from "./handoff.ts";
 import { availableState, offlineState, connectingState } from "./supervisorState.ts";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
@@ -117,16 +118,6 @@ type EstablishmentEvent =
     }
   | { readonly _tag: "Interrupted"; readonly resetRetry: boolean }
   | { readonly _tag: "TimedOut" };
-
-function exitUnlessInterrupted<A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<Exit.Exit<A, E>, never, R> {
-  return Effect.matchCauseEffect(effect, {
-    onFailure: (cause) =>
-      Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Exit.failCause(cause)),
-    onSuccess: (value) => Effect.succeed(Exit.succeed(value)),
-  });
-}
 
 export interface EnvironmentSupervisorOptions {
   readonly initiallyDesired?: boolean;
@@ -999,6 +990,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           resetRetryLadder();
           replacing = true;
         }
+        yield* handoff.pause;
         continue;
       }
 
@@ -1029,6 +1021,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       if (yield* handoff.active) {
         resetRetryLadder();
         replacing = true;
+        yield* handoff.pause;
         continue;
       }
 

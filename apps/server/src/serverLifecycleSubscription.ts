@@ -1,4 +1,4 @@
-import type { ServerLifecycleStreamEvent } from "@t3tools/contracts";
+import type { ServerLifecycleStreamEvent } from "@t3tools/contracts/serverLifecycle";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -13,7 +13,10 @@ export const subscribeServerLifecycle = (
       yield* registerHandoffClient(input.handoffClientId);
       const liveBuffer = yield* Queue.unbounded<ServerLifecycleStreamEvent>();
       yield* Effect.forkScoped(
-        lifecycleEvents.stream.pipe(Stream.runForEach((event) => Queue.offer(liveBuffer, event))),
+        lifecycleEvents.stream.pipe(
+          Stream.filter((event) => event.type !== "handoff" || input.handoffClientId !== undefined),
+          Stream.runForEach((event) => Queue.offer(liveBuffer, event)),
+        ),
         { startImmediately: true },
       );
       const snapshot = yield* lifecycleEvents.snapshot;
@@ -21,7 +24,7 @@ export const subscribeServerLifecycle = (
         (left, right) => left.sequence - right.sequence,
       );
       const liveEvents = Stream.fromQueue(liveBuffer).pipe(
-        Stream.filter((event) => event.sequence > snapshot.sequence),
+        Stream.filter((event) => event.type === "handoff" || event.sequence > snapshot.sequence),
       );
       return Stream.concat(Stream.fromArray(snapshotEvents), liveEvents);
     }),

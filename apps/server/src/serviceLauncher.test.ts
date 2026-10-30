@@ -8,14 +8,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
+import { Launcher, main } from "./serviceLauncher.ts";
+import { databaseBackupBlocker, type BackupSpaceProbe } from "./serviceLauncherDatabase.ts";
 import {
-  databaseBackupBlocker,
-  Launcher,
-  main,
-  type BackupSpaceProbe,
-  readServiceState,
-  writeServiceState,
-} from "./serviceLauncher.ts";
+  readServiceState as readState,
+  writeServiceState as writeState,
+} from "./serviceLauncherState.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
@@ -139,17 +137,14 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         "setInterval(() => {}, 1_000);\n",
       );
       yield* Effect.promise(() =>
-        writeServiceState(statePath, {
+        writeState(statePath, {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.0.0",
         }),
       );
       const run = () =>
         Effect.gen(function* () {
-          const launcher = new Launcher(
-            root,
-            yield* Effect.promise(() => readServiceState(statePath)),
-          );
+          const launcher = new Launcher(root, yield* Effect.promise(() => readState(statePath)));
           const running = launcher.run();
           yield* Effect.promise(() => launcher.stop("SIGTERM"));
           yield* Effect.promise(() => running);
@@ -178,7 +173,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         `process.send({type:"state-dir-owned"},()=>process.exit(78));\n`,
       );
       yield* Effect.promise(() =>
-        writeServiceState(statePath, {
+        writeState(statePath, {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.0.0",
         }),
@@ -193,7 +188,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         ),
         (spy) => Effect.sync(() => spy.mockRestore()),
       );
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = new Launcher(root, yield* Effect.promise(() => readState(statePath)));
       let completed = false;
       const running = launcher.run().finally(() => {
         completed = true;
@@ -238,13 +233,13 @@ if (context.update?.status === "pending") {
         );
       }
       yield* Effect.promise(() =>
-        writeServiceState(statePath, {
+        writeState(statePath, {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.0.0",
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = new Launcher(root, yield* Effect.promise(() => readState(statePath)));
       yield* Effect.promise(() =>
         launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
@@ -252,7 +247,7 @@ if (context.update?.status === "pending") {
         ),
       );
 
-      const state = yield* Effect.promise(() => readServiceState(statePath));
+      const state = yield* Effect.promise(() => readState(statePath));
       assert.equal(state.activeVersion, "1.1.0");
       assert.equal(state.update?.status, "committed");
     }),
@@ -300,7 +295,7 @@ if (context.update?.status === "pending") {
         );
       }
       yield* Effect.promise(() =>
-        writeServiceState(statePath, {
+        writeState(statePath, {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.0.0",
         }),
@@ -313,7 +308,7 @@ if (context.update?.status === "pending") {
         ),
       );
 
-      const state = yield* Effect.promise(() => readServiceState(statePath));
+      const state = yield* Effect.promise(() => readState(statePath));
       assert.equal(state.activeVersion, "1.0.0");
       assert.equal(state.update?.status, "rolled-back");
       assert.equal(
@@ -382,16 +377,13 @@ if (context.update?.status === "pending") {
           );
         }
         yield* Effect.promise(() =>
-          writeServiceState(statePath, {
+          writeState(statePath, {
             protocol: SERVICE_LAUNCHER_PROTOCOL,
             activeVersion: "1.0.0",
           }),
         );
 
-        const launcher = new Launcher(
-          root,
-          yield* Effect.promise(() => readServiceState(statePath)),
-        );
+        const launcher = new Launcher(root, yield* Effect.promise(() => readState(statePath)));
         yield* Effect.promise(() =>
           launcher.run().then(
             () => Promise.reject(new Error("launcher unexpectedly completed")),
@@ -399,7 +391,7 @@ if (context.update?.status === "pending") {
           ),
         );
 
-        const state = yield* Effect.promise(() => readServiceState(statePath));
+        const state = yield* Effect.promise(() => readState(statePath));
         assert.equal(state.activeVersion, "1.0.0");
         assert.equal(state.update?.status, "rolled-back");
         assert.equal(yield* fs.readFileString(databaseFile), original);
@@ -454,17 +446,15 @@ if (context.update?.status === "pending") {
         );
       }
       yield* Effect.promise(() =>
-        writeServiceState(statePath, {
+        writeState(statePath, {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.0.0",
         }),
       );
 
-      const launcher = new Launcher(
-        root,
-        yield* Effect.promise(() => readServiceState(statePath)),
-        { backupSpaceProbe },
-      );
+      const launcher = new Launcher(root, yield* Effect.promise(() => readState(statePath)), {
+        backupSpaceProbe,
+      });
       yield* Effect.promise(() =>
         launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
@@ -475,7 +465,7 @@ if (context.update?.status === "pending") {
       return {
         reason: yield* fs.readFileString(replyPath),
         trialStarted: yield* fs.exists(trialMarker),
-        state: yield* Effect.promise(() => readServiceState(statePath)),
+        state: yield* Effect.promise(() => readState(statePath)),
       };
     });
 
@@ -536,26 +526,22 @@ setInterval(() => {}, 1_000);
         );
       }
       yield* Effect.promise(() =>
-        writeServiceState(statePath, {
+        writeState(statePath, {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.0.0",
         }),
       );
-      const launcher = new Launcher(
-        root,
-        yield* Effect.promise(() => readServiceState(statePath)),
-        {
-          backupSpaceProbe: {
-            readFreeBytes: () => {
-              const child = spawnedChildren.at(-1)!;
-              return new Promise((resolve) => {
-                if (!child.connected) resolve(Number.MAX_SAFE_INTEGER);
-                else child.once("disconnect", () => resolve(Number.MAX_SAFE_INTEGER));
-              });
-            },
+      const launcher = new Launcher(root, yield* Effect.promise(() => readState(statePath)), {
+        backupSpaceProbe: {
+          readFreeBytes: () => {
+            const child = spawnedChildren.at(-1)!;
+            return new Promise((resolve) => {
+              if (!child.connected) resolve(Number.MAX_SAFE_INTEGER);
+              else child.once("disconnect", () => resolve(Number.MAX_SAFE_INTEGER));
+            });
           },
         },
-      );
+      });
       const failure = yield* Effect.promise(() =>
         launcher.run().then(
           () => new Error("launcher unexpectedly completed"),
@@ -564,7 +550,7 @@ setInterval(() => {}, 1_000);
       );
 
       assert.include(failure.message, "Active child exited unexpectedly (3)");
-      const state = yield* Effect.promise(() => readServiceState(statePath));
+      const state = yield* Effect.promise(() => readState(statePath));
       assert.equal(state.activeVersion, "1.0.0");
       assert.isUndefined(state.update);
     }),

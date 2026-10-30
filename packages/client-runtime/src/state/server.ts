@@ -3,14 +3,16 @@ import {
   type ProviderInstanceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
-  type ServerLifecycleWelcomePayload,
-  type ServerLifecycleStreamReadyEvent,
   type ServerProviderWorkspaceSnapshot,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
   shouldRecommendDatabaseCompaction,
   WS_METHODS,
 } from "@t3tools/contracts";
+import {
+  type ServerLifecycleWelcomePayload as WelcomePayload,
+  type ServerLifecycleStreamReadyEvent as ReadyEvent,
+} from "@t3tools/contracts/serverLifecycle";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
@@ -137,7 +139,7 @@ const SERVER_UPDATE_RESUME_TIMEOUT = Duration.minutes(32);
 
 export function matchesServerUpdateReadyEvent(
   result: ServerSelfUpdateResult,
-  event: ServerLifecycleStreamReadyEvent,
+  event: ReadyEvent,
 ): boolean {
   return result.updateId === undefined
     ? event.payload.environment.serverVersion === result.targetVersion
@@ -146,7 +148,7 @@ export function matchesServerUpdateReadyEvent(
 
 export function matchesServerUpdateResumeEvent(
   result: ServerSelfUpdateResult,
-  event: ServerLifecycleStreamReadyEvent,
+  event: ReadyEvent,
 ): boolean {
   return (
     (result.method === "desktop-app" && result.desktopUpdateToken !== undefined) ||
@@ -156,7 +158,7 @@ export function matchesServerUpdateResumeEvent(
 
 export function validateServerUpdateReadyEvent(
   result: ServerSelfUpdateResult,
-  event: ServerLifecycleStreamReadyEvent,
+  event: ReadyEvent,
 ): Effect.Effect<void, ServerUpdateTerminalError> {
   if (result.updateId === undefined) return Effect.void;
   const outcome = event.payload.updateOutcome;
@@ -255,9 +257,9 @@ export const waitForDesktopUpdateTarget = Effect.fn("waitForDesktopUpdateTarget"
   ECommit,
 >(
   targetVersion: string,
-  nextReady: Effect.Effect<ServerLifecycleStreamReadyEvent, EReady>,
+  nextReady: Effect.Effect<ReadyEvent, EReady>,
   retryCommit: Effect.Effect<void, ECommit>,
-): Effect.fn.Return<ServerLifecycleStreamReadyEvent, EReady | ECommit | ServerUpdateTerminalError> {
+): Effect.fn.Return<ReadyEvent, EReady | ECommit | ServerUpdateTerminalError> {
   const maxCommitAttempts = 3;
   for (let attempt = 1; attempt <= maxCommitAttempts; attempt += 1) {
     const ready = yield* nextReady;
@@ -536,7 +538,7 @@ export function applyServerWelcomeEvent(
     ? {
         ...current,
         welcomeSession: session,
-        welcome: event.payload as ServerLifecycleWelcomePayload,
+        welcome: event.payload as WelcomePayload,
       }
     : current;
 }
@@ -544,12 +546,12 @@ export function applyServerWelcomeEvent(
 export interface EnvironmentServerWelcomeState {
   readonly currentSession: RpcSession | null;
   readonly welcomeSession: RpcSession | null;
-  readonly welcome: ServerLifecycleWelcomePayload | null;
+  readonly welcome: WelcomePayload | null;
 }
 
 export function resolveServerWelcomeState(
   state: EnvironmentServerWelcomeState,
-): ServerLifecycleWelcomePayload | null {
+): WelcomePayload | null {
   return state.currentSession === state.welcomeSession ? state.welcome : null;
 }
 
@@ -987,7 +989,7 @@ export function createServerEnvironmentAtoms<R, E>(
           .followStream(target.environmentId, subscribe(WS_METHODS.subscribeServerLifecycle, {}))
           .pipe(
             Stream.filter(
-              (event): event is ServerLifecycleStreamReadyEvent =>
+              (event): event is ReadyEvent =>
                 event.type === "ready" && matchesServerUpdateResumeEvent(result, event),
             ),
             Stream.runHead,
@@ -1108,7 +1110,7 @@ export function createServerEnvironmentAtoms<R, E>(
       const result = get(welcomeStateFamily(environmentId));
       if (result._tag !== "Success") return result;
       return result.value === null
-        ? AsyncResult.initial<ServerLifecycleWelcomePayload, never>(result.waiting)
+        ? AsyncResult.initial<WelcomePayload, never>(result.waiting)
         : AsyncResult.success(result.value, result);
     }).pipe(Atom.withLabel(`environment-data:server:welcome:${environmentId}`)),
   );

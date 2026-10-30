@@ -6,9 +6,9 @@ import {
   UsageLimitSourceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
-  type ServerLifecycleWelcomePayload,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { type ServerLifecycleWelcomePayload as WelcomePayload } from "@t3tools/contracts/serverLifecycle";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -672,10 +672,10 @@ describe("server state projection", () => {
     const firstSession = session({} as WsRpcProtocolClient);
     const secondSession = session({} as WsRpcProtocolClient);
     const welcome = {
-      environment: {} as ServerLifecycleWelcomePayload["environment"],
+      environment: {} as WelcomePayload["environment"],
       cwd: "/repo",
       projectName: "repo",
-    } as ServerLifecycleWelcomePayload;
+    } as WelcomePayload;
     const initial = {
       currentSession: firstSession,
       welcomeSession: firstSession,
@@ -728,10 +728,10 @@ describe("server state projection", () => {
         retryNow: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const staleWelcome = {
-        environment: {} as ServerLifecycleWelcomePayload["environment"],
+        environment: {} as WelcomePayload["environment"],
         cwd: "/stale",
         projectName: "stale",
-      } as ServerLifecycleWelcomePayload;
+      } as WelcomePayload;
 
       yield* Effect.scoped(
         Effect.gen(function* () {
@@ -841,24 +841,22 @@ describe("server state projection", () => {
         retryNow: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const firstWelcome = {
-        environment: {} as ServerLifecycleWelcomePayload["environment"],
+        environment: {} as WelcomePayload["environment"],
         cwd: "/first",
         projectName: "first",
-      } as ServerLifecycleWelcomePayload;
+      } as WelcomePayload;
       const secondWelcome = {
-        environment: {} as ServerLifecycleWelcomePayload["environment"],
+        environment: {} as WelcomePayload["environment"],
         cwd: "/second",
         projectName: "second",
-      } as ServerLifecycleWelcomePayload;
+      } as WelcomePayload;
 
       yield* Effect.scoped(
         Effect.gen(function* () {
           const state = yield* makeEnvironmentServerWelcomeState().pipe(
             Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
           );
-          const nextResolved = (
-            predicate: (value: ServerLifecycleWelcomePayload | null) => boolean,
-          ) =>
+          const nextResolved = (predicate: (value: WelcomePayload | null) => boolean) =>
             SubscriptionRef.changes(state).pipe(
               Stream.map(resolveServerWelcomeState),
               Stream.filter(predicate),
