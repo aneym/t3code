@@ -76,8 +76,7 @@ import Migration0069 from "./Migrations/069_ThreadMessageSearch.ts";
 import Migration0070 from "./Migrations/070_PeerLinks.ts";
 import Migration0071 from "./Migrations/071_PeerLinkFence.ts";
 import Migration0072 from "./Migrations/072_WaitingLinkRequestIndex.ts";
-import Migration0073 from "./Migrations/073_ProjectionThreadAutomationPlacement.ts";
-import Migration0074 from "./Migrations/074_ProjectionProjectsPinOrder.ts";
+import Migration0073 from "./Migrations/073_ActiveTurnItemIndexes.ts";
 import { runForkMigrations } from "./ForkMigrations.ts";
 
 const migrationEntries = [
@@ -154,8 +153,7 @@ const migrationEntries = [
   [70, "PeerLinks", Migration0070],
   [71, "PeerLinkFence", Migration0071],
   [72, "WaitingLinkRequestIndex", Migration0072],
-  [73, "ProjectionThreadAutomationPlacement", Migration0073],
-  [74, "ProjectionProjectsPinOrder", Migration0074],
+  [73, "ActiveTurnItemIndexes", Migration0073],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

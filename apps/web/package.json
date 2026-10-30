@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/web",
-  "version": "0.1.4-nightly.20261027.3770.aneym.8",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "scripts": {

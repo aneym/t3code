@@ -160,12 +160,6 @@ export function ThreadAutomationsPanel(props: {
         marked={thread?.automationTaskId != null}
         bound={boundTasks.length > 0}
       />
-      {tasksQuery.error !== null ? (
-        <p className="px-2.5 py-1.5 text-2xs text-destructive">
-          Could not load automations: {tasksQuery.error}
-        </p>
-      ) : null}
-
       <ul className="m-0 list-none p-0">
         {boundTasks.map((task) => (
           <li
@@ -249,6 +243,12 @@ export function ThreadAutomationsPanel(props: {
           </li>
         ))}
       </ul>
+      {/* Kept last: the details card treats a section whose last child is empty as empty. */}
+      {tasksQuery.error !== null ? (
+        <p className="px-2.5 py-1.5 text-2xs text-destructive">
+          Could not load automations: {tasksQuery.error}
+        </p>
+      ) : null}
     </ThreadDetailsSection>
   );
 }

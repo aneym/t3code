@@ -1,3 +1,5 @@
+import { RegistryContext } from "@effect/atom-react";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
@@ -11,7 +13,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
 
 const environmentId = EnvironmentId.make("laptop");
@@ -39,12 +41,28 @@ const task: ScheduledTask = {
   runCount: 0,
 };
 
-const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true, health: false }));
+const state = vi.hoisted(() => ({
+  connected: true,
+  tasksLoaded: true,
+  health: false,
+  secondary: false,
+}));
+const secondaryId = EnvironmentId.make("secondary");
+const permissions = new Map<string, Atom.Writable<boolean>>();
 
 function setup() {
   state.connected = true;
   state.tasksLoaded = true;
   state.health = false;
+  state.secondary = false;
+  permissions.clear();
+  permissions.set(environmentId, Atom.make(true));
+  permissions.set(secondaryId, Atom.make(true));
+  permissions.set("", Atom.make(false));
+}
+
+function secondaryEnvironment() {
+  return { ...environment(), environmentId: secondaryId, label: "Secondary" };
 }
 
 function environment() {
@@ -61,8 +79,12 @@ vi.mock(import("./SettingsScopeContext"), async (original) => {
     const entry = environment();
     return {
       scope: { kind: "all", label: "All", members: [], environmentIds: [environmentId] },
-      environments: [entry],
-      connectedEnvironments: state.connected ? [entry] : [],
+      environments: state.secondary ? [entry, secondaryEnvironment()] : [entry],
+      connectedEnvironments: state.connected
+        ? state.secondary
+          ? [entry, secondaryEnvironment()]
+          : [entry]
+        : [],
       environment: entry,
       target: null,
       targets: [],
@@ -75,15 +97,14 @@ vi.mock(import("./SettingsScopeContext"), async (original) => {
 });
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
-  const { Atom } = await import("effect/reactivity");
-  const allowed = Atom.make(true);
+
   return {
     ...actual,
     serverEnvironment: {
       ...actual.serverEnvironment,
       upsertScheduledTask: {
         ...actual.serverEnvironment.upsertScheduledTask,
-        permissionAtom: () => allowed,
+        permissionAtom: (id: string | null) => permissions.get(id ?? "")!,
       },
     },
   };
@@ -125,7 +146,8 @@ vi.mock(import("../../state/query"), async (original) => ({
 }));
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
-  useEnvironment: (() => environment()) as never,
+  useEnvironment: ((id: EnvironmentId) =>
+    id === secondaryId ? secondaryEnvironment() : environment()) as never,
 }));
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
@@ -160,6 +182,42 @@ describe("ScheduledTasksSettings", () => {
     await expect
       .element(screen.getByRole("link", { name: "Bound thread" }))
       .toHaveAttribute("href", "/laptop/bound");
+  });
+
+  it("creates on a permitted secondary and reacts to permission changes", async () => {
+    setup();
+    state.secondary = true;
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    registry.set(permissions.get(environmentId)!, false);
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <ScheduledTasksSettings />
+      </RegistryContext.Provider>,
+    );
+    const create = screen.getByRole("button", { name: "New task" });
+    await expect.element(create).toBeEnabled();
+    await act(() => registry.set(permissions.get(secondaryId)!, false));
+    await expect.element(create).toBeDisabled();
+    await act(() => registry.set(permissions.get(secondaryId)!, true));
+    await expect.element(create).toBeEnabled();
+    await create.click();
+    await expect.element(page.getByLabelText("Runs on")).toHaveTextContent("Secondary");
+  });
+
+  it("keeps the permitted representative as the creation target", async () => {
+    setup();
+    state.secondary = true;
+    await using screen = await render(<ScheduledTasksSettings />);
+    await screen.getByRole("button", { name: "New task" }).click();
+    await expect.element(page.getByLabelText("Runs on")).toHaveTextContent("Laptop");
+  });
+
+  it("disables creation without a connected target", async () => {
+    setup();
+    state.connected = false;
+    await using screen = await render(<ScheduledTasksSettings />);
+    await expect.element(screen.getByRole("button", { name: "New task" })).toBeDisabled();
   });
 
   it("keeps a linked task's unsaved edits across a disconnect and reconnect", async () => {

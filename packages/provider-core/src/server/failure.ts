@@ -198,7 +198,7 @@ export function redactProviderFailureText(value: string): string {
       "$1[REDACTED]$2",
     )
     .replace(
-      /(\b(?!(?:tokenizer|passwordless|max_tokens|token_count|secretary)\b)[\w-]*(?:access[_-]?(?:token|key)|api[_-]?key|private[_-]?key|authorization|(?:credential|password|secret|token)[\w-]*)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
+      /((?<![\w-])(?!(?:tokenizer|passwordless|max_tokens|token_count|secretary)\b)[\w-]*(?:access[_-]?(?:token|key)|api[_-]?key|private[_-]?key|authorization|(?:credential|password|secret|token)[\w-]*)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
       "$1[REDACTED]",
     )
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/gu, "[REDACTED]")

@@ -15,6 +15,6 @@ export const reconcileForkMigrationIds = Effect.fn("reconcileForkMigrationIds")(
   `;
   yield* sql`
     DELETE FROM effect_sql_migrations
-    WHERE migration_id IN (70, 71) AND name IN ${sql.in(forkMigrationNames)}
+    WHERE migration_id IN (70, 71, 73, 74) AND name IN ${sql.in(forkMigrationNames)}
   `;
 });

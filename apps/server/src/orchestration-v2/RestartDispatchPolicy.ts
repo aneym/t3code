@@ -6,6 +6,7 @@ import {
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   cancelledBeforeStart,
+  continuationFailedBeforePrompt,
   isRestartContinuationSource,
   restartNoteOwed,
 } from "./RestartBackgroundNote.ts";
@@ -97,7 +98,8 @@ export function restartDispatchRefusal(
   if (
     !(prepared
       ? source.status === "cancelled" || restartNoteOwed(source, projection.providerTurns)
-      : isRestartContinuationSource(source, projection.providerTurns))
+      : isRestartContinuationSource(source, projection.providerTurns) ||
+        continuationFailedBeforePrompt(source, projection.providerTurns))
   )
     return "not_restartable";
   if (projection.thread.archivedAt !== null) return "archived";
