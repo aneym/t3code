@@ -46,9 +46,12 @@ def ensure_connector(run):
         else:
             shutil.copytree(source, destination, symlinks=True)
     label, path = identity(run)
-    paths = [entry for entry in os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep) if not str(Path(entry).resolve()).startswith("/Volumes/")]
+    sandbox = run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal."))
+    paths = os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep)
+    if sandbox:
+        paths = [entry for entry in paths if not str(Path(entry).resolve()).startswith("/Volumes/")]
     environment = {"PATH": os.pathsep.join(paths), "T3CODE_HOME": str(run.home)}
-    if run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal.")):
+    if sandbox:
         environment["HOME"] = str(run.home)
     if not run.args.rpc_tree:
         raise ValueError("connector unit installation requires --rpc-tree for production renderers")

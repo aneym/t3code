@@ -49,7 +49,7 @@ def labels(path):
     if command.is_file():
         argv = json.loads(command.read_text())
         result.add(argv[argv.index("--label") + 1].removesuffix(".service"))
-    if not result or any(not re.fullmatch(r"(?:com\.)?t3-rehearsal[.-][A-Za-z0-9_.-]+", label) for label in result):
+    if any(not re.fullmatch(r"(?:com\.)?t3-rehearsal[.-][A-Za-z0-9_.-]+", label) for label in result):
         raise ValueError("missing or unsafe sandbox unit identity")
     return result | {label + "-connector" for label in result}
 
@@ -99,8 +99,15 @@ def prune_to(limit, run):
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 if running(path):
                     raise ValueError("recorded rehearsal process group is still running")
-                if any(loaded(label) for label in labels(path)):
-                    raise ValueError("sandbox unit still loaded")
+                from .rehearsal_units import unload
+                from .rehearsal_waiter import cleanup
+
+                for label in sorted(labels(path), key=lambda value: not value.endswith("-connector")):
+                    if loaded(label):
+                        unload(path / "home", label)
+                    if loaded(label):
+                        raise ValueError("sandbox unit remained loaded after recorded-identity teardown")
+                cleanup(path / "home", path / "gate-waiters")
                 home = path / "home"
                 if home.is_symlink() or home.resolve() != home or home.stat().st_uid != os.getuid():
                     raise ValueError("sandbox home identity changed")
@@ -133,6 +140,10 @@ def create_home(sandbox):
         after_prune = len(homes())
         if after_prune > 1:
             raise ValueError("rehearsal refused before creating home: older homes are still live or unsafe to prune: " + json.dumps(report["held"]))
+        target = run / "rehearsal-target.json"
+        staged = target.with_suffix(".next")
+        staged.write_text(json.dumps({"home": str(sandbox.home), "label": sandbox.label, "port": sandbox.port}) + "\n")
+        os.replace(staged, target)
         sandbox.home.mkdir(mode=0o700)
         receipt = {"at": report["at"], "beforeHomes": before, "afterPruneHomes": after_prune, "afterCreationHomes": len(homes()), "retention": report, "disk": disk}
         (run / "home-creation.json").write_text(json.dumps(receipt, indent=2) + "\n")

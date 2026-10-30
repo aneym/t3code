@@ -42,7 +42,7 @@ def finish(run):
 def running(run):
     path = run / ".rehearsal-process.json"
     if not path.exists():
-        if not (run / "evidence/result.json").is_file():
+        if not (run / "evidence/result.json").is_file() and (run / "rehearsal-target.json").exists():
             raise ValueError("rehearsal has no completed result or recorded process group")
         return False
     receipt = json.loads(path.read_text())

@@ -62,8 +62,13 @@ def cleanup(home, records):
     for path in sorted(records.glob("*.json")):
         if path.is_symlink():
             raise ValueError("waiter identity receipt cannot be a symlink")
-        receipt = json.loads(path.read_text())
-        pid, pgid = receipt["pid"], receipt["pgid"]
+        try:
+            receipt = json.loads(path.read_text())
+            pid, pgid = receipt["pid"], receipt["pgid"]
+            receipt["home"], receipt["identity"]
+        except (OSError, ValueError, KeyError, TypeError):
+            report["waiters"].append({"receipt": path.name, "outcome": "already-exited-incomplete-receipt"})
+            continue
         if receipt["home"] != str(Path(home).resolve()) or not isinstance(pid, int) or pid <= 1 or pgid != pid or pgid == os.getpgrp():
             raise ValueError("refused unsafe rehearsal waiter process group")
         observed = identity(pid)
@@ -71,7 +76,7 @@ def cleanup(home, records):
         if observed is None:
             row["outcome"] = "already-exited"
         elif observed != receipt["identity"]:
-            raise ValueError("refused reused rehearsal waiter PID")
+            row["outcome"] = "already-exited-reused-pid"
         else:
             try:
                 os.killpg(pgid, signal.SIGTERM)
