@@ -15,6 +15,7 @@ export default Effect.gen(function* () {
       AND aggregate_kind = 'thread'
       AND event_type = 'thread.metadata-updated'
       AND json_extract(payload_json, '$.automationTaskId') IS NOT NULL
+      AND json_extract(payload_json, '$.automationPlacementAt') IS NULL
       AND ${sql.literal(explicitMark("orchestration_events"))}
   `;
   yield* sql`
@@ -44,6 +45,7 @@ export default Effect.gen(function* () {
       )
     )
     WHERE json_extract(payload_json, '$.automationTaskId') IS NOT NULL
+      AND json_extract(payload_json, '$.automationPlacementAt') IS NULL
       AND EXISTS (
         SELECT 1
         FROM orchestration_events events
