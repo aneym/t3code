@@ -19,10 +19,10 @@ export function useAgentProjectGroups(
     ),
   );
   return groups.map((group) => {
-    const agent = group.memberProjectRefs
-      .map((ref) => byHome.get(scopedProjectKey(ref)))
-      .find((entry) => entry !== undefined);
-    return agent ? { ...group, displayName: agent.name, agent } : group;
+    const owners = group.memberProjectRefs.map((ref) => byHome.get(scopedProjectKey(ref)));
+    const agent = owners[0];
+    if (!agent || owners.some((owner) => owner !== agent)) return group;
+    return { ...group, displayName: agent.name, agent };
   });
 }
 
