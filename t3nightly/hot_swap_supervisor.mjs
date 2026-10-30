@@ -30,7 +30,9 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
             save();
           }
           const result = original(input);
-          if (method !== "subscribeServerLifecycle") return result;
+          if (method !== "subscribeServerLifecycle") return result.pipe(Effect.tap(() => Effect.sync(() => {
+            if (input?.handoffSequence !== undefined) { data.handoffReplies.push({ atMs: elapsed(), clientId: input.handoffClientId, sequence: input.handoffSequence }); save(); }
+          })));
           return result.pipe(Stream.tap((event) => Effect.sync(() => {
             if (event.type === "handoff") { data.handoffEvents.push({ atMs: elapsed(), sequence: event.sequence, reconnectWithinMs: event.payload.reconnectWithinMs }); save(); }
           })));

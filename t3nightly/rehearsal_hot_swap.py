@@ -121,37 +121,47 @@ class HotSwapRehearsal(Rehearsal):
         pressure = self.sandbox.evidence / "pressure.json"
         if pressure.is_file():
             traffic = json.loads(pressure.read_text())
-            capacity_pass = traffic.get("servedNew", 0) > 0 and traffic.get("servedOld", 0) == 0 and traffic.get("reset", 0) > 0 and traffic.get("refused", 0) == 0
+            capacity_pass = traffic.get("queuedAcrossRelease", 0) > 0 and traffic.get("overflowBeforeRelease", 0) > 0 and traffic.get("servedNew", 0) > 0 and traffic.get("servedOld", 0) == 0 and traffic.get("reset", 0) > 0 and traffic.get("refused", 0) == 0
             budget_pass = traffic.get("pastBudget", 0) > 0 and traffic.get("refused", 0) == 0
-            passed = traffic.get("status") == "complete" and (capacity_pass if self.args.queue_mode == "capacity" else budget_pass)
+            passed = bool(traffic.get("drained")) and traffic.get("status") == "complete" and (capacity_pass if self.args.queue_mode == "capacity" else budget_pass)
             hot["checks"]["queue-saturation"] = {"status": "passed" if passed else "failed", "traffic": traffic}
         if hot.get("probe"):
             probe = hot["probe"]
             ids = {row["clientId"] for row in probe.get("handoffCalls", []) if row["method"] == "subscribeServerLifecycle"}
-            acknowledgments = [row for row in probe.get("handoffCalls", []) if row["method"] == "server.probe" and row.get("sequence") is not None and row["clientId"] in ids]
+            acknowledgments = [row for row in probe.get("handoffReplies", []) if row.get("sequence") is not None and row["clientId"] in ids and any(event["sequence"] == row["sequence"] for event in probe.get("handoffEvents", []))]
             presentation_pass = bool(probe.get("presentations")) and not probe.get("presentationViolations") and bool(acknowledgments)
             hot["checks"]["presentation"] = {"status": "passed" if presentation_pass else "failed", "states": probe.get("presentations", []), "violations": probe.get("presentationViolations", []), "handoffAcknowledgments": acknowledgments}
         if hot.get("walAfter"):
             hot["checks"]["wal-writes"] = {"status": "passed" if hot["walAfter"]["events"] > hot["walBefore"]["events"] and hot["databaseIntegrity"] == [("ok",)] else "failed"}
         if hot.get("probe", {}).get("keepAlive", {}).get("reused", 0):
-            hot["checks"]["keep-alive-freeze"] = {"status": "exercised", **hot["probe"]["keepAlive"]}
+            keep = hot["probe"]["keepAlive"]
+            crossed = [row["id"] for row in keep.get("sockets", []) if hot["oldVersion"] in row["versions"] and self.version in row["versions"]]
+            hot["checks"]["keep-alive-freeze"] = {"status": "passed" if crossed else "failed", "sameSocketsAcrossVersions": crossed, **keep}
         probe = hot.get("swapProbe", hot.get("probe", {}))
         hot["candidateMeasuredStartupMs"] = probe.get("flipGapMs")
         if hot.get("install"):
             steps = hot["install"]["steps"]
-            hot["checks"]["drain-arrivals"] = {"status": "exercised", "httpSamples": probe.get("httpSamples"), "drain": [step for step in steps if step["step"].startswith("restart-drain")]}
+            ipc = hot.get("launcherIPC", [])
+            warm = next((row for row in ipc if row["phase"] == "warm"), None)
+            drained = next((row for row in ipc if row["phase"] == "drained" and warm and row.get("updateId") == warm.get("updateId")), None)
+            arrivals = [row for row in probe.get("httpObservations", []) if warm and drained and warm["at"] <= row["at"] <= drained["at"]]
+            hot["checks"]["drain-arrivals"] = {"status": "passed" if arrivals and all(row["version"] == hot["oldVersion"] for row in arrivals) else "failed", "freshConnectionSamples": arrivals, "drainStart": warm, "drainEnd": drained, "maintenanceDrain": [step for step in steps if step["step"].startswith("restart-drain")]}
         hot["checks"].update({name: {"status": "awaiting-capable-server"} for name in ("drain-arrivals", "keep-alive-freeze", "launcher-crash", "queue-saturation", "warm-rollback", "pre-routing-rollback") if name not in hot["checks"]})
         receipt_path = self.sandbox.evidence / "rehearsal-receipt.json"
         if receipt_path.is_file():
             from .release_receipts import seal
 
             receipt = json.loads(receipt_path.read_text())
+            if self.args.queue_mode != "none":
+                receipt["releaseEligible"] = False
+                result["releaseEligible"] = False
             receipt["hotSwap"] = {key: hot[key] for key in ("status", "sequenceContinuity", "candidateMeasuredStartupMs", "checks") if key in hot}
             if hot.get("install", {}).get("hotSwap", {}).get("method") == "maintenance":
                 receipt["result"] = "PASS"
             queue_failed = self.args.queue_mode != "none" and hot.get("checks", {}).get("queue-saturation", {}).get("status") != "passed"
             presentation_failed = self.args.queue_mode != "budget" and self.args.inject == "none" and hot.get("checks", {}).get("presentation", {}).get("status") != "passed"
-            if hot.get("status") == "hot-swap" and (probe.get("refusedConnections") or hot.get("sequenceContinuity") is not True or hot.get("databaseIntegrity") != [("ok",)] or queue_failed or presentation_failed):
+            connection_failed = self.args.inject == "none" and any(hot["checks"].get(name, {}).get("status") != "passed" for name in ("keep-alive-freeze", "drain-arrivals"))
+            if hot.get("status") == "hot-swap" and (connection_failed or probe.get("refusedConnections") or hot.get("sequenceContinuity") is not True or hot.get("databaseIntegrity") != [("ok",)] or queue_failed or presentation_failed):
                 receipt["result"] = "FAIL"
                 result.update(result="FAIL", releaseEligible=False)
             receipt_path.write_text(json.dumps(seal(receipt), indent=2) + "\n")

@@ -5,7 +5,7 @@ import nodeHttp from "node:http";
 export async function monitor(context) {
   const { opts, Effect, Stream, layers } = context;
   const started = performance.now();
-  const data = { httpSamples: 0, refusedConnections: 0, httpFailures: 0, maxHttpGapMs: 0, flipGapMs: null, servedVersions: [], keepAlive: { requests: 0, reused: 0, failures: 0, versions: [] }, wsConnections: 0, wsFailures: 0, snapshots: [], sequences: [], resnapshots: 0, ready: false, presentations: [], presentationViolations: [], handoffCalls: [], handoffEvents: [] };
+  const data = { httpSamples: 0, refusedConnections: 0, httpFailures: 0, maxHttpGapMs: 0, flipGapMs: null, servedVersions: [], httpObservations: [], keepAlive: { requests: 0, reused: 0, failures: 0, versions: [], sockets: [] }, wsConnections: 0, wsFailures: 0, snapshots: [], sequences: [], resnapshots: 0, ready: false, presentations: [], presentationViolations: [], handoffCalls: [], handoffReplies: [], handoffEvents: [] };
   let lastOk = started;
   let lastSequence;
   const elapsed = () => Math.round(performance.now() - started);
@@ -19,9 +19,17 @@ export async function monitor(context) {
   const http = async () => {
     while (!existsSync(opts.stop)) {
       try {
-        const response = await fetch(`${opts.origin}/.well-known/t3/environment`, { signal: AbortSignal.timeout(2000) });
-        if (!response.ok) throw new Error("health status");
-        const environment = await response.json();
+        const environment = await new Promise((resolve, reject) => {
+          const request = nodeHttp.get(`${opts.origin}/.well-known/t3/environment`, { agent: false, timeout: 2000 }, (response) => {
+            let body = "";
+            response.on("data", (chunk) => { body += chunk; });
+            response.on("end", () => { try { if (response.statusCode !== 200) throw new Error("health status"); resolve(JSON.parse(body)); } catch (error) { reject(error); } });
+            response.on("error", reject);
+          });
+          request.on("timeout", () => request.destroy(new Error("fresh HTTP deadline")));
+          request.on("error", reject);
+        });
+        data.httpObservations.push({ at: new Date().toISOString(), atMs: elapsed(), version: environment.serverVersion });
         const now = performance.now();
         const gap = Math.round(now - lastOk);
         data.maxHttpGapMs = Math.max(data.maxHttpGapMs, gap);
@@ -30,7 +38,7 @@ export async function monitor(context) {
         if (data.servedVersions.at(-1)?.version !== environment.serverVersion) data.servedVersions.push({ version: environment.serverVersion, atMs: elapsed() });
       } catch (error) {
         data.httpFailures++;
-        if (error?.cause?.code === "ECONNREFUSED") data.refusedConnections++;
+        if (error?.code === "ECONNREFUSED" || error?.cause?.code === "ECONNREFUSED") data.refusedConnections++;
       }
       data.httpSamples++;
       save();
@@ -39,6 +47,7 @@ export async function monitor(context) {
   };
   const keepAlive = async () => {
     const agent = new nodeHttp.Agent({ keepAlive: true, maxSockets: 1 });
+    const sockets = new WeakMap();
     try {
       while (!existsSync(opts.stop)) {
         await new Promise((resolve) => {
@@ -50,6 +59,13 @@ export async function monitor(context) {
               if (request.reusedSocket) data.keepAlive.reused++;
               try {
                 const version = JSON.parse(body).serverVersion;
+                const socket = request.socket;
+                if (socket) {
+                  let row = sockets.get(socket);
+                  if (!row) { row = { id: data.keepAlive.sockets.length + 1, versions: [], replies: 0 }; sockets.set(socket, row); data.keepAlive.sockets.push(row); }
+                  row.replies++;
+                  if (!row.versions.includes(version)) row.versions.push(version);
+                }
                 if (data.keepAlive.versions.at(-1) !== version) data.keepAlive.versions.push(version);
               } catch { data.keepAlive.failures++; }
               resolve();
