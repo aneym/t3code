@@ -34,7 +34,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 /** The redirect registered for a link. Nothing ever listens there: the code comes back in the response. */
-const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
+const URI = "http://127.0.0.1/t3code-peer-link";
 /**
  * How long a peer's descriptor may take before a route counts as unreachable.
  * A tailnet or relayed route to a machine that is waking up takes longer.
@@ -225,16 +225,17 @@ const make = Effect.gen(function* () {
 
   /** Signs in to the peer's `/mcp` with a pairing code: register, decide, exchange. */
   const signIn = Effect.fn("PeerLinks.signIn")(
-    function* (origin: string, input: PeerLinkCreateInput, clientName: string) {
+    function* (origin: string, input: PeerLinkCreateInput, name: string) {
       const client = yield* clientFor(origin);
       // Only the peer's own refusals are rejections. A dropped connection or
       // an answer this version cannot read is classified below.
       const registered = yield* client.mcpOAuth
         .register({
           payload: {
-            client_name: clientName,
-            redirect_uris: [LINK_REDIRECT_URI],
+            client_name: name,
+            redirect_uris: [URI],
             software_id: MCP_PEER_LINK_SOFTWARE_ID,
+            peer_environment: yield* environment.getDescriptor,
           },
         })
         .pipe(
@@ -260,7 +261,7 @@ const make = Effect.gen(function* () {
             authorization: {
               response_type: "code",
               client_id: registered.client_id,
-              redirect_uri: LINK_REDIRECT_URI,
+              redirect_uri: URI,
               code_challenge: challenge,
               code_challenge_method: "S256",
               state,
@@ -298,7 +299,7 @@ const make = Effect.gen(function* () {
           payload: {
             grant_type: "authorization_code",
             code,
-            redirect_uri: LINK_REDIRECT_URI,
+            redirect_uri: URI,
             client_id: registered.client_id,
             code_verifier: verifier,
             resource,

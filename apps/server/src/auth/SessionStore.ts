@@ -1,12 +1,13 @@
+import { SessionClaims } from "./SessionClaims.ts";
 import {
   AuthSessionId,
   AuthStandardClientScopes,
-  AuthEnvironmentScopes,
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthEnvironmentScope,
   AuthWebSocketTicketUse,
-  RuntimeMode,
+  type RuntimeMode,
+  type PeerIdentity,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -61,6 +62,7 @@ export interface VerifiedSession {
   readonly runtimeModeCeiling?: RuntimeMode;
   /** An MCP client that is another T3 Code environment's peer link. */
   readonly peerLink?: true;
+  readonly peer?: PeerIdentity | undefined;
 }
 
 export interface VerifiedWebSocketTicket extends VerifiedSession {
@@ -383,6 +385,7 @@ export class SessionStore extends Context.Service<
       readonly proofKeyThumbprint?: string;
       readonly runtimeModeCeiling?: RuntimeMode;
       readonly peerLink?: boolean;
+      readonly peer?: PeerIdentity | undefined;
       readonly replaceActiveForSubjectAndMethod?: boolean;
       readonly replaceSessionId?: AuthSessionId;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
@@ -426,22 +429,6 @@ export class SessionStore extends Context.Service<
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
-
-const SessionClaims = Schema.Struct({
-  v: Schema.Literals([1, 2]),
-  kind: Schema.Literal("session"),
-  sid: AuthSessionId,
-  sub: Schema.String,
-  scopes: AuthEnvironmentScopes,
-  method: Schema.Literals(["browser-session-cookie", "bearer-access-token", "dpop-access-token"]),
-  jkt: Schema.optionalKey(Schema.String),
-  rtc: Schema.optionalKey(RuntimeMode),
-  /** Signed, so a client cannot shed its peer link's limits. */
-  plk: Schema.optionalKey(Schema.Literal(1)),
-  iat: Schema.Number,
-  exp: Schema.Number,
-});
-type SessionClaims = typeof SessionClaims.Type;
 
 const WebSocketClaims = Schema.Struct({
   v: Schema.Literal(1),
@@ -655,7 +642,9 @@ const make = Effect.gen(function* () {
         method: input?.method ?? "browser-session-cookie",
         ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
         ...(input?.runtimeModeCeiling ? { rtc: input.runtimeModeCeiling } : {}),
-        ...(input?.peerLink === true ? { plk: 1 as const } : {}),
+        ...(input?.peerLink === true
+          ? { plk: 1 as const, ...(input.peer === undefined ? {} : { peer: input.peer }) }
+          : {}),
         iat: issuedAt.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
       };
@@ -837,7 +826,7 @@ const make = Effect.gen(function* () {
         scopes: claims.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
-        ...(claims.plk === 1 ? { peerLink: true as const } : {}),
+        ...(claims.plk === 1 ? { peerLink: true as const, peer: claims.peer } : {}),
       } satisfies VerifiedSession;
     },
   );

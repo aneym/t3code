@@ -4,15 +4,22 @@ import { EnvironmentId, ThreadId } from "./baseSchemas.ts";
 export const MessageSender = Schema.Struct({
   senderThreadId: Schema.optional(ThreadId),
   senderEnvironmentId: Schema.optional(EnvironmentId),
+  senderEnvironmentLabel: Schema.optional(Schema.String),
 });
 export type MessageSender = typeof MessageSender.Type;
 
 export const messageSender = (value: MessageSender | null | undefined): MessageSender => ({
   ...(value?.senderThreadId === undefined ? {} : { senderThreadId: value.senderThreadId }),
+  ...(value?.senderEnvironmentLabel === undefined
+    ? {}
+    : { senderEnvironmentLabel: value.senderEnvironmentLabel }),
   ...(value?.senderEnvironmentId === undefined
     ? {}
     : { senderEnvironmentId: value.senderEnvironmentId }),
 });
+
+export const PeerIdentity = Schema.Struct({ environmentId: EnvironmentId, label: Schema.String });
+export type PeerIdentity = typeof PeerIdentity.Type;
 
 export const FORWARDED_SENDER_HEADER = "t3-thread-sender";
 export const ForwardedThreadSender = Schema.Struct({

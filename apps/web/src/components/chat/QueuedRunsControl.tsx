@@ -37,7 +37,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { GuestMessageName } from "./guestMessageStyle";
 import { TimelineRowTimestamp } from "./TimelineRowParts";
-import { FoldedMessageHeader, useScheduledTaskTitle } from "./TimelineUserMessageRow";
+import { FoldedMessageHeader, useScheduledTaskTitle } from "./FoldedMessageHeader";
 
 export interface EditQueuedRunRequest {
   readonly runId: RunId;

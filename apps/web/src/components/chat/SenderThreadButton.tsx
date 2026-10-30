@@ -1,3 +1,6 @@
+import { messageSenderRef } from "@t3tools/contracts";
+import { useQuietThreadShell } from "../../state/entities";
+import { useEnvironment } from "../../state/environments";
 import type { EnvironmentId, MessageSender, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { InlineButton } from "../ui/button";
@@ -8,8 +11,15 @@ export function SenderThreadButton(props: {
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
   const threadId = props.sender.senderThreadId;
-  if (threadId === undefined) return null;
   const environmentId = props.sender.senderEnvironmentId ?? props.environmentId;
+  const environment = useEnvironment(environmentId);
+  const shell = useQuietThreadShell(messageSenderRef(props.sender, props.environmentId));
+  if (
+    threadId === undefined ||
+    shell === null ||
+    (environmentId !== props.environmentId && environment === null)
+  )
+    return null;
   return environmentId === props.environmentId ? (
     <InlineButton onClick={() => props.onOpenThread(threadId)} tone="muted">
       Open thread

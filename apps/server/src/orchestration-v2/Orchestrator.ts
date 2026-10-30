@@ -7570,7 +7570,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       parentThreadId === null ||
       (command.notification === undefined &&
         command.createdBy !== "user" &&
-        command.senderThreadId !== parentThreadId)
+        (command.senderEnvironmentId !== undefined || command.senderThreadId !== parentThreadId))
     )
       return;
     const run =

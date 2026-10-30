@@ -1,3 +1,4 @@
+import { useEnvironments } from "../../state/environments";
 import * as Haptics from "expo-haptics";
 import { Pressable, type ColorValue } from "react-native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -8,6 +9,7 @@ import { useQuietThreadShell } from "../../state/entities";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { ThreadDisclosureChevron } from "./thread-work-log";
 
+/** Messages from other agents fold to one line so the user's own messages stay easy to find. */
 export function AgentMessageFoldHeader(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId?: ThreadId;
@@ -64,6 +66,13 @@ export function OpenSenderThreadButton(props: {
   readonly senderThreadId: ThreadId;
 }) {
   const openLinkedThread = useOpenLinkedThread();
+  const shell = useQuietThreadShell(scopeThreadRef(props.environmentId, props.senderThreadId));
+  const { environments } = useEnvironments();
+  if (
+    shell === null ||
+    !environments.some((environment) => environment.environmentId === props.environmentId)
+  )
+    return null;
   return (
     <Pressable
       accessibilityRole="link"

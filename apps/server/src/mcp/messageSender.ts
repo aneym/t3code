@@ -6,5 +6,9 @@ export const mcpMessageSender = (scope: McpInvocationScope): MessageSender => {
   const sender = scope.client?.linked === true ? scope.client.sender : undefined;
   return sender === undefined
     ? {}
-    : { senderThreadId: sender.threadId, senderEnvironmentId: sender.environmentId };
+    : {
+        senderThreadId: sender.threadId,
+        senderEnvironmentId: sender.environmentId,
+        senderEnvironmentLabel: sender.environmentLabel,
+      };
 };

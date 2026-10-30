@@ -1,7 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { OrchestratorMcpThreadTimelineItem } from "./orchestratorMcpTimeline.ts";
-export { OrchestratorMcpThreadTimelineItem } from "./orchestratorMcpTimeline.ts";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { AuthMcpClientAccess } from "./auth.ts";

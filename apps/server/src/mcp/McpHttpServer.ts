@@ -1,3 +1,4 @@
+import { withPeerRequestContext } from "./peerRequestContext.ts";
 import { AgentToolkit } from "./toolkits/agent/tools.ts";
 import * as AgentHandlers from "./toolkits/agent/handlers.ts";
 import * as Cause from "effect/Cause";
@@ -42,7 +43,6 @@ import {
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import { decodeAsAdvertised, validateAdvertisedParameters } from "./advertisedParameters.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import { withPeerRequestContext } from "./peerRequestContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -155,6 +155,14 @@ const normalizeMcpHttpResponse = (
 
 const looksLikeProviderToken = (token: string) => token.length > 0 && !token.includes(".");
 
+const invalidModeLimit = HttpServerResponse.jsonUnsafe(
+  {
+    error: "invalid_mode_limit",
+    message: "T3-Mode-Limit must be <runtimeMode>/<interactionMode>, e.g. auto/default.",
+  },
+  { status: 400, headers: { "cache-control": "no-store" } },
+);
+
 // The Linked environments beta is off here: links wait until it is on again.
 const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
   {
@@ -194,9 +202,8 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         offerOAuth: Option.isSome(clients) && !looksLikeProviderToken(token),
       });
     }
-    const context = withPeerRequestContext(invocation, request);
-    if (context.error !== undefined) return context.error;
-    const limited = context.invocation;
+    const limited = withPeerRequestContext(invocation, request);
+    if (limited === undefined) return invalidModeLimit;
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     return yield* httpEffect.pipe(

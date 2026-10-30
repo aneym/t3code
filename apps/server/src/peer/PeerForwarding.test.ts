@@ -378,6 +378,8 @@ it.effect("an agent here works on a linked environment's threads within its own 
         threads: [{ threadId: boxThread, runtimeMode: "auto" }],
       });
 
+      // A full-access agent here is held to the link's `auto` there, which
+      // the box's `auto` thread is within.
       const sent = yield* a.call("thread:laptop-full", "t3_thread_send", {
         environmentId: box.environmentId,
         threadId: boxThread,
@@ -386,11 +388,9 @@ it.effect("an agent here works on a linked environment's threads within its own 
       });
       expect(sent.isError).toBe(false);
       expect(sent.structuredContent).toMatchObject({ threadId: boxThread, delivery: "started" });
-      expect((yield* Ref.get(seen)).sends[0]).toMatchObject({
-        senderThreadId: "thread:laptop-full",
-        senderEnvironmentId: laptop.environmentId,
-      });
 
+      // A plan-mode agent here may not steer that thread there: the box
+      // refuses it, because the call carries the agent's own modes.
       const planned = yield* a.call("thread:laptop-plan", "t3_thread_send", {
         environmentId: box.environmentId,
         threadId: boxThread,

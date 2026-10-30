@@ -1,54 +1,63 @@
 import {
   FORWARDED_SENDER_HEADER,
   ForwardedThreadSender,
-  ProviderInteractionMode,
   RuntimeMode,
+  ProviderInteractionMode,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { MODE_LIMIT_HEADER, type McpInvocationScope } from "./McpInvocationContext.ts";
 
 const decodeModeLimit = Schema.decodeUnknownOption(
   Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
 );
+const parseModeLimit = (value: string) => {
+  const [runtimeMode, interactionMode, ...rest] = value.trim().split("/");
+  return rest.length === 0 ? decodeModeLimit({ runtimeMode, interactionMode }) : Option.none();
+};
+
+/** Applies a client's requested mode limit; undefined when the header is malformed. */
+const withModeLimit = (
+  invocation: McpInvocationScope,
+  request: HttpServerRequest.HttpServerRequest,
+): McpInvocationScope | undefined => {
+  const header = request.headers[MODE_LIMIT_HEADER];
+  if (header === undefined || invocation.client === undefined) return invocation;
+  const limit = parseModeLimit(header);
+  return Option.isNone(limit)
+    ? undefined
+    : { ...invocation, client: { ...invocation.client, narrowedTo: limit.value } };
+};
+
 const decodeSender = Schema.decodeUnknownOption(Schema.fromJsonString(ForwardedThreadSender));
-
-const invalidModeLimit = HttpServerResponse.jsonUnsafe(
-  {
-    error: "invalid_mode_limit",
-    message: "T3-Mode-Limit must be <runtimeMode>/<interactionMode>, e.g. auto/default.",
-  },
-  { status: 400, headers: { "cache-control": "no-store" } },
-);
-
-const invalidSender = HttpServerResponse.jsonUnsafe(
-  {
-    error: "invalid_thread_sender",
-    message: "T3-Thread-Sender must name a thread and environment.",
-  },
-  { status: 400, headers: { "cache-control": "no-store" } },
-);
 
 export const withPeerRequestContext = (
   invocation: McpInvocationScope,
   request: HttpServerRequest.HttpServerRequest,
 ) => {
-  if (invocation.client === undefined) return { invocation };
-  let client = invocation.client;
-  const mode = request.headers[MODE_LIMIT_HEADER];
-  if (mode !== undefined) {
-    const [runtimeMode, interactionMode, ...rest] = mode.trim().split("/");
-    const limit = decodeModeLimit({ runtimeMode, interactionMode });
-    if (rest.length !== 0 || Option.isNone(limit)) return { error: invalidModeLimit };
-    client = { ...client, narrowedTo: limit.value };
-  }
+  const limited = withModeLimit(invocation, request);
+  if (limited === undefined || limited.client === undefined) return limited;
+  let client = limited.client;
   const header = request.headers[FORWARDED_SENDER_HEADER];
   if (client.linked === true && header !== undefined) {
     const sender = decodeSender(header);
-    if (Option.isNone(sender)) return { error: invalidSender };
-    client = { ...client, sender: sender.value };
+    const peer = client.peer;
+    if (
+      Option.isSome(sender) &&
+      peer !== undefined &&
+      peer.environmentId !== invocation.environmentId &&
+      sender.value.environmentId === peer.environmentId
+    ) {
+      client = {
+        ...client,
+        sender: {
+          threadId: sender.value.threadId,
+          environmentId: peer.environmentId,
+          environmentLabel: peer.label,
+        },
+      };
+    }
   }
-  return { invocation: { ...invocation, client } };
+  return { ...limited, client };
 };

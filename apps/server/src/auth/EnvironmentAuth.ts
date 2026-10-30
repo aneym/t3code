@@ -1,7 +1,6 @@
 import {
   AuthAccessTokenType,
   AuthAccessWriteScope,
-  AuthOrchestrationOperateScope,
   AuthStandardClientScopes,
   type AuthAccessTokenResult,
   type AuthBrowserSessionResult,
@@ -10,6 +9,7 @@ import {
   type AuthCreatePairingCredentialInput,
   type AuthEnvironmentScope,
   type AuthMcpClientAccess,
+  type PeerIdentity,
   type AuthPairingLink,
   type AuthPairingCredentialResult,
   type AuthSessionId,
@@ -39,7 +39,7 @@ import * as ServerConfig from "../config.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import {
   isMcpClientSubject,
-  isOwnerCliSubject,
+  mcpClientSession,
   mcpClientSubject,
   type McpClientSession,
 } from "./McpClientSubjects.ts";
@@ -535,6 +535,7 @@ export class EnvironmentAuth extends Context.Service<
       readonly label: string;
       readonly access: AuthMcpClientAccess;
       readonly peerLink: boolean;
+      readonly peer?: PeerIdentity | undefined;
       readonly ownerCli?: boolean;
       readonly client: AuthClientMetadata;
     }) => Effect.Effect<
@@ -1278,15 +1279,7 @@ export const make = Effect.gen(function* () {
       mapSessionVerificationErrors,
       Effect.flatMap((session) =>
         isMcpClientSubject(session.subject) && session.method === "bearer-access-token"
-          ? Effect.succeed({
-              sessionId: session.sessionId,
-              label: session.client.label ?? "MCP client",
-              access: session.scopes.includes(AuthOrchestrationOperateScope)
-                ? (session.runtimeModeCeiling ?? "approval-required")
-                : "read-only",
-              peerLink: session.peerLink === true,
-              ownerCli: isOwnerCliSubject(session.subject),
-            } satisfies McpClientSession)
+          ? Effect.succeed(mcpClientSession(session))
           : Effect.fail(
               new ServerAuthInvalidCredentialError({
                 diagnostic: "Only MCP client sessions are accepted here.",
@@ -1306,6 +1299,7 @@ export const make = Effect.gen(function* () {
         ttl: MCP_CLIENT_SESSION_TTL,
         ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
         peerLink: input.peerLink,
+        peer: input.peer,
         client: { ...input.client, label: input.label, deviceType: "bot" },
       })
       .pipe(

@@ -78,3 +78,4 @@ export * from "./worktreeSetup.ts";
 export * from "./secretRequest.ts";
 export * from "./clientRpcPermissions.ts";
 export * from "./messageSender.ts";
+export * from "./orchestratorMcpTimeline.ts";

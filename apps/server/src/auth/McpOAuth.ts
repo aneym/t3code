@@ -1,3 +1,4 @@
+import { decodeClientIdPayload, type McpOAuthClient, type PendingCode } from "./McpOAuthClient.ts";
 import {
   AuthAccessWriteScope,
   type AuthMcpApprovalDecision,
@@ -12,6 +13,7 @@ import {
   AuthOrchestrationReadScope,
   MCP_PEER_LINK_SOFTWARE_ID,
   mcpClientScopes,
+  type PeerIdentity,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Clock from "effect/Clock";
@@ -89,22 +91,6 @@ const sameResource = (urls: McpOAuthUrls, presented: string | undefined): boolea
   }
 };
 
-const ClientIdPayload = Schema.Struct({
-  v: Schema.Literal(1),
-  n: Schema.String,
-  r: Schema.Array(Schema.String),
-  /** Registered as another T3 Code environment's peer link. */
-  p: Schema.optionalKey(Schema.Literal(1)),
-});
-const decodeClientIdPayload = Schema.decodeUnknownOption(Schema.fromJsonString(ClientIdPayload));
-
-export interface McpOAuthClient {
-  readonly clientId: string;
-  readonly name: string;
-  readonly redirectUris: ReadonlyArray<string>;
-  readonly peerLink: boolean;
-}
-
 export class McpOAuthPageError extends Schema.TaggedError<McpOAuthPageError>()(
   "McpOAuthPageError",
   { description: Schema.String },
@@ -131,17 +117,6 @@ export interface AuthorizationRequest {
   readonly state: string | undefined;
   readonly resource: string;
   readonly issuer: string;
-}
-
-interface PendingCode {
-  readonly clientId: string;
-  readonly clientName: string;
-  readonly peerLink: boolean;
-  readonly redirectUri: string;
-  readonly codeChallenge: string;
-  readonly resource: string;
-  readonly access: AuthMcpClientAccess;
-  readonly expiresAtMs: number;
 }
 
 export type ApprovalDecision = Exclude<AuthMcpApprovalDecision, { readonly _tag: "deny" }>;
@@ -210,9 +185,14 @@ const make = Effect.gen(function* () {
 
   const sign = (domain: string, payload: string) => signPayload(`${domain}.${payload}`, signingKey);
 
-  const signClientId = (name: string, redirectUris: ReadonlyArray<string>, peerLink: boolean) => {
+  const signClientId = (
+    name: string,
+    redirectUris: ReadonlyArray<string>,
+    peerLink: boolean,
+    peer?: PeerIdentity,
+  ) => {
     const body = base64UrlEncode(
-      JSON.stringify({ v: 1, n: name, r: redirectUris, ...(peerLink ? { p: 1 } : {}) }),
+      JSON.stringify({ v: 1, n: name, r: redirectUris, ...(peerLink ? { p: 1, e: peer } : {}) }),
     );
     return `${body}.${sign("mcp-client-id", body)}`;
   };
@@ -234,6 +214,7 @@ const make = Effect.gen(function* () {
           name: payload.n,
           redirectUris: payload.r,
           peerLink: payload.p === 1,
+          ...(payload.p === 1 && payload.e !== undefined ? { peer: payload.e } : {}),
         })),
       ),
     );
@@ -289,10 +270,13 @@ const make = Effect.gen(function* () {
         });
       }
       return {
-        clientId: signClientId(name, redirectUris, peerLink),
+        clientId: signClientId(name, redirectUris, peerLink, metadata.peer_environment),
         name,
         redirectUris,
         peerLink,
+        ...(peerLink && metadata.peer_environment !== undefined
+          ? { peer: metadata.peer_environment }
+          : {}),
       };
     },
   );
@@ -376,6 +360,7 @@ const make = Effect.gen(function* () {
         clientId: authorization.client.clientId,
         clientName: authorization.client.name,
         peerLink: authorization.client.peerLink,
+        peer: authorization.client.peer,
         redirectUri: authorization.redirectUri,
         codeChallenge: authorization.codeChallenge,
         resource: authorization.resource,
@@ -478,6 +463,7 @@ const make = Effect.gen(function* () {
           label: pending.clientName,
           access: pending.access,
           peerLink: pending.peerLink,
+          peer: pending.peer,
           client: deriveAuthClientMetadata({ request }),
         })
         .pipe(
@@ -531,6 +517,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     label: client.label,
                     access: client.access,
                     linked: client.peerLink,
+                    peer: client.peer,
                     ...(client.peerLink ? {} : { webOrigin: requestUrls(request).issuer }),
                     ownerCli: client.ownerCli,
                   },
