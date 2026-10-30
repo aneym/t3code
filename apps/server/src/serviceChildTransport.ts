@@ -14,6 +14,9 @@ import {
 import { ServiceLauncherClientError } from "./cloud/serviceLauncherErrors.ts";
 
 let attachedContext: ReturnType<typeof decodeServiceLauncherContext>;
+let ingressAccepted = false;
+
+export const hotSwapProtocolAccepted = () => ingressAccepted;
 
 export function hotSwapContext() {
   if (attachedContext !== undefined) return attachedContext;
@@ -50,7 +53,10 @@ export const exchangeServiceMessage = Effect.fn("serviceChildTransport.exchange"
     };
     const onMessage = (value: unknown) => {
       const reply = decodeServiceLauncherParentMessage(value);
-      if (reply !== undefined && accept(reply)) finish(Effect.succeed(reply));
+      if (reply !== undefined && accept(reply)) {
+        if (reply.type === "ingress-bound") ingressAccepted = true;
+        finish(Effect.succeed(reply));
+      }
     };
     const onDisconnect = () =>
       finish(Effect.fail(new ServiceLauncherClientError({ operation: "disconnect" })));
