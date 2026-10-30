@@ -272,11 +272,11 @@ class Sandbox:
     def close(self):
         from .rehearsal_waiter import cleanup
 
-        target = self.home.parent / "rehearsal-target.json"
-        if not self.home_created and target.is_file() and self.home.is_dir():
-            recorded = json.loads(target.read_text())
-            self.home_created = recorded.get("home") == str(self.home) and recorded.get("label") == self.label
         try:
+            target = self.home.parent / "rehearsal-target.json"
+            if not self.home_created and target.is_file() and self.home.is_dir():
+                recorded = json.loads(target.read_text())
+                self.home_created = recorded.get("home") == str(self.home) and recorded.get("label") == self.label
             if self.home_created:
                 from .rehearsal_units import unload
 
