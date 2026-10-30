@@ -86,6 +86,7 @@ export type ServerLifecycleStreamEvent = typeof ServerLifecycleStreamEvent.Type;
 export const ServerHandoffProbe = Schema.Struct({
   handoffClientId: Schema.optionalKey(TrimmedNonEmptyString),
   handoffSequence: Schema.optionalKey(NonNegativeInt),
+  handoffReplyReceived: Schema.optionalKey(Schema.Boolean),
 });
 export const ServerHandoffSubscription = Schema.Struct({
   handoffClientId: Schema.optionalKey(TrimmedNonEmptyString),
