@@ -26,28 +26,44 @@ describe("ssh auth", () => {
     }),
   );
 
-  it.effect("creates askpass env for cached password prompts", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-askpass-test-" });
-      const env = yield* buildSshChildEnvironment({
-        authSecret: "super-secret",
-        interactiveAuth: true,
-        askpassDirectory: directory,
-        baseEnv: {},
-      });
+  it.effect.each([false, true])(
+    "creates askpass env for cached password prompts: custom=%s",
+    (custom) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-askpass-test-" });
+        const env = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const env = yield* buildSshChildEnvironment({
+              authSecret: "super-secret",
+              interactiveAuth: true,
+              ...(custom ? { askpassDirectory: directory } : {}),
+              baseEnv: {},
+            });
 
-      const askpassPath = path.join(directory, "ssh-askpass.sh");
-      assert.equal(env.SSH_ASKPASS, askpassPath);
-      assert.equal(env.SSH_ASKPASS_REQUIRE, "force");
-      assert.equal(env.T3_SSH_AUTH_SECRET, "super-secret");
-      assert.equal(env.DISPLAY, "t3code");
-      assert.equal(yield* fs.exists(askpassPath), true);
-      assert.include(yield* fs.readFileString(askpassPath), 'printf "%s\\n" "$T3_SSH_AUTH_SECRET"');
-    }).pipe(
-      Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),
-      Effect.scoped,
-    ),
+            const askpassPath = env.SSH_ASKPASS!;
+            if (custom) assert.equal(askpassPath, path.join(directory, "ssh-askpass.sh"));
+            assert.equal(env.SSH_ASKPASS_REQUIRE, "force");
+            assert.equal(env.T3_SSH_AUTH_SECRET, "super-secret");
+            assert.equal(env.DISPLAY, "t3code");
+            assert.equal(yield* fs.exists(askpassPath), true);
+            assert.include(
+              yield* fs.readFileString(askpassPath),
+              'printf "%s\\n" "$T3_SSH_AUTH_SECRET"',
+            );
+            return env;
+          }),
+        );
+        assert.equal(
+          yield* fs.exists(custom ? directory : path.dirname(path.dirname(env.SSH_ASKPASS!))),
+          custom,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux")),
+        ),
+        Effect.scoped,
+      ),
   );
 });

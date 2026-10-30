@@ -69,18 +69,12 @@ import {
   type ProviderReplayGate,
 } from "@t3tools/provider-testing/replayGate";
 
-export function makeReplayServerConfig(
-  scenario: string,
-): Effect.Effect<
-  ServerConfig.ServerConfig["Service"],
-  PlatformError.PlatformError,
-  FileSystem.FileSystem | Path.Path
-> {
+export function makeReplayServerConfig(scenario: string) {
   const safeScenario = scenario.replace(/[^a-z0-9_-]+/gi, "-");
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const baseDir = yield* fs.makeTempDirectory({
+    const baseDir = yield* fs.makeTempDirectoryScoped({
       prefix: `t3-orchestration-v2-replay-${safeScenario}-`,
     });
     const stateDir = path.join(baseDir, "userdata");
@@ -144,7 +138,6 @@ export function makeReplayServerConfig(
       browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
       environmentThemesDir,
       logsDir,
-      serverLogPath: path.join(logsDir, "server.log"),
       serverTracePath: path.join(logsDir, "server.trace.ndjson"),
       providerLogsDir,
       providerEventLogPath: path.join(providerLogsDir, "events.log"),
@@ -153,7 +146,7 @@ export function makeReplayServerConfig(
       environmentIdPath: path.join(stateDir, "environment-id"),
       serverRuntimeStatePath: path.join(stateDir, "server-runtime.json"),
       secretsDir: path.join(stateDir, "secrets"),
-    };
+    } satisfies ServerConfig.ServerConfig["Service"];
   });
 }
 

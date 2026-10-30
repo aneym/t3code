@@ -1070,16 +1070,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   readonly authOptions: SshAuth.SshAuthOptions;
   readonly remoteServerKind: "external" | "managed" | null;
   readonly scope: Scope.Closeable;
-}): Effect.fn.Return<
-  SshTunnelEntry,
-  SshCommandError | SshInvalidTargetError | SshReadinessError,
-  | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
-  | FileSystem.FileSystem
-  | Path.Path
-  | HttpClient.HttpClient
-  | NetService.NetService
-> {
+}) {
   const hostSpec = yield* buildSshHostSpecEffect(input.resolvedTarget);
   const childEnvironment = yield* SshAuth.buildSshChildEnvironment({
     ...(input.authOptions.authSecret === undefined
@@ -1089,6 +1080,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
       ? {}
       : { interactiveAuth: input.authOptions.interactiveAuth }),
   }).pipe(
+    Effect.provideService(Scope.Scope, input.scope),
     Effect.mapError(
       (cause) =>
         new SshCommandError({
