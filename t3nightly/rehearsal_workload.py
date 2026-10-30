@@ -49,22 +49,28 @@ class Workload:
         states = self.sandbox.query("SELECT status FROM orchestration_v2_projection_runs WHERE run_id=?", (item["runId"],))
         if states and states[0][0] in TERMINAL:
             raise RuntimeError("active rehearsal turn ended before cutover")
-        return self.sandbox.query("SELECT t.provider_turn_id FROM orchestration_v2_projection_provider_turns t JOIN orchestration_v2_projection_runs r ON t.thread_id=r.thread_id WHERE r.run_id=? AND r.status='running' AND t.status='running'", (item["runId"],))
+        return self.sandbox.query("SELECT t.provider_turn_id FROM orchestration_v2_projection_provider_turns t JOIN orchestration_v2_projection_runs r ON t.thread_id=r.thread_id AND t.run_attempt_id=json_extract(r.payload_json,'$.activeAttemptId') WHERE r.run_id=? AND r.status='running' AND t.status='running'", (item["runId"],))
 
     def prepare(self):
         helper = self.sandbox.home / "runtime/rehearsal_waiter.py"
         records = self.sandbox.home.parent / "gate-waiters"
         command = shlex.join(["python3", str(helper), "--home", str(self.sandbox.home), "--records", str(records), "--seconds", str(HOLD_S)])
         prompt = f"Use Bash in the foreground with a {HOLD_S * 1000} ms timeout to run exactly: {command}\nDo not background it. Do no other work. After it completes reply RELEASED."
-        for name in ("active-turn", "snoozed-thread"):
+        names = ("active-turn", "snoozed-thread", "queued-thread") if getattr(self.sandbox.args, "hot_swap", False) else ("active-turn", "snoozed-thread")
+        for name in names:
             if name == "active-turn":
                 self.held = time.monotonic()
-            item = self.start(name, prompt)
+            expected = "CONTINUED_" + uuid.uuid4().hex
+            active_prompt = prompt.replace("reply RELEASED.", f"reply with exactly {expected} and nothing else. If the server interrupts this turn and automatically continues it, finish the same wait command and reply with exactly {expected}; do not ask for another prompt.") if name == "active-turn" else prompt
+            item = self.start(name, active_prompt)
+            if name == "active-turn":
+                item["expectedOutput"] = expected
             wait_for(lambda: self.running(item), self.sandbox.args.chat_timeout, "running provider milestone")
         active = self.work["active-turn"]
         nonce = f"QUEUED_{uuid.uuid4().hex}"
-        queued = self.sandbox.t3("thread", "send", active["threadId"], f"Reply with exactly {nonce} and nothing else.", "--mode", "queue", "--json")
-        self.work["queued-message"] = {"threadId": active["threadId"], "runId": queued["runId"], "messageId": queued.get("messageId"), "nonce": nonce}
+        queue_thread = self.work.get("queued-thread", active)["threadId"]
+        queued = self.sandbox.t3("thread", "send", queue_thread, f"Reply with exactly {nonce} and nothing else.", "--mode", "queue", "--json")
+        self.work["queued-message"] = {"threadId": queue_thread, "runId": queued["runId"], "messageId": queued.get("messageId"), "nonce": nonce}
         until = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
         self.sandbox.t3("thread", "snooze", self.work["snoozed-thread"]["threadId"], "--snoozed-until", until, "--json")
         self.snoozed = self.sandbox.query("SELECT payload_json FROM orchestration_v2_projection_threads WHERE thread_id=?", (self.work["snoozed-thread"]["threadId"],))[0][0]
@@ -110,15 +116,24 @@ class Workload:
         queued = self.work["queued-message"]
         if queued["messageId"] not in current or current[queued["messageId"]][2] != queued["runId"]:
             raise ValueError("queued message identity changed")
-        (self.sandbox.home / "release-gate").touch()
+        continuation = None
+        installer_path = self.sandbox.evidence / "installer-state/last.json"
+        capable = installer_path.is_file() and json.loads(installer_path.read_text()).get("hotSwap", {}).get("method") == "launcher-ipc"
+        if getattr(self.sandbox.args, "hot_swap", False) and capable and not interrupted:
+            from .rehearsal_continuation import automatic
+
+            proof, continuation = automatic(self)
+        else:
+            (self.sandbox.home / "release-gate").touch()
         queued_state = self.sandbox.query("SELECT status FROM orchestration_v2_projection_runs WHERE run_id=?", (queued["runId"],))
         if interrupted and queued_state and queued_state[0][0] in ("cancelled", "interrupted"):
             queued_reply = {"threadId": queued["threadId"], "runId": queued["runId"], "disposition": "interrupted-by-rollback-stop", "status": queued_state[0][0]}
         else:
             queued_reply = self.reply({"threadId": queued["threadId"], "runId": queued["runId"]}, queued["nonce"])
-        nonce = f"RESUME_{uuid.uuid4().hex}"
-        active = self.work["active-turn"]
-        result = self.sandbox.t3("thread", "send", active["threadId"], f"Reply with exactly {nonce} and nothing else. Do not use tools.", "--mode", "queue", "--json")
-        proof = self.reply({"threadId": active["threadId"], "runId": result["runId"]}, nonce)
-        evidence = {"before": self.before, "after": after, "dispositions": dispositions, "queued": queued, "queuedReply": queued_reply, "snoozedUntil": json.loads(snoozed)["snoozedUntil"], "resume": proof}
+        if continuation is None:
+            nonce = f"RESUME_{uuid.uuid4().hex}"
+            active = self.work["active-turn"]
+            result = self.sandbox.t3("thread", "send", active["threadId"], f"Reply with exactly {nonce} and nothing else. Do not use tools.", "--mode", "queue", "--json")
+            proof = self.reply({"threadId": active["threadId"], "runId": result["runId"]}, nonce)
+        evidence = {"before": self.before, "after": self.snapshot(), "dispositions": dispositions, "queued": queued, "queuedReply": queued_reply, "snoozedUntil": json.loads(snoozed)["snoozedUntil"], "resume": proof, "activeContinuation": continuation}
         return proof, evidence
