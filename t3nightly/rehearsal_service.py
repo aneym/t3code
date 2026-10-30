@@ -49,12 +49,11 @@ def boot(sandbox, argv, log):
     (sandbox.home / "service.env").chmod(0o600)
     if sys.platform == "darwin":
         unit = plistlib.loads(text.encode())
-        unit["Label"] = sandbox.label
-        unit["EnvironmentVariables"]["T3_BOOT_SERVICE_UNIT"] = sandbox.label + ".plist"
-        unit["EnvironmentVariables"].update(environment)
+        if unit["Label"] != sandbox.label:
+            raise ValueError("production renderer did not honor the sandbox unitPath")
         if unit.get("ExitTimeOut") != 90:
             raise ValueError("production renderer does not provide ExitTimeOut 90")
-        sandbox.unit.write_bytes(plistlib.dumps(unit))
+        sandbox.unit.write_text(text)
         sandbox.unit.chmod(0o600)
         subprocess.run(["launchctl", "bootstrap", sandbox.domain, str(sandbox.unit)], check=True, timeout=60)
     else:
@@ -62,7 +61,7 @@ def boot(sandbox, argv, log):
             raise ValueError("production renderer lacks mixed kill mode / 90s stop timeout")
         sandbox.systemd_unit.parent.mkdir(parents=True, exist_ok=True)
         with sandbox.systemd_unit.open("x") as output:
-            output.write(text.replace("T3_BOOT_SERVICE_UNIT=t3code.service", f"T3_BOOT_SERVICE_UNIT={sandbox.label}.service"))
+            output.write(text)
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=30)
         subprocess.run(["systemctl", "--user", "start", f"{sandbox.label}.service"], check=True, timeout=60)
     sandbox.started = True
