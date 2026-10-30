@@ -43,8 +43,6 @@ class HotSwapRehearsal(Rehearsal):
                     before_running = any(row[1] == "running" and row[3] == "running" for row in self.hot["providerTurnBefore"])
                     after_running = any(row[1] == "running" and row[3] == "running" for row in self.hot["providerTurnAfter"])
                     self.hot["checks"]["provider-turn-across-freeze"] = {"status": "passed" if before_running and after_running else "failed", "runId": self.probe_run}
-                    if not before_running or not after_running:
-                        raise ValueError("real provider turn was not running across the capable cutover")
             except BaseException:
                 self.stop_probe()
                 raise
@@ -178,8 +176,9 @@ class HotSwapRehearsal(Rehearsal):
                 receipt["result"] = "PASS"
             queue_failed = self.args.queue_mode != "none" and hot.get("checks", {}).get("queue-saturation", {}).get("status") != "passed"
             presentation_failed = self.args.queue_mode != "budget" and self.args.inject == "none" and hot.get("checks", {}).get("presentation", {}).get("status") != "passed"
+            provider_failed = hot.get("checks", {}).get("provider-turn-across-freeze", {}).get("status") == "failed"
             connection_failed = self.args.inject == "none" and any(hot["checks"].get(name, {}).get("status") != "passed" for name in ("keep-alive-freeze", "drain-arrivals"))
-            if hot.get("status") == "hot-swap" and (connection_failed or probe.get("refusedConnections") or hot.get("sequenceContinuity") is not True or hot.get("databaseIntegrity") != [("ok",)] or queue_failed or presentation_failed):
+            if hot.get("status") == "hot-swap" and (provider_failed or connection_failed or probe.get("refusedConnections") or hot.get("sequenceContinuity") is not True or hot.get("databaseIntegrity") != [("ok",)] or queue_failed or presentation_failed):
                 receipt["result"] = "FAIL"
                 result.update(result="FAIL", releaseEligible=False)
             receipt_path.write_text(json.dumps(seal(receipt), indent=2) + "\n")
