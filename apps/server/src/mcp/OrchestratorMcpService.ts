@@ -1,3 +1,4 @@
+import { threadSettlement } from "./threadSettlement.ts";
 import {
   messageSender,
   CommandId,
@@ -620,16 +621,6 @@ function threadTitle(input: {
   const detail = input.title?.trim() || input.prompt?.trim();
   if (!detail) return `${input.parentTitle} thread ${input.index + 1}`;
   return detail.length > 80 ? `${detail.slice(0, 77)}...` : detail;
-}
-
-function threadSettlement(
-  thread: Pick<OrchestrationV2ThreadShell, "settledOverride" | "settledAt">,
-): Pick<OrchestratorMcpThreadListItem, "settled" | "settledAt"> {
-  const settled = thread.settledOverride === "settled";
-  return {
-    settled,
-    settledAt: settled && thread.settledAt !== null ? DateTime.formatIso(thread.settledAt) : null,
-  };
 }
 
 function threadSnooze(
@@ -2920,6 +2911,10 @@ const make = Effect.gen(function* () {
         yield* threadManagement
           .stopDelegatedTasks({ threadId: input.threadId, commandId, reason: input.reason })
           .pipe(Effect.catch(stopFailed));
+        // The run this stop interrupted, from its own events, so a retry
+        // reports the same run even if another has started since. Stop also
+        // holds queued runs and marks runs it could not interrupt, with no
+        // provider turn; neither is the run it interrupted.
         const interrupted = stopped.storedEvents.find(
           ({ event }) =>
             (event.type === "run.updated" && event.payload.status === "interrupted") ||

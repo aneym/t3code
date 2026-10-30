@@ -3,6 +3,11 @@ import {
   OrchestrationV2GetThreadProjectionInput,
 } from "./orchestrationDispatchResult.ts";
 import { ModelSelectionPrecondition } from "./modelSelectionPrecondition.ts";
+import {
+  ThreadSettlement,
+  ThreadSettleCommand,
+  ThreadAutoSettleCommand,
+} from "./threadSettlement.ts";
 import { OrchestrationV2DelegatedCompletionCohort } from "./delegatedCompletionDelivery.ts";
 import { QueueHoldState, QueueHoldStateJson } from "./queueHoldReason.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
@@ -479,13 +484,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   settledAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  lastSettlement: Schema.optional(
-    Schema.Struct({
-      source: Schema.Literals(["sweep", "user", "mcp"]),
-      commandId: CommandId,
-      recordedAt: IsoDateTime,
-    }),
-  ),
+  lastSettlement: Schema.optional(ThreadSettlement),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -708,6 +707,7 @@ export function orchestrationV2RunWorkStartedAt(
 
 export const OrchestrationV2RunAttempt = Schema.Struct({
   id: RunAttemptId,
+  // Provider-thread rows can be reused after recovery; retain the native input destination.
   nativeThreadId: Schema.optional(Schema.String),
   runId: RunId,
   attemptOrdinal: PositiveInt,
@@ -2923,21 +2923,9 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
   }),
-  Schema.Struct({
-    type: Schema.Literal("thread.settle"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    source: Schema.optional(Schema.Literals(["sweep", "user", "mcp"])),
-    settledAt: Schema.optional(Schema.DateTimeUtc),
-  }),
+  ThreadSettleCommand,
   /** Rejects changes since snapshotAt or any explicit settled override to preserve user actions. */
-  Schema.Struct({
-    type: Schema.Literal("thread.auto-settle"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    snapshotAt: Schema.DateTimeUtc,
-    settledAt: Schema.optional(Schema.DateTimeUtc),
-  }),
+  ThreadAutoSettleCommand,
   Schema.Struct({
     type: Schema.Literal("thread.unsettle"),
     commandId: CommandId,
@@ -2993,6 +2981,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     visitedAt: IsoDateTime,
+    // The user opened the thread, as opposed to new activity on an open one.
+    // Older servers ignore both fields and only move the read watermark.
     opened: Schema.optional(Schema.Boolean),
     searchQuery: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
   }),
@@ -3231,6 +3221,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     text: Schema.String,
+    // Replaces all attachments; absent preserves them for older clients editing text.
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
   }),
   Schema.Struct({
@@ -3289,6 +3280,7 @@ export const OrchestrationV2Command = Schema.Union([
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
     workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+    // Defaults to settled_only; fire-and-forget wakes require always.
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
@@ -3331,7 +3323,9 @@ export const OrchestrationV2Command = Schema.Union([
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
+// Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),
     commandId: CommandId,
@@ -3782,6 +3776,7 @@ export function isKnownOrchestrationV2EventType(type: string): boolean {
   return knownDomainEventTypes.has(type);
 }
 
+// Skip unknown event or turn-item types while advancing the resume cursor.
 const OrchestrationV2UnknownThreadStreamEvent = Schema.Struct({
   kind: Schema.Literal("event"),
   sequence: NonNegativeInt,
