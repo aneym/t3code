@@ -23,6 +23,19 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
   });
   const program = Effect.scoped(Effect.gen(function* () {
     const factory = yield* RpcSession.RpcSessionFactory;
+    if (opts["stock-client"] === "true") {
+      const prepared = yield* prepare();
+      const stock = yield* factory.connect(prepared);
+      yield* stock.probe;
+      data.stockClient = { ready: true, serverVersion: preparedVersions.get(prepared), connectedAtMs: elapsed(), handoffClientIdSent: false, confirmationSent: false, events: [] };
+      save();
+      yield* stock.client.subscribeServerLifecycle({}).pipe(
+        Stream.runForEach((event) => Effect.sync(() => { data.stockClient.events.push({ type: event.type, sequence: event.sequence, atMs: elapsed() }); save(); })),
+        Effect.onExit((exit) => Effect.sync(() => { data.stockClient.streamEndedAtMs = elapsed(); data.stockClient.outcome = exit._tag; save(); })),
+        Effect.ignore,
+        Effect.forkScoped,
+      );
+    }
     const connect = (connection) => factory.connect(connection).pipe(Effect.map((session) => {
       data.wsConnections++;
       const identity = { id: data.wsConnections, serverVersion: preparedVersions.get(connection), atMs: elapsed() };
@@ -32,12 +45,12 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
         if (method !== "subscribeServerLifecycle" && method !== "server.probe") return original;
         return (input) => {
           if (typeof input?.handoffClientId === "string") {
-            data.handoffCalls.push({ atMs: elapsed(), sessionId: identity.id, serverVersion: identity.serverVersion, method, clientId: input.handoffClientId, sequence: input.handoffSequence ?? null });
+            data.handoffCalls.push({ atMs: elapsed(), sessionId: identity.id, serverVersion: identity.serverVersion, method, clientId: input.handoffClientId, sequence: input.handoffSequence ?? null, confirmation: input.handoffReplyReceived === true });
             save();
           }
           const result = original(input);
           if (method !== "subscribeServerLifecycle") return result.pipe(Effect.tap(() => Effect.sync(() => {
-            if (input?.handoffSequence !== undefined) { data.handoffReplies.push({ atMs: elapsed(), sessionId: identity.id, clientId: input.handoffClientId, sequence: input.handoffSequence }); save(); }
+            if (input?.handoffSequence !== undefined) { data.handoffReplies.push({ atMs: elapsed(), sessionId: identity.id, clientId: input.handoffClientId, sequence: input.handoffSequence, confirmation: input.handoffReplyReceived === true }); save(); }
           })), Effect.onExit((exit) => Effect.sync(() => {
             if (input?.handoffSequence !== undefined) { data.handoffSettlements.push({ atMs: elapsed(), sessionId: identity.id, clientId: input.handoffClientId, sequence: input.handoffSequence, outcome: exit._tag }); save(); }
           })));

@@ -26,6 +26,8 @@ class HotSwapRehearsal(Rehearsal):
         run = SimpleNamespace(args=SimpleNamespace(drain_s=self.args.drain_s), home=sandbox.home, state=sandbox.evidence, runtime=lambda version: sandbox.home / "runtime/versions" / version / "t3")
         with restart_session(run, sandbox.old.name) as bearer:
             command = ["node", str(self.engine / "client.mjs"), "hot-swap-probe", "--tree", str(self.args.rpc_tree.resolve()), "--origin", f"http://127.0.0.1:{sandbox.port}", "--bearer-file", str(bearer), "--thread", self.probe_thread, "--output", str(self.probe_path), "--stop", str(self.stop_path)]
+            if self.args.stock_client:
+                command.extend(["--stock-client", "true"])
             self.probe_log = (sandbox.evidence / "connection-probe.log").open("w")
             self.probe_process = subprocess.Popen(command, stdout=self.probe_log, stderr=subprocess.STDOUT)
             wait_for(self.probe_ready, 60, "persistent probe WS snapshot")
@@ -50,7 +52,8 @@ class HotSwapRehearsal(Rehearsal):
         if self.probe_process.poll() is not None:
             raise ValueError("connection probe exited; see connection-probe.log")
         try:
-            return json.loads(self.probe_path.read_text()).get("ready") is True
+            probe = json.loads(self.probe_path.read_text())
+            return probe.get("ready") is True and (not self.args.stock_client or probe.get("stockClient", {}).get("ready") is True)
         except (OSError, ValueError):
             return False
 
@@ -170,6 +173,7 @@ class HotSwapRehearsal(Rehearsal):
             presentation_failed = self.args.queue_mode != "budget" and self.args.inject == "none" and hot.get("checks", {}).get("presentation", {}).get("status") != "passed"
             normal = self.args.inject == "none" and not self.args.force_rollback and self.args.queue_mode == "none"
             provider_failed = normal and any(hot["checks"].get(name, {}).get("status") != "passed" for name in ("provider-turn-in-flight-before-freeze", "active-automatic-continuation", "handoff-reply-and-NEW-event"))
+            provider_failed = provider_failed or (self.args.stock_client and hot["checks"].get("stock-client", {}).get("status") != "passed")
             connection_failed = self.args.inject == "none" and any(hot["checks"].get(name, {}).get("status") != "passed" for name in ("keep-alive-freeze", "drain-arrivals"))
             if hot.get("status") == "hot-swap" and (provider_failed or connection_failed or probe.get("refusedConnections") or hot.get("sequenceContinuity") is not True or hot.get("databaseIntegrity") != [("ok",)] or queue_failed or presentation_failed):
                 receipt["result"] = "FAIL"
