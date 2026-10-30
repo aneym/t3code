@@ -83,16 +83,28 @@ def admit(run, policy):
     run.admitted_at = policy.get("at")
 
 
-def recheck(run):
+def recheck(run, *, recovery=False):
     policy = run.report.get("installWindow", {})
     if not getattr(run, "cutover_admitted", False) or policy.get("allowed") is not True:
         raise ValueError("service mutation requires a recorded install admission")
+    if policy.get("version") != run.args.version:
+        raise ValueError("install admission version mismatch")
     admitted = datetime.fromisoformat(policy["at"])
+    if admitted.tzinfo is None:
+        raise ValueError("install admission requires a timezone-aware timestamp")
+    if policy.get("isolated"):
+        refuse_probe(run.home, run.args.port, run.service_label, getattr(run.args, "live_home", []))
+        return
+    if recovery or getattr(run, "recovering", False):
+        return
     age = (datetime.now(timezone.utc) - admitted).total_seconds()
     if not 0 <= age <= MAX_ADMISSION_AGE_S:
         raise ValueError("install admission expired; re-run the installer inside a window or with --override-reason")
-    if policy.get("version") not in (None, run.args.version):
-        raise ValueError("install admission version mismatch")
+
+
+def begin_recovery(run):
+    recheck(run, recovery=True)
+    run.recovering = True
 
 
 def admitted_environment(policy, environment=None):

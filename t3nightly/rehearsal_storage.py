@@ -73,12 +73,12 @@ def store_root():
 def publish(source, move=False):
     source = Path(source).resolve()
     root = store_root()
-    key = tree_digest(source)
-    if source.parent == root and source.name != key:
-        raise ValueError("shared rehearsal source content drifted")
-    target = root / key
     with (root / ".store.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        key = tree_digest(source)
+        if source.parent == root and source.name != key:
+            raise ValueError("shared rehearsal source content drifted")
+        target = root / key
         if target.exists():
             if target.is_symlink() or tree_digest(target) != key:
                 raise ValueError("shared rehearsal runtime content drifted")
@@ -90,7 +90,17 @@ def publish(source, move=False):
                 else:
                     clone_tree(source, staged)
                 os.replace(staged, target)
+        renew_publication(root, key)
     return target
+
+
+def renew_publication(root, key):
+    metadata = root / ".published"
+    metadata.mkdir(exist_ok=True, mode=0o700)
+    marker = metadata / key
+    if metadata.is_symlink() or marker.is_symlink():
+        raise ValueError("rehearsal publication metadata must not be a symlink")
+    marker.touch()
 
 
 def enabled(home):
@@ -131,6 +141,7 @@ def seed_database(seed, destination):
             cached = root / (key + ".sqlite")
             if not cached.exists():
                 os.replace(snapshot, cached)
+            renew_publication(store_root(), cached.name)
             method = clone_file(cached, destination)
     return {"method": method, "snapshot": str(cached), "sha256": key}
 

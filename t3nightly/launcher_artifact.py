@@ -164,6 +164,9 @@ def watchdog(run, version):
             run.step("launcher-watchdog-passed", version=version)
             return
         time.sleep(0.25)
+    from .install_policy import begin_recovery
+
+    begin_recovery(run)
     service(run, "stop")
     try:
         rollback_launcher(run)
