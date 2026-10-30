@@ -46,7 +46,7 @@ import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { makeWorktreeIntegrationCheck } from "./worktreeIntegration.ts";
-import { makeWorktreeTrash, WORKTREE_TRASH_FOLDER } from "./worktreeTrash.ts";
+import { makeWorktreeTrash, PENDING_OPERATIONS, WORKTREE_TRASH_FOLDER } from "./worktreeTrash.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -623,6 +623,12 @@ const make = Effect.gen(function* () {
         if ((yield* fs.stat(directory)).type !== "Directory")
           return "submodule repository could not be inspected";
         if (yield* fs.exists(path.join(directory, "HEAD"))) {
+          for (const operation of PENDING_OPERATIONS)
+            if (yield* fs.exists(path.join(directory, operation)))
+              return `submodule has a Git operation in progress (${operation})`;
+          const linked = path.join(directory, "worktrees");
+          if ((yield* fs.exists(linked)) && (yield* fs.readDirectory(linked)).length > 0)
+            return "submodule has another linked worktree";
           const unpushed = yield* inspect([
             "--git-dir",
             directory,

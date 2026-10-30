@@ -672,6 +672,49 @@ it.live("keeps unpushed submodule history after checkout and deinitialization", 
   ),
 );
 
+it.live("keeps a deinitialized submodule whose paused merge holds an autostash", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, submodule, child, command } = yield* submoduleCleanupFixture();
+      const childGit = (yield* command(child, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+      const empty = (yield* command(child, [
+        "commit-tree",
+        "HEAD^{tree}",
+        "-p",
+        "HEAD",
+        "-m",
+        "empty",
+      ])).stdout.trim();
+      yield* fs.writeFileString(`${child}/tracked.txt`, "edited\n");
+      yield* command(child, ["merge", "--no-ff", "--no-commit", "--autostash", empty]);
+      yield* command(submodule, ["submodule", "deinit", "child"]);
+      expect(
+        (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+      ).toMatchObject({ outcome: "kept", reason: expect.stringContaining("MERGE_") });
+      expect(yield* fs.exists(`${childGit}/MERGE_AUTOSTASH`)).toBe(true);
+    }),
+  ),
+);
+
+it.live("keeps a deinitialized submodule that owns another linked worktree", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, submodule, child, command } = yield* submoduleCleanupFixture();
+      const linked = `${yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-linked-" })}/side`;
+      yield* command(child, ["worktree", "add", "-b", "side", linked]);
+      yield* fs.writeFileString(`${linked}/tracked.txt`, "staged\n");
+      yield* command(linked, ["add", "tracked.txt"]);
+      yield* command(submodule, ["submodule", "deinit", "child"]);
+      expect(
+        (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+      ).toMatchObject({ outcome: "kept", reason: expect.stringContaining("linked worktree") });
+      expect((yield* command(linked, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe(
+        "tracked.txt",
+      );
+    }),
+  ),
+);
+
 it.live("keeps submodules when stored repository metadata is malformed", () =>
   runCleanupTest(
     Effect.gen(function* () {

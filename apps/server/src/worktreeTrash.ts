@@ -16,7 +16,7 @@ const ENTRY = /^(\d{13})-[^/\\]+\.worktree$/;
 const RECOVERY_REQUIRED = "recovery-required";
 const RECOVERY_FAILED = "recovery-failed.txt";
 const RETENTION_MS = 86_400_000;
-const PENDING_OPERATIONS = [
+export const PENDING_OPERATIONS = [
   "MERGE_HEAD",
   "MERGE_AUTOSTASH",
   "CHERRY_PICK_HEAD",
