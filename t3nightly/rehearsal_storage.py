@@ -127,6 +127,15 @@ def owns(home, binary):
         return True
     if not enabled(home):
         return False
+    refs = runtime / "rehearsal-runtime-refs.json"
+    if refs.is_file() and not refs.is_symlink():
+        for version, raw in json.loads(refs.read_text()).items():
+            shared = Path(raw).resolve()
+            private = runtime / "versions" / version / "t3"
+            if Path(version).name != version or shared.parent != store_root():
+                raise ValueError("rehearsal runtime ownership reference escaped its store")
+            if binary == shared / "t3" and private.is_file() and os.path.samefile(binary, private):
+                return True
     return any(path.is_symlink() and binary == (path / "t3").resolve() and path.resolve().parent == store_root() for path in (runtime / "versions").iterdir())
 
 
