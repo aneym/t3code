@@ -45,11 +45,13 @@ import {
   type ReactNode,
   type SyntheticEvent,
 } from "react";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
-  LegendList,
-  type LegendListRef,
-  type MaintainScrollAtEndOptions,
-} from "@legendapp/list/react";
+  hasRunMcpApp,
+  isGrowingMcpApp,
+  TIMELINE_MAINTAIN_SCROLL_AT_END,
+  TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH,
+} from "./timelineMcpFollow";
 import { type PendingApproval, type TimelineEntry } from "../../session-logic";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import { type ChatFileAttachment, type TurnDiffSummary } from "../../types";
@@ -181,20 +183,7 @@ function TimelineListFooter({
 }
 
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
-const TIMELINE_MAINTAIN_SCROLL_AT_END = {
-  animated: false,
-  on: {
-    dataChange: true,
-    footerLayout: false,
-    itemLayout: true,
-    layout: true,
-  },
-} as const satisfies MaintainScrollAtEndOptions;
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
-const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
-  ...TIMELINE_MAINTAIN_SCROLL_AT_END,
-  animated: true,
-} as const satisfies MaintainScrollAtEndOptions;
 
 const CITED_HISTORY_LOADING: CitedHistory = { _tag: "loading" };
 
@@ -942,7 +931,29 @@ const ConversationTimeline = memo(function ConversationTimeline({
     scheduleMinimapRefresh();
   };
 
-  const handleItemSizeChanged = () => {
+  const maintainScrollAtEnd =
+    citationPositioning ||
+    (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+    anchoredEndSpace ||
+    !liveFollowEnabled ||
+    fullscreenAppRowId !== null ||
+    disclosureToggleSettling
+      ? false
+      : isWorking &&
+          !prefersReducedMotion &&
+          settlingListIdentity === null &&
+          !hasRunMcpApp(timelineEntries, runningRunId)
+        ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
+        : TIMELINE_MAINTAIN_SCROLL_AT_END;
+
+  const handleItemSizeChanged = (info: {
+    itemData: MessagesTimelineRow;
+    size: number;
+    previous: number;
+  }) => {
+    if (maintainScrollAtEnd === TIMELINE_MAINTAIN_SCROLL_AT_END && isGrowingMcpApp(info)) {
+      void listRef.current?.scrollToEnd({ animated: false });
+    }
     if (disclosurePinsEndRef.current) {
       queueMicrotask(pinDisclosureToEnd);
       scheduleDisclosureSettle();
@@ -1315,18 +1326,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               onLoad={handleListLoad}
               {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
               contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-              maintainScrollAtEnd={
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-                anchoredEndSpace ||
-                !liveFollowEnabled ||
-                fullscreenAppRowId !== null ||
-                disclosureToggleSettling
-                  ? false
-                  : isWorking && !prefersReducedMotion && settlingListIdentity === null
-                    ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-                    : TIMELINE_MAINTAIN_SCROLL_AT_END
-              }
+              maintainScrollAtEnd={maintainScrollAtEnd}
               maintainVisibleContentPosition={
                 findActive ||
                 citationPositioning ||
