@@ -25,13 +25,20 @@ def boot(sandbox, argv, log):
 
         internal(sandbox.args.rpc_tree)
 
-    if sandbox.args.inject != "none":
+    if sandbox.args.hot_swap:
         from shutil import copy2
 
         fault = sandbox.home / "runtime/hot-swap-fault.cjs"
         copy2(Path(__file__).with_name("hot_swap_fault.cjs"), fault)
-        environment.update(NODE_OPTIONS="--require=" + json.dumps(str(fault)), T3_REHEARSAL_FAULT=sandbox.args.inject, T3_REHEARSAL_FAULT_RECEIPT=str(sandbox.evidence / "fault-injected.json"))
-    text = render(sandbox.args.rpc_tree.resolve(), sandbox.home, sandbox.unit, argv, log, environment)
+        hold = 0
+        if getattr(sandbox.args, "queue_mode", "none") != "none":
+            config = json.loads((sandbox.home / "runtime/launcher-config.json").read_text())
+            hold = 2000 if sandbox.args.queue_mode == "capacity" else config["holdBudgetMs"] + 1000
+        environment["T3_REHEARSAL_VALIDATED_HOLD_MS"] = str(hold)
+        environment["T3_REHEARSAL_IPC_RECEIPT"] = str(sandbox.evidence / "launcher-ipc.jsonl")
+        environment.update(NODE_OPTIONS="--require=" + json.dumps(str(fault)), T3_REHEARSAL_FAULT="" if sandbox.args.inject == "none" else sandbox.args.inject, T3_REHEARSAL_FAULT_RECEIPT=str(sandbox.evidence / "fault-injected.json"))
+    unit_path = sandbox.unit if sys.platform == "darwin" else sandbox.systemd_unit
+    text = render(sandbox.args.rpc_tree.resolve(), sandbox.home, unit_path, argv, log, environment)
     lines = []
     for key, value in environment.items():
         quote = "'" if "'" not in value else '"'
