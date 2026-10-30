@@ -2,11 +2,13 @@ import fcntl
 import json
 import re
 import shutil
+import time
 from pathlib import Path
 
 from .rehearsal_storage import store_root
 
 DIGEST = re.compile(r"[0-9a-f]{64}")
+PUBLICATION_GRACE_S = 15 * 60
 
 
 def retain_references(root):
@@ -47,7 +49,7 @@ def retain_references(root):
 
 def prune():
     root = store_root()
-    report = {"deleted": [], "kib": 0}
+    report = {"deleted": [], "kib": 0, "recent": [], "publicationGraceSeconds": PUBLICATION_GRACE_S}
     with (root / ".store.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
@@ -63,11 +65,19 @@ def prune():
         for path in candidates:
             if path in references or path.is_symlink() or not path.resolve().is_relative_to(root) or path.stat().st_uid != root.stat().st_uid:
                 continue
+            published = root / ".published" / path.name
+            if published.is_symlink() or published.parent.is_symlink():
+                raise ValueError("rehearsal publication metadata must not be a symlink")
+            published_at = published.stat().st_mtime if published.exists() else path.stat().st_ctime
+            if time.time() - published_at < PUBLICATION_GRACE_S:
+                report["recent"].append(str(path))
+                continue
             size = kib(path)
             if path.is_dir():
                 shutil.rmtree(path)
             else:
                 path.unlink()
+            published.unlink(missing_ok=True)
             report["deleted"].append(str(path))
             report["kib"] += size
     return report

@@ -219,6 +219,9 @@ def install(run):
             outcome = "installed"
     except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as error:
         run.step("hard-failure", error=str(error))
+        from .install_policy import begin_recovery
+
+        begin_recovery(run)
         if routed:
             try:
                 from .install_hot_swap import binary_compatible, supported, swap
