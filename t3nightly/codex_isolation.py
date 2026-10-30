@@ -29,11 +29,11 @@ def without_store_keys(lines):
     return current
 
 
-def isolated_codex_home(root):
+def isolated_codex_home(root, *, inherit=True):
     root = Path(root)
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     source = Path.home() / ".codex/config.toml"
-    lines = source.read_text().splitlines(keepends=True) if source.is_file() else []
+    lines = source.read_text().splitlines(keepends=True) if inherit and source.is_file() else []
     text = "".join(f'{key} = "{value}"\n' for key, value in STORES.items()) + "".join(without_store_keys(lines))
     parsed = tomllib.loads(text)
     if any(parsed.get(key) != value for key, value in STORES.items()):

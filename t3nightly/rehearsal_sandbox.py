@@ -170,7 +170,7 @@ class Sandbox:
         (self.home / "runtime/versions").mkdir(parents=True)
         (self.home / "runtime/tmp").mkdir(mode=0o700)
         shutil.copy2(Path(__file__).with_name("rehearsal_waiter.py"), self.home / "runtime/rehearsal_waiter.py")
-        isolated_codex_home(self.home / "codex-home")
+        isolated_codex_home(self.home / "codex-home", inherit=sys.platform != "darwin")
         self.os_home.mkdir()
         old_version = self.old.name
         if getattr(self.args, "hot_swap", False):
