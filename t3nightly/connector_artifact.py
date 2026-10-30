@@ -70,13 +70,16 @@ def ensure_connector(run):
 
 
 def control(run, action):
+    from .install_policy import command_environment
+
+    environment = command_environment(run)
     label, path = identity(run)
     if sys.platform == "darwin":
         command = ["launchctl", "bootout", "--wait", f"gui/{os.getuid()}/{label}"] if action == "stop" else ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)]
     else:
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, capture_output=True, timeout=30)
+        subprocess.run(["systemctl", "--user", "daemon-reload"], env=environment, check=True, capture_output=True, timeout=30)
         command = ["systemctl", "--user", action, f"{label}.service"]
-    subprocess.run(command, check=True, capture_output=True, timeout=120)
+    subprocess.run(command, env=environment, check=True, capture_output=True, timeout=120)
 
 
 def uninstall(run):
@@ -88,5 +91,7 @@ def uninstall(run):
     path.unlink()
     pin.rename(pin.with_suffix(".uninstalled.json"))
     if sys.platform != "darwin":
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, capture_output=True, timeout=30)
+        from .install_policy import command_environment
+
+        subprocess.run(["systemctl", "--user", "daemon-reload"], env=command_environment(run), check=True, capture_output=True, timeout=30)
     run.step("connector-service-uninstalled", service=label, runtime_kept=True)

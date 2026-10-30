@@ -27,7 +27,7 @@ def main():
     events = []
     try:
         policy = window(args.version, reason=args.override_reason, sandbox=isolated(home, args.port, args.service_label))
-        run = SimpleNamespace(args=args, home=home, service_label=args.service_label, step=lambda name, **fields: events.append({"step": name, **fields}))
+        run = SimpleNamespace(args=args, home=home, service_label=args.service_label, report={"installWindow": policy}, cutover_admitted=True, step=lambda name, **fields: events.append({"step": name, **fields}))
         if args.action == "install":
             if not args.connector_artifact:
                 raise ValueError("install requires --connector-artifact")

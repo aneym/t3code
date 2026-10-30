@@ -93,7 +93,7 @@ def connector_run(sandbox, baseline=False):
     if baseline:
         args.launcher_artifact = sandbox.args.old_launcher_artifact
         args.connector_artifact = ""
-    return SimpleNamespace(args=args, home=sandbox.home, service_label=sandbox.label if sys.platform == "darwin" else sandbox.label + ".service", step=lambda name, **fields: print(json.dumps({"step": name, **fields}), flush=True))
+    return SimpleNamespace(args=args, home=sandbox.home, service_label=sandbox.label if sys.platform == "darwin" else sandbox.label + ".service", report={"installWindow": {"allowed": True, "isolated": True}}, cutover_admitted=True, step=lambda name, **fields: print(json.dumps({"step": name, **fields}), flush=True))
 
 
 def pin_artifacts(sandbox):
