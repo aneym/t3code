@@ -33,10 +33,9 @@ function pendingInputQueueRelease(
     (run) => run.status === "running" || run.status === "waiting",
   );
   if (active === undefined) return [];
-  const queued = queuedRunsInDeliveryOrder(projection);
+  const queued = queuedRunsInDeliveryOrder(projection).filter((run) => run.queueHeld !== true);
   if (
     queued.length === 0 ||
-    queued.some((run) => run.queueHeld === true) ||
     queued[0]?.providerInstanceId !== active.providerInstanceId ||
     providerInstanceDisabledForProject(
       settings,
