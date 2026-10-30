@@ -18,7 +18,7 @@ class HotSwapRehearsal(Rehearsal):
         self.probe_path = sandbox.evidence / "connection-probe.json"
         self.stop_path = sandbox.evidence / "probe.stop"
         environment = sandbox.version()
-        self.hot = {"previousMeasuredStartupMs": self.manifest.get("hotSwap", {}).get("previousMeasuredStartupMs"), "injection": self.args.inject, "oldVersion": environment, "checks": {}, "unitRenderer": sandbox.unit_renderer}
+        self.hot = {"oldChildPid": json.loads((sandbox.home / "userdata/server-runtime.json").read_text())["pid"], "previousMeasuredStartupMs": self.manifest.get("hotSwap", {}).get("previousMeasuredStartupMs"), "injection": self.args.inject, "oldVersion": environment, "checks": {}, "unitRenderer": sandbox.unit_renderer}
         if self.args.inject != "none" and not (sandbox.home / "runtime/launcher-config.json").is_file():
             self.hot["status"] = "hot-swap-unsupported"
             raise ValueError("hot-swap-unsupported: crash injection requires a capability-qualified sandbox launcher")
@@ -106,6 +106,15 @@ class HotSwapRehearsal(Rehearsal):
 
                 hot["checks"]["launcher-crash"] = launcher_crash(self.sandbox)
             hot["install"] = installer
+            hot["servingChildPid"] = json.loads((self.sandbox.home / "userdata/server-runtime.json").read_text())["pid"]
+            rollback = installer.get("hotSwap", {}).get("rollback")
+            if self.args.inject != "none":
+                automatic = rollback == "launcher-automatic" and installer.get("outcome") == "rolled-back"
+                unchanged = self.args.inject != "warm-death" or hot["oldChildPid"] == hot["servingChildPid"]
+                name = "warm-rollback" if self.args.inject == "warm-death" else "pre-routing-rollback"
+                hot["checks"][name] = {"status": "passed" if automatic and unchanged and hot.get("injected") else "failed", "method": rollback, "oldChildPid": hot["oldChildPid"], "servingChildPid": hot["servingChildPid"], "warmOldUntouched": unchanged if self.args.inject == "warm-death" else None}
+            if self.args.force_rollback:
+                hot["checks"]["post-routing-binary-rollback"] = {"status": "passed" if rollback == "launcher-ipc" and result.get("result") == "ROLLBACK-PROOF" else "failed", "method": rollback, "databaseKeptProof": result.get("proof")}
             fallback = installer.get("hotSwap", {}).get("method") != "launcher-ipc"
             hot["status"] = "hot-swap-unsupported" if fallback else "hot-swap"
             hot["fallbackAccepted"] = installer.get("outcome") == "installed"
