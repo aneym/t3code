@@ -1,3 +1,4 @@
+import { withServerAdmission } from "../serverHandoffBarrier.ts";
 import { readRejection, tagRejection } from "./RejectionReason.ts";
 import { makePendingInputQueueRelease, isQueuedInputRelease } from "./PendingInputQueueRelease.ts";
 import {
@@ -13289,13 +13290,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   }, withCommandMetrics);
 
-  // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
   const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
     const dispatch = threadDispatch.withLock(
       commandThreadId(command),
-      effectOutbox.withDispatch(dispatchWithReceiptEffect(command)),
+      effectOutbox.withDispatch(withServerAdmission(dispatchWithReceiptEffect(command))),
     );
-    // Answering a message-mode question can also start a follow-up.
     if (
       command.type !== "runtime-request.respond" &&
       (command.type !== "message.dispatch" || !mayStartSubagentFollowup(command))
@@ -13621,7 +13620,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             thread.limitRecovery.resetAt === input.limitRecovery.resetAt
           )
             return;
-          yield* dispatchWithReceiptEffect({ type: "thread.metadata.update", ...input });
+          yield* withServerAdmission(
+            dispatchWithReceiptEffect({ type: "thread.metadata.update", ...input }),
+          );
         }),
       );
     }),
@@ -13758,7 +13759,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       ),
-    // Start at the latest sequence; awareness needs no historical replay.
     streamDomainEvents: Stream.unwrap(
       eventSink
         .latestSequence()

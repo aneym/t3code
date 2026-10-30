@@ -1,3 +1,4 @@
+import { runServiceHandoff } from "./serviceChildHandoff.ts";
 import { importRestartManifest } from "./orchestration-v2/RestartManifest.ts";
 import {
   CommandId,
@@ -633,7 +634,6 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       }),
     );
 
-    yield* Effect.logDebug("startup phase: waiting for http listener");
     yield* runStartupPhase("http.wait", Deferred.await(httpListening));
     yield* runStartupPhase("auxiliary-roots.parked", options?.awaitAuxiliaryParked ?? Effect.void);
 
@@ -662,7 +662,6 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
     yield* options?.activate ?? Effect.void;
     yield* Effect.logDebug("Accepting commands");
     yield* commandGate.signalCommandReady;
-    yield* Effect.logDebug("startup phase: publishing ready event");
     yield* runStartupPhase(
       "ready.publish",
       lifecycleEvents.publish({
@@ -675,6 +674,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         },
       }),
     );
+    yield* runServiceHandoff();
     yield* Effect.logDebug("startup phase: complete");
     yield* flushCompileCache;
   }).pipe(

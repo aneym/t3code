@@ -12,8 +12,6 @@ import {
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
-  ProjectId,
-  ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
@@ -787,72 +785,7 @@ export const ServerConfigStreamEvent = Schema.Union([
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 
-export const ServerSelfUpdateOutcome = Schema.Struct({
-  id: TrimmedNonEmptyString,
-  fromVersion: TrimmedNonEmptyString,
-  targetVersion: TrimmedNonEmptyString,
-  status: Schema.Literals(["committed", "rolled-back", "failed"]),
-  reason: Schema.optionalKey(TrimmedNonEmptyString),
-});
-export type ServerSelfUpdateOutcome = typeof ServerSelfUpdateOutcome.Type;
-
-export const ServerLifecycleReadyPayload = Schema.Struct({
-  at: IsoDateTime,
-  environment: ExecutionEnvironmentDescriptor,
-  updateOutcome: Schema.optionalKey(ServerSelfUpdateOutcome),
-});
-export type ServerLifecycleReadyPayload = typeof ServerLifecycleReadyPayload.Type;
-
-export const ServerLifecycleWelcomePayload = Schema.Struct({
-  environment: ExecutionEnvironmentDescriptor,
-  cwd: TrimmedNonEmptyString,
-  projectName: TrimmedNonEmptyString,
-  bootstrapStatus: Schema.optional(Schema.Literals(["pending", "complete"])),
-  bootstrapProjectId: Schema.optional(ProjectId),
-  bootstrapThreadId: Schema.optional(ThreadId),
-  bootstrapProjectCreated: Schema.optional(Schema.Boolean),
-  bootstrapThreadCreated: Schema.optional(Schema.Boolean),
-});
-export type ServerLifecycleWelcomePayload = typeof ServerLifecycleWelcomePayload.Type;
-
-export const ServerLifecycleLegacyThreadMigrationPayload = Schema.Struct({
-  status: Schema.Union([Schema.Literal("running"), Schema.Literal("complete")]),
-  totalThreadCount: NonNegativeInt,
-});
-export type ServerLifecycleLegacyThreadMigrationPayload =
-  typeof ServerLifecycleLegacyThreadMigrationPayload.Type;
-
-export const ServerLifecycleStreamWelcomeEvent = Schema.Struct({
-  version: Schema.Literal(1),
-  sequence: NonNegativeInt,
-  type: Schema.Literal("welcome"),
-  payload: ServerLifecycleWelcomePayload,
-});
-export type ServerLifecycleStreamWelcomeEvent = typeof ServerLifecycleStreamWelcomeEvent.Type;
-
-export const ServerLifecycleStreamReadyEvent = Schema.Struct({
-  version: Schema.Literal(1),
-  sequence: NonNegativeInt,
-  type: Schema.Literal("ready"),
-  payload: ServerLifecycleReadyPayload,
-});
-export type ServerLifecycleStreamReadyEvent = typeof ServerLifecycleStreamReadyEvent.Type;
-
-export const ServerLifecycleStreamLegacyThreadMigrationEvent = Schema.Struct({
-  version: Schema.Literal(1),
-  sequence: NonNegativeInt,
-  type: Schema.Literal("legacyThreadMigration"),
-  payload: ServerLifecycleLegacyThreadMigrationPayload,
-});
-export type ServerLifecycleStreamLegacyThreadMigrationEvent =
-  typeof ServerLifecycleStreamLegacyThreadMigrationEvent.Type;
-
-export const ServerLifecycleStreamEvent = Schema.Union([
-  ServerLifecycleStreamWelcomeEvent,
-  ServerLifecycleStreamReadyEvent,
-  ServerLifecycleStreamLegacyThreadMigrationEvent,
-]);
-export type ServerLifecycleStreamEvent = typeof ServerLifecycleStreamEvent.Type;
+export * from "./serverLifecycle.ts";
 
 export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,

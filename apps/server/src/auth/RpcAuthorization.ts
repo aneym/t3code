@@ -31,6 +31,8 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { withServerAdmission } from "../serverHandoffBarrier.ts";
+import * as RpcSchema from "effect/rpc/RpcSchema";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
@@ -288,9 +290,13 @@ export const layer = (
     const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
     const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
     if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
-    return onAuthorized === undefined
-      ? effect
-      : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
+    const admitted =
+      onAuthorized === undefined
+        ? effect
+        : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
+    return RpcSchema.isStreamSchema(rpc.successSchema) || rpc._tag === WS_METHODS.serverProbe
+      ? admitted
+      : withServerAdmission(admitted);
   });
 
 /** Retrying can install or restart tools even though ordinary listing is readable. */
