@@ -60,7 +60,10 @@ export const writeConnectorService = Effect.fn("bootServiceConnector.write")(fun
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const connector = connectorServiceManager(manager, plan.connectorUnitPath);
+  const connector = connectorServiceManager(
+    manager,
+    plan.connectorUnitPath ?? connectorUnitPath(plan.unitPath),
+  );
   const nextPlan = {
     ...plan,
     program: [plan.program[0]!, "__service-connector"],
