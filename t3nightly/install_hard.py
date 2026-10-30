@@ -201,10 +201,10 @@ def install(run):
                 raise ValueError("staged candidate runtime changed after provenance check")
             run.step("hard-retain-runtime", version=previous, path=str(retain_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")))
             backup = capture(run, previous, stop, rollback_gate)
-            routed = True
-            activate(run, args.version)
             stopped = False
+            activate(run, args.version)
             serving(run, args.version, observed["candidateRuntime.digest"])
+            routed = True
             retained(run, before)
             if connect and not connect_returns(run, args.version):
                 raise ValueError("previously healthy Connect is unavailable")
@@ -224,11 +224,18 @@ def install(run):
                 from .install_hot_swap import binary_compatible, supported, swap
                 from .install_rpc import restart_session
 
-                if not binary_compatible(manifest, migration_history(run)) or not supported(run.environment(), run):
-                    raise ValueError("post-routing rollback requires a compatible hot swap; database preserved for forward repair")
-                restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")
-                with restart_session(run, args.version) as bearer:
-                    swap(run, bearer, previous, True)
+                if not binary_compatible(manifest, migration_history(run)):
+                    raise ValueError("post-routing rollback requires a compatible binary; database preserved for forward repair")
+                if supported(run.environment(), run):
+                    restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")
+                    with restart_session(run, args.version) as bearer:
+                        swap(run, bearer, previous, True)
+                else:
+                    stop()
+                    restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")
+                    activate(run, previous)
+                    stopped = False
+                    run.step("hard-binary-rollback", method="maintenance", database_preserved=True)
                 serving(run, previous, observed["oldRuntime.digest"])
                 outcome = "rolled-back"
             except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
