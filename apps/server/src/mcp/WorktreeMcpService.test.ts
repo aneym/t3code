@@ -347,7 +347,6 @@ const expectTypedFailure = (exit: Exit.Exit<unknown, unknown>, expected: object)
   expect(reason.error).toMatchObject(expected);
 };
 
-// Resolve once so calls share the in-flight guard.
 const resolveService = (harness: ReturnType<typeof makeHarness>) =>
   WorktreeMcpService.WorktreeMcpService.pipe(Effect.provide(harness.layer));
 

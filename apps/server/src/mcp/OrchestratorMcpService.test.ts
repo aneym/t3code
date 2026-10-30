@@ -519,7 +519,6 @@ describe("OrchestratorMcpService", () => {
               },
             ],
           }) as unknown as OrchestrationV2ThreadProjection;
-        // A finished run whose binding to the follow-up was lost.
         const childProjection = {
           thread: { id: childThreadId, title: "Child" },
           runs:

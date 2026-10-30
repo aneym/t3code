@@ -44,7 +44,11 @@ import * as Stream from "effect/Stream";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import * as OrchestratorErrors from "./OrchestratorErrors.ts";
+import {
+  OrchestratorDispatchError,
+  OrchestratorProjectionError,
+  type OrchestratorV2Error,
+} from "./OrchestratorErrors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -288,15 +292,15 @@ export const ThreadManagementError = Schema.Union([
 ]);
 export type ThreadManagementError = typeof ThreadManagementError.Type;
 
-type ThreadManagementFailure = ThreadManagementError | OrchestratorErrors.OrchestratorV2Error;
+type ThreadManagementFailure = ThreadManagementError | OrchestratorV2Error;
 
 export interface ThreadManagementServiceShape {
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
-  ) => Stream.Stream<OrchestrationV2SearchThreadResult, OrchestratorErrors.OrchestratorV2Error>;
+  ) => Stream.Stream<OrchestrationV2SearchThreadResult, OrchestratorV2Error>;
   readonly searchThread: (
     input: OrchestrationV2SearchThreadInput,
-  ) => Effect.Effect<OrchestrationV2SearchThreadResult, OrchestratorErrors.OrchestratorV2Error>;
+  ) => Effect.Effect<OrchestrationV2SearchThreadResult, OrchestratorV2Error>;
   readonly ensureLegacyTranscript: (
     threadId: ThreadId,
   ) => Effect.Effect<void, LegacyV1ThreadImporter.LegacyV1ThreadImportError>;
@@ -304,7 +308,7 @@ export interface ThreadManagementServiceShape {
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<
     Orchestrator.OrchestratorV2DispatchResult,
-    OrchestratorErrors.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
+    OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
   readonly getThreadHistoryPage: Orchestrator.OrchestratorV2["Service"]["getThreadHistoryPage"];
   readonly getTimelinePage: Orchestrator.OrchestratorV2["Service"]["getTimelinePage"];
@@ -312,18 +316,18 @@ export interface ThreadManagementServiceShape {
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
-  }) => Effect.Effect<OrchestrationV2GetTurnItemResult, OrchestratorErrors.OrchestratorV2Error>;
+  }) => Effect.Effect<OrchestrationV2GetTurnItemResult, OrchestratorV2Error>;
   readonly getThreadRecords: Orchestrator.OrchestratorV2["Service"]["getThreadRecords"];
   readonly getThreadProjection: (
     threadId: ThreadId,
-  ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorErrors.OrchestratorV2Error>;
+  ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
   readonly getCheckpointContext: Orchestrator.OrchestratorV2["Service"]["getCheckpointContext"];
   readonly getThreadSnapshot: Orchestrator.OrchestratorV2["Service"]["getThreadSnapshot"];
   readonly getThreadTranscript: (
     threadId: ThreadId,
   ) => Effect.Effect<
     OrchestrationV2ThreadTranscript,
-    OrchestratorErrors.OrchestratorV2Error | ThreadTranscriptTooLargeError,
+    OrchestratorV2Error | ThreadTranscriptTooLargeError,
     ServerEnvironment.ServerEnvironmentIdentity
   >;
   readonly getThreadSnapshotWindow: Orchestrator.OrchestratorV2["Service"]["getThreadSnapshotWindow"];
@@ -340,7 +344,7 @@ export interface ThreadManagementServiceShape {
       ShellSnapshotOptions,
       "location" | "projectId" | "unsettledOnly" | "worktreePath" | "threadIds"
     >,
-  ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorErrors.OrchestratorV2Error>;
+  ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
   readonly listActiveSubagentThreadIds: Orchestrator.OrchestratorV2["Service"]["listActiveSubagentThreadIds"];
   readonly countThreads: Orchestrator.OrchestratorV2["Service"]["countThreads"];
   readonly listActiveShellIndex: Orchestrator.OrchestratorV2["Service"]["listActiveShellIndex"];
@@ -348,8 +352,8 @@ export interface ThreadManagementServiceShape {
   readonly readShellSnapshot: (
     options?: Pick<ShellSnapshotOptions, "location" | "familyOf" | "worktreePath" | "threadIds">,
   ) => Effect.Effect<
-    Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorErrors.OrchestratorV2Error>,
-    OrchestratorErrors.OrchestratorV2Error
+    Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>,
+    OrchestratorV2Error
   >;
   readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
   /** Omit `projectId` to list every project's threads. */
@@ -387,7 +391,7 @@ export interface ThreadManagementServiceShape {
     readonly byOwnAgent: boolean;
   }) => Effect.Effect<
     { readonly sequence: number } | { readonly settlesWhenTurnEnds: true },
-    OrchestratorErrors.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
+    OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
   readonly snoozeThread: (input: {
     readonly threadId: ThreadId;
@@ -399,7 +403,7 @@ export interface ThreadManagementServiceShape {
       readonly replayed?: true;
       readonly snoozesWhenQueueDrains?: true;
     },
-    OrchestratorErrors.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
+    OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
   readonly interruptThread: (
     input: ThreadManagementInterruptInput,
@@ -419,10 +423,7 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly reason?: string | undefined;
-  }) => Effect.Effect<
-    void,
-    OrchestratorErrors.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
-  >;
+  }) => Effect.Effect<void, OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError>;
   readonly getThreadEventSequence: Orchestrator.OrchestratorV2["Service"]["getThreadEventSequence"];
   readonly recoverDelegatedTask: Orchestrator.OrchestratorV2["Service"]["recoverDelegatedTask"];
   readonly delegatedTaskResultPending: Orchestrator.OrchestratorV2["Service"]["delegatedTaskResultPending"];
@@ -550,7 +551,7 @@ const make = Effect.gen(function* () {
     ensureLegacyTranscript(threadId).pipe(
       Effect.mapError(
         (cause) =>
-          new OrchestratorErrors.OrchestratorProjectionError({
+          new OrchestratorProjectionError({
             threadId,
             cause,
           }),
@@ -567,7 +568,7 @@ const make = Effect.gen(function* () {
     ).pipe(
       Effect.mapError(
         (cause) =>
-          new OrchestratorErrors.OrchestratorDispatchError({
+          new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
             cause,
@@ -960,7 +961,7 @@ const make = Effect.gen(function* () {
     }
     const shell = yield* orchestrator.getThreadShell(input.threadId);
     if (shell === null) {
-      return yield* new OrchestratorErrors.OrchestratorDispatchError({
+      return yield* new OrchestratorDispatchError({
         commandId: input.commandId,
         commandType: "thread.snooze",
         cause: `Thread ${input.threadId} is deleted.`,
@@ -1187,9 +1188,7 @@ const make = Effect.gen(function* () {
     "ThreadManagementService.stopDelegatedTasks",
   )(function* (input) {
     const { subagents } = yield* orchestrator.getThreadRecords(input.threadId, ["subagents"]);
-    const failures: Array<
-      OrchestratorErrors.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
-    > = [];
+    const failures: Array<OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError> = [];
     const stoppedChildThreadIds = new Set<ThreadId>();
     for (const task of subagents) {
       if (task.origin !== "app_owned") continue;

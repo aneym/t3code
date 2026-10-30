@@ -33,7 +33,7 @@ import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
-import * as OrchestratorErrors from "../OrchestratorErrors.ts";
+import type { OrchestratorV2Error } from "../OrchestratorErrors.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -201,7 +201,7 @@ export function runOrchestratorV2ProviderReplayScenario<
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
-  | OrchestratorErrors.OrchestratorV2Error
+  | OrchestratorV2Error
   | OrchestratorV2ScenarioStepError
   | Error
   | MigrationError
@@ -293,7 +293,6 @@ export function layerWithRegistry<Error>(
           Layer.provide(RuntimePolicy.layer),
         );
   const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
-  // Share one continuation queue across adapters, orchestrator, and worker through layer memoization.
   const layerContinuationRequests =
     options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
   const layerProvidedRegistry = registryLayer.pipe(

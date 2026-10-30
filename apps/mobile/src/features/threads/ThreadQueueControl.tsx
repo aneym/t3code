@@ -169,12 +169,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
               if (busyRef.current) return;
               busyRef.current = true;
               setResuming(true);
-              try {
-                await sendAll({ ...target, input: { threadId: target.threadId } });
-              } finally {
+              await sendAll({ ...target, input: { threadId: target.threadId } }).finally(() => {
                 busyRef.current = false;
                 setResuming(false);
-              }
+              });
             }}
           />
         </View>

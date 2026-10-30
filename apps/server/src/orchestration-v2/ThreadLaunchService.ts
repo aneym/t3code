@@ -50,7 +50,7 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as Orchestrator from "./Orchestrator.ts";
-import type * as OrchestratorErrors from "./OrchestratorErrors.ts";
+import type { OrchestratorV2Error } from "./OrchestratorErrors.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
@@ -101,7 +101,6 @@ export interface ThreadLaunchInput {
   };
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
-  /** The linked environment this launch is for, if one asked for it. */
   readonly linkOrigin?: OrchestrationV2LinkOrigin;
   /** The parent there, when that environment's agent delegated this as a task. */
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
@@ -185,8 +184,7 @@ export class ThreadLaunchService extends Context.Service<
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
       Orchestrator.OrchestratorV2DispatchResult,
-      | OrchestratorErrors.OrchestratorV2Error
-      | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+      OrchestratorV2Error | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
     readonly prepareRun: (input: ThreadLaunchPreparationInput) => Effect.Effect<void>;
   }

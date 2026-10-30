@@ -312,7 +312,6 @@ it.effect("records only failed calls of tools that hand off no work", () => {
     expect(declaredFailure(yield* organize(new Set<never>()))).toMatchObject({
       code: "capability_denied",
     });
-    // The successful call ran first, so it would be the first event if it were recorded.
     expect(yield* Deferred.await(recorded)).toMatchObject({
       event: "mcp.tool.invoked",
       properties: { tool: "t3_thread_organize", outcome: "error" },

@@ -147,12 +147,13 @@ export function QueuedRunsControl({
     if (!queueSendAll || !canSendAll || steerInFlightRef.current || busyRunId !== null) return;
     steerInFlightRef.current = true;
     setBusyRunId(queued[0]!.run.id);
-    try {
-      await sendAll({ environmentId: props.environmentId, input: { threadId: props.threadId } });
-    } finally {
+    await sendAll({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId },
+    }).finally(() => {
       steerInFlightRef.current = false;
       setBusyRunId(null);
-    }
+    });
   };
 
   useImperativeHandle(ref, () => ({
