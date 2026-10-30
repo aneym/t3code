@@ -10,7 +10,7 @@ import { waitForServiceReadiness } from "./serviceLauncherReadiness.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalTimers:off
 // The launcher must survive unloadable server versions; use Node built-ins without Effect.
-import * as NodeChildProcess from "node:child_process";
+import { spawnServiceChild, type ManagedChild } from "./serviceLauncherChildSpawn.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -18,7 +18,6 @@ import * as NodePath from "node:path";
 import type {
   PendingServiceUpdate,
   ServiceLauncherChildMessage,
-  ServiceLauncherContext,
   ServiceState,
   ServiceUpdateRecord,
 } from "./cloud/serviceProtocol.ts";
@@ -45,12 +44,7 @@ import {
 import { ServiceLauncherExitDeadline } from "./serviceLauncherExitDeadline.ts";
 import { readServiceEnvironment } from "./serviceEnvironment.ts";
 
-import {
-  decodeServiceLauncherChildMessage,
-  SERVICE_LAUNCHER_CONTEXT_ENV,
-  SERVICE_LAUNCHER_PROTOCOL,
-  SERVICE_STATE_FILE,
-} from "./cloud/serviceProtocol.ts";
+import { decodeServiceLauncherChildMessage, SERVICE_STATE_FILE } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 /**
@@ -59,24 +53,7 @@ const HANDOFF_DELAY_MS = 2_000;
  */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
 
-type ChildRole = "active" | "trial";
-
-interface ManagedChild {
-  readonly version: string;
-  role: ChildRole;
-  stateDirOwned: boolean;
-  capable: boolean;
-  readonly instanceId: string;
-  readonly process: NodeChildProcess.ChildProcess;
-}
-
-import {
-  runtimePaths,
-  runtimeSpawnArguments,
-  runtimeExists,
-  readServiceState,
-  writeServiceState,
-} from "./serviceLauncherState.ts";
+import { runtimeExists, readServiceState, writeServiceState } from "./serviceLauncherState.ts";
 
 export class Launcher {
   readonly #baseDir: string;
@@ -250,7 +227,7 @@ export class Launcher {
 
   async #startChild(
     version: string,
-    role: ChildRole,
+    role: ManagedChild["role"],
     update?: ServiceUpdateRecord,
     warm = false,
     instanceId = NodeCrypto.randomUUID(),
@@ -260,50 +237,19 @@ export class Launcher {
       throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
     }
     if (this.#stopping) return;
-    const paths = runtimePaths(this.#baseDir, version);
-    const context: ServiceLauncherContext = {
-      protocol: SERVICE_LAUNCHER_PROTOCOL,
-      childVersion: version,
-      ...(this.#ingressConfig === undefined || this.#maintenanceVersions.has(version)
-        ? {}
-        : {
-            hotSwap: {
-              instanceId,
-              warm,
-              protocol: 1,
-              publicHost: this.#ingressConfig.host,
-              publicPort: this.#ingressConfig.port,
-              holdBudgetMs: this.#ingressConfig.holdBudgetMs,
-            },
-          }),
-      ...(update === undefined ? {} : { update }),
-    };
-    const spawnArguments = runtimeSpawnArguments(paths);
-    const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
-      env: {
-        ...this.#environment,
-        ...(this.#ingressConfig === undefined
-          ? {}
-          : {
-              T3CODE_PORT: String(this.#ingressConfig.port),
-              T3CODE_HOST: this.#ingressConfig.host,
-            }),
-        [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context),
-      },
-      stdio: ["inherit", "inherit", "inherit", "ipc"],
-    });
-    await new Promise<void>((resolve, reject) => {
-      const onError = (error: Error) => reject(error);
-      child.once("error", onError);
-      child.once("spawn", () => {
-        child.removeListener("error", onError);
-        child.on("error", () =>
-          this.#enqueue(async () => {
-            if (this.#warming?.process === child) await this.#dropWarm("candidate-ipc-error");
-          }),
-        );
-        resolve();
-      });
+    const child = await spawnServiceChild({
+      baseDir: this.#baseDir,
+      version,
+      instanceId,
+      warm,
+      update,
+      ingress: this.#ingressConfig,
+      maintenance: this.#maintenanceVersions.has(version),
+      environment: this.#environment,
+      onError: (child) =>
+        this.#enqueue(async () => {
+          if (this.#warming?.process === child) await this.#dropWarm("candidate-ipc-error");
+        }),
     });
     if (this.#stopping) {
       await this.#guards.terminator.terminate(child);

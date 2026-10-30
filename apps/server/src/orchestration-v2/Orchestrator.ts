@@ -1,4 +1,4 @@
-import { withServerAdmission } from "../serverHandoffBarrier.ts";
+import { makeCommandDispatchAdmission } from "./CommandDispatchAdmission.ts";
 import { readRejection, tagRejection } from "./RejectionReason.ts";
 import { makePendingInputQueueRelease, isQueuedInputRelease } from "./PendingInputQueueRelease.ts";
 import {
@@ -13108,28 +13108,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   }, withCommandMetrics);
 
-  // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
-  const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
-    const dispatch = threadDispatch.withLock(
-      commandThreadId(command),
-      effectOutbox.withDispatch(withServerAdmission(dispatchWithReceiptEffect(command))),
-    );
-    // Answering a message-mode question can also start a follow-up.
-    if (
-      command.type !== "runtime-request.respond" &&
-      (command.type !== "message.dispatch" || !mayStartSubagentFollowup(command))
-    )
-      return yield* dispatch;
-    const parentThreadId = yield* appOwnedSubagentParentThreadId(command.threadId).pipe(
-      Effect.mapError(
-        (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+  const admittedCommands = makeCommandDispatchAdmission({
+    execute: dispatchWithReceiptEffect,
+    commandThreadId,
+    mayStartFollowup: mayStartSubagentFollowup,
+    parentThreadId: (threadId) =>
+      appOwnedSubagentParentThreadId(threadId).pipe(
+        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       ),
-    );
-    // Follow-up intake and Stop serialize on the parent before taking the child lock.
-    return yield* parentThreadId === undefined
-      ? dispatch
-      : threadDispatch.withLock(parentThreadId, dispatch);
+    outbox: effectOutbox,
+    locks: threadDispatch,
   });
+  const dispatchWithReceipt = admittedCommands.dispatch;
 
   const handleRunUpdate = Effect.fn("Orchestrator.handleRunUpdate")(
     function* (stored: OrchestrationV2StoredEvent) {
@@ -13421,9 +13411,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             thread.limitRecovery.resetAt === input.limitRecovery.resetAt
           )
             return;
-          yield* withServerAdmission(
-            dispatchWithReceiptEffect({ type: "thread.metadata.update", ...input }),
-          );
+          yield* admittedCommands.execute({ type: "thread.metadata.update", ...input });
         }),
       );
     }),
