@@ -39,7 +39,10 @@ def wait_for(fn, seconds, what):
 
 
 def provider_wrapper(binary, evidence, destination):
-    lines = ["#!/bin/sh", "export ENABLE_TOOL_SEARCH=false", f"export HOME={shlex.quote(str(Path.home()))}",
+    provider_home = destination.parent.parent
+    config = provider_home / "claude-home"
+    config.mkdir(exist_ok=True, mode=0o700)
+    lines = ["#!/bin/sh", "export ENABLE_TOOL_SEARCH=false", f"export HOME={shlex.quote(str(provider_home))}", f"export CLAUDE_CONFIG_DIR={shlex.quote(str(config))}",
              f"export CLAUDE_CODE_TMPDIR={shlex.quote(str(destination.parent / 'tmp'))}"]
     if sys.platform == "darwin":
         lines.extend(claude_lb_lines(headless_bin(destination.parent / "headless-bin", evidence / "security-refusals.log")))
@@ -94,6 +97,10 @@ class Sandbox:
             raise ValueError("old runtime or sanitized seed missing")
         if sys.platform == "darwin" and str(self.home).startswith("/Volumes/"):
             raise ValueError("launchd sandbox home requires internal storage")
+        if sys.platform == "darwin":
+            from .rehearsal_internal import validate
+
+            validate(self)
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", self.port))
         if sys.platform == "darwin":
@@ -145,7 +152,7 @@ class Sandbox:
         return json.loads(result.stdout) if "--json" in args else result.stdout
 
     def service_environment(self):
-        paths = [str(self.cli.parent)] + [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if ".t3" not in entry]
+        paths = [str(self.cli.parent)] + [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if ".t3" not in entry and not str(Path(entry).resolve()).startswith("/Volumes/")]
         environment = {"HOME": str(self.home), "PATH": os.pathsep.join(paths), "T3CODE_HOME": str(self.home), "T3CODE_NO_BROWSER": "1", "TMPDIR": str(self.home / "runtime/tmp"), "CODEX_HOME": str(self.home / "codex-home"), "GIT_TERMINAL_PROMPT": "0",
                        "T3CODE_HOST": "127.0.0.1", "T3CODE_PORT": str(self.port)}
         if any(".t3" in value and not value.startswith(str(self.home)) for value in environment.values()):
