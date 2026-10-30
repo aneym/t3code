@@ -30,7 +30,7 @@ class HotSwapRehearsal(Rehearsal):
             self.probe_process = subprocess.Popen(command, stdout=self.probe_log, stderr=subprocess.STDOUT)
             wait_for(self.probe_ready, 60, "persistent probe WS snapshot")
             self.hot["walBefore"] = self.wal()
-            self.hot["providerTurnBefore"] = sandbox.query("SELECT r.run_id,r.status,t.provider_turn_id,t.status FROM orchestration_v2_projection_runs r JOIN orchestration_v2_projection_provider_turns t ON r.thread_id=t.thread_id WHERE r.run_id=?", (self.probe_run,))
+            self.hot["providerTurnBefore"] = sandbox.query("SELECT r.run_id,r.status,t.provider_turn_id,t.status FROM orchestration_v2_projection_runs r JOIN orchestration_v2_projection_provider_turns t ON r.thread_id=t.thread_id AND t.run_attempt_id=json_extract(r.payload_json,'$.activeAttemptId') WHERE r.run_id=?", (self.probe_run,))
             config = sandbox.home / "runtime/launcher-config.json"
             if config.is_file() and self.args.queue_mode != "none":
                 ingress = json.loads(config.read_text())
@@ -38,11 +38,10 @@ class HotSwapRehearsal(Rehearsal):
                 self.pressure_process = subprocess.Popen(pressure, stdout=self.probe_log, stderr=subprocess.STDOUT)
             try:
                 super().install()
-                self.hot["providerTurnAfter"] = sandbox.query("SELECT r.run_id,r.status,t.provider_turn_id,t.status FROM orchestration_v2_projection_runs r JOIN orchestration_v2_projection_provider_turns t ON r.thread_id=t.thread_id WHERE r.run_id=?", (self.probe_run,))
+                self.hot["providerTurnAfter"] = sandbox.query("SELECT r.run_id,r.status,t.provider_turn_id,t.status FROM orchestration_v2_projection_runs r JOIN orchestration_v2_projection_provider_turns t ON r.thread_id=t.thread_id AND t.run_attempt_id=json_extract(r.payload_json,'$.activeAttemptId') WHERE r.run_id=?", (self.probe_run,))
                 if self.args.inject == "none" and not self.args.force_rollback:
                     before_running = any(row[1] == "running" and row[3] == "running" for row in self.hot["providerTurnBefore"])
-                    after_running = any(row[1] == "running" and row[3] == "running" for row in self.hot["providerTurnAfter"])
-                    self.hot["checks"]["provider-turn-across-freeze"] = {"status": "passed" if before_running and after_running else "failed", "runId": self.probe_run}
+                    self.hot["checks"]["provider-turn-in-flight-before-freeze"] = {"status": "passed" if before_running else "failed", "runId": self.probe_run, "interruptionExpected": True}
             except BaseException:
                 self.stop_probe()
                 raise
@@ -108,7 +107,7 @@ class HotSwapRehearsal(Rehearsal):
         state = self.sandbox.evidence / "installer-state/last.json"
         if state.exists():
             installer = json.loads(state.read_text())
-            if installer.get("outcome") == "installed" and installer.get("hotSwap", {}).get("method") == "launcher-ipc":
+            if not getattr(self.args, "focused", False) and installer.get("outcome") == "installed" and installer.get("hotSwap", {}).get("method") == "launcher-ipc":
                 from .rehearsal_crash import launcher_crash
 
                 hot["checks"]["launcher-crash"] = launcher_crash(self.sandbox)
@@ -141,18 +140,11 @@ class HotSwapRehearsal(Rehearsal):
             budget_pass = traffic.get("pastBudget", 0) > 0 and traffic.get("refused", 0) == 0
             passed = bool(traffic.get("drained")) and traffic.get("status") == "complete" and (capacity_pass if self.args.queue_mode == "capacity" else budget_pass)
             hot["checks"]["queue-saturation"] = {"status": "passed" if passed else "failed", "traffic": traffic}
-        if hot.get("probe"):
-            probe = hot["probe"]
-            ids = {row["clientId"] for row in probe.get("handoffCalls", []) if row["method"] == "subscribeServerLifecycle"}
-            acknowledgments = [row for row in probe.get("handoffReplies", []) if row.get("sequence") is not None and row["clientId"] in ids and any(event["sequence"] == row["sequence"] for event in probe.get("handoffEvents", []))]
-            presentation_pass = bool(probe.get("presentations")) and not probe.get("presentationViolations") and bool(ids) and bool(probe.get("handoffEvents"))
-            hot["checks"]["presentation"] = {"status": "passed" if presentation_pass else "failed", "states": probe.get("presentations", []), "violations": probe.get("presentationViolations", []), "handoffAcknowledgments": acknowledgments, "acknowledgmentObserved": bool(acknowledgments)}
+        from .hot_swap_client_evidence import client_checks
+
+        client_checks(self, hot)
         if hot.get("walAfter"):
             hot["checks"]["wal-writes"] = {"status": "passed" if hot["walAfter"]["events"] > hot["walBefore"]["events"] and hot["databaseIntegrity"] == [("ok",)] else "failed"}
-        if hot.get("probe", {}).get("keepAlive", {}).get("reused", 0):
-            keep = hot["probe"]["keepAlive"]
-            crossed = [row["id"] for row in keep.get("sockets", []) if hot["oldVersion"] in row["versions"] and self.version in row["versions"]]
-            hot["checks"]["keep-alive-freeze"] = {"status": "passed" if crossed else "failed", "sameSocketsAcrossVersions": crossed, **keep}
         probe = hot.get("swapProbe", hot.get("probe", {}))
         hot["candidateMeasuredStartupMs"] = probe.get("flipGapMs")
         if hot.get("install"):
@@ -176,7 +168,8 @@ class HotSwapRehearsal(Rehearsal):
                 receipt["result"] = "PASS"
             queue_failed = self.args.queue_mode != "none" and hot.get("checks", {}).get("queue-saturation", {}).get("status") != "passed"
             presentation_failed = self.args.queue_mode != "budget" and self.args.inject == "none" and hot.get("checks", {}).get("presentation", {}).get("status") != "passed"
-            provider_failed = hot.get("checks", {}).get("provider-turn-across-freeze", {}).get("status") == "failed"
+            normal = self.args.inject == "none" and not self.args.force_rollback and self.args.queue_mode == "none"
+            provider_failed = normal and any(hot["checks"].get(name, {}).get("status") != "passed" for name in ("provider-turn-in-flight-before-freeze", "active-automatic-continuation", "handoff-reply-and-NEW-event"))
             connection_failed = self.args.inject == "none" and any(hot["checks"].get(name, {}).get("status") != "passed" for name in ("keep-alive-freeze", "drain-arrivals"))
             if hot.get("status") == "hot-swap" and (provider_failed or connection_failed or probe.get("refusedConnections") or hot.get("sequenceContinuity") is not True or hot.get("databaseIntegrity") != [("ok",)] or queue_failed or presentation_failed):
                 receipt["result"] = "FAIL"
