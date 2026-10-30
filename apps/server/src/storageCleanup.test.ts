@@ -1783,7 +1783,7 @@ describe("storage cleanup reports and local file policies", () => {
       Effect.gen(function* () {
         const { service, fs, repo, worktree, command } = yield* cleanupFixture();
         const personal = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-ignore-" });
-        yield* fs.writeFileString(`${personal}/.gitignore`, "cache/notes.md\n");
+        yield* fs.writeFileString(`${personal}/.gitignore`, "cache/notes.md\ndist/notes.md\n");
         yield* command(worktree, ["config", "core.excludesFile", `${personal}/.gitignore`]);
         yield* fs.writeFileString(
           `${worktree}/.gitignore`,
@@ -1798,6 +1798,11 @@ describe("storage cleanup reports and local file policies", () => {
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
         expect(yield* fs.readFileString(`${worktree}/cache/notes.md`)).toBe("notes\n");
         yield* fs.remove(`${worktree}/cache/notes.md`);
+        yield* fs.makeDirectory(`${worktree}/dist`);
+        yield* fs.writeFileString(`${worktree}/dist/notes.md`, "notes\n");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.readFileString(`${worktree}/dist/notes.md`)).toBe("notes\n");
+        yield* fs.remove(`${worktree}/dist/notes.md`);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
       }),
     ),
@@ -2179,7 +2184,7 @@ it.live.each([
     state: "excluded",
     policy: "uncommitted-changes",
     directory: "notes",
-    reason: "Has excluded local state (notes/)",
+    reason: "Has excluded local state (notes/ledger.md)",
   },
   {
     state: "lane",

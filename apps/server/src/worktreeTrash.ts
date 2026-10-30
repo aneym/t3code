@@ -278,22 +278,22 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       "refs/replace/",
     ]);
     if (replaced.stdout.trim() !== "") return "repository has replace refs";
-    const ignoredBy = (sources: string) =>
-      git.execute({
-        operation: "StorageCleanup.ignoredFiles",
-        cwd,
-        args: ["ls-files", "--others", "--ignored", "--directory", "-z", sources],
-        maxOutputBytes: 16 * 1024 * 1024,
-      });
-    const everySource = yield* ignoredBy("--exclude-standard");
-    const repositoryOnly = yield* ignoredBy("--exclude-per-directory=.gitignore");
-    if (everySource.stdoutTruncated || repositoryOnly.stdoutTruncated)
-      return "ignored files exceed the inspection limit";
-    const disposable = new Set(repositoryOnly.stdout.split("\0"));
-    const personal = everySource.stdout
-      .split("\0")
-      .find((entry) => entry !== "" && !disposable.has(entry));
-    if (personal !== undefined) return `has excluded local state (${personal})`;
+    const personal = yield* git.execute({
+      operation: "StorageCleanup.personalIgnoredFiles",
+      cwd,
+      args: [
+        "ls-files",
+        "--others",
+        "--ignored",
+        "-z",
+        "--exclude-standard",
+        "--exclude-per-directory=/",
+      ],
+      maxOutputBytes: 16 * 1024 * 1024,
+    });
+    if (personal.stdoutTruncated) return "excluded files exceed the inspection limit";
+    const file = personal.stdout.split("\0").find((entry) => entry !== "");
+    if (file !== undefined) return `has excluded local state (${file})`;
     const nested = yield* nestedRepository(cwd, submodules);
     return nested === null ? null : `has a nested repository (${nested})`;
   });
