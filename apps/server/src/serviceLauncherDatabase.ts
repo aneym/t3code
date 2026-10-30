@@ -25,6 +25,7 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
+// Opened read-write: Windows refuses to flush a handle without write access.
 async function syncFile(filePath: string): Promise<void> {
   const handle = await NodeFSP.open(filePath, "r+");
   try {
@@ -34,6 +35,7 @@ async function syncFile(filePath: string): Promise<void> {
   }
 }
 
+// Fsync makes renames durable; Windows returns EPERM and NTFS journals them itself.
 async function syncDirectory(directory: string): Promise<void> {
   const handle = await NodeFSP.open(directory, "r");
   try {
@@ -46,6 +48,7 @@ async function syncDirectory(directory: string): Promise<void> {
 }
 
 const GIB = 1024 ** 3;
+// Cloned backups still need headroom for trial writes and migrations to diverge.
 const CLONED_BACKUP_MIN_HEADROOM_BYTES = GIB;
 const CLONED_BACKUP_HEADROOM_FRACTION = 0.1;
 
@@ -61,6 +64,7 @@ async function statDatabaseFiles(dbPath: string): Promise<ReadonlyArray<NodeFS.S
   return stats;
 }
 
+// cp -c silently copies across volumes; require one device matching the APFS system volume's filesystem type.
 async function backupCanClone(dbPath: string, backupRoot: string): Promise<boolean> {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const platform = process.platform;
@@ -104,6 +108,7 @@ const filesystemBackupSpaceProbe: BackupSpaceProbe = {
   canClone: backupCanClone,
 };
 
+/** Check before stopping the server so full disks refuse updates without an outage. */
 export async function databaseBackupBlocker(
   baseDir: string,
   dbPath: string,
@@ -130,6 +135,7 @@ export async function backupDatabaseOnce(
   baseDir: string,
   pending: PendingServiceUpdate,
 ): Promise<void> {
+  // Preserve completed backups; restarted trials may already have changed the live database.
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (await pathExists(backupDir)) return;
 
@@ -158,6 +164,7 @@ const restoreMarkerPath = (baseDir: string, updateId: string) =>
 export const databaseRestorePending = (baseDir: string, pending: PendingServiceUpdate) =>
   pathExists(restoreMarkerPath(baseDir, pending.id));
 
+// Resolve symlink targets even if a crashed cp -c left the final target missing.
 async function restoreTarget(path: string): Promise<string> {
   let current = path;
   for (let hops = 0; hops < 40; hops++) {
@@ -172,6 +179,7 @@ async function restoreTarget(path: string): Promise<string> {
       throw cause;
     });
     if (link === undefined) return current;
+    // Do not normalize .. before following directory symlinks; match filesystem resolution.
     current = NodePath.isAbsolute(link)
       ? link
       : `${await NodeFSP.realpath(NodePath.dirname(current))}${NodePath.sep}${link}`;
@@ -193,6 +201,7 @@ export async function restoreDatabaseBackup(
     const livePath = `${pending.dbPath}${suffix}`;
     const source = databaseBackupFile(backupDir, suffix);
     if (await pathExists(source)) {
+      // Restore into the symlink target; cloning would replace the link.
       const target = await restoreTarget(livePath);
       await copyDatabaseFile(source, target);
       await syncFile(target);

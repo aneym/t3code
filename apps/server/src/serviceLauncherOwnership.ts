@@ -20,15 +20,19 @@ export async function reserveServiceOwnership(baseDir: string, instanceId: strin
     db.close();
     throw cause;
   });
+  let published = false;
   try {
     await grant.writeFile(JSON.stringify({ pid: process.pid, instanceId }));
     await grant.sync();
     await NodeFSP.rename(temporary, grantPath);
+    published = true;
   } catch (cause) {
     db.close();
     throw cause;
   } finally {
-    await grant.close();
+    await grant
+      .close()
+      .finally(() => (published ? undefined : NodeFSP.rm(temporary, { force: true })));
   }
   let held = true;
   return {
@@ -43,3 +47,16 @@ export async function reserveServiceOwnership(baseDir: string, instanceId: strin
 
 export const clearOwnershipGrant = (baseDir: string) =>
   NodeFSP.rm(NodePath.join(baseDir, "runtime", "ownership-grant.json"), { force: true });
+
+export async function sweepGrantTemps(baseDir: string): Promise<void> {
+  const directory = NodePath.join(baseDir, "runtime");
+  const files = await NodeFSP.readdir(directory).catch((cause: unknown) => {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw cause;
+  });
+  await Promise.all(
+    files
+      .filter((name) => /^ownership-grant\.json\..+\.pending$/.test(name))
+      .map((name) => NodeFSP.rm(NodePath.join(directory, name), { force: true })),
+  );
+}
