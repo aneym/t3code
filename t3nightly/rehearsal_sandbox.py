@@ -250,17 +250,19 @@ class Sandbox:
     def close(self):
         if not self.started:
             return
-        if (self.home / "runtime/connector-pin.json").is_file():
-            from .rehearsal_service import connector_run
-            from .connector_artifact import uninstall
+        try:
+            if (self.home / "runtime/connector-pin.json").is_file():
+                from .rehearsal_service import connector_run
+                from .connector_artifact import uninstall
 
-            uninstall(connector_run(self))
-        if sys.platform == "darwin":
-            subprocess.run(["launchctl", "bootout", "--wait", f"{self.domain}/{self.label}"], capture_output=True, check=True, timeout=120)
-        else:
-            subprocess.run(["systemctl", "--user", "stop", f"{self.label}.service"], check=True, timeout=60)
-            self.systemd_unit.unlink()
-            if self.systemd_dropin.exists():
-                shutil.rmtree(self.systemd_dropin)
-            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=30)
-        self.started = False
+                uninstall(connector_run(self))
+        finally:
+            if sys.platform == "darwin":
+                subprocess.run(["launchctl", "bootout", "--wait", f"{self.domain}/{self.label}"], capture_output=True, check=True, timeout=120)
+            else:
+                subprocess.run(["systemctl", "--user", "stop", f"{self.label}.service"], check=True, timeout=60)
+                self.systemd_unit.unlink(missing_ok=True)
+                if self.systemd_dropin.exists():
+                    shutil.rmtree(self.systemd_dropin)
+                subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=30)
+            self.started = False

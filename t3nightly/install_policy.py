@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 LIVE_SERVICES = {"t3code.service", "com.t3tools.t3code.service"}
+MAX_ADMISSION_AGE_S = 7200
 STATE = Path.home() / ".agent-rails/lanes/t3-fast-release/STATE.md"
 
 
@@ -76,12 +77,22 @@ def enforce(args):
     return policy
 
 
-def recheck(run):
-    if getattr(run, "cutover_admitted", False):
-        return
-    policy = enforce(run.args)
+def admit(run, policy):
     run.report["installWindow"] = policy
-    run.cutover_admitted = True
+    run.cutover_admitted = policy.get("allowed") is True
+    run.admitted_at = policy.get("at")
+
+
+def recheck(run):
+    policy = run.report.get("installWindow", {})
+    if not getattr(run, "cutover_admitted", False) or policy.get("allowed") is not True:
+        raise ValueError("service mutation requires a recorded install admission")
+    admitted = datetime.fromisoformat(policy["at"])
+    age = (datetime.now(timezone.utc) - admitted).total_seconds()
+    if not 0 <= age <= MAX_ADMISSION_AGE_S:
+        raise ValueError("install admission expired; re-run the installer inside a window or with --override-reason")
+    if policy.get("version") not in (None, run.args.version):
+        raise ValueError("install admission version mismatch")
 
 
 def admitted_environment(policy, environment=None):

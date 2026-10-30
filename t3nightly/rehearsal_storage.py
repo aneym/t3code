@@ -120,7 +120,7 @@ def owns(home, binary):
 def seed_database(seed, destination):
     root = store_root() / "seeds"
     root.mkdir(exist_ok=True)
-    with (root / ".seed.lock").open("a") as lock:
+    with (store_root() / ".store.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         with tempfile.TemporaryDirectory(prefix=".snapshot-", dir=root) as raw:
             snapshot = Path(raw) / "statev2.sqlite"
@@ -143,6 +143,7 @@ def prepare(sandbox):
     (runtime / "versions" / sandbox.old.name).symlink_to(shared, target_is_directory=True)
     launcher_method = clone_tree(shared, sandbox.cli.parent)
     seed = seed_database(sandbox.args.seed, sandbox.db)
+    (runtime / "rehearsal-seed.json").write_text(json.dumps(seed) + "\n")
     receipt = {"runtime": str(shared), "versionMethod": "symlink", "launcherMethod": launcher_method, "seed": seed}
     (sandbox.evidence / "storage.json").write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt

@@ -91,11 +91,16 @@ def serving_digest(sandbox):
 def connector_run(sandbox, baseline=False):
     from types import SimpleNamespace
 
+    from .install_policy import window
+
     args = SimpleNamespace(**vars(sandbox.args))
+    args.version = sandbox.old.name
+    if not getattr(sandbox, "artifact_admission", None):
+        sandbox.artifact_admission = window(args.version, sandbox=True)
     if baseline:
         args.launcher_artifact = sandbox.args.old_launcher_artifact
         args.connector_artifact = ""
-    return SimpleNamespace(args=args, home=sandbox.home, service_label=sandbox.label if sys.platform == "darwin" else sandbox.label + ".service", report={"installWindow": {"allowed": True, "isolated": True}}, cutover_admitted=True, step=lambda name, **fields: print(json.dumps({"step": name, **fields}), flush=True))
+    return SimpleNamespace(args=args, home=sandbox.home, service_label=sandbox.label if sys.platform == "darwin" else sandbox.label + ".service", report={"installWindow": sandbox.artifact_admission}, cutover_admitted=True, step=lambda name, **fields: print(json.dumps({"step": name, **fields}), flush=True))
 
 
 def pin_artifacts(sandbox):
