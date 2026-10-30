@@ -82,3 +82,18 @@ def recheck(run):
     policy = enforce(run.args)
     run.report["installWindow"] = policy
     run.cutover_admitted = True
+
+
+def admitted_environment(policy, environment=None):
+    child = dict(os.environ if environment is None else environment)
+    child.pop("T3NIGHTLY_INSTALL_WINDOW", None)
+    if policy.get("allowed") is not True:
+        raise ValueError("service mutation requires a passed install-window gate")
+    if not policy.get("isolated"):
+        child["T3NIGHTLY_INSTALL_WINDOW"] = "1"
+    return child
+
+
+def command_environment(run, environment=None):
+    recheck(run)
+    return admitted_environment(run.report["installWindow"], environment)

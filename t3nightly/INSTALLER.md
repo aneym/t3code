@@ -14,6 +14,8 @@ A candidate server prunes runtime versions that nothing references and that are 
 
 Every installer mode, IM/IL stage, desktop swap and Windows feed activation checks UTC admission. Admission is restricted to the minute beginning at 08:00Z or 18:00Z; an admitted cutover may finish later. `--override-reason "..."` records the reason in the install receipt and appends an override record to `~/.agent-rails/lanes/t3-fast-release/STATE.md`. It is checked again immediately before cutover. Recovery of an admitted cutover does not wait for another window.
 
+After admission, live service-control, launcher-restart, update-RPC and installer-dispatch subprocesses receive `T3NIGHTLY_INSTALL_WINDOW=1` for the agent restart guard. Inherited marker values are discarded and rebuilt from the gate receipt; read-only modes cannot grant it, and isolated rehearsal commands do not need or receive it. The marker is a child-process environment value, never a persistent service setting.
+
 Other-host dispatches, including forge, pc-wsl, Book and native Windows installers, use `install-window --host HOST --version VERSION --receipt FILE [--override-reason TEXT] -- COMMAND ...`. This gates dispatch before SSH or a native installer runs. Unix hosts also enforce admission in `install` itself. Native Windows and desktop-bundled servers keep their existing update mechanism.
 
 Rehearsals are exempt only with all three: a private home, a non-live port, and a `t3-rehearsal-*` or `com.t3-rehearsal.*` service. `--rehearsal`, `--force-rollback`, `--restart-probe` and `--drain-proof` refuse live identities even with an override. `--live-home PATH` protects an additional configured live home; symlink aliases are resolved.

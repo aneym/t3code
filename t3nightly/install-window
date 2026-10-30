@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from t3nightly.install_policy import window
+from t3nightly.install_policy import admitted_environment, window
 
 
 def main():
@@ -26,7 +26,7 @@ def main():
         parser.exit(1, f"install-window refusal: {error}\n")
     args.receipt.parent.mkdir(parents=True, exist_ok=True)
     args.receipt.write_text(json.dumps({"installWindow": policy, "outcome": "admitted"}) + "\n")
-    code = subprocess.run(command, check=False).returncode if command else 0
+    code = subprocess.run(command, env=admitted_environment(policy), check=False).returncode if command else 0
     args.receipt.write_text(json.dumps({"installWindow": policy, "commandExit": code, "outcome": "passed" if code == 0 else "failed"}) + "\n")
     return code
 

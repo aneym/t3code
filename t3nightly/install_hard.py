@@ -25,6 +25,9 @@ CONNECT_POLL_S = 5
 
 
 def service(run, action):
+    from .install_policy import command_environment
+
+    environment = command_environment(run)
     if sys.platform == "darwin":
         domain = f"gui/{os.getuid()}"
         commands = {"stop": ["launchctl", "bootout", "--wait", f"{domain}/{run.service_label}"],
@@ -33,7 +36,7 @@ def service(run, action):
         command = commands[action]
     else:
         command = ["systemctl", "--user", action, run.service_label]
-    result = subprocess.run(command, capture_output=True, timeout=120, check=False)
+    result = subprocess.run(command, env=environment, capture_output=True, timeout=120, check=False)
     run.step("hard-service-" + action, service=run.service_label, code=result.returncode)
     if result.returncode:
         raise ValueError(f"intended service {action} failed")
@@ -56,7 +59,9 @@ def activate(run, version):
         dropin.mkdir(parents=True, exist_ok=True)
         override = dropin / "20-hard-runtime.conf"
         override.write_text(f'[Service]\nExecStart=\nExecStart="{launcher}" __service-launcher\n')
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, capture_output=True, timeout=30)
+        from .install_policy import command_environment
+
+        subprocess.run(["systemctl", "--user", "daemon-reload"], env=command_environment(run), check=True, capture_output=True, timeout=30)
     state = run.home / "runtime/service-state.json"
     selected = json.loads(state.read_text()) if state.exists() else {"protocol": SERVICE_PROTOCOL}
     selected["activeVersion"] = version

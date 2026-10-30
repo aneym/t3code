@@ -227,7 +227,7 @@ class Run:
         return REACHABLE in out.stdout
 
     def update(self, from_version, to_version, downgrade):
-        from t3nightly.install_policy import recheck
+        from t3nightly.install_policy import command_environment, recheck
 
         recheck(self)
         binary = self.runtime(from_version)
@@ -247,7 +247,7 @@ class Run:
         else:
             verify_cli(self.runtime(to_version))
         persist_release_feed(self.args, to_version)
-        env = dict(os.environ)
+        env = command_environment(self)
         env.pop("T3CODE_RESTART_HANDOFF_FILE", None)
         if ".aneym." in to_version:
             env["T3CODE_RELEASE_BASE_URL"] = self.args.base_url
@@ -352,6 +352,9 @@ class Run:
         self.step("link-cli", target=str(binary))
 
     def service(self, action):
+        from t3nightly.install_policy import command_environment
+
+        environment = command_environment(self)
         if sys.platform == "darwin":
             if action != "stop":
                 with self.service_plist.open("rb") as handle:
@@ -365,7 +368,7 @@ class Run:
         else:
             command = ["systemctl", "--user", action, self.service_label]
         code = subprocess.run(
-            command, capture_output=True, timeout=120, check=False
+            command, env=environment, capture_output=True, timeout=120, check=False
         ).returncode
         self.step(f"service-{action}", code=code)
 

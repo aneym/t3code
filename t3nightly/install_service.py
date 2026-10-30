@@ -49,10 +49,14 @@ def service_identity(args, run):
 
 
 def restart_launcher(run, launcher):
+    from .install_policy import command_environment
+
+    environment = command_environment(run)
     if run.service_label == DEFAULT_LABEL:
         return subprocess.run(
             [str(launcher), "service", "restart", "--base-dir", str(run.home)],
             capture_output=True,
+            env=environment,
             timeout=240,
             check=False,
         ).returncode
@@ -60,6 +64,7 @@ def restart_launcher(run, launcher):
     stopped = subprocess.run(
         ["launchctl", "bootout", "--wait", f"{domain}/{run.service_label}"],
         capture_output=True,
+        env=environment,
         timeout=120,
         check=False,
     )
@@ -68,6 +73,7 @@ def restart_launcher(run, launcher):
     return subprocess.run(
         ["launchctl", "bootstrap", domain, str(run.service_plist)],
         capture_output=True,
+        env=environment,
         timeout=120,
         check=False,
     ).returncode
