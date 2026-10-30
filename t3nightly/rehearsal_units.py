@@ -26,7 +26,7 @@ def unload(home, label):
     if recorded.is_symlink():
         raise ValueError("refused symlinked sandbox identity")
     target = json.loads(recorded.read_text())
-    main = target["label"].removesuffix(".service")
+    main = target["label"]
     if Path(target["home"]).resolve() != home or label not in (main, main + "-connector") or home.is_relative_to(Path.home() / ".t3"):
         raise ValueError("refused teardown of an unrecorded sandbox unit")
     units = target.get("units")
@@ -40,7 +40,7 @@ def unload(home, label):
                 raise ValueError("connector identity was not recorded by this sandbox")
             units[label] = pin["unit"]
     expected = home / f"{label}.plist" if sys.platform == "darwin" else Path.home() / ".config/systemd/user" / f"{label}.service"
-    if sys.platform == "darwin" and label.endswith("-connector"):
+    if sys.platform == "darwin" and label == main + "-connector":
         expected = home / "Library/LaunchAgents" / f"{label}.plist"
     unit = Path(units.get(label, str(expected)))
     if unit != expected:
