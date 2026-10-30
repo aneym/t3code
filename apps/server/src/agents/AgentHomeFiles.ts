@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalConsole:off cryptoRandomUUID:off -- Node watcher callbacks and atomic rename form the filesystem boundary.
 import { AGENT_HOME_HANDLE_PATTERN, AgentHome, AgentHomeBinding } from "@t3tools/contracts";
+import * as NodeOS from "node:os";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -122,13 +124,14 @@ export const writeBinding = async (
   root: string,
   handle: string,
   doc: Record<string, unknown>,
-  next: Record<string, unknown> | null,
+  next: Record<string, unknown> | null | undefined,
   readText: string,
   projects?: ReadonlyArray<string>,
 ) => {
   const old =
     typeof doc.t3 === "object" && doc.t3 !== null ? (doc.t3 as Record<string, unknown>) : null;
-  if (old && next) {
+  if (old && next !== undefined) {
+    next ??= {};
     const { previous: _previous, reason: _reason, ...previous } = old;
     next.previous = previous;
   }
@@ -138,7 +141,7 @@ export const writeBinding = async (
     await NodeFSP.writeFile(
       temporary,
       JSON.stringify(
-        { ...doc, ...(next ? { t3: next } : {}), ...(projects ? { projects } : {}) },
+        { ...doc, ...(next !== undefined ? { t3: next } : {}), ...(projects ? { projects } : {}) },
         null,
         2,
       ) + "\n",
@@ -201,4 +204,22 @@ export const watchHomes = (root: string, changed: () => void) => {
     clearTimeout(timer);
     for (const watcher of watchers.values()) watcher.close();
   };
+};
+
+export const readAgentMainThreads = async (environmentId: EnvironmentId) => {
+  const root =
+    process.env.T3CODE_AGENT_HOMES_DIR ?? NodePath.join(NodeOS.homedir(), ".agent-rails", "agents");
+  const { homes } = await readHomes(
+    root,
+    async () => [],
+    () => false,
+  );
+  return new Set(
+    homes.flatMap(({ binding }) =>
+      binding !== null &&
+      (binding.environmentId === null || binding.environmentId === environmentId)
+        ? [binding.threadId]
+        : [],
+    ),
+  );
 };

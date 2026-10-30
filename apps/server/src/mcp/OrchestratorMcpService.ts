@@ -697,6 +697,7 @@ function threadDetail(
   const latest = ThreadManagementService.latestRun(projection);
   const active = ThreadManagementService.latestActiveRun(projection);
   return {
+    lastSettlement: projection.thread.lastSettlement,
     threadId: projection.thread.id,
     projectId: projection.thread.projectId,
     title: projection.thread.title,
@@ -2919,10 +2920,6 @@ const make = Effect.gen(function* () {
         yield* threadManagement
           .stopDelegatedTasks({ threadId: input.threadId, commandId, reason: input.reason })
           .pipe(Effect.catch(stopFailed));
-        // The run this stop interrupted, from its own events, so a retry
-        // reports the same run even if another has started since. Stop also
-        // holds queued runs and marks runs it could not interrupt, with no
-        // provider turn; neither is the run it interrupted.
         const interrupted = stopped.storedEvents.find(
           ({ event }) =>
             (event.type === "run.updated" && event.payload.status === "interrupted") ||
