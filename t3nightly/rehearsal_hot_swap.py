@@ -18,7 +18,7 @@ class HotSwapRehearsal(Rehearsal):
         self.probe_path = sandbox.evidence / "connection-probe.json"
         self.stop_path = sandbox.evidence / "probe.stop"
         environment = sandbox.version()
-        self.hot = {"injection": self.args.inject, "oldVersion": environment, "checks": {}, "unitRenderer": sandbox.unit_renderer}
+        self.hot = {"previousMeasuredStartupMs": self.manifest.get("hotSwap", {}).get("previousMeasuredStartupMs"), "injection": self.args.inject, "oldVersion": environment, "checks": {}, "unitRenderer": sandbox.unit_renderer}
         if self.args.inject != "none" and not (sandbox.home / "runtime/launcher-config.json").is_file():
             self.hot["status"] = "hot-swap-unsupported"
             raise ValueError("hot-swap-unsupported: crash injection requires a capability-qualified sandbox launcher")
@@ -155,7 +155,7 @@ class HotSwapRehearsal(Rehearsal):
             if self.args.queue_mode != "none":
                 receipt["releaseEligible"] = False
                 result["releaseEligible"] = False
-            receipt["hotSwap"] = {key: hot[key] for key in ("status", "sequenceContinuity", "candidateMeasuredStartupMs", "checks") if key in hot}
+            receipt["hotSwap"] = {key: hot[key] for key in ("status", "sequenceContinuity", "candidateMeasuredStartupMs", "previousMeasuredStartupMs", "checks") if key in hot}
             if hot.get("install", {}).get("hotSwap", {}).get("method") == "maintenance":
                 receipt["result"] = "PASS"
             queue_failed = self.args.queue_mode != "none" and hot.get("checks", {}).get("queue-saturation", {}).get("status") != "passed"
