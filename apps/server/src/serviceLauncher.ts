@@ -120,6 +120,7 @@ export class Launcher {
   readonly #ingressConfig: LauncherIngressConfig | undefined;
   #timer: NodeJS.Timeout | undefined;
   #transitions: Promise<void> = Promise.resolve();
+  #canRollbackCommitted = false;
   #stopRequested = false;
   #stopping = false;
   #done = false;
@@ -401,6 +402,7 @@ export class Launcher {
         await this.#startTrial(pending);
         return;
       }
+      this.#canRollbackCommitted = true;
       this.#swap = { phase: "drain", willMigrate: false };
       const active = this.#child;
       if (active === null) throw new Error("Warm trial has no active child.");
@@ -538,6 +540,7 @@ export class Launcher {
       return;
     }
     this.#timer = undefined;
+    this.#canRollbackCommitted = false;
     if (
       child.capable &&
       this.#ingressConfig !== undefined &&
@@ -715,11 +718,7 @@ export class Launcher {
       await this.#startTrial(pending);
       return;
     }
-    if (
-      pending?.status === "committed" &&
-      this.#ingressConfig !== undefined &&
-      (await candidateCanHotSwap(this.#baseDir, pending.targetVersion, this.#ingressConfig))
-    ) {
+    if (pending?.status === "committed" && this.#canRollbackCommitted) {
       await this.#returnToPrevious(
         {
           ...pending,
@@ -754,6 +753,10 @@ export class Launcher {
     reason: string,
     child?: ManagedChild,
   ): Promise<void> {
+    if (this.#state.update?.status === "committed" && !this.#canRollbackCommitted)
+      throw new Error(
+        "Committed update requires forward repair; the current database was retained.",
+      );
     this.#ingress.route();
     if (child !== undefined) {
       this.#child = null;
