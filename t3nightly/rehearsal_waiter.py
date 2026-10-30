@@ -73,12 +73,20 @@ def cleanup(home, records):
         elif observed != receipt["identity"]:
             raise ValueError("refused reused rehearsal waiter PID")
         else:
-            os.killpg(pgid, signal.SIGTERM)
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+            except ProcessLookupError:
+                row["outcome"] = "exited-during-cleanup"
+                report["waiters"].append(row)
+                continue
             deadline = time.monotonic() + 3
             while identity(pid) == observed and time.monotonic() < deadline:
                 time.sleep(0.05)
             if identity(pid) == observed:
-                os.killpg(pgid, signal.SIGKILL)
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             row["outcome"] = "terminated-owned-group"
         report["waiters"].append(row)
     output = records.parent / "gate-waiter-cleanup.json"
