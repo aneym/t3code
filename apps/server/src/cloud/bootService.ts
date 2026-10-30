@@ -402,9 +402,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   );
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
-  const runningInsideService =
-    (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
-    BOOT_SERVICE_UNIT_FILE;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -438,6 +435,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     environmentPath,
   });
   const unitPath = detectedManager?.unitPath ?? "";
+  const runningInService =
+    (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
+    path.basename(unitPath);
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
@@ -650,7 +650,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // With start=false, changing startup-only files is safe except during a remote update,
     // when the launcher also writes its state file.
     const start = options?.start !== false;
-    if (installed && start && runningInsideService && manager.kind === "systemd") {
+    if (installed && start && runningInService && manager.kind === "systemd") {
       // Stopping the unit from inside it kills this process before the start.
       // A transient unit runs the same install from outside, stop first, so it
       // still serialises with a remote update the launcher may be starting.
@@ -767,7 +767,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     }
     // Writes no state, and the launcher lets an update transition in flight
     // finish before the queued stop tears it down.
-    if (runningInsideService && manager.handoff !== undefined) {
+    if (runningInService && manager.handoff !== undefined) {
       yield* runSteps(manager.handoff);
       return "queued" as const;
     }
