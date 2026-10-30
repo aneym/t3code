@@ -1,3 +1,4 @@
+import { connectorUnitPath, serviceUnitFileName } from "../serviceConnectorUnit.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -10,25 +11,37 @@ import {
   type BootServiceStep,
 } from "./bootService.ts";
 
-const CONNECTOR_UNIT_FILE = "t3code-connector.service";
-const CONNECTOR_LAUNCHD_LABEL = "com.t3tools.t3code-connector.service";
-
-export function connectorServiceManager(manager: BootServiceManager): BootServiceManager {
-  const replace = (value: string) =>
-    value
-      .replaceAll(BOOT_SERVICE_PLIST_FILE, `${CONNECTOR_LAUNCHD_LABEL}.plist`)
-      .replaceAll(BOOT_SERVICE_LAUNCHD_LABEL, CONNECTOR_LAUNCHD_LABEL)
-      .replaceAll(BOOT_SERVICE_UNIT_FILE, CONNECTOR_UNIT_FILE);
+export function connectorServiceManager(
+  manager: BootServiceManager,
+  unitPath = connectorUnitPath(manager.unitPath),
+): BootServiceManager {
+  const mainFile = serviceUnitFileName(manager.unitPath);
+  const connectorFile = serviceUnitFileName(unitPath);
+  const replacements = new Map([
+    [manager.unitPath, unitPath],
+    [mainFile, connectorFile],
+    [mainFile.replace(/\.plist$/, ""), connectorFile.replace(/\.plist$/, "")],
+    [BOOT_SERVICE_PLIST_FILE, connectorFile],
+    [BOOT_SERVICE_LAUNCHD_LABEL, connectorFile.replace(/\.plist$/, "")],
+    [BOOT_SERVICE_UNIT_FILE, connectorFile],
+  ]);
+  const pattern = new RegExp(
+    [...replacements.keys()]
+      .sort((a, b) => b.length - a.length)
+      .map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|"),
+    "g",
+  );
+  const replace = (value: string) => value.replace(pattern, (match) => replacements.get(match)!);
   const steps = (list: ReadonlyArray<BootServiceStep>) =>
     list.map((step) => ({ ...step, args: step.args.map(replace) }));
   return {
     ...manager,
-    unitPath: replace(manager.unitPath),
+    unitPath,
     render: (plan) =>
-      replace(manager.render(plan)).replace(
-        "Description=T3 Code server",
-        "Description=T3 Code tunnel connector",
-      ),
+      manager
+        .render({ ...plan, unitPath, connectorUnitPath: unitPath })
+        .replace("Description=T3 Code server", "Description=T3 Code tunnel connector"),
     stop: steps(manager.stop),
     restart: steps(manager.restart),
     deactivate: steps(manager.deactivate),
@@ -47,7 +60,7 @@ export const writeConnectorService = Effect.fn("bootServiceConnector.write")(fun
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const connector = connectorServiceManager(manager);
+  const connector = connectorServiceManager(manager, plan.connectorUnitPath);
   const nextPlan = {
     ...plan,
     program: [plan.program[0]!, "__service-connector"],

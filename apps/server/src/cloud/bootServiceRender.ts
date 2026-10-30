@@ -1,3 +1,8 @@
+import {
+  CONNECTOR_UNIT_PATH_ENV,
+  connectorUnitPath,
+  serviceUnitFileName,
+} from "../serviceConnectorUnit.ts";
 import type * as Duration from "effect/Duration";
 const BOOT_SERVICE_NAME = "t3code";
 export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
@@ -13,7 +18,7 @@ function escapeSystemdSpecifiers(value: string): string {
   return value.replaceAll("%", "%%");
 }
 
-function quoteSystemdValue(value: string): string {
+export function quoteSystemdValue(value: string): string {
   const escaped = escapeSystemdSpecifiers(value);
   return /[\s"'\\]/.test(escaped)
     ? `"${escaped.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
@@ -51,6 +56,7 @@ export interface BootServicePlan {
   readonly baseDir: string;
   readonly logPath: string;
   readonly unitPath: string;
+  readonly connectorUnitPath?: string;
   /** The manager accepted a detached install; its outcome is written to `logPath`. */
   readonly handedOff?: boolean;
 }
@@ -68,7 +74,8 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "Type=simple",
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
-    `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
+    `Environment=${BOOT_SERVICE_UNIT_ENV}=${quoteSystemdValue(serviceUnitFileName(plan.unitPath))}`,
+    `Environment=${CONNECTOR_UNIT_PATH_ENV}=${quoteSystemdValue(plan.connectorUnitPath ?? connectorUnitPath(plan.unitPath))}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark the stop before it signals the server.
     // Past TimeoutStopSec, systemd SIGKILLs the cgroup.
@@ -112,7 +119,7 @@ export function renderBootServicePlist(
     `<plist version="1.0">`,
     `<dict>`,
     `  <key>Label</key>`,
-    `  <string>${BOOT_SERVICE_LAUNCHD_LABEL}</string>`,
+    `  <string>${escapeXmlText(serviceUnitFileName(plan.unitPath).replace(/\.plist$/, ""))}</string>`,
     `  <key>ProgramArguments</key>`,
     `  <array>`,
     ...plan.program.map((argument) => `    <string>${escapeXmlText(argument)}</string>`),
@@ -124,7 +131,9 @@ export function renderBootServicePlist(
     `    <key>T3CODE_HOME</key>`,
     `    <string>${escapeXmlText(plan.baseDir)}</string>`,
     `    <key>${BOOT_SERVICE_UNIT_ENV}</key>`,
-    `    <string>${BOOT_SERVICE_PLIST_FILE}</string>`,
+    `    <string>${escapeXmlText(serviceUnitFileName(plan.unitPath))}</string>`,
+    `    <key>${CONNECTOR_UNIT_PATH_ENV}</key>`,
+    `    <string>${escapeXmlText(plan.connectorUnitPath ?? connectorUnitPath(plan.unitPath))}</string>`,
     `  </dict>`,
     `  <key>WorkingDirectory</key>`,
     `  <string>${escapeXmlText(options.homeDir)}</string>`,
