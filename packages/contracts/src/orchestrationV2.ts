@@ -2,10 +2,6 @@ import {
   OrchestrationV2DispatchCommandResult,
   OrchestrationV2GetThreadProjectionInput,
 } from "./orchestrationDispatchResult.ts";
-export {
-  OrchestrationV2DispatchCommandResult,
-  OrchestrationV2GetThreadProjectionInput,
-} from "./orchestrationDispatchResult.ts";
 import { ModelSelectionPrecondition } from "./modelSelectionPrecondition.ts";
 import { QueueHoldReason } from "./queueHoldReason.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";

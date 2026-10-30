@@ -1,3 +1,4 @@
+import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -561,7 +562,7 @@ const make = Effect.gen(function* () {
     ).pipe(
       Effect.mapError(
         (cause) =>
-          new Orchestrator.OrchestratorDispatchError({
+          new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
             cause,
@@ -954,7 +955,7 @@ const make = Effect.gen(function* () {
     }
     const shell = yield* orchestrator.getThreadShell(input.threadId);
     if (shell === null) {
-      return yield* new Orchestrator.OrchestratorDispatchError({
+      return yield* new OrchestratorDispatchError({
         commandId: input.commandId,
         commandType: "thread.snooze",
         cause: `Thread ${input.threadId} is deleted.`,

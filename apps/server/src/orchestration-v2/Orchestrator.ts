@@ -2,10 +2,6 @@ import {
   OrchestratorCommandRejectedError,
   OrchestratorDispatchError,
 } from "./OrchestratorDispatchError.ts";
-export {
-  OrchestratorCommandRejectedError,
-  OrchestratorDispatchError,
-} from "./OrchestratorDispatchError.ts";
 import { readRejection, tagRejection } from "./RejectionReason.ts";
 import {
   rootProviderThreadsForProvider,
