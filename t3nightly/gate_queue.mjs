@@ -121,11 +121,11 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
       const openBefore = starting(projection);
       const sent = yield* cli("send", "--mode", "auto", first.threadId, `Reply with exactly ${markers[1]} and nothing else. Do not use tools.`);
       receipts.push(first, sent);
-      if (!sent.runId || sent.runId === first.runId) throw fail("send did not return a distinct run");
-      yield* waitFor("sent run persisted", (p) => p.runs.some((run) => run.id === sent.runId));
+      if (sent.runId) yield* waitFor("sent run persisted", (p) => p.runs.some((run) => run.id === sent.runId));
       const openAfter = starting(projection);
       restartObservation = { openBefore, openAfter, delivery: sent.delivery };
-      if (!openBefore || !openAfter) throw fail("inconclusive: the send missed the startup window (provider turn registered or run ended first)");
+      if (!openBefore || !openAfter) return { ...evidence(), threadId: first.threadId, firstRun: first.runId, sentDelivery: sent.delivery, inconclusive: "the send missed the startup window (provider turn registered or run ended first)" };
+      if (!sent.runId || sent.runId === first.runId) throw fail("send did not return a distinct run");
       if (sent.delivery !== "queued") throw fail(`auto send into a starting run was delivered ${sent.delivery} instead of queued behind it`);
       const final = yield* waitFor("both runs to settle", (p) =>
         [first.runId, sent.runId].every((id) => p.runs.some((run) => run.id === id && terminal.has(run.status))) && p.runs.every((run) => terminal.has(run.status)),

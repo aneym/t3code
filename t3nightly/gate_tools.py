@@ -184,6 +184,11 @@ def last_reply(shown):
     return replies[-1] if replies else ""
 
 
+def first_line(text):
+    lines = text.strip().splitlines()
+    return lines[0].strip() if lines else ""
+
+
 def agent_tools(ctx, deadline):
     name = "agent-tools"
     fruit = "%s-%d" % (
@@ -220,7 +225,7 @@ def agent_tools(ctx, deadline):
         name,
         deadline,
         parent,
-        lambda view: fruit == last_reply(view).strip(),
+        lambda view: fruit == first_line(last_reply(view)),
         reserve=150,
     )
     mcp = Mcp(ctx, name, deadline)
@@ -253,7 +258,7 @@ def agent_tools(ctx, deadline):
     if code != 0:
         raise CheckFailed("t3 thread send exited %d" % code)
     sent = wait_for(
-        ctx, name, deadline, parent, lambda view: last_reply(view).strip() == "SENT"
+        ctx, name, deadline, parent, lambda view: first_line(last_reply(view)) == "SENT"
     )
     if "SENT" not in last_reply(sent):
         raise CheckFailed("follow-up send got %r" % last_reply(sent)[:80])

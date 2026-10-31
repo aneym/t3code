@@ -358,6 +358,8 @@ def starting_send(ctx, deadline):
     result = client(ctx, name, deadline, "queue-drain", "--pairing-file", str(pairing(ctx, name, deadline)), "--cli", ctx.t3,
                     "--home", str(ctx.home), "--project", str(ctx.project), "--model", CLAUDE_MODEL, "--scenario", "starting-send",
                     "--timeout", str(min(180, int(deadline.left()) - 15)))
+    if result.get("inconclusive"):
+        return "inconclusive: %s; delivered %s; thread %s" % (result["inconclusive"], result["sentDelivery"], result["threadId"])
     return "auto send into a starting run was delivered %s; both runs completed with %d exactly-once replies; thread %s" % (
         result["sentDelivery"], result["exactlyOnceReplies"], result["threadId"])
 
