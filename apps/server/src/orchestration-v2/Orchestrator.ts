@@ -1,4 +1,4 @@
-import { makeAutoSettlementValidation } from "./ChildThreadSettlement.ts";
+import { makeAutoSettlementValidation } from "./SettlementValidation.ts";
 import {
   OrchestratorCommandRejectedError,
   OrchestratorDispatchError,

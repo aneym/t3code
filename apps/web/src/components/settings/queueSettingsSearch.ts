@@ -2,6 +2,13 @@ import type { SettingsSearchItem } from "./settingsSearch";
 
 export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
   {
+    id: "settle-idle-children",
+    title: "Settle idle child threads",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["settle parent child subagent delegate idle cleanup worktree"],
+  },
+  {
     id: "queue-send-all",
     title: "Send all queued messages",
     to: "/settings/chat",

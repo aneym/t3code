@@ -1,3 +1,7 @@
+import {
+  changedForkThreadSettings,
+  forkThreadSettingsDefaults,
+} from "./forkThreadSettingsDefaults";
 import { useAtomValue } from "@effect/atom-react";
 import { QueueSettings } from "./QueueSettings";
 import { AutomationPlacementSetting } from "./AutomationPlacementSetting";
@@ -543,12 +547,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? ["Continue threads after restarts"]
       : []),
-    ...(settings.queueSendAll !== DEFAULT_UNIFIED_SETTINGS.queueSendAll
-      ? ["Send all queued messages"]
-      : []),
-    ...(settings.batchQueuedMessages !== DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages
-      ? ["Send queued messages together"]
-      : []),
+    ...changedForkThreadSettings(settings),
     ...(isBackgroundActivityDirty ? ["Background activity"] : []),
     ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
       ? ["New thread mode"]
@@ -670,8 +669,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
-      batchQueuedMessages: DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages,
-      queueSendAll: DEFAULT_UNIFIED_SETTINGS.queueSendAll,
+      ...forkThreadSettingsDefaults,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,

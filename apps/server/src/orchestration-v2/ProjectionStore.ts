@@ -1,4 +1,7 @@
-import { makeSubagentThreadListing } from "./SubagentThreadListing.ts";
+import {
+  makeSubagentThreadListing,
+  type SubagentThreadListingOptions,
+} from "./SubagentThreadListing.ts";
 import { preserveRunRecordedFields } from "./RecordedRunFields.ts";
 import { pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
@@ -457,10 +460,9 @@ export interface ProjectionStoreV2Shape {
   readonly getShellSnapshot: (
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>;
-  readonly listActiveSubagentThreadIds: (options?: {
-    readonly parentId?: ThreadId;
-    readonly unsettledOnly?: boolean;
-  }) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
+  readonly listActiveSubagentThreadIds: (
+    options?: SubagentThreadListingOptions,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   /** Threads that are not deleted, archived ones included. */
   readonly countThreads: () => Effect.Effect<number, ProjectionStoreV2Error>;
   /** Every active thread, in shell order. */

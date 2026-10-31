@@ -40,6 +40,7 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as SettlementPolicy from "./AutoSettlementPolicy.ts";
 import * as ThreadSettlementService from "./ThreadSettlementService.ts";
 import { autoSettlementSettingsKey } from "./ThreadSettlementSettings.ts";
 
@@ -133,7 +134,7 @@ function persistedLink(
 describe("isAutoSettlementCandidate", () => {
   it("settles a thread whose only background work is a command left running", () => {
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      SettlementPolicy.isAutoSettlementCandidate(
         shell({
           pendingBackgroundTasks: [
             { taskId: "dev", kind: "command", description: "vp run dev --share" },
@@ -146,17 +147,14 @@ describe("isAutoSettlementCandidate", () => {
 
   it("never settles, or keeps snoozed, a thread whose guest is waiting on the owner", () => {
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
-        shell({ pendingGuestMessageCount: 1 }),
-        NOW_MS,
-      ),
+      SettlementPolicy.isAutoSettlementCandidate(shell({ pendingGuestMessageCount: 1 }), NOW_MS),
     ).toBe(false);
     const snoozed = shell({
       snoozedUntil: at(60 * 60 * 1_000),
       snoozedAt: at(-60 * 60 * 1_000),
       pendingGuestMessageCount: 1,
     });
-    expect(ThreadSettlementService.isSnoozed(snoozed, NOW_MS)).toBe(false);
+    expect(SettlementPolicy.isSnoozed(snoozed, NOW_MS)).toBe(false);
   });
 
   it("keeps snoozed threads parked until a fresh failure or timer wake", () => {
@@ -164,33 +162,33 @@ describe("isAutoSettlementCandidate", () => {
       snoozedUntil: at(60 * 60 * 1_000),
       snoozedAt: at(-60 * 60 * 1_000),
     });
-    expect(ThreadSettlementService.isAutoSettlementCandidate(snoozed, NOW_MS)).toBe(false);
+    expect(SettlementPolicy.isAutoSettlementCandidate(snoozed, NOW_MS)).toBe(false);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      SettlementPolicy.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-30 * 60 * 1_000) }),
         NOW_MS,
       ),
     ).toBe(true);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      SettlementPolicy.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-2 * 60 * 60 * 1_000) }),
         NOW_MS,
       ),
     ).toBe(false);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      SettlementPolicy.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: snoozed.snoozedAt }),
         NOW_MS,
       ),
     ).toBe(false);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      SettlementPolicy.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: null }),
         NOW_MS,
       ),
     ).toBe(false);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      SettlementPolicy.isAutoSettlementCandidate(
         shell({ ...snoozed, snoozedUntil: at(-1) }),
         NOW_MS,
       ),
@@ -1440,8 +1438,8 @@ describe("isSnoozed", () => {
       latestRunCompletedAt: at(-DAY_MS),
     });
 
-    expect(ThreadSettlementService.isSnoozed(thread, NOW_MS)).toBe(true);
-    expect(ThreadSettlementService.isAutoSettlementCandidate(thread, NOW_MS)).toBe(false);
+    expect(SettlementPolicy.isSnoozed(thread, NOW_MS)).toBe(true);
+    expect(SettlementPolicy.isAutoSettlementCandidate(thread, NOW_MS)).toBe(false);
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({
         thread,

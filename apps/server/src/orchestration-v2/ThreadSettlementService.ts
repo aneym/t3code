@@ -1,3 +1,4 @@
+import { isAutoSettlementCandidate } from "./AutoSettlementPolicy.ts";
 import { makeChildSettlementSweep } from "./ChildThreadSettlement.ts";
 import { autoSettlementConfigured, autoSettlementSettingsKey } from "./ThreadSettlementSettings.ts";
 import {
@@ -11,7 +12,6 @@ import {
   isOrchestrationV2WorkActive,
   type ThreadId,
   type OrchestrationV2DomainEvent,
-  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -47,7 +47,6 @@ export interface SettlementPullRequest {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
-const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
@@ -99,31 +98,6 @@ function settlementPullRequestLinks(
   });
 }
 
-/** Absolute age bounds clock skew in both directions and expires stale pre-adoption data. */
-export function threadHasQueuedTurnStart(
-  thread: Pick<
-    OrchestrationV2ThreadShell,
-    | "latestUserMessageAt"
-    | "latestRunRequestedAt"
-    | "latestRunStartedAt"
-    | "latestRunCompletedAt"
-    | "latestRunId"
-    | "status"
-  >,
-  nowMs: number,
-): boolean {
-  const messageAtMs = toMillis(thread.latestUserMessageAt);
-  if (messageAtMs === null || thread.status === "failed") return false;
-  const age = nowMs - messageAtMs;
-  if (Number.isNaN(age) || Math.abs(age) > QUEUED_TURN_START_GRACE_MS) return false;
-  if (thread.latestRunId === null) return true;
-  return [
-    toMillis(thread.latestRunRequestedAt),
-    toMillis(thread.latestRunStartedAt),
-    toMillis(thread.latestRunCompletedAt),
-  ].every((value) => value === null || value < messageAtMs);
-}
-
 function pullRequestSettles(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
@@ -145,50 +119,6 @@ function pullRequestSettles(
   const pullRequestAtMs = Date.parse(terminalAt);
   if (Number.isNaN(pullRequestAtMs)) return false;
   return pullRequestAtMs >= userAnchorMs;
-}
-
-export function isAutoSettlementCandidate(
-  thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
-  nowMs: number,
-  agentMainThreads?: ReadonlySet<string>,
-): boolean {
-  if (agentMainThreads?.has(thread.id)) return false;
-  if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
-  if (thread.pinnedAt != null || thread.autoSettleDisabledAt != null) return false;
-  if (thread.pendingRuntimeRequest !== null) return false;
-  // A guest is waiting on the owner; settling would hide the Request.
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
-  if (thread.activityRunStatus != null) return false;
-  if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
-  if (threadHasQueuedTurnStart(thread, nowMs)) return false;
-  // Interrupted runs must keep the same snooze protection the sidebar shows.
-  return !isSnoozed(thread, nowMs);
-}
-
-/** Match client effectiveSnoozed so agents and sidebar agree. */
-export function isSnoozed(
-  thread: Pick<
-    ProjectionStore.ProjectionSettlementCandidate,
-    | "snoozedUntil"
-    | "snoozedAt"
-    | "latestRunCompletedAt"
-    | "status"
-    | "pendingRuntimeRequest"
-    | "pendingGuestMessageCount"
-  >,
-  nowMs: number,
-): boolean {
-  const snoozedUntilMs = toMillis(thread.snoozedUntil);
-  if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return false;
-  if (thread.pendingRuntimeRequest !== null) return false;
-  // Same as the client: a waiting guest message wakes the thread, and the snooze stays stored.
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
-  const snoozedAtMs = toMillis(thread.snoozedAt);
-  const completedAtMs = toMillis(thread.latestRunCompletedAt);
-  const wokeOnError =
-    thread.status === "failed" &&
-    (snoozedAtMs === null || (completedAtMs !== null && completedAtMs > snoozedAtMs));
-  return !wokeOnError;
 }
 
 export function resolveAutoSettlementAt(input: {
