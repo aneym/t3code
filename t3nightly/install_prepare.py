@@ -6,6 +6,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 
 from .install_copy import backup_database
+from .install_diagnostics import persist_memory_diagnostics
 from .install_feed import persist_release_feed
 from .install_runtime import stage_runtime
 
@@ -70,6 +71,7 @@ def prepare(run):
     if previous is None:
         raise ValueError("server is not answering; preparation refused")
     stage_runtime(run.home, run.args.version, run.args.assets)
+    persist_memory_diagnostics(run.args)
     persist_release_feed(run.args, run.args.version)
     before = capture_work(run)
     backup = backup_database(run, previous, preparing=True)

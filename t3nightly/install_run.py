@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from t3nightly.install_copy import refresh_snapshot, backup_database
 from t3nightly.release_signatures import verify_cli
 from t3nightly.install_runtime import mark_update_restart, pin_runtime, stage_runtime
+from t3nightly.install_diagnostics import persist_memory_diagnostics
 from t3nightly.install_feed import persist_release_feed, verify_release_feed
 from t3nightly.install_storage import payload_locations, snapshot_path
 
@@ -250,6 +251,7 @@ class Run:
             stage_runtime(self.home, to_version, self.args.assets)
         else:
             verify_cli(self.runtime(to_version))
+        persist_memory_diagnostics(self.args)
         persist_release_feed(self.args, to_version)
         env = command_environment(self)
         env.pop("T3CODE_RESTART_HANDOFF_FILE", None)
