@@ -1007,7 +1007,7 @@ const make = Effect.gen(function* () {
             (key) =>
               current[key as keyof typeof settings] !== settings[key as keyof typeof settings],
           ) ||
-          JSON.stringify(currentDisposable) !== JSON.stringify(disposable)
+          currentDisposable.join("\0") !== disposable.join("\0")
         )
           return keep("settings changed since check");
         // Runs right before the move; the status check goes last so it sees edits made meanwhile.

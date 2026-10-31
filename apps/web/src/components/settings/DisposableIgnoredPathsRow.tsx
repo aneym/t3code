@@ -16,8 +16,7 @@ export function DisposableIgnoredPathsRow() {
     connectedEnvironments.length === 0 ||
     connectedEnvironments.some(
       (environment) =>
-        environment.serverConfig?.environment.capabilities.worktreeDisposableIgnoredPaths !==
-        true,
+        environment.serverConfig?.environment.capabilities.worktreeDisposableIgnoredPaths !== true,
     )
   )
     return null;
