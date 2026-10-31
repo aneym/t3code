@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import { readAgentMainThreads } from "../agents/AgentHomeFiles.ts";
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
 import type { ThreadManagementServiceShape } from "./ThreadManagementService.ts";
 
 const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
@@ -26,7 +27,7 @@ export const makeSettlementCommands = Effect.fn("ThreadManagementService.makeSet
       const bindings = yield* Effect.tryPromise({
         try: () => readAgentMainThreads(environmentId),
         catch: () =>
-          new Orchestrator.OrchestratorDispatchError({
+          new OrchestratorDispatchError({
             commandId,
             commandType: "thread.settle",
             cause:
@@ -34,7 +35,7 @@ export const makeSettlementCommands = Effect.fn("ThreadManagementService.makeSet
           }),
       });
       if (bindings.has(threadId))
-        return yield* new Orchestrator.OrchestratorDispatchError({
+        return yield* new OrchestratorDispatchError({
           commandId,
           commandType: "thread.settle",
           cause:
