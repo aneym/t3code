@@ -1,4 +1,7 @@
-import { localOnceInput } from "@t3tools/client-runtime/scheduled-task-once";
+import {
+  localOnceInput,
+  onceScheduleFromInput,
+} from "@t3tools/client-runtime/scheduled-task-once";
 import type { Dispatch, SetStateAction } from "react";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -26,7 +29,10 @@ export function ScheduledTaskTimeFields({
           nativeInput
           step="0.001"
           value={draft.onceAt ? localOnceInput(draft.onceAt) : ""}
-          onChange={(event) => setDraft((current) => ({ ...current, onceAt: event.target.value }))}
+          onChange={(event) => {
+            const onceAt = onceScheduleFromInput(event.target.value)?.at ?? "";
+            setDraft((current) => ({ ...current, onceAt }));
+          }}
         />
         <p className="text-xs text-muted-foreground">
           Your local time. Disables after one run. Change its time or enable it again to re-arm.
