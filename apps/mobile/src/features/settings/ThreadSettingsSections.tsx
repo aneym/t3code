@@ -21,6 +21,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { resolveMobileSettingsTargets, uniformMobileSetting } from "./settings-scoped-server";
+import { RemovedLinkedRoutes } from "./RemovedLinkedRoutes";
 
 export function SettingsLabsRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -227,6 +228,9 @@ function BetaSettingsSection() {
     reportFailure: true,
   });
   if (supported.length === 0) return null;
+  const linked = supported.filter(
+    (environment) => environment.serverConfig?.settings.linkedEnvironmentsEnabled === true,
+  );
   return (
     <View className="gap-3">
       <SettingsSection title="Beta: Linked environments">
@@ -250,6 +254,36 @@ function BetaSettingsSection() {
         Let agents on a machine work on your other machines, and theirs on it. Turn it on for each
         machine. While it is off, nothing new starts over a link; tasks already running finish.
       </Text>
+      {linked.length > 0 ? (
+        <SettingsSection
+          title="Linked machines in load balancing"
+          footer="Devices that balance load add a route to each machine linked there with full access, once. A route you remove stays removed until you add it back."
+        >
+          {linked.map((environment) => (
+            <SettingsSwitchRow
+              key={environment.environmentId}
+              icon="link"
+              label={environment.label}
+              value={
+                environment.serverConfig?.settings.loadBalancingIncludeLinkedEnvironments === true
+              }
+              disabled={!writable.has(environment.environmentId)}
+              onValueChange={(value) =>
+                void updateSettings({
+                  environmentId: environment.environmentId,
+                  input: { patch: { loadBalancingIncludeLinkedEnvironments: value } },
+                })
+              }
+            />
+          ))}
+        </SettingsSection>
+      ) : null}
+      <RemovedLinkedRoutes
+        hosts={linked.filter(
+          (environment) =>
+            environment.serverConfig?.settings.loadBalancingIncludeLinkedEnvironments === true,
+        )}
+      />
     </View>
   );
 }

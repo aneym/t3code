@@ -128,27 +128,6 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect("requires the destination settings grant to check OTLP endpoints", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const registry = yield* setup;
-        const check = createCommandPermissions(runtime, WS_METHODS.serverCheckOtlpEndpoint);
-        registry.set(sessions(env), AsyncResult.success(grant(true)));
-        expect(registry.get(check.permissionAtom(env))).toBe(false);
-        registry.set(
-          sessions(env),
-          AsyncResult.success({
-            ...grant(false),
-            scopes: [AuthSettingsWriteScope],
-            permissions: [AuthSettingsWriteScope],
-          }),
-        );
-        expect(registry.get(check.permissionAtom(env))).toBe(true);
-        yield* check.authorize(registry, env);
-      }),
-    ),
-  );
-
   it.effect.each([WS_METHODS.scheduledTasksDelete, ORCHESTRATION_V2_WS_METHODS.stopWorkflow])(
     "uses the target grant for both availability and execution of %s",
     (method) =>
@@ -454,26 +433,26 @@ it.effect(
     ),
 );
 
-it.effect("requires access management to answer a link request", () =>
+it.effect.each([
+  [WS_METHODS.serverCheckOtlpEndpoint, AuthSettingsWriteScope],
+  [WS_METHODS.peerLinksAnswerRequest, AuthAccessWriteScope],
+  [WS_METHODS.peerLinksPairClient, AuthAccessWriteScope],
+] as const)("%s requires its destination grant", ([method, scope]) =>
   Effect.scoped(
     Effect.gen(function* () {
       const registry = yield* setup;
       registry.set(sessions(env), AsyncResult.success(grant(true)));
-      const answer = createCommandPermissions(runtime, WS_METHODS.peerLinksAnswerRequest);
-      expect(registry.get(answer.permissionAtom(env))).toBe(false);
-      expect((yield* answer.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
-        AuthAccessWriteScope,
+      const command = createCommandPermissions(runtime, method);
+      expect(registry.get(command.permissionAtom(env))).toBe(false);
+      expect((yield* command.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
+        scope,
       );
       registry.set(
         sessions(env),
-        AsyncResult.success({
-          ...grant(false),
-          scopes: [AuthAccessWriteScope],
-          permissions: [AuthAccessWriteScope],
-        }),
+        AsyncResult.success({ ...grant(false), scopes: [scope], permissions: [scope] }),
       );
-      expect(registry.get(answer.permissionAtom(env))).toBe(true);
-      yield* answer.authorize(registry, env);
+      expect(registry.get(command.permissionAtom(env))).toBe(true);
+      yield* command.authorize(registry, env);
     }),
   ),
 );

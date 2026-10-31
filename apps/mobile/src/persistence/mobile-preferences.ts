@@ -89,6 +89,7 @@ const isThreadProject = Schema.is(ThreadProject);
 export interface Preferences {
   readonly loadBalancingEnabled?: boolean;
   readonly loadBalancingWeights?: Readonly<Record<string, number>>;
+  readonly loadBalancingSeenLinkedEnvironmentIds?: readonly EnvironmentId[];
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
   readonly pullRequestHideTestFiles?: boolean;
@@ -183,16 +184,20 @@ function sanitizePreferences(parsed: Preferences): Preferences {
       ]),
     );
   }
-  if (Array.isArray(parsed.hiddenNavigationTabs)) {
-    preferences.hiddenNavigationTabs = parsed.hiddenNavigationTabs.filter(
-      (tab): tab is string => typeof tab === "string",
-    );
+  for (const key of [
+    "hiddenNavigationTabs",
+    "navigationTabOrder",
+    "connectOnboardingOptOutAccounts",
+    "collapsedProjectGroups",
+    "dismissedDatabaseStorageNotices",
+  ] as const) {
+    const values: unknown = parsed[key];
+    if (Array.isArray(values))
+      preferences[key] = values.filter((value) => typeof value === "string");
   }
-
-  if (Array.isArray(parsed.navigationTabOrder)) {
-    preferences.navigationTabOrder = parsed.navigationTabOrder.filter(
-      (tab): tab is string => typeof tab === "string",
-    );
+  if (Array.isArray(parsed.loadBalancingSeenLinkedEnvironmentIds)) {
+    preferences.loadBalancingSeenLinkedEnvironmentIds =
+      parsed.loadBalancingSeenLinkedEnvironmentIds.filter(Schema.is(EnvironmentId));
   }
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
@@ -253,21 +258,6 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.mathRenderingEnabled = parsed.mathRenderingEnabled;
   if (typeof parsed.crashReportsEnabled === "boolean") {
     preferences.crashReportsEnabled = parsed.crashReportsEnabled;
-  }
-  if (Array.isArray(parsed.connectOnboardingOptOutAccounts)) {
-    preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(
-      (account): account is string => typeof account === "string",
-    );
-  }
-  if (Array.isArray(parsed.collapsedProjectGroups)) {
-    preferences.collapsedProjectGroups = parsed.collapsedProjectGroups.filter(
-      (key): key is string => typeof key === "string",
-    );
-  }
-  if (Array.isArray(parsed.dismissedDatabaseStorageNotices)) {
-    preferences.dismissedDatabaseStorageNotices = parsed.dismissedDatabaseStorageNotices.filter(
-      (value): value is string => typeof value === "string",
-    );
   }
   if (parsed.composerEnterBehavior === "send" || parsed.composerEnterBehavior === "newline") {
     preferences.composerEnterBehavior = parsed.composerEnterBehavior;
