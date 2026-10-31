@@ -89,6 +89,9 @@ export const layer: Layer.Layer<
               snapshotSequence: bounded.snapshotSequence,
               projection: bounded.projection,
               latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+              ...(bounded.retentionRevision === undefined
+                ? {}
+                : { retentionRevision: bounded.retentionRevision }),
             },
             history: {
               historyCursor: bounded.historyCursor,

@@ -4,6 +4,7 @@ import {
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
@@ -19,6 +20,7 @@ import {
 } from "../auth/http.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
+import * as DatabaseStorage from "../persistence/DatabaseStorage.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import {
@@ -57,6 +59,7 @@ export const layer = HttpApiBuilder.group(
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
     const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+    const databaseStorage = yield* Effect.serviceOption(DatabaseStorage.DatabaseStorage);
 
     const enrichProjectShells = Effect.fn("http.orchestration.enrichProjectShells")(
       (projects: ReadonlyArray<OrchestrationProjectShell>) =>
@@ -220,6 +223,9 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.threadBoundedSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const retentionRevision = Option.isSome(databaseStorage)
+            ? yield* databaseStorage.value.retentionRevision(args.params.threadId)
+            : 0;
           const snapshot = yield* loadThreadSnapshotWindow(
             args.params.threadId,
             undefined,
@@ -238,6 +244,7 @@ export const layer = HttpApiBuilder.group(
               dedupeBodies: args.query.dedupeBodies === "1",
               compactIds: args.query.compactIds === "1",
             }),
+            ...(retentionRevision > 0 ? { retentionRevision } : {}),
           };
         }),
       )

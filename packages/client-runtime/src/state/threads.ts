@@ -95,7 +95,9 @@ function snapshotToPersist(
   projection: OrchestrationV2ThreadProjection,
   history: ThreadHistoryMeta,
   acceptsBoundedSnapshots: boolean,
+  retentionRevision?: number,
 ): OrchestrationV2ThreadDetailSnapshot {
+  const revision = retentionRevision ? { retentionRevision } : {};
   // A complete bounded snapshot still proves paging support. Retain that evidence
   // so a thread that grows while closed can resume with a bounded fallback.
   if (acceptsBoundedSnapshots || history.hasMoreHistory || history.historyCursor !== null) {
@@ -105,9 +107,10 @@ function snapshotToPersist(
       historyCursor: history.historyCursor,
       hasMoreHistory: history.hasMoreHistory,
       latestLocalTurnOrdinal: history.latestLocalTurnOrdinal,
+      ...revision,
     };
   }
-  return { snapshotSequence, projection };
+  return { snapshotSequence, projection, ...revision };
 }
 
 function shouldPersistThread(
@@ -152,6 +155,7 @@ interface ThreadResumeSnapshot {
   readonly sequence: number;
   readonly persisted: boolean;
   readonly acceptsBoundedSnapshots?: boolean;
+  readonly retentionRevision?: number;
 }
 
 interface ThreadResumeCache {
@@ -229,6 +233,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const initialSequence =
     retained?.sequence ??
     Option.match(cached, { onNone: () => 0, onSome: (snapshot) => snapshot.snapshotSequence });
+  let retentionRevision = (retained ?? Option.getOrUndefined(cached))?.retentionRevision ?? 0;
   const initialState: EnvironmentThreadState = retained
     ? cachedThreadState(retained.state)
     : {
@@ -250,6 +255,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     sequence: initialSequence,
     persisted: retained?.persisted ?? Option.isSome(cached),
     acceptsBoundedSnapshots: canLoadHistory,
+    retentionRevision,
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
@@ -271,6 +277,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       state: current,
       sequence,
       acceptsBoundedSnapshots: yield* Ref.get(acceptsBoundedSocketSnapshots),
+      retentionRevision,
       persisted:
         committed.persisted &&
         matchesThreadSnapshot(committed, Option.getOrNull(current.data), sequence, current.history),
@@ -343,6 +350,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                   projection,
                   current.history,
                   committed.acceptsBoundedSnapshots === true,
+                  committed.retentionRevision,
                 ),
               )
             : // The consumer may still be waiting out its delay; an expanded thread queues
@@ -429,13 +437,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // payloads. Persist once the run settles so cache encoding stays off the
     // streaming path. Progressive meta rides along when the window is incomplete.
     if (shouldPersistThread(thread, next.history)) {
-      const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
       yield* queuePersist(
         snapshotToPersist(
-          snapshotSequence,
+          yield* SubscriptionRef.get(lastSequence),
           thread,
           next.history,
           yield* Ref.get(acceptsBoundedSocketSnapshots),
+          retentionRevision,
         ),
       );
     }
@@ -592,6 +600,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           result.projection,
           result.history,
           yield* Ref.get(acceptsBoundedSocketSnapshots),
+          retentionRevision,
         ),
       );
     }
@@ -612,6 +621,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
     if (item.kind === "snapshot") {
       yield* SubscriptionRef.set(lastSequence, item.snapshotSequence);
+      retentionRevision = item.retentionRevision ?? 0;
       const hasProgressiveHistory =
         item.historyCursor !== undefined ||
         item.hasMoreHistory !== undefined ||
@@ -619,16 +629,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       yield* setThread(
         boundedSnapshotProjection(item),
         hasProgressiveHistory
-          ? {
-              history: {
-                historyCursor: item.historyCursor ?? null,
-                hasMoreHistory: item.hasMoreHistory ?? false,
-                loading: false,
-                error: null,
-                expanded: false,
-                latestLocalTurnOrdinal: item.latestLocalTurnOrdinal ?? null,
-              },
-            }
+          ? { history: historyMetaFromCachedSnapshot(item) }
           : { resetHistory: true },
       );
       return;
@@ -978,16 +979,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               yield* applyLock.withPermits(1)(
                 Effect.gen(function* () {
                   yield* SubscriptionRef.set(lastSequence, httpResult.snapshot.snapshotSequence);
+                  retentionRevision = httpResult.snapshot.retentionRevision ?? 0;
                   const history: ThreadHistoryMeta =
                     httpResult.history !== undefined
-                      ? {
-                          historyCursor: httpResult.history.historyCursor,
-                          hasMoreHistory: httpResult.history.hasMoreHistory,
-                          loading: false,
-                          error: null,
-                          expanded: false,
-                          latestLocalTurnOrdinal: httpResult.history.latestLocalTurnOrdinal ?? null,
-                        }
+                      ? historyMetaFromCachedSnapshot({
+                          ...httpResult.snapshot,
+                          ...httpResult.history,
+                        })
                       : EMPTY_THREAD_HISTORY_META;
                   yield* setThread(httpResult.snapshot.projection, { history });
                   yield* remember;
@@ -1012,7 +1010,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
         return {
           threadId,
-          ...(canResume ? { afterSequence: sequence } : {}),
+          ...(canResume ? { afterSequence: sequence, retentionRevision } : {}),
           requestCompletionMarker: true as const,
           ...(acceptBoundedSnapshot
             ? {

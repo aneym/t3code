@@ -9,7 +9,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 const HISTORY_RETENTION_VERSION = 1;
 const TRIM_ABOVE_CHARACTERS = 8192;
 const KEEP_CHARACTERS = 2048;
-const BOUNDARY_WINDOW = 1024;
 const THREAD_PAGE_SIZE = 50;
 const EVENT_PAGE_SIZE = 200;
 const WRITE_BATCH_BYTES = 1024 * 1024;
@@ -40,36 +39,38 @@ export class HistoryRetention extends Context.Service<
       readonly idleBefore: DateTime.Utc;
       readonly betweenPages?: Effect.Effect<void>;
     }) => Effect.Effect<HistoryRetentionResult, HistoryRetentionError>;
-    readonly isIdle: (input: {
-      readonly threadId: string;
-      readonly idleBefore: DateTime.Utc;
-    }) => Effect.Effect<boolean, HistoryRetentionError>;
+    readonly revision: (threadId: string) => Effect.Effect<number, HistoryRetentionError>;
   }
 >()("t3/orchestration-v2/HistoryRetention") {}
 
 const TRIMMED_ITEM_TYPES = new Set(["command_execution", "dynamic_tool"]);
 
-const ANSI_SEQUENCE =
-  /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[@-Z\\-_])/g;
+const ESCAPE_SEQUENCE =
+  /\u001b(?:\[[0-?]*[ -/]*[@-~]|[\]PX^_][^\u0007\u001b]*(?:\u0007|\u001b\\)|[ -/]*(?![[\]PX^_])[0-~])/y;
 
-const sequenceAround = (text: string, at: number) => {
-  const from = Math.max(0, at - BOUNDARY_WINDOW);
-  for (const match of text.slice(from, at + BOUNDARY_WINDOW).matchAll(ANSI_SEQUENCE)) {
-    const start = from + match.index;
-    if (start >= at) return undefined;
-    if (start + match[0].length > at) return { start, end: start + match[0].length };
-  }
-  return undefined;
+const escapeEnd = (text: string, start: number) => {
+  ESCAPE_SEQUENCE.lastIndex = start;
+  const match = ESCAPE_SEQUENCE.exec(text);
+  return match === null ? undefined : start + match[0].length;
 };
 
 const headEnd = (text: string, at: number) => {
-  const cut = sequenceAround(text, at)?.start ?? at;
+  let cut = at;
+  while (cut > 0) {
+    const start = text.lastIndexOf("\u001b", cut - 1);
+    if (start < 0) break;
+    const end = escapeEnd(text, start);
+    if (end !== undefined && end <= cut) break;
+    cut = start;
+  }
   const code = text.charCodeAt(cut - 1);
   return code >= 0xd800 && code <= 0xdbff ? cut - 1 : cut;
 };
 
 const tailStart = (text: string, at: number) => {
-  const cut = sequenceAround(text, at)?.end ?? at;
+  const start = text.lastIndexOf("\u001b", at - 1);
+  const end = start < 0 ? undefined : escapeEnd(text, start);
+  const cut = end !== undefined && end > at ? end : at;
   const code = text.charCodeAt(cut);
   return code >= 0xdc00 && code <= 0xdfff ? cut + 1 : cut;
 };
@@ -81,27 +82,23 @@ const trimText = (text: string) => {
   return `${text.slice(0, head)}\n\n[T3 history retention v${HISTORY_RETENTION_VERSION} removed ${tail - head} characters]\n\n${text.slice(tail)}`;
 };
 
-const trimTextBlocks = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    const items = value.map(trimTextBlocks);
-    return items.some((item, index) => item !== value[index]) ? items : value;
-  }
-  if (value === null || typeof value !== "object") return value;
-  const record = value as Record<string, unknown>;
-  if (record.type === "text" && typeof record.text === "string") {
-    const text = trimText(record.text);
-    return text === record.text ? value : { ...record, text };
-  }
-  const entries = Object.entries(record).map(
-    ([key, child]) => [key, trimTextBlocks(child)] as const,
-  );
-  return entries.some(([key, child]) => child !== record[key])
-    ? Object.fromEntries(entries)
-    : value;
+const trimTextBlock = (block: unknown) => {
+  if (block === null || typeof block !== "object") return block;
+  const record = block as Record<string, unknown>;
+  if (record.type !== "text" || typeof record.text !== "string") return block;
+  const text = trimText(record.text);
+  return text === record.text ? block : { ...record, text };
 };
 
-const trimOutput = (output: unknown) =>
-  typeof output === "string" ? trimText(output) : trimTextBlocks(output);
+const trimOutput = (output: unknown) => {
+  if (typeof output === "string") return trimText(output);
+  const content = (output as { readonly content?: unknown } | null)?.content;
+  if (!Array.isArray(content)) return output;
+  const blocks = content.map(trimTextBlock);
+  return blocks.some((block, index) => block !== content[index])
+    ? { ...(output as object), content: blocks }
+    : output;
+};
 
 const trimItemPayload = (payloadJson: string) => {
   const payload = JSON.parse(payloadJson) as Record<string, unknown>;
@@ -132,6 +129,14 @@ interface Batch {
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS history_retention_revisions (
+      thread_id TEXT PRIMARY KEY,
+      revision INTEGER NOT NULL
+    ) WITHOUT ROWID
+  `.pipe(
+    Effect.catch((cause) => Effect.logWarning("Could not prepare history retention", { cause })),
+  );
 
   const idleThread = (cutoff: string) => sql`
     COALESCE(
@@ -162,6 +167,10 @@ const make = Effect.gen(function* () {
           WHERE thread.thread_id = ${threadId} AND ${idleThread(cutoff)}
         `;
         if (idle.length === 0) return yield* new ThreadNoLongerIdle();
+        yield* sql`
+          INSERT INTO history_retention_revisions (thread_id, revision) VALUES (${threadId}, 1)
+          ON CONFLICT (thread_id) DO UPDATE SET revision = revision + 1
+        `;
         for (const rewrite of batch.events) {
           yield* sql`
             UPDATE orchestration_events SET payload_json = ${rewrite.payload}
@@ -341,20 +350,17 @@ const make = Effect.gen(function* () {
     Effect.mapError((cause) => new HistoryRetentionError({ cause })),
   );
 
-  const isIdle = Effect.fn("HistoryRetention.isIdle")(
-    function* (input: { readonly threadId: string; readonly idleBefore: DateTime.Utc }) {
-      const rows = yield* sql`
-        SELECT 1 FROM orchestration_v2_projection_threads AS thread
-        WHERE thread.thread_id = ${input.threadId}
-          AND thread.deleted_at IS NULL
-          AND ${idleThread(DateTime.formatIso(input.idleBefore))}
+  const revision = Effect.fn("HistoryRetention.revision")(
+    function* (threadId: string) {
+      const rows = yield* sql<{ readonly revision: number }>`
+        SELECT revision FROM history_retention_revisions WHERE thread_id = ${threadId}
       `.pipe(NodeSqliteClient.readOnly);
-      return rows.length > 0;
+      return rows[0]?.revision ?? 0;
     },
     Effect.mapError((cause) => new HistoryRetentionError({ cause })),
   );
 
-  return HistoryRetention.of({ trimIdleThreads, isIdle });
+  return HistoryRetention.of({ trimIdleThreads, revision });
 });
 
 export const layer = Layer.effect(HistoryRetention, make);

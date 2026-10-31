@@ -1,6 +1,7 @@
 import type {
   DatabaseStorageStatus,
   OrchestrationV2SubscribeThreadInput,
+  OrchestrationV2ThreadStreamItem,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -35,9 +36,13 @@ export class DatabaseStorage extends Context.Service<
     readonly reclaim: Effect.Effect<void>;
     /** Current file accounting, re-published after each maintenance pass. Null until first read. */
     readonly status: Stream.Stream<DatabaseStorageStatus | null>;
-    readonly threadSubscription: (
+    readonly retentionRevision: (threadId: string) => Effect.Effect<number>;
+    readonly threadSubscription: <E, R, E1, R1>(
       input: OrchestrationV2SubscribeThreadInput,
-    ) => Effect.Effect<OrchestrationV2SubscribeThreadInput>;
+      subscribe: (
+        input: OrchestrationV2SubscribeThreadInput,
+      ) => Effect.Effect<Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>, E1, R1>,
+    ) => Effect.Effect<Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>, E1, R1>;
   }
 >()("t3/persistence/DatabaseStorage") {}
 
@@ -177,33 +182,42 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const threadSubscription = Effect.fn("DatabaseStorage.threadSubscription")(
-    function* (input: OrchestrationV2SubscribeThreadInput) {
-      yield* Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId });
-      if (input.afterSequence === undefined) return input;
-      const idleBefore = yield* historyIdleBefore;
-      if (Option.isNone(idleBefore)) return input;
-      const idle = yield* retention.isIdle({
-        threadId: input.threadId,
-        idleBefore: idleBefore.value,
-      });
-      if (!idle) return input;
-      const { afterSequence: _afterSequence, ...snapshot } = input;
-      return snapshot;
-    },
-    (effect, input) =>
-      effect.pipe(
+  const retentionRevision = (threadId: string) =>
+    retention
+      .revision(threadId)
+      .pipe(
         Effect.catch((cause) =>
-          Effect.logWarning("Could not check thread history retention", { cause }).pipe(
-            Effect.as(input),
+          Effect.logWarning("Could not read thread history retention", { cause }).pipe(
+            Effect.as(0),
           ),
         ),
-      ),
-  );
+      );
+
+  const threadSubscription = Effect.fn("DatabaseStorage.threadSubscription")(function* <
+    E,
+    R,
+    E1,
+    R1,
+  >(
+    input: OrchestrationV2SubscribeThreadInput,
+    subscribe: (
+      input: OrchestrationV2SubscribeThreadInput,
+    ) => Effect.Effect<Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>, E1, R1>,
+  ) {
+    yield* Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId });
+    const revision = yield* retentionRevision(input.threadId);
+    const { afterSequence: _afterSequence, ...snapshot } = input;
+    const stream = yield* subscribe(revision === (input.retentionRevision ?? 0) ? input : snapshot);
+    if (revision === 0) return stream;
+    return Stream.map(stream, (item) =>
+      item.kind === "snapshot" ? { ...item, retentionRevision: revision } : item,
+    );
+  });
 
   return DatabaseStorage.of({
     reclaim,
     status: SubscriptionRef.changes(statusRef),
+    retentionRevision,
     threadSubscription,
   });
 });
