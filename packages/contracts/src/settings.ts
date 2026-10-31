@@ -1050,7 +1050,7 @@ const SettledWorktreeRetentionDays = Schema.NullOr(
 const DisposableIgnoredPaths = Schema.Array(
   TrimmedNonEmptyString.check(
     Schema.isMaxLength(200),
-    Schema.isPattern(/^(?!(?:.*\/)?\.\.(?:\/|$))[^,\\\p{Cc}]+$/u),
+    Schema.isPattern(/^(?!(?:[\w.*?[\]!@+~/-]*\/)?\.\.(?:\/|$))[\w.*?[\]!@+~/-]+$/),
   ),
 ).check(Schema.isMaxLength(50));
 
