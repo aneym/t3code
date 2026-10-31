@@ -193,7 +193,16 @@ Active sessions and shared worktrees prevent removal. **Keep worktrees with loca
 to **Uncommitted changes**, which protects tracked edits and untracked files but deletes ignored
 files such as `.env` and build output. **Any local files** also protects ignored files other than
 `node_modules`. **Edited tracked files** protects only tracked edits and allows untracked and
-ignored files to be deleted. Branches and thread history stay; starting another turn recreates the checkout.
+ignored files to be deleted. Whatever that setting says, cleanup keeps a worktree that holds files
+excluded through the repository's `.git/info/exclude`, a `.lane` folder, or a nested Git repository
+anywhere outside `node_modules`. A removed worktree moves to a `.worktree-trash` folder inside
+its worktree folder for a day before it is deleted, so you can copy files back out of its
+`checkout` folder. If cleanup cannot put a worktree back after a failed removal, it leaves a
+`recovery-failed.txt` note in that entry and never deletes it. A `recovery-required` folder also
+protects an interrupted move, even if its recovery note could not be written; restore the saved
+parts manually before removing that flag. Git metadata is kept in the repository’s
+`.git/t3-worktree-trash` under the same entry name and must be restored too. Branches and thread history stay;
+starting another turn recreates the checkout.
 Merge cleanup requires a merged pull request whose commits are included in the remote default
 branch. A squash or rebase merge on GitHub also counts when the pull request targeted the default
 branch and the worktree is still at the pull request's last commit.
