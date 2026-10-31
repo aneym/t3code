@@ -758,6 +758,7 @@ const make = Effect.gen(function* () {
     for (const thread of candidates) {
       const settings = resolveWorktreeCleanup(serverSettings, thread.projectId);
       if (!worktreeCleanupEnabled(settings)) continue;
+      const disposable = serverSettings.storageCleanup.worktreeDisposableIgnoredPaths;
       const worktreePath = path.resolve(thread.worktreePath!);
       const group = groups.get(worktreePath) ?? [];
       const activityAt = Math.max(...group.map(storageCleanupActivityAt));
@@ -984,7 +985,7 @@ const make = Effect.gen(function* () {
         });
         const blocked = yield* blockedSinceCheck();
         if (blocked !== null) return keep(blocked);
-        const personal = yield* trash.personalStateReason(worktreePath);
+        const personal = yield* trash.personalStateReason(worktreePath, disposable);
         if (personal !== null) return keep(personal);
         const bytes = yield* measureWorktree(worktreePath);
         const blockedWhileMeasuring = yield* blockedSinceCheck();
@@ -998,15 +999,15 @@ const make = Effect.gen(function* () {
           return keep("commit changed since check");
         const finalChanges = yield* localChangesReason(worktreePath, settings);
         if (finalChanges !== null) return keep(finalChanges);
-        const current = resolveWorktreeCleanup(
-          yield* settingsService.getSettings,
-          thread.projectId,
-        );
+        const currentSettings = yield* settingsService.getSettings;
+        const current = resolveWorktreeCleanup(currentSettings, thread.projectId);
+        const currentDisposable = currentSettings.storageCleanup.worktreeDisposableIgnoredPaths;
         if (
           Object.keys(settings).some(
             (key) =>
               current[key as keyof typeof settings] !== settings[key as keyof typeof settings],
-          )
+          ) ||
+          JSON.stringify(currentDisposable) !== JSON.stringify(disposable)
         )
           return keep("settings changed since check");
         // Runs right before the move; the status check goes last so it sees edits made meanwhile.
@@ -1027,7 +1028,7 @@ const make = Effect.gen(function* () {
                 head.commitSha
               )
                 return "commit changed since check";
-              const personal = yield* trash.personalStateReason(worktreePath);
+              const personal = yield* trash.personalStateReason(worktreePath, disposable);
               if (personal !== null) return personal;
               const submodules = yield* submoduleKeepReason(worktreePath, settings);
               if (submodules !== null) return submodules;

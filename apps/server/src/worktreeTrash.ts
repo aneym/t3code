@@ -240,6 +240,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
   const checkoutStateReason = Effect.fnUntraced(function* (
     cwd: string,
     submodules: ReadonlySet<string>,
+    disposable: ReadonlyArray<string>,
   ) {
     if (yield* fs.exists(path.join(cwd, ".lane"))) return "has excluded local state (.lane/)";
     const git = yield* GitVcsDriver.GitVcsDriver;
@@ -309,6 +310,8 @@ export const makeWorktreeTrash = Effect.gen(function* () {
         "-z",
         "--exclude-standard",
         "--exclude-per-directory=/",
+        "--",
+        ...disposable.map((pattern) => `:(exclude,glob)${pattern}`),
       ],
       maxOutputBytes: 16 * 1024 * 1024,
     });
@@ -321,6 +324,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
 
   const personalStateReason = Effect.fn("StorageCleanup.personalStateReason")(function* (
     cwd: string,
+    disposable: ReadonlyArray<string>,
   ) {
     const git = yield* GitVcsDriver.GitVcsDriver;
     const submodules = new Set<string>();
@@ -341,10 +345,10 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       for (const submodule of populated.stdout.split("\0").filter(Boolean))
         submodules.add(yield* fs.realPath(submodule));
     }
-    const own = yield* checkoutStateReason(cwd, submodules);
+    const own = yield* checkoutStateReason(cwd, submodules, disposable);
     if (own !== null) return own;
     for (const submodule of submodules) {
-      const reason = yield* checkoutStateReason(submodule, submodules);
+      const reason = yield* checkoutStateReason(submodule, submodules, disposable);
       if (reason !== null) return `submodule ${reason}`;
     }
     return null;

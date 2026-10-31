@@ -1047,6 +1047,10 @@ const SettledWorktreeRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3650 })),
 );
 
+const DisposableIgnoredPaths = Schema.Array(
+  TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+).check(Schema.isMaxLength(50));
+
 export const WorktreeKeepWhen = Schema.Literals([
   "any-local-files",
   "uncommitted-changes",
@@ -1249,6 +1253,9 @@ export const StorageCleanupSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   logsAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  worktreeDisposableIgnoredPaths: DisposableIgnoredPaths.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
@@ -1634,6 +1641,7 @@ export const ServerSettingsPatch = Schema.Struct({
       ...WorktreeCleanupRulesPatchFields,
       browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
       logsAfterDays: Schema.optionalKey(StorageRetentionDays),
+      worktreeDisposableIgnoredPaths: Schema.optionalKey(DisposableIgnoredPaths),
     }),
   ),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
