@@ -3714,7 +3714,6 @@ export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
   /** The client restores `*Omitted` bodies from records it already holds. */
   acceptDedupedBodies: Schema.optionalKey(Schema.Boolean),
   acceptCompactIds: Schema.optionalKey(Schema.Boolean),
-  retentionRevision: Schema.optionalKey(NonNegativeInt),
 });
 export type OrchestrationV2SubscribeThreadInput = typeof OrchestrationV2SubscribeThreadInput.Type;
 
@@ -3731,7 +3730,6 @@ export const OrchestrationV2ThreadDetailSnapshot = Schema.Struct({
   historyCursor: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   hasMoreHistory: Schema.optionalKey(Schema.Boolean),
   latestLocalTurnOrdinal: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
-  retentionRevision: Schema.optionalKey(NonNegativeInt),
 });
 export type OrchestrationV2ThreadDetailSnapshot = typeof OrchestrationV2ThreadDetailSnapshot.Type;
 
@@ -3749,7 +3747,6 @@ export const OrchestrationV2ThreadBoundedSnapshot = withRecordIdTable(
      * with `boundedSnapshotProjection` before using the projection.
      */
     turnItemsOmitLocalVisible: Schema.optionalKey(Schema.Literal(true)),
-    retentionRevision: Schema.optionalKey(NonNegativeInt),
     idTable: IdTableMarker,
   }),
   () => "projection",
@@ -3825,7 +3822,11 @@ export const OrchestrationV2ThreadStreamItem = withRecordIdTable(
     }),
     Schema.Struct({
       kind: Schema.Literal("snapshot"),
-      ...OrchestrationV2ThreadDetailSnapshot.fields,
+      snapshotSequence: NonNegativeInt,
+      projection: OrchestrationV2ThreadProjection,
+      historyCursor: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+      hasMoreHistory: Schema.optionalKey(Schema.Boolean),
+      latestLocalTurnOrdinal: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
       turnItemsOmitLocalVisible: Schema.optionalKey(Schema.Literal(true)),
       idTable: IdTableMarker,
     }),

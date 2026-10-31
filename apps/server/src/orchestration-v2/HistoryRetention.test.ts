@@ -1,4 +1,3 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
@@ -17,12 +16,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as Stream from "effect/Stream";
 
-import * as ServerConfig from "../config.ts";
-import * as DatabaseStorage from "../persistence/DatabaseStorage.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as HistoryRetention from "./HistoryRetention.ts";
@@ -40,12 +35,6 @@ const layerTest = Layer.mergeAll(
   EventSink.layer.pipe(Layer.provide(stores)),
   ProjectionMaintenance.layer.pipe(Layer.provide(stores)),
   HistoryRetention.layer.pipe(Layer.provide(database)),
-);
-const layerStorage = DatabaseStorage.layer.pipe(
-  Layer.provideMerge(layerTest),
-  Layer.provide(ServerSettings.layerTest({ storageCleanup: { threadHistoryAfterDays: 3 } })),
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "history-retention-" })),
-  Layer.provide(NodeServices.layer),
 );
 
 const providerInstanceId = ProviderInstanceId.make("claude");
@@ -457,59 +446,4 @@ it.effect("rolls back event rewrites when the projection write fails", () =>
     assert.isTrue(Exit.isFailure(exit));
     assert.deepEqual(yield* rawPayloads(threadId), before);
   }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("sends a snapshot only to clients that hold output from before the latest trim", () =>
-  Effect.gen(function* () {
-    const sink = yield* EventSink.EventSinkV2;
-    const storage = yield* DatabaseStorage.DatabaseStorage;
-    const retention = yield* HistoryRetention.HistoryRetention;
-    const projection = yield* ProjectionStore.ProjectionStoreV2;
-    const now = yield* DateTime.now;
-    const threadId = ThreadId.make("thread:history-retention:resume");
-    yield* sink.write({
-      events: threadEvents(threadId, now, DateTime.subtract(now, { days: 10 })),
-    });
-    const resume = (retentionRevision?: number) =>
-      storage
-        .threadSubscription(
-          { threadId, afterSequence: 3, ...(retentionRevision ? { retentionRevision } : {}) },
-          (input) =>
-            Effect.map(projection.getThreadProjection(threadId), (thread) =>
-              Stream.make(
-                input.afterSequence === undefined
-                  ? { kind: "snapshot" as const, snapshotSequence: 3, projection: thread }
-                  : { kind: "synchronized" as const },
-              ),
-            ),
-        )
-        .pipe(
-          Effect.flatMap(Stream.runCollect),
-          Effect.map((items) =>
-            Array.from(items, (item) =>
-              item.kind === "snapshot" ? (item.retentionRevision ?? 0) : item.kind,
-            ),
-          ),
-        );
-    assert.deepEqual(yield* resume(), ["synchronized"]);
-    yield* retention.trimIdleThreads({ idleBefore: DateTime.subtract(now, { days: 3 }) });
-    assert.deepEqual(yield* resume(1), ["synchronized"]);
-    yield* sink.write({
-      events: [
-        {
-          id: EventId.make(`event:${threadId}:resumed`),
-          threadId,
-          occurredAt: now,
-          type: "turn-item.updated",
-          payload: turnItem(threadId, now, "resumed", 50, false, {
-            type: "command_execution",
-            input: "vp run dev",
-            output: "",
-          }),
-        },
-      ],
-    });
-    assert.deepEqual(yield* resume(), [1]);
-    assert.deepEqual(yield* resume(1), ["synchronized"]);
-  }).pipe(Effect.provide(layerStorage)),
 );

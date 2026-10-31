@@ -39,7 +39,6 @@ export class HistoryRetention extends Context.Service<
       readonly idleBefore: DateTime.Utc;
       readonly betweenPages?: Effect.Effect<void>;
     }) => Effect.Effect<HistoryRetentionResult, HistoryRetentionError>;
-    readonly revision: (threadId: string) => Effect.Effect<number, HistoryRetentionError>;
   }
 >()("t3/orchestration-v2/HistoryRetention") {}
 
@@ -129,15 +128,6 @@ interface Batch {
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`
-    CREATE TABLE IF NOT EXISTS history_retention_revisions (
-      thread_id TEXT PRIMARY KEY,
-      revision INTEGER NOT NULL
-    ) WITHOUT ROWID
-  `.pipe(
-    Effect.catch((cause) => Effect.logWarning("Could not prepare history retention", { cause })),
-  );
-
   const idleThread = (cutoff: string) => sql`
     COALESCE(
       thread.deleted_at,
@@ -167,10 +157,6 @@ const make = Effect.gen(function* () {
           WHERE thread.thread_id = ${threadId} AND ${idleThread(cutoff)}
         `;
         if (idle.length === 0) return yield* new ThreadNoLongerIdle();
-        yield* sql`
-          INSERT INTO history_retention_revisions (thread_id, revision) VALUES (${threadId}, 1)
-          ON CONFLICT (thread_id) DO UPDATE SET revision = revision + 1
-        `;
         for (const rewrite of batch.events) {
           yield* sql`
             UPDATE orchestration_events SET payload_json = ${rewrite.payload}
@@ -350,17 +336,7 @@ const make = Effect.gen(function* () {
     Effect.mapError((cause) => new HistoryRetentionError({ cause })),
   );
 
-  const revision = Effect.fn("HistoryRetention.revision")(
-    function* (threadId: string) {
-      const rows = yield* sql<{ readonly revision: number }>`
-        SELECT revision FROM history_retention_revisions WHERE thread_id = ${threadId}
-      `.pipe(NodeSqliteClient.readOnly);
-      return rows[0]?.revision ?? 0;
-    },
-    Effect.mapError((cause) => new HistoryRetentionError({ cause })),
-  );
-
-  return HistoryRetention.of({ trimIdleThreads, revision });
+  return HistoryRetention.of({ trimIdleThreads });
 });
 
 export const layer = Layer.effect(HistoryRetention, make);

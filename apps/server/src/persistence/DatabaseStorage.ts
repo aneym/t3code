@@ -1,8 +1,4 @@
-import type {
-  DatabaseStorageStatus,
-  OrchestrationV2SubscribeThreadInput,
-  OrchestrationV2ThreadStreamItem,
-} from "@t3tools/contracts";
+import type { DatabaseStorageStatus } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -36,13 +32,6 @@ export class DatabaseStorage extends Context.Service<
     readonly reclaim: Effect.Effect<void>;
     /** Current file accounting, re-published after each maintenance pass. Null until first read. */
     readonly status: Stream.Stream<DatabaseStorageStatus | null>;
-    readonly retentionRevision: (threadId: string) => Effect.Effect<number>;
-    readonly threadSubscription: <E, R, E1, R1>(
-      input: OrchestrationV2SubscribeThreadInput,
-      subscribe: (
-        input: OrchestrationV2SubscribeThreadInput,
-      ) => Effect.Effect<Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>, E1, R1>,
-    ) => Effect.Effect<Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>, E1, R1>;
   }
 >()("t3/persistence/DatabaseStorage") {}
 
@@ -182,44 +171,7 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const retentionRevision = (threadId: string) =>
-    retention
-      .revision(threadId)
-      .pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not read thread history retention", { cause }).pipe(
-            Effect.as(0),
-          ),
-        ),
-      );
-
-  const threadSubscription = Effect.fn("DatabaseStorage.threadSubscription")(function* <
-    E,
-    R,
-    E1,
-    R1,
-  >(
-    input: OrchestrationV2SubscribeThreadInput,
-    subscribe: (
-      input: OrchestrationV2SubscribeThreadInput,
-    ) => Effect.Effect<Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>, E1, R1>,
-  ) {
-    yield* Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId });
-    const revision = yield* retentionRevision(input.threadId);
-    const { afterSequence: _afterSequence, ...snapshot } = input;
-    const stream = yield* subscribe(revision === (input.retentionRevision ?? 0) ? input : snapshot);
-    if (revision === 0) return stream;
-    return Stream.map(stream, (item) =>
-      item.kind === "snapshot" ? { ...item, retentionRevision: revision } : item,
-    );
-  });
-
-  return DatabaseStorage.of({
-    reclaim,
-    status: SubscriptionRef.changes(statusRef),
-    retentionRevision,
-    threadSubscription,
-  });
+  return DatabaseStorage.of({ reclaim, status: SubscriptionRef.changes(statusRef) });
 });
 
 export const layer = Layer.effect(DatabaseStorage, make).pipe(
