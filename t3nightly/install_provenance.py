@@ -23,6 +23,13 @@ def migration_history(run):
         return history_digest(connection.execute("SELECT migration_id, name FROM effect_sql_migrations"))
 
 
+def eligibility(manifest, host, args, restore_copy=None):
+    proof = Path(args.rollback_proof) if required(manifest, host) and getattr(args, "rollback_proof", None) else None
+    return {"class": manifest["targets"][host]["compatibility"].get("eligibility"),
+            "rollbackProof": {"path": str(proof), "sha256": file_digest(proof)} if proof and proof.is_file() else None,
+            "restoreCopy": restore_copy}
+
+
 def install_host(args):
     return args.receipt_host or ("studio" if sys.platform == "darwin" else "ax42")
 

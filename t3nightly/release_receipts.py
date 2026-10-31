@@ -23,7 +23,7 @@ INSTALL_FIELDS = {
     "schema": str, "release": str, "runId": str, "host": str, "platform": str, "arch": str,
     "candidateDigest": str, "rehearsalDigest": str, "artifactManifestDigest": str,
     "service": str, "oldRuntime": RUNTIME, "servingRuntime": RUNTIME, "backup": dict,
-    "chat": dict, "outcome": str, "reapedSshLaunch": list, "startedAt": str, "finishedAt": str, "digest": str,
+    "chat": dict, "outcome": str, "reapedSshLaunch": list, "eligibility": dict, "startedAt": str, "finishedAt": str, "digest": str,
 }
 OBSERVED = (
     "oldRuntime.digest", "oldMigrationHistory", "artifactManifestDigest",
@@ -125,6 +125,9 @@ def provenance(receipt, manifest, host, now=None, observed=None):
         expected["engineDigest"] = manifest["engine"]["digest"]
         expected["sourceTree"] = manifest["source"]["stampedTree"]
         expected["candidateMigrationHistory"] = compatibility["candidateMigrations"]["history"]
+        expected["oldMigrationHistory"] = compatibility["baseMigrations"]["history"]
+    else:
+        expected["eligibility.class"] = compatibility.get("eligibility")
     if target.get("oldRelease"):
         expected["oldRuntime.version"] = target["oldRelease"]
     for key in OBSERVED:

@@ -143,6 +143,18 @@ def fast_install(path, manifest, artifact, rehearsal, host):
     return receipt
 
 
+def eligibility_evidence(receipts, manifest, artifact, host, install):
+    recorded = install["eligibility"]
+    proof = None
+    if required(manifest, host) and install["outcome"] != "current":
+        path = receipts / f"rollback-proof-{host}.json"
+        claimed = (recorded.get("rollbackProof") or {}).get("sha256")
+        if not proven(path, manifest, artifact["archive"]["sha256"]) or claimed != sha256(path):
+            raise ValueError(f"{host}: {recorded['class']} install has no passing forced-rollback proof matching its receipt")
+        proof = {"path": str(path), "sha256": claimed}
+    return {"class": recorded["class"], "rollbackProof": proof, "restoreCopy": recorded.get("restoreCopy")}
+
+
 def host_evidence(run, version, host, build):
     key = "darwin-arm64" if host == "studio" else "linux-x64"
     own = build / "candidate.json"
@@ -182,7 +194,8 @@ def fast_evidence(run, version):
         if release_identity(manifest) != release_identity(release):
             raise ValueError(f"{host}: candidate {manifest['digest']} is not the same release source as {release['digest']}")
         rows[host] = {"candidate": manifest["digest"], "engine": manifest["engine"]["commit"], "frozenAt": manifest["frozenAt"], "artifact": artifact["digest"], "archive": artifact["archive"]["sha256"], "runtime": artifact["runtime"]["sha256"],
-                      "rehearsal": rehearsal["digest"], "install": install["digest"], "outcome": install["outcome"]}
+                      "rehearsal": rehearsal["digest"], "install": install["digest"], "outcome": install["outcome"],
+                      "eligibility": eligibility_evidence(receipts, manifest, artifact, host, install)}
     desktop = fast_artifact(run / "desktop/artifact-desktop-darwin-arm64.json", version, "darwin-arm64", "desktop")
     swap = json.loads((run / "desktop-swap.json").read_text())
     if swap["digest"] != digest({key: value for key, value in swap.items() if key != "digest"}):

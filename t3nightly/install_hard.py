@@ -15,8 +15,9 @@ from .install_backup import capture
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_process import serving_process
 from .install_strays import managed_strays, reap_strays
-from .install_provenance import file_digest, migration_history, validate
+from .install_provenance import eligibility, file_digest, migration_history, validate
 from .install_runtime import pin_runtime, restore_runtime, retain_runtime, stage_runtime
+from .release_eligibility import RESTORE_CLASS, binary_rollback, restore_refusal
 from .release_receipts import INSTALL_SCHEMA, write
 from .release_signatures import cli_binary
 
@@ -160,10 +161,14 @@ def install(run):
         manifest, rehearsal, host, observed = validate(run, previous, candidate)
     compatibility = manifest["targets"][host]["compatibility"]
     base_history = compatibility.get("baseMigrations", {}).get("history")
+    refusal = restore_refusal(compatibility, host, args)
+    if refusal:
+        return run.finish("failed", refusal)
+    restore_class = compatibility.get("eligibility") == RESTORE_CLASS
 
     def rollback_gate():
         live = migration_history(run)
-        eligible = compatibility.get("binaryRollback") is True and ((compatibility.get("persistedState") == "compatible" and compatibility.get("migrationFiles") == []) or compatibility.get("persistedState") == "fork-additive") and live == base_history
+        eligible = binary_rollback(compatibility) and live == base_history
         return {"liveMigrationHistory": live, "baseMigrationHistory": base_history} if eligible else None
     precheck(run, previous, observed["oldRuntime.digest"])
     try:
@@ -205,7 +210,7 @@ def install(run):
             if file_digest(staged) != observed["candidateRuntime.digest"]:
                 raise ValueError("staged candidate runtime changed after provenance check")
             run.step("hard-retain-runtime", version=previous, path=str(retain_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")))
-            backup = (install_offbox.capture if args.offbox else capture)(run, previous, stop, rollback_gate)
+            backup = install_offbox.capture(run, previous, stop, rollback_gate, keep_local=restore_class) if args.offbox else capture(run, previous, stop, rollback_gate)
             stopped = False
             activate(run, args.version)
             serving(run, args.version, observed["candidateRuntime.digest"])
@@ -229,7 +234,7 @@ def install(run):
         from .install_policy import begin_recovery
 
         begin_recovery(run)
-        if routed:
+        if routed and not restore_class:
             try:
                 from .install_hot_swap import binary_compatible, supported, swap
                 from .install_rpc import restart_session
@@ -312,6 +317,12 @@ def install(run):
     }
     path = Path(args.install_receipt) if args.install_receipt else run.state / "receipts" / f"install-{host}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
+    local = backup.get("local")
+    if local:
+        from .install_restore_hold import schedule
+
+        local = {**local, "hold": schedule(run, local, path)} if outcome == "installed" else {**local, "hold": {"outcome": "kept", "reason": f"install {outcome}; copy kept for recovery"}}
+    receipt["eligibility"] = eligibility(manifest, host, args, local)
     write(path, receipt)
     run.step("hard-install-receipt", path=str(path), outcome=outcome)
     if outcome in ("installed", "current"):

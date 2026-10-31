@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from . import install_offbox_stage as stage
+from . import install_restore_copy as restore_copy
+from .db_publish import LOCAL_MARGIN, local_check, publish, wal_bytes
 from . import live_read_guard as guard
 from .install_storage import record_payload
 from .io_priority import background_command
@@ -25,7 +27,6 @@ REMOTE_ZSTD = "/opt/homebrew/bin/zstd"
 CHUNK = 1024 * 1024
 ZSTD_THREADS = 4
 METHOD = "offbox-sqlite3-rsync"
-LOCAL_MARGIN = 512 * 1024 * 1024
 CATCH_UP_ROUNDS = 3
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
@@ -152,25 +153,12 @@ def remote_check(host, replica, deadline):
     return remote(host, f"set -e; chmod 600 {path}; sqlite3 {path} 'PRAGMA quick_check'", deadline).strip()
 
 
-def local_check(path):
-    with closing(sqlite3.connect(path, timeout=30, isolation_level=None)) as connection:
-        check = connection.execute("PRAGMA quick_check").fetchone()[0]
-        if connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0] != 0:
-            raise ValueError("database WAL checkpoint is busy")
-    return check
-
-
 def schema_state(db):
     with closing(sqlite3.connect(f"{Path(db).resolve().as_uri()}?mode=ro", uri=True, timeout=30)) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         rows = [connection.execute("SELECT type, name, coalesce(sql, '') FROM sqlite_master ORDER BY type, name").fetchall()]
         rows += [connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall() for table in ("effect_sql_migrations", "aneym_fork_migrations") if table in tables]
     return hashlib.sha256(json.dumps(rows, default=str).encode()).hexdigest()
-
-
-def wal_bytes(db):
-    wal = Path(f"{db}-wal")
-    return wal.stat().st_size if wal.exists() else 0
 
 
 def restore_space(size, wal):
@@ -251,7 +239,7 @@ def catch_up(run, host, replica, source, size, deadline):
         raise ValueError(f"local space under the {needed >> 20} MiB an in-place restore could need; nothing stopped")
 
 
-def capture(run, previous, stop, rollback_gate):
+def capture(run, previous, stop, rollback_gate, keep_local=False):
     started = time.monotonic()
     binary = rollback_gate()
     if binary:
@@ -264,15 +252,23 @@ def capture(run, previous, stop, rollback_gate):
     host, root, replica, source, size = placement(run, local)
     seeded, deadline = preseed(run, host, root, replica, source, size, started)
     catch_up(run, host, replica, source, size, deadline)
+    if keep_local:
+        restore_copy.precheck(run, source)
     destination = local / uuid.uuid4().hex
     destination.mkdir(mode=0o700)
     stop()
     stopped = time.monotonic()
-    deadline = stopped + run.args.offbox_stop_s
     state = schema_state(source)
-    sync(source, f"{host}:{replica}", deadline)
-    metadata = verified(run, host, root, replica, deadline, {"bytes": size, "schemaState": state, "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3),
-                                                             "seconds": round(time.monotonic() - started, 3), "previous": previous})
+    copy = restore_copy.take(run, source, previous) if keep_local else None
+    try:
+        deadline = time.monotonic() + run.args.offbox_stop_s
+        sync(source, f"{host}:{replica}", deadline)
+        metadata = verified(run, host, root, replica, deadline, {"bytes": size, "schemaState": state, "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3),
+                                                                 "seconds": round(time.monotonic() - started, 3), "previous": previous, **({"local": copy} if copy else {})})
+    except BaseException:
+        if copy:
+            restore_copy.discard(run, copy)
+        raise
     (destination / "payload.json").write_text(json.dumps(metadata))
     run.step("hard-backup", **metadata)
     return metadata
@@ -293,33 +289,6 @@ def prune(run, host, root, current):
             record_payload(run.state, "discard-offbox-rollback-backup", f"{host}:{root / name}", bytes=0)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         run.step("offbox-prune-failed", error=str(error))
-
-
-def fsync(path, flags=os.O_RDONLY):
-    descriptor = os.open(path, flags)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def publish(staged, db):
-    wal = Path(f"{db}-wal")
-    try:
-        local_check(db)
-    except (sqlite3.Error, ValueError):
-        pass
-    if wal_bytes(db):
-        wal.unlink()
-        Path(f"{db}-shm").unlink(missing_ok=True)
-    for suffix in ("-wal", "-shm"):
-        Path(f"{staged}{suffix}").unlink(missing_ok=True)
-    fsync(staged)
-    os.replace(staged, db)
-    fsync(db.parent)
-    wal.unlink(missing_ok=True)
-    Path(f"{db}-shm").unlink(missing_ok=True)
-    fsync(db.parent)
 
 
 def restore(run, backup, *, beside=None):
@@ -372,6 +341,12 @@ def rollback_database(run, backup):
     if unchanged(run, backup):
         run.step("hard-restore-db-skipped", reason="schema and migrations match the backup")
         return
+    if backup.get("local"):
+        try:
+            restore_copy.restore(backup["local"], run.db.resolve(), run.step)
+            return
+        except (OSError, ValueError, sqlite3.Error) as error:
+            run.step("hard-restore-local-failed", error=str(error), fallback="offbox-replica")
     try:
         restore(run, backup)
     except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as error:

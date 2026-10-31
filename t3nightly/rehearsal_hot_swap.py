@@ -7,6 +7,7 @@ from urllib.parse import unquote
 from .install_rpc import restart_session
 from .rehearsal_run import Rehearsal
 from .rehearsal_sandbox import wait_for
+from .release_eligibility import RESTORE_CLASS
 
 
 class HotSwapRehearsal(Rehearsal):
@@ -124,10 +125,12 @@ class HotSwapRehearsal(Rehearsal):
                 hot["checks"][name] = {"status": "passed" if automatic and unchanged and hot.get("injected") else "failed", "method": rollback, "oldChildPid": hot["oldChildPid"], "servingChildPid": hot["servingChildPid"], "warmOldUntouched": unchanged if self.args.inject == "warm-death" else None}
             if self.args.force_rollback:
                 hot["checks"]["post-routing-binary-rollback"] = {"status": "passed" if rollback == "launcher-ipc" and result.get("result") == "ROLLBACK-PROOF" else "failed", "method": rollback, "databaseKeptProof": result.get("proof")}
-            fallback = installer.get("hotSwap", {}).get("method") != "launcher-ipc"
-            hot["status"] = "hot-swap-unsupported" if fallback else "hot-swap"
+            method = installer.get("hotSwap", {}).get("method")
+            restore = self.manifest["targets"][self.args.target_host]["compatibility"].get("eligibility") == RESTORE_CLASS and method == "maintenance"
+            fallback = method != "launcher-ipc"
+            hot["status"] = "maintenance" if restore else "hot-swap-unsupported" if fallback else "hot-swap"
             hot["fallbackAccepted"] = installer.get("outcome") == "installed"
-            if fallback and result.get("result") in ("PASS", "COMPATIBILITY-PROBE"):
+            if fallback and not restore and result.get("result") in ("PASS", "COMPATIBILITY-PROBE"):
                 result.update(result="COMPATIBILITY-PROBE", releaseEligible=False)
                 from .release_receipts import seal
 

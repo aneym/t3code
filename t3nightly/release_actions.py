@@ -23,7 +23,7 @@ from .release_manifest import digest, eligible, freeze, history_digest, load
 from .release_outputs import fast_evidence
 from .release_ownership import ownership
 from .release_readiness import readiness
-from .release_rollback_proof import fast_rollback_proof
+from .release_rollback_proof import fast_rollback_proof, required
 from .release_seed_remotes import seed
 from .release_transport import command, git_tree, prepare_remote, remote_worker, require, transfer
 from .release_windows import WINDOWS_STAGES, run_windows
@@ -264,7 +264,8 @@ def fast_swap(config, log):
 def fast_publish(config, log):
     remote, local = config.on("ax42"), config.run / "ax42"
     local.mkdir(exist_ok=True)
-    for path in (remote.build_out() / remote.archive(), remote.artifact(), remote.manifest, remote.receipt("rehearsal"), remote.receipt("install")):
+    proof = (remote.receipt("rollback-proof"),) if required(load(config.manifest), "ax42") else ()
+    for path in (remote.build_out() / remote.archive(), remote.artifact(), remote.manifest, remote.receipt("rehearsal"), remote.receipt("install"), *proof):
         transfer(f"{config.linux_host}:{path}", str(local) + "/", log)
     publish = config.run / "publish"
     publish.mkdir(exist_ok=True)

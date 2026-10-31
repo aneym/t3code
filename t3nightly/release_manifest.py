@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .release_assemble import PACKAGE_FILES
+from .release_eligibility import classify
 
 
 CANDIDATE_SCHEMA = "t3nightly.candidate/1"
@@ -368,7 +369,7 @@ def freeze(tree, base, version, out, old_releases=None, engine=None, serving_hea
             if computed[serving]["upstreamTag"]["candidate"] != f"v{match.group(1)}":
                 computed[serving]["fastPath"]["reasons"].append("version-tag-mismatch")
                 computed[serving]["fastPath"]["eligible"] = False
-        targets[host] = {"platform": platform, "arch": arch, "oldRelease": old_releases.get(host), "servingHead": serving, "compatibility": computed[serving]}
+        targets[host] = {"platform": platform, "arch": arch, "oldRelease": old_releases.get(host), "servingHead": serving, "compatibility": classify(computed[serving], host)}
     manifest = {
         "schema": CANDIDATE_SCHEMA,
         "version": version,

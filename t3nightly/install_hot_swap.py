@@ -10,10 +10,11 @@ from . import install_offbox
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_copy import backup_database
 from .install_hard import connect_returns, install as hard_install
-from .install_provenance import file_digest, migration_history, validate
+from .install_provenance import eligibility, file_digest, migration_history, validate
 from .install_rpc import restart_rpc, restart_session
 from .install_runtime import restore_runtime, retain_runtime, stage_runtime
 from .install_seamless import prepare_with_drain
+from .release_eligibility import RESTORE_CLASS, binary_rollback
 from .release_receipts import INSTALL_SCHEMA, write
 
 
@@ -75,7 +76,7 @@ def swap(run, bearer, version, downgrade=False):
 
 
 def binary_compatible(compatibility, history):
-    return compatibility.get("binaryRollback") is True and compatibility.get("persistedState") in ("compatible", "fork-additive") and history == compatibility["candidateMigrations"]["history"] and (compatibility.get("persistedState") == "fork-additive" or compatibility.get("migrationFiles") == [])
+    return binary_rollback(compatibility) and history == compatibility["candidateMigrations"]["history"]
 
 
 def install(run):
@@ -92,7 +93,7 @@ def install(run):
     from .launcher_artifact import changed, qualify
 
     qualification = qualify(run)
-    maintenance = bool(changed(run) or compatibility.get("migrationFiles") or compatibility.get("maintenance") or manifest.get("maintenance"))
+    maintenance = bool(changed(run) or compatibility.get("migrationFiles") or compatibility.get("maintenance") or manifest.get("maintenance") or compatibility.get("eligibility") == RESTORE_CLASS)
     available = supported(run.environment(), run) and qualification["qualified"] and not maintenance
     if available and not mark_candidate(run, manifest, rehearsal, compatibility):
         available, maintenance = False, True
@@ -165,7 +166,7 @@ def install(run):
     serving_version = run.server_version() or "unavailable"
     serving_binary = run.runtime(serving_version)
     serving_digest = file_digest(serving_binary) if serving_binary.is_file() else ""
-    receipt = {"schema": INSTALL_SCHEMA, "release": args.version, "runId": uuid.uuid4().hex, "host": host, **{key: manifest["targets"][host][key] for key in ("platform", "arch")}, "candidateDigest": manifest["digest"], "rehearsalDigest": rehearsal["digest"] if rehearsal else "", "artifactManifestDigest": observed["artifactManifestDigest"], "service": run.service_label, "oldRuntime": {"version": previous, "digest": observed["oldRuntime.digest"]}, "servingRuntime": {"version": serving_version, "digest": serving_digest}, "backup": backup, "chat": post["proof"], "outcome": "failed" if outcome == "broken" else outcome, "reapedSshLaunch": [], "hotSwap": {**run.report["hotSwap"], "update": update or run.report["hotSwap"].get("update")}, "installWindow": run.report.get("installWindow"), "startedAt": run.report["started_at"], "finishedAt": datetime.now(timezone.utc).isoformat()}
+    receipt = {"schema": INSTALL_SCHEMA, "release": args.version, "runId": uuid.uuid4().hex, "host": host, **{key: manifest["targets"][host][key] for key in ("platform", "arch")}, "candidateDigest": manifest["digest"], "rehearsalDigest": rehearsal["digest"] if rehearsal else "", "artifactManifestDigest": observed["artifactManifestDigest"], "service": run.service_label, "oldRuntime": {"version": previous, "digest": observed["oldRuntime.digest"]}, "servingRuntime": {"version": serving_version, "digest": serving_digest}, "backup": backup, "chat": post["proof"], "outcome": "failed" if outcome == "broken" else outcome, "reapedSshLaunch": [], "hotSwap": {**run.report["hotSwap"], "update": update or run.report["hotSwap"].get("update")}, "installWindow": run.report.get("installWindow"), "eligibility": eligibility(manifest, host, args), "startedAt": run.report["started_at"], "finishedAt": datetime.now(timezone.utc).isoformat()}
     destination = Path(args.install_receipt) if args.install_receipt else run.state / "receipts" / f"install-{host}.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     write(destination, receipt)
