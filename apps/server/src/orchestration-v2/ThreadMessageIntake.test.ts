@@ -29,7 +29,7 @@ import {
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { OrchestratorCommandPreviouslyRejectedError } from "./Orchestrator.ts";
+import { OrchestratorCommandPreviouslyRejectedError } from "./OrchestratorErrors.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
 

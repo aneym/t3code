@@ -1,3 +1,7 @@
+import {
+  canSendAllQueued,
+  describeSendAllQueued,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import { QueuedRunSender } from "./QueuedRunSender";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
@@ -27,6 +31,7 @@ import { ScreenContent } from "../../components/ui/ScreenContent";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { serverEnvironment } from "../../state/server";
 import { useAssetUrl } from "../../state/assets";
 import { assetImageSource } from "../../lib/assetImageSource";
 import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edit";
@@ -72,6 +77,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const editBlockedReason = queuedRunEditBlockedReason({
     openQuestionCount: pendingRequests?.userInputs.length ?? 0,
   });
+  const sendAll = useAtomCommand(threadEnvironment.sendAllQueuedRuns, "send all queued messages");
+  const queueSendAll =
+    useAtomValue(serverEnvironment.configValueAtom(target.environmentId))?.settings.queueSendAll ===
+    true;
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
@@ -150,6 +159,24 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       contentContainerClassName="px-5 pb-6"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
     >
+      {queueSendAll && workflow && canSendAllQueued(workflow, editing !== null) ? (
+        <View className="gap-2 py-3">
+          <Text className="text-sm text-foreground-muted">{describeSendAllQueued(workflow)}</Text>
+          <Button
+            label="Send all"
+            disabled={resuming || busyRunId !== null}
+            onPress={async () => {
+              if (busyRef.current) return;
+              busyRef.current = true;
+              setResuming(true);
+              await sendAll({ ...target, input: { threadId: target.threadId } }).finally(() => {
+                busyRef.current = false;
+                setResuming(false);
+              });
+            }}
+          />
+        </View>
+      ) : null}
       {workflow?.isHeld && queuedRuns.length > 0 ? (
         <View className="gap-2 py-3">
           <Text className="text-sm text-foreground-muted">Queue paused</Text>

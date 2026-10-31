@@ -12,7 +12,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import { OrchestratorProjectionError } from "../orchestration-v2/OrchestratorErrors.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 
 const EPOCH = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");

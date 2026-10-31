@@ -13,7 +13,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
+import type { OrchestratorV2Error } from "../orchestration-v2/OrchestratorErrors.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
