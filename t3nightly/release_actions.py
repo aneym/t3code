@@ -284,7 +284,7 @@ def fast_publish(config, log):
         rows.append(f"{hashlib.file_digest(target.open('rb'), 'sha256').hexdigest()}  {target.name}\n")
     (publish / "SHA256SUMS").write_text("".join(rows))
     code = command([sys.executable, str(config.tools / "publish-feed"), str(publish), "--desktop-dir", str(config.run / "desktop"),
-                    "--feed-dir", "/Volumes/StudioExt/t3nightly-feed", "--fast-evidence", str(config.run), "--override-reason", config.override_reason], log)
+                    "--feed-dir", "/Volumes/StudioExt/t3nightly-feed", "--fast-evidence", str(config.run)], log)
     if code:
         return code
     evidence = fast_evidence(config.run, config.version)
