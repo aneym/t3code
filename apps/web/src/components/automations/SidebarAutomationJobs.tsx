@@ -59,10 +59,7 @@ export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () 
     if (task.threadId === null) return true;
     const key = `${environmentId}:${task.threadId}`;
     const thread = byKey.get(key);
-    return (
-      thread === undefined ||
-      isAutomationOnlyThread(thread, new Set([key, `${environmentId}:${task.id}`]))
-    );
+    return thread === undefined || isAutomationOnlyThread(thread, new Set([key]));
   });
   const [expanded, setExpanded] = useLocalStorage(
     AUTOMATIONS_SHELF_EXPANDED_KEY,
