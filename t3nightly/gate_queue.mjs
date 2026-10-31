@@ -131,7 +131,7 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
       receipts.push(first, sent);
       yield* waitFor("sent message persisted", () => order.sent !== null);
       listeners.delete(track);
-      const missed = !openBefore || (order.turnEnded !== null && order.turnEnded < order.sent);
+      const missed = !openBefore || (order.turnEnded !== null && order.turnEnded < order.sent) || sent.delivery === "steered";
       const distinct = Boolean(sent.runId) && sent.runId !== first.runId;
       restartObservation = { openBefore, turnEndedTick: order.turnEnded, sentTick: order.sent, missed, delivery: sent.delivery };
       if (!missed && !distinct) throw fail("send into a starting run did not return a distinct run");
@@ -146,7 +146,7 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
         if (status !== "completed" || (marker === null ? replies.length < 1 : replies.length !== 1 || replies[0].text.trim() !== marker)) throw fail(`run ${id} ended ${status} with ${replies.length} replies instead of one ${marker ?? "reply"}`);
       }
       if (final.runs.length !== expected.length || final.runs.some((run) => run.queueHeld)) throw fail("unexpected runs or held work remain");
-      const inconclusive = missed ? `the send landed after the first run left its startup window (delivered ${sent.delivery})` : undefined;
+      const inconclusive = missed ? `the send landed after the first run left its startup window (delivered ${sent.delivery}${sent.delivery === "steered" ? ", server had the turn active" : ""})` : undefined;
       return { ...evidence(), threadId: first.threadId, firstRun: first.runId, sentDelivery: sent.delivery, exactlyOnceReplies: distinct ? 2 : 0, inconclusive };
     }
     const started = yield* cli(
