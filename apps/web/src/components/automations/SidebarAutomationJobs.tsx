@@ -59,14 +59,17 @@ export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () 
     if (task.threadId === null) return true;
     const key = `${environmentId}:${task.threadId}`;
     const thread = byKey.get(key);
-    return thread === undefined || isAutomationOnlyThread(thread, new Set([key]));
+    return (
+      thread === undefined ||
+      isAutomationOnlyThread(thread, new Set([key, `${environmentId}:${task.id}`]))
+    );
   });
   const [expanded, setExpanded] = useLocalStorage(
     AUTOMATIONS_SHELF_EXPANDED_KEY,
     false,
     Schema.Boolean,
   );
-  const standaloneThreads = automationThreadsWithoutJobs(threads, automations);
+  const standaloneThreads = automationThreadsWithoutJobs(threads, tasks);
   if (automations.length === 0 && standaloneThreads.length === 0) return null;
   const grouped = new Map<
     string,

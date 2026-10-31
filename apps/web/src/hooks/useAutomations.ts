@@ -48,9 +48,10 @@ function sameKeys(left: ReadonlySet<string>, right: ReadonlySet<string>): boolea
 export function useAutomationThreadKeys(): ReadonlySet<string> {
   for (const { environmentId, tasks } of useLoadedScheduledTasks()) {
     const next = new Set(
-      tasks
-        .filter((task) => task.threadId !== null)
-        .map((task) => `${environmentId}:${task.threadId}`),
+      tasks.flatMap((task) => [
+        `${environmentId}:${task.id}`,
+        ...(task.threadId === null ? [] : [`${environmentId}:${task.threadId}`]),
+      ]),
     );
     if (!sameKeys(retainedAutomationThreadKeys.get(environmentId) ?? new Set(), next)) {
       retainedAutomationThreadKeys.set(environmentId, next);

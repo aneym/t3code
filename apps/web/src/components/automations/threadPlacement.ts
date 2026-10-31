@@ -13,6 +13,13 @@ export function isAutomationOnlyThread(
 ): boolean {
   if (thread.pinnedAt != null) return false;
   const bound = boundThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true;
+  if (
+    !bound &&
+    thread.automationTaskId?.startsWith("scheduled-task:") &&
+    boundThreadKeys !== undefined &&
+    !boundThreadKeys.has(`${thread.environmentId}:${thread.automationTaskId}`)
+  )
+    return false;
   if (thread.automationTaskId === null && !bound) return false;
   if (thread.automationTaskId === undefined && !bound) return false;
   if (thread.latestUserAuthoredMessageAt == null) return true;

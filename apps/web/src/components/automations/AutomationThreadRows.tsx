@@ -8,9 +8,12 @@ export function automationThreadsWithoutJobs(
   threads: ReadonlyArray<EnvironmentThreadShell>,
   automations: ReadonlyArray<EnvironmentAutomation>,
 ): ReadonlyArray<EnvironmentThreadShell> {
+  const taskKeys = new Set(
+    automations.map(({ environmentId, task }) => `${environmentId}:${task.id}`),
+  );
   return threads.filter(
     (thread) =>
-      isAutomationOnlyThread(thread) &&
+      isAutomationOnlyThread(thread, taskKeys) &&
       thread.archivedAt === null &&
       thread.settledOverride !== "settled" &&
       !automations.some(
