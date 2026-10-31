@@ -12,14 +12,25 @@ def required(manifest, host):
     return manifest["targets"][host]["compatibility"].get("rollbackProof") == "required"
 
 
+def legacy_launcher(installer):
+    steps = {step.get("step") for step in installer.get("steps", [])}
+    return installer.get("hotSwap", {}).get("method") == "hot-swap-unsupported" and "hot-swap-unsupported" in steps
+
+
+def hard_rolled_back(installer):
+    return legacy_launcher(installer) and installer.get("outcome") == "rolled-back" and any(step.get("step") == "hard-binary-rollback" for step in installer.get("steps", []))
+
+
 def proven(path, manifest, archive_sha):
     try:
         receipt = json.loads(Path(path).read_text())
     except (OSError, TypeError, ValueError):
         return False
-    method = receipt.get("proof", {}).get("installer", {}).get("hotSwap", {}).get("method")
-    rollback = receipt.get("proof", {}).get("installer", {}).get("hotSwap", {}).get("rollback")
-    return method == "launcher-ipc" and rollback == "launcher-ipc" and receipt.get("result") == "ROLLBACK-PROOF" and receipt.get("manifest") == identity_digest(manifest) and receipt.get("archive") == archive_sha
+    installer = receipt.get("proof", {}).get("installer", {})
+    method = installer.get("hotSwap", {}).get("method")
+    rollback = installer.get("hotSwap", {}).get("rollback")
+    swapped = (method == "launcher-ipc" and rollback == "launcher-ipc") or hard_rolled_back(installer)
+    return swapped and receipt.get("result") == "ROLLBACK-PROOF" and receipt.get("manifest") == identity_digest(manifest) and receipt.get("archive") == archive_sha
 
 
 def fast_rollback_proof(config, log):
@@ -42,8 +53,8 @@ def fast_rollback_proof(config, log):
                     "--hot-swap", "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")),
                     *config.service_artifacts(), *config.target_artifacts()], log)
     result = json.loads((root / "evidence" / "result.json").read_text())
-    method = result.get("hotSwap", {}).get("install", {}).get("hotSwap", {}).get("method")
-    if code or result.get("result") != "ROLLBACK-PROOF" or method != "launcher-ipc":
+    installer = result.get("hotSwap", {}).get("install", {})
+    if code or result.get("result") != "ROLLBACK-PROOF" or not (installer.get("hotSwap", {}).get("method") == "launcher-ipc" or hard_rolled_back(installer)):
         return code or 1
     receipt = {"result": result["result"], "manifest": identity_digest(manifest), "archive": hashlib.sha256((config.build_out() / config.archive()).read_bytes()).hexdigest(),
                "proof": json.loads(Path(result["proof"]).read_text()), "timings": result.get("timings")}

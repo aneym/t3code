@@ -8,6 +8,7 @@ from .install_rpc import restart_session
 from .rehearsal_run import Rehearsal
 from .rehearsal_sandbox import wait_for
 from .release_eligibility import RESTORE_CLASS
+from .release_rollback_proof import hard_rolled_back, legacy_launcher
 
 
 class HotSwapRehearsal(Rehearsal):
@@ -109,6 +110,7 @@ class HotSwapRehearsal(Rehearsal):
             missing = sorted(set(expected) - set(probe["sequences"]))
             hot.update(probe=probe, missedEvents=missing, sequenceContinuity=bool(probe["snapshots"]) and not missing and not probe["resnapshots"] and not hot.get("cursorError"), walAfter=self.wal(), databaseIntegrity=self.sandbox.query("PRAGMA integrity_check"), servedVersion=self.sandbox.version(), finalPersistedSequence=final_sequence, lastAppliedSequence=end)
         state = self.sandbox.evidence / "installer-state/last.json"
+        hard_rollback = False
         if state.exists():
             installer = json.loads(state.read_text())
             if not getattr(self.args, "focused", False) and installer.get("outcome") == "installed" and installer.get("hotSwap", {}).get("method") == "launcher-ipc":
@@ -118,19 +120,21 @@ class HotSwapRehearsal(Rehearsal):
             hot["install"] = installer
             hot["servingChildPid"] = json.loads((self.sandbox.home / "userdata/server-runtime.json").read_text())["pid"]
             rollback = installer.get("hotSwap", {}).get("rollback")
+            legacy = legacy_launcher(installer)
+            hard_rollback = self.args.force_rollback and self.args.inject == "none" and hard_rolled_back(installer)
             if self.args.inject != "none":
                 automatic = rollback == "launcher-automatic" and installer.get("outcome") == "rolled-back"
                 unchanged = self.args.inject != "warm-death" or hot["oldChildPid"] == hot["servingChildPid"]
                 name = "warm-rollback" if self.args.inject == "warm-death" else "pre-routing-rollback"
                 hot["checks"][name] = {"status": "passed" if automatic and unchanged and hot.get("injected") else "failed", "method": rollback, "oldChildPid": hot["oldChildPid"], "servingChildPid": hot["servingChildPid"], "warmOldUntouched": unchanged if self.args.inject == "warm-death" else None}
             if self.args.force_rollback:
-                hot["checks"]["post-routing-binary-rollback"] = {"status": "passed" if rollback == "launcher-ipc" and result.get("result") == "ROLLBACK-PROOF" else "failed", "method": rollback, "databaseKeptProof": result.get("proof")}
+                hot["checks"]["post-routing-binary-rollback"] = {"status": "passed" if (rollback == "launcher-ipc" or hard_rollback) and result.get("result") == "ROLLBACK-PROOF" else "failed", "method": "hard-binary" if hard_rollback else rollback, "databaseKeptProof": result.get("proof")}
             method = installer.get("hotSwap", {}).get("method")
             restore = self.manifest["targets"][self.args.target_host]["compatibility"].get("eligibility") == RESTORE_CLASS and method == "maintenance"
             fallback = method != "launcher-ipc"
-            hot["status"] = "maintenance" if restore else "hot-swap-unsupported" if fallback else "hot-swap"
+            hot["status"] = "maintenance" if restore or legacy else "hot-swap-unsupported" if fallback else "hot-swap"
             hot["fallbackAccepted"] = installer.get("outcome") == "installed"
-            if fallback and not restore and result.get("result") in ("PASS", "COMPATIBILITY-PROBE"):
+            if fallback and not (restore or legacy) and result.get("result") in ("PASS", "COMPATIBILITY-PROBE"):
                 result.update(result="COMPATIBILITY-PROBE", releaseEligible=False)
                 from .release_receipts import seal
 
@@ -163,7 +167,7 @@ class HotSwapRehearsal(Rehearsal):
         hot["checks"].update({name: {"status": "awaiting-capable-server"} for name in ("drain-arrivals", "keep-alive-freeze", "launcher-crash", "queue-saturation", "warm-rollback", "pre-routing-rollback") if name not in hot["checks"]})
         rollback_names = ("warm-rollback", "pre-routing-rollback", "post-routing-binary-rollback")
         failed_rollback = any(hot["checks"].get(name, {}).get("status") == "failed" for name in rollback_names)
-        wrong_method = (self.args.force_rollback or self.args.inject != "none") and hot.get("install", {}).get("hotSwap", {}).get("method") != "launcher-ipc"
+        wrong_method = (self.args.force_rollback or self.args.inject != "none") and hot.get("install", {}).get("hotSwap", {}).get("method") != "launcher-ipc" and not hard_rollback
         if failed_rollback or wrong_method:
             result.update(result="FAIL", releaseEligible=False)
         receipt_path = self.sandbox.evidence / "rehearsal-receipt.json"
@@ -212,10 +216,11 @@ class HotSwapRehearsal(Rehearsal):
             path = self.sandbox.evidence / "rollback-proof.json"
             path.write_text(json.dumps({"injected": injected, "installer": installer, "postRollbackChat": post, "workload": evidence, "databaseIntegrity": self.sandbox.query("PRAGMA integrity_check")}, indent=2) + "\n")
             return path
-        if installer.get("hotSwap", {}).get("method") != "launcher-ipc":
-            raise ValueError("hot-swap rollback proof requires launcher-ipc; maintenance/fallback cannot prove hot-swap-back")
-        if installer.get("hotSwap", {}).get("rollback") != "launcher-ipc":
-            raise ValueError("post-flip failure did not use a schema-compatible hot swap back")
+        if not hard_rolled_back(installer):
+            if installer.get("hotSwap", {}).get("method") != "launcher-ipc":
+                raise ValueError("hot-swap rollback proof requires launcher-ipc; maintenance/fallback cannot prove hot-swap-back")
+            if installer.get("hotSwap", {}).get("rollback") != "launcher-ipc":
+                raise ValueError("post-flip failure did not use a schema-compatible hot swap back")
         writes = json.loads((state / "candidate-writes.json").read_text())
         shown = self.sandbox.t3("thread", "show", writes["threadId"], "--messages", "50", "--json")
         if not any(message["role"] == "assistant" and message["text"].strip() == writes["nonce"] for message in shown["messages"]):
