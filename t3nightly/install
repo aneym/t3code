@@ -73,6 +73,7 @@ def parse():
     parser.add_argument("--drain-s", type=int, default=300)
     parser.add_argument("--node", default="node")
     parser.add_argument("--no-pin-launcher", action="store_true")
+    parser.add_argument("--offbox", default="")
     args = parser.parse_args()
     if args.backup_keep < 1:
         parser.error("--backup-keep must be at least one")
@@ -90,6 +91,15 @@ def parse():
         parser.error("--compatibility-probe requires isolated --rehearsal")
     if args.seamless and not all((args.manifest, args.artifact_manifest, args.chat_project, args.rpc_tree, args.receipt or args.rehearsal)):
         parser.error("--seamless requires --manifest, --artifact-manifest, --chat-project, --rpc-tree and --receipt (or --rehearsal)")
+    if args.offbox:
+        if not (args.hard or args.seamless):
+            parser.error("--offbox requires --hard or --seamless")
+        from t3nightly.install_offbox import target
+
+        try:
+            target(args.offbox)
+        except ValueError as error:
+            parser.error(str(error))
     return args
 
 

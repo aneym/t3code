@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import install_offbox
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_copy import backup_database
 from .install_hard import connect_returns, install as hard_install
@@ -117,7 +118,7 @@ def install(run):
     baseline = prove(run, previous)
     before = identities(run)
     connect = run.managed_connect(previous)
-    backup = backup_database(run, previous, preparing=True)
+    backup = install_offbox.live_backup(run, previous) if args.offbox else {"path": str(backup_database(run, previous, preparing=True))}
     store = run.home / "runtime/.rollback-runtime"
     retain_runtime(run.home, previous, store)
     outcome, post, update = "failed", baseline, None
@@ -164,7 +165,7 @@ def install(run):
     serving_version = run.server_version() or "unavailable"
     serving_binary = run.runtime(serving_version)
     serving_digest = file_digest(serving_binary) if serving_binary.is_file() else ""
-    receipt = {"schema": INSTALL_SCHEMA, "release": args.version, "runId": uuid.uuid4().hex, "host": host, **{key: manifest["targets"][host][key] for key in ("platform", "arch")}, "candidateDigest": manifest["digest"], "rehearsalDigest": rehearsal["digest"] if rehearsal else "", "artifactManifestDigest": observed["artifactManifestDigest"], "service": run.service_label, "oldRuntime": {"version": previous, "digest": observed["oldRuntime.digest"]}, "servingRuntime": {"version": serving_version, "digest": serving_digest}, "backup": {"path": str(backup)}, "chat": post["proof"], "outcome": "failed" if outcome == "broken" else outcome, "reapedSshLaunch": [], "hotSwap": {**run.report["hotSwap"], "update": update or run.report["hotSwap"].get("update")}, "installWindow": run.report.get("installWindow"), "startedAt": run.report["started_at"], "finishedAt": datetime.now(timezone.utc).isoformat()}
+    receipt = {"schema": INSTALL_SCHEMA, "release": args.version, "runId": uuid.uuid4().hex, "host": host, **{key: manifest["targets"][host][key] for key in ("platform", "arch")}, "candidateDigest": manifest["digest"], "rehearsalDigest": rehearsal["digest"] if rehearsal else "", "artifactManifestDigest": observed["artifactManifestDigest"], "service": run.service_label, "oldRuntime": {"version": previous, "digest": observed["oldRuntime.digest"]}, "servingRuntime": {"version": serving_version, "digest": serving_digest}, "backup": backup, "chat": post["proof"], "outcome": "failed" if outcome == "broken" else outcome, "reapedSshLaunch": [], "hotSwap": {**run.report["hotSwap"], "update": update or run.report["hotSwap"].get("update")}, "installWindow": run.report.get("installWindow"), "startedAt": run.report["started_at"], "finishedAt": datetime.now(timezone.utc).isoformat()}
     destination = Path(args.install_receipt) if args.install_receipt else run.state / "receipts" / f"install-{host}.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     write(destination, receipt)

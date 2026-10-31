@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .identity_snapshot import finish as finish_identities
+from . import install_offbox
 from .install_backup import capture
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_process import serving_process
@@ -204,7 +205,7 @@ def install(run):
             if file_digest(staged) != observed["candidateRuntime.digest"]:
                 raise ValueError("staged candidate runtime changed after provenance check")
             run.step("hard-retain-runtime", version=previous, path=str(retain_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")))
-            backup = capture(run, previous, stop, rollback_gate)
+            backup = (install_offbox.capture if args.offbox else capture)(run, previous, stop, rollback_gate)
             stopped = False
             activate(run, args.version)
             serving(run, args.version, observed["candidateRuntime.digest"])
@@ -260,6 +261,8 @@ def install(run):
                 from .launcher_artifact import rollback_launcher
 
                 rollback_launcher(run)
+                if backup.get("method") == install_offbox.METHOD:
+                    install_offbox.restore(run, backup)
                 if restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime"):
                     run.step("hard-restore-runtime", version=previous)
                 activate(run, previous)

@@ -16,6 +16,7 @@ from .release_assemble import assemble, stamp
 from .release_approval import approved
 from .release_continuation import require_studio_proof
 from .build_artifacts import tree_digest
+from .install_offbox import REMOTE_ROOT
 from .release_graph import SUCCESS_OUTCOMES
 from .release_land_receipts import publish as publish_landings
 from .release_manifest import digest, freeze, history_digest, load
@@ -234,7 +235,7 @@ def fast_install(config, log):
              "--chat-project", str(config.chat_project()), "--load-max", "64", "--health-s", "300", "--override-reason", config.override_reason,
              "--smoke-verdict", str(config.run / f"e2e-{config.host}" / "smoke-verdict.json"), "--rollback-proof", str(config.receipt("rollback-proof"))]
     if config.host == "ax42":
-        words.extend(["--service-label", "t3code.service", "--backups", str(backups)])
+        words.extend(["--service-label", "t3code.service", "--backups", str(backups), "--offbox", f"studio:{REMOTE_ROOT}/ax42"])
     words.extend(config.target_artifacts())
     config.receipt("install").unlink(missing_ok=True)
     code = command(words, log, env=env)
