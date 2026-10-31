@@ -304,23 +304,13 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       args: ["config", "--bool", "core.ignoreCase"],
       allowNonZeroExit: true,
     });
-    if (ignoreCaseSetting.stdout.trim() === "true") {
-      const lower = yield* fs.stat(path.join(cwd, ".git"));
-      const upper = yield* fs.stat(path.join(cwd, ".GIT")).pipe(Effect.option);
-      const upperIsLink = yield* fs.readLink(path.join(cwd, ".GIT")).pipe(
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      );
-      if (
-        upperIsLink ||
-        Option.isNone(upper) ||
-        upper.value.dev !== lower.dev ||
-        Option.isNone(lower.ino) ||
-        Option.isNone(upper.value.ino) ||
-        upper.value.ino.value !== lower.ino.value
-      )
-        return "Git ignores case on a case-sensitive filesystem";
-    }
+    if (
+      ignoreCaseSetting.stdout.trim() === "true" &&
+      ((yield* fs.readDirectory(cwd)).filter((entry) => entry.toLowerCase() === ".git").join() !==
+        ".git" ||
+        !(yield* fs.exists(path.join(cwd, ".GIT"))))
+    )
+      return "Git ignores case on a case-sensitive filesystem";
     for (const ignoreCase of ["true", "false"]) {
       const personal = yield* git.execute({
         operation: "StorageCleanup.personalIgnoredFiles",
