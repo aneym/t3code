@@ -7,7 +7,6 @@ from urllib.parse import unquote
 from .install_rpc import restart_session
 from .rehearsal_run import Rehearsal
 from .rehearsal_sandbox import wait_for
-from .release_eligibility import RESTORE_CLASS
 from .release_rollback_proof import hard_rolled_back, legacy_launcher
 
 
@@ -130,11 +129,11 @@ class HotSwapRehearsal(Rehearsal):
             if self.args.force_rollback:
                 hot["checks"]["post-routing-binary-rollback"] = {"status": "passed" if (rollback == "launcher-ipc" or hard_rollback) and result.get("result") == "ROLLBACK-PROOF" else "failed", "method": "hard-binary" if hard_rollback else rollback, "databaseKeptProof": result.get("proof")}
             method = installer.get("hotSwap", {}).get("method")
-            restore = self.manifest["targets"][self.args.target_host]["compatibility"].get("eligibility") == RESTORE_CLASS and method == "maintenance"
+            maintenance = method == "maintenance"
             fallback = method != "launcher-ipc"
-            hot["status"] = "maintenance" if restore or legacy else "hot-swap-unsupported" if fallback else "hot-swap"
+            hot["status"] = "maintenance" if maintenance or legacy else "hot-swap-unsupported" if fallback else "hot-swap"
             hot["fallbackAccepted"] = installer.get("outcome") == "installed"
-            if fallback and not (restore or legacy) and result.get("result") in ("PASS", "COMPATIBILITY-PROBE"):
+            if fallback and not (maintenance or legacy) and result.get("result") in ("PASS", "COMPATIBILITY-PROBE"):
                 result.update(result="COMPATIBILITY-PROBE", releaseEligible=False)
                 from .release_receipts import seal
 
