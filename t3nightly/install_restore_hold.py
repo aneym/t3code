@@ -22,6 +22,8 @@ SCHEMA = "t3nightly.restore-hold/2"
 SUFFIXES = ("", "-wal", "-shm", "-journal")
 SIDECARS = (".hold.json", ".hold.json.lock", ".hold.json.next", ".reship.json", ".reship.json.next", ".reship.lock")
 ENGINES = ".hold-engine"
+COPY_LOCK = ".restore-copy.lock"
+RESHIP_PENDING = ("scheduled", "running", "retrying")
 
 
 def now():
@@ -179,7 +181,7 @@ def reshipping(copy, at, cap):
         if not free:
             return True
     try:
-        return json.loads(status.read_text()).get("state") == "scheduled" and at < cap
+        return json.loads(status.read_text()).get("state") in RESHIP_PENDING and at < cap
     except ValueError:
         return False
 
@@ -224,7 +226,8 @@ def evaluate(path):
             arm(record, path, detail)
             entry.update(dueAt=record["dueAt"], unit=record["unit"], armed=record["outcome"])
         elif action == "keep":
-            record.update(outcome="kept-past-cap", loud=True, dueAt=(at + timedelta(seconds=HOLD_S)).isoformat())
+            arm(record, path, HOLD_S)
+            record.update(outcome="kept-past-cap", loud=True)
             print(detail, file=sys.stderr, flush=True)
         else:
             record["outcome"] = "missing"
@@ -237,7 +240,7 @@ def evaluate(path):
         return record
 
 
-def sweep(directory):
+def sweep(directory, *, force=False):
     actions = []
     for copy in sorted(directory.glob("restore-*.sqlite")):
         path = record_path(copy)
@@ -250,23 +253,28 @@ def sweep(directory):
         except (KeyError, ValueError) as error:
             actions.append({"copy": str(copy), "action": "kept-unreadable-record", "error": str(error)})
             continue
-        if due:
+        if due or force:
             record = evaluate(path)
             actions.append({"copy": str(copy), "action": "evaluated", "outcome": record and record["outcome"]})
-    for part in sorted(directory.glob("restore-*.sqlite.part")):
-        if not record_path(part.with_suffix("")).is_file():
+    with flocked(directory / COPY_LOCK) as free:
+        for part in sorted(directory.glob("restore-*.sqlite.part")):
+            if not free:
+                actions.append({"copy": str(part), "action": "kept-copy-in-progress"})
+                continue
             actions.append({"copy": str(part), "action": "leak-removed", "freedBytes": remove(part)})
-    for path in sorted(directory.glob("restore-*.sqlite.hold.json")):
-        if not Path(str(path).removesuffix(".hold.json")).is_file() and not Path(str(path).removesuffix(".hold.json") + ".part").is_file():
-            forget(Path(str(path).removesuffix(".hold.json")))
-    live = set()
+            forget(part.with_suffix(""))
+        for path in sorted(directory.glob("restore-*.sqlite.hold.json")) if free else ():
+            if not Path(str(path).removesuffix(".hold.json")).is_file():
+                forget(Path(str(path).removesuffix(".hold.json")))
+    boot = directory / ENGINES / "boot"
+    live = {boot.read_text().strip()} if boot.is_file() else set()
     for path in [*directory.glob("restore-*.sqlite.hold.json"), *directory.glob("restore-*.sqlite.reship.json")]:
         try:
             live.add(json.loads(path.read_text()).get("engine"))
         except ValueError:
             return actions
     for root in (directory / ENGINES).glob("*") if (directory / ENGINES).is_dir() else ():
-        if str(root) not in live and not root.is_symlink():
+        if root != boot and str(root) not in live and not root.is_symlink():
             shutil.rmtree(root, ignore_errors=True)
     return actions
 

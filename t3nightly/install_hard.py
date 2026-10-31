@@ -322,11 +322,13 @@ def install(run):
     local = backup.get("local")
     if local and Path(local["path"]).is_file():
         from .install_offbox_reship import start
+        from .install_restore_boot import ensure
         from .install_restore_hold import schedule
 
         local = {**local, "hold": schedule(run, local, path, outcome, serving_version)}
         if backup.get("replica") == "deferred":
             local["reship"] = start(run, local, backup)
+        local["boot"] = ensure(run, Path(local["path"]).parent)
     receipt["eligibility"] = eligibility(manifest, host, args, local)
     write(path, receipt)
     run.step("hard-install-receipt", path=str(path), outcome=outcome)
