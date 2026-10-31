@@ -119,24 +119,35 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
       yield* subscribe(first.threadId);
       yield* waitFor("first run running before its provider turn", (p) => starting(p) || p.runs.some((run) => run.id === first.runId && terminal.has(run.status)) || (p.attempts ?? []).some((attempt) => attempt.runId === first.runId && attempt.providerTurnId));
       const openBefore = starting(projection);
+      const order = { tick: 0, turnEnded: null, sent: null };
+      const track = () => {
+        order.tick += 1;
+        if (order.turnEnded === null && !starting(projection)) order.turnEnded = order.tick;
+        if (order.sent === null && projection.messages.some((message) => message.role === "user" && message.text.includes(markers[1]))) order.sent = order.tick;
+      };
+      listeners.add(track);
+      track();
       const sent = yield* cli("send", "--mode", "auto", first.threadId, `Reply with exactly ${markers[1]} and nothing else. Do not use tools.`);
       receipts.push(first, sent);
-      if (sent.runId) yield* waitFor("sent run persisted", (p) => p.runs.some((run) => run.id === sent.runId));
-      const openAfter = starting(projection);
-      restartObservation = { openBefore, openAfter, delivery: sent.delivery };
-      if (!openBefore || !openAfter) return { ...evidence(), threadId: first.threadId, firstRun: first.runId, sentDelivery: sent.delivery, inconclusive: "the send missed the startup window (provider turn registered or run ended first)" };
-      if (!sent.runId || sent.runId === first.runId) throw fail("send did not return a distinct run");
-      if (sent.delivery !== "queued") throw fail(`auto send into a starting run was delivered ${sent.delivery} instead of queued behind it`);
-      const final = yield* waitFor("both runs to settle", (p) =>
-        [first.runId, sent.runId].every((id) => p.runs.some((run) => run.id === id && terminal.has(run.status))) && p.runs.every((run) => terminal.has(run.status)),
+      yield* waitFor("sent message persisted", () => order.sent !== null);
+      listeners.delete(track);
+      const missed = !openBefore || (order.turnEnded !== null && order.turnEnded < order.sent);
+      const distinct = Boolean(sent.runId) && sent.runId !== first.runId;
+      restartObservation = { openBefore, turnEndedTick: order.turnEnded, sentTick: order.sent, missed, delivery: sent.delivery };
+      if (!missed && !distinct) throw fail("send into a starting run did not return a distinct run");
+      if (!missed && sent.delivery !== "queued") throw fail(`auto send into a starting run was delivered ${sent.delivery} instead of queued behind it`);
+      const expected = distinct ? [[first.runId, markers[0]], [sent.runId, markers[1]]] : [[first.runId, null]];
+      const final = yield* waitFor("runs to settle", (p) =>
+        expected.every(([id]) => p.runs.some((run) => run.id === id && terminal.has(run.status))) && p.runs.every((run) => terminal.has(run.status)),
       );
-      for (const [id, marker] of [[first.runId, markers[0]], [sent.runId, markers[1]]]) {
+      for (const [id, marker] of expected) {
         const status = final.runs.find((run) => run.id === id)?.status;
         const replies = final.messages.filter((message) => message.runId === id && message.role === "assistant" && message.text.trim());
-        if (status !== "completed" || replies.length !== 1 || replies[0].text.trim() !== marker) throw fail(`run ${id} ended ${status} with ${replies.length} replies instead of one ${marker}`);
+        if (status !== "completed" || (marker !== null && (replies.length !== 1 || replies[0].text.trim() !== marker))) throw fail(`run ${id} ended ${status} with ${replies.length} replies instead of one ${marker ?? "reply"}`);
       }
-      if (final.runs.length !== 2 || final.runs.some((run) => run.queueHeld)) throw fail("unexpected runs or held work remain");
-      return { ...evidence(), threadId: first.threadId, firstRun: first.runId, sentDelivery: sent.delivery, exactlyOnceReplies: 2 };
+      if (final.runs.length !== expected.length || final.runs.some((run) => run.queueHeld)) throw fail("unexpected runs or held work remain");
+      const inconclusive = missed ? `the send landed after the first run left its startup window (delivered ${sent.delivery})` : undefined;
+      return { ...evidence(), threadId: first.threadId, firstRun: first.runId, sentDelivery: sent.delivery, exactlyOnceReplies: distinct ? 2 : 0, inconclusive };
     }
     const started = yield* cli(
       "start", "--provider", "claudeAgent", "--model", opts.model, opts.project,
