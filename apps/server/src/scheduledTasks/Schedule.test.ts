@@ -26,7 +26,30 @@ describe("scheduled task schedule calculation", () => {
     expect(parts?.minute).toBe(0);
   });
 
+  it.each(["2026-07-01T08:00:00.000Z", "2026-07-01T10:00:00.000Z"])(
+    "keeps a one-shot due time before or after %s",
+    (from) => {
+      const next = nextScheduledRunAt(
+        { type: "once", at: "2026-07-01T09:00:00.000Z" },
+        DateTime.makeUnsafe(from),
+      );
+      expect(next && DateTime.formatIso(next)).toBe("2026-07-01T09:00:00.000Z");
+    },
+  );
+
   it("compares schedules structurally", () => {
+    expect(
+      isSameSchedule(
+        { type: "once", at: "2026-07-01T09:00:00.000Z" },
+        { type: "once", at: "2026-07-01T09:00:00.000Z" },
+      ),
+    ).toBe(true);
+    expect(
+      isSameSchedule(
+        { type: "once", at: "2026-07-01T09:00:00.000Z" },
+        { type: "once", at: "2026-07-02T09:00:00.000Z" },
+      ),
+    ).toBe(false);
     expect(
       isSameSchedule({ type: "interval", everyMs: 60_000 }, { type: "interval", everyMs: 60_000 }),
     ).toBe(true);

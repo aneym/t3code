@@ -7,6 +7,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -227,5 +229,69 @@ it.effect(
         yield* TestClock.adjust("60 seconds");
         expect(yield* Deferred.await(launched)).toBe(created.task.title);
       }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect.each([false, true])(
+  "consumes a one-shot attempt, including dispatch failure %s",
+  (fail) =>
+    Effect.gen(function* () {
+      const at = "2026-07-01T09:01:00.000Z";
+      yield* TestClock.setTime(Date.parse(at) - 60_000);
+      const dependencies = Layer.mergeAll(
+        NodeCrypto.layer,
+        Scheduler.layer,
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          launch: () =>
+            fail
+              ? Effect.die("synthetic dispatch failure")
+              : Effect.succeed({ threadId: "thread-once", resumed: false } as never),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const input = yield* decodeUpsertInput({
+          title: "One-time review",
+          prompt: "Review the open pull requests.",
+          enabled: true,
+          schedule: { type: "once", at },
+          projectId: "project-once",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        });
+        const created = yield* service.upsert(input);
+        expect(created.task.nextRunAt).toBe(at);
+        const completion = yield* service.subscribeList().pipe(
+          Stream.filter(({ tasks }) => tasks.some((task) => task.runCount === 1)),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("65 seconds");
+        yield* Fiber.join(completion);
+        const [completed] = (yield* service.list()).tasks;
+        expect(completed?.enabled).toBe(false);
+        expect(completed?.nextRunAt).toBeNull();
+        expect(completed?.lastRunStatus).toBe(fail ? "failed" : "succeeded");
+        yield* TestClock.adjust("5 minutes");
+        expect((yield* service.list()).tasks[0]?.runCount).toBe(1);
+        const reenabled = yield* service.setEnabled({ id: created.task.id, enabled: true });
+        expect(reenabled.task.nextRunAt).toBe(at);
+        yield* service.setEnabled({ id: created.task.id, enabled: false });
+        const rearmed = yield* service.upsert({
+          ...input,
+          id: created.task.id,
+          schedule: { type: "once", at: "2026-07-02T09:01:00.000Z" },
+        });
+        expect(rearmed.task.enabled).toBe(true);
+        expect(rearmed.task.nextRunAt).toBe("2026-07-02T09:01:00.000Z");
+      }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(dependencies))));
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

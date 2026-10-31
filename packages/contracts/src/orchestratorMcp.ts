@@ -1,3 +1,4 @@
+import { OrchestratorMcpSchedule } from "./orchestratorMcpSchedule.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -20,7 +21,6 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
-import { ScheduledTaskUpsertSchedule } from "./scheduledTask.ts";
 import { ProviderInteractionMode, ProviderRequestKind, RuntimeMode } from "./providerPolicy.ts";
 import { PullRequestState } from "./pullRequest.ts";
 import {
@@ -51,21 +51,6 @@ export const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(Schema
     ),
   )
   .annotate({ description: "Reuse it to retry the same call. A new call gets a new key." });
-
-// OpenCode 1.15 serializes nested MCP union objects as JSON strings; decode that form at the boundary.
-const OrchestratorMcpScheduleFromJsonString = Schema.fromJsonString(
-  ScheduledTaskUpsertSchedule,
-).annotate({
-  description: "JSON-text schedule. Prefer the object form.",
-});
-
-const OrchestratorMcpSchedule = Schema.Union([
-  ScheduledTaskUpsertSchedule,
-  OrchestratorMcpScheduleFromJsonString,
-]).annotate({
-  description:
-    "Trigger: {type:'interval',everyMs}, {type:'fixed_time',timeOfDay,weekdays?}, or {type:'webhook'}.",
-});
 
 const OrchestratorMcpTargetOptionsFromRecord = Schema.Record(
   Schema.String,

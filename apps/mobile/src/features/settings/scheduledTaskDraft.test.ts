@@ -14,6 +14,14 @@ import {
 } from "./scheduledTaskDraft";
 
 describe("scheduleDraftForTask", () => {
+  it("keeps a one-shot instant through local editor round trips", () => {
+    const schedule = { type: "once", at: "2026-11-01T06:15:00.123Z" } as const;
+    const draft = scheduleDraftForTask({ schedule });
+    expect(draft.mode).toBe("once");
+    expect(scheduleFromDraft(draft)).toEqual(schedule);
+    expect(scheduleFromDraft({ ...draft, onceAt: "" })).toBeNull();
+  });
+
   it("opens legacy sub-minute schedules at the writable minimum", () => {
     const draft = scheduleDraftForTask({ schedule: { type: "interval", everyMs: 30_000 } });
     expect(draft.intervalMinutes).toBe("1");
