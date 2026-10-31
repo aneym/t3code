@@ -210,6 +210,12 @@ Results also list folders in the worktree folder that no thread uses, with their
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
 
+**Shorten old tool output** keeps the first and last 2,048 characters of long command and tool
+output once a thread has been settled, archived or deleted for the chosen number of days, and notes
+how much was removed. Messages, workflow results and file changes are kept. The removed output
+cannot be restored, so keep a backup if you need it. It is off by default and runs with the
+six-hourly database maintenance.
+
 ## Project icons
 
 Select the project and open Project to choose an icon, emoji, monogram, or image. The choice applies to

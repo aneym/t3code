@@ -689,6 +689,26 @@ export function WorktreeCleanupSection() {
   );
 }
 
+const RETENTION_ROWS = [
+  {
+    key: "browserArtifactsAfterDays",
+    title: "Delete old browser artifacts",
+    description:
+      "Delete saved browser captures after this many days. Older capture links will no longer open.",
+  },
+  {
+    key: "logsAfterDays",
+    title: "Delete old rotated logs",
+    description: "Delete inactive rotated log files after this many days. Current logs are kept.",
+  },
+  {
+    key: "threadHistoryAfterDays",
+    title: "Shorten old tool output",
+    description:
+      "Keep the start and end of long tool output after a thread is settled or archived this long.",
+  },
+] as const;
+
 /** Retention for logs and captures, and the manual cleanup run, which covers worktrees too. */
 export function StorageCleanupSections() {
   const { scope, connectedEnvironments, targets } = useSettingsScope();
@@ -696,10 +716,6 @@ export function StorageCleanupSections() {
   const updateSettings = useUpdateScopedSettings();
   if (scope.kind === "project" || scope.kind === "checkout") return null;
   const settings = scopedSettings.storageCleanup;
-  const ruleStatus = (key: "browserArtifactsAfterDays" | "logsAfterDays") =>
-    targets.some((target) => target.settings.storageCleanup[key] !== settings[key])
-      ? "Mixed across selected machines"
-      : undefined;
   const update = (patch: Partial<StorageCleanupSettings>) =>
     updateSettings({ storageCleanup: patch });
   const databaseStorageNotice = (
@@ -725,32 +741,26 @@ export function StorageCleanupSections() {
     <>
       {databaseStorageNotice}
       <SettingsSection id="storage-artifacts" title="Artifacts and logs">
-        <SettingsRow
-          title="Delete old browser artifacts"
-          status={ruleStatus("browserArtifactsAfterDays")}
-          description="Delete saved browser captures after this many days. Older capture links will no longer open."
-          serverScoped
-          control={
-            <RetentionControl
-              label="Delete old browser artifacts"
-              value={settings.browserArtifactsAfterDays}
-              onChange={(browserArtifactsAfterDays) => update({ browserArtifactsAfterDays })}
-            />
-          }
-        />
-        <SettingsRow
-          title="Delete old rotated logs"
-          status={ruleStatus("logsAfterDays")}
-          description="Delete inactive rotated log files after this many days. Current logs are kept."
-          serverScoped
-          control={
-            <RetentionControl
-              label="Delete old rotated logs"
-              value={settings.logsAfterDays}
-              onChange={(logsAfterDays) => update({ logsAfterDays })}
-            />
-          }
-        />
+        {RETENTION_ROWS.map(({ key, title, description }) => (
+          <SettingsRow
+            key={key}
+            title={title}
+            status={
+              targets.some((target) => target.settings.storageCleanup[key] !== settings[key])
+                ? "Mixed across selected machines"
+                : undefined
+            }
+            description={description}
+            serverScoped
+            control={
+              <RetentionControl
+                label={title}
+                value={settings[key]}
+                onChange={(days) => update({ [key]: days })}
+              />
+            }
+          />
+        ))}
       </SettingsSection>
       <CleanupSection />
     </>

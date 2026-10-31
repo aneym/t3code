@@ -254,7 +254,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Artifacts and logs",
     to: "/settings/maintenance",
     scope: "environment-defaults",
-    searchTerms: ["disk storage browser screenshots captures rotated logs cleanup retention"],
+    searchTerms: ["disk storage browser captures logs tool output cleanup retention"],
   },
   {
     id: "project-defaults",

@@ -1,11 +1,13 @@
 import type { DatabaseStorageStatus } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -14,8 +16,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { resolveHostCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
+import * as HistoryRetention from "../orchestration-v2/HistoryRetention.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as Settings from "../serverSettings.ts";
 
 // Bound each reclaim pass to one minute of churn.
 const RECLAIM_PAGES_PER_PASS = 1024;
@@ -35,6 +39,8 @@ export class DatabaseStorage extends Context.Service<
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+  const retention = yield* HistoryRetention.HistoryRetention;
+  const settings = yield* Effect.serviceOption(Settings.ServerSettingsService);
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -114,6 +120,16 @@ const make = Effect.gen(function* () {
     if (result.deletedEventCount > 0 || result.deletedReceiptCount > 0) {
       yield* Effect.logInfo("Compacted orchestration history", result);
     }
+    if (Option.isNone(settings)) return;
+    const afterDays = (yield* settings.value.getSettings).storageCleanup.threadHistoryAfterDays;
+    if (afterDays === null) return;
+    const trimmed = yield* retention.trimIdleThreads({
+      idleBefore: DateTime.subtract(yield* DateTime.now, { days: afterDays }),
+      betweenPages,
+    });
+    if (trimmed.events > 0 || trimmed.turnItems > 0) {
+      yield* Effect.logInfo("Trimmed idle thread history", trimmed);
+    }
   }).pipe(
     Effect.catch((cause) =>
       Effect.logWarning("Orchestration history compaction failed", { cause }),
@@ -153,4 +169,6 @@ const make = Effect.gen(function* () {
   return DatabaseStorage.of({ reclaim, status: SubscriptionRef.changes(statusRef) });
 });
 
-export const layer = Layer.effect(DatabaseStorage, make);
+export const layer = Layer.effect(DatabaseStorage, make).pipe(
+  Layer.provide(HistoryRetention.layer),
+);
