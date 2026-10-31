@@ -304,6 +304,8 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       args: [
         "-c",
         "core.fsmonitor=false",
+        "-c",
+        "core.ignoreCase=false",
         "ls-files",
         "--others",
         "--ignored",
@@ -322,6 +324,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       maxOutputBytes: 16 * 1024 * 1024,
     });
     if (personal.stdoutTruncated) return "excluded files exceed the inspection limit";
+    if (personal.stderr.trim() !== "") return "excluded file inspection reported a warning";
     const file = personal.stdout.split("\0").find((entry) => entry !== "");
     if (file !== undefined) return `has excluded local state (${file})`;
     const nested = yield* nestedRepository(cwd, submodules);
