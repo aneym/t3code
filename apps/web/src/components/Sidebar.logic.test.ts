@@ -81,7 +81,11 @@ describe("filterSidebarV2VisibleThreads", () => {
       });
       const bound = makeThreadFixture({ ...fields, id: ThreadId.make("bound") });
       const otherEnvironment = { ...bound, environmentId: EnvironmentId.make("other") };
-      const bindings = new Set([`${bound.environmentId}:${bound.id}`]);
+      const bindings = new Set([
+        bound.environmentId,
+        `${bound.environmentId}:${bound.id}`,
+        `${created.environmentId}:${created.automationTaskId}`,
+      ]);
       expect(
         filterSidebarV2VisibleThreads(
           [manual, created, bound, otherEnvironment],

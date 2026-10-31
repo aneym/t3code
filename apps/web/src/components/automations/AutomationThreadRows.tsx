@@ -7,13 +7,11 @@ import type { EnvironmentAutomation } from "../../hooks/useAutomations";
 export function automationThreadsWithoutJobs(
   threads: ReadonlyArray<EnvironmentThreadShell>,
   automations: ReadonlyArray<EnvironmentAutomation>,
+  threadKeys: ReadonlySet<string>,
 ): ReadonlyArray<EnvironmentThreadShell> {
-  const taskKeys = new Set(
-    automations.map(({ environmentId, task }) => `${environmentId}:${task.id}`),
-  );
   return threads.filter(
     (thread) =>
-      isAutomationOnlyThread(thread, taskKeys) &&
+      isAutomationOnlyThread(thread, threadKeys) &&
       thread.archivedAt === null &&
       thread.settledOverride !== "settled" &&
       !automations.some(

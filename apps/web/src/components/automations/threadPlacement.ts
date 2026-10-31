@@ -15,8 +15,9 @@ export function isAutomationOnlyThread(
   const bound = boundThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true;
   if (
     !bound &&
-    thread.automationTaskId?.startsWith("scheduled-task:") &&
-    boundThreadKeys !== undefined &&
+    thread.automationTaskId != null &&
+    thread.automationTaskId !== `automation:thread:${thread.id}` &&
+    boundThreadKeys?.has(thread.environmentId) === true &&
     !boundThreadKeys.has(`${thread.environmentId}:${thread.automationTaskId}`)
   )
     return false;
