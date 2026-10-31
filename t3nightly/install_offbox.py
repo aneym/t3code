@@ -13,12 +13,15 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
+from . import install_offbox_stage as stage
 from .install_storage import record_payload
 from .io_priority import background_command
 
 REMOTE_ROOT = PurePosixPath("/Volumes/StudioExt/t3nightly-install-data/remote")
 REMOTE_EXE = "/Users/aneyman/.local/bin/sqlite3_rsync"
 SSH = Path(__file__).with_name("offbox-ssh")
+REMOTE_ZSTD = "/opt/homebrew/bin/zstd"
+CHUNK = 1024 * 1024
 METHOD = "offbox-sqlite3-rsync"
 LOCAL_MARGIN = 512 * 1024 * 1024
 CATCH_UP_ROUNDS = 3
@@ -57,10 +60,65 @@ def remote_directory(host, path, deadline):
 
 def seed(host, root, replica, deadline):
     path = shlex.quote(str(replica))
-    script = (f"set -e; test -e {path} && exit 0; newest=$(ls -1t {shlex.quote(str(root))}/*/rollback/statev2.sqlite 2>/dev/null | head -1); "
+    script = (f"set -e; if test -e {path}; then echo existing; exit 0; fi; newest=$(ls -1t {shlex.quote(str(root))}/*/rollback/statev2.sqlite 2>/dev/null | head -1); "
               f"[ -n \"$newest\" ] || exit 0; [ -L \"$newest\" ] && exit 0; cp -c \"$newest\" {path}.seed && chmod 600 {path}.seed "
               f"&& mv {path}.seed {path} && echo \"$newest\"")
     return remote(host, script, deadline).strip() or None
+
+
+def remote_zstd(host):
+    script = f"z=$(command -v zstd || true); [ -n \"$z\" ] || z={REMOTE_ZSTD}; test -x \"$z\" && echo \"$z\""
+    found = remote(host, script, time.monotonic() + 60).strip()
+    if not found or not shutil.which("zstd"):
+        raise ValueError("zstd must exist locally and on the off-box host for a first ship; nothing stopped")
+    return found
+
+
+def stream(host, staged, replica, deadline):
+    part = shlex.quote(f"{replica}.part")
+    zstd = shlex.quote(remote_zstd(host))
+    script = f"set -e; umask 077; {zstd} -q -d -f -o {part}; chmod 600 {part}; mv {part} {shlex.quote(str(replica))}"
+    compress = subprocess.Popen(["zstd", "-q", "-T0", "-3", "-c", str(staged)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    send = subprocess.Popen([str(SSH), host, script], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    sent = 0
+    try:
+        while chunk := compress.stdout.read(CHUNK):
+            if time.monotonic() >= deadline:
+                raise ValueError("compressed first ship passed its --offbox-seed-s deadline")
+            send.stdin.write(chunk)
+            sent += len(chunk)
+        send.stdin.close()
+        compressed = compress.wait(timeout=max(1, deadline - time.monotonic()))
+        received = send.wait(timeout=max(1, deadline - time.monotonic()))
+        if compressed or received:
+            raise ValueError(f"compressed first ship failed: {send.stderr.read().decode(errors='replace').strip()[-300:]}")
+    except (BrokenPipeError, subprocess.TimeoutExpired) as error:
+        raise ValueError(f"compressed first ship failed: {type(error).__name__}") from error
+    finally:
+        for process in (compress, send):
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+    return sent
+
+
+def ship(run, host, replica, source, size, deadline, *, first):
+    directory = stage.staging(run)
+    staged, metrics = stage.copy(run, directory, source, size)
+    started = time.monotonic()
+    try:
+        if first:
+            sent = stream(host, staged, replica, deadline)
+            metrics.update(shipMethod="zstd-stream", compressedBytes=sent, compressionRatio=round(metrics["stageBytes"] / max(sent, 1), 3))
+        else:
+            sync(staged, f"{host}:{replica}", deadline, background=True)
+            metrics["shipMethod"] = "sqlite3-rsync-stage"
+    finally:
+        metrics["shipSeconds"] = round(time.monotonic() - started, 3)
+        metrics["stageBytesFreed"] = stage.discard(run, directory, staged)
+        metrics["stageFreeAfter"] = shutil.disk_usage(directory).free
+        run.step("offbox-stage", remote=f"{host}:{replica}", **metrics)
+    return metrics
 
 
 def executable():
@@ -128,11 +186,12 @@ def placement(run, local):
     return host, root, replica, source, size
 
 
-def preseed(run, host, root, replica, source, started):
+def preseed(run, host, root, replica, source, size, started):
     address = f"{host}:{replica}"
     deadline = time.monotonic() + run.args.offbox_seed_s
-    seeded = {"clonedFrom": seed(host, root, replica, deadline)}
-    sync(source, address, deadline, background=True)
+    found = seed(host, root, replica, deadline)
+    seeded = {"clonedFrom": None if found == "existing" else found, "existing": found == "existing"}
+    seeded["stage"] = ship(run, host, replica, source, size, deadline, first=found is None)
     seeded["seconds"] = round(time.monotonic() - started, 3)
     run.step("hard-backup-seed", remote=address, **seeded)
     return seeded, deadline
@@ -153,7 +212,7 @@ def verified(run, host, root, replica, deadline, metadata):
 def live_backup(run, previous):
     started = time.monotonic()
     host, root, replica, source, size = placement(run, run.db.resolve().parent)
-    seeded, deadline = preseed(run, host, root, replica, source, started)
+    seeded, deadline = preseed(run, host, root, replica, source, size, started)
     metadata = verified(run, host, root, replica, deadline, {"bytes": size, "seed": seeded, "live": True, "previous": previous})
     metadata["seconds"] = round(time.monotonic() - started, 3)
     run.step("backup", **metadata)
@@ -169,11 +228,11 @@ def catch_up(run, host, replica, source, size, deadline):
     checking = time.monotonic() - started
     budget = run.args.offbox_stop_s
     for _ in range(CATCH_UP_ROUNDS):
-        last = sync(source, f"{host}:{replica}", deadline, background=True)
-        estimate = max(last, wal_bytes(source) / rate(run)) + checking
+        last = ship(run, host, replica, source, size, deadline, first=False)["shipSeconds"]
+        estimate = max(last, stage.wal_in_use(source) / rate(run)) + checking
         if estimate <= budget / 2:
             break
-    run.step("hard-backup-estimate", catchUpSeconds=round(last, 3), checkSeconds=round(checking, 3), estimateSeconds=round(estimate, 3), budgetSeconds=budget)
+    run.step("hard-backup-estimate", catchUpShipSeconds=round(last, 3), checkSeconds=round(checking, 3), estimateSeconds=round(estimate, 3), budgetSeconds=budget)
     if estimate > budget:
         raise ValueError(f"post-stop off-box sync estimated at {estimate:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
     needed = restore_space(size, wal_bytes(source))
@@ -192,7 +251,7 @@ def capture(run, previous, stop, rollback_gate):
     local = run.home / "runtime" / "rollback"
     local.mkdir(parents=True, exist_ok=True, mode=0o700)
     host, root, replica, source, size = placement(run, local)
-    seeded, deadline = preseed(run, host, root, replica, source, started)
+    seeded, deadline = preseed(run, host, root, replica, source, size, started)
     catch_up(run, host, replica, source, size, deadline)
     destination = local / uuid.uuid4().hex
     destination.mkdir(mode=0o700)

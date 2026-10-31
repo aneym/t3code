@@ -235,7 +235,7 @@ def fast_install(config, log):
              "--chat-project", str(config.chat_project()), "--load-max", "64", "--health-s", "300", "--override-reason", config.override_reason,
              "--smoke-verdict", str(config.run / f"e2e-{config.host}" / "smoke-verdict.json"), "--rollback-proof", str(config.receipt("rollback-proof"))]
     if config.host == "ax42":
-        words.extend(["--service-label", "t3code.service", "--backups", str(backups), "--offbox", f"studio:{REMOTE_ROOT}/ax42"])
+        words.extend(["--service-label", "t3code.service", "--backups", str(backups), "--offbox", f"studio:{REMOTE_ROOT}/ax42", "--offbox-stage", "/srv/cow/t3nightly-offbox-stage"])
     words.extend(config.target_artifacts())
     config.receipt("install").unlink(missing_ok=True)
     code = command(words, log, env=env)
