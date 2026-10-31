@@ -210,6 +210,8 @@ def install(run):
             activate(run, args.version)
             serving(run, args.version, observed["candidateRuntime.digest"])
             routed = True
+            if backup.get("method") == install_offbox.METHOD:
+                install_offbox.prune_backup(run, backup)
             retained(run, before)
             if connect and not connect_returns(run, args.version):
                 raise ValueError("previously healthy Connect is unavailable")

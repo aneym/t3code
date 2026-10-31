@@ -205,8 +205,12 @@ def capture(run, previous, stop, rollback_gate):
                                                              "seconds": round(time.monotonic() - started, 3), "previous": previous})
     (destination / "payload.json").write_text(json.dumps(metadata))
     run.step("hard-backup", **metadata)
-    prune(run, host, root, run.args.version)
     return metadata
+
+
+def prune_backup(run, backup):
+    host, _, path = backup["remote"].partition(":")
+    prune(run, host, PurePosixPath(path).parent.parent.parent, run.args.version)
 
 
 def prune(run, host, root, current):
@@ -258,7 +262,7 @@ def restore(run, backup, *, beside=None):
     address = backup["remote"]
     db = run.db.resolve()
     size = int(backup["bytes"])
-    budget = run.args.offbox_stop_s
+    budget = run.args.offbox_seed_s
     free = shutil.disk_usage(db.parent).free
     if beside is None:
         beside = free >= max(size * 2, LOCAL_MARGIN) and size / rate(run) <= budget

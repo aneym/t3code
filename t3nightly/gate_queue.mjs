@@ -143,7 +143,7 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
       for (const [id, marker] of expected) {
         const status = final.runs.find((run) => run.id === id)?.status;
         const replies = final.messages.filter((message) => message.runId === id && message.role === "assistant" && message.text.trim());
-        if (status !== "completed" || (marker !== null && (replies.length !== 1 || replies[0].text.trim() !== marker))) throw fail(`run ${id} ended ${status} with ${replies.length} replies instead of one ${marker ?? "reply"}`);
+        if (status !== "completed" || (marker === null ? replies.length < 1 : replies.length !== 1 || replies[0].text.trim() !== marker)) throw fail(`run ${id} ended ${status} with ${replies.length} replies instead of one ${marker ?? "reply"}`);
       }
       if (final.runs.length !== expected.length || final.runs.some((run) => run.queueHeld)) throw fail("unexpected runs or held work remain");
       const inconclusive = missed ? `the send landed after the first run left its startup window (delivered ${sent.delivery})` : undefined;
