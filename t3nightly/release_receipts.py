@@ -110,7 +110,10 @@ def provenance(receipt, manifest, host, now=None, observed=None):
     now = now or datetime.now(timezone.utc)
     observed = observed or {}
     platform, arch = TARGETS.get(host, (None, None))
-    target = manifest["targets"].get(host, {})
+    target = manifest["targets"].get(host)
+    if target is None:
+        return [f"host: {host} is not a candidate target"]
+    compatibility = target["compatibility"]
     expected = {
         "host": host,
         "platform": platform,
@@ -121,7 +124,7 @@ def provenance(receipt, manifest, host, now=None, observed=None):
     if receipt["schema"] == REHEARSAL_SCHEMA:
         expected["engineDigest"] = manifest["engine"]["digest"]
         expected["sourceTree"] = manifest["source"]["stampedTree"]
-        expected["candidateMigrationHistory"] = manifest["compatibility"]["candidateMigrations"]["history"]
+        expected["candidateMigrationHistory"] = compatibility["candidateMigrations"]["history"]
     if target.get("oldRelease"):
         expected["oldRuntime.version"] = target["oldRelease"]
     for key in OBSERVED:
@@ -133,8 +136,8 @@ def provenance(receipt, manifest, host, now=None, observed=None):
         actual = receipt.get(section, {}).get(field) if field else receipt.get(section)
         if actual != value:
             reasons.append(f"{key}: receipt {actual} != expected {value}")
-    if not manifest["compatibility"]["fastPath"]["eligible"]:
-        reasons.append("candidate is not fast-path eligible: " + ", ".join(manifest["compatibility"]["fastPath"]["reasons"]))
+    if not compatibility["fastPath"]["eligible"]:
+        reasons.append("candidate is not fast-path eligible: " + ", ".join(compatibility["fastPath"]["reasons"]))
     if receipt["schema"] == REHEARSAL_SCHEMA:
         if receipt["result"] != "PASS":
             reasons.append(f"result is {receipt['result']}, not PASS")

@@ -23,12 +23,16 @@ def migration_history(run):
         return history_digest(connection.execute("SELECT migration_id, name FROM effect_sql_migrations"))
 
 
+def install_host(args):
+    return args.receipt_host or ("studio" if sys.platform == "darwin" else "ax42")
+
+
 def validate(run, previous, candidate):
     args = run.args
     manifest = load(args.manifest)
     if manifest["version"] != args.version:
         raise ValueError("candidate version mismatch")
-    host = args.receipt_host or ("studio" if sys.platform == "darwin" else "ax42")
+    host = install_host(args)
     expected = manifest["targets"][host]
     arch = {"aarch64": "arm64", "AMD64": "x64", "x86_64": "x64"}.get(platform.machine(), platform.machine())
     if (expected["platform"], expected["arch"]) != (sys.platform, arch):
@@ -58,9 +62,9 @@ def validate(run, previous, candidate):
         isolated = home != live and not home.is_relative_to(live) and not live.is_relative_to(home)
         if not isolated or not run.service_label.startswith(("com.agent-rails.", "com.t3-rehearsal.", "t3-rehearsal-")):
             raise ValueError("rehearsal bypass requires an isolated sandbox home and service")
-        if not manifest["compatibility"]["fastPath"]["eligible"] and not args.compatibility_probe:
+        if not expected["compatibility"]["fastPath"]["eligible"] and not args.compatibility_probe:
             raise ValueError("ineligible candidate requires isolated --compatibility-probe; not release evidence")
-        if observed["oldMigrationHistory"] != manifest["compatibility"]["baseMigrations"]["history"]:
+        if observed["oldMigrationHistory"] != expected["compatibility"]["baseMigrations"]["history"]:
             raise ValueError("sandbox migration history differs from frozen base")
         return manifest, None, host, observed
     if not args.smoke_verdict:
@@ -69,7 +73,7 @@ def validate(run, previous, candidate):
     if smoke.get("ok") is not True or (smoke.get("kind"), smoke.get("version"), smoke.get("archiveSha256")) != ("t3-smoke", args.version, artifact["archive"]["sha256"]):
         raise ValueError("e2e smoke verdict does not pass for this archive")
     run.step("hard-smoke-accepted", archive=smoke["archiveSha256"])
-    if required(manifest):
+    if required(manifest, host):
         if not proven(args.rollback_proof, manifest, artifact["archive"]["sha256"]):
             raise ValueError("fork-additive migrations require a forced-rollback proof for this archive")
         run.step("hard-rollback-proof-accepted")

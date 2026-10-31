@@ -158,7 +158,7 @@ def install(run):
     archive = Path(args.assets) / f"t3-{args.version}-{target}.tar.gz"
     with cli_binary(archive) as candidate:
         manifest, rehearsal, host, observed = validate(run, previous, candidate)
-    compatibility = manifest.get("compatibility", {})
+    compatibility = manifest["targets"][host]["compatibility"]
     base_history = compatibility.get("baseMigrations", {}).get("history")
 
     def rollback_gate():
@@ -234,7 +234,7 @@ def install(run):
                 from .install_hot_swap import binary_compatible, supported, swap
                 from .install_rpc import restart_session
 
-                if not binary_compatible(manifest, migration_history(run)):
+                if not binary_compatible(compatibility, migration_history(run)):
                     raise ValueError("post-routing rollback requires a compatible binary; database preserved for forward repair")
                 if supported(run.environment(), run):
                     restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")

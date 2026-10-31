@@ -325,36 +325,45 @@ def identity_digest(manifest):
     return digest({key: value for key, value in manifest.items() if key != "frozenAt"})
 
 
-def freeze(tree, base, version, out, old_releases=None, engine=None):
+def ancestor(tree, ref, head):
+    commit = git(tree, "rev-parse", f"{ref}^{{commit}}").strip()
+    if git(tree, "merge-base", commit, head).strip() != commit:
+        raise ValueError(f"base {ref} is not an ancestor of the candidate head")
+    return commit
+
+
+def eligible(manifest):
+    return all(target["compatibility"]["fastPath"]["eligible"] for target in manifest["targets"].values())
+
+
+def freeze(tree, base, version, out, old_releases=None, engine=None, serving_heads=None):
     tree = Path(tree).resolve()
     match = VERSION.fullmatch(version)
     if not match:
         raise ValueError("version must be an upstream nightly plus .aneym.N")
     head = git(tree, "rev-parse", "HEAD^{commit}").strip()
-    base_commit = git(tree, "rev-parse", f"{base}^{{commit}}").strip()
-    if git(tree, "merge-base", base_commit, head).strip() != base_commit:
-        raise ValueError(f"base {base} is not an ancestor of the candidate head")
-    compat = compatibility(tree, base_commit, head)
-    tag = compat["upstreamTag"]["candidate"]
-    if tag != f"v{match.group(1)}":
-        compat["fastPath"]["reasons"].append("version-tag-mismatch")
-        compat["fastPath"]["eligible"] = False
-    old_releases = old_releases or {}
-    unknown = sorted(set(old_releases) - set(TARGETS))
+    base_commit = ancestor(tree, base, head)
+    old_releases, serving_heads = old_releases or {}, serving_heads or {}
+    unknown = sorted((set(old_releases) | set(serving_heads)) - set(TARGETS))
     if unknown:
         raise ValueError(f"unknown target hosts: {', '.join(unknown)}")
+    targets, computed = {}, {}
+    for host, (platform, arch) in TARGETS.items():
+        serving = ancestor(tree, serving_heads[host], head) if serving_heads.get(host) else base_commit
+        if serving not in computed:
+            computed[serving] = compatibility(tree, serving, head)
+            if computed[serving]["upstreamTag"]["candidate"] != f"v{match.group(1)}":
+                computed[serving]["fastPath"]["reasons"].append("version-tag-mismatch")
+                computed[serving]["fastPath"]["eligible"] = False
+        targets[host] = {"platform": platform, "arch": arch, "oldRelease": old_releases.get(host), "servingHead": serving, "compatibility": computed[serving]}
     manifest = {
         "schema": CANDIDATE_SCHEMA,
         "version": version,
-        "base": {"ref": base, "commit": base_commit, "upstreamTag": compat["upstreamTag"]["base"]},
+        "base": {"ref": base, "commit": base_commit, "upstreamTag": newest_tag(tree, base_commit)},
         "source": source_identity(tree, head),
         "topics": topics(tree, base_commit, head),
         "engine": engine_identity(engine) if engine else engine_identity(),
-        "targets": {
-            host: {"platform": platform, "arch": arch, "oldRelease": old_releases.get(host)}
-            for host, (platform, arch) in TARGETS.items()
-        },
-        "compatibility": compat,
+        "targets": targets,
         "frozenAt": datetime.now(timezone.utc).isoformat(),
     }
     manifest["digest"] = identity_digest(manifest)

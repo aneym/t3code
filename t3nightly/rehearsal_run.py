@@ -50,7 +50,7 @@ class Rehearsal:
             raise ValueError("target host platform does not match this machine")
         if self.manifest["engine"]["digest"] != engine_identity(self.engine)["digest"]:
             raise ValueError("candidate engine content differs from rehearsal engine")
-        if not self.manifest["compatibility"]["fastPath"]["eligible"] and not self.args.compatibility_probe:
+        if not self.manifest["targets"][self.args.target_host]["compatibility"]["fastPath"]["eligible"] and not self.args.compatibility_probe:
             raise ValueError("candidate is not fast-path eligible; use --compatibility-probe for non-release evidence only")
         if sys.platform != "darwin" and not (self.engine / "install_hard.py").is_file():
             raise ValueError("Linux rehearsal requires P4 isolated hard installer; refusing before boot")
@@ -133,7 +133,7 @@ class Rehearsal:
             tick = time.monotonic()
             self.sandbox.prepare(self.args.health_s)
             self.old_history = self.sandbox.history()
-            if self.old_history != self.manifest["compatibility"]["baseMigrations"]["history"]:
+            if self.old_history != self.manifest["targets"][self.args.target_host]["compatibility"]["baseMigrations"]["history"]:
                 raise ValueError("seed migration history differs from candidate base")
             self.mark("prepare", tick)
             workload = Workload(self.sandbox)
@@ -161,7 +161,7 @@ class Rehearsal:
             tick = time.monotonic()
             post, evidence = workload.verify()
             candidate_history = self.sandbox.history()
-            if candidate_history != self.manifest["compatibility"]["candidateMigrations"]["history"]:
+            if candidate_history != self.manifest["targets"][self.args.target_host]["compatibility"]["candidateMigrations"]["history"]:
                 raise ValueError("candidate migration history differs from manifest")
             (self.sandbox.evidence / "workload.json").write_text(json.dumps(evidence, indent=2) + "\n")
             self.mark("verify", tick)

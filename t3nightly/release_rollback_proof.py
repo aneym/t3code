@@ -8,8 +8,8 @@ from .release_manifest import identity_digest, load
 from .release_transport import command
 
 
-def required(manifest):
-    return manifest["compatibility"].get("rollbackProof") == "required"
+def required(manifest, host):
+    return manifest["targets"][host]["compatibility"].get("rollbackProof") == "required"
 
 
 def proven(path, manifest, archive_sha):
@@ -24,7 +24,7 @@ def proven(path, manifest, archive_sha):
 
 def fast_rollback_proof(config, log):
     manifest = load(config.manifest)
-    if not required(manifest):
+    if not required(manifest, config.host):
         log.write("rollback proof not required\n")
         return 0
     plan = json.loads((config.run / f"sandbox-{config.host}.json").read_text())

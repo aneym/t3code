@@ -24,7 +24,7 @@ def supported(environment, run=None):
     return capabilities.get("serverSelfUpdate") == "boot-service" and capabilities.get("serverHotSwap") is True and (ingress_qualified(run) if run is not None else True)
 
 
-def mark_candidate(run, manifest, rehearsal):
+def mark_candidate(run, manifest, rehearsal, compatibility):
     qualification = (rehearsal or {}).get("hotSwap", {}) if not run.args.rehearsal else manifest.get("hotSwap", {})
     measured = qualification.get("candidateMeasuredStartupMs")
     if not isinstance(measured, int) or measured <= 0:
@@ -39,7 +39,7 @@ def mark_candidate(run, manifest, rehearsal):
     write_marker(run, run.args.version, measured, manifest)
     previous_measured = qualification.get("previousMeasuredStartupMs")
     previous = run.report.get("previous")
-    if manifest["compatibility"].get("binaryRollback") is True and previous and isinstance(previous_measured, int) and 0 < previous_measured <= config["measuredStartupMs"]:
+    if compatibility.get("binaryRollback") is True and previous and isinstance(previous_measured, int) and 0 < previous_measured <= config["measuredStartupMs"]:
         write_marker(run, previous, previous_measured, manifest)
     return True
 
@@ -74,8 +74,7 @@ def swap(run, bearer, version, downgrade=False):
     return result
 
 
-def binary_compatible(manifest, history):
-    compatibility = manifest["compatibility"]
+def binary_compatible(compatibility, history):
     return compatibility.get("binaryRollback") is True and compatibility.get("persistedState") in ("compatible", "fork-additive") and history == compatibility["candidateMigrations"]["history"] and (compatibility.get("persistedState") == "fork-additive" or compatibility.get("migrationFiles") == [])
 
 
@@ -87,14 +86,15 @@ def install(run):
     run.report["previous"] = previous
     candidate = run.runtime(previous) if previous == args.version else stage_runtime(run.home, args.version, args.assets)
     manifest, rehearsal, host, observed = validate(run, previous, candidate)
+    compatibility = manifest["targets"][host]["compatibility"]
     if previous == args.version:
         return hard_install(run)
     from .launcher_artifact import changed, qualify
 
     qualification = qualify(run)
-    maintenance = bool(changed(run) or manifest["compatibility"].get("migrationFiles") or manifest["compatibility"].get("maintenance") or manifest.get("maintenance"))
+    maintenance = bool(changed(run) or compatibility.get("migrationFiles") or compatibility.get("maintenance") or manifest.get("maintenance"))
     available = supported(run.environment(), run) and qualification["qualified"] and not maintenance
-    if available and not mark_candidate(run, manifest, rehearsal):
+    if available and not mark_candidate(run, manifest, rehearsal, compatibility):
         available, maintenance = False, True
     run.report["hotSwap"] = {"supported": available, "method": "launcher-ipc" if available else "maintenance" if maintenance else "hot-swap-unsupported", "qualification": qualification}
     if not available:
@@ -147,7 +147,7 @@ def install(run):
                 if run.server_version() == previous:
                     wait_version(run, previous)
                     method = "launcher-automatic"
-                elif binary_compatible(manifest, migration_history(run)) and supported(run.environment(), run):
+                elif binary_compatible(compatibility, migration_history(run)) and supported(run.environment(), run):
                     swap(run, bearer, previous, True)
                     method = "launcher-ipc"
                 else:

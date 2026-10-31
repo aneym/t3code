@@ -19,7 +19,7 @@ from .build_artifacts import tree_digest
 from .install_offbox import REMOTE_ROOT
 from .release_graph import SUCCESS_OUTCOMES
 from .release_land_receipts import publish as publish_landings
-from .release_manifest import digest, freeze, history_digest, load
+from .release_manifest import digest, eligible, freeze, history_digest, load
 from .release_outputs import fast_evidence
 from .release_ownership import ownership
 from .release_readiness import readiness
@@ -159,9 +159,9 @@ def fast_assemble(config, log):
             require(["git", "-C", str(tree), "merge", "--no-ff", "-m", message, sha], log)
         head = subprocess.run(["git", "-C", str(tree), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
         stamp(tree, config.version)
-        manifest = freeze(tree, ready.get("servingHead") or base, config.version, config.run, ready["oldReleases"], config.tools)
-        if not manifest["compatibility"]["fastPath"]["eligible"]:
-            log.write(f"fast path refused: {manifest['compatibility']['fastPath']['reasons']}\n")
+        manifest = freeze(tree, ready.get("servingHead") or base, config.version, config.run, ready["oldReleases"], config.tools, ready.get("servingHeads"))
+        if not eligible(manifest):
+            log.write(f"fast path refused: { {host: target['compatibility']['fastPath']['reasons'] for host, target in manifest['targets'].items()} }\n")
             return 3
         (config.run / "assembly.json").write_text(json.dumps({"base": base, "head": head, "topics": config.topic.split(","), "topicShas": ready["topicShas"]}, indent=2) + "\n")
         bundle = config.run / "candidate.bundle"
@@ -179,7 +179,7 @@ def fast_prepare(config, log):
     manifest = load(config.manifest)
     old = manifest["targets"][config.host]["oldRelease"]
     runtime = config.home / ".t3/runtime/versions" / old
-    history = manifest["compatibility"]["baseMigrations"]["history"]
+    history = manifest["targets"][config.host]["compatibility"]["baseMigrations"]["history"]
     seed_path = config.seed(history)
     with closing(sqlite3.connect(f"file:{seed_path}?mode=ro", uri=True)) as connection:
         if history_digest(connection.execute("SELECT migration_id, name FROM effect_sql_migrations")) != history:

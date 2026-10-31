@@ -439,10 +439,10 @@ class Run:
             problem = str(error)
         from t3nightly.install_hot_swap import binary_compatible, supported, swap
         from t3nightly.install_rpc import restart_session
-        from t3nightly.install_provenance import migration_history
+        from t3nightly.install_provenance import install_host, migration_history
         from t3nightly.release_manifest import load
 
-        if not self.args.manifest or not binary_compatible(load(self.args.manifest), migration_history(self)) or not supported(self.environment(), self):
+        if not self.args.manifest or not binary_compatible(load(self.args.manifest)["targets"][install_host(self.args)]["compatibility"], migration_history(self)) or not supported(self.environment(), self):
             self.report["forwardRepairRequired"] = True
             return self.finish("failed", f"{self.report['host']}: acceptance failed; current database preserved for forward repair")
         self.step("rollback", reason=problem)

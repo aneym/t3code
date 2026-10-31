@@ -6,7 +6,7 @@ from pathlib import Path
 from .build_artifacts import load as load_artifact
 from .release_approval import approved
 from .release_graph import SUCCESS_OUTCOMES
-from .release_manifest import digest, load
+from .release_manifest import digest, eligible, load
 from .release_rollback_proof import proven, required
 from .release_receipts import INSTALL_SCHEMA, REHEARSAL_SCHEMA, parse, provenance, timestamp
 from .release_continuation import require_studio_proof
@@ -201,7 +201,7 @@ def fast_output(stage, config):
         return json.loads((run / "readiness.json").read_text())["ok"] is True
     if stage == "A":
         manifest = load(config.manifest)
-        return manifest["version"] == config.version and manifest["compatibility"]["fastPath"]["eligible"]
+        return manifest["version"] == config.version and eligible(manifest)
     if stage in ("M", "L"):
         artifact = fast_artifact(config.artifact(), config.version, config.key)
         return sha256(config.build_out() / config.archive()) == artifact["archive"]["sha256"]
@@ -215,7 +215,7 @@ def fast_output(stage, config):
         return True
     if stage in ("XM", "XL"):
         manifest = load(config.manifest)
-        return not required(manifest) or proven(config.receipt("rollback-proof"), manifest, fast_artifact(config.artifact(), config.version, config.key)["archive"]["sha256"])
+        return not required(manifest, config.host) or proven(config.receipt("rollback-proof"), manifest, fast_artifact(config.artifact(), config.version, config.key)["archive"]["sha256"])
     if stage in ("EM", "EL"):
         verdict = json.loads((run / f"e2e-{config.host}" / "smoke-verdict.json").read_text())
         artifact = fast_artifact(config.artifact(), config.version, config.key)
