@@ -1,4 +1,5 @@
-import { autoSettlementSettingsKey } from "./ThreadSettlementSettings.ts";
+import { makeChildSettlementSweep } from "./ChildThreadSettlement.ts";
+import { autoSettlementConfigured, autoSettlementSettingsKey } from "./ThreadSettlementSettings.ts";
 import {
   backgroundWorkHoldsCompletion,
   turnItemUpdateCanEndBackgroundWork,
@@ -253,19 +254,9 @@ export class ThreadSettlementServiceV2 extends Context.Service<
   {
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     readonly drain: Effect.Effect<void>;
+    readonly settleIdleChildren: (threadId?: ThreadId, parentId?: ThreadId) => Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/ThreadSettlementService/ThreadSettlementServiceV2") {}
-
-function autoSettlementConfigured(settings: import("@t3tools/contracts").ServerSettings): boolean {
-  if (settings.sidebarAutoSettleOnMerge || settings.sidebarAutoSettleAfterDays !== null) {
-    return true;
-  }
-  return Object.values(settings.projectSettingsOverrides).some(
-    (entry) =>
-      entry.sidebarAutoSettleOnMerge === true ||
-      (entry.sidebarAutoSettleAfterDays !== undefined && entry.sidebarAutoSettleAfterDays !== null),
-  );
-}
 
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -284,6 +275,8 @@ export const make = Effect.gen(function* () {
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
   const settleActionRunAt = new Map<ThreadId, number>();
+
+  const settleIdleChildren = yield* makeChildSettlementSweep(orchestrator.dispatch);
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
@@ -314,7 +307,6 @@ export const make = Effect.gen(function* () {
         pullRequest: SettlementPullRequest | null,
         bound: ReadonlySet<string>,
       ) {
-        // thread.auto-settle does not recheck settings, so read them per decision; reads are cached.
         const currentSettings = resolveProjectSettings(
           yield* settingsService.getSettings,
           thread.projectId,
@@ -521,7 +513,8 @@ export const make = Effect.gen(function* () {
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
     threadId?: ThreadId,
   ) =>
-    sweep(mergedPullRequest, threadId).pipe(
+    settleIdleChildren(threadId).pipe(
+      Effect.andThen(sweep(mergedPullRequest, threadId)),
       Effect.catchCauseIf(
         (cause) => !Cause.hasInterruptsOnly(cause),
         (cause) =>
@@ -601,11 +594,15 @@ export const make = Effect.gen(function* () {
   const processEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.settled":
-        return cleanUpSettledThread(event.threadId);
+        return Effect.andThen(
+          settleIdleChildren(undefined, event.threadId),
+          cleanUpSettledThread(event.threadId),
+        );
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
       case "provider-session.detached":
       case "run.background-work-cancelled":
+      case "runtime-request.updated":
         return enqueueThread(event.threadId);
       // Sweep only when the work can have ended: progress updates cannot settle anything.
       case "subagent.updated":
@@ -682,6 +679,7 @@ export const make = Effect.gen(function* () {
 
   return {
     start,
+    settleIdleChildren,
     drain: Effect.andThen(fullSweeps.drain, FiberSet.awaitEmpty(threadSweeps)),
   } satisfies ThreadSettlementServiceV2["Service"];
 });

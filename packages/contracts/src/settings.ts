@@ -1,3 +1,4 @@
+import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
 import { SidebarAgentsSettings } from "./sidebarAgents.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
@@ -1279,10 +1280,7 @@ export const ServerSettings = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
-  retainAutomationPlacement: DefaultTrue,
-  queuedMessagesAnswerPendingInput: DefaultTrue,
-  batchQueuedMessages: DefaultTrue,
-  queueSendAll: DefaultTrue,
+  ...ForkThreadSettingsFields,
 
   enableAgentBrowserAccess: DefaultTrue,
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
@@ -1639,10 +1637,7 @@ export const ServerSettingsPatch = Schema.Struct({
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
-  retainAutomationPlacement: Schema.optionalKey(Schema.Boolean),
-  queuedMessagesAnswerPendingInput: Schema.optionalKey(Schema.Boolean),
-  batchQueuedMessages: Schema.optionalKey(Schema.Boolean),
-  queueSendAll: Schema.optionalKey(Schema.Boolean),
+  ...ForkThreadSettingsPatchFields,
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),

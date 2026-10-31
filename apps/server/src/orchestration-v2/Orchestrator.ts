@@ -1,3 +1,4 @@
+import { makeAutoSettlementValidation } from "./ChildThreadSettlement.ts";
 import {
   OrchestratorCommandRejectedError,
   OrchestratorDispatchError,
@@ -856,6 +857,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerSwitchService = yield* ProviderSwitchServiceV2;
   const planThreadSelectionChange = yield* makeThreadSelectionPlanner;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const validateAutoSettlement = yield* makeAutoSettlementValidation;
   const queuedInputRelease = yield* makePendingInputQueueRelease();
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
@@ -12618,24 +12620,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchThreadVisit(command, events);
         break;
       case "thread.auto-settle": {
-        // Recheck live state; changes and explicit overrides take precedence over the sweep snapshot.
-        const thread = yield* projectionStore
-          .getThread(command.threadId)
-          .pipe(
-            Effect.mapError(
-              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-            ),
-          );
-        if (
-          thread.settledOverride !== null ||
-          DateTime.toEpochMillis(thread.updatedAt) > DateTime.toEpochMillis(command.snapshotAt)
-        ) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: `Thread ${command.threadId} changed before automatic settlement.`,
-          });
-        }
+        yield* validateAutoSettlement(command);
         yield* dispatchThreadMutation(
           {
             type: "thread.settle",
