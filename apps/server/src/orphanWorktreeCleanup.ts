@@ -90,8 +90,7 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
   });
   const holderReason = Effect.fn("StorageCleanup.orphanHolders")(
     function* (cwd: string) {
-      if (platform !== "darwin" && platform !== "linux")
-        return "process cwd inspection is unavailable";
+      if (platform !== "darwin" && platform !== "linux") return "lsof-unavailable";
       const result = yield* processRunner.run({
         command: "lsof",
         args: ["-n", "-P", "-a", "-d", "cwd", "-Fpn"],
@@ -99,14 +98,10 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
         timeout: "30 seconds",
         maxOutputBytes: 8 * 1024 * 1024,
       });
-      if (
-        result.code !== 0 ||
-        result.stdoutTruncated ||
-        result.stderrTruncated ||
-        result.stdoutInvalidUtf8 ||
-        result.stderr.trim() !== ""
-      )
-        return "process cwd inspection is uncertain";
+      if (result.stdoutTruncated || result.stderrTruncated) return "lsof-output-truncated";
+      if (result.stdoutInvalidUtf8 || result.stderrInvalidUtf8) return "lsof-invalid-utf8";
+      if (result.stderr.trim() !== "") return "lsof-noise";
+      if (result.code !== 0) return "lsof-failed";
       for (const line of new Set(result.stdout.split("\n"))) {
         if (!line.startsWith("n/")) continue;
         const current = line.slice(1);
@@ -116,7 +111,7 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
       }
       return null;
     },
-    Effect.orElseSucceed(() => "process cwd inspection failed"),
+    Effect.orElseSucceed(() => "lsof-failed"),
   );
 
   return Effect.fn("StorageCleanup.cleanOrphans")(function* (
@@ -183,6 +178,7 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
         skipped[reason] = (skipped[reason] ?? 0) + 1;
         if (!entries.some((previous) => previous.path === cwd)) entries.push({ ...entry, reason });
       };
+      let failureReason = "inspection-failed";
       yield* Effect.gen(function* () {
         const initialBinding = yield* bindingReason(cwd);
         if (initialBinding !== null) return keep(initialBinding);
@@ -278,30 +274,56 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
         const early = yield* ready();
         if (early !== null) return keep(early);
         let published = false;
+        let remoteMissing = false;
         const upstream = yield* run([
           "for-each-ref",
           "--format=%(upstream:remotename)%00%(upstream:remoteref)",
           `refs/heads/${branch}`,
         ]);
+        if (upstream.stdoutTruncated || upstream.stderrTruncated)
+          return keep("upstream-inspection-truncated");
         const [remote, remoteRef] = upstream.stdout.trim().split("\0");
         if (remote && remote !== "." && remoteRef?.startsWith("refs/heads/")) {
-          yield* git.fetchRemoteTrackingBranch({
+          failureReason = "fetch-failed";
+          const fetched = yield* git.execute({
+            operation: "StorageCleanup.orphanFetch",
             cwd,
-            remoteName: remote,
-            remoteBranch: remoteRef.slice(11),
+            args: [
+              "fetch",
+              "--quiet",
+              "--no-tags",
+              "--",
+              remote,
+              `+${remoteRef}:refs/remotes/${remote}/${remoteRef.slice(11)}`,
+            ],
+            env: { LC_ALL: "C" },
+            allowNonZeroExit: true,
           });
-          const remoteHead = yield* git.resolveCommit({
-            cwd,
-            revision: `refs/remotes/${remote}/${remoteRef.slice(11)}`,
-          });
-          published =
-            (yield* git.execute({
+          if (fetched.stdoutTruncated || fetched.stderrTruncated)
+            return keep("fetch-output-truncated");
+          if (fetched.exitCode !== 0) {
+            remoteMissing =
+              fetched.exitCode === 128 &&
+              fetched.stderr.trim() === `fatal: couldn't find remote ref ${remoteRef}`;
+            if (!remoteMissing) return keep("fetch-failed");
+          } else {
+            failureReason = "publication-check-failed";
+            const remoteHead = yield* git.resolveCommit({
+              cwd,
+              revision: `refs/remotes/${remote}/${remoteRef.slice(11)}`,
+            });
+            const ancestor = yield* git.execute({
               operation: "StorageCleanup.orphanPublished",
               cwd,
               args: ["merge-base", "--is-ancestor", head, remoteHead.commitSha],
               allowNonZeroExit: true,
-            })).exitCode === 0;
+            });
+            if (ancestor.exitCode !== 0 && ancestor.exitCode !== 1)
+              return keep("publication-check-failed");
+            published = ancestor.exitCode === 0;
+          }
         }
+        failureReason = "integration-check-failed";
         const landed = published
           ? null
           : yield* integration({
@@ -310,9 +332,16 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
               headSha: head,
               matchContent: rules.worktreeContentIntegration,
             });
-        if (!published && !landed?.integrated) return keep("branch is not published or integrated");
+        if (!published && !landed?.integrated)
+          return keep(
+            remoteMissing
+              ? "remote-branch-missing-not-integrated"
+              : "branch-not-published-or-integrated",
+          );
+        failureReason = "inspection-failed";
         const final = yield* ready();
         if (final !== null) return keep(final);
+        failureReason = "removal-failed";
         yield* git.execute({
           operation: "StorageCleanup.removeOrphan",
           cwd: repository,
@@ -326,7 +355,16 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
         });
       }).pipe(
         (effect) => withWorkspaceLease(cwd, effect),
-        Effect.catch(() => Effect.sync(() => keep("inspection or unforced removal failed"))),
+        Effect.catch((error) =>
+          Effect.sync(() =>
+            keep(
+              error._tag === "GitCommandError" &&
+                error.operation === "GitVcsDriver.fetchRemoteTrackingBranch"
+                ? "fetch-failed"
+                : failureReason,
+            ),
+          ),
+        ),
       );
     }
     yield* Effect.logInfo("orphan worktree cleanup completed", { removed, skipped });
