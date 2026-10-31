@@ -82,6 +82,9 @@ function cleanupFailureReason(error: { readonly message: string }) {
     : (error.message.split(/\r?\n/)[0] ?? error.message);
 }
 
+const samePaths = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
+  left.length === right.length && left.every((pattern, index) => pattern === right[index]);
+
 const worktreeCleanupEnabled = (rules: WorktreeCleanupRules) =>
   rules.worktreeAfterDays !== null ||
   rules.worktreeSettledAfterDays !== null ||
@@ -1007,7 +1010,7 @@ const make = Effect.gen(function* () {
             (key) =>
               current[key as keyof typeof settings] !== settings[key as keyof typeof settings],
           ) ||
-          currentDisposable.join("\0") !== disposable.join("\0")
+          !samePaths(currentDisposable, disposable)
         )
           return keep("settings changed since check");
         // Runs right before the move; the status check goes last so it sees edits made meanwhile.
@@ -1033,7 +1036,7 @@ const make = Effect.gen(function* () {
               const submodules = yield* submoduleKeepReason(worktreePath, settings);
               if (submodules !== null) return submodules;
               const latest = (yield* settingsService.getSettings).storageCleanup;
-              if (latest.worktreeDisposableIgnoredPaths.join("\0") !== disposable.join("\0"))
+              if (!samePaths(latest.worktreeDisposableIgnoredPaths, disposable))
                 return "settings changed since check";
               return yield* localChangesReason(worktreePath, settings);
             }),
