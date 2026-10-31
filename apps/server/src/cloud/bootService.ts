@@ -14,6 +14,9 @@ import * as Schema from "effect/Schema";
 
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
+import { pinLauncherArtifact } from "./launcherArtifact.ts";
+import { bootServiceUnitCurrent } from "./bootServiceComparison.ts";
+import { writeConnectorService, connectorServiceManager } from "./bootServiceConnector.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -32,167 +35,30 @@ import {
   type ServiceState,
 } from "./serviceProtocol.ts";
 
-const BOOT_SERVICE_NAME = "t3code";
-export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
-// `.service` suffix keeps the label distinct from the desktop app's bundle id
-// (com.t3tools.t3code), so launchd and TCC records never collide.
-export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
-export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
-const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
-export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
-
-/** systemd expands `%` specifiers, including in unquoted append-log paths. */
-function escapeSystemdSpecifiers(value: string): string {
-  return value.replaceAll("%", "%%");
-}
-
-function quoteSystemdValue(value: string): string {
-  const escaped = escapeSystemdSpecifiers(value);
-  return /[\s"'\\]/.test(escaped)
-    ? `"${escaped.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
-    : escaped;
-}
-
-const unquoteSystemdValue = (raw: string) =>
-  (raw.startsWith('"') && raw.endsWith('"')
-    ? raw.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\")
-    : raw
-  ).replaceAll("%%", "%");
-
-const unescapeXmlText = (value: string) =>
-  value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
-
-export function bootServiceBaseDirOf(contents: string): string | undefined {
-  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
-  if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());
-  const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
-  return plist === undefined ? undefined : unescapeXmlText(plist);
-}
-
-/** The executable an installed unit or plist starts: the launcher's runtime. */
-export function bootServiceProgramOf(contents: string): string | undefined {
-  const systemd = /^ExecStart=("(?:\\.|[^"\\])*"|\S+)/m.exec(contents)?.[1];
-  if (systemd !== undefined) return unquoteSystemdValue(systemd);
-  const plist = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/.exec(
-    contents,
-  )?.[1];
-  return plist === undefined ? undefined : unescapeXmlText(plist);
-}
-
-export interface BootServicePlan {
-  readonly program: ReadonlyArray<string>;
-  readonly baseDir: string;
-  readonly logPath: string;
-  readonly unitPath: string;
-  /** The manager accepted a detached install; its outcome is written to `logPath`. */
-  readonly handedOff?: boolean;
-}
-
-/** Service units cannot rely on the user's shell or PATH. */
-export function renderBootServiceUnit(plan: BootServicePlan): string {
-  // The user manager has no reliable network-online target; server networking retries itself.
-  return [
-    "[Unit]",
-    "Description=T3 Code server",
-    "StartLimitIntervalSec=300",
-    "StartLimitBurst=5",
-    "",
-    "[Service]",
-    "Type=simple",
-    "WorkingDirectory=%h",
-    `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
-    `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
-    `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
-    // Let the launcher mark the stop before it signals the server.
-    // Past TimeoutStopSec, systemd SIGKILLs the cgroup.
-    "KillMode=mixed",
-    "TimeoutStopSec=90s",
-    // Helpers share this cgroup; default OOMPolicy=stop would stop the unit if one is OOM-killed.
-    "OOMPolicy=continue",
-    "Restart=always",
-    "RestartSec=5",
-    // Weights favor the server over the sibling agents slice; IOWeight needs a delegated io controller.
-    "CPUWeight=1000",
-    "IOWeight=1000",
-    // Reclaim takes the agents' unprotected pages first. The kernel caps this at the
-    // protection of user.slice and user@.service, which only root can grant.
-    "MemoryLow=1536M",
-    // A user manager's own score, the lowest it may set: below its other services (200) and agents (800).
-    // `t3 service protect` lowers it further through a drop-in.
-    "OOMScoreAdjust=100",
-    // systemd-oomd ignores this preference when the watched cgroup is root-owned, as user-1000.slice usually is.
-    "ManagedOOMPreference=avoid",
-    `StandardOutput=append:${escapeSystemdSpecifiers(plan.logPath)}`,
-    `StandardError=append:${escapeSystemdSpecifiers(plan.logPath)}`,
-    "",
-    "[Install]",
-    "WantedBy=default.target",
-    "",
-  ].join("\n");
-}
-
-function escapeXmlText(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
-/** Launch agents cannot rely on the user's shell or PATH. */
-export function renderBootServicePlist(
-  plan: BootServicePlan,
-  options: { readonly homeDir: string; readonly environmentPath: string },
-): string {
-  // Allow 90s stops for update handoffs.
-  // Interactive avoids background throttling.
-  // AbandonProcessGroup=false reaps agents only on launcher exit, preserving them across child updates.
-  return [
-    `<?xml version="1.0" encoding="UTF-8"?>`,
-    `<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">`,
-    `<plist version="1.0">`,
-    `<dict>`,
-    `  <key>Label</key>`,
-    `  <string>${BOOT_SERVICE_LAUNCHD_LABEL}</string>`,
-    `  <key>ProgramArguments</key>`,
-    `  <array>`,
-    ...plan.program.map((argument) => `    <string>${escapeXmlText(argument)}</string>`),
-    `  </array>`,
-    `  <key>EnvironmentVariables</key>`,
-    `  <dict>`,
-    `    <key>PATH</key>`,
-    `    <string>${escapeXmlText(options.environmentPath)}</string>`,
-    `    <key>T3CODE_HOME</key>`,
-    `    <string>${escapeXmlText(plan.baseDir)}</string>`,
-    `    <key>${BOOT_SERVICE_UNIT_ENV}</key>`,
-    `    <string>${BOOT_SERVICE_PLIST_FILE}</string>`,
-    `  </dict>`,
-    `  <key>WorkingDirectory</key>`,
-    `  <string>${escapeXmlText(options.homeDir)}</string>`,
-    `  <key>RunAtLoad</key>`,
-    `  <true/>`,
-    `  <key>KeepAlive</key>`,
-    `  <true/>`,
-    `  <key>ThrottleInterval</key>`,
-    `  <integer>5</integer>`,
-    `  <key>ExitTimeOut</key>`,
-    `  <integer>90</integer>`,
-    `  <key>ProcessType</key>`,
-    `  <string>Interactive</string>`,
-    `  <key>StandardOutPath</key>`,
-    `  <string>${escapeXmlText(plan.logPath)}</string>`,
-    `  <key>StandardErrorPath</key>`,
-    `  <string>${escapeXmlText(plan.logPath)}</string>`,
-    `</dict>`,
-    `</plist>`,
-    ``,
-  ].join("\n");
-}
-
-export interface BootServiceStep {
-  readonly step: string;
-  readonly command: string;
-  readonly args: ReadonlyArray<string>;
-  /** Non-zero exit is logged and ignored. */
-  readonly optional?: boolean;
-  readonly timeout?: Duration.Input;
-}
+export {
+  BOOT_SERVICE_UNIT_FILE,
+  BOOT_SERVICE_LAUNCHD_LABEL,
+  BOOT_SERVICE_PLIST_FILE,
+  BOOT_SERVICE_LOG_FILE,
+  bootServiceBaseDirOf,
+  bootServiceProgramOf,
+  renderBootServiceUnit,
+  renderBootServicePlist,
+  type BootServicePlan,
+  type BootServiceStep,
+} from "./bootServiceRender.ts";
+import {
+  BOOT_SERVICE_UNIT_FILE,
+  BOOT_SERVICE_LAUNCHD_LABEL,
+  BOOT_SERVICE_PLIST_FILE,
+  BOOT_SERVICE_LOG_FILE,
+  BOOT_SERVICE_UNIT_ENV,
+  bootServiceBaseDirOf,
+  renderBootServiceUnit,
+  renderBootServicePlist,
+  type BootServicePlan,
+  type BootServiceStep,
+} from "./bootServiceRender.ts";
 
 /** Must exceed systemd TimeoutStopSec and launchd ExitTimeOut (both 90s) to avoid shutdown races. */
 const STOP_STEP_TIMEOUT = Duration.seconds(120);
@@ -536,9 +402,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   );
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
-  const runningInsideService =
-    (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
-    BOOT_SERVICE_UNIT_FILE;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -572,6 +435,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     environmentPath,
   });
   const unitPath = detectedManager?.unitPath ?? "";
+  const runningInService =
+    (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
+    path.basename(unitPath);
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
@@ -784,7 +650,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // With start=false, changing startup-only files is safe except during a remote update,
     // when the launcher also writes its state file.
     const start = options?.start !== false;
-    if (installed && start && runningInsideService && manager.kind === "systemd") {
+    if (installed && start && runningInService && manager.kind === "systemd") {
       // Stopping the unit from inside it kills this process before the start.
       // A transient unit runs the same install from outside, stop first, so it
       // still serialises with a remote update the launcher may be starting.
@@ -855,7 +721,23 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           return yield* new BootServiceUpdatePendingError();
         }
       }
-      yield* writeDurably(unitPath, manager.render(plan));
+      if (yield* fs.exists(path.join(input.baseDir, "runtime", "launcher-config.json"))) {
+        const launcher = yield* pinLauncherArtifact(
+          input.baseDir,
+          runtimePaths.versionDir,
+          runtimePaths.entryPath,
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        );
+        const pinnedPlan = { ...plan, program: [launcher, "__service-launcher-watchdog"] };
+        const connector = yield* writeConnectorService(manager, pinnedPlan).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        );
+        yield* writeDurably(unitPath, manager.render(pinnedPlan));
+        if (start) yield* runSteps(connector.activate);
+      } else yield* writeDurably(unitPath, manager.render(plan));
 
       if (start) {
         yield* runSteps(manager.activate);
@@ -885,7 +767,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     }
     // Writes no state, and the launcher lets an update transition in flight
     // finish before the queued stop tears it down.
-    if (runningInsideService && manager.handoff !== undefined) {
+    if (runningInService && manager.handoff !== undefined) {
       yield* runSteps(manager.handoff);
       return "queued" as const;
     }
@@ -954,6 +836,18 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
     const manager = yield* requireManager;
     if (
+      yield* fs
+        .exists(connectorServiceManager(manager).unitPath)
+        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })))
+    ) {
+      const connector = connectorServiceManager(manager);
+      yield* runSteps(connector.deactivate);
+      yield* fs
+        .remove(connector.unitPath, { force: true })
+        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+      yield* runSteps(connector.finalize);
+    }
+    if (
       !(yield* fs
         .exists(unitPath)
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))))
@@ -985,10 +879,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ? serviceStateActiveVersion(stateText.value)
       : undefined;
     const installedBaseDir = bootServiceBaseDirOf(unit);
-    const normalizeUnit = (contents: string) =>
-      detectedManager.kind === "launchd"
-        ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
-        : contents;
     const problems: BootServiceProblem[] =
       detectedManager.kind === "systemd" ? [...(yield* readSystemdProblems(true))] : [];
     if (yield* fs.exists(restartPendingPath)) problems.push("restart-pending");
@@ -1000,7 +890,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       problems,
       current:
         problems.length === 0 &&
-        normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
+        (yield* bootServiceUnitCurrent(detectedManager, unit, plan, input.baseDir).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        )) &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&

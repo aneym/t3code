@@ -170,6 +170,9 @@ import * as CloudCliState from "./cloud/CliState.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import { attachServiceIngress, hotSwapContext } from "./serviceChildTransport.ts";
+import { warmServiceChild } from "./serviceChildWarm.ts";
+import { makeTailscaleServeLayer } from "./serviceTailscaleServe.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
@@ -204,7 +207,6 @@ import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 import * as ServerActivation from "./serverActivation.ts";
 
 const HTTP_ROUTER_CONFIG = {
@@ -305,8 +307,9 @@ const layerHttpServer = Layer.unwrap(
     const config = yield* ServerConfig.ServerConfig;
     return NodeHttpServer.layer(
       () => {
-        const server = rejectRequestsUntilServing(
-          guardHttpResponseWriteErrors(NodeHttp.createServer()),
+        const server = attachServiceIngress(
+          rejectRequestsUntilServing(guardHttpResponseWriteErrors(NodeHttp.createServer())),
+          config.port,
         );
         if (config.privateNetworkOnly) {
           server.on("connection", (socket) => {
@@ -318,8 +321,8 @@ const layerHttpServer = Layer.unwrap(
         return server;
       },
       {
-        host: config.host ?? "127.0.0.1",
-        port: config.port,
+        host: hotSwapContext() === undefined ? (config.host ?? "127.0.0.1") : "127.0.0.1",
+        port: hotSwapContext() === undefined ? config.port : 0,
         gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
         websocket: { perMessageDeflate: true },
       },
@@ -764,6 +767,7 @@ const layerMakeRoutes = Layer.mergeAll(
 const layerMakeServer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
+    yield* warmServiceChild(config);
     const ownership = yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath);
     const activation = yield* Deferred.make<void>();
     const awaitActivation = Deferred.await(activation);
@@ -808,59 +812,7 @@ const layerMakeServer = Layer.unwrap(
           );
       }),
     );
-    const layerTailscaleServe = config.tailscaleServeEnabled
-      ? Layer.effectDiscard(
-          Effect.acquireRelease(
-            Effect.gen(function* () {
-              yield* Deferred.succeed(tailscaleParked, undefined).pipe(Effect.orDie);
-              yield* awaitActivation;
-              const server = yield* HttpServer.HttpServer;
-              const address = server.address;
-              if (typeof address === "string" || !("port" in address)) {
-                return null;
-              }
-
-              const localPort = address.port;
-              return yield* ensureTailscaleServe({
-                localPort,
-                servePort: config.tailscaleServePort,
-                localHost: loopbackUrlHostForAddress(address),
-              }).pipe(
-                Effect.as({ localPort, servePort: config.tailscaleServePort }),
-                Effect.tap(() =>
-                  Effect.logInfo("Tailscale Serve configured", {
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("Failed to configure Tailscale Serve", {
-                    cause,
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }).pipe(Effect.as(null)),
-                ),
-              );
-            }),
-            (configured) =>
-              configured
-                ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
-                    Effect.tap(() =>
-                      Effect.logInfo("Tailscale Serve disabled", {
-                        servePort: configured.servePort,
-                      }),
-                    ),
-                    Effect.catch((cause) =>
-                      Effect.logWarning("Failed to disable Tailscale Serve", {
-                        cause,
-                        servePort: configured.servePort,
-                      }),
-                    ),
-                  )
-                : Effect.void,
-          ),
-        )
-      : Layer.empty;
+    const layerTailscaleServe = makeTailscaleServeLayer(config, tailscaleParked, awaitActivation);
     const layerCloudDesiredLinkReconcile = Layer.effectDiscard(
       Effect.gen(function* () {
         const cloudLink = yield* CloudLink.CloudLink;

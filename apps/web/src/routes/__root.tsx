@@ -1,4 +1,4 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts/serverLifecycle";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   Outlet,

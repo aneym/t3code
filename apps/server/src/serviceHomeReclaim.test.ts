@@ -11,7 +11,8 @@ import { RECORD_START_SCRIPT } from "@t3tools/ssh/remoteHomeServerScript";
 
 import { SERVER_OWNER_LOCK_FILE, SERVICE_LAUNCHER_PROTOCOL } from "./cloud/serviceProtocol.ts";
 import { stopSshLaunchedServers } from "./serviceHomeReclaim.ts";
-import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import { Launcher } from "./serviceLauncher.ts";
+import { readServiceState, writeServiceState } from "./serviceLauncherState.ts";
 
 interface Sandbox {
   readonly home: string;

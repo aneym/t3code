@@ -15,7 +15,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "../config.ts";
-import { writeServiceState } from "../serviceLauncher.ts";
+import { writeServiceState as save } from "../serviceLauncherState.ts";
 import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
@@ -146,7 +146,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
       const config = yield* ServerConfigModule.ServerConfig;
       const statePath = path.join(config.baseDir, "runtime", SERVICE_STATE_FILE);
       yield* Effect.promise(() =>
-        writeServiceState(statePath, {
+        save(statePath, {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "0.0.30",
           update,

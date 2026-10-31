@@ -1,4 +1,4 @@
-import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
+import type { ServerSelfUpdateOutcome } from "@t3tools/contracts/serverLifecycle";
 
 // Bump for incompatible runtime layout changes; launchers survive self-updates. Protocol 3 requires standalone executables.
 export const SERVICE_LAUNCHER_PROTOCOL = 3 as const;
@@ -30,10 +30,38 @@ export interface ServiceState {
 export interface ServiceLauncherContext {
   readonly protocol: typeof SERVICE_LAUNCHER_PROTOCOL;
   readonly childVersion: string;
+  readonly hotSwap?: {
+    readonly instanceId: string;
+    readonly warm: boolean;
+    readonly protocol: number;
+    readonly publicHost: string;
+    readonly publicPort: number;
+    readonly holdBudgetMs: number;
+  };
   readonly update?: ServiceUpdateRecord;
 }
 
+export interface ServiceConnectorFacts {
+  readonly readyConnections: number | null;
+  readonly hostname: string | null;
+  readonly protocol: string | null;
+}
+
 export type ServiceLauncherChildMessage =
+  | { readonly type: "capability-rejected"; readonly reason: "unsupported-hot-swap" }
+  | {
+      readonly type: "freeze-aborted";
+      readonly updateId: string;
+      readonly reason: "freeze-timeout" | "freeze-failed";
+    }
+  | { readonly type: "socket-accepted"; readonly transferId: number }
+  | { readonly type: "socket-returned"; readonly transferId: number; readonly prefix?: string }
+  | { readonly type: "ingress-ready"; readonly host: string; readonly port: number }
+  | { readonly type: "warm"; readonly updateId: string; readonly willMigrate: boolean }
+  | { readonly type: "drained"; readonly updateId: string }
+  | { readonly type: "drain-failed"; readonly updateId: string }
+  | { readonly type: "validated"; readonly updateId: string; readonly port: number }
+  | { readonly type: "listening"; readonly port: number }
   | { readonly type: "state-dir-owned" }
   | {
       readonly type: "request-update";
@@ -46,7 +74,20 @@ export type ServiceLauncherChildMessage =
       readonly updateId: string;
     };
 
+export interface ServiceConnectorConfig {
+  readonly executable: string;
+  readonly token: string;
+  readonly tunnelId?: string;
+  readonly tunnelName?: string;
+}
+
 export type ServiceLauncherParentMessage =
+  | { readonly type: "ingress-bound" }
+  | { readonly type: "acquire"; readonly updateId: string }
+  | { readonly type: "drain"; readonly updateId: string; readonly drainTimeoutMs: number }
+  | { readonly type: "relinquish"; readonly updateId: string }
+  | { readonly type: "abort-drain"; readonly updateId: string }
+  | { readonly type: "socket"; readonly transferId: number; readonly prefix?: string }
   | {
       readonly type: "update-accepted";
       readonly updateId: string;
@@ -222,9 +263,25 @@ export function decodeServiceLauncherContext(value: string): ServiceLauncherCont
   if (parsed.childVersion !== selectedVersion) {
     return undefined;
   }
+  if (
+    parsed.hotSwap !== undefined &&
+    !(
+      isRecord(parsed.hotSwap) &&
+      typeof parsed.hotSwap.instanceId === "string" &&
+      typeof parsed.hotSwap.warm === "boolean" &&
+      parsed.hotSwap.protocol === 1 &&
+      typeof parsed.hotSwap.publicHost === "string" &&
+      typeof parsed.hotSwap.publicPort === "number" &&
+      typeof parsed.hotSwap.holdBudgetMs === "number"
+    )
+  )
+    return undefined;
   return {
     protocol: SERVICE_LAUNCHER_PROTOCOL,
     childVersion: parsed.childVersion,
+    ...(parsed.hotSwap === undefined
+      ? {}
+      : { hotSwap: parsed.hotSwap as NonNullable<ServiceLauncherContext["hotSwap"]> }),
     ...(update === undefined ? {} : { update }),
   };
 }
@@ -233,6 +290,48 @@ export function decodeServiceLauncherChildMessage(
   value: unknown,
 ): ServiceLauncherChildMessage | undefined {
   if (!isRecord(value)) return undefined;
+  if (value.type === "capability-rejected" && value.reason === "unsupported-hot-swap")
+    return { type: value.type, reason: value.reason };
+  if (
+    value.type === "freeze-aborted" &&
+    typeof value.updateId === "string" &&
+    (value.reason === "freeze-timeout" || value.reason === "freeze-failed")
+  )
+    return { type: value.type, updateId: value.updateId, reason: value.reason };
+  if (
+    (value.type === "socket-accepted" || value.type === "socket-returned") &&
+    typeof value.transferId === "number"
+  )
+    return {
+      type: value.type,
+      transferId: value.transferId,
+      ...(typeof value.prefix === "string" ? { prefix: value.prefix } : {}),
+    };
+  if (
+    value.type === "ingress-ready" &&
+    typeof value.host === "string" &&
+    typeof value.port === "number"
+  )
+    return { type: value.type, host: value.host, port: value.port };
+  if (
+    value.type === "warm" &&
+    typeof value.updateId === "string" &&
+    typeof value.willMigrate === "boolean"
+  )
+    return { type: value.type, updateId: value.updateId, willMigrate: value.willMigrate };
+  if (
+    (value.type === "drained" || value.type === "drain-failed") &&
+    typeof value.updateId === "string"
+  )
+    return { type: value.type, updateId: value.updateId };
+  if (
+    value.type === "validated" &&
+    typeof value.updateId === "string" &&
+    typeof value.port === "number"
+  )
+    return { type: value.type, updateId: value.updateId, port: value.port };
+  if (value.type === "listening" && typeof value.port === "number")
+    return { type: value.type, port: value.port };
   if (value.type === "state-dir-owned") return { type: value.type };
   if (
     value.type === "request-update" &&
@@ -256,6 +355,24 @@ export function decodeServiceLauncherParentMessage(
   value: unknown,
 ): ServiceLauncherParentMessage | undefined {
   if (!isRecord(value)) return undefined;
+  if (value.type === "ingress-bound") return { type: value.type };
+  if (value.type === "socket" && typeof value.transferId === "number")
+    return {
+      type: value.type,
+      transferId: value.transferId,
+      ...(typeof value.prefix === "string" ? { prefix: value.prefix } : {}),
+    };
+  if (
+    (value.type === "acquire" || value.type === "relinquish" || value.type === "abort-drain") &&
+    typeof value.updateId === "string"
+  )
+    return { type: value.type, updateId: value.updateId };
+  if (
+    value.type === "drain" &&
+    typeof value.updateId === "string" &&
+    typeof value.drainTimeoutMs === "number"
+  )
+    return { type: value.type, updateId: value.updateId, drainTimeoutMs: value.drainTimeoutMs };
   if (value.type === "update-rejected" && typeof value.reason === "string") {
     return { type: value.type, reason: value.reason };
   }
@@ -265,4 +382,17 @@ export function decodeServiceLauncherParentMessage(
   return value.type === "committed" && typeof value.updateId === "string"
     ? { type: value.type, updateId: value.updateId }
     : undefined;
+}
+
+export function unsupportedServiceHotSwap(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return (
+      isRecord(parsed) &&
+      Object.hasOwn(parsed, "hotSwap") &&
+      decodeServiceLauncherContext(value) === undefined
+    );
+  } catch {
+    return false;
+  }
 }

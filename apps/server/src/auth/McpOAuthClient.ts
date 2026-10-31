@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { PeerIdentity, type AuthMcpClientAccess } from "@t3tools/contracts";
+import { PeerIdentity } from "@t3tools/contracts";
 
 export const ClientIdPayload = Schema.Struct({
   v: Schema.Literal(1),
@@ -19,16 +19,4 @@ export interface McpOAuthClient {
   readonly redirectUris: ReadonlyArray<string>;
   readonly peerLink: boolean;
   readonly peer?: PeerIdentity | undefined;
-}
-
-export interface PendingCode {
-  readonly clientId: string;
-  readonly clientName: string;
-  readonly peerLink: boolean;
-  readonly peer?: PeerIdentity | undefined;
-  readonly redirectUri: string;
-  readonly codeChallenge: string;
-  readonly resource: string;
-  readonly access: AuthMcpClientAccess;
-  readonly expiresAtMs: number;
 }

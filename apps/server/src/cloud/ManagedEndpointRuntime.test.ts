@@ -1,3 +1,4 @@
+import * as EndpointPolicy from "./ManagedEndpointPolicy.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -124,63 +125,61 @@ describe("CloudManagedEndpointRuntime", () => {
 
   it("classifies Cloudflare connection and warning output", () => {
     expect(
-      ManagedEndpointRuntime.classifyRelayClientOutput(
+      EndpointPolicy.classifyRelayClientOutput(
         "2026-06-17T02:00:00Z INF Registered tunnel connection connIndex=0",
       ),
     ).toBe("connected");
     expect(
-      ManagedEndpointRuntime.classifyRelayClientOutput(
+      EndpointPolicy.classifyRelayClientOutput(
         "2026-06-17T02:00:00Z ERR Failed to serve tunnel connection",
       ),
     ).toBe("warning");
     expect(
-      ManagedEndpointRuntime.classifyRelayClientOutput(
-        "2026-06-17T02:00:00Z INF Starting metrics server",
-      ),
+      EndpointPolicy.classifyRelayClientOutput("2026-06-17T02:00:00Z INF Starting metrics server"),
     ).toBe("debug");
     expect(
-      ManagedEndpointRuntime.classifyRelayClientOutput(
+      EndpointPolicy.classifyRelayClientOutput(
         "2026-06-17T02:00:00Z FTL Cannot determine default origin certificate path",
       ),
     ).toBe("warning");
-    expect(
-      ManagedEndpointRuntime.classifyRelayClientOutput("2026-06-17T02:00:00Z PNC runtime panic"),
-    ).toBe("warning");
+    expect(EndpointPolicy.classifyRelayClientOutput("2026-06-17T02:00:00Z PNC runtime panic")).toBe(
+      "warning",
+    );
   });
 
   it("recognizes tunnel authorization failures without matching ordinary transport errors", () => {
     expect(
-      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+      EndpointPolicy.isRejectedRelayClientTunnelOutput(
         '2026-09-15T06:30:43Z ERR Register tunnel error from server side error="Failed to get tunnel" connIndex=0 event=0 ip=198.41.200.23',
       ),
     ).toBe(true);
     expect(
-      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+      EndpointPolicy.isRejectedRelayClientTunnelOutput(
         '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="Unauthorized: Record for tunnel not found" connIndex=0',
       ),
     ).toBe(true);
     expect(
-      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+      EndpointPolicy.isRejectedRelayClientTunnelOutput(
         '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="Unauthorized: Invalid tunnel secret" connIndex=0',
       ),
     ).toBe(true);
     expect(
-      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+      EndpointPolicy.isRejectedRelayClientTunnelOutput(
         '2026-10-06T12:00:00Z ERR Register tunnel error from server side error="Unauthorized: Tunnel not found" connIndex=0 event=0 ip=198.41.200.23',
       ),
     ).toBe(true);
     expect(
-      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+      EndpointPolicy.isRejectedRelayClientTunnelOutput(
         '2026-10-06T12:00:00Z ERR Register tunnel error from server side error="Tunnel not found" connIndex=0',
       ),
     ).toBe(true);
     expect(
-      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+      EndpointPolicy.isRejectedRelayClientTunnelOutput(
         '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="connection timed out" connIndex=0',
       ),
     ).toBe(false);
     expect(
-      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+      EndpointPolicy.isRejectedRelayClientTunnelOutput(
         '2026-06-17T02:00:00Z ERR Failed to serve tunnel connection error="Unauthorized: Tunnel not found" connIndex=0',
       ),
     ).toBe(false);
