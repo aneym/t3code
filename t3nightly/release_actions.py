@@ -190,6 +190,11 @@ def fast_prepare(config, log):
     if root.exists():
         raise ValueError(f"rehearsal sandbox already allocated: {root}")
     root.mkdir(parents=True, mode=0o700)
+    if sys.platform == "darwin":
+        clone = root / "old-runtime" / old
+        clone.parent.mkdir(mode=0o700)
+        subprocess.run(["cp", "-c", "-R", str(runtime), str(clone)], check=True, timeout=120)
+        runtime = clone
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]

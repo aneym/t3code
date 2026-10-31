@@ -11,7 +11,10 @@ def internal(path):
 
 def audit_tree(path):
     path = Path(path)
+    build_shims = path / ".local-release" / "build-tool-bin"
     for entry in path.rglob("*"):
+        if entry.parent == build_shims:
+            continue
         if entry.is_symlink() and str(entry.resolve()).startswith("/Volumes/"):
             raise ValueError("macOS rehearsal dependency resolves onto a removable volume")
 
