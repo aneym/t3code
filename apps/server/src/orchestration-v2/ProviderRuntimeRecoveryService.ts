@@ -1,3 +1,6 @@
+import { sessionsLiveAtStart, type RecoverySession } from "./RuntimeRecoverySessions.ts";
+import * as Duration from "effect/Duration";
+import { drainBeforeRestart } from "./RestartDrain.ts";
 import {
   nonterminalRuns,
   isBackgroundCapableTurnItemType,
@@ -74,21 +77,10 @@ export class ProviderRuntimeRecoveryError extends Schema.TaggedError<ProviderRun
   }
 }
 
-export interface ProviderRuntimeRecoverySummary {
-  readonly terminalizedRuns: number;
-  readonly stoppedSessions: number;
-  readonly closedRequests: number;
-  readonly retiredEffects: number;
-  readonly requeuedEffects: number;
-}
-
-export interface ProviderRuntimeReconciliationSummary {
-  readonly terminalizedRuns: number;
-  readonly stoppedSessions: number;
-  readonly closedRequests: number;
-  readonly retiredEffects: number;
-  readonly requeuedEffects: number;
-}
+import type {
+  ProviderRuntimeRecoverySummary,
+  ProviderRuntimeReconciliationSummary,
+} from "./ProviderRuntimeRecoverySummary.ts";
 
 export class ProviderRuntimeRecoveryService extends Context.Service<
   ProviderRuntimeRecoveryService,
@@ -102,6 +94,10 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
     readonly importRestartHandoff: (
       input: ServerImportRestartHandoffInput,
     ) => Effect.Effect<ServerPrepareRestartResult, ServerImportRestartHandoffError>;
+    readonly drainForHandoff: (
+      epoch: string,
+      timeoutMs: number,
+    ) => Effect.Effect<void, ServerPrepareRestartError>;
     readonly prepareRestart: (
       epoch: string,
       drainTimeoutMs?: number,
@@ -120,22 +116,6 @@ export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
-  type RecoverySession = ProjectionStore.ProjectionRuntimeRecoveryState["providerSessions"][number];
-  /** Shared sessions stop on their first recovered thread; later threads still decide wakes from pre-recovery liveness. */
-  const sessionsLiveAtStart = (
-    projection: ProjectionStore.ProjectionRuntimeRecoveryState,
-    stoppedThisPass: ReadonlyMap<string, RecoverySession>,
-  ) => {
-    const sessions = new Map(projection.providerSessions.map((session) => [session.id, session]));
-    for (const providerThread of projection.providerThreads) {
-      const stopped =
-        providerThread.providerSessionId === null
-          ? undefined
-          : stoppedThisPass.get(providerThread.providerSessionId);
-      if (stopped !== undefined) sessions.set(stopped.id, stopped);
-    }
-    return [...sessions.values()];
-  };
 
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
     function* (
@@ -790,6 +770,14 @@ export const make = Effect.gen(function* () {
     | ServerSettings.ServerSettingsService
   >();
   return ProviderRuntimeRecoveryService.of({
+    drainForHandoff: Effect.fn("ProviderRuntimeRecoveryService.drainForHandoff")(
+      (epoch, timeoutMs) =>
+        Effect.scoped(drainBeforeRestart(epoch, Duration.millis(timeoutMs))).pipe(
+          Effect.provide(restartContext),
+          Effect.asVoid,
+          Effect.mapError((cause) => new ServerPrepareRestartError({ cause })),
+        ),
+    ),
     getRestartStatus: Effect.fn("ProviderRuntimeRecoveryService.getRestartStatus")((epoch) =>
       restartStatus(epoch).pipe(Effect.provide(restartContext)),
     ),

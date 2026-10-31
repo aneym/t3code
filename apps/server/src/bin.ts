@@ -17,7 +17,15 @@ if (
   // Guard sockets before either dispatch path can load outbound-capable modules.
   const { ignoreMacosTypeOfServiceEinval } = await import("./outboundHttp.ts");
   ignoreMacosTypeOfServiceEinval();
-  if (command === "__document-text") {
+  if (command === "__service-launcher-watchdog") {
+    const { runLauncherWatchdog } = await import("./serviceLauncherWatchdog.ts");
+    await runLauncherWatchdog(process.execPath);
+  } else if (command === "__service-connector") {
+    const { runServiceConnector } = await import("./serviceConnector.ts");
+    const baseDir = process.env.T3CODE_HOME?.trim();
+    if (!baseDir) throw new Error("T3CODE_HOME is required by the connector service.");
+    await runServiceConnector(baseDir);
+  } else if (command === "__document-text") {
     const { extractDocumentText } = await import("./provider/documentTextWorker.ts");
     try {
       process.stdout.write(await extractDocumentText(process.argv[3]!, process.argv[4]!));

@@ -1,3 +1,5 @@
+import { ServerProviderRefreshInput } from "./serverProviderRefresh.ts";
+import { ServerHandoffProbe, ServerHandoffSubscription } from "./serverLifecycle.ts";
 import {
   ServerPrepareRestartInput,
   ServerPrepareRestartResult,
@@ -39,7 +41,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt } from "./baseSchemas.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -164,7 +166,7 @@ import {
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
 } from "./provider.ts";
-import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
+import { ProviderInstanceMutation } from "./providerInstance.ts";
 import {
   GuestShareCreateError,
   GuestShareCreateInput,
@@ -317,7 +319,6 @@ import {
   ServerConfig,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
-  ServerLifecycleStreamEvent,
   ServerRemoveKeybindingInput,
   ServerRemoveKeybindingResult,
   ServerProviderUpdatedPayload,
@@ -335,6 +336,7 @@ import {
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
+import { ServerLifecycleStreamEvent } from "./serverLifecycle.ts";
 import {
   HostResourcesSnapshot,
   ResourceTelemetryHistory,
@@ -631,7 +633,7 @@ const WsServerRemoveKeybindingRpc = Rpc.make(WS_METHODS.serverRemoveKeybinding, 
 });
 
 const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
-  payload: Schema.Struct({}),
+  payload: ServerHandoffProbe,
   success: Schema.Struct({}),
   error: EnvironmentAuthorizationError,
 });
@@ -665,21 +667,7 @@ const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
 });
 
 export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, {
-  payload: Schema.Struct({
-    instanceId: Schema.optional(ProviderInstanceId),
-    cwd: Schema.optional(TrimmedNonEmptyString),
-    fresh: Schema.optional(Schema.Boolean),
-    /** Bypass model caches; explicit rediscovery may open sessions, background refreshes must not. */
-    refreshModels: Schema.optional(Schema.Boolean),
-    /**
-     * Reply without snapshots, or with only the requested instance's cwd snapshot. Snapshots then
-     * reach the client only through these replies, so another client's scan shows on its next
-     * refresh, at most one TTL later.
-     */
-    workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
-    /** As on `subscribeServerConfig`: add /usage-limits to the replied snapshot. */
-    usageLimitsCommand: Schema.optional(Schema.Boolean),
-  }),
+  payload: ServerProviderRefreshInput,
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
 });
@@ -1871,7 +1859,7 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
 });
 
 const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecycle, {
-  payload: Schema.Struct({}),
+  payload: ServerHandoffSubscription,
   success: ServerLifecycleStreamEvent,
   error: EnvironmentAuthorizationError,
   stream: true,
