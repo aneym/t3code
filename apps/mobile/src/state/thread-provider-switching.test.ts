@@ -1,4 +1,4 @@
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import { ProviderInstanceId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
@@ -9,16 +9,27 @@ const startedThread = {
   runtime: { status: "idle" },
 } as never;
 
+const modelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-6.1-luna",
+} satisfies OrchestrationV2ThreadProjection["thread"]["modelSelection"];
+
 function projectionWithSession(supportsProviderSwitchingViaHandoff: boolean) {
   return {
-    thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+    thread: { modelSelection, id: "thread", activeProviderThreadId: "provider-thread" },
     runs: [],
     providerThreads: [
-      { id: "provider-thread", appThreadId: "thread", providerSessionId: "provider-session" },
+      {
+        id: "provider-thread",
+        appThreadId: "thread",
+        providerInstanceId: modelSelection.instanceId,
+        providerSessionId: "provider-session",
+      },
     ],
     providerSessions: [
       {
         id: "provider-session",
+        providerInstanceId: modelSelection.instanceId,
         status: "running",
         capabilities: { sessions: { supportsProviderSwitchingViaHandoff } },
       },
@@ -41,7 +52,12 @@ describe("threadAllowsProviderSwitch", () => {
       threadAllowsProviderSwitch({
         thread: startedThread,
         projection: {
-          thread: { id: "thread", activeProviderThreadId: null, historyOrigin: "v1_import" },
+          thread: {
+            modelSelection,
+            id: "thread",
+            activeProviderThreadId: null,
+            historyOrigin: "v1_import",
+          },
           runs: [],
           providerThreads: [],
           providerSessions: [],
@@ -55,7 +71,12 @@ describe("threadAllowsProviderSwitch", () => {
       threadAllowsProviderSwitch({
         thread: startedThread,
         projection: {
-          thread: { id: "thread", activeProviderThreadId: null, historyOrigin: "v1_import" },
+          thread: {
+            modelSelection,
+            id: "thread",
+            activeProviderThreadId: null,
+            historyOrigin: "v1_import",
+          },
           runs: [{ status: "preparing", providerThreadId: "provider-thread" }],
           providerThreads: [],
           providerSessions: [],
