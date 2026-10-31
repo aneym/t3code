@@ -1,4 +1,7 @@
-import type { DatabaseStorageStatus } from "@t3tools/contracts";
+import type {
+  DatabaseStorageStatus,
+  OrchestrationV2SubscribeThreadInput,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -32,6 +35,9 @@ export class DatabaseStorage extends Context.Service<
     readonly reclaim: Effect.Effect<void>;
     /** Current file accounting, re-published after each maintenance pass. Null until first read. */
     readonly status: Stream.Stream<DatabaseStorageStatus | null>;
+    readonly threadSubscription: (
+      input: OrchestrationV2SubscribeThreadInput,
+    ) => Effect.Effect<OrchestrationV2SubscribeThreadInput>;
   }
 >()("t3/persistence/DatabaseStorage") {}
 
@@ -45,6 +51,12 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const statusRef = yield* SubscriptionRef.make<DatabaseStorageStatus | null>(null);
+  const historyIdleBefore = Effect.gen(function* () {
+    if (Option.isNone(settings)) return Option.none<DateTime.Utc>();
+    const afterDays = (yield* settings.value.getSettings).storageCleanup.threadHistoryAfterDays;
+    if (afterDays === null) return Option.none<DateTime.Utc>();
+    return Option.some(DateTime.subtract(yield* DateTime.now, { days: afterDays }));
+  });
 
   // The notice shows host-shell quoting verbatim; desktop needs its launcher because t3 is absent from PATH.
   const { command: compactCommand } = yield* resolveHostCliCommand("doctor", [
@@ -120,14 +132,13 @@ const make = Effect.gen(function* () {
     if (result.deletedEventCount > 0 || result.deletedReceiptCount > 0) {
       yield* Effect.logInfo("Compacted orchestration history", result);
     }
-    if (Option.isNone(settings)) return;
-    const afterDays = (yield* settings.value.getSettings).storageCleanup.threadHistoryAfterDays;
-    if (afterDays === null) return;
+    const idleBefore = yield* historyIdleBefore;
+    if (Option.isNone(idleBefore)) return;
     const trimmed = yield* retention.trimIdleThreads({
-      idleBefore: DateTime.subtract(yield* DateTime.now, { days: afterDays }),
+      idleBefore: idleBefore.value,
       betweenPages,
     });
-    if (trimmed.events > 0 || trimmed.turnItems > 0) {
+    if (trimmed.events > 0 || trimmed.turnItems > 0 || trimmed.skipped > 0) {
       yield* Effect.logInfo("Trimmed idle thread history", trimmed);
     }
   }).pipe(
@@ -166,7 +177,35 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  return DatabaseStorage.of({ reclaim, status: SubscriptionRef.changes(statusRef) });
+  const threadSubscription = Effect.fn("DatabaseStorage.threadSubscription")(
+    function* (input: OrchestrationV2SubscribeThreadInput) {
+      yield* Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId });
+      if (input.afterSequence === undefined) return input;
+      const idleBefore = yield* historyIdleBefore;
+      if (Option.isNone(idleBefore)) return input;
+      const idle = yield* retention.isIdle({
+        threadId: input.threadId,
+        idleBefore: idleBefore.value,
+      });
+      if (!idle) return input;
+      const { afterSequence: _afterSequence, ...snapshot } = input;
+      return snapshot;
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not check thread history retention", { cause }).pipe(
+            Effect.as(input),
+          ),
+        ),
+      ),
+  );
+
+  return DatabaseStorage.of({
+    reclaim,
+    status: SubscriptionRef.changes(statusRef),
+    threadSubscription,
+  });
 });
 
 export const layer = Layer.effect(DatabaseStorage, make).pipe(

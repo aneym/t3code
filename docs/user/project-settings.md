@@ -213,8 +213,9 @@ working. Current logs, message attachments, and browser profiles are kept.
 **Shorten old tool output** keeps the first and last 2,048 characters of long command and tool
 output once a thread has been settled, archived or deleted for the chosen number of days, and notes
 how much was removed. Messages, workflow results and file changes are kept. The removed output
-cannot be restored, so keep a backup if you need it. It is off by default and runs with the
-six-hourly database maintenance.
+cannot be restored, so keep a backup if you need it. A window that already shows such a thread keeps
+its full output until it reconnects, then loads the shortened thread. It is off by default and runs
+with the six-hourly database maintenance.
 
 ## Project icons
 

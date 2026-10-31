@@ -97,13 +97,8 @@ describe("serverSettings helpers", () => {
         storageCleanup: { worktreeAfterDays: null },
       }).storageCleanup,
     ).toEqual({
-      worktreeAfterDays: null,
-      worktreeSettledAfterDays: null,
+      ...DEFAULT_SERVER_SETTINGS.storageCleanup,
       worktreeOnMerge: true,
-      worktreeOnDelete: false,
-      worktreeUnchanged: false,
-      worktreeKeepWhen: "uncommitted-changes",
-      browserArtifactsAfterDays: null,
       logsAfterDays: 30,
     });
   });

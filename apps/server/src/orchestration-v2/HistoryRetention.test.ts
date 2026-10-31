@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
@@ -13,10 +14,14 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as ServerConfig from "../config.ts";
+import * as DatabaseStorage from "../persistence/DatabaseStorage.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as HistoryRetention from "./HistoryRetention.ts";
@@ -34,6 +39,12 @@ const layerTest = Layer.mergeAll(
   EventSink.layer.pipe(Layer.provide(stores)),
   ProjectionMaintenance.layer.pipe(Layer.provide(stores)),
   HistoryRetention.layer.pipe(Layer.provide(database)),
+);
+const layerStorage = DatabaseStorage.layer.pipe(
+  Layer.provideMerge(layerTest),
+  Layer.provide(ServerSettings.layerTest({ storageCleanup: { threadHistoryAfterDays: 3 } })),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "history-retention-" })),
+  Layer.provide(NodeServices.layer),
 );
 
 const providerInstanceId = ProviderInstanceId.make("claude");
@@ -67,6 +78,7 @@ const makeThread = (
   deletedAt: null,
 });
 
+const boundaryText = "a".repeat(2047) + "😀" + "b".repeat(10_000) + "\u001b[31m" + "c".repeat(2045);
 const longText = (label: string) =>
   `${label}:head:` + "h".repeat(3000) + "m".repeat(20_000) + "t".repeat(3000) + `:${label}:tail`;
 
@@ -151,7 +163,21 @@ const threadEvents = (threadId: ThreadId, now: DateTime.Utc, archivedAt: DateTim
       payload: turnItem(threadId, now, "tool", 20, true, {
         type: "dynamic_tool",
         input: { threadId: "thread:other" },
-        output: { content: [{ type: "text", text: longText("tool") }] },
+        output: {
+          content: [
+            { type: "text", text: longText("tool") },
+            { type: "image", data: "i".repeat(20_000), mimeType: "image/png" },
+          ],
+          structuredContent: { rows: "s".repeat(9000) },
+        },
+      }),
+    }),
+    event("boundary", {
+      type: "turn-item.updated",
+      payload: turnItem(threadId, now, "boundary", 25, true, {
+        type: "command_execution",
+        input: "cat log",
+        output: boundaryText,
       }),
     }),
     event("short", {
@@ -237,7 +263,7 @@ it.effect(
 
       assert.deepEqual(yield* rawPayloads(activeThreadId), activeBefore);
       assert.deepEqual(yield* rawPayloads(recentThreadId), recentBefore);
-      assert.include(result, { threads: 1, events: 4, turnItems: 2 });
+      assert.include(result, { threads: 1, events: 5, turnItems: 3, skipped: 0 });
       assert.isAbove(result.bytesRemoved, 80_000);
 
       const idleAfter = yield* projections.getThreadProjection(idleThreadId);
@@ -250,9 +276,21 @@ it.effect(
       assert.isTrue((command as string).endsWith("ttt:command:tail"));
       assert.match(command as string, /T3 history retention v1 removed 21\d{3} characters/);
       assert.isBelow((command as string).length, 4500);
-      const tool = outputs.get("tool");
-      assert.isString(tool);
-      assert.isTrue((tool as string).startsWith('{"content":[{"type":"text","text":"tool:head:'));
+      const tool = outputs.get("tool") as {
+        readonly content: ReadonlyArray<{ readonly text?: string; readonly data?: string }>;
+        readonly structuredContent: { readonly rows: string };
+      };
+      assert.isTrue(tool.content[0]?.text?.startsWith("tool:head:hhh"));
+      assert.isTrue(tool.content[0]?.text?.endsWith("ttt:tool:tail"));
+      assert.isBelow(tool.content[0]?.text?.length ?? Infinity, 4500);
+      assert.equal(tool.content[1]?.data?.length, 20_000);
+      assert.equal(tool.structuredContent.rows.length, 9000);
+      assert.equal(
+        outputs.get("boundary"),
+        "a".repeat(2047) +
+          "\n\n[T3 history retention v1 removed 10007 characters]\n\n" +
+          "c".repeat(2045),
+      );
       assert.equal(outputs.get("short"), "README.md\n");
       assert.deepEqual(
         idleAfter.subagents.map((subagent) => subagent.workflow?.agents.length),
@@ -287,7 +325,138 @@ it.effect(
       const later = yield* retention.trimIdleThreads({
         idleBefore: DateTime.add(now, { days: 1 }),
       });
-      assert.include(later, { threads: 1, events: 4, turnItems: 2 });
+      assert.include(later, { threads: 1, events: 5, turnItems: 3 });
       assert.deepEqual(yield* rawPayloads(activeThreadId), activeBefore);
     }).pipe(Effect.provide(layerTest)),
+);
+
+const commandOutput = (threadId: ThreadId, key: string) =>
+  Effect.flatMap(
+    SqlClient.SqlClient,
+    (sql) => sql<{ readonly length: number }>`
+      SELECT length(json_extract(payload_json, '$.output')) AS length
+      FROM orchestration_events WHERE event_id = ${`event:${threadId}:${key}`}
+    `,
+  ).pipe(Effect.map((rows) => rows[0]?.length));
+
+it.effect("rechecks that a thread is still idle when it writes", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const retention = yield* HistoryRetention.HistoryRetention;
+    const now = yield* DateTime.now;
+    const archivedAt = DateTime.subtract(now, { days: 10 });
+    const first = ThreadId.make("thread:history-retention:a");
+    const reopened = ThreadId.make("thread:history-retention:b");
+    yield* sink.write({ events: threadEvents(first, now, archivedAt) });
+    yield* sink.write({ events: threadEvents(reopened, now, archivedAt) });
+    const before = yield* commandOutput(reopened, "command:1");
+    let started = false;
+    const result = yield* retention.trimIdleThreads({
+      idleBefore: DateTime.subtract(now, { days: 3 }),
+      betweenPages: Effect.suspend(() => {
+        if (started) return Effect.void;
+        started = true;
+        return sink
+          .write({
+            events: [
+              {
+                id: EventId.make(`event:${reopened}:started`),
+                threadId: reopened,
+                occurredAt: now,
+                type: "turn-item.updated",
+                payload: turnItem(reopened, now, "started", 40, false, {
+                  type: "command_execution",
+                  input: "vp run dev",
+                  output: "",
+                }),
+              },
+            ],
+          })
+          .pipe(Effect.orDie);
+      }),
+    });
+    assert.include(result, { threads: 1, events: 5, turnItems: 3 });
+    assert.equal(yield* commandOutput(reopened, "command:1"), before);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("pages raw events and skips a rewrite larger than one write batch", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const retention = yield* HistoryRetention.HistoryRetention;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:history-retention:large");
+    const [created] = threadEvents(threadId, now, DateTime.subtract(now, { days: 10 }));
+    const item = (key: string, ordinal: number, input: string, output: string) =>
+      ({
+        id: EventId.make(`event:${threadId}:${key}`),
+        threadId,
+        occurredAt: now,
+        type: "turn-item.updated",
+        payload: turnItem(threadId, now, key, ordinal, true, {
+          type: "command_execution",
+          input,
+          output,
+        }),
+      }) as OrchestrationV2DomainEvent;
+    yield* sink.write({
+      events: [
+        created!,
+        item("large", 1, "i".repeat(1_100_000), longText("large")),
+        ...Array.from({ length: 450 }, (_, index) => item(`short:${index}`, index + 2, "ls", "ok")),
+      ],
+    });
+    let pages = 0;
+    const result = yield* retention.trimIdleThreads({
+      idleBefore: DateTime.subtract(now, { days: 3 }),
+      betweenPages: Effect.sync(() => {
+        pages += 1;
+      }),
+    });
+    assert.include(result, { events: 0, turnItems: 0, skipped: 1 });
+    assert.isAtLeast(pages, 2);
+    assert.equal(yield* commandOutput(threadId, "large"), longText("large").length);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("rolls back event rewrites when the projection write fails", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const retention = yield* HistoryRetention.HistoryRetention;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:history-retention:crash");
+    yield* sink.write({
+      events: threadEvents(threadId, now, DateTime.subtract(now, { days: 10 })),
+    });
+    const before = yield* rawPayloads(threadId);
+    yield* sql`
+      CREATE TRIGGER history_retention_crash BEFORE UPDATE ON orchestration_v2_projection_turn_items
+      BEGIN SELECT RAISE(ABORT, 'crash'); END
+    `;
+    const exit = yield* Effect.exit(
+      retention.trimIdleThreads({ idleBefore: DateTime.subtract(now, { days: 3 }) }),
+    );
+    assert.isTrue(Exit.isFailure(exit));
+    assert.deepEqual(yield* rawPayloads(threadId), before);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("resumes an idle thread from a snapshot so trimmed output reaches synced clients", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const storage = yield* DatabaseStorage.DatabaseStorage;
+    const now = yield* DateTime.now;
+    const idle = ThreadId.make("thread:history-retention:resume-idle");
+    const active = ThreadId.make("thread:history-retention:resume-active");
+    yield* sink.write({ events: threadEvents(idle, now, DateTime.subtract(now, { days: 10 })) });
+    yield* sink.write({ events: threadEvents(active, now, null) });
+    assert.deepEqual(yield* storage.threadSubscription({ threadId: idle, afterSequence: 3 }), {
+      threadId: idle,
+    });
+    assert.deepEqual(yield* storage.threadSubscription({ threadId: active, afterSequence: 3 }), {
+      threadId: active,
+      afterSequence: 3,
+    });
+  }).pipe(Effect.provide(layerStorage)),
 );

@@ -2126,8 +2126,9 @@ export const layerWsRpc = (
           Stream.unwrap(subscribeOrchestrationV2Shell(input)),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
           Stream.unwrap(
-            Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
-              Effect.andThen(subscribeOrchestrationV2Thread(input)),
+            Effect.flatMap(
+              databaseStorage.threadSubscription(input),
+              subscribeOrchestrationV2Thread,
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (input) =>

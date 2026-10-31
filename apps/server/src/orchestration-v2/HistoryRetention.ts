@@ -8,22 +8,29 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 const HISTORY_RETENTION_VERSION = 1;
 const TRIM_ABOVE_CHARACTERS = 8192;
-const KEEP_HEAD_CHARACTERS = 2048;
-const KEEP_TAIL_CHARACTERS = 2048;
+const KEEP_CHARACTERS = 2048;
+const BOUNDARY_WINDOW = 1024;
 const THREAD_PAGE_SIZE = 50;
-const ROW_PAGE_SIZE = 20;
+const EVENT_PAGE_SIZE = 200;
 const WRITE_BATCH_BYTES = 1024 * 1024;
+const FREED_PAGES_PER_MAP_PAGE = 400;
 
 export interface HistoryRetentionResult {
   readonly threads: number;
   readonly events: number;
   readonly turnItems: number;
+  readonly skipped: number;
   readonly bytesRemoved: number;
 }
 
 export class HistoryRetentionError extends Schema.TaggedError<HistoryRetentionError>()(
   "HistoryRetentionError",
   { cause: Schema.optional(Schema.Defect()) },
+) {}
+
+class ThreadNoLongerIdle extends Schema.TaggedError<ThreadNoLongerIdle>()(
+  "ThreadNoLongerIdle",
+  {},
 ) {}
 
 export class HistoryRetention extends Context.Service<
@@ -33,24 +40,75 @@ export class HistoryRetention extends Context.Service<
       readonly idleBefore: DateTime.Utc;
       readonly betweenPages?: Effect.Effect<void>;
     }) => Effect.Effect<HistoryRetentionResult, HistoryRetentionError>;
+    readonly isIdle: (input: {
+      readonly threadId: string;
+      readonly idleBefore: DateTime.Utc;
+    }) => Effect.Effect<boolean, HistoryRetentionError>;
   }
 >()("t3/orchestration-v2/HistoryRetention") {}
 
 const TRIMMED_ITEM_TYPES = new Set(["command_execution", "dynamic_tool"]);
 
-const trimOutput = (output: unknown): string | undefined => {
-  if (output === undefined || output === null) return undefined;
-  const text = typeof output === "string" ? output : JSON.stringify(output);
-  if (text.length <= TRIM_ABOVE_CHARACTERS) return undefined;
-  const removed = text.length - KEEP_HEAD_CHARACTERS - KEEP_TAIL_CHARACTERS;
-  return `${text.slice(0, KEEP_HEAD_CHARACTERS)}\n\n[T3 history retention v${HISTORY_RETENTION_VERSION} removed ${removed} characters]\n\n${text.slice(-KEEP_TAIL_CHARACTERS)}`;
+const ANSI_SEQUENCE =
+  /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[@-Z\\-_])/g;
+
+const sequenceAround = (text: string, at: number) => {
+  const from = Math.max(0, at - BOUNDARY_WINDOW);
+  for (const match of text.slice(from, at + BOUNDARY_WINDOW).matchAll(ANSI_SEQUENCE)) {
+    const start = from + match.index;
+    if (start >= at) return undefined;
+    if (start + match[0].length > at) return { start, end: start + match[0].length };
+  }
+  return undefined;
 };
 
-const trimItemPayload = (payloadJson: string): string | undefined => {
+const headEnd = (text: string, at: number) => {
+  const cut = sequenceAround(text, at)?.start ?? at;
+  const code = text.charCodeAt(cut - 1);
+  return code >= 0xd800 && code <= 0xdbff ? cut - 1 : cut;
+};
+
+const tailStart = (text: string, at: number) => {
+  const cut = sequenceAround(text, at)?.end ?? at;
+  const code = text.charCodeAt(cut);
+  return code >= 0xdc00 && code <= 0xdfff ? cut + 1 : cut;
+};
+
+const trimText = (text: string) => {
+  if (text.length <= TRIM_ABOVE_CHARACTERS) return text;
+  const head = headEnd(text, KEEP_CHARACTERS);
+  const tail = tailStart(text, text.length - KEEP_CHARACTERS);
+  return `${text.slice(0, head)}\n\n[T3 history retention v${HISTORY_RETENTION_VERSION} removed ${tail - head} characters]\n\n${text.slice(tail)}`;
+};
+
+const trimTextBlocks = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    const items = value.map(trimTextBlocks);
+    return items.some((item, index) => item !== value[index]) ? items : value;
+  }
+  if (value === null || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  if (record.type === "text" && typeof record.text === "string") {
+    const text = trimText(record.text);
+    return text === record.text ? value : { ...record, text };
+  }
+  const entries = Object.entries(record).map(
+    ([key, child]) => [key, trimTextBlocks(child)] as const,
+  );
+  return entries.some(([key, child]) => child !== record[key])
+    ? Object.fromEntries(entries)
+    : value;
+};
+
+const trimOutput = (output: unknown) =>
+  typeof output === "string" ? trimText(output) : trimTextBlocks(output);
+
+const trimItemPayload = (payloadJson: string) => {
   const payload = JSON.parse(payloadJson) as Record<string, unknown>;
   if (typeof payload.type !== "string" || !TRIMMED_ITEM_TYPES.has(payload.type)) return undefined;
   const output = trimOutput(payload.output);
-  return output === undefined ? undefined : JSON.stringify({ ...payload, output });
+  if (output === payload.output) return undefined;
+  return { itemId: String(payload.id), payload: JSON.stringify({ ...payload, output }) };
 };
 
 const withoutWorkflow = (payloadJson: string) => {
@@ -59,31 +117,67 @@ const withoutWorkflow = (payloadJson: string) => {
   return { subagentId: String(rest.id), payload: JSON.stringify(rest) };
 };
 
-type Rewrite = { readonly key: string | number; readonly guard?: string; readonly payload: string };
+interface Rewrite {
+  readonly key: number | string;
+  readonly guard?: string;
+  readonly payload: string;
+  readonly removed: number;
+}
+
+interface Batch {
+  events: Rewrite[];
+  turnItems: Rewrite[];
+  cost: number;
+}
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  const write = (table: "events" | "turnItems", rewrites: ReadonlyArray<Rewrite>) =>
-    rewrites.length === 0
-      ? Effect.void
-      : sql.withTransaction(
-          Effect.forEach(
-            rewrites,
-            (rewrite) =>
-              table === "events"
-                ? sql`
-                    UPDATE orchestration_events SET payload_json = ${rewrite.payload}
-                    WHERE sequence = ${rewrite.key}
-                  `
-                : sql`
-                    UPDATE orchestration_v2_projection_turn_items
-                    SET payload_json = ${rewrite.payload}
-                    WHERE turn_item_id = ${rewrite.key} AND updated_at = ${rewrite.guard ?? ""}
-                  `,
-            { discard: true },
-          ),
-        );
+  const idleThread = (cutoff: string) => sql`
+    COALESCE(
+      thread.deleted_at,
+      thread.archived_at,
+      json_extract(thread.payload_json, '$.settledAt')
+    ) < ${cutoff}
+    AND NOT EXISTS (
+      SELECT 1 FROM orchestration_v2_projection_turn_items AS item
+      WHERE item.thread_id = thread.thread_id
+        AND item.status IN ('pending', 'running', 'waiting')
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM orchestration_v2_projection_runs AS run
+      WHERE run.thread_id = thread.thread_id
+        AND (
+          run.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+          OR COALESCE(run.completed_at, run.requested_at) >= ${cutoff}
+        )
+    )
+  `;
+
+  const commit = (threadId: string, cutoff: string, batch: Batch) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        const idle = yield* sql`
+          SELECT 1 FROM orchestration_v2_projection_threads AS thread
+          WHERE thread.thread_id = ${threadId} AND ${idleThread(cutoff)}
+        `;
+        if (idle.length === 0) return yield* new ThreadNoLongerIdle();
+        for (const rewrite of batch.events) {
+          yield* sql`
+            UPDATE orchestration_events SET payload_json = ${rewrite.payload}
+            WHERE sequence = ${rewrite.key}
+          `;
+        }
+        for (const rewrite of batch.turnItems) {
+          const updated = yield* sql`
+            UPDATE orchestration_v2_projection_turn_items SET payload_json = ${rewrite.payload}
+            WHERE turn_item_id = ${rewrite.key} AND updated_at = ${rewrite.guard ?? ""}
+            RETURNING turn_item_id
+          `;
+          if (updated.length === 0) return yield* new ThreadNoLongerIdle();
+        }
+      }),
+    );
 
   const trimIdleThreads = Effect.fn("HistoryRetention.trimIdleThreads")(
     function* (input: {
@@ -92,137 +186,175 @@ const make = Effect.gen(function* () {
     }) {
       const betweenPages = input.betweenPages ?? Effect.void;
       const cutoff = DateTime.formatIso(input.idleBefore);
-      const totals = { threads: 0, events: 0, turnItems: 0, bytesRemoved: 0 };
-      const pending: { events: Rewrite[]; turnItems: Rewrite[]; bytes: number } = {
-        events: [],
-        turnItems: [],
-        bytes: 0,
-      };
-      const flush = Effect.gen(function* () {
-        yield* write("events", pending.events);
-        yield* write("turnItems", pending.turnItems);
-        pending.events = [];
-        pending.turnItems = [];
-        pending.bytes = 0;
-        yield* Effect.yieldNow;
-        yield* betweenPages;
-      });
-      const queue = (table: "events" | "turnItems", before: string, rewrite: Rewrite) => {
-        pending[table].push(rewrite);
-        pending.bytes += rewrite.payload.length;
-        totals[table] += 1;
-        totals.bytesRemoved += Buffer.byteLength(before) - Buffer.byteLength(rewrite.payload);
-        return pending.bytes >= WRITE_BATCH_BYTES ? flush : Effect.void;
-      };
+      const totals = { threads: 0, events: 0, turnItems: 0, skipped: 0, bytesRemoved: 0 };
+      const [pageSizeRow] = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;
+      const pageSize = pageSizeRow?.page_size ?? 4096;
+      const writeCost = (before: number, after: string) =>
+        Buffer.byteLength(after) +
+        pageSize * (2 + Math.ceil(before / pageSize / FREED_PAGES_PER_MAP_PAGE));
 
       const trimThread = Effect.fn("HistoryRetention.trimThread")(function* (threadId: string) {
-        const before = totals.events + totals.turnItems;
         const workflowKept = new Set<string>();
-        let throughSequence = Number.MAX_SAFE_INTEGER;
+        const pairedItems = new Set<string>();
+        let batch: Batch = { events: [], turnItems: [], cost: 0 };
+        let committed = false;
+        const flush = Effect.gen(function* () {
+          if (batch.events.length === 0) return true;
+          const done = batch;
+          batch = { events: [], turnItems: [], cost: 0 };
+          const idle = yield* commit(threadId, cutoff, done).pipe(
+            Effect.as(true),
+            Effect.catchTags({ ThreadNoLongerIdle: () => Effect.succeed(false) }),
+          );
+          if (idle) {
+            committed = true;
+            totals.events += done.events.length;
+            totals.turnItems += done.turnItems.length;
+            for (const rewrite of [...done.events, ...done.turnItems]) {
+              totals.bytesRemoved += rewrite.removed;
+            }
+          }
+          yield* Effect.yieldNow;
+          yield* betweenPages;
+          return idle;
+        });
+        const queue = Effect.fn("HistoryRetention.queue")(function* (
+          events: Rewrite[],
+          turnItems: Rewrite[],
+          cost: number,
+        ) {
+          if (cost > WRITE_BATCH_BYTES) {
+            totals.skipped += 1;
+            return true;
+          }
+          if (batch.cost + cost > WRITE_BATCH_BYTES && !(yield* flush)) return false;
+          batch.events.push(...events);
+          batch.turnItems.push(...turnItems);
+          batch.cost += cost;
+          return true;
+        });
+        const readEvent = (sequence: number) =>
+          sql<{ readonly payload_json: string }>`
+            SELECT payload_json FROM orchestration_events WHERE sequence = ${sequence}
+          `.pipe(
+            NodeSqliteClient.readOnly,
+            Effect.map((rows) => rows[0]?.payload_json),
+          );
+        const readTurnItem = (itemId: string) =>
+          sql<{ readonly updated_at: string; readonly payload_json: string }>`
+            SELECT updated_at, payload_json FROM orchestration_v2_projection_turn_items
+            WHERE turn_item_id = ${itemId} AND thread_id = ${threadId}
+          `.pipe(
+            NodeSqliteClient.readOnly,
+            Effect.map((rows) => rows[0]),
+          );
+
+        let beforeSequence = Number.MAX_SAFE_INTEGER;
         while (true) {
-          const rows = yield* sql<{
+          const page = yield* sql<{
             readonly sequence: number;
             readonly event_type: string;
-            readonly payload_json: string;
+            readonly bytes: number;
           }>`
-          SELECT sequence, event_type, payload_json
-          FROM orchestration_events
-          WHERE stream_id = ${threadId}
-            AND application_event_version = 2
-            AND aggregate_kind = 'thread'
-            AND sequence < ${throughSequence}
-            AND event_type IN ('turn-item.updated', 'subagent.updated')
-            AND octet_length(payload_json) > ${TRIM_ABOVE_CHARACTERS}
-          ORDER BY sequence DESC
-          LIMIT ${ROW_PAGE_SIZE}
-        `.pipe(NodeSqliteClient.readOnly);
-          for (const row of rows) {
-            if (row.event_type === "turn-item.updated") {
-              const payload = trimItemPayload(row.payload_json);
-              if (payload !== undefined) {
-                yield* queue("events", row.payload_json, { key: row.sequence, payload });
+            SELECT sequence, event_type, octet_length(payload_json) AS bytes
+            FROM orchestration_events
+            INDEXED BY idx_orchestration_events_agent_stream_sequence
+            WHERE stream_id = ${threadId}
+              AND application_event_version = 2
+              AND aggregate_kind = 'thread'
+              AND sequence < ${beforeSequence}
+            ORDER BY sequence DESC
+            LIMIT ${EVENT_PAGE_SIZE}
+          `.pipe(NodeSqliteClient.readOnly);
+          for (const row of page) {
+            if (row.bytes <= TRIM_ABOVE_CHARACTERS) continue;
+            if (row.event_type !== "turn-item.updated" && row.event_type !== "subagent.updated") {
+              continue;
+            }
+            const payloadJson = yield* readEvent(row.sequence);
+            if (payloadJson === undefined) continue;
+            if (row.event_type === "subagent.updated") {
+              const stripped = withoutWorkflow(payloadJson);
+              if (stripped === undefined) continue;
+              if (!workflowKept.has(stripped.subagentId)) {
+                workflowKept.add(stripped.subagentId);
+                continue;
               }
+              const event = {
+                key: row.sequence,
+                payload: stripped.payload,
+                removed: row.bytes - Buffer.byteLength(stripped.payload),
+              };
+              if (!(yield* queue([event], [], writeCost(row.bytes, event.payload)))) return;
               continue;
             }
-            const stripped = withoutWorkflow(row.payload_json);
-            if (stripped === undefined) continue;
-            if (!workflowKept.has(stripped.subagentId)) {
-              workflowKept.add(stripped.subagentId);
-              continue;
-            }
-            yield* queue("events", row.payload_json, {
+            const trimmed = trimItemPayload(payloadJson);
+            if (trimmed === undefined) continue;
+            const event = {
               key: row.sequence,
-              payload: stripped.payload,
-            });
-          }
-          if (rows.length < ROW_PAGE_SIZE) break;
-          throughSequence = rows.at(-1)!.sequence;
-          yield* betweenPages;
-        }
-
-        let afterTurnItemId = "";
-        while (true) {
-          const rows = yield* sql<{
-            readonly turn_item_id: string;
-            readonly updated_at: string;
-            readonly payload_json: string;
-          }>`
-          SELECT turn_item_id, updated_at, payload_json
-          FROM orchestration_v2_projection_turn_items
-          WHERE thread_id = ${threadId}
-            AND turn_item_id > ${afterTurnItemId}
-            AND type IN ('command_execution', 'dynamic_tool')
-            AND octet_length(payload_json) > ${TRIM_ABOVE_CHARACTERS}
-          ORDER BY turn_item_id ASC
-          LIMIT ${ROW_PAGE_SIZE}
-        `.pipe(NodeSqliteClient.readOnly);
-          for (const row of rows) {
-            const payload = trimItemPayload(row.payload_json);
-            if (payload !== undefined) {
-              yield* queue("turnItems", row.payload_json, {
-                key: row.turn_item_id,
-                guard: row.updated_at,
-                payload,
-              });
+              payload: trimmed.payload,
+              removed: row.bytes - Buffer.byteLength(trimmed.payload),
+            };
+            const turnItems: Rewrite[] = [];
+            let cost = writeCost(row.bytes, event.payload);
+            if (!pairedItems.has(trimmed.itemId)) {
+              pairedItems.add(trimmed.itemId);
+              const projected = yield* readTurnItem(trimmed.itemId);
+              const projectedTrim =
+                projected === undefined ? undefined : trimItemPayload(projected.payload_json);
+              if (projected !== undefined && projectedTrim !== undefined) {
+                const before = Buffer.byteLength(projected.payload_json);
+                turnItems.push({
+                  key: trimmed.itemId,
+                  guard: projected.updated_at,
+                  payload: projectedTrim.payload,
+                  removed: before - Buffer.byteLength(projectedTrim.payload),
+                });
+                cost += writeCost(before, projectedTrim.payload);
+              }
             }
+            if (!(yield* queue([event], turnItems, cost))) return;
           }
-          if (rows.length < ROW_PAGE_SIZE) break;
-          afterTurnItemId = rows.at(-1)!.turn_item_id;
+          if (page.length < EVENT_PAGE_SIZE) break;
+          beforeSequence = page.at(-1)!.sequence;
           yield* betweenPages;
         }
-        if (totals.events + totals.turnItems > before) totals.threads += 1;
+        yield* flush;
+        if (committed) totals.threads += 1;
       });
 
       let afterThreadId = "";
       while (true) {
         const threads = yield* sql<{ readonly thread_id: string }>`
-        SELECT thread.thread_id
-        FROM orchestration_v2_projection_threads AS thread
-        WHERE thread.thread_id > ${afterThreadId}
-          AND COALESCE(
-            thread.deleted_at,
-            thread.archived_at,
-            json_extract(thread.payload_json, '$.settledAt')
-          ) < ${cutoff}
-          AND NOT EXISTS (
-            SELECT 1 FROM orchestration_v2_projection_turn_items AS item
-            WHERE item.thread_id = thread.thread_id
-              AND item.status IN ('pending', 'running', 'waiting')
-          )
-        ORDER BY thread.thread_id ASC
-        LIMIT ${THREAD_PAGE_SIZE}
-      `.pipe(NodeSqliteClient.readOnly);
+          SELECT thread.thread_id
+          FROM orchestration_v2_projection_threads AS thread
+          WHERE thread.thread_id > ${afterThreadId} AND ${idleThread(cutoff)}
+          ORDER BY thread.thread_id ASC
+          LIMIT ${THREAD_PAGE_SIZE}
+        `.pipe(NodeSqliteClient.readOnly);
         for (const thread of threads) yield* trimThread(thread.thread_id);
         if (threads.length < THREAD_PAGE_SIZE) break;
         afterThreadId = threads.at(-1)!.thread_id;
       }
-      yield* flush;
       return totals satisfies HistoryRetentionResult;
     },
     Effect.mapError((cause) => new HistoryRetentionError({ cause })),
   );
 
-  return HistoryRetention.of({ trimIdleThreads });
+  const isIdle = Effect.fn("HistoryRetention.isIdle")(
+    function* (input: { readonly threadId: string; readonly idleBefore: DateTime.Utc }) {
+      const rows = yield* sql`
+        SELECT 1 FROM orchestration_v2_projection_threads AS thread
+        WHERE thread.thread_id = ${input.threadId}
+          AND thread.deleted_at IS NULL
+          AND ${idleThread(DateTime.formatIso(input.idleBefore))}
+      `.pipe(NodeSqliteClient.readOnly);
+      return rows.length > 0;
+    },
+    Effect.mapError((cause) => new HistoryRetentionError({ cause })),
+  );
+
+  return HistoryRetention.of({ trimIdleThreads, isIdle });
 });
 
 export const layer = Layer.effect(HistoryRetention, make);
