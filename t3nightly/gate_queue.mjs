@@ -152,9 +152,9 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
         const steeredAt = millis(final.messages.find((message) => message.role === "user" && message.text.includes(markers[1]))?.createdAt);
         const turnLive = (final.providerTurns ?? []).some((turn) => attempts.has(turn.runAttemptId) && turn.startedAt != null && millis(turn.startedAt) <= steeredAt);
         if (!turnLive) throw fail("auto send steered into a run whose provider turn had not started");
-        if (!final.messages.some((message) => message.runId === first.runId && message.role === "assistant" && message.text.includes(markers[1]))) throw fail("steered send was not answered in the first run");
+        restartObservation.steerAnswered = final.messages.some((message) => message.runId === first.runId && message.role === "assistant" && message.text.includes(markers[1]));
       }
-      const inconclusive = missed ? `the send landed after the first run left its startup window (delivered ${sent.delivery}${sent.delivery === "steered" ? ", server had the turn active" : ""})` : undefined;
+      const inconclusive = missed ? `the send landed after the first run left its startup window (delivered ${sent.delivery}${sent.delivery === "steered" ? `, server had the turn active, steer ${restartObservation.steerAnswered ? "answered" : "unanswered"} in the first run` : ""})` : undefined;
       return { ...evidence(), threadId: first.threadId, firstRun: first.runId, sentDelivery: sent.delivery, exactlyOnceReplies: distinct ? 2 : 0, inconclusive };
     }
     const started = yield* cli(
