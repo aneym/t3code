@@ -6,12 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { SidebarAgents } from "./SidebarAgents";
-import {
-  agentScopeProjectKeys,
-  useAgentFocusHandle,
-  useSidebarAgentThreads,
-  withoutAgentHomes,
-} from "./agentFocus";
+import { agentScopeProjectKeys, useAgentFocusHandle, useSidebarAgentThreads } from "./agentFocus";
 import { useAgentMainThreadMenu } from "./agentMainThreadMenu";
 import {
   openSidebarJumpAgent,
@@ -48,7 +43,6 @@ export function useSidebarAgentsLayer({
       folderGroups: enabled ? (groups.length === 0 || focused ? projectGroups : groups) : null,
       keepEmptyFolders: groups.length > 0 && !focused,
     }),
-    projectGroups: withoutAgentHomes(projectGroups),
     jumpKeys: (keys: ReadonlyArray<string>) => sidebarJumpKeys(lists.jumpable, keys),
     jumpLabels: (keys: ReadonlyArray<string>) => sidebarJumpLabels(keys, keybindings),
     openJump: (

@@ -2838,7 +2838,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               hasProjects={projectGroups.length > 0}
               projectScope={
                 <SidebarProjectScopePicker
-                  groups={agentsLayer.projectGroups}
+                  groups={projectGroups}
                   scopeKeys={projectScopeKeys}
                   allSelected={projectScopeKeys.length === 0 && !agentsLayer.focused}
                   scopedProjects={scopedProjectGroups}

@@ -8,7 +8,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { LayoutGridIcon, MoreHorizontalIcon } from "lucide-react";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
-import { ProjectFavicon } from "../ProjectFavicon";
+import { AgentProjectIcon, type AgentProjectSnapshot } from "../agents/agentProjectPresentation";
 import { SidebarPointerSensor } from "../Sidebar.pointer";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -24,7 +24,7 @@ const keyboardSensorOptions = {
 };
 
 type PinnedProjectControls = {
-  projects: readonly SidebarProjectSnapshot[];
+  projects: readonly AgentProjectSnapshot[];
   scopeKeys: readonly string[];
   allSelected: boolean;
   setScopeKey: (key: string | null) => void;
@@ -38,7 +38,7 @@ function PinnedProjectChip({
   onSelect,
   disabled,
 }: {
-  project: SidebarProjectSnapshot;
+  project: AgentProjectSnapshot;
   selected: boolean;
   onSelect: () => void;
   disabled: boolean;
@@ -68,7 +68,7 @@ function PinnedProjectChip({
             />
           }
         >
-          <ProjectFavicon project={project} className="size-3.5" />
+          <AgentProjectIcon project={project} className="size-3.5" />
         </TooltipTrigger>
         <TooltipPopup>{project.displayName}</TooltipPopup>
       </Tooltip>
