@@ -63,8 +63,8 @@ def remote_directory(host, path, deadline):
 
 def seed(host, root, replica, deadline):
     path = shlex.quote(str(replica))
-    script = (f"set -e; if test -e {path}; then echo existing; exit 0; fi; newest=$(ls -1t {shlex.quote(str(root))}/*/rollback/statev2.sqlite 2>/dev/null | head -1); "
-              f"[ -n \"$newest\" ] || exit 0; [ -L \"$newest\" ] && exit 0; cp -c \"$newest\" {path}.seed && chmod 600 {path}.seed "
+    script = (f"set -e; if test -e {path}; then echo existing; exit 0; fi; marker=$(ls -1t {shlex.quote(str(root))}/*/rollback/verified.json 2>/dev/null | head -1); "
+              f"[ -n \"$marker\" ] || exit 0; newest=\"${{marker%verified.json}}statev2.sqlite\"; [ -f \"$newest\" ] && [ ! -L \"$newest\" ] || exit 0; cp -c \"$newest\" {path}.seed && chmod 600 {path}.seed "
               f"&& mv {path}.seed {path} && echo \"$newest\"")
     return remote(host, script, deadline).strip() or None
 
@@ -232,17 +232,21 @@ def stopped_work(run, host, replica, seeded, size):
     deadline = time.monotonic() + run.args.offbox_seed_s
     base = PurePosixPath(seeded["clonedFrom"]).parent if seeded["clonedFrom"] else replica.parent if seeded["existing"] else None
     marker = fresh(host, base, deadline) if base else None
+    proof = None
     if marker:
         run.step("offbox-replica-check-skipped", replica=f"{host}:{base}", verifiedAt=marker.get("verifiedAt"), freshHours=FRESH_H, role="disaster-only secondary")
+        proof = {"how": "fresh-marker", "replica": str(base), "verifiedAt": marker.get("verifiedAt"), "quickCheck": "ok"}
     elif base:
         check = remote_check(host, replica, deadline)
         if check != "ok":
             raise ValueError(f"seeded off-box replica quick_check {check}; nothing stopped")
+        proof = {"how": "remote-check", "replica": str(replica), "quickCheck": "ok"}
     estimate = restore_copy.estimate(size)
     budget = run.args.offbox_stop_s
     run.step("hard-backup-estimate", stoppedWork=["local-restore-copy", "quick_check", "identity"], localRestoreCopy=estimate, estimateSeconds=estimate["totalSeconds"], budgetSeconds=budget)
     if estimate["totalSeconds"] > budget:
         raise ValueError(f"stopped local copy and quick_check estimated at {estimate['totalSeconds']:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
+    return proof
 
 
 def catch_up(run, host, replica, source, size, deadline):
@@ -280,7 +284,7 @@ def capture(run, previous, stop, rollback_gate, keep_local=False):
     host, root, replica, source, size = placement(run, local)
     if keep_local:
         seeded, _ = preseed(run, host, root, replica, source, size, started, ship_now=False)
-        stopped_work(run, host, replica, seeded, size)
+        seeded = {**seeded, "verified": stopped_work(run, host, replica, seeded, size)}
         restore_copy.precheck(run, source)
     else:
         seeded, deadline = preseed(run, host, root, replica, source, size, started)
@@ -318,5 +322,11 @@ def prune(run, host, root, current):
             path = shlex.quote(str(root / name))
             remote(host, f"set -e; [ ! -L {path} ]; rm -rf -- {path}", time.monotonic() + 120)
             record_payload(run.state, "discard-offbox-rollback-backup", f"{host}:{root / name}", bytes=0)
+        quoted = shlex.quote(str(root))
+        stale = remote(host, f"cd {quoted} && for d in */; do d=${{d%/}}; [ -L \"$d\" ] && continue; [ -e \"$d/rollback/verified.json\" ] && continue; "
+                             f"[ -z \"$(find \"$d\" -mmin -{FRESH_H * 60} -print -quit)\" ] && echo \"$d\"; done; true", time.monotonic() + 60)
+        for name in [name for name in stale.splitlines() if NAME.fullmatch(name) and name != current]:
+            remote(host, f"set -e; [ ! -L {shlex.quote(str(root / name))} ]; rm -rf -- {shlex.quote(str(root / name))}", time.monotonic() + 120)
+            record_payload(run.state, "discard-unverified-offbox-replica", f"{host}:{root / name}", bytes=0)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         run.step("offbox-prune-failed", error=str(error))

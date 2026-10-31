@@ -5,19 +5,20 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import uuid
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 from .db_publish import LOCAL_MARGIN, fsync, local_check, publish, wal_bytes
 from .install_offbox_stage import staging
-from .install_restore_hold import create, forget, remove
+from .install_restore_hold import COPY_LOCK, create, flocked, forget, remove
 from .install_storage import record_payload
 
 STEP_PAGES = 4096
 CHECK_MIB_S = 40
-COPY_MIB_S = 200
+COPY_MIB_S = 360
 
 
 def identity(path, *, copy=False):
@@ -49,6 +50,29 @@ def estimate(size):
     return {"copySeconds": round(copy, 3), "checkSeconds": round(check, 3), "totalSeconds": round(copy + check + 30, 3), "copyMiBs": COPY_MIB_S, "checkMiBs": CHECK_MIB_S}
 
 
+def ionice(*words):
+    if not shutil.which("ionice"):
+        return None
+    try:
+        result = subprocess.run(["ionice", *words, "-p", str(threading.get_native_id())], capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+@contextmanager
+def foreground_io(note):
+    before = ionice()
+    raised = bool(before and before.startswith("idle")) and ionice("-c2", "-n4") is not None
+    if before is not None:
+        note("restore-copy-io-priority", before=before, during="best-effort: prio 4" if raised else before)
+    try:
+        yield
+    finally:
+        if raised:
+            ionice("-c3")
+
+
 def verify(path, expected, deadline=None):
     if not Path(path).is_file():
         raise ValueError(f"restore copy {path} is missing")
@@ -75,25 +99,31 @@ def take(run, source, previous, window):
     expected = identity(source)
     target = directory / f"restore-{run.args.version}-{uuid.uuid4().hex[:8]}.sqlite"
     part = Path(f"{target}.part")
-    create(run, target)
 
     def progress(*_):
         if time.monotonic() > deadline:
             raise TimeoutError("restore copy passed its --offbox-copy-s or --offbox-stop-s deadline")
-    try:
-        with closing(sqlite3.connect(source, timeout=30)) as reader, closing(sqlite3.connect(part)) as writer:
-            reader.backup(writer, pages=STEP_PAGES, progress=progress)
-        os.chmod(part, 0o600)
-        fsync(part)
-        os.replace(part, target)
-        fsync(directory)
-        check = verify(target, expected, window)
-    except BaseException:
-        remove(part)
-        remove(target)
-        forget(target)
-        raise
-    record = {"path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous, "seconds": round(time.monotonic() - started, 3)}
+    with flocked(directory / COPY_LOCK) as free:
+        if not free:
+            raise ValueError("another restore copy is in progress in the offbox stage")
+        create(run, target)
+        try:
+            with foreground_io(run.step):
+                with closing(sqlite3.connect(source, timeout=30)) as reader, closing(sqlite3.connect(part)) as writer:
+                    reader.backup(writer, pages=STEP_PAGES, progress=progress)
+                os.chmod(part, 0o600)
+                fsync(part)
+                os.replace(part, target)
+                fsync(directory)
+                copied = time.monotonic()
+                check = verify(target, expected, window)
+        except BaseException:
+            remove(part)
+            remove(target)
+            forget(target)
+            raise
+    record = {"path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous, "seconds": round(time.monotonic() - started, 3),
+              "copySeconds": round(copied - started, 3), "checkSeconds": round(time.monotonic() - copied, 3)}
     record_payload(run.state, "restore-copy", target, bytes=record["bytes"])
     run.step("restore-copy", **record)
     return record
@@ -142,11 +172,12 @@ def restore(record, db, note):
     if observed != record["identity"]:
         raise ValueError(f"restore copy {copy} is missing or differs from the copy taken at install")
     mode = db.stat().st_mode & 0o777 if db.exists() else 0o600
-    try:
-        check, into = beside(copy, db, mode), "beside"
-    except (OSError, ValueError, sqlite3.Error) as error:
-        note("hard-restore-local-beside-failed", copy=str(copy), error=str(error), next="delete the failed database and WAL, then copy in place")
-        check, into = in_place(copy, db, mode), "in-place"
+    with foreground_io(note):
+        try:
+            check, into = beside(copy, db, mode), "beside"
+        except (OSError, ValueError, sqlite3.Error) as error:
+            note("hard-restore-local-beside-failed", copy=str(copy), error=str(error), next="delete the failed database and WAL, then copy in place")
+            check, into = in_place(copy, db, mode), "in-place"
     metadata = {"source": "local-restore-copy", "copy": str(copy), "into": into, "quickCheck": check, "seconds": round(time.monotonic() - started, 3)}
     note("hard-restore-db", **metadata)
     return metadata

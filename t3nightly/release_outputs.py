@@ -157,7 +157,10 @@ def condition_met(condition, compatibility, rehearsal, install):
     if condition == "baseline-seed-rehearsal":
         return rehearsal["result"] == "PASS" and rehearsal["oldMigrationHistory"] == compatibility["baseMigrations"]["history"]
     if condition == "offbox":
-        return install["backup"].get("method") == OFFBOX_METHOD and bool(install["backup"].get("remote"))
+        backup = install["backup"]
+        seeded = backup.get("seed") or {}
+        deferred = backup.get("replica") != "deferred" or (bool(seeded.get("clonedFrom") or seeded.get("existing")) and (seeded.get("verified") or {}).get("quickCheck") == "ok")
+        return backup.get("method") == OFFBOX_METHOD and bool(backup.get("remote")) and deferred
     if condition == "local-restore-copy":
         return copy.get("quickCheck") == "ok" and bool(copy.get("identity")) and bool(copy.get("path")) and (copy.get("path"), copy.get("identity")) == (local.get("path"), local.get("identity"))
     return False
