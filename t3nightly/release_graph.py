@@ -74,7 +74,7 @@ FAST_GRAPH = (
     FastNode("EM", "e2e-studio", "studio", ("M",), 300, ("e2e:studio",)),
     FastNode("EL", "e2e-ax42", "ax42", ("L",), 360, ("e2e:ax42",)),
     FastNode("IM", "install-studio", "studio", ("RM", "EM", "XM"), 180, ("live-install:studio",), outcomes=INSTALL_OUTCOMES),
-    FastNode("IL", "install-ax42", "ax42", ("RL", "EL", "XL"), 240, ("live-install:ax42",), outcomes=INSTALL_OUTCOMES),
+    FastNode("IL", "install-ax42", "ax42", ("RL", "EL", "XL"), 1200, ("live-install:ax42",), outcomes=INSTALL_OUTCOMES),
     FastNode("S", "desktop-swap", "studio", ("D", "IM"), 5, ("desktop-app:studio",)),
     FastNode("F", "publish-feed", "studio", ("S", "IL"), 15, ("feed",)),
     FastNode("LM", "link-mesh", "studio", ("IM", "IL"), 60, ("link-mesh",), gating=False),
