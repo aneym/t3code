@@ -4,6 +4,7 @@ import plistlib
 from pathlib import Path
 
 from .build_artifacts import load as load_artifact
+from .install_offbox import METHOD as OFFBOX_METHOD
 from .release_approval import approved
 from .release_graph import SUCCESS_OUTCOMES
 from .release_manifest import digest, eligible, load
@@ -143,16 +144,43 @@ def fast_install(path, manifest, artifact, rehearsal, host):
     return receipt
 
 
-def eligibility_evidence(receipts, manifest, artifact, host, install):
+def rollback_proof(receipts, manifest, artifact, host, recorded):
+    path = receipts / f"rollback-proof-{host}.json"
+    claimed = (recorded.get("rollbackProof") or {}).get("sha256")
+    if not proven(path, manifest, artifact["archive"]["sha256"]) or claimed != sha256(path):
+        raise ValueError(f"{host}: {recorded['class']} install has no passing forced-rollback proof for archive {artifact['archive']['sha256']} matching its receipt")
+    return {"path": str(path), "sha256": claimed}
+
+
+def condition_met(condition, compatibility, rehearsal, install):
+    copy, local = install["eligibility"].get("restoreCopy") or {}, install["backup"].get("local") or {}
+    if condition == "baseline-seed-rehearsal":
+        return rehearsal["result"] == "PASS" and rehearsal["oldMigrationHistory"] == compatibility["baseMigrations"]["history"]
+    if condition == "offbox":
+        return install["backup"].get("method") == OFFBOX_METHOD and bool(install["backup"].get("remote"))
+    if condition == "local-restore-copy":
+        return copy.get("quickCheck") == "ok" and bool(copy.get("identity")) and bool(copy.get("path")) and (copy.get("path"), copy.get("identity")) == (local.get("path"), local.get("identity"))
+    return False
+
+
+def eligibility_evidence(receipts, manifest, artifact, host, install, rehearsal):
+    compatibility = manifest["targets"][host]["compatibility"]
     recorded = install["eligibility"]
-    proof = None
-    if required(manifest, host) and install["outcome"] != "current":
-        path = receipts / f"rollback-proof-{host}.json"
-        claimed = (recorded.get("rollbackProof") or {}).get("sha256")
-        if not proven(path, manifest, artifact["archive"]["sha256"]) or claimed != sha256(path):
-            raise ValueError(f"{host}: {recorded['class']} install has no passing forced-rollback proof matching its receipt")
-        proof = {"path": str(path), "sha256": claimed}
-    return {"class": recorded["class"], "rollbackProof": proof, "restoreCopy": recorded.get("restoreCopy")}
+    expected = compatibility.get("eligibility")
+    if expected is None or recorded.get("class") != expected:
+        raise ValueError(f"{host}: install eligibility {recorded.get('class')} is not the manifest class {expected}")
+    if install["outcome"] == "current":
+        return {"class": expected, "rollbackProof": None, "restoreCopy": None, "conditions": {}}
+    proof = rollback_proof(receipts, manifest, artifact, host, recorded) if required(manifest, host) else None
+    conditions = {}
+    for condition in compatibility["fastPath"]["conditions"]:
+        if condition == "forced-rollback-proof":
+            conditions[condition] = proof is not None
+        else:
+            conditions[condition] = condition_met(condition, compatibility, rehearsal, install)
+        if not conditions[condition]:
+            raise ValueError(f"{host}: {expected} install does not meet its {condition} condition")
+    return {"class": expected, "rollbackProof": proof, "restoreCopy": recorded.get("restoreCopy"), "conditions": conditions}
 
 
 def host_evidence(run, version, host, build):
@@ -195,7 +223,7 @@ def fast_evidence(run, version):
             raise ValueError(f"{host}: candidate {manifest['digest']} is not the same release source as {release['digest']}")
         rows[host] = {"candidate": manifest["digest"], "engine": manifest["engine"]["commit"], "frozenAt": manifest["frozenAt"], "artifact": artifact["digest"], "archive": artifact["archive"]["sha256"], "runtime": artifact["runtime"]["sha256"],
                       "rehearsal": rehearsal["digest"], "install": install["digest"], "outcome": install["outcome"],
-                      "eligibility": eligibility_evidence(receipts, manifest, artifact, host, install)}
+                      "eligibility": eligibility_evidence(receipts, manifest, artifact, host, install, rehearsal)}
     desktop = fast_artifact(run / "desktop/artifact-desktop-darwin-arm64.json", version, "darwin-arm64", "desktop")
     swap = json.loads((run / "desktop-swap.json").read_text())
     if swap["digest"] != digest({key: value for key, value in swap.items() if key != "digest"}):
