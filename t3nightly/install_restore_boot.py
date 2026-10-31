@@ -41,7 +41,7 @@ def resume(directory):
     resumed = []
     for status in sorted(directory.glob("restore-*.sqlite.reship.json")):
         value = json.loads(status.read_text())
-        if value["state"] not in (*RESHIP_PENDING, "unscheduled") or datetime.now(UTC) >= datetime.fromisoformat(value["capAt"]):
+        if value["state"] not in RESHIP_PENDING or datetime.now(UTC) >= datetime.fromisoformat(value["capAt"]):
             continue
         with flocked(f"{value['copy']}.reship.lock") as free:
             if free:

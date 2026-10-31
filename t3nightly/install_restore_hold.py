@@ -23,7 +23,7 @@ SUFFIXES = ("", "-wal", "-shm", "-journal")
 SIDECARS = (".hold.json", ".hold.json.lock", ".hold.json.next", ".reship.json", ".reship.json.next", ".reship.lock")
 ENGINES = ".hold-engine"
 COPY_LOCK = ".restore-copy.lock"
-RESHIP_PENDING = ("scheduled", "running", "retrying")
+RESHIP_PENDING = ("scheduled", "running", "retrying", "unscheduled")
 
 
 def now():
