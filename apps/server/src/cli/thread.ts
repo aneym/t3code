@@ -1,4 +1,5 @@
 import { titleFromMessage } from "./threadTitle.ts";
+import { threadSendAllCommand } from "./threadSendAll.ts";
 import {
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListResult,
@@ -67,7 +68,6 @@ const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools
   return projects;
 });
 
-/** A project id, or a path inside a project's folder (deepest project wins). */
 const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   tools: OwnerMcpTools,
   identifier: string,
@@ -548,6 +548,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadSendCommand,
     threadRestartCommand,
     threadPromoteCommand,
+    threadSendAllCommand,
     threadUnqueueCommand,
     threadInterruptCommand,
     threadShowCommand,

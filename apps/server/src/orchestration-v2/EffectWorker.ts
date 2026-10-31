@@ -50,14 +50,11 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
  * replacement turn.
  */
 function isNonRetryableProviderTurnControlFailure(effectType: string, errorText: string): boolean {
-  if (effectType !== "provider-turn.interrupt") {
-    return false;
-  }
   return (
-    /is not active/i.test(errorText) ||
-    /hard teardown is already in progress/i.test(errorText) ||
-    /treating as already interrupted/i.test(errorText) ||
-    /treating as already stopped/i.test(errorText)
+    effectType === "provider-turn.interrupt" &&
+    /is not active|hard teardown is already in progress|treating as already (?:interrupted|stopped)/i.test(
+      errorText,
+    )
   );
 }
 
@@ -302,6 +299,7 @@ export const layerExecutor: Layer.Layer<
                       .dispatch({
                         type: "message.dispatch",
                         commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
+                        retrySteeringBatch: true,
                         threadId: effect.threadId,
                         messageId: message.id,
                         text: message.text,

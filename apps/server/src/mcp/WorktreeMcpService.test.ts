@@ -24,7 +24,7 @@ import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerConfig from "../config.ts";
-import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import { OrchestratorProjectionError } from "../orchestration-v2/OrchestratorErrors.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSend from "../orchestration-v2/ThreadSend.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -345,7 +345,6 @@ const expectTypedFailure = (exit: Exit.Exit<unknown, unknown>, expected: object)
   expect(reason.error).toMatchObject(expected);
 };
 
-// Resolve once so calls share the in-flight guard.
 const resolveService = (harness: ReturnType<typeof makeHarness>) =>
   WorktreeMcpService.WorktreeMcpService.pipe(Effect.provide(harness.layer));
 

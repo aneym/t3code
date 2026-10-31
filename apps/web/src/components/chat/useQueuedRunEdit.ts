@@ -69,6 +69,11 @@ const queuedRunEdits = makeQueuedRunEditStore<EditingQueuedRun>({
   label: "web-queued-run-edits",
 });
 
+export function useHasQueuedRunEdit(thread: ScopedThreadRef | null): boolean {
+  const edits = useAtomValue(queuedRunEdits.atom);
+  return thread !== null && edits[scopedThreadKey(thread)] !== undefined;
+}
+
 interface QueuedRunEditContent {
   readonly prompt: string;
   readonly images: ReadonlyArray<ComposerImageAttachment>;

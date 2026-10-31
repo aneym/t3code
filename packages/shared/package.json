@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./queuedMessages": {
+      "types": "./src/queuedMessages.ts",
+      "import": "./src/queuedMessages.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"

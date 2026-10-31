@@ -25,6 +25,7 @@ import {
 import {
   canReleaseQueueHold,
   clearQueueHold,
+  queueReleaseEvents,
   inheritedQueueHold,
   releasesQueueHoldAtRunEnd,
   stoppedQueueHold,
@@ -98,7 +99,6 @@ import {
   THREAD_SESSION_RESTART_REASON,
   ThreadLinkedPullRequest,
   ThreadId,
-  ThreadOrganizeRefusalReason,
   TurnItemId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -187,6 +187,12 @@ import {
   nextRunOrdinal,
   wakeWorkStartedAt,
 } from "./QueuedRunOrder.ts";
+import {
+  isBlockedCompletionRun,
+  makeQueuedRunSendAll,
+  sendAllStartRun,
+} from "./QueuedRunSendAll.ts";
+import { makeQueuedSteerRecovery } from "./QueuedSteerRecovery.ts";
 import { queuedRunBatch, queuedRunBatchEvents } from "./QueuedRunBatch.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
@@ -210,106 +216,18 @@ const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
 );
 
-export class OrchestratorThreadAlreadyExistsError extends Schema.TaggedError<OrchestratorThreadAlreadyExistsError>()(
-  "OrchestratorThreadAlreadyExistsError",
-  { commandId: CommandId, threadId: ThreadId },
-) {
-  override get message(): string {
-    return `Thread ${this.threadId} already exists. Use a new thread id.`;
-  }
-}
-
-export class OrchestratorProjectionError extends Schema.TaggedError<OrchestratorProjectionError>()(
-  "OrchestratorProjectionError",
-  {
-    threadId: ThreadId,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return `Failed to load orchestration projection for thread ${this.threadId}.`;
-  }
-}
-
-const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
-const isOrchestratorProviderAdapterError = Schema.is(OrchestratorProviderAdapterError);
-
-export class OrchestratorDomainEventStreamError extends Schema.TaggedError<OrchestratorDomainEventStreamError>()(
-  "OrchestratorDomainEventStreamError",
-  {
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return "Failed while streaming orchestration domain events.";
-  }
-}
-
-export class OrchestratorSubagentThreadReadOnlyError extends Schema.TaggedError<OrchestratorSubagentThreadReadOnlyError>()(
-  "OrchestratorSubagentThreadReadOnlyError",
-  { commandId: CommandId, threadId: ThreadId },
-) {
-  override get message(): string {
-    return "This subagent is run by its provider and cannot take messages. Message the parent thread instead.";
-  }
-}
-
-export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<OrchestratorThreadAboveModeLimitError>()(
-  "OrchestratorThreadAboveModeLimitError",
-  {
-    commandId: CommandId,
-    threadId: ThreadId,
-    mode: Schema.Literals(["runtime", "interaction"]),
-    runtimeMode: RuntimeMode,
-    interactionMode: ProviderInteractionMode,
-  },
-) {
-  override get message(): string {
-    return `Thread ${this.threadId} now runs in ${this.runtimeMode}/${this.interactionMode} mode, above what this caller may change.`;
-  }
-}
-
-export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedError<OrchestratorCommandPreviouslyRejectedError>()(
-  "OrchestratorCommandPreviouslyRejectedError",
-  {
-    commandId: CommandId,
-    commandType: Schema.String,
-    detail: Schema.String,
-    reason: Schema.optional(ThreadOrganizeRefusalReason),
-  },
-) {
-  override get message(): string {
-    return `Command ${this.commandId} was previously rejected: ${this.detail}`;
-  }
-}
-
-export class OrchestratorCommandIdConflictError extends Schema.TaggedError<OrchestratorCommandIdConflictError>()(
-  "OrchestratorCommandIdConflictError",
-  {
-    commandId: CommandId,
-    commandType: Schema.String,
-    receiptThreadId: ThreadId,
-    commandThreadId: ThreadId,
-  },
-) {
-  override get message(): string {
-    return `Command ${this.commandId} was already handled for thread ${this.receiptThreadId} and cannot be replayed for ${this.commandThreadId}.`;
-  }
-}
-
-export const OrchestratorV2Error = Schema.Union([
-  OrchestratorDispatchError,
+import {
   OrchestratorThreadAlreadyExistsError,
-  OrchestratorCommandRejectedError,
   OrchestratorProjectionError,
   OrchestratorDomainEventStreamError,
-  OrchestratorProviderAdapterError,
-  OrchestratorCommandPreviouslyRejectedError,
-  OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
   OrchestratorThreadAboveModeLimitError,
-]);
-export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
+  OrchestratorCommandPreviouslyRejectedError,
+  OrchestratorCommandIdConflictError,
+  OrchestratorV2Error,
+} from "./OrchestratorErrors.ts";
+const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
+const isOrchestratorProviderAdapterError = Schema.is(OrchestratorProviderAdapterError);
 
 export interface OrchestratorV2DispatchResult {
   readonly sequence: number;
@@ -497,6 +415,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "run.interrupt":
     case "queued-message.promote-to-steer":
     case "queued-run.start":
+    case "queue.send-all":
     case "queue.resume":
     case "queued-run.reorder":
     case "queued-run.cancel":
@@ -1396,6 +1315,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly endedRunId?: RunId;
         readonly queuedRunId?: RunId;
         readonly explicitResume?: boolean;
+        readonly sendAll?: boolean;
       },
     ) {
       if ((yield* effectOutbox.restartPrepared) !== undefined) return;
@@ -1419,7 +1339,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : ended,
               view,
               options?.endedRunId === undefined,
-            ),
+            ) &&
+            !(ended?.retainBlockedCompletionHolds && isBlockedCompletionRun(view, run)),
         );
         if (held.length > 0) {
           const now = yield* DateTime.now;
@@ -1457,7 +1378,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       const storedQueuedRun =
         options?.queuedRunId === undefined
-          ? nextQueuedRun(projection)
+          ? options?.sendAll
+            ? sendAllStartRun(projection)
+            : nextQueuedRun(projection)
           : projection.runs.find(
               (run) => run.id === options.queuedRunId && run.status === "queued",
             );
@@ -1523,8 +1446,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           turnItemRunIds: newerRunIds,
         })).turnItems.length > 0;
       const batchMembers =
-        options?.queuedRunId === undefined && settings.batchQueuedMessages
-          ? queuedRunBatch(projection, queuedRun)
+        options?.queuedRunId === undefined && (settings.batchQueuedMessages || options?.sendAll)
+          ? queuedRunBatch(projection, queuedRun, options?.sendAll)
           : [];
       const ordinal =
         startedAhead || batchMembers.length > 0 ? nextRunOrdinal(projection) : queuedRun.ordinal;
@@ -1852,6 +1775,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       };
       const startingRun: OrchestrationV2Run = {
         ...queuedRun,
+        ...(options?.sendAll ? { retainBlockedCompletionHolds: true } : {}),
         providerThreadId: queuedProviderThread.id,
         ordinal,
         status: "starting",
@@ -5763,6 +5687,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Provider failure or usage limits re-hold the queue.
     const worktreeSetupUnresolved = worktreeSetupPending(projection);
     const sentByUserFromClient =
+      command.retrySteeringBatch !== true &&
       command.createdBy === "user" &&
       (command.creationSource === "web" || command.creationSource === "mobile") &&
       command.scheduledTaskId === undefined;
@@ -9394,6 +9319,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  const dispatchQueueSendAll = yield* makeQueuedRunSendAll;
+  const recoverSteeringBatch = yield* makeQueuedSteerRecovery;
+
   const dispatchQueuedRunReorder = Effect.fn("Orchestrator.dispatchQueuedRunReorder")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "queued-run.reorder" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -12816,6 +12744,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 context: { version: 1 as const, records: [], guest: guestSend.guest },
               };
         cancelUnsettledEffects = yield* dispatchMessage(dispatched, events, effects);
+        for (const event of yield* recoverSteeringBatch(dispatched, yield* Ref.get(events)))
+          yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
         yield* recordSubagentFollowup(dispatched, events).pipe(mapDispatchError(command));
         break;
       }
@@ -12881,6 +12811,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           effects,
         );
         break;
+      case "queue.send-all":
+        cancelUnsettledEffects = yield* dispatchQueueSendAll({
+          command,
+          events,
+          effects,
+          promote: dispatchQueuedMessagePromoteToSteer,
+          emit: emit(events, command),
+        });
+        break;
       case "queued-run.start":
       case "queue.resume": {
         const projection = yield* loadProjectionForCommand(
@@ -12934,31 +12873,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
         const now = yield* DateTime.now;
-        const queued = projection.runs.filter((run) => run.status === "queued");
-        for (const run of queued) {
-          yield* emit(
-            events,
-            command,
-          )({
-            type: "run.updated",
-            threadId: command.threadId,
-            runId: run.id,
-            providerInstanceId: run.providerInstanceId,
-            occurredAt: now,
-            payload: clearQueueHold(run),
-          });
-        }
-        if (queued.length === 0) {
-          yield* emit(
-            events,
-            command,
-          )({
-            type: "thread.metadata-updated",
-            threadId: command.threadId,
-            occurredAt: now,
-            payload: projection.thread,
-          });
-        }
+        for (const event of queueReleaseEvents(projection, now))
+          yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
         break;
       }
       case "queued-run.reorder":
@@ -13092,10 +13008,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       if (command.type === "message.dispatch")
         yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
-      if (command.type === "queue.resume" || command.type === "queued-run.start") {
+      if (
+        command.type === "queue.resume" ||
+        command.type === "queued-run.start" ||
+        command.type === "queue.send-all"
+      ) {
         yield* mapDispatchError(command)(
           startNextQueuedRun(command.threadId, {
             explicitResume: true,
+            ...(command.type === "queue.send-all" ? { sendAll: true } : {}),
             ...(command.type === "queued-run.start" ? { queuedRunId: command.runId } : {}),
           }),
         );
@@ -13244,10 +13165,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (command.type === "message.dispatch")
       yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
-    if (command.type === "queue.resume" || command.type === "queued-run.start") {
+    if (
+      command.type === "queue.resume" ||
+      command.type === "queued-run.start" ||
+      command.type === "queue.send-all"
+    ) {
       yield* mapDispatchError(command)(
         startNextQueuedRun(command.threadId, {
           explicitResume: true,
+          ...(command.type === "queue.send-all" ? { sendAll: true } : {}),
           ...(command.type === "queued-run.start" ? { queuedRunId: command.runId } : {}),
         }),
       );

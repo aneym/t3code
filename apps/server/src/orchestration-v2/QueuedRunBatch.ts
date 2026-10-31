@@ -1,7 +1,6 @@
 import {
   messageSender,
   senderEnvironmentLabel,
-  parseGoalCommand,
   type NodeId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
@@ -10,12 +9,14 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import {
+  batchableQueuedMessage as batchableMessage,
+  compatibleQueuedRuns,
+  MAX_QUEUED_MESSAGE_BATCH_SIZE as MAX_BATCH_SIZE,
+  sendAllQueuedMembers,
+} from "@t3tools/shared/queuedMessages";
 
-import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
-
-const MAX_BATCH_SIZE = 20;
 
 export interface QueuedRunBatchMember {
   readonly run: OrchestrationV2Run;
@@ -29,39 +30,13 @@ type DraftEvent = OrchestrationV2DomainEvent extends infer Event
     : never
   : never;
 
-function batchableMessage(
-  projection: Pick<OrchestrationV2ThreadProjection, "messages">,
-  run: OrchestrationV2Run,
-): OrchestrationV2ConversationMessage | undefined {
-  if (
-    run.status !== "queued" ||
-    run.queueHeld === true ||
-    run.restartContinuationOfRunId !== undefined ||
-    run.delegatedTaskId !== undefined ||
-    run.sourcePlanRef !== undefined
-  ) {
-    return undefined;
-  }
-  const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-  if (
-    message === undefined ||
-    message.notification !== undefined ||
-    message.workflowScript === true ||
-    message.scheduledTaskId !== undefined ||
-    message.idleCompaction !== undefined ||
-    message.text.trimStart().startsWith("/") ||
-    isNativeMaintenanceCommand(message) ||
-    parseGoalCommand(message) !== null
-  ) {
-    return undefined;
-  }
-  return message;
-}
-
 export function queuedRunBatch(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
   first: OrchestrationV2Run,
+  explicitRelease = false,
 ): ReadonlyArray<QueuedRunBatchMember> {
+  if (explicitRelease)
+    return sendAllQueuedMembers(projection).filter(({ run }) => run.id !== first.id);
   if (batchableMessage(projection, first) === undefined) return [];
   const members: Array<QueuedRunBatchMember> = [];
   for (const run of queuedRunsInDeliveryOrder(projection)) {
@@ -69,9 +44,7 @@ export function queuedRunBatch(
     const message = batchableMessage(projection, run);
     if (
       message === undefined ||
-      run.providerInstanceId !== first.providerInstanceId ||
-      !modelSelectionsEqual(run.modelSelection, first.modelSelection) ||
-      run.workspacePreparation?.type !== first.workspacePreparation?.type ||
+      !compatibleQueuedRuns(first, run) ||
       members.length + 1 >= MAX_BATCH_SIZE
     ) {
       break;
@@ -81,7 +54,7 @@ export function queuedRunBatch(
   return members;
 }
 
-function foldedQueuedTurnItems(
+export function foldedQueuedTurnItems(
   turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
   run: Pick<OrchestrationV2Run, "id" | "userMessageId">,
 ): ReadonlyArray<UserTurnItem> {
@@ -95,7 +68,8 @@ function foldedQueuedTurnItems(
         item.runId === run.id &&
         firstItem !== undefined &&
         item.nodeId === firstItem.nodeId &&
-        item.inputIntent === "queued_turn" &&
+        (item.parentItemId === firstItem?.id ||
+          (item.parentItemId === null && item.inputIntent === "queued_turn")) &&
         item.messageId !== run.userMessageId,
     )
     .toSorted((left, right) => left.ordinal - right.ordinal);
@@ -109,6 +83,7 @@ export function queuedRunBatchEvents(input: {
   readonly firstItem: UserTurnItem;
   readonly itemId: (messageId: OrchestrationV2ConversationMessage["id"]) => UserTurnItem["id"];
   readonly occurredAt: UserTurnItem["updatedAt"];
+  readonly groupUnderFirst?: boolean;
 }): ReadonlyArray<DraftEvent> {
   const { target, rootNodeId, firstItem, occurredAt } = input;
   const into = {
@@ -133,6 +108,7 @@ export function queuedRunBatchEvents(input: {
       ...firstItem,
       id: input.itemId(message.id),
       ordinal: firstItem.ordinal + index + 1,
+      ...(input.groupUnderFirst ? { parentItemId: firstItem.id } : {}),
       messageId: message.id,
       text: message.text,
       attachments: message.attachments,
@@ -211,7 +187,7 @@ export function queuedMessageSender(part: QueuedRunBatchPart): string {
     : `${part.createdBy} (${part.creationSource})`;
 }
 
-function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): string {
+export function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): string {
   if (parts.length < 2) {
     const part = parts[0];
     return part?.senderEnvironmentId === undefined

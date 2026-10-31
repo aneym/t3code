@@ -1,3 +1,4 @@
+import { sendAllQueuedMembers } from "@t3tools/shared/queuedMessages";
 import {
   type ChatAttachment,
   isCompactionCommandMessage,
@@ -40,6 +41,7 @@ export interface ThreadQueueWorkflowState {
   /** The active run is a compaction, so promoting a queued message stops it instead of steering. */
   readonly promoteSkipsCompaction: boolean;
   readonly canSendNow: boolean;
+  readonly canSendAll?: boolean;
 }
 
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
@@ -187,21 +189,49 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     };
   });
 
+  const canSendNow =
+    activeRun === null &&
+    projection.thread.archivedAt == null &&
+    projection.thread.deletedAt == null;
+  const canPromoteToSteer =
+    promoteSkipsCompaction ||
+    (hasSteerableProviderTurn &&
+      (capabilities?.supportsActiveSteering === true ||
+        capabilities?.supportsSteeringByInterruptRestart === true));
+  const eligible = sendAllQueuedMembers(projection);
   return {
     activeRun,
     queuedRuns,
+    canSendAll:
+      eligible.length >= 2 &&
+      (canSendNow || canPromoteToSteer) &&
+      !(
+        activeMessage !== undefined &&
+        activeMessage.attachments.length === 0 &&
+        ["/compact", "/logout"].includes(activeMessage.text.trim().toLowerCase())
+      ),
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
-    canSendNow:
-      activeRun === null &&
-      projection.thread.archivedAt == null &&
-      projection.thread.deletedAt == null,
-    canPromoteToSteer:
-      promoteSkipsCompaction ||
-      (hasSteerableProviderTurn &&
-        (capabilities?.supportsActiveSteering === true ||
-          capabilities?.supportsSteeringByInterruptRestart === true)),
+    canSendNow,
+    canPromoteToSteer,
     promoteSkipsCompaction,
   };
+}
+
+export function canSendAllQueued(
+  workflow: ThreadQueueWorkflowState | null | undefined,
+  editing: boolean,
+): boolean {
+  return !editing && workflow?.canSendAll === true;
+}
+
+export function describeSendAllQueued(workflow: ThreadQueueWorkflowState): string {
+  const waiting = workflow.queuedRuns.filter((entry) => entry.isBackgroundResult).length;
+  const action = workflow.canSendNow
+    ? "Start one turn with queued messages"
+    : "Send queued messages into the current turn";
+  return waiting === 0
+    ? action
+    : `${action}. ${waiting} background ${waiting === 1 ? "result stays" : "results stay"} waiting`;
 }
 
 export function canForkProjectedAssistantItem(input: {

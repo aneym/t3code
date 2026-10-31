@@ -46,7 +46,7 @@ import {
 import {
   OrchestratorProjectionError,
   OrchestratorThreadAboveModeLimitError,
-} from "../orchestration-v2/Orchestrator.ts";
+} from "../orchestration-v2/OrchestratorErrors.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -523,7 +523,6 @@ describe("OrchestratorMcpService", () => {
               },
             ],
           }) as unknown as OrchestrationV2ThreadProjection;
-        // A finished run whose binding to the follow-up was lost.
         const childProjection = {
           thread: { id: childThreadId, title: "Child" },
           runs:

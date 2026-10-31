@@ -1350,7 +1350,6 @@ describe("orchestration v2 provider switching", () => {
     (older) =>
       Effect.scoped(
         Effect.gen(function* () {
-          // A run that fails before its provider turn starts is retried as a missed request.
           const missed = older === "a missed request";
           const name = `resume-fallback-handoff-order${missed ? "-missed" : ""}`;
           const cwd = yield* checkpointWorkspace(name);

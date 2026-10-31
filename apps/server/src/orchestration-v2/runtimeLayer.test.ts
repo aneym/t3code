@@ -61,6 +61,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { OrchestratorProjectionError } from "./OrchestratorErrors.ts";
 import { ROLLBACK_FAILED_MESSAGE } from "./CheckpointRollbackService.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -2089,7 +2090,7 @@ it.layer(layerLegacyImportTest)("OrchestrationV2 legacy import", (it) => {
           `.pipe(Effect.orDie),
         ),
       );
-      assert.instanceOf(projectionFailure, Orchestrator.OrchestratorProjectionError);
+      assert.instanceOf(projectionFailure, OrchestratorProjectionError);
       assert.instanceOf(projectionFailure.cause, LegacyV1ThreadImporter.LegacyV1ThreadImportError);
       assert.instanceOf(hydrationFailure, OrchestratorDispatchError);
       assert.instanceOf(hydrationFailure.cause, LegacyV1ThreadImporter.LegacyV1ThreadImportError);
