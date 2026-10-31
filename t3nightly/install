@@ -74,6 +74,9 @@ def parse():
     parser.add_argument("--node", default="node")
     parser.add_argument("--no-pin-launcher", action="store_true")
     parser.add_argument("--offbox", default="")
+    parser.add_argument("--offbox-mib-s", type=float, default=0.5)
+    parser.add_argument("--offbox-seed-s", type=int, default=43200)
+    parser.add_argument("--offbox-stop-s", type=int, default=600)
     args = parser.parse_args()
     if args.backup_keep < 1:
         parser.error("--backup-keep must be at least one")
@@ -94,6 +97,8 @@ def parse():
     if args.offbox:
         if not (args.hard or args.seamless):
             parser.error("--offbox requires --hard or --seamless")
+        if args.offbox_mib_s <= 0 or args.offbox_seed_s < 60 or args.offbox_stop_s < 30:
+            parser.error("--offbox-mib-s must be positive, --offbox-seed-s at least 60 and --offbox-stop-s at least 30")
         from t3nightly.install_offbox import target
 
         try:

@@ -262,7 +262,7 @@ def install(run):
 
                 rollback_launcher(run)
                 if backup.get("method") == install_offbox.METHOD:
-                    install_offbox.restore(run, backup)
+                    install_offbox.rollback_database(run, backup)
                 if restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime"):
                     run.step("hard-restore-runtime", version=previous)
                 activate(run, previous)
