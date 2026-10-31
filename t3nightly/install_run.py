@@ -89,6 +89,10 @@ class Run:
 
     @contextmanager
     def readonly(self):
+        if getattr(self.args, "offbox", ""):
+            with closing(sqlite3.connect(f"file:{self.db}?mode=ro", uri=True, timeout=30)) as connection:
+                yield connection
+            return
         if not self.snapshot_ready:
             refresh_snapshot(self)
         with closing(

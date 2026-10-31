@@ -18,11 +18,12 @@ def query(run, sql, params=()):
 
 
 def identities(run, *, fresh=False):
-    timeout = getattr(run.args, "snapshot_max_s", 1200)
+    guarded = bool(getattr(run.args, "offbox", ""))
+    timeout = run.args.offbox_copy_s if guarded else getattr(run.args, "snapshot_max_s", 1200)
     if not fresh:
-        return read(for_version(run.args.version, home=run.home, timeout=timeout))
+        return read(for_version(run.args.version, home=run.home, timeout=timeout, guarded=guarded))
     with tempfile.TemporaryDirectory(prefix=".identity-snapshot-", dir=run.home.parent) as raw:
-        return read(take(Path(raw) / "statev2.sqlite", home=run.home, timeout=timeout))
+        return read(take(Path(raw) / "statev2.sqlite", home=run.home, timeout=timeout, guarded=guarded))
 
 
 def retained(run, before):

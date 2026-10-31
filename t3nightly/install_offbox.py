@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from . import install_offbox_stage as stage
+from . import live_read_guard as guard
 from .install_storage import record_payload
 from .io_priority import background_command
 
@@ -22,6 +23,7 @@ REMOTE_EXE = "/Users/aneyman/.local/bin/sqlite3_rsync"
 SSH = Path(__file__).with_name("offbox-ssh")
 REMOTE_ZSTD = "/opt/homebrew/bin/zstd"
 CHUNK = 1024 * 1024
+ZSTD_THREADS = 4
 METHOD = "offbox-sqlite3-rsync"
 LOCAL_MARGIN = 512 * 1024 * 1024
 CATCH_UP_ROUNDS = 3
@@ -78,9 +80,9 @@ def stream(host, staged, replica, deadline):
     part = shlex.quote(f"{replica}.part")
     zstd = shlex.quote(remote_zstd(host))
     script = f"set -e; umask 077; {zstd} -q -d -f -o {part}; chmod 600 {part}; mv {part} {shlex.quote(str(replica))}"
-    compress = subprocess.Popen(["zstd", "-q", "-T0", "-3", "-c", str(staged)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    compress = subprocess.Popen(background_command(["zstd", "-q", f"-T{ZSTD_THREADS}", "-3", "-c", str(staged)]), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     send = subprocess.Popen([str(SSH), host, script], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    sent = 0
+    sent, shipped = 0, False
     try:
         while chunk := compress.stdout.read(CHUNK):
             if time.monotonic() >= deadline:
@@ -92,6 +94,7 @@ def stream(host, staged, replica, deadline):
         received = send.wait(timeout=max(1, deadline - time.monotonic()))
         if compressed or received:
             raise ValueError(f"compressed first ship failed: {send.stderr.read().decode(errors='replace').strip()[-300:]}")
+        shipped = True
     except (BrokenPipeError, subprocess.TimeoutExpired) as error:
         raise ValueError(f"compressed first ship failed: {type(error).__name__}") from error
     finally:
@@ -99,14 +102,20 @@ def stream(host, staged, replica, deadline):
             if process.poll() is None:
                 process.kill()
                 process.wait()
+        if not shipped:
+            try:
+                remote(host, f"rm -f {part}", time.monotonic() + 30)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
     return sent
 
 
 def ship(run, host, replica, source, size, deadline, *, first):
     directory = stage.staging(run)
-    staged, metrics = stage.copy(run, directory, source, size)
-    started = time.monotonic()
+    staged, metrics, started = None, {}, time.monotonic()
     try:
+        staged, metrics = stage.copy(run, directory, source, size)
+        started = time.monotonic()
         if first:
             sent = stream(host, staged, replica, deadline)
             metrics.update(shipMethod="zstd-stream", compressedBytes=sent, compressionRatio=round(metrics["stageBytes"] / max(sent, 1), 3))
@@ -114,10 +123,11 @@ def ship(run, host, replica, source, size, deadline, *, first):
             sync(staged, f"{host}:{replica}", deadline, background=True)
             metrics["shipMethod"] = "sqlite3-rsync-stage"
     finally:
-        metrics["shipSeconds"] = round(time.monotonic() - started, 3)
-        metrics["stageBytesFreed"] = stage.discard(run, directory, staged)
-        metrics["stageFreeAfter"] = shutil.disk_usage(directory).free
-        run.step("offbox-stage", remote=f"{host}:{replica}", **metrics)
+        if staged is not None:
+            metrics["shipSeconds"] = round(time.monotonic() - started, 3)
+            metrics["stageBytesFreed"] = stage.discard(run, directory, staged)
+            metrics["stageFreeAfter"] = shutil.disk_usage(directory).free
+            run.step("offbox-stage", remote=f"{host}:{replica}", **metrics)
     return metrics
 
 
@@ -228,11 +238,12 @@ def catch_up(run, host, replica, source, size, deadline):
     checking = time.monotonic() - started
     budget = run.args.offbox_stop_s
     for _ in range(CATCH_UP_ROUNDS):
-        last = ship(run, host, replica, source, size, deadline, first=False)["shipSeconds"]
-        estimate = max(last, stage.wal_in_use(source) / rate(run)) + checking
+        last = ship(run, host, replica, source, size, deadline, first=False)
+        stale = last["copySeconds"] + last["shipSeconds"]
+        estimate = max(stale, guard.wal_in_use(source) / rate(run)) + checking
         if estimate <= budget / 2:
             break
-    run.step("hard-backup-estimate", catchUpShipSeconds=round(last, 3), checkSeconds=round(checking, 3), estimateSeconds=round(estimate, 3), budgetSeconds=budget)
+    run.step("hard-backup-estimate", catchUpShipSeconds=last["shipSeconds"], stageCopySeconds=last["copySeconds"], stageStaleSeconds=round(stale, 3), checkSeconds=round(checking, 3), estimateSeconds=round(estimate, 3), budgetSeconds=budget)
     if estimate > budget:
         raise ValueError(f"post-stop off-box sync estimated at {estimate:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
     needed = restore_space(size, wal_bytes(source))

@@ -14,6 +14,8 @@ from t3nightly.live_snapshot import clone_file, take
 
 
 def refresh_snapshot(run):
+    if getattr(run.args, "offbox", ""):
+        raise ValueError("--offbox never takes a live read snapshot; nothing stopped")
     run.snapshot_ready = False
     replaced_bytes = run.snapshot.stat().st_size if run.snapshot.exists() else 0
     staged = Path(str(run.snapshot) + ".partial")

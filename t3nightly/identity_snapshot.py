@@ -11,6 +11,7 @@ import time
 from contextlib import closing
 from pathlib import Path
 
+from . import live_read_guard as guard
 from .io_priority import background_command
 from .live_snapshot import checked_path, snapshot_root
 
@@ -29,9 +30,11 @@ def read(snapshot):
         }
 
 
-def copy(source, destination, timeout):
+def copy(source, destination, timeout, watch=None):
     started = time.monotonic()
     with closing(sqlite3.connect(destination, uri=True, timeout=min(timeout, 30))) as connection:
+        if watch is not None:
+            watch.connection = connection
         connection.set_progress_handler(lambda: int(time.monotonic() - started >= timeout), 10000)
         connection.execute("ATTACH DATABASE ? AS live", (source.resolve().as_uri() + "?mode=ro",))
         with connection:
@@ -50,21 +53,31 @@ def merge(fresh, destination):
         connection.execute("DETACH DATABASE fresh")
 
 
-def take(destination, *, home, timeout=1200):
+def take(destination, *, home, timeout=1200, guarded=False):
     destination = checked_path(destination, home)
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     source = Path(home).resolve() / "userdata/statev2.sqlite"
     with tempfile.TemporaryDirectory(prefix=".identity-build-", dir=destination.parent) as raw:
         staged = Path(raw) / "statev2.sqlite"
         root = str(Path(__file__).resolve().parent.parent)
-        command = background_command([sys.executable, "-m", "t3nightly.identity_snapshot", str(source), str(staged), str(timeout)])
+        words = guard.guard_words(timeout) if guarded else []
+        command = background_command([sys.executable, "-m", "t3nightly.identity_snapshot", str(source), str(staged), str(timeout), *words])
         env = dict(os.environ, PYTHONPATH=root)
-        subprocess.run(command, cwd=root, env=env, check=True, timeout=timeout)
+
+        def attempt():
+            staged.unlink(missing_ok=True)
+            code = subprocess.run(command, cwd=root, env=env, check=False, timeout=timeout + (guard.GRACE_S + 5 if guarded else 0)).returncode
+            if code == guard.WAL_EXIT:
+                raise guard.WalAbort("identity snapshot stopped: live WAL over its limit")
+            if code:
+                raise subprocess.CalledProcessError(code, command)
+
+        guard.retried(attempt, lambda wait, error: print(json.dumps({"identitySnapshotRetry": wait, "reason": str(error)}), file=sys.stderr, flush=True)) if guarded else attempt()
         os.replace(staged, destination)
     return destination
 
 
-def for_version(version, *, home, timeout=1200):
+def for_version(version, *, home, timeout=1200, guarded=False):
     if not version:
         raise ValueError("identity snapshot version must not be empty")
     root = snapshot_root(home)
@@ -90,12 +103,12 @@ def for_version(version, *, home, timeout=1200):
         if reused:
             fresh = checked_path(root / f"identity-fresh-{digest}.sqlite", home)
             try:
-                take(fresh, home=home, timeout=remaining)
+                take(fresh, home=home, timeout=remaining, guarded=guarded)
                 merge(fresh, destination)
             finally:
                 fresh.unlink(missing_ok=True)
         else:
-            take(destination, home=home, timeout=remaining)
+            take(destination, home=home, timeout=remaining, guarded=guarded)
         print(json.dumps({"identitySnapshot": "extended" if reused else "created", "seconds": round(time.monotonic() - started, 6), "bytes": destination.stat().st_size}), file=sys.stderr, flush=True)
     return destination
 
@@ -113,9 +126,14 @@ if __name__ == "__main__":
     parser.add_argument("source", type=Path)
     parser.add_argument("destination", type=Path)
     parser.add_argument("timeout", type=float)
+    guard.add_guard_arguments(parser)
     args = parser.parse_args()
     started = time.monotonic()
-    copy(args.source, args.destination, args.timeout)
+    if args.parent:
+        with guard.guarded(args.source, args.wal_limit, args.seconds, args.parent) as watch:
+            copy(args.source, args.destination, args.timeout, watch)
+    else:
+        copy(args.source, args.destination, args.timeout)
     io = Path("/proc/self/io")
     counters = dict(line.split(": ", 1) for line in io.read_text().splitlines()) if io.exists() else {}
     print(json.dumps({"identityCopySeconds": round(time.monotonic() - started, 6), "bytes": args.destination.stat().st_size, "io": counters}), file=sys.stderr, flush=True)
