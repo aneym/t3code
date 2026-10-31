@@ -1032,6 +1032,9 @@ const make = Effect.gen(function* () {
               if (personal !== null) return personal;
               const submodules = yield* submoduleKeepReason(worktreePath, settings);
               if (submodules !== null) return submodules;
+              const latest = (yield* settingsService.getSettings).storageCleanup;
+              if (latest.worktreeDisposableIgnoredPaths.join("\0") !== disposable.join("\0"))
+                return "settings changed since check";
               return yield* localChangesReason(worktreePath, settings);
             }),
         );

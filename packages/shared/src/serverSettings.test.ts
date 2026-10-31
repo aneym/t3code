@@ -107,6 +107,7 @@ describe("serverSettings helpers", () => {
       worktreeKeepWhen: "uncommitted-changes",
       browserArtifactsAfterDays: null,
       logsAfterDays: 30,
+      worktreeDisposableIgnoredPaths: [],
     });
   });
   it("replaces a source control host's patched field so a cleared account pin does not survive", () => {

@@ -313,6 +313,12 @@ export const makeWorktreeTrash = Effect.gen(function* () {
         "--",
         ...disposable.map((pattern) => `:(exclude,glob)${pattern}`),
       ],
+      env: {
+        GIT_LITERAL_PATHSPECS: "0",
+        GIT_GLOB_PATHSPECS: "0",
+        GIT_NOGLOB_PATHSPECS: "0",
+        GIT_ICASE_PATHSPECS: "0",
+      },
       maxOutputBytes: 16 * 1024 * 1024,
     });
     if (personal.stdoutTruncated) return "excluded files exceed the inspection limit";

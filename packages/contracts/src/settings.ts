@@ -1048,7 +1048,7 @@ const SettledWorktreeRetentionDays = Schema.NullOr(
 );
 
 const DisposableIgnoredPaths = Schema.Array(
-  TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  TrimmedNonEmptyString.check(Schema.isMaxLength(200), Schema.isPattern(/^[^,\n]+$/)),
 ).check(Schema.isMaxLength(50));
 
 export const WorktreeKeepWhen = Schema.Literals([
