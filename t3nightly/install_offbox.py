@@ -1,6 +1,5 @@
 import hashlib
 import json
-import os
 import re
 import shlex
 import shutil
@@ -15,7 +14,7 @@ from pathlib import Path, PurePosixPath
 
 from . import install_offbox_stage as stage
 from . import install_restore_copy as restore_copy
-from .db_publish import LOCAL_MARGIN, local_check, publish, wal_bytes
+from .db_publish import LOCAL_MARGIN, wal_bytes
 from . import live_read_guard as guard
 from .install_storage import record_payload
 from .io_priority import background_command
@@ -218,7 +217,7 @@ def live_backup(run, previous):
     return metadata
 
 
-def catch_up(run, host, replica, source, size, deadline):
+def catch_up(run, host, replica, source, size, deadline, keep_local):
     started = time.monotonic()
     check = remote_check(host, replica, deadline)
     if check != "ok":
@@ -228,10 +227,12 @@ def catch_up(run, host, replica, source, size, deadline):
     for _ in range(CATCH_UP_ROUNDS):
         last = ship(run, host, replica, source, size, deadline, first=False)
         stale = last["copySeconds"] + last["shipSeconds"]
-        estimate = max(stale, guard.wal_in_use(source) / rate(run)) + checking
+        local = restore_copy.estimate(size, last) if keep_local else {}
+        estimate = max(stale, guard.wal_in_use(source) / rate(run)) + checking + local.get("copySeconds", 0) + local.get("checkSeconds", 0)
         if estimate <= budget / 2:
             break
-    run.step("hard-backup-estimate", catchUpShipSeconds=last["shipSeconds"], stageCopySeconds=last["copySeconds"], stageStaleSeconds=round(stale, 3), checkSeconds=round(checking, 3), estimateSeconds=round(estimate, 3), budgetSeconds=budget)
+    run.step("hard-backup-estimate", catchUpShipSeconds=last["shipSeconds"], stageCopySeconds=last["copySeconds"], stageStaleSeconds=round(stale, 3), checkSeconds=round(checking, 3),
+             localRestoreCopy=local or None, estimateSeconds=round(estimate, 3), budgetSeconds=budget)
     if estimate > budget:
         raise ValueError(f"post-stop off-box sync estimated at {estimate:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
     needed = restore_space(size, wal_bytes(source))
@@ -251,20 +252,27 @@ def capture(run, previous, stop, rollback_gate, keep_local=False):
     local.mkdir(parents=True, exist_ok=True, mode=0o700)
     host, root, replica, source, size = placement(run, local)
     seeded, deadline = preseed(run, host, root, replica, source, size, started)
-    catch_up(run, host, replica, source, size, deadline)
+    catch_up(run, host, replica, source, size, deadline, keep_local)
     if keep_local:
         restore_copy.precheck(run, source)
     destination = local / uuid.uuid4().hex
     destination.mkdir(mode=0o700)
     stop()
     stopped = time.monotonic()
+    window = stopped + run.args.offbox_stop_s
     state = schema_state(source)
-    copy = restore_copy.take(run, source, previous) if keep_local else None
+    copy = restore_copy.take(run, source, previous, window) if keep_local else None
     try:
-        deadline = time.monotonic() + run.args.offbox_stop_s
-        sync(source, f"{host}:{replica}", deadline)
-        metadata = verified(run, host, root, replica, deadline, {"bytes": size, "schemaState": state, "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3),
-                                                                 "seconds": round(time.monotonic() - started, 3), "previous": previous, **({"local": copy} if copy else {})})
+        try:
+            sync(source, f"{host}:{replica}", window)
+            metadata = verified(run, host, root, replica, window, {"bytes": size, "schemaState": state, "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3),
+                                                                   "seconds": round(time.monotonic() - started, 3), "previous": previous, **({"local": copy} if copy else {})})
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            if not copy:
+                raise
+            metadata = {"remote": f"{host}:{replica}", "method": METHOD, "replica": "degraded", "replicaError": f"{type(error).__name__}: {error}", "bytes": size, "schemaState": state,
+                        "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3), "seconds": round(time.monotonic() - started, 3), "previous": previous, "local": copy, "complete": True}
+            run.step("offbox-replica-degraded", remote=metadata["remote"], error=metadata["replicaError"], primary="local-restore-copy", next="background reship from the restore copy")
     except BaseException:
         if copy:
             restore_copy.discard(run, copy)
@@ -289,68 +297,3 @@ def prune(run, host, root, current):
             record_payload(run.state, "discard-offbox-rollback-backup", f"{host}:{root / name}", bytes=0)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         run.step("offbox-prune-failed", error=str(error))
-
-
-def restore(run, backup, *, beside=None):
-    started = time.monotonic()
-    host, _, raw = backup["remote"].partition(":")
-    replica = PurePosixPath(raw)
-    if replica.name != "statev2.sqlite":
-        raise ValueError("off-box backup must name a statev2.sqlite replica")
-    target(f"{host}:{replica.parent}")
-    address = backup["remote"]
-    db = run.db.resolve()
-    size = int(backup["bytes"])
-    budget = run.args.offbox_seed_s
-    free = shutil.disk_usage(db.parent).free
-    if beside is None:
-        beside = free >= max(size * 2, LOCAL_MARGIN) and size / rate(run) <= budget
-    if not beside and free < restore_space(size, wal_bytes(db)):
-        raise ValueError("insufficient local space for an in-place off-box restore")
-    deadline = time.monotonic() + budget
-    if beside:
-        staged = db.with_name(f".{db.name}.restore-{uuid.uuid4().hex}")
-        try:
-            sync(address, staged, deadline)
-            check = local_check(staged)
-            if check != "ok":
-                raise ValueError(f"restored database quick_check {check}")
-            os.chmod(staged, db.stat().st_mode & 0o777 if db.exists() else 0o600)
-            publish(staged, db)
-        finally:
-            for suffix in ("", "-wal", "-shm", "-journal"):
-                Path(f"{staged}{suffix}").unlink(missing_ok=True)
-    else:
-        sync(address, db, deadline)
-        check = local_check(db)
-        if check != "ok":
-            raise ValueError(f"restored database quick_check {check}")
-    metadata = {"remote": address, "into": "beside" if beside else "in-place", "quickCheck": check, "seconds": round(time.monotonic() - started, 3)}
-    run.step("hard-restore-db", **metadata)
-    return metadata
-
-
-def unchanged(run, backup):
-    try:
-        return schema_state(run.db) == backup.get("schemaState") and local_check(run.db.resolve()) == "ok"
-    except (OSError, sqlite3.Error, ValueError):
-        return False
-
-
-def rollback_database(run, backup):
-    if unchanged(run, backup):
-        run.step("hard-restore-db-skipped", reason="schema and migrations match the backup")
-        return
-    if backup.get("local"):
-        try:
-            restore_copy.restore(backup["local"], run.db.resolve(), run.step)
-            return
-        except (OSError, ValueError, sqlite3.Error) as error:
-            run.step("hard-restore-local-failed", error=str(error), fallback="offbox-replica")
-    try:
-        restore(run, backup)
-    except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as error:
-        intact = unchanged(run, backup)
-        run.step("hard-restore-db-failed", error=str(error), databaseUnchanged=intact)
-        if not intact:
-            raise

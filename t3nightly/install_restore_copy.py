@@ -12,10 +12,11 @@ from pathlib import Path
 
 from .db_publish import LOCAL_MARGIN, fsync, local_check, publish, wal_bytes
 from .install_offbox_stage import staging
+from .install_restore_hold import create, forget, remove
 from .install_storage import record_payload
 
 STEP_PAGES = 4096
-SUFFIXES = ("", "-wal", "-shm", "-journal")
+CHECK_MIB_S = 40
 
 
 def identity(path, *, copy=False):
@@ -42,21 +43,21 @@ def precheck(run, source):
     room(run, staging(run), source.stat().st_size + wal_bytes(source), stopped=False)
 
 
-def remove(path):
-    freed = 0
-    for suffix in SUFFIXES:
-        part = Path(f"{path}{suffix}")
-        if part.is_file() and not part.is_symlink():
-            freed += part.stat().st_size
-            part.unlink()
-    return freed
+def estimate(size, stage):
+    rate = stage["stageBytes"] / max(stage["copySeconds"], 0.001)
+    return {"copySeconds": round(size / rate, 3), "checkSeconds": round(size / (CHECK_MIB_S << 20), 3), "checkMiBs": CHECK_MIB_S, "measuredCopyMiBs": round(rate / (1 << 20), 1)}
 
 
-def verify(path, expected):
+def verify(path, expected, deadline=None):
     if not Path(path).is_file():
         raise ValueError(f"restore copy {path} is missing")
     with closing(sqlite3.connect(f"{Path(path).resolve().as_uri()}?immutable=1", uri=True, timeout=30)) as connection:
-        check = connection.execute("PRAGMA quick_check").fetchone()[0]
+        if deadline is not None:
+            connection.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)
+        try:
+            check = connection.execute("PRAGMA quick_check").fetchone()[0]
+        except sqlite3.OperationalError as error:
+            raise ValueError(f"restore copy quick_check stopped at its deadline: {error}") from error
     if check != "ok":
         raise ValueError(f"restore copy quick_check {check}")
     observed = identity(path, copy=True)
@@ -65,18 +66,19 @@ def verify(path, expected):
     return check
 
 
-def take(run, source, previous):
+def take(run, source, previous, window):
     directory = staging(run)
     room(run, directory, source.stat().st_size + wal_bytes(source), stopped=True)
     started = time.monotonic()
-    deadline = started + run.args.offbox_copy_s
+    deadline = min(started + run.args.offbox_copy_s, window)
     expected = identity(source)
     target = directory / f"restore-{run.args.version}-{uuid.uuid4().hex[:8]}.sqlite"
     part = Path(f"{target}.part")
+    create(run, target)
 
     def progress(*_):
         if time.monotonic() > deadline:
-            raise TimeoutError(f"restore copy passed its --offbox-copy-s {run.args.offbox_copy_s} s deadline")
+            raise TimeoutError("restore copy passed its --offbox-copy-s or --offbox-stop-s deadline")
     try:
         with closing(sqlite3.connect(source, timeout=30)) as reader, closing(sqlite3.connect(part)) as writer:
             reader.backup(writer, pages=STEP_PAGES, progress=progress)
@@ -84,10 +86,11 @@ def take(run, source, previous):
         fsync(part)
         os.replace(part, target)
         fsync(directory)
-        check = verify(target, expected)
+        check = verify(target, expected, window)
     except BaseException:
         remove(part)
         remove(target)
+        forget(target)
         raise
     record = {"path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous, "seconds": round(time.monotonic() - started, 3)}
     record_payload(run.state, "restore-copy", target, bytes=record["bytes"])
@@ -97,8 +100,38 @@ def take(run, source, previous):
 
 def discard(run, record):
     freed = remove(record["path"])
+    forget(record["path"])
     record_payload(run.state, "discard-restore-copy", record["path"], bytes=freed)
     return freed
+
+
+def beside(copy, db, mode):
+    free = shutil.disk_usage(db.parent).free
+    if free < copy.stat().st_size + LOCAL_MARGIN:
+        raise ValueError(f"{free >> 20} MiB beside the database cannot hold the {copy.stat().st_size >> 20} MiB restore copy")
+    staged = db.with_name(f".{db.name}.restore-{uuid.uuid4().hex}")
+    try:
+        shutil.copyfile(copy, staged)
+        os.chmod(staged, mode)
+        check = local_check(staged)
+        if check != "ok":
+            raise ValueError(f"restored database quick_check {check}")
+        publish(staged, db)
+    finally:
+        remove(staged)
+    return check
+
+
+def in_place(copy, db, mode):
+    remove(db)
+    fsync(db.parent)
+    shutil.copyfile(copy, db)
+    os.chmod(db, mode)
+    fsync(db)
+    check = local_check(db)
+    if check != "ok":
+        raise ValueError(f"in-place restored database quick_check {check}")
+    return check
 
 
 def restore(record, db, note):
@@ -107,20 +140,13 @@ def restore(record, db, note):
     observed = identity(copy, copy=True) if copy.is_file() else None
     if observed != record["identity"]:
         raise ValueError(f"restore copy {copy} is missing or differs from the copy taken at install")
-    free = shutil.disk_usage(db.parent).free
-    if free < copy.stat().st_size + LOCAL_MARGIN:
-        raise ValueError(f"{free >> 20} MiB beside the database cannot hold the {copy.stat().st_size >> 20} MiB restore copy")
-    staged = db.with_name(f".{db.name}.restore-{uuid.uuid4().hex}")
+    mode = db.stat().st_mode & 0o777 if db.exists() else 0o600
     try:
-        shutil.copyfile(copy, staged)
-        os.chmod(staged, db.stat().st_mode & 0o777 if db.exists() else 0o600)
-        check = local_check(staged)
-        if check != "ok":
-            raise ValueError(f"restored database quick_check {check}")
-        publish(staged, db)
-    finally:
-        remove(staged)
-    metadata = {"source": "local-restore-copy", "copy": str(copy), "quickCheck": check, "seconds": round(time.monotonic() - started, 3)}
+        check, into = beside(copy, db, mode), "beside"
+    except (OSError, ValueError, sqlite3.Error) as error:
+        note("hard-restore-local-beside-failed", copy=str(copy), error=str(error), next="delete the failed database and WAL, then copy in place")
+        check, into = in_place(copy, db, mode), "in-place"
+    metadata = {"source": "local-restore-copy", "copy": str(copy), "into": into, "quickCheck": check, "seconds": round(time.monotonic() - started, 3)}
     note("hard-restore-db", **metadata)
     return metadata
 

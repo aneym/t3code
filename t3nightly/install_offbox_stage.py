@@ -10,6 +10,7 @@ from contextlib import closing
 from pathlib import Path
 
 from . import live_read_guard as guard
+from .install_restore_hold import sweep
 from .install_storage import record_payload
 from .live_snapshot import checked_path
 
@@ -37,6 +38,12 @@ def staging(run):
     if swept:
         fsync_directory(path)
         record_payload(run.state, "discard-stale-offbox-stage", path, bytes=freed, files=swept)
+    held = sweep(path)
+    for action in held:
+        if action["action"] == "leak-removed":
+            record_payload(run.state, "discard-leaked-restore-copy", action["copy"], bytes=action["freedBytes"])
+    if held:
+        run.step("restore-hold-sweep", actions=held)
     return path
 
 

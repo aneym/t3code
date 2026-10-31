@@ -269,7 +269,9 @@ def install(run):
 
                 rollback_launcher(run)
                 if backup.get("method") == install_offbox.METHOD:
-                    install_offbox.rollback_database(run, backup)
+                    from .install_db_rollback import rollback_database
+
+                    rollback_database(run, backup, compatibility)
                 if restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime"):
                     run.step("hard-restore-runtime", version=previous)
                 activate(run, previous)
@@ -318,10 +320,13 @@ def install(run):
     path = Path(args.install_receipt) if args.install_receipt else run.state / "receipts" / f"install-{host}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     local = backup.get("local")
-    if local:
+    if local and Path(local["path"]).is_file():
+        from .install_offbox_reship import start
         from .install_restore_hold import schedule
 
-        local = {**local, "hold": schedule(run, local, path)} if outcome == "installed" else {**local, "hold": {"outcome": "kept", "reason": f"install {outcome}; copy kept for recovery"}}
+        local = {**local, "hold": schedule(run, local, path, outcome, serving_version)}
+        if backup.get("replica") == "degraded":
+            local["reship"] = start(run, local, backup)
     receipt["eligibility"] = eligibility(manifest, host, args, local)
     write(path, receipt)
     run.step("hard-install-receipt", path=str(path), outcome=outcome)
