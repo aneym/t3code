@@ -16,7 +16,7 @@ import {
   reduceSidebarProjectScopeMenuState,
 } from "../Sidebar.logic";
 import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
-import { ProjectFavicon } from "../ProjectFavicon";
+import { AgentProjectIcon, useAgentProjectGroups } from "../agents/agentProjectPresentation";
 import { Button } from "../ui/button";
 import {
   Combobox,
@@ -32,10 +32,10 @@ import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { SidebarPinnedProjectSwapper } from "./SidebarPinnedProjectSwapper";
 
 export function SidebarProjectScopePicker({
-  groups,
+  groups: projectGroups,
   scopeKeys,
   allSelected,
-  scopedProjects,
+  scopedProjects: scopedGroups,
   setScopeKey,
   openSettings,
   anchor,
@@ -52,6 +52,9 @@ export function SidebarProjectScopePicker({
   primaryEnvironmentId: EnvironmentId | null;
   machines: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>;
 }) {
+  const groups = useAgentProjectGroups(projectGroups);
+  const byKey = new Map(groups.map((group) => [group.projectKey, group]));
+  const scopedProjects = scopedGroups.map((group) => byKey.get(group.projectKey) ?? group);
   const [menu, dispatch] = useReducer(reduceSidebarProjectScopeMenuState, {
     open: false,
     query: "",
@@ -66,7 +69,6 @@ export function SidebarProjectScopePicker({
       (scoped) => !pinned.slice(0, 5).some((project) => project.projectKey === scoped.projectKey),
     ) ?? null;
   const ordered = [...pinned, ...groups.filter((group) => projectGroupPinOrder(group) === null)];
-  const byKey = new Map(groups.map((group) => [group.projectKey, group]));
   const items = [
     { value: "all", label: "All projects" },
     ...ordered.map((group) => ({ value: group.projectKey, label: group.displayName })),
@@ -159,7 +161,7 @@ export function SidebarProjectScopePicker({
         >
           {triggerProject ? (
             <span className="flex shrink-0">
-              <ProjectFavicon project={triggerProject} className="size-4" />
+              <AgentProjectIcon project={triggerProject} className="size-4" />
             </span>
           ) : (
             <ListFilterIcon className="size-4" />
@@ -222,7 +224,7 @@ export function SidebarProjectScopePicker({
                     }}
                   >
                     {project ? (
-                      <ProjectFavicon project={project} className="size-4 shrink-0" />
+                      <AgentProjectIcon project={project} className="size-4 shrink-0" />
                     ) : (
                       <FolderIcon className="size-4 shrink-0" />
                     )}

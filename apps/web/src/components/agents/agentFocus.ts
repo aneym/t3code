@@ -5,7 +5,6 @@ import {
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { FocusIcon } from "lucide-react";
 import { useEffect } from "react";
@@ -20,12 +19,7 @@ import {
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { threadFamilies } from "../../state/threads";
-import {
-  type RailsAgent,
-  railsAgentHandle,
-  railsAgentThreadKey,
-  useRailsAgents,
-} from "./railsAgents";
+import { type RailsAgent, railsAgentThreadKey, useRailsAgents } from "./railsAgents";
 import { sidebarProjectPinKey } from "./sidebarPins";
 
 const AGENT_FOCUS_STORAGE_KEY = "t3code:sidebar-agent-focus";
@@ -107,12 +101,6 @@ export function useSidebarAgentThreads<T extends EnvironmentThreadShell>(
     projectKeys,
     scopeKeys,
   };
-}
-
-export function withoutAgentHomes<T extends Pick<EnvironmentProject, "workspaceRoot">>(
-  groups: ReadonlyArray<T>,
-): ReadonlyArray<T> {
-  return groups.filter((group) => railsAgentHandle(group.workspaceRoot) === null);
 }
 
 export function useAgentFocusAction(setProjectScope: (keys: readonly string[]) => void) {
