@@ -208,7 +208,6 @@ describe("MessagesTimeline messages", () => {
   it("keeps the first and last message headings reachable from either end", async () => {
     setup();
     const props = baseProps();
-    // Folded messages at both ends: their headings must not live inside the fold.
     const entries = Array.from({ length: 120 }, (_, index) =>
       index === 0
         ? message("First turn", { scheduledTaskId: TASK_ID }, "turn-0")
@@ -231,7 +230,6 @@ describe("MessagesTimeline messages", () => {
     const headingFor = (text: string) =>
       headings().find((heading) => heading.parentElement?.textContent?.includes(text));
     const viewport = props.listRef.current!.getScrollableNode()!;
-    // A screen reader scrolls the heading it moves to into view.
     const expectHeadingInView = async (text: string, neighbour: string) => {
       await act(() => headingFor(text)!.scrollIntoView({ block: "start" }));
       await vi.waitFor(() => expect(screen.text()).toContain(neighbour));
@@ -243,7 +241,6 @@ describe("MessagesTimeline messages", () => {
 
     await vi.waitFor(() => expect(screen.text()).toContain("Turn 118:"));
     expect(screen.text()).not.toContain("Turn 60:");
-    // Wrapping follows DOM order, so the ends must also sit first and last.
     await vi.waitFor(() => {
       expect(headings()[0]).toBe(headingFor("First turn"));
       expect(headings().at(-1)).toBe(headingFor("Last turn"));
@@ -256,7 +253,6 @@ describe("MessagesTimeline messages", () => {
 
   it("keeps rows in item order after a reload or thread switch, before any timer runs", async () => {
     setup();
-    // NVDA's browse mode keeps the first DOM order it reads, so a timer that sorts rows later is too late.
     using _timers = fakeTimers();
     const thread = (name: string) =>
       Array.from({ length: 120 }, (_, index) =>
@@ -587,27 +583,39 @@ const SENDER_THREAD_ID = ThreadId.make("thread-sender");
 const AGENT_MESSAGE = "Review finished\n\nThe migration drops the index before backfilling it.";
 
 describe("MessagesTimeline agent messages", () => {
-  it("folds a message from another agent into a one-line preview", async () => {
-    setup();
-    const onOpenThread = vi.fn();
-    await using screen = await renderTimeline(
-      [message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID })],
-      { onOpenThread },
-    );
-    const row = screen.button(/^Agent/);
-    expect(row.textContent).toContain("Review finished");
-    expect(row.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.text()).not.toContain("drops the index");
-    expect(screen.buttons("Open thread")).toHaveLength(0);
+  it.each([undefined, EnvironmentId.make("unknown")])(
+    "folds an agent message from %s",
+    async (senderEnvironmentId) => {
+      setup();
+      const onOpenThread = vi.fn();
+      await using screen = await renderTimeline(
+        [
+          message(AGENT_MESSAGE, {
+            createdBy: "agent",
+            senderThreadId: SENDER_THREAD_ID,
+            senderEnvironmentId,
+          }),
+        ],
+        { onOpenThread },
+      );
+      const row = screen.button(/^Agent/);
+      expect(row.textContent).toContain("Review finished");
+      expect(row.getAttribute("aria-expanded")).toBe("false");
+      expect(screen.text()).not.toContain("drops the index");
+      expect(screen.buttons("Open thread")).toHaveLength(0);
 
-    await click(row);
-    expect(screen.text()).toContain("The migration drops the index before backfilling it.");
-    await click(screen.button("Open thread"));
-    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
+      await click(row);
+      expect(screen.text()).toContain("The migration drops the index before backfilling it.");
+      expect(screen.buttons("Open thread")).toHaveLength(senderEnvironmentId ? 0 : 1);
+      if (!senderEnvironmentId) {
+        await click(screen.button("Open thread"));
+        expect(onOpenThread).toHaveBeenCalledExactlyOnceWith(SENDER_THREAD_ID);
+      }
 
-    await click(screen.button(/^Agent/));
-    expect(screen.text()).not.toContain("drops the index");
-  });
+      await click(row);
+      expect(screen.text()).not.toContain("drops the index");
+    },
+  );
 
   it("leaves messages sent by T3 Code as full bubbles", async () => {
     setup();

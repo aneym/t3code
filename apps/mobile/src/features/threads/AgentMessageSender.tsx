@@ -66,12 +66,8 @@ export function OpenSenderThreadButton(props: {
   readonly senderThreadId: ThreadId;
 }) {
   const openLinkedThread = useOpenLinkedThread();
-  const shell = useQuietThreadShell(scopeThreadRef(props.environmentId, props.senderThreadId));
   const { environments } = useEnvironments();
-  if (
-    shell === null ||
-    !environments.some((environment) => environment.environmentId === props.environmentId)
-  )
+  if (!environments.some((environment) => environment.environmentId === props.environmentId))
     return null;
   return (
     <Pressable

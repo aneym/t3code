@@ -20,6 +20,16 @@ import { ThreadFeed } from "../features/threads/ThreadFeed";
 import type { ThreadFeedEntry } from "./threadActivity";
 import type { MarkdownImageRenderer } from "../native/SelectableMarkdownText";
 
+vi.hoisted(() => {
+  vi.stubGlobal("__DEV__", false);
+  vi.stubGlobal("expo", {
+    EventEmitter: vi.fn(),
+    NativeModule: vi.fn(),
+    SharedObject: vi.fn(),
+    SharedRef: vi.fn(),
+  });
+});
+
 const audio = vi.hoisted(() => ({
   status: {
     playing: false,
@@ -108,7 +118,9 @@ vi.mock("../components/ui/Button", () => ({
   Button: (props: { label: string; onPress(): void; disabled?: boolean }) =>
     createElement("button", { onClick: props.onPress, disabled: props.disabled }, props.label),
 }));
-vi.mock("expo", () => ({
+vi.mock("expo/build/Expo.fx", () => ({}));
+vi.mock("expo", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("expo")>()),
   useEvent: (_player: unknown, _event: unknown, initial: unknown) => initial,
   useReleasingSharedObjectWithLifecycle: (
     lifecycle: {
@@ -171,6 +183,7 @@ vi.mock("../state/session", () => ({
 }));
 vi.mock("../state/atom-registry", () => ({ appAtomRegistry: {} }));
 vi.mock("../state/threads", () => ({ environmentThreadShells: {}, threadEnvironment: {} }));
+vi.mock("../state/environments", () => ({}));
 vi.mock("../state/entities", () => ({
   useLiveThreadLinkLabels: (text: string) => text,
   useThreadChipIcons: () => new Map(),
@@ -614,7 +627,6 @@ describe("ThreadInlineFilePreview playback", () => {
               .click(),
           );
         } else if (release === "finish") {
-          // Native completion queues deactivation before JS receives didJustFinish.
           queueDeactivation();
           audio.status = { ...audio.status, playing: false, didJustFinish: true };
           await act(async () => render());
@@ -632,7 +644,6 @@ describe("ThreadInlineFilePreview playback", () => {
         });
         if (successor !== "recording") expect(audio.video.playing).toBe(true);
         expect(audio.player.pause).toHaveBeenCalled();
-        // Cleanup of the old native ref must not interrupt the successor either.
         await act(async () => render(successor === "video", false));
         await vi.advanceTimersByTimeAsync(200);
         expect(sessionActive).toBe(true);
@@ -913,7 +924,6 @@ describe("ThreadInlineFilePreview playback", () => {
         ),
       );
       audio.video.pause.mockClear();
-      // iOS can keep readyToPlay during a seek's evaluatingBufferingRate wait.
       if (transition === "buffering") {
         audio.video.status = "loading";
         for (const listener of audio.videoStatusListeners) listener({ status: "loading" });
@@ -921,7 +931,6 @@ describe("ThreadInlineFilePreview playback", () => {
       audio.video.playing = false;
       for (const listener of audio.videoListeners) listener({ isPlaying: false });
       expect(audio.video.pause).not.toHaveBeenCalled();
-      // Buffer readiness can precede the native playing=true event.
       audio.video.status = "readyToPlay";
       for (const listener of audio.videoStatusListeners) listener({ status: "readyToPlay" });
       expect(audio.video.pause).not.toHaveBeenCalled();
@@ -1147,7 +1156,6 @@ describe("ThreadInlineFilePreview playback", () => {
       expect(audio.player.play).toHaveBeenCalledTimes(phase === "playing" ? 1 : 0);
       await releaseAudioSession(recording);
       audio.status = { ...audio.status, isLoaded: true };
-      // Refresh the native status before the next tap.
       await act(async () =>
         root!.render(
           createElement(ThreadInlineFilePreview, {
@@ -1353,7 +1361,6 @@ describe("ThreadFeed previews", () => {
       },
     ];
     const container = document.createElement("div");
-    // Records what each commit shows before passive effects get a chance to run.
     const committedPreviews: Array<string | null> = [];
     function CommitProbe() {
       useLayoutEffect(() => {
@@ -1406,7 +1413,6 @@ describe("ThreadFeed previews", () => {
       await act(async () => root.render(element(ThreadId.make("thread-2"))));
       expect(committedPreviews[0]).toBeNull();
 
-      // A preview hidden by a presentation change stays closed when the content comes back.
       await act(async () =>
         container.querySelector<HTMLButtonElement>('[aria-label="Open report.pdf"]')!.click(),
       );
