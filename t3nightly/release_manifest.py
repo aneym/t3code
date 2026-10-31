@@ -325,10 +325,23 @@ def identity_digest(manifest):
     return digest({key: value for key, value in manifest.items() if key != "frozenAt"})
 
 
+def contained(tree, commit, head):
+    commit = subprocess.run(["git", "-C", str(tree), "rev-parse", "--verify", "--quiet", f"{commit}^{{commit}}"], capture_output=True, text=True, check=False).stdout.strip()
+    if not commit:
+        return False
+    while subprocess.run(["git", "-C", str(tree), "merge-base", "--is-ancestor", commit, head], capture_output=True, check=False).returncode:
+        own = git(tree, "rev-parse", f"{commit}^{{tree}}").strip()
+        same = [parent for parent in git(tree, "rev-parse", f"{commit}^@").split() if git(tree, "rev-parse", f"{parent}^{{tree}}").strip() == own]
+        if not same:
+            return False
+        commit = same[0]
+    return True
+
+
 def ancestor(tree, ref, head):
     commit = git(tree, "rev-parse", f"{ref}^{{commit}}").strip()
-    if git(tree, "merge-base", commit, head).strip() != commit:
-        raise ValueError(f"base {ref} is not an ancestor of the candidate head")
+    if not contained(tree, commit, head):
+        raise ValueError(f"base {ref} is not contained in the candidate head")
     return commit
 
 

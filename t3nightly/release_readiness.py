@@ -9,7 +9,7 @@ from contextlib import closing
 from pathlib import Path
 
 from .release_config import CHAT_PROJECT, SEEDS
-from .release_manifest import engine_identity, history_digest, migration_identity
+from .release_manifest import contained, engine_identity, history_digest, migration_identity
 
 
 FLOORS = {"/Volumes/StudioExt": 20 * 1024**3, "/": 25 * 1024**3}
@@ -76,7 +76,7 @@ def serving_head(config, version):
 
 
 def contains(repo, ancestor, commit):
-    return bool(ancestor and commit) and subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", ancestor, commit], capture_output=True, check=False).returncode == 0
+    return bool(ancestor and commit) and contained(repo, ancestor, commit)
 
 
 def remote_probe(config, log):
