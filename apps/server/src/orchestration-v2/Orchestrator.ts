@@ -2,6 +2,7 @@ import {
   OrchestratorCommandRejectedError,
   OrchestratorDispatchError,
 } from "./OrchestratorDispatchError.ts";
+import { withPullRequestWatch } from "./ThreadPullRequestWatch.ts";
 import { readRejection, tagRejection } from "./RejectionReason.ts";
 import { makePendingInputQueueRelease, isQueuedInputRelease } from "./PendingInputQueueRelease.ts";
 import {
@@ -66,7 +67,6 @@ import {
   type OrchestrationV2LimitRecoveryUpdate,
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
-  type ThreadPullRequestWatch,
   type OrchestrationV2AppThread,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ContextSourcePoint,
@@ -628,16 +628,6 @@ function isLiveRun(run: OrchestrationV2Run): boolean {
 
 function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): boolean {
   return projection.runs.some(isLiveRun);
-}
-
-function withPullRequestWatch(
-  link: ThreadPullRequestLink,
-  watch: ThreadPullRequestWatch | undefined,
-): ThreadPullRequestLink {
-  const { watch: previous, endedWatch, ...rest } = link;
-  if (watch !== undefined) return { ...rest, watch };
-  const ended = previous ?? endedWatch;
-  return ended === undefined ? rest : { ...rest, endedWatch: ended };
 }
 
 function legacyPullRequestLink(
@@ -3445,6 +3435,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
+            lastSettlement: alreadySettled
+              ? thread.lastSettlement
+              : {
+                  source: command.source ?? "user",
+                  commandId: command.commandId,
+                  recordedAt: DateTime.formatIso(now),
+                },
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             unsettledAt: null,
             pinnedAt: null,
@@ -12713,6 +12710,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchThreadMutation(
           {
             type: "thread.settle",
+            source: "sweep",
             commandId: command.commandId,
             threadId: command.threadId,
             ...(command.settledAt === undefined ? {} : { settledAt: command.settledAt }),

@@ -1,3 +1,4 @@
+import { autoSettlementSettingsKey } from "./ThreadSettlementSettings.ts";
 import {
   backgroundWorkHoldsCompletion,
   turnItemUpdateCanEndBackgroundWork,
@@ -19,11 +20,14 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { readAgentMainThreads } from "../agents/AgentHomeFiles.ts";
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -145,7 +149,9 @@ function pullRequestSettles(
 export function isAutoSettlementCandidate(
   thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
   nowMs: number,
+  agentMainThreads?: ReadonlySet<string>,
 ): boolean {
+  if (agentMainThreads?.has(thread.id)) return false;
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
   if (thread.pinnedAt != null || thread.autoSettleDisabledAt != null) return false;
   if (thread.pendingRuntimeRequest !== null) return false;
@@ -261,33 +267,6 @@ function autoSettlementConfigured(settings: import("@t3tools/contracts").ServerS
   );
 }
 
-/** @internal Exported for tests. */
-export function autoSettlementSettingsKey(
-  settings: import("@t3tools/contracts").ServerSettings,
-): string {
-  return JSON.stringify([
-    settings.sidebarAutoSettleOnMerge,
-    settings.sidebarAutoSettleAfterDays,
-    settings.sidebarAutoSettleKeepPullRequests,
-    Object.entries(settings.projectSettingsOverrides)
-      .filter(
-        ([, entry]) =>
-          entry.sidebarAutoSettleOnMerge !== undefined ||
-          entry.sidebarAutoSettleAfterDays !== undefined ||
-          entry.sidebarAutoSettleKeepPullRequests !== undefined,
-      )
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([projectId, entry]) => [
-        projectId,
-        entry.sidebarAutoSettleOnMerge ?? "inherit",
-        entry.sidebarAutoSettleAfterDays === undefined
-          ? "inherit"
-          : entry.sidebarAutoSettleAfterDays,
-        entry.sidebarAutoSettleKeepPullRequests ?? "inherit",
-      ]),
-  ]);
-}
-
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -296,6 +275,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitManager.GitManager;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
+  const environment = yield* Effect.serviceOption(ServerEnvironmentIdentity);
   const fileSystem = yield* FileSystem.FileSystem;
   // A shell merge or close sends no event, and the branch lookup caches an open pull request for
   // a minute, so these threads' next lookup reads the host fresh.
@@ -309,6 +289,9 @@ export const make = Effect.gen(function* () {
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
     threadId?: ThreadId,
   ) {
+    const environmentId = Option.isSome(environment)
+      ? yield* environment.value.getEnvironmentId
+      : undefined;
     const settings = yield* settingsService.getSettings;
     if (!autoSettlementConfigured(settings)) {
       return;
@@ -318,12 +301,19 @@ export const make = Effect.gen(function* () {
     const projectShells = yield* projectStore.listShells();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
+    const agentMainThreads = yield* Effect.promise(() => readAgentMainThreads(environmentId));
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
-    const candidates = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
+    const candidates = threads.filter((thread) =>
+      isAutoSettlementCandidate(thread, nowMs, agentMainThreads),
+    );
 
     // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.
     const settleThread = Effect.fnUntraced(
-      function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
+      function* (
+        thread: (typeof candidates)[number],
+        pullRequest: SettlementPullRequest | null,
+        bound: ReadonlySet<string>,
+      ) {
         // thread.auto-settle does not recheck settings, so read them per decision; reads are cached.
         const currentSettings = resolveProjectSettings(
           yield* settingsService.getSettings,
@@ -339,6 +329,7 @@ export const make = Effect.gen(function* () {
           autoSettleKeepPullRequests: currentSettings.sidebarAutoSettleKeepPullRequests,
         });
         if (settledAt === null) return thread;
+        if (bound.has(thread.id)) return null;
         const uuid = yield* crypto.randomUUIDv4();
         yield* orchestrator.dispatch({
           type: "thread.auto-settle",
@@ -364,7 +355,7 @@ export const make = Effect.gen(function* () {
 
     const lookupCandidates = (yield* Effect.forEach(
       candidates,
-      (thread) => settleThread(thread, null),
+      (thread) => settleThread(thread, null, agentMainThreads),
       { concurrency: 8 },
     ))
       .filter((thread) => thread !== null)
@@ -505,9 +496,13 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const pullRequest = yield* pullRequestFor(group);
           if (pullRequest === undefined) return;
-          yield* Effect.forEach(group, (thread) => settleThread(thread, pullRequest), {
-            discard: true,
-          });
+          yield* Effect.forEach(
+            group,
+            (thread) => settleThread(thread, pullRequest, agentMainThreads),
+            {
+              discard: true,
+            },
+          );
         }).pipe(
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),

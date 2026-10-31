@@ -1,4 +1,5 @@
 import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
+import { makeSettlementCommands } from "./ThreadSettlementCommands.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -385,6 +386,7 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly byOwnAgent: boolean;
+    readonly byUser?: boolean;
   }) => Effect.Effect<
     { readonly sequence: number } | { readonly settlesWhenTurnEnds: true },
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
@@ -483,8 +485,6 @@ export function latestActiveRun(
     .filter(isActiveRun)
     .toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
-
-const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
 
 const make = Effect.gen(function* () {
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -856,37 +856,7 @@ const make = Effect.gen(function* () {
     return settledResult(yield* evaluate((yield* getProjectThreadRecords(input, ["runs"])).runs));
   });
 
-  const settleAfterRun: ThreadManagementServiceShape["settleAfterRun"] = Effect.fn(
-    "orchestrationV2.threadManagement.settleAfterRun",
-  )(function* (input) {
-    const { run } = yield* waitForThread({ ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS });
-    if (run?.status !== "completed") return;
-    yield* dispatch({
-      type: "thread.settle",
-      commandId: CommandId.make(`server:settle-after-run:${input.runId}`),
-      threadId: input.threadId,
-    });
-  });
-
-  const settleThread: ThreadManagementServiceShape["settleThread"] = Effect.fn(
-    "orchestrationV2.threadManagement.settleThread",
-  )(function* (input) {
-    const shell = input.byOwnAgent ? yield* orchestrator.getThreadShell(input.threadId) : null;
-    if (shell != null && shell.activeRunId !== null) {
-      yield* settleAfterRun({
-        projectId: shell.projectId,
-        threadId: shell.id,
-        runId: shell.activeRunId,
-      }).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(layerScope));
-      return { settlesWhenTurnEnds: true } as const;
-    }
-    const result = yield* dispatch({
-      type: "thread.settle",
-      commandId: input.commandId,
-      threadId: input.threadId,
-    });
-    return { sequence: result.sequence };
-  });
+  const { settleAfterRun, settleThread } = yield* makeSettlementCommands(dispatch, waitForThread);
 
   const snoozeAfterQueue = Effect.fn("orchestrationV2.threadManagement.snoozeAfterQueue")(
     function* (input: {

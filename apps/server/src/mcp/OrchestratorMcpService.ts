@@ -1,3 +1,4 @@
+import { threadSettlement } from "./threadSettlement.ts";
 import {
   messageSender,
   CommandId,
@@ -622,16 +623,6 @@ function threadTitle(input: {
   return detail.length > 80 ? `${detail.slice(0, 77)}...` : detail;
 }
 
-function threadSettlement(
-  thread: Pick<OrchestrationV2ThreadShell, "settledOverride" | "settledAt">,
-): Pick<OrchestratorMcpThreadListItem, "settled" | "settledAt"> {
-  const settled = thread.settledOverride === "settled";
-  return {
-    settled,
-    settledAt: settled && thread.settledAt !== null ? DateTime.formatIso(thread.settledAt) : null,
-  };
-}
-
 function threadSnooze(
   thread: Parameters<typeof isSnoozed>[0],
   nowMs: number,
@@ -697,6 +688,9 @@ function threadDetail(
   const latest = ThreadManagementService.latestRun(projection);
   const active = ThreadManagementService.latestActiveRun(projection);
   return {
+    ...(projection.thread.lastSettlement === undefined
+      ? {}
+      : { lastSettlement: projection.thread.lastSettlement }),
     threadId: projection.thread.id,
     projectId: projection.thread.projectId,
     title: projection.thread.title,

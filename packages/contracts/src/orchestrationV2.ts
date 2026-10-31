@@ -3,6 +3,11 @@ import {
   OrchestrationV2GetThreadProjectionInput,
 } from "./orchestrationDispatchResult.ts";
 import { ModelSelectionPrecondition } from "./modelSelectionPrecondition.ts";
+import {
+  ThreadSettlement,
+  ThreadSettleCommand,
+  ThreadAutoSettleCommand,
+} from "./threadSettlement.ts";
 import { OrchestrationV2DelegatedCompletionCohort } from "./delegatedCompletionDelivery.ts";
 import { QueueHoldState, QueueHoldStateJson } from "./queueHoldReason.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
@@ -479,6 +484,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   settledAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  lastSettlement: Schema.optional(ThreadSettlement),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2917,20 +2923,9 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
   }),
-  Schema.Struct({
-    type: Schema.Literal("thread.settle"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    settledAt: Schema.optional(Schema.DateTimeUtc),
-  }),
+  ThreadSettleCommand,
   /** Rejects changes since snapshotAt or any explicit settled override to preserve user actions. */
-  Schema.Struct({
-    type: Schema.Literal("thread.auto-settle"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    snapshotAt: Schema.DateTimeUtc,
-    settledAt: Schema.optional(Schema.DateTimeUtc),
-  }),
+  ThreadAutoSettleCommand,
   Schema.Struct({
     type: Schema.Literal("thread.unsettle"),
     commandId: CommandId,

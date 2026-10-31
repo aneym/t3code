@@ -48,19 +48,31 @@ const bind = Command.make("bind", {
   environment: Flag.String("environment").pipe(Flag.optional),
   host: Flag.String("host").pipe(Flag.optional),
   by: Flag.String("by").pipe(Flag.optional),
+  unbind: Flag.Boolean("unbind").pipe(Flag.withDefault(false)),
   onlyIfUnbound: Flag.Boolean("if-unbound").pipe(Flag.withDefault(false)),
   json: Flag.Boolean("json").pipe(Flag.withDefault(false)),
 }).pipe(
   Command.withHandler((flags) =>
     withOwnerMcpTools("agent", flags, (tools) =>
       Effect.gen(function* () {
+        if (flags.unbind && Option.isSome(flags.thread)) {
+          const snapshot = yield* tools.call("t3_agent_list", {}, AgentHomesSnapshot);
+          if (
+            snapshot.homes.find((home) => home.handle === flags.agent)?.binding?.threadId !==
+            flags.thread.value
+          )
+            return yield* new McpToolFailedError({
+              tool: "t3_agent_bind",
+              detail: "Cannot unbind: the given thread is not the agent home’s current binding.",
+            });
+        }
         const result = yield* tools.call(
           "t3_agent_bind",
           {
             handle: flags.agent,
             ...Option.match(flags.thread, {
-              onNone: () => ({}),
-              onSome: (threadId) => ({ threadId }),
+              onNone: () => (flags.unbind ? { threadId: null } : {}),
+              onSome: (threadId) => ({ threadId: flags.unbind ? null : threadId }),
             }),
             ...Option.match(flags.projects, {
               onNone: () => ({}),

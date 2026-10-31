@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalConsole:off cryptoRandomUUID:off -- Node watcher callbacks and atomic rename form the filesystem boundary.
 import { AGENT_HOME_HANDLE_PATTERN, AgentHome, AgentHomeBinding } from "@t3tools/contracts";
+import * as NodeOS from "node:os";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -30,10 +32,12 @@ const readDocument = async (root: string, handle: string) =>
 const decodeBinding = Schema.decodeSync(AgentHomeBinding);
 const decodeHome = Schema.decodeSync(AgentHome);
 const text = (value: unknown) => (typeof value === "string" ? value : null);
-const binding = (value: unknown): AgentHomeBinding | null => {
-  if (typeof value !== "object" || value === null) return null;
+const decodeMainBinding = (value: unknown): AgentHomeBinding | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid agent binding");
   const data = value as Record<string, unknown>;
-  if (typeof data.thread_id !== "string" || !data.thread_id.trim()) return null;
+  if (typeof data.thread_id !== "string" || !data.thread_id.trim())
+    throw new Error("Agent binding requires a nonempty string thread_id");
   return decodeBinding({
     threadId: data.thread_id,
     environmentId: text(data.environment_id),
@@ -42,11 +46,20 @@ const binding = (value: unknown): AgentHomeBinding | null => {
     by: text(data.by),
   });
 };
+const binding = (value: unknown, strict: boolean): AgentHomeBinding | null => {
+  try {
+    return decodeMainBinding(value);
+  } catch (error) {
+    if (strict) throw error;
+    return null;
+  }
+};
 export const homeFromDocument = (
   root: string,
   handle: string,
   doc: Record<string, unknown>,
   lanes: ReadonlyArray<{ name: string; threadId: string; host: string | null }> = [],
+  strict = false,
 ): AgentHome =>
   decodeHome({
     handle,
@@ -57,11 +70,12 @@ export const homeFromDocument = (
       ? doc.projects.filter((name): name is string => typeof name === "string")
       : [],
     lanes,
-    binding: binding(doc.t3),
+    binding: binding(doc.t3, strict),
     previous: binding(
       typeof doc.t3 === "object" && doc.t3 !== null
         ? (doc.t3 as Record<string, unknown>).previous
-        : null,
+        : doc.t3_previous,
+      false,
     ),
   });
 export const isLaneThread = async (root: string, threadId: string) => {
@@ -90,6 +104,7 @@ export const readHomes = async (
   root: string,
   readLanes: ReturnType<typeof createLaneReader>,
   isLocal: (host: string) => boolean,
+  strict = false,
 ) => {
   const entries = await NodeFSP.readdir(root, { withFileTypes: true }).catch(
     (error: NodeJS.ErrnoException) => {
@@ -109,11 +124,15 @@ export const readHomes = async (
           entry.name,
           doc,
           lanesUnder(lanes, text(doc.lane) ?? entry.name, isLocal),
+          strict,
         ),
       );
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-        console.warn(`Skipping invalid agent home ${entry.name}`);
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      console.warn(
+        `Unable to read agent home ${entry.name}; ${strict ? "settlement refused" : "home skipped"}`,
+      );
+      if (strict) throw error;
     }
   }
   return { homes: homes.sort((a, b) => a.handle.localeCompare(b.handle)) };
@@ -122,26 +141,28 @@ export const writeBinding = async (
   root: string,
   handle: string,
   doc: Record<string, unknown>,
-  next: Record<string, unknown> | null,
+  next: Record<string, unknown> | null | undefined,
   readText: string,
   projects?: ReadonlyArray<string>,
 ) => {
   const old =
     typeof doc.t3 === "object" && doc.t3 !== null ? (doc.t3 as Record<string, unknown>) : null;
-  if (old && next) {
-    const { previous: _previous, reason: _reason, ...previous } = old;
-    next.previous = previous;
-  }
+  const { t3: _binding, ...withoutBinding } = doc;
+  const { previous: _previous, reason: _reason, ...previous } = old ?? {};
+  const prior = old ? previous : doc.t3_previous;
+  if (next) next.previous = prior;
+  const updated =
+    next === undefined
+      ? doc
+      : next === null
+        ? { ...withoutBinding, t3_previous: prior }
+        : { ...withoutBinding, t3: next };
   const target = await agentFile(root, handle);
   const temporary = `${target}.${crypto.randomUUID()}.tmp`;
   try {
     await NodeFSP.writeFile(
       temporary,
-      JSON.stringify(
-        { ...doc, ...(next ? { t3: next } : {}), ...(projects ? { projects } : {}) },
-        null,
-        2,
-      ) + "\n",
+      JSON.stringify({ ...updated, ...(projects ? { projects } : {}) }, null, 2) + "\n",
       {
         mode: (await NodeFSP.stat(target)).mode,
       },
@@ -201,4 +222,25 @@ export const watchHomes = (root: string, changed: () => void) => {
     clearTimeout(timer);
     for (const watcher of watchers.values()) watcher.close();
   };
+};
+
+export const readAgentMainThreads = async (environmentId?: EnvironmentId) => {
+  const root =
+    process.env.T3CODE_AGENT_HOMES_DIR ?? NodePath.join(NodeOS.homedir(), ".agent-rails", "agents");
+  const { homes } = await readHomes(
+    root,
+    async () => [],
+    () => false,
+    true,
+  );
+  return new Set(
+    homes.flatMap(({ binding }) =>
+      binding !== null &&
+      (environmentId === undefined ||
+        binding.environmentId === null ||
+        binding.environmentId === environmentId)
+        ? [binding.threadId]
+        : [],
+    ),
+  );
 };

@@ -1,7 +1,7 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
+  SourceControlProviderKind,
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   EventId,
@@ -41,6 +41,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadSettlementService from "./ThreadSettlementService.ts";
+import { autoSettlementSettingsKey } from "./ThreadSettlementSettings.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -449,11 +450,11 @@ const PROJECT_ID = ProjectId.make("settlement-project");
 
 describe("autoSettlementSettingsKey", () => {
   it("distinguishes a project that inherits the threshold from one that disables it", () => {
-    const inherits = ThreadSettlementService.autoSettlementSettingsKey({
+    const inherits = autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleOnMerge: true } },
     });
-    const never = ThreadSettlementService.autoSettlementSettingsKey({
+    const never = autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: {
         [PROJECT_ID]: { sidebarAutoSettleOnMerge: true, sidebarAutoSettleAfterDays: null },

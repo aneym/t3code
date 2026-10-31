@@ -1,3 +1,4 @@
+import { ThreadLifecycleFields } from "./threadSettlement.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { OrchestratorMcpThreadTimelineItem } from "./orchestratorMcpTimeline.ts";
@@ -390,13 +391,7 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   itemCount: NonNegativeInt,
   pendingRequestCount: NonNegativeInt,
   awaitedBackgroundTaskCount: Schema.optional(NonNegativeInt),
-  archived: Schema.Boolean,
-  settled: Schema.Boolean,
-  settledAt: Schema.NullOr(IsoDateTime),
-  snoozed: Schema.Boolean,
-  snoozedUntil: Schema.NullOr(IsoDateTime),
-  createdAt: IsoDateTime,
-  updatedAt: IsoDateTime,
+  ...ThreadLifecycleFields,
 });
 export type OrchestratorMcpThreadDetail = typeof OrchestratorMcpThreadDetail.Type;
 
