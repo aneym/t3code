@@ -129,3 +129,17 @@ export class PeerLinkRequestError extends Schema.TaggedError<PeerLinkRequestErro
     return PEER_LINK_REQUEST_FAILURE_MESSAGES[this.reason];
   }
 }
+
+export const PEER_CLIENT_PAIRING_PATH = "/api/peer/client-pairing";
+
+export const PeerClientPairingCredential = Schema.Struct({
+  credential: TrimmedNonEmptyString,
+  expiresAt: Schema.DateTimeUtc,
+});
+export type PeerClientPairingCredential = typeof PeerClientPairingCredential.Type;
+
+export const PeerLinkPairClientInput = Schema.Struct({ environmentId: EnvironmentId });
+export type PeerLinkPairClientInput = typeof PeerLinkPairClientInput.Type;
+
+export const PeerLinkPairClientResult = Schema.Struct({ pairingUrl: TrimmedNonEmptyString });
+export type PeerLinkPairClientResult = typeof PeerLinkPairClientResult.Type;
