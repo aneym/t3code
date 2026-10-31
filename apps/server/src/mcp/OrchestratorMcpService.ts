@@ -1683,11 +1683,6 @@ const make = Effect.gen(function* () {
     runtimeModeRank(modes.runtimeMode) <= runtimeModeRank(limits.runtimeMode) &&
     interactionModeRank(modes.interactionMode) <= interactionModeRank(limits.interactionMode);
 
-  /**
-   * Its webhook URL starts runs, so only a caller that may start one sees it: never a client
-   * approved for read-only access, and a thread caller only with a live turn, at modes covering
-   * every mode the task runs at.
-   */
   const summarizeScheduledTask = Effect.fn("OrchestratorMcpService.summarizeScheduledTask")(
     function* (
       scope: McpInvocationScope,
@@ -1714,11 +1709,6 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /**
-   * A scheduled task the caller may change: one whose runs execute at modes no
-   * broader than the caller's own, so editing its prompt cannot run work above
-   * the caller's limits.
-   */
   const loadScheduledTask = Effect.fn("OrchestratorMcpService.loadScheduledTask")(function* (
     scheduledTaskId: ScheduledTask["id"],
     limits: {
@@ -1779,8 +1769,6 @@ const make = Effect.gen(function* () {
         interactionMode: limits.interactionMode,
         createdBy: "agent",
         creationSource: "mcp",
-        // Scope the idempotency key by provider session so two callers
-        // reusing the same clientRequestId cannot collide on one task row.
         ...(input.clientRequestId === undefined
           ? {}
           : {
@@ -1803,7 +1791,15 @@ const make = Effect.gen(function* () {
     listScheduledTasks: Effect.fn("OrchestratorMcpService.listScheduledTasks")(
       function* (scope, input) {
         const { parent, limits } = yield* loadCaller(scope);
-        const projectId = input.projectId ?? parent?.thread.projectId;
+        if (input.allProjects && input.projectId !== undefined) {
+          return yield* failure(
+            "invalid_request",
+            "Use either projectId or allProjects, not both.",
+          );
+        }
+        const projectId = input.allProjects
+          ? undefined
+          : (input.projectId ?? parent?.thread.projectId);
         const { tasks } = yield* scheduledTasks
           .list()
           .pipe(
@@ -1811,10 +1807,16 @@ const make = Effect.gen(function* () {
               failure("orchestration_error", `Could not list scheduled tasks: ${error.message}`),
             ),
           );
+        const selected = tasks.filter(
+          (task) => projectId === undefined || task.projectId === projectId,
+        );
         return {
-          tasks: yield* Effect.forEach(
-            tasks.filter((task) => projectId === undefined || task.projectId === projectId),
-            (task) => summarizeScheduledTask(scope, { parent, limits }, task),
+          projectId: projectId ?? null,
+          next: projectId === undefined ? null : "All projects: call with allProjects=true.",
+          total: selected.length,
+          environmentTotal: tasks.length,
+          tasks: yield* Effect.forEach(selected, (task) =>
+            summarizeScheduledTask(scope, { parent, limits }, task),
           ),
         };
       },
