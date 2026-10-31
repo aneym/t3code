@@ -688,7 +688,9 @@ function threadDetail(
   const latest = ThreadManagementService.latestRun(projection);
   const active = ThreadManagementService.latestActiveRun(projection);
   return {
-    lastSettlement: projection.thread.lastSettlement,
+    ...(projection.thread.lastSettlement === undefined
+      ? {}
+      : { lastSettlement: projection.thread.lastSettlement }),
     threadId: projection.thread.id,
     projectId: projection.thread.projectId,
     title: projection.thread.title,
