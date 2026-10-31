@@ -43,6 +43,7 @@ describe("storage cleanup settings", () => {
       browserArtifactsAfterDays: null,
       logsAfterDays: null,
       worktreeDisposableIgnoredPaths: [],
+      worktreeOrphans: false,
     });
   });
 
