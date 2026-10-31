@@ -298,35 +298,37 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       "refs/replace/",
     ]);
     if (replaced.stdout.trim() !== "") return "repository has replace refs";
-    const personal = yield* git.execute({
-      operation: "StorageCleanup.personalIgnoredFiles",
-      cwd,
-      args: [
-        "-c",
-        "core.fsmonitor=false",
-        "-c",
-        "core.ignoreCase=false",
-        "ls-files",
-        "--others",
-        "--ignored",
-        "-z",
-        "--exclude-standard",
-        "--exclude-per-directory=/",
-        "--",
-        ...disposable.map((pattern) => `:(exclude,glob)${pattern}`),
-      ],
-      env: {
-        GIT_LITERAL_PATHSPECS: "0",
-        GIT_GLOB_PATHSPECS: "0",
-        GIT_NOGLOB_PATHSPECS: "0",
-        GIT_ICASE_PATHSPECS: "0",
-      },
-      maxOutputBytes: 16 * 1024 * 1024,
-    });
-    if (personal.stdoutTruncated) return "excluded files exceed the inspection limit";
-    if (personal.stderr.trim() !== "") return "excluded file inspection reported a warning";
-    const file = personal.stdout.split("\0").find((entry) => entry !== "");
-    if (file !== undefined) return `has excluded local state (${file})`;
+    for (const ignoreCase of ["true", "false"]) {
+      const personal = yield* git.execute({
+        operation: "StorageCleanup.personalIgnoredFiles",
+        cwd,
+        args: [
+          "-c",
+          "core.fsmonitor=false",
+          "-c",
+          `core.ignoreCase=${ignoreCase}`,
+          "ls-files",
+          "--others",
+          "--ignored",
+          "-z",
+          "--exclude-standard",
+          "--exclude-per-directory=/",
+          "--",
+          ...disposable.map((pattern) => `:(exclude,glob)${pattern}`),
+        ],
+        env: {
+          GIT_LITERAL_PATHSPECS: "0",
+          GIT_GLOB_PATHSPECS: "0",
+          GIT_NOGLOB_PATHSPECS: "0",
+          GIT_ICASE_PATHSPECS: "0",
+        },
+        maxOutputBytes: 16 * 1024 * 1024,
+      });
+      if (personal.stdoutTruncated) return "excluded files exceed the inspection limit";
+      if (personal.stderr.trim() !== "") return "excluded file inspection reported a warning";
+      const file = personal.stdout.split("\0").find((entry) => entry !== "");
+      if (file !== undefined) return `has excluded local state (${file})`;
+    }
     const nested = yield* nestedRepository(cwd, submodules);
     return nested === null ? null : `has a nested repository (${nested})`;
   });
