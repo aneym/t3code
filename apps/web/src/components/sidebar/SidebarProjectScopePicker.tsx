@@ -69,9 +69,14 @@ export function SidebarProjectScopePicker({
       (scoped) => !pinned.slice(0, 5).some((project) => project.projectKey === scoped.projectKey),
     ) ?? null;
   const ordered = [...pinned, ...groups.filter((group) => projectGroupPinOrder(group) === null)];
+  const folderNames = new Map(projectGroups.map((group) => [group.projectKey, group.displayName]));
   const items = [
-    { value: "all", label: "All projects" },
-    ...ordered.map((group) => ({ value: group.projectKey, label: group.displayName })),
+    { value: "all", label: "All projects", searchLabels: ["All projects"] },
+    ...ordered.map((group) => ({
+      value: group.projectKey,
+      label: group.displayName,
+      searchLabels: [group.displayName, folderNames.get(group.projectKey) ?? group.displayName],
+    })),
   ];
   const selected = allSelected
     ? items[0]!
@@ -81,7 +86,8 @@ export function SidebarProjectScopePicker({
   const filtered = filterSidebarProjectScopeItems({
     items,
     query: menu.query,
-    matches: (item, query) => filter.contains(item, query, (candidate) => candidate.label),
+    matches: (item, query) =>
+      item.searchLabels.some((searchLabel) => filter.contains(item, query, () => searchLabel)),
   });
   const firstPinned = filtered.find((item) =>
     pinned.some((project) => project.projectKey === item.value),
