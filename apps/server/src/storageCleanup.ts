@@ -1002,17 +1002,18 @@ const make = Effect.gen(function* () {
           return keep("commit changed since check");
         const finalChanges = yield* localChangesReason(worktreePath, settings);
         if (finalChanges !== null) return keep(finalChanges);
-        const currentSettings = yield* settingsService.getSettings;
-        const current = resolveWorktreeCleanup(currentSettings, thread.projectId);
-        const currentDisposable = currentSettings.storageCleanup.worktreeDisposableIgnoredPaths;
-        if (
-          Object.keys(settings).some(
-            (key) =>
-              current[key as keyof typeof settings] !== settings[key as keyof typeof settings],
-          ) ||
-          !samePaths(currentDisposable, disposable)
-        )
-          return keep("settings changed since check");
+        const settingsChanged = Effect.gen(function* () {
+          const currentSettings = yield* settingsService.getSettings;
+          const current = resolveWorktreeCleanup(currentSettings, thread.projectId);
+          return (
+            Object.keys(settings).some(
+              (key) =>
+                current[key as keyof typeof settings] !== settings[key as keyof typeof settings],
+            ) ||
+            !samePaths(currentSettings.storageCleanup.worktreeDisposableIgnoredPaths, disposable)
+          );
+        });
+        if (yield* settingsChanged) return keep("settings changed since check");
         // Runs right before the move; the status check goes last so it sees edits made meanwhile.
         const removal = yield* trash.remove(
           managedRoot,
@@ -1035,9 +1036,7 @@ const make = Effect.gen(function* () {
               if (personal !== null) return personal;
               const submodules = yield* submoduleKeepReason(worktreePath, settings);
               if (submodules !== null) return submodules;
-              const latest = (yield* settingsService.getSettings).storageCleanup;
-              if (!samePaths(latest.worktreeDisposableIgnoredPaths, disposable))
-                return "settings changed since check";
+              if (yield* settingsChanged) return "settings changed since check";
               return yield* localChangesReason(worktreePath, settings);
             }),
         );

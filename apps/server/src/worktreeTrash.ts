@@ -298,6 +298,14 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       "refs/replace/",
     ]);
     if (replaced.stdout.trim() !== "") return "repository has replace refs";
+    const ignoreCaseSetting = yield* git.execute({
+      operation: "StorageCleanup.ignoreCase",
+      cwd,
+      args: ["config", "--bool", "core.ignoreCase"],
+      allowNonZeroExit: true,
+    });
+    if (ignoreCaseSetting.stdout.trim() === "true" && !(yield* fs.exists(path.join(cwd, ".GIT"))))
+      return "Git ignores case on a case-sensitive filesystem";
     for (const ignoreCase of ["true", "false"]) {
       const personal = yield* git.execute({
         operation: "StorageCleanup.personalIgnoredFiles",
