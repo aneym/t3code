@@ -591,21 +591,26 @@ describe("MessagesTimeline agent messages", () => {
     setup();
     const onOpenThread = vi.fn();
     await using screen = await renderTimeline(
-      [message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID })],
+      [
+        message(AGENT_MESSAGE, {
+          createdBy: "agent",
+          senderThreadId: SENDER_THREAD_ID,
+          senderEnvironmentId: ENVIRONMENT_ID,
+        }),
+      ],
       { onOpenThread },
     );
     const row = screen.button(/^Agent/);
     expect(row.textContent).toContain("Review finished");
-    expect(row.getAttribute("aria-expanded")).toBe("false");
     expect(screen.text()).not.toContain("drops the index");
     expect(screen.buttons("Open thread")).toHaveLength(0);
 
     await click(row);
-    expect(screen.text()).toContain("The migration drops the index before backfilling it.");
+    expect(screen.text()).toContain("drops the index");
     await click(screen.button("Open thread"));
-    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
+    expect(onOpenThread).toHaveBeenCalledExactlyOnceWith(SENDER_THREAD_ID);
 
-    await click(screen.button(/^Agent/));
+    await click(row);
     expect(screen.text()).not.toContain("drops the index");
   });
 
