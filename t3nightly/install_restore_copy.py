@@ -17,6 +17,7 @@ from .install_storage import record_payload
 
 STEP_PAGES = 4096
 CHECK_MIB_S = 40
+COPY_MIB_S = 200
 
 
 def identity(path, *, copy=False):
@@ -43,9 +44,9 @@ def precheck(run, source):
     room(run, staging(run), source.stat().st_size + wal_bytes(source), stopped=False)
 
 
-def estimate(size, stage):
-    rate = stage["stageBytes"] / max(stage["copySeconds"], 0.001)
-    return {"copySeconds": round(size / rate, 3), "checkSeconds": round(size / (CHECK_MIB_S << 20), 3), "checkMiBs": CHECK_MIB_S, "measuredCopyMiBs": round(rate / (1 << 20), 1)}
+def estimate(size):
+    copy, check = size / (COPY_MIB_S << 20), size / (CHECK_MIB_S << 20)
+    return {"copySeconds": round(copy, 3), "checkSeconds": round(check, 3), "totalSeconds": round(copy + check + 30, 3), "copyMiBs": COPY_MIB_S, "checkMiBs": CHECK_MIB_S}
 
 
 def verify(path, expected, deadline=None):

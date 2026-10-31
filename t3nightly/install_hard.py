@@ -325,7 +325,7 @@ def install(run):
         from .install_restore_hold import schedule
 
         local = {**local, "hold": schedule(run, local, path, outcome, serving_version)}
-        if backup.get("replica") == "degraded":
+        if backup.get("replica") == "deferred":
             local["reship"] = start(run, local, backup)
     receipt["eligibility"] = eligibility(manifest, host, args, local)
     write(path, receipt)

@@ -27,6 +27,7 @@ CHUNK = 1024 * 1024
 ZSTD_THREADS = 4
 METHOD = "offbox-sqlite3-rsync"
 CATCH_UP_ROUNDS = 3
+FRESH_H = 24
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
@@ -183,12 +184,12 @@ def placement(run, local):
     return host, root, replica, source, size
 
 
-def preseed(run, host, root, replica, source, size, started):
+def preseed(run, host, root, replica, source, size, started, *, ship_now=True):
     address = f"{host}:{replica}"
     deadline = time.monotonic() + run.args.offbox_seed_s
     found = seed(host, root, replica, deadline)
     seeded = {"clonedFrom": None if found == "existing" else found, "existing": found == "existing"}
-    seeded["stage"] = ship(run, host, replica, source, size, deadline, first=found is None)
+    seeded["stage"] = ship(run, host, replica, source, size, deadline, first=found is None) if ship_now else None
     seeded["seconds"] = round(time.monotonic() - started, 3)
     run.step("hard-backup-seed", remote=address, **seeded)
     return seeded, deadline
@@ -217,7 +218,34 @@ def live_backup(run, previous):
     return metadata
 
 
-def catch_up(run, host, replica, source, size, deadline, keep_local):
+def fresh(host, directory, deadline):
+    path = shlex.quote(str(directory / "verified.json"))
+    script = f"if [ -f {path} ] && [ ! -L {path} ] && [ -n \"$(find {path} -mmin -{FRESH_H * 60})\" ]; then cat {path}; fi"
+    try:
+        marker = json.loads(remote(host, script, deadline) or "null")
+    except ValueError:
+        return None
+    return marker if isinstance(marker, dict) and marker.get("quickCheck") == "ok" else None
+
+
+def stopped_work(run, host, replica, seeded, size):
+    deadline = time.monotonic() + run.args.offbox_seed_s
+    base = PurePosixPath(seeded["clonedFrom"]).parent if seeded["clonedFrom"] else replica.parent if seeded["existing"] else None
+    marker = fresh(host, base, deadline) if base else None
+    if marker:
+        run.step("offbox-replica-check-skipped", replica=f"{host}:{base}", verifiedAt=marker.get("verifiedAt"), freshHours=FRESH_H, role="disaster-only secondary")
+    elif base:
+        check = remote_check(host, replica, deadline)
+        if check != "ok":
+            raise ValueError(f"seeded off-box replica quick_check {check}; nothing stopped")
+    estimate = restore_copy.estimate(size)
+    budget = run.args.offbox_stop_s
+    run.step("hard-backup-estimate", stoppedWork=["local-restore-copy", "quick_check", "identity"], localRestoreCopy=estimate, estimateSeconds=estimate["totalSeconds"], budgetSeconds=budget)
+    if estimate["totalSeconds"] > budget:
+        raise ValueError(f"stopped local copy and quick_check estimated at {estimate['totalSeconds']:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
+
+
+def catch_up(run, host, replica, source, size, deadline):
     started = time.monotonic()
     check = remote_check(host, replica, deadline)
     if check != "ok":
@@ -227,12 +255,11 @@ def catch_up(run, host, replica, source, size, deadline, keep_local):
     for _ in range(CATCH_UP_ROUNDS):
         last = ship(run, host, replica, source, size, deadline, first=False)
         stale = last["copySeconds"] + last["shipSeconds"]
-        local = restore_copy.estimate(size, last) if keep_local else {}
-        estimate = max(stale, guard.wal_in_use(source) / rate(run)) + checking + local.get("copySeconds", 0) + local.get("checkSeconds", 0)
+        estimate = max(stale, guard.wal_in_use(source) / rate(run)) + checking
         if estimate <= budget / 2:
             break
     run.step("hard-backup-estimate", catchUpShipSeconds=last["shipSeconds"], stageCopySeconds=last["copySeconds"], stageStaleSeconds=round(stale, 3), checkSeconds=round(checking, 3),
-             localRestoreCopy=local or None, estimateSeconds=round(estimate, 3), budgetSeconds=budget)
+             estimateSeconds=round(estimate, 3), budgetSeconds=budget)
     if estimate > budget:
         raise ValueError(f"post-stop off-box sync estimated at {estimate:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
     needed = restore_space(size, wal_bytes(source))
@@ -251,32 +278,28 @@ def capture(run, previous, stop, rollback_gate, keep_local=False):
     local = run.home / "runtime" / "rollback"
     local.mkdir(parents=True, exist_ok=True, mode=0o700)
     host, root, replica, source, size = placement(run, local)
-    seeded, deadline = preseed(run, host, root, replica, source, size, started)
-    catch_up(run, host, replica, source, size, deadline, keep_local)
     if keep_local:
+        seeded, _ = preseed(run, host, root, replica, source, size, started, ship_now=False)
+        stopped_work(run, host, replica, seeded, size)
         restore_copy.precheck(run, source)
+    else:
+        seeded, deadline = preseed(run, host, root, replica, source, size, started)
+        catch_up(run, host, replica, source, size, deadline)
     destination = local / uuid.uuid4().hex
     destination.mkdir(mode=0o700)
     stop()
     stopped = time.monotonic()
     window = stopped + run.args.offbox_stop_s
     state = schema_state(source)
-    copy = restore_copy.take(run, source, previous, window) if keep_local else None
-    try:
-        try:
-            sync(source, f"{host}:{replica}", window)
-            metadata = verified(run, host, root, replica, window, {"bytes": size, "schemaState": state, "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3),
-                                                                   "seconds": round(time.monotonic() - started, 3), "previous": previous, **({"local": copy} if copy else {})})
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
-            if not copy:
-                raise
-            metadata = {"remote": f"{host}:{replica}", "method": METHOD, "replica": "degraded", "replicaError": f"{type(error).__name__}: {error}", "bytes": size, "schemaState": state,
-                        "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3), "seconds": round(time.monotonic() - started, 3), "previous": previous, "local": copy, "complete": True}
-            run.step("offbox-replica-degraded", remote=metadata["remote"], error=metadata["replicaError"], primary="local-restore-copy", next="background reship from the restore copy")
-    except BaseException:
-        if copy:
-            restore_copy.discard(run, copy)
-        raise
+    if keep_local:
+        copy = restore_copy.take(run, source, previous, window)
+        metadata = {"remote": f"{host}:{replica}", "method": METHOD, "replica": "deferred", "bytes": size, "schemaState": state, "seed": seeded,
+                    "stoppedSeconds": round(time.monotonic() - stopped, 3), "seconds": round(time.monotonic() - started, 3), "previous": previous, "local": copy, "complete": True}
+        run.step("offbox-replica-deferred", remote=metadata["remote"], primary="local-restore-copy", next="sync and verify in the background from the restore copy after restart")
+    else:
+        sync(source, f"{host}:{replica}", window)
+        metadata = verified(run, host, root, replica, window, {"bytes": size, "schemaState": state, "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3),
+                                                               "seconds": round(time.monotonic() - started, 3), "previous": previous})
     (destination / "payload.json").write_text(json.dumps(metadata))
     run.step("hard-backup", **metadata)
     return metadata

@@ -68,7 +68,9 @@ def rollback_database(run, backup, compatibility):
         try:
             restore_copy.verify(local["path"], local["identity"])
         except (OSError, ValueError, sqlite3.Error) as error:
-            run.step("hard-restore-local-unusable", loud=True, copy=local["path"], error=str(error), fallback="offbox-replica", replica=backup.get("replica", "verified"))
+            run.step("hard-restore-local-unusable", loud=True, copy=local["path"], error=str(error), fallback="forward-repair" if backup.get("replica") == "deferred" else "offbox-replica", replica=backup.get("replica", "verified"))
+            if backup.get("replica") == "deferred":
+                raise ValueError("restore copy unusable and the off-box replica is a pre-install clone not yet synced; database preserved for forward repair") from error
         else:
             restore_copy.restore(local, run.db.resolve(), run.step)
             return
