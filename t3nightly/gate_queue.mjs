@@ -147,7 +147,7 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
       }
       if (final.runs.length !== expected.length || final.runs.some((run) => run.queueHeld)) throw fail("unexpected runs or held work remain");
       if (sent.delivery === "steered") {
-        const millis = (value) => (typeof value === "string" ? Date.parse(value) : typeof value?.epochMillis === "number" ? value.epochMillis : Number(new Date(value)));
+        const millis = (value) => (typeof value === "string" ? Date.parse(value) : typeof value?.epochMilliseconds === "number" ? value.epochMilliseconds : NaN);
         const attempts = new Set((final.attempts ?? []).filter((attempt) => attempt.runId === first.runId).map((attempt) => attempt.id));
         const steeredAt = millis(final.messages.find((message) => message.role === "user" && message.text.includes(markers[1]))?.createdAt);
         const turnLive = (final.providerTurns ?? []).some((turn) => attempts.has(turn.runAttemptId) && turn.startedAt != null && millis(turn.startedAt) <= steeredAt);
