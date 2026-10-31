@@ -41,11 +41,11 @@ async function waitGone(locator, message) {
   }
 }
 
-async function pickProject(label) {
+async function pickProject(label, option = label) {
   step = `pick ${label}`;
   await sidebar().getByRole("combobox", { name: /^Filter threads by project/ }).click();
   await page.getByLabel("Search projects").fill(label === "All projects" ? "" : label);
-  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = option.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   await page.getByRole("option", { name: new RegExp(`(^|\\s)${escaped}$`) }).first().click();
 }
 
@@ -130,13 +130,18 @@ await story("pinned-agent-in-project", async () => {
   else await agentButton("Pin");
   const pinned = sidebar().getByRole("list", { name: "Agents", exact: true }).getByRole("listitem").filter({ hasText: names.agent });
   await waitShown(pinned, "pinned agent is not under Agents");
-  await pickProject(names.agentProject);
+  await pickProject(names.agentProject, names.build >= 33 ? names.agent : names.agentProject);
   await waitShown(pinned, "pinned agent does not carry into its project view");
   await pickProject(names.otherProject);
   if (names.build >= 26) await waitShown(pinned, "pinned agent does not come along into another project view");
   else await waitGone(pinned, "pinned agent leaks into an unrelated project view");
   await pickProject("All projects");
   await waitShown(pinned, "pin lost after leaving the project view");
+  if (names.build >= 33) {
+    await pickProject(names.agent);
+    await waitShown(pinned, "searching the agent name does not reach its project view");
+    await pickProject("All projects");
+  }
 });
 
 await browser.close();
