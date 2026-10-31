@@ -140,10 +140,16 @@ class Sandbox:
     def wait_ready(self, version, seconds):
         wait_for(lambda: self.version() == version and self.published(), seconds, f"sandbox runtime {version} to publish its runtime state")
 
+    def user_cli(self):
+        serving = self.version()
+        linked = self.home / "runtime/versions" / serving / "t3" if serving and Path(serving).name == serving else None
+        return linked if linked and linked.is_file() else self.cli
+
     def t3(self, *args):
+        cli = self.user_cli()
         for attempt in range(OWNED_RETRIES + 1):
             debug = ["--log-level", "debug"] if attempt == OWNED_RETRIES else []
-            result = subprocess.run([str(self.cli), *args, *debug, "--base-dir", str(self.home)], capture_output=True, text=True, timeout=120, cwd=self.project, check=False)
+            result = subprocess.run([str(cli), *args, *debug, "--base-dir", str(self.home)], capture_output=True, text=True, timeout=120, cwd=self.project, check=False)
             if result.returncode != SERVER_OWNED_EXIT:
                 break
             with (self.evidence / "cli-owned-refusals.log").open("a") as log:
