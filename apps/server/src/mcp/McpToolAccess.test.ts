@@ -22,6 +22,7 @@ import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
+import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 
 const supervisedThreadId = ThreadId.make("thread:supervised");
 const planThreadId = ThreadId.make("thread:plan");
@@ -370,6 +371,10 @@ const linkedProbe = {
   }),
 };
 const LinkedProbeToolkit = Toolkit.make(
+  Tool.make("t3_thread_move", {
+    ...probe,
+    parameters: ThreadToolkit.tools.t3_thread_move.parametersSchema,
+  }),
   Tool.make("reads", linkedProbe),
   Tool.make("writes", linkedProbe),
   Tool.make("writes_with_capability", linkedProbe),
@@ -384,6 +389,7 @@ const ranHere = <P extends object>(params: P) =>
 const linkedProbeServer = McpHttpServer.toolkitRegistration(
   LinkedProbeToolkit,
   McpToolAccess.toLayer(LinkedProbeToolkit, {
+    t3_thread_move: McpToolAccess.writesThreads((input) => [input.threadId], ranHere),
     reads: McpToolAccess.reads(ranHere),
     writes: McpToolAccess.writes(ranHere),
     writes_with_capability: McpToolAccess.writesWithCapability(ranHere),
@@ -408,6 +414,12 @@ const linkedProbeServer = McpHttpServer.toolkitRegistration(
 );
 
 it.effect.each([
+  [
+    "t3_thread_move",
+    supervised,
+    { environmentId: box, threadId: fullAccessThreadId, projectId: "project:remote" },
+    "t3_thread_move in environment-box",
+  ],
   ["reads", supervised, { environmentId: box }, "reads in environment-box"],
   ["reads", supervised, { environmentId: here }, "here"],
   ["reads", supervised, {}, "here"],
