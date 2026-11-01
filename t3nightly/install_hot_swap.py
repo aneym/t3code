@@ -116,6 +116,10 @@ def install(run):
                     restart_rpc(run, bearer, "abort", {"epoch": epoch}, timeout=30)
                 except (OSError, ValueError, subprocess.SubprocessError):
                     run.step("fallback-drain-abort-unavailable")
+                    drain = run.report.get("restartDrain") or {}
+                    if drain.get("stopRefused"):
+                        drain["abortFailed"] = True
+                        (run.state / "last.json").write_text(json.dumps(run.report, indent=1))
     from .connector_artifact import ensure_connector
 
     ensure_connector(run)
