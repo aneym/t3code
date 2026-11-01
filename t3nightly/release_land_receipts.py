@@ -1,8 +1,8 @@
 import argparse
-import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -10,14 +10,26 @@ REPO = "aneym/t3code"
 SHA = re.compile(r"[0-9a-f]{40}")
 
 
-def sender():
-    root = Path(os.environ.get("AGENT_RAILS_ROOT", "/Volumes/StudioExt/repos/agent-rails"))
-    spec = importlib.util.spec_from_file_location("agent_rails_land_receipts", root / "scripts/merge_gate/land_receipts.py")
-    if spec is None or spec.loader is None:
-        raise ImportError("agent-rails land_receipts is unavailable")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.send
+def release_cli():
+    installed = Path.home() / ".local/bin/land-receipt"
+    executable = str(installed) if installed.is_file() and os.access(installed, os.X_OK) else shutil.which("land-receipt")
+    if not executable:
+        raise RuntimeError("land-receipt CLI unavailable; install ~/.local/bin/land-receipt or add it to PATH")
+    return str(Path(executable).resolve())
+
+
+def delivered_release(output, receipt, version):
+    response = json.loads(output)
+    landing = response.get("landing") if isinstance(response, dict) else None
+    if not isinstance(landing, dict):
+        raise ValueError("land-receipt release did not return a recorded landing")
+    for key in ("repo", "branch", "head", "main_sha"):
+        if landing.get(key) != receipt[key]:
+            raise ValueError(f"recorded release {key} mismatch: expected {receipt[key]}, recorded {landing.get(key)}")
+    source = landing.get("source")
+    if not isinstance(source, dict) or source.get("kind") != "release" or source.get("version") != version:
+        raise ValueError("land-receipt release returned a landing without the matching release source")
+    return True
 
 
 def build(git, main_sha, topics):
@@ -31,9 +43,10 @@ def build(git, main_sha, topics):
 def post(receipts, out, git, version):
     rows = []
     out.parent.mkdir(parents=True, exist_ok=True)
+    executable = release_cli() if receipts else None
     for receipt in receipts:
         try:
-            result = subprocess.run(["land-receipt", "release", "--repo", str(git), "--branch", receipt["branch"], "--version", version],
+            result = subprocess.run([executable, "release", "--repo", str(git), "--branch", receipt["branch"], "--version", version],
                                     capture_output=True, text=True, timeout=180, check=False)
         except subprocess.TimeoutExpired as error:
             stdout = error.stdout.decode(errors="replace") if isinstance(error.stdout, bytes) else error.stdout or ""
@@ -44,10 +57,7 @@ def post(receipts, out, git, version):
         out.write_text(json.dumps(rows, indent=2) + "\n")
         if result.returncode:
             raise RuntimeError(f"land-receipt release failed ({result.returncode}): {result.stdout}{result.stderr}")
-    send = sender() if rows else None
-    for row in rows:
-        row["delivered"] = send({key: row[key] for key in ("repo", "branch", "head", "main_sha", "at", "parent")},
-                                "RAILS_LAND_RECEIPT_KEY", "rails-land-receipt-key")
+        rows[-1]["delivered"] = delivered_release(result.stdout, receipt, version)
         out.write_text(json.dumps(rows, indent=2) + "\n")
     if not rows:
         out.write_text("[]\n")
