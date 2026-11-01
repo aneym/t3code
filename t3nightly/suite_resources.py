@@ -182,7 +182,7 @@ while True:
 
 
 def job_tmp(tree):
-    return f"{TMP_ROOT}/{Path(tree).name}"
+    return f"{TMP_ROOT}/advisory-{Path(tree).name[-10:]}"
 
 
 def cache_exports(host, tree):
