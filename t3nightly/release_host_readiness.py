@@ -1,10 +1,106 @@
-from .release_config import CHAT_PROJECT
+import json
+import subprocess
+from pathlib import Path
+
+from .release_config import CHAT_PROJECT, SEEDS
+from .release_manifest import migration_identity
+from .release_targets import LINUX_TARGETS
 
 
-def probe_host(config, log, host, value):
-    from .release_readiness import REMOTE_FLOOR, remote_probe, serving_head, source_history
+REMOTE_FLOOR = 25 * 1024**3
+REMOTE_PROBE = r'''
+import json, os, shutil, sqlite3, sys, urllib.request
+from contextlib import closing
+from pathlib import Path
+tools, seeds, version, chat, remote_run = sys.argv[1:6]
+home = Path.home()
+row = {"disk": shutil.disk_usage("/").free, "load": os.getloadavg()[0], "cpus": os.cpu_count()}
+try:
+    with urllib.request.urlopen("http://127.0.0.1:3773/.well-known/t3/environment", timeout=3) as response:
+        row["serving"] = json.load(response).get("serverVersion")
+except (OSError, ValueError):
+    row["serving"] = None
+sys.path.insert(0, str(Path(tools).parent))
+try:
+    from t3nightly.release_manifest import engine_identity
+    row["engine"] = engine_identity(Path(tools))["digest"]
+except Exception as error:
+    row["engine"] = f"unavailable: {type(error).__name__}"
+row["head"] = None
+if row["serving"]:
+    current = Path(remote_run)
+    root = current.parent.parent if current.name.startswith("fast") else current.parent
+    roots = (root / row["serving"], home / ".t3nightly/runs" / row["serving"])
+    for path in (path for runs in roots for path in (runs / "fast/assembly.json", runs / "assembly.json")):
+        if path.is_file():
+            try:
+                row["head"] = json.loads(path.read_text()).get("head")
+            except (OSError, ValueError, AttributeError):
+                pass
+            break
+row["liveHistory"] = None
+try:
+    with closing(sqlite3.connect(f"file:{home / '.t3/userdata/statev2.sqlite'}?mode=ro", uri=True)) as connection:
+        from t3nightly.release_manifest import history_digest
+        row["liveHistory"] = history_digest(connection.execute("SELECT migration_id, name FROM effect_sql_migrations"))
+except Exception:
+    pass
+row["seedHistories"] = {}
+for path in sorted((home / seeds).glob("*.sqlite")):
+    try:
+        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as connection:
+            from t3nightly.release_manifest import history_digest
+            row["seedHistories"][path.stem] = history_digest(connection.execute("SELECT migration_id, name FROM effect_sql_migrations"))
+    except Exception:
+        row["seedHistories"][path.stem] = None
+versions = home / ".t3/runtime/versions"
+row["runtimes"] = sorted(path.name for path in versions.iterdir() if (path / "t3").is_file()) if versions.is_dir() else []
+row["held"] = (home / ".t3nightly" / f"hold-install{version.rsplit('.', 1)[1]}").exists()
+row["files"] = {name: (home / name).exists() for name in (".local/bin/claude", ".vite-plus/bin/vp", ".cargo/bin/cargo", ".config/t3nightly/public-config.env", chat)}
+try:
+    with closing(sqlite3.connect(f"file:{home / '.t3/userdata/statev2.sqlite'}?mode=ro", uri=True)) as connection:
+        row["chatProject"] = connection.execute("SELECT 1 FROM projection_projects WHERE workspace_root=? AND deleted_at IS NULL", (str(home / chat),)).fetchone() is not None
+except sqlite3.Error:
+    row["chatProject"] = False
+print(json.dumps(row))
+'''
 
+
+def serving_head(config, version):
+    runs = config.home / ".t3nightly/runs" / str(version)
+    assembly = next((path for path in (runs / "fast/assembly.json", runs / "assembly.json") if path.is_file()), None)
+    try:
+        return json.loads(assembly.read_text()).get("head") if version and assembly else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+def remote_probe(config, log, host="ax42"):
+    words = ["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", LINUX_TARGETS[host], "python3", "-", config.remote_tools, SEEDS, config.version, CHAT_PROJECT, config.remote_run]
+    try:
+        result = subprocess.run(words, input=REMOTE_PROBE, capture_output=True, text=True, timeout=25, check=False)
+        if result.returncode:
+            log.write(result.stderr)
+            return {}
+        value = json.loads(result.stdout)
+        return value if isinstance(value, dict) else {}
+    except (OSError, subprocess.TimeoutExpired, ValueError) as error:
+        log.write(f"{host} probe failed: {error}\n")
+        return {}
+
+
+def source_history(repo, head):
+    if not head:
+        return None
+    try:
+        return migration_identity(repo, head)["history"]
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        return None
+
+
+def probe_host(config, log, host, value, *, require_result=False):
     remote = remote_probe(config, log, host)
+    if require_result and not remote:
+        raise ValueError(f"{host}: readiness probe failed; previous evidence preserved")
     old = remote.get("serving")
     head = remote.get("head") or serving_head(config, old)
     if not head and old and old == value["oldReleases"]["studio"]:
