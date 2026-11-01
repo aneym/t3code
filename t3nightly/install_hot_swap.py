@@ -187,7 +187,7 @@ def launcher_identity(run, version, expected):
 
     serving_process(run, version, expected)
     serving = run.report["steps"][-1]
-    return {"servicePid": serving["servicePid"], "childPid": serving["pid"], **{name: file_digest(run.home / "runtime" / name) for name in ("launcher/t3", "launcher-pin.json", "launcher-config.json")}}
+    return {"servicePid": serving["servicePid"], **{name: file_digest(run.home / "runtime" / name) for name in ("launcher/t3", "launcher-pin.json", "launcher-config.json")}}
 
 
 def clean_rollback(run, previous, expected, original):
@@ -198,12 +198,20 @@ def clean_rollback(run, previous, expected, original):
         return None
     if any(word in str(update.get("reason", "")).lower() for word in ("watchdog", "last-known-good", "lkg")) or any(step["step"].startswith("launcher-watchdog") for step in run.report["steps"]):
         return None
-    if launcher_identity(run, previous, expected) != original:
-        return None
-    with urllib.request.urlopen(f"http://127.0.0.1:{run.args.port}/api/health", timeout=5) as response:
-        if response.status != 200:
-            return None
-    return update
+    deadline = time.monotonic() + run.args.health_s
+    while time.monotonic() < deadline:
+        if run.server_version() == previous:
+            if launcher_identity(run, previous, expected) != original:
+                return None
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{run.args.port}/api/health", timeout=5) as response:
+                    if response.status == 200:
+                        current = json.loads((run.home / "runtime/service-state.json").read_text())
+                        return update if current == state else None
+            except OSError:
+                pass
+        time.sleep(0.25)
+    raise ValueError("launcher rollback did not restore healthy OLD within the health deadline")
 
 
 def install(run):
@@ -273,6 +281,7 @@ def install(run):
                 raise
             restore_runtime(run.home, previous, store)
             try:
+                fallback = clean_rollback(run, previous, observed["oldRuntime.digest"], original_launcher)
                 if run.server_version() == previous:
                     wait_version(run, previous)
                     method = "launcher-automatic"
@@ -288,8 +297,6 @@ def install(run):
                 prove(run, previous, baseline)
                 run.report["hotSwap"]["rollback"] = method
                 outcome = "rolled-back"
-                if method == "launcher-automatic":
-                    fallback = clean_rollback(run, previous, observed["oldRuntime.digest"], original_launcher)
             except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
                 run.step("hot-swap-rollback-failed", error_type=type(rollback).__name__)
                 outcome = "broken"
