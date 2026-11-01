@@ -179,6 +179,7 @@ def main():
             final_probe = attempt("read-final-probe", lambda: json.loads((run / "probe.json").read_text()))
             if final_probe is not None:
                 probe = final_probe
+                cursor = attempt("final-continuity", lambda: continuity(home, thread, probe)) or {"verified": False, "reason": "final continuity failed", "missedEvents": []}
         job["teardownErrors"] = teardown
         inputs = {"job": job, "probe": probe, "turn": turn, "status": status, "cursor": cursor, "error": error}
         attempt("save-receipt-inputs", lambda: (run / "receipt-inputs.json").write_text(json.dumps(inputs) + "\n"))
