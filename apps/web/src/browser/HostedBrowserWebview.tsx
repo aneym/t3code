@@ -104,7 +104,7 @@ export function HostedBrowserWebview(props: {
   const recordingActive = useActiveBrowserRecordingTabIds().has(runtimeTabId);
   usePreviewBridge({ threadRef, tabId, runtimeTabId, serverDriven });
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Remote desktop tabs claim their CDP event key for the relay lifetime.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds this remote tab's CDP event claim in the desktop bridge while mounted and releases it on cleanup
   useEffect(() => {
     const bridge = window.desktopBridge?.desktopBrowser;
     if (!bridge || remoteDevice === undefined) return;

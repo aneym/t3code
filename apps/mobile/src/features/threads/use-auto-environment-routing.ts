@@ -129,7 +129,7 @@ export function useAutoEnvironmentRouting(input: {
     });
     input.onResolved(project);
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Commits an asynchronously received host snapshot to the persisted draft routing state.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the load-balanced environment picked from remote host probes into the persisted draft store once the pick settles
   useEffect(() => {
     if (!resources.pending && !importing) resolveTarget(resources.environmentId);
   }, [resources.pending, resources.environmentId, importing]);
