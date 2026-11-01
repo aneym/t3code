@@ -89,10 +89,10 @@ def probe(host, service, port, database, linux_host="ax42") -> dict:
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=20)
         if result.returncode:
-            raise ValueError("probe exited nonzero")
+            return {"version": None, "threadCount": None, "service": {}, "errors": [f"probe: exited {result.returncode}"]}
         return json.loads(result.stdout)
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return {"version": None, "threadCount": None, "service": {}, "errors": ["probe unavailable"]}
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        return {"version": None, "threadCount": None, "service": {}, "errors": [f"probe: {type(error).__name__}"]}
 
 
 def reasons(sample, previous, expected):
@@ -137,6 +137,10 @@ def report(host, service, expected, out, started_at, started, rows, status):
         "samples": str(out / "samples.jsonl"),
         "result": status,
         "reasons": found,
+        "unavailableReasons": [
+            {"sample": index, "at": row.get("at"), "probe": error}
+            for index, row in enumerate(rows, 1) for error in row.get("errors", [])
+        ],
         "rollbackRecommendation": {
             "recommended": bool(found),
             "kind": "binary" if found else None,
