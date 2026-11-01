@@ -196,9 +196,14 @@ def install(run):
             reported = receipt.get("drain") or {}
             if reported.get("drained") is not True:
                 active_run_ids = reported.get("activeRunIds", [])
-                run.report["restartDrain"] = {**run.report.get("restartDrain", {}), "outcome": "timed-out" if reported else "unreported", "stopRefused": True, "activeRunIds": active_run_ids}
-                run.step("hard-stop-refused", active_run_ids=active_run_ids)
-                raise ValueError(f"restart drain did not report drained: true; nothing stopped; active_run_ids={active_run_ids}")
+                drain_outcome = "timed-out" if reported else "unreported"
+                if getattr(run.args, "rehearsal", False):
+                    run.report["restartDrain"] = {**run.report.get("restartDrain", {}), "outcome": drain_outcome, "stopForcedInRehearsal": True, "activeRunIds": active_run_ids}
+                    run.step("rehearsal-stop-after-drain", active_run_ids=active_run_ids)
+                else:
+                    run.report["restartDrain"] = {**run.report.get("restartDrain", {}), "outcome": drain_outcome, "stopRefused": True, "activeRunIds": active_run_ids}
+                    run.step("hard-stop-refused", active_run_ids=active_run_ids)
+                    raise ValueError(f"restart drain did not report drained: true; nothing stopped; active_run_ids={active_run_ids}")
         service(run, "stop")
         stopped = True
         attempts = 0
