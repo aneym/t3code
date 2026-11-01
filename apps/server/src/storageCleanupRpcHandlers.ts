@@ -5,6 +5,6 @@ export const makeStorageCleanupRpcHandlers = (
   service: StorageCleanup.StorageCleanup["Service"],
 ) => ({
   [WS_METHODS.serverRunStorageCleanup]: () => service.runNow,
-  [WS_METHODS.serverGetStorageCleanupReport]: () => service.latestReport,
-  [WS_METHODS.serverSubscribeStorageCleanupReport]: () => service.reports,
+  [WS_METHODS.serverReadStorageCleanupReport]: () => service.latestReport,
+  [WS_METHODS.serverGetStorageCleanupReport]: () => service.reports,
 });

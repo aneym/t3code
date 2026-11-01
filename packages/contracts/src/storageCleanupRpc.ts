@@ -6,7 +6,7 @@ import { ServerSettingsError, StorageCleanupReport } from "./settings.ts";
 export const STORAGE_CLEANUP_WS_METHODS = {
   serverRunStorageCleanup: "server.runStorageCleanup",
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
-  serverSubscribeStorageCleanupReport: "server.subscribeStorageCleanupReport",
+  serverReadStorageCleanupReport: "server.readStorageCleanupReport",
 } as const;
 
 export const StorageCleanupRpcs = [
@@ -18,12 +18,12 @@ export const StorageCleanupRpcs = [
   Rpc.make(STORAGE_CLEANUP_WS_METHODS.serverGetStorageCleanupReport, {
     payload: Schema.Struct({}),
     success: Schema.NullOr(StorageCleanupReport),
+    stream: true,
     error: EnvironmentAuthorizationError,
   }),
-  Rpc.make(STORAGE_CLEANUP_WS_METHODS.serverSubscribeStorageCleanupReport, {
+  Rpc.make(STORAGE_CLEANUP_WS_METHODS.serverReadStorageCleanupReport, {
     payload: Schema.Struct({}),
     success: Schema.NullOr(StorageCleanupReport),
-    stream: true,
     error: EnvironmentAuthorizationError,
   }),
 ] as const;

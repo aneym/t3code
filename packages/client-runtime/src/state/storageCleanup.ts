@@ -16,7 +16,7 @@ export const createStorageCleanupAtoms = <R, E>(
   }),
   storageCleanupReport: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:server:storage-cleanup-report",
-    tag: WS_METHODS.serverSubscribeStorageCleanupReport,
+    tag: WS_METHODS.serverGetStorageCleanupReport,
     idleTtlMs: 0,
   }),
 });
