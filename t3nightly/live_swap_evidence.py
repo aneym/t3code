@@ -23,9 +23,9 @@ def turn_state(home, turn):
             candidates.append({"runId": run_id, "status": status, "restartContinuationOfRunId": parent})
     messages = query(home, "SELECT run_id,payload_json FROM orchestration_v2_projection_messages WHERE thread_id=? AND role='assistant' AND streaming=0", (turn["threadId"],))
     completed = [row for row in candidates if row["status"] == "completed" and any(run_id == row["runId"] and json.loads(raw).get("text", "").strip() == turn["nonce"] for run_id, raw in messages)]
-    users = query(home, "SELECT message_id FROM orchestration_v2_projection_messages WHERE thread_id=? AND role='user'", (turn["threadId"],))
+    users = query(home, "SELECT message_id,payload_json FROM orchestration_v2_projection_messages WHERE thread_id=? AND role='user'", (turn["threadId"],))
     allowed = {"message:restart-continuation:" + run_id for run_id in chain}
-    ordinary = [row[0] for row in users if row[0] not in allowed]
+    ordinary = [row[0] for row in users if row[0] not in allowed and not json.loads(row[1]).get("notification")]
     return {"newUserPromptsAfterStart": max(0, len(ordinary) - 1), "runs": candidates, "completedRun": completed[-1] if completed else None, "userMessageIds": [row[0] for row in users]}
 
 

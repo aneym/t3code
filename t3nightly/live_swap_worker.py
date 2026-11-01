@@ -89,7 +89,7 @@ def main():
             nonce = "LIVE_SWAP_" + uuid.uuid4().hex
             gate = [sys.executable, "-m", "t3nightly.live_swap_gate", "--run", str(run), "--deadline", str(job["until"] - 45)]
             command = "env PYTHONPATH=" + shlex.quote(str(Path(__file__).resolve().parent.parent)) + " " + shlex.join(gate)
-            prompt = f"Use Bash in the foreground to run exactly: {command}\nWait for that command; do not background it. Then reply with exactly {nonce} and nothing else. If the server automatically continues this interrupted turn, finish this same command and reply with the same nonce. Do not send messages, edit files, or do other work."
+            prompt = f"Call the Bash tool with timeout=600000 and run_in_background=false to run exactly: {command}\nThe explicit 600000 ms Bash timeout is mandatory so the tool does not turn this into a background command. Wait in this one provider turn until that same Bash call returns; do not background it, do not finish this turn while the command runs, and do not reply with a waiting message. Then reply with exactly {nonce} and nothing else. If the server automatically continues this interrupted turn, finish this same command and reply with the same nonce. Do not send messages, edit files, or do other work."
             submitted = cli(home, version, "thread", "start", "--provider", job["provider"], "--model", job["model"], "--title", "Live swap recorder", str(project), prompt)
             turn = {"threadId": submitted["threadId"], "runId": submitted["runId"], "nonce": nonce, "provider": job["provider"], "model": job["model"], "submittedVersion": version, "newPromptsSent": 1}
             thread = turn["threadId"]
