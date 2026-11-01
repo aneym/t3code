@@ -3,8 +3,6 @@ import argparse
 import json
 import os
 import platform
-import secrets
-import shlex
 import shutil
 import signal
 import socket
@@ -15,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from t3nightly.gate_checks import pair, t3  # noqa: E402
+from t3nightly.gate_checks import background_wait, pair, t3  # noqa: E402
 from t3nightly.gate_env import (  # noqa: E402
     free_port,
     guard_isolated,
@@ -32,7 +30,7 @@ from t3nightly.release_approval import file_sha256, smoke_record, verdict_path  
 from t3nightly.smoke_checks import AGENT_HANDLE, AGENT_NAME, CHECKS  # noqa: E402
 from t3nightly.smoke_extra import story_steps  # noqa: E402
 from t3nightly.smoke_ui import ui  # noqa: E402
-from t3nightly.gate_checks import CLAUDE_MODEL, client, pairing, queue_complete, queue_interrupt, starting_send  # noqa: E402
+from t3nightly.gate_checks import queue_complete, queue_interrupt, starting_send  # noqa: E402
 
 
 class Context:
@@ -132,64 +130,6 @@ def teardown(ctx, _deadline):
     if not stopped or ctx.work.exists():
         raise CheckFailed("; ".join(notes) or "temp dir survived removal")
     return "; ".join(notes) or "no server started"
-
-
-def background_wait(ctx, deadline):
-    marker = "BG%s-done" % secrets.token_hex(4)
-    release = ctx.work / (marker + ".release")
-    command = (
-        "i=0; while [ ! -e %s ] && [ \"$i\" -lt 240 ]; do sleep 1; i=$((i + 1)); done; "
-        "[ -e %s ] && echo %s"
-    ) % (shlex.quote(str(release)), shlex.quote(str(release)), marker)
-    prompt = (
-        "Run this exact shell command as a background task (Bash tool with run_in_background set to true): %s\n"
-        "Then call the t3_background_wait tool with that background task id. Do not poll, sleep or read its output yourself. "
-        "When the task finishes and you are notified, reply with only the line the command printed."
-        % command
-    )
-    pair_file = pairing(ctx, "background-wait", deadline)
-    code, out = t3(
-        ctx,
-        "background-wait",
-        deadline,
-        "thread start",
-        "--provider",
-        "claudeAgent",
-        "--model",
-        CLAUDE_MODEL,
-        "--json",
-        str(ctx.project),
-        prompt,
-        cap=60,
-    )
-    if code != 0:
-        raise CheckFailed("t3 thread start exited %d" % code)
-    thread_id = json.loads(out)["threadId"]
-    result = client(
-        ctx,
-        "background-wait",
-        deadline,
-        "bgwait",
-        "--pairing-file",
-        str(pair_file),
-        "--thread",
-        thread_id,
-        "--marker",
-        marker,
-        "--release-file",
-        str(release),
-        "--timeout",
-        str(int(deadline.left()) - 15),
-    )
-    return (
-        "held Working from %ss to %ss until client release, follow-up run settled completed with the task output; idle gaps at %s"
-        % (
-            result["heldAtSeconds"],
-            result["releasedAtSeconds"],
-            result["idleWhileHeldRunAtSeconds"],
-        )
-    )
-
 
 DELIVERY = [("background-wait", 300, background_wait), ("queue-drain", 300, queue_complete), ("queue-interrupt", 300, queue_interrupt), ("starting-send", 240, starting_send)]
 STEPS = [("boot", 600, boot), ("pair", 120, pair), *CHECKS, *DELIVERY, ("ui", 420, ui), *story_steps()]
