@@ -1,4 +1,7 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { closeSync, constants, mkdtempSync, openSync, rmSync, writeSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 
@@ -110,52 +113,73 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
       return { ...evidence(), threadId, exactlyOnceReplies: 2 };
     }
     if (opts.scenario === "starting-send") {
-      const first = yield* cli("start", "--provider", "claudeAgent", "--model", opts.model, opts.project, `Reply with exactly ${markers[0]} and nothing else. Do not use tools.`);
-      if (!first.threadId || !first.runId) throw fail("thread start did not return thread and run ids");
-      const starting = (p) => {
-        const run = p.runs.find((item) => item.id === first.runId);
-        return run?.status === "running" && !(p.attempts ?? []).some((attempt) => attempt.runId === first.runId && attempt.providerTurnId);
-      };
-      yield* subscribe(first.threadId);
-      yield* waitFor("first run running before its provider turn", (p) => starting(p) || p.runs.some((run) => run.id === first.runId && terminal.has(run.status)) || (p.attempts ?? []).some((attempt) => attempt.runId === first.runId && attempt.providerTurnId));
-      const openBefore = starting(projection);
-      const order = { tick: 0, turnEnded: null, sent: null };
-      const track = () => {
-        order.tick += 1;
-        if (order.turnEnded === null && !starting(projection)) order.turnEnded = order.tick;
-        if (order.sent === null && projection.messages.some((message) => message.role === "user" && message.text.includes(markers[1]))) order.sent = order.tick;
-      };
-      listeners.add(track);
-      track();
-      const sent = yield* cli("send", "--mode", "auto", first.threadId, `Reply with exactly ${markers[1]} and nothing else. Do not use tools.`);
-      receipts.push(first, sent);
-      yield* waitFor("sent message persisted", () => order.sent !== null);
-      listeners.delete(track);
-      const missed = !openBefore || (order.turnEnded !== null && order.turnEnded < order.sent) || sent.delivery === "steered";
-      const distinct = Boolean(sent.runId) && sent.runId !== first.runId;
-      restartObservation = { openBefore, turnEndedTick: order.turnEnded, sentTick: order.sent, missed, delivery: sent.delivery };
-      if (!missed && !distinct) throw fail("send into a starting run did not return a distinct run");
-      if (!missed && sent.delivery !== "queued") throw fail(`auto send into a starting run was delivered ${sent.delivery} instead of queued behind it`);
-      const expected = distinct ? [[first.runId, markers[0]], [sent.runId, markers[1]]] : [[first.runId, null]];
-      const final = yield* waitFor("runs to settle", (p) =>
-        expected.every(([id]) => p.runs.some((run) => run.id === id && terminal.has(run.status))) && p.runs.every((run) => terminal.has(run.status)),
-      );
-      for (const [id, marker] of expected) {
-        const status = final.runs.find((run) => run.id === id)?.status;
-        const replies = final.messages.filter((message) => message.runId === id && message.role === "assistant" && message.text.trim());
-        if (status !== "completed" || (marker === null ? replies.length < 1 : replies.length !== 1 || replies[0].text.trim() !== marker)) throw fail(`run ${id} ended ${status} with ${replies.length} replies instead of one ${marker ?? "reply"}`);
+      const directory = mkdtempSync(join(tmpdir(), "t3-queue-gate-"));
+      const fifo = join(directory, "release");
+      execFileSync("mkfifo", [fifo]);
+      const gate = openSync(fifo, constants.O_RDWR | constants.O_NONBLOCK);
+      try {
+        const first = yield* cli("start", "--provider", "claudeAgent", "--model", opts.model, opts.project, `Run this exact command with the Bash tool in the foreground: python3 -c "open('${fifo}').read(1)". After it finishes reply with exactly ${markers[0]} and nothing else. If a newer user instruction arrives, follow it. Do not run other tools.`);
+        if (!first.threadId || !first.runId) throw fail("thread start did not return thread and run ids");
+        const starting = (p) => {
+          const run = p.runs.find((item) => item.id === first.runId);
+          return run?.status === "running" && !(p.attempts ?? []).some((attempt) => attempt.runId === first.runId && attempt.providerTurnId);
+        };
+        yield* subscribe(first.threadId);
+        yield* waitFor("first run running before its provider turn", (p) => starting(p) || p.runs.some((run) => run.id === first.runId && terminal.has(run.status)) || (p.attempts ?? []).some((attempt) => attempt.runId === first.runId && attempt.providerTurnId));
+        const openBefore = starting(projection);
+        if (!openBefore) {
+          yield* waitFor("first provider turn and foreground command to be active", (p) =>
+            p.runs.some((run) => run.id === first.runId && run.status === "running") &&
+            (p.providerTurns ?? []).some((turn) => turn.startedAt != null && turn.completedAt == null &&
+              (p.attempts ?? []).some((attempt) => attempt.runId === first.runId && attempt.id === turn.runAttemptId)) &&
+            p.turnItems.some((item) => item.runId === first.runId && item.type === "command_execution" && item.input.includes(fifo) && !terminal.has(item.status)),
+          );
+        }
+        const order = { tick: 0, turnEnded: null, sent: null };
+        const track = () => {
+          order.tick += 1;
+          if (order.turnEnded === null && !starting(projection)) order.turnEnded = order.tick;
+          if (order.sent === null && projection.messages.some((message) => message.role === "user" && message.text.includes(markers[1]))) order.sent = order.tick;
+        };
+        listeners.add(track);
+        track();
+        const sent = yield* cli("send", "--mode", "auto", first.threadId, `Reply with exactly ${markers[1]} and nothing else. Do not use tools.`);
+        receipts.push(first, sent);
+        yield* waitFor("sent message persisted", () => order.sent !== null);
+        listeners.delete(track);
+        writeSync(gate, "x");
+        const missed = !openBefore || (order.turnEnded !== null && order.turnEnded < order.sent) || sent.delivery === "steered";
+        if (!sent.runId) throw fail("send did not return a run id");
+        const distinct = sent.runId !== first.runId;
+        if (!distinct && sent.delivery !== "steered") throw fail("send reused the first run without steering");
+        restartObservation = { openBefore, turnEndedTick: order.turnEnded, sentTick: order.sent, missed, delivery: sent.delivery };
+        if (!missed && !distinct) throw fail("send into a starting run did not return a distinct run");
+        if (!missed && sent.delivery !== "queued") throw fail(`auto send into a starting run was delivered ${sent.delivery} instead of queued behind it`);
+        const expected = distinct ? [[first.runId, markers[0]], [sent.runId, markers[1]]] : [[first.runId, markers[1]]];
+        const final = yield* waitFor("runs to settle", (p) =>
+          expected.every(([id]) => p.runs.some((run) => run.id === id && terminal.has(run.status))) && p.runs.every((run) => terminal.has(run.status)),
+        );
+        for (const [id, marker] of expected) {
+          const status = final.runs.find((run) => run.id === id)?.status;
+          const replies = final.messages.filter((message) => message.runId === id && message.role === "assistant" && message.text.trim());
+          if (status !== "completed" || (replies.length !== 1 || replies[0].text.trim() !== marker)) throw fail(`run ${id} ended ${status} with ${replies.length} replies instead of one ${marker}`);
+        }
+        if (final.runs.length !== expected.length || final.runs.some((run) => run.queueHeld)) throw fail("unexpected runs or held work remain");
+        if (sent.delivery === "steered") {
+          const millis = (value) => (typeof value === "string" ? Date.parse(value) : typeof value?.epochMilliseconds === "number" ? value.epochMilliseconds : NaN);
+          const attempts = new Set((final.attempts ?? []).filter((attempt) => attempt.runId === first.runId).map((attempt) => attempt.id));
+          const steeredAt = millis(final.messages.find((message) => message.role === "user" && message.text.includes(markers[1]))?.createdAt);
+          const turnLive = (final.providerTurns ?? []).some((turn) => attempts.has(turn.runAttemptId) && turn.startedAt != null && millis(turn.startedAt) <= steeredAt && (turn.completedAt == null || millis(turn.completedAt) >= steeredAt));
+          if (!turnLive) throw fail("auto send steered into a run whose provider turn had not started");
+          restartObservation.steerAnswered = final.messages.some((message) => message.runId === first.runId && message.role === "assistant" && message.text.includes(markers[1]));
+        }
+        const inconclusive = missed ? `the send landed after the first run left its startup window (delivered ${sent.delivery}${sent.delivery === "steered" ? `, server had the turn active, steer ${restartObservation.steerAnswered ? "answered" : "unanswered"} in the first run` : ""})` : undefined;
+        return { ...evidence(), threadId: first.threadId, firstRun: first.runId, sentDelivery: sent.delivery, exactlyOnceReplies: distinct ? 2 : 1, inconclusive };
+      } finally {
+        writeSync(gate, "x");
+        closeSync(gate);
+        rmSync(directory, { recursive: true, force: true });
       }
-      if (final.runs.length !== expected.length || final.runs.some((run) => run.queueHeld)) throw fail("unexpected runs or held work remain");
-      if (sent.delivery === "steered") {
-        const millis = (value) => (typeof value === "string" ? Date.parse(value) : typeof value?.epochMilliseconds === "number" ? value.epochMilliseconds : NaN);
-        const attempts = new Set((final.attempts ?? []).filter((attempt) => attempt.runId === first.runId).map((attempt) => attempt.id));
-        const steeredAt = millis(final.messages.find((message) => message.role === "user" && message.text.includes(markers[1]))?.createdAt);
-        const turnLive = (final.providerTurns ?? []).some((turn) => attempts.has(turn.runAttemptId) && turn.startedAt != null && millis(turn.startedAt) <= steeredAt);
-        if (!turnLive) throw fail("auto send steered into a run whose provider turn had not started");
-        restartObservation.steerAnswered = final.messages.some((message) => message.runId === first.runId && message.role === "assistant" && message.text.includes(markers[1]));
-      }
-      const inconclusive = missed ? `the send landed after the first run left its startup window (delivered ${sent.delivery}${sent.delivery === "steered" ? `, server had the turn active, steer ${restartObservation.steerAnswered ? "answered" : "unanswered"} in the first run` : ""})` : undefined;
-      return { ...evidence(), threadId: first.threadId, firstRun: first.runId, sentDelivery: sent.delivery, exactlyOnceReplies: distinct ? 2 : 0, inconclusive };
     }
     const started = yield* cli(
       "start", "--provider", "claudeAgent", "--model", opts.model, opts.project,
