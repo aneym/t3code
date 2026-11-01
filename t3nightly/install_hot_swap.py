@@ -89,7 +89,7 @@ def measure_candidate(sandbox, manifest):
     return receipt
 
 
-def mark_candidate(run, manifest, rehearsal, compatibility):
+def mark_candidate(run, manifest, rehearsal, compatibility, observed):
     qualification = (rehearsal or {}).get("hotSwap") or {}
     if run.args.rehearsal:
         path = run.state.parent / "candidate-startup.json"
@@ -100,6 +100,17 @@ def mark_candidate(run, manifest, rehearsal, compatibility):
     elif qualification.get("status") != "hot-swap" or qualification.get("sequenceContinuity") is not True:
         run.step("hot-swap-fallback", reason="rehearsal-not-hot-swap-or-sequence-discontinuous", rehearsal_status=qualification.get("status"))
         return False
+    if not run.args.rehearsal:
+        startup = qualification.get("startupMeasurement") or {}
+        if startup.get("version") != run.args.version:
+            run.step("hot-swap-fallback", reason="rehearsal-startup-version-mismatch")
+            return False
+        if startup.get("runtimeDigest") != observed["candidateRuntime.digest"]:
+            run.step("hot-swap-fallback", reason="rehearsal-startup-runtime-digest-mismatch")
+            return False
+        if startup.get("candidateMeasuredStartupMs") != qualification.get("candidateMeasuredStartupMs"):
+            run.step("hot-swap-fallback", reason="rehearsal-startup-measurement-mismatch")
+            return False
     measured = qualification.get("candidateMeasuredStartupMs")
     if type(measured) is not int or measured <= 0:
         run.step("hot-swap-fallback", reason="candidate-startup-measurement-missing-or-invalid")
@@ -173,7 +184,7 @@ def install(run):
     reasons = [name for name, required in (("service-artifact-change", changed(run)), ("migration-files", compatibility.get("migrationFiles")), ("compatibility-maintenance", compatibility.get("maintenance")), ("manifest-maintenance", manifest.get("maintenance")), ("restore-rollback-class", compatibility.get("eligibility") == RESTORE_CLASS)) if required]
     maintenance = bool(reasons)
     available = supported(environment, run) and qualification["qualified"] and not maintenance
-    if available and not mark_candidate(run, manifest, rehearsal, compatibility):
+    if available and not mark_candidate(run, manifest, rehearsal, compatibility, observed):
         available, maintenance = False, True
     run.report["hotSwap"] = {"supported": available, "method": "launcher-ipc" if available else "maintenance" if maintenance else "hot-swap-unsupported", "qualification": qualification}
     if not available:

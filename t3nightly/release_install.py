@@ -19,10 +19,7 @@ def fast_install(config, log):
         state.mkdir(parents=True, exist_ok=True)
         env = {**os.environ, "AGENT_LANE": "t3-nightly", "AGENT_THREAD_ID": "mcp:a2795f2f-43aa-40c5-890c-98de1291379a"}
         prefix = ["ionice", "-c3"]
-    hot = load(config.receipt("rehearsal")).get("hotSwap") or {}
-    seamless = hot.get("status") == "hot-swap" and hot.get("sequenceContinuity") is True
-    log.write(f"install mode: {'seamless' if seamless else 'hard'}; hotSwap.status={hot.get('status')}\n")
-    words = [*prefix, sys.executable, str(config.tools / "install"), "--seamless" if seamless else "--hard", "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")), "--version", config.version, "--assets", str(config.build_out()),
+    words = [*prefix, sys.executable, str(config.tools / "install"), "--seamless", "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")), "--version", config.version, "--assets", str(config.build_out()),
              "--manifest", str(config.manifest), "--artifact-manifest", str(config.artifact()), "--receipt", str(config.receipt("rehearsal")),
              "--receipt-host", config.host, "--install-receipt", str(config.receipt("install")), "--state-dir", str(state),
              "--chat-project", str(config.chat_project()), "--load-max", "64", "--health-s", "300", "--override-reason", config.override_reason,

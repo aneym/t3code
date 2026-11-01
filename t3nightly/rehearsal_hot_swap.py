@@ -134,7 +134,8 @@ class HotSwapRehearsal(Rehearsal):
             method = installer.get("hotSwap", {}).get("method")
             maintenance = method == "maintenance"
             fallback = method != "launcher-ipc"
-            hot["status"] = "maintenance" if maintenance or legacy else "hot-swap-unsupported" if fallback else "hot-swap"
+            outcome = installer.get("outcome")
+            hot["status"] = outcome if outcome != "installed" else "maintenance" if maintenance or legacy else "hot-swap-unsupported" if fallback else "hot-swap"
             hot["fallbackAccepted"] = installer.get("outcome") == "installed"
             if fallback and not (maintenance or legacy) and result.get("result") in ("PASS", "COMPATIBILITY-PROBE"):
                 result.update(result="COMPATIBILITY-PROBE", releaseEligible=False)
@@ -185,7 +186,7 @@ class HotSwapRehearsal(Rehearsal):
                 receipt["result"] = "FAIL"
             elif hot.get("status") == "hot-swap-unsupported":
                 receipt["result"] = "HOT-SWAP-UNSUPPORTED"
-            receipt["hotSwap"] = {key: hot[key] for key in ("status", "sequenceContinuity", "candidateMeasuredStartupMs", "previousMeasuredStartupMs", "checks") if key in hot}
+            receipt["hotSwap"] = {key: hot[key] for key in ("status", "sequenceContinuity", "candidateMeasuredStartupMs", "previousMeasuredStartupMs", "startupMeasurement", "checks") if key in hot}
             queue_failed = self.args.queue_mode != "none" and hot.get("checks", {}).get("queue-saturation", {}).get("status") != "passed"
             presentation_failed = self.args.queue_mode != "budget" and self.args.inject == "none" and hot.get("checks", {}).get("presentation", {}).get("status") != "passed"
             normal = self.args.inject == "none" and not self.args.force_rollback and self.args.queue_mode == "none"
