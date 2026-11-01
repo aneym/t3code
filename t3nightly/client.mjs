@@ -1,5 +1,5 @@
 import { queueDrain } from "./gate_queue.mjs";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const [mode, ...rest] = process.argv.slice(2);
@@ -192,9 +192,10 @@ const programs = {
       const last = samples.at(-1);
       if (!last || last.status !== sample.status || last.active !== sample.active || last.held !== sample.held) samples.push(sample);
       const working = sample.active || sample.held;
-      if (sample.held && heldAt === null) {
+      if (sample.held && !sample.active && heldAt === null) {
         heldAt = seconds;
         heldRunId = thread.latestRunId;
+        if (opts["release-file"]) writeFileSync(opts["release-file"], "released\n", { flag: "wx" });
       }
       if (heldAt === null && !working && idleBeforeHold === null) idleBeforeHold = seconds;
       if (heldAt !== null && !sample.held && releasedAt === null) releasedAt = seconds;
@@ -202,7 +203,7 @@ const programs = {
       current = thread;
       return heldAt !== null && !working && thread.latestRunId !== heldRunId && settledStatuses.has(thread.status);
     };
-    yield* session.client["orchestration.subscribeShell"]({}).pipe(
+    const observed = yield* session.client["orchestration.subscribeShell"]({}).pipe(
       Stream.flatMap((item) =>
         item.kind === "snapshot"
           ? Stream.fromIterable(item.snapshot.threads.filter((thread) => thread.id === threadId))
@@ -213,9 +214,11 @@ const programs = {
       Stream.takeUntil(observe),
       Stream.runDrain,
       Effect.timeout(`${Number(opts.timeout ?? 180)} seconds`),
+      Effect.exit,
     );
-    const detail = yield* firstOf(session.client["orchestration.subscribeThread"]({ threadId }), "snapshot", "60 seconds");
-    const reply = detail.projection.messages.filter((message) => message.role === "assistant").map((message) => message.text).join("\n");
+    const snapshot = yield* firstOf(session.client["orchestration.subscribeThread"]({ threadId }), "snapshot", "5 seconds").pipe(Effect.exit);
+    const detail = snapshot._tag === "Success" ? snapshot.value : null;
+    const replies = (detail?.projection.messages ?? []).filter((message) => message.role === "assistant");
     const result = {
       samples,
       heldAtSeconds: heldAt,
@@ -223,10 +226,13 @@ const programs = {
       idleBeforeHoldAtSeconds: idleBeforeHold,
       idleWhileHeldRunAtSeconds: idleGaps,
       finalStatus: current?.status ?? null,
-      markerInReply: reply.includes(opts.marker),
-      runs: detail.projection.runs?.length ?? null,
+      markerInReply: replies.some((message) => message.text.trim() === opts.marker),
+      runs: detail?.projection.runs?.length ?? null,
+      ...(observed._tag === "Failure" ? { detail, detailError: snapshot._tag === "Failure" ? String(snapshot.cause) : null } : {}),
     };
     const fail = (message) => Object.assign(new Error(message), { result });
+    if (observed._tag === "Failure") throw fail(`background wait failed: ${String(observed.cause)}`);
+    if (snapshot._tag === "Failure") throw fail(`thread detail failed: ${String(snapshot.cause)}`);
     if (idleBeforeHold !== null) throw fail("thread went idle before the agent marked its background task");
     if (releasedAt === null || releasedAt < Number(opts["min-release"] ?? 0)) throw fail(`hold released at ${releasedAt}s, before the task could finish`);
     if (!result.markerInReply) throw fail("assistant reply lacks the background task output");
