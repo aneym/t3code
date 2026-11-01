@@ -173,13 +173,17 @@ export const layer = Layer.effect(
                     DateTime.toEpochMillis(shell.automationPlacementAt)));
             if (
               projection.thread.deletedAt !== null ||
-              projection.thread.lineage.parentThreadId !== null ||
-              projection.thread.forkedFrom !== null ||
+              ((projection.thread.lineage.parentThreadId !== null ||
+                projection.thread.forkedFrom !== null) &&
+                !(
+                  projection.thread.lineage.relationshipToParent === "fork" &&
+                  projection.thread.forkedFrom?.type === "run"
+                )) ||
               automationOnly
             )
               return yield* new AgentHomeError({
                 handle: input.handle,
-                message: "Subagent, fork and automation threads cannot be agent main threads",
+                message: "Deleted, delegated and automation threads cannot be agent main threads",
               });
           }
           const at = DateTime.formatIso(yield* DateTime.now).replace(/\.\d{3}Z$/, "Z");
