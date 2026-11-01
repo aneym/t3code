@@ -185,7 +185,7 @@ def cache_exports(host, tree):
     if host != "ax42":
         return "true"
     tmp = job_tmp(tree)
-    return f"{{ mkdir -p /srv/cow/t3-wt/.advisory-cache/pnpm {tmp} && export TMPDIR={tmp} XDG_CACHE_HOME=/srv/cow/t3-wt/.advisory-cache PNPM_CONFIG_CACHE_DIR=/srv/cow/t3-wt/.advisory-cache/pnpm PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright electron_config_cache=$HOME/.cache/electron; }}"
+    return f"{{ mkdir -p /srv/cow/t3-wt/.advisory-cache/pnpm {tmp} && test \"$(realpath {tmp})\" = {tmp} && export TMPDIR={tmp} XDG_CACHE_HOME=/srv/cow/t3-wt/.advisory-cache PNPM_CONFIG_CACHE_DIR=/srv/cow/t3-wt/.advisory-cache/pnpm PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright electron_config_cache=$HOME/.cache/electron; }}"
 
 
 @contextmanager

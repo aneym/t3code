@@ -45,7 +45,7 @@ def execute(host, words, log, timeout, cwd=None, env=None):
     )
     try:
         return process.wait(timeout=max(1, int(wait)))
-    except WorkerTerminated:
+    except (WorkerTerminated, KeyboardInterrupt):
         if pidfile and process.poll() is None:
             quoted = shlex.quote(pidfile)
             stop = f"for i in $(seq 50); do test -s {quoted} && break; sleep 0.1; done; test -s {quoted} && kill -TERM \"$(cat {quoted})\"; rm -f {quoted}"
