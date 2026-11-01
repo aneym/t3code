@@ -8,6 +8,7 @@ from .install_offbox import METHOD as OFFBOX_METHOD
 from .release_approval import approved
 from .release_graph import SUCCESS_OUTCOMES
 from .release_manifest import digest, eligible, load
+from .release_publish_stage import validate as validate_staged
 from .release_rollback_proof import proven, required
 from .release_receipts import INSTALL_SCHEMA, REHEARSAL_SCHEMA, parse, provenance, timestamp
 from .release_continuation import require_studio_proof
@@ -242,6 +243,8 @@ def fast_evidence(run, version):
 
 def fast_output(stage, config):
     run = config.run
+    if stage in ("SM", "SL", "SD"):
+        return validate_staged(config, stage)
     if stage == "Q":
         return json.loads((run / "readiness.json").read_text())["ok"] is True
     if stage == "A":

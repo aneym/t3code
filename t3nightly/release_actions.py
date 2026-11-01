@@ -21,6 +21,7 @@ from .release_graph import SUCCESS_OUTCOMES
 from .release_land_receipts import publish as publish_landings
 from .release_manifest import digest, eligible, freeze, history_digest, load
 from .release_outputs import fast_evidence
+from .release_publish_stage import stage_payload, validate as validate_staged
 from .release_ownership import ownership
 from .release_readiness import readiness
 from .release_rollback_proof import fast_rollback_proof, required
@@ -273,15 +274,14 @@ def fast_publish(config, log):
     remote, local = config.on("ax42"), config.run / "ax42"
     local.mkdir(exist_ok=True)
     proof = (remote.receipt("rollback-proof"),) if required(load(config.manifest), "ax42") else ()
-    for path in (remote.build_out() / remote.archive(), remote.artifact(), remote.manifest, remote.receipt("rehearsal"), remote.receipt("install"), *proof):
+    for path in (remote.manifest, remote.receipt("rehearsal"), remote.receipt("install"), *proof):
         transfer(f"{config.linux_host}:{path}", str(local) + "/", log)
+    for stage in ("SM", "SL", "SD"):
+        validate_staged(config, stage)
     publish = config.run / "publish"
     publish.mkdir(exist_ok=True)
     rows = []
-    for source in (config.build_out() / config.archive(), local / remote.archive()):
-        target = publish / source.name
-        target.unlink(missing_ok=True)
-        shutil.copy2(source, target)
+    for target in (publish / config.archive(), publish / remote.archive()):
         rows.append(f"{hashlib.file_digest(target.open('rb'), 'sha256').hexdigest()}  {target.name}\n")
     (publish / "SHA256SUMS").write_text("".join(rows))
     code = command([sys.executable, str(config.tools / "publish-feed"), str(publish), "--desktop-dir", str(config.run / "desktop"),
@@ -321,6 +321,8 @@ def run_fast_action(stage, config, log):
         return fast_build(config, "linux-cli", head, config.build_out(), "build-cli", log)
     if stage == "D":
         return fast_build(config, "desktop", head, config.run / "desktop", "build-desktop", log)
+    if stage in ("SM", "SL", "SD"):
+        return stage_payload(config, stage, log)
     if stage in ("PM", "PL"):
         return fast_prepare(config, log)
     if stage in ("RM", "RL"):
