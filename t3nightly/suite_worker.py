@@ -46,7 +46,7 @@ def execute(host, words, log, timeout, cwd=None, env=None):
     try:
         return process.wait(timeout=max(1, int(wait)))
     except WorkerTerminated:
-        if pidfile:
+        if pidfile and process.poll() is None:
             quoted = shlex.quote(pidfile)
             stop = f"for i in $(seq 50); do test -s {quoted} && break; sleep 0.1; done; test -s {quoted} && kill -TERM \"$(cat {quoted})\"; rm -f {quoted}"
             try:
@@ -54,12 +54,15 @@ def execute(host, words, log, timeout, cwd=None, env=None):
                                stdout=log, stderr=subprocess.STDOUT, timeout=20, check=False)
             except subprocess.TimeoutExpired:
                 log.write(f"remote stop timed out for {pidfile}\n")
-        os.killpg(process.pid, signal.SIGTERM)
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+            except (ProcessLookupError, PermissionError):
+                process.wait()
         raise
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGTERM)
