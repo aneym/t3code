@@ -26,6 +26,16 @@ export const MIN_SCHEDULED_TASK_INTERVAL_MS = 60_000;
 
 const ScheduledTaskIntervalMs = Schema.Int.check(Schema.isGreaterThan(0));
 
+const ScheduledTaskOnceSchedule = Schema.Struct({
+  type: Schema.Literal("once"),
+  at: IsoDateTime.check(
+    Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/),
+    Schema.makeFilter((value) => Number.isFinite(Date.parse(value))),
+  ).annotate({
+    description: "ISO datetime with timezone. Runs once at or after this time, then disables.",
+  }),
+});
+
 const ScheduledTaskIntervalSchedule = Schema.Struct({
   type: Schema.Literal("interval"),
   everyMs: ScheduledTaskIntervalMs,
@@ -164,6 +174,7 @@ const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
 
 /** Accept legacy sub-minute schedules so users can still manage them. */
 export const ScheduledTaskSchedule = Schema.Union([
+  ScheduledTaskOnceSchedule,
   ScheduledTaskIntervalSchedule,
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskWebhookSchedule,
@@ -171,6 +182,7 @@ export const ScheduledTaskSchedule = Schema.Union([
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
 export const ScheduledTaskUpsertSchedule = Schema.Union([
+  ScheduledTaskOnceSchedule,
   Schema.Struct({
     type: Schema.Literal("interval"),
     everyMs: ScheduledTaskIntervalMs.check(

@@ -1,3 +1,4 @@
+import { scheduledTaskStateLabel } from "@t3tools/client-runtime/scheduled-task-once";
 import { isAutomationOnlyThread } from "./threadPlacement";
 import { AutomationThreadRows, automationThreadsWithoutJobs } from "./AutomationThreadRows";
 import {
@@ -168,7 +169,7 @@ function AutomationJobRow({
             </span>
           </span>
         ) : !task.enabled ? (
-          "Paused"
+          scheduledTaskStateLabel(task)
         ) : failed ? (
           <span className="inline-flex items-center gap-1 font-medium text-error-foreground">
             <CircleAlertIcon aria-hidden className="size-4 shrink-0" />

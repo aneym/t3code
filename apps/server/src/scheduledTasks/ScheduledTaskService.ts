@@ -50,7 +50,13 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
-import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import { makeMarkScheduledTaskRunning } from "./scheduledTaskRunState.ts";
+import {
+  isMissedFixedTimeRun,
+  isOnceScheduleRearmed,
+  isSameSchedule,
+  nextScheduledRunAt,
+} from "./Schedule.ts";
 import {
   redactHeaders,
   redactQuery,
@@ -676,24 +682,7 @@ export const layer = Layer.effect(
           ),
         );
 
-    const markRunning = (id: ScheduledTaskId, startedAtIso: string, webhookDeliveryId?: string) =>
-      sql<{ task_id: string }>`
-        UPDATE scheduled_tasks
-        SET updated_at = ${startedAtIso},
-            last_run_at = ${startedAtIso},
-            last_run_webhook_delivery_id = ${webhookDeliveryId ?? null},
-            last_run_status = 'running',
-            last_run_error = NULL
-        WHERE task_id = ${id}
-        RETURNING task_id
-      `.pipe(
-        Effect.mapError((cause) =>
-          taskError("Could not mark schedule task as running.", { taskId: id, cause }),
-        ),
-        Effect.flatMap((rows) =>
-          rows.length > 0 ? Effect.void : taskError("Schedule task not found.", { taskId: id }),
-        ),
-      );
+    const markRunning = makeMarkScheduledTaskRunning(sql);
 
     const markCompleted = (input: {
       readonly id: ScheduledTaskId;
@@ -1220,15 +1209,16 @@ export const layer = Layer.effect(
         (yield* managedFolders.isScratchProject(input.projectId))
           ? { type: "root" }
           : input.workspaceStrategy;
+      const enabled = input.enabled || isOnceScheduleRearmed(existingTask, schedule);
       const scheduleUnchanged =
         existingTask !== null &&
-        existingTask.enabled === input.enabled &&
+        existingTask.enabled === enabled &&
         isSameSchedule(existingTask.schedule, schedule);
       const task: ScheduledTask = {
         id,
         title: input.title,
         prompt: input.prompt,
-        enabled: input.enabled,
+        enabled,
         schedule,
         projectId: input.projectId,
         threadId: input.threadId ?? null,
@@ -1242,7 +1232,7 @@ export const layer = Layer.effect(
         updatedAt: iso(now),
         nextRunAt: scheduleUnchanged
           ? existingTask.nextRunAt
-          : nextRunAt({ enabled: input.enabled, schedule }, now),
+          : nextRunAt({ enabled, schedule }, now),
         lastRunAt: existingTask?.lastRunAt ?? null,
         lastRunStatus: existingTask?.lastRunStatus ?? "never",
         lastRunError: existingTask?.lastRunError ?? null,

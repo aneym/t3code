@@ -7,10 +7,19 @@ import {
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
 
+const encodeUpsertSchedule = Schema.encodeSync(ScheduledTaskUpsertSchedule);
 const decodeSchedule = Schema.decodeUnknownSync(ScheduledTaskSchedule);
 const decodeUpsertSchedule = Schema.decodeUnknownSync(ScheduledTaskUpsertSchedule);
 
 describe("ScheduledTaskSchedule", () => {
+  it("round-trips one-shot schedules and rejects missing or ambiguous times", () => {
+    const once = { type: "once", at: "2026-07-01T09:00:00.000Z" } as const;
+    expect(decodeSchedule(encodeUpsertSchedule(once))).toEqual(once);
+    for (const at of [undefined, "", "tomorrow", "2026-07-01T09:00:00", "2026-99-01T09:00:00Z"]) {
+      expect(() => decodeUpsertSchedule({ type: "once", at })).toThrow();
+    }
+  });
+
   it("keeps legacy sub-minute persisted schedules readable", () => {
     expect(
       decodeSchedule({
