@@ -233,10 +233,25 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
         if (repository === undefined || !registered.some((target) => key(target) === key(cwd)))
           return keep("worktree registration is unavailable");
         failureReason = "inspection-failed: branch-head";
-        const branch = (yield* run(["symbolic-ref", "--quiet", "HEAD"])).stdout
-          .trim()
-          .replace(/^refs\/heads\//, "");
-        const head = (yield* git.resolveCommit({ cwd, revision: "HEAD" })).commitSha;
+        const branchHead = yield* git.execute({
+          operation: "StorageCleanup.orphanBranchHead",
+          cwd,
+          args: ["symbolic-ref", "--quiet", "HEAD"],
+          allowNonZeroExit: true,
+        });
+        if (branchHead.stdoutTruncated || branchHead.stderrTruncated)
+          return keep("branch-head-inspection-truncated");
+        if (branchHead.exitCode === 1 && branchHead.stderr.trim() === "")
+          return keep("detached HEAD");
+        if (branchHead.exitCode !== 0) return keep("branch-head-symbolic-ref-failed");
+        const ref = branchHead.stdout.trim();
+        if (!ref.startsWith("refs/heads/")) return keep("branch-head-ref-unavailable");
+        const branch = ref.slice("refs/heads/".length);
+        failureReason = "inspection-failed: branch-head-commit";
+        const commit = yield* git.resolveCommit({ cwd, revision: "HEAD" }).pipe(Effect.option);
+        if (Option.isNone(commit))
+          return keep("HEAD commit could not be resolved (unborn or invalid branch)");
+        const head = commit.value.commitSha;
         const identity = Effect.fn("StorageCleanup.orphanIdentity")(function* () {
           if (
             (yield* fs.realPath(cwd)) !==

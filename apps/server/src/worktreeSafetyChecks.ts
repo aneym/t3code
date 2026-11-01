@@ -1,8 +1,8 @@
+import { inspectWorktreeSubmodules } from "./worktreeSubmodules.ts";
 import { GitCommandError, type WorktreeCleanupRules } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { PENDING_OPERATIONS } from "./worktreeTrash.ts";
 
@@ -10,18 +10,6 @@ export const makeWorktreeSafetyChecks = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const git = yield* GitVcsDriver.GitVcsDriver;
-  const isWindows = yield* HostProcess.isWindows;
-  const pathKey = (target: string) =>
-    isWindows ? path.resolve(target).toLowerCase() : path.resolve(target);
-  const inside = (root: string, target: string) => {
-    const relative = path.relative(pathKey(root), pathKey(target));
-    return (
-      relative !== "" &&
-      relative !== ".." &&
-      !relative.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relative)
-    );
-  };
   const branchChanged = Effect.fn("StorageCleanup.branchChanged")(function* (
     cwd: string,
     branch: string | null,
@@ -134,16 +122,9 @@ export const makeWorktreeSafetyChecks = Effect.gen(function* () {
       if (admin.stdoutTruncated || admin.stderrTruncated)
         return "submodule inspection exceeded the limit";
       const modules = path.join(admin.stdout.replace(/\n$/, ""), "modules");
-      const populated = yield* inspect([
-        "submodule",
-        "foreach",
-        "--recursive",
-        "--quiet",
-        'printf "%s\\0" "$toplevel/$sm_path"',
-      ]);
-      if (populated.stdoutTruncated || populated.stderrTruncated)
-        return "submodule inspection exceeded the limit";
-      const paths = populated.stdout.split("\0").filter(Boolean);
+      const discovered = yield* inspectWorktreeSubmodules(cwd);
+      if (typeof discovered === "string") return discovered;
+      const { paths, unchecked } = discovered;
       const pending = [modules];
       for (const submodule of paths) {
         const directory = yield* inspect(["-C", submodule, "rev-parse", "--absolute-git-dir"]);
@@ -205,24 +186,6 @@ export const makeWorktreeSafetyChecks = Effect.gen(function* () {
       for (const submodule of paths) {
         const changes = yield* localChangesReason(submodule, rules);
         if (changes !== null) return `submodule ${changes}`;
-      }
-      const root = yield* fs.realPath(cwd);
-      const populatedPaths = new Set(paths.map(pathKey));
-      const unchecked: string[] = [];
-      for (const repository of [root, ...paths]) {
-        const index = yield* inspect(
-          ["-C", repository, "ls-files", "--stage", "-z"],
-          16 * 1024 * 1024,
-        );
-        if (index.stdoutTruncated || index.stderrTruncated)
-          return "submodule inspection exceeded the limit";
-        for (const entry of index.stdout.split("\0")) {
-          if (!entry.startsWith("160000 ")) continue;
-          const submodule = path.resolve(repository, entry.slice(entry.indexOf("\t") + 1));
-          if (!inside(root, submodule)) return "submodules could not be inspected";
-          if (!populatedPaths.has(pathKey(submodule)) && (yield* fs.exists(submodule)))
-            unchecked.push(submodule);
-        }
       }
       let inspected = unchecked.length;
       while (unchecked.length > 0) {
