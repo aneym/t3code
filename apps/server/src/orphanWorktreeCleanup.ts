@@ -89,17 +89,19 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
     return null;
   });
   const inspectHolders = Effect.fn("StorageCleanup.orphanHolders")(
-    function* () {
+    function* (cwd: string | undefined) {
       if (platform !== "darwin" && platform !== "linux")
         return { reason: "lsof-unavailable", paths: [] };
       const result = yield* processRunner.run({
         command: "lsof",
-        args: ["-w", "-n", "-P", "-a", "-d", "cwd", "-Fpn"],
+        args:
+          cwd === undefined
+            ? ["-w", "-n", "-P", "-a", "-d", "cwd", "-Fpn"]
+            : ["-w", "-n", "-P", "-Fpn", "+D", cwd],
         cwd: config.cwd,
         timeout: "30 seconds",
         maxOutputBytes: 8 * 1024 * 1024,
         outputMode: "truncate",
-        env: { LC_ALL: "C" },
       });
       if (result.stdoutTruncated || result.stderrTruncated)
         return { reason: "lsof-output-truncated", paths: [] };
@@ -115,9 +117,18 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
             !/^(?:lsof: )?Output information may be incomplete\.?$/.test(line),
         );
       if (errors.length > 0) return { reason: "lsof-stderr-error", paths: [] };
+      if (cwd !== undefined && result.stdout.trim() !== "")
+        return { reason: "live process holder", paths: [] };
+      if (cwd !== undefined && result.code === 1 && result.stdout.trim() === "")
+        return { reason: null, paths: [] };
       if (result.code !== 0) return { reason: "lsof-failed", paths: [] };
+      if (cwd !== undefined)
+        return {
+          reason: result.stdout.trim() === "" ? "lsof-empty-output" : "live process holder",
+          paths: [],
+        };
       const paths = new Set<string>();
-      for (const line of result.stdout.split("\n")) {
+      for (const line of new Set(result.stdout.split("\n"))) {
         if (!line.startsWith("n/")) continue;
         const current = line.slice(1);
         paths.add(current);
@@ -125,7 +136,10 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
       }
       return { reason: null, paths: [...paths] };
     },
-    Effect.orElseSucceed(() => ({ reason: "lsof-execution-failed", paths: [] })),
+    (effect) =>
+      effect.pipe(
+        Effect.catchCause(() => Effect.succeed({ reason: "lsof-execution-failed", paths: [] })),
+      ),
   );
 
   return Effect.fn("StorageCleanup.cleanOrphans")(function* (
@@ -176,7 +190,8 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
           return Effect.logWarning("orphan worktree discovery failed");
         }),
       );
-    const holders = candidates.size > 0 ? yield* inspectHolders() : { reason: null, paths: [] };
+    const holders =
+      candidates.size > 0 ? yield* inspectHolders(undefined) : { reason: null, paths: [] };
     for (const cwd of candidates) {
       const entry: StorageCleanupReportEntry = {
         kind: "worktree",
@@ -260,7 +275,7 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
             return "commit changed since check";
           return null;
         });
-        const ready = Effect.fn("StorageCleanup.orphanReady")(function* () {
+        const ready = Effect.fn("StorageCleanup.orphanReady")(function* (freshHolders: boolean) {
           failureReason = "inspection-failed: identity";
           const moved = yield* identity();
           if (moved !== null) return moved;
@@ -295,9 +310,11 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
           const finalIdentity = yield* identity();
           if (finalIdentity !== null) return finalIdentity;
           failureReason = "inspection-failed: final-bindings";
-          return yield* bindingReason(cwd);
+          const binding = yield* bindingReason(cwd);
+          if (binding !== null) return binding;
+          return freshHolders ? (yield* inspectHolders(cwd)).reason : null;
         });
-        const early = yield* ready();
+        const early = yield* ready(false);
         if (early !== null) return keep(early);
         failureReason = "inspection-failed: upstream";
         let published = false;
@@ -366,12 +383,12 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
               : "branch-not-published-or-integrated",
           );
         failureReason = "inspection-failed: final-readiness";
-        const final = yield* ready();
+        const final = yield* ready(true);
         if (final !== null) return keep(final);
         failureReason = "removal-failed";
         const root = roots.find((root) => contains(root, cwd));
         if (root === undefined) return keep("managed root changed since check");
-        const removal = yield* trash.remove(root, cwd, repository, () => ready());
+        const removal = yield* trash.remove(root, cwd, repository, () => ready(true));
         if (removal !== null) return keep(removal);
         removed++;
         entries.push({
