@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 
+from .release_engine import require_engine
 from .release_graph import FAST_DEADLINE, FAST_GRAPH, SUCCESS_OUTCOMES, critical_path
 from .release_job_runner import TERM_GRACE_S
 from .release_jobs import HostJobs, TERMINAL, status, submit, write_status
@@ -39,6 +40,11 @@ def remote_engine():
 
 
 def drive_fast(args):
+    manifest = args.run / "candidate.json"
+    engine_checked = False
+    if not args.dry_run and manifest.is_file():
+        require_engine(manifest)
+        engine_checked = True
     args.run.mkdir(parents=True, exist_ok=True)
     jobs = HostJobs(args.run, args.remote_run, args.remote_tools, args.dry_run, linux_host=args.linux_host)
     timeline = Timeline(args.run / "timeline.jsonl")
@@ -65,6 +71,9 @@ def drive_fast(args):
     recorded = set(existing.get("recorded", []))
     completed_at = existing.get("releaseSeconds")
     while pending or running:
+        if not args.dry_run and not engine_checked and manifest.is_file():
+            require_engine(manifest)
+            engine_checked = True
         for key, node in list(pending.items()):
             if set(node.needs) & failed:
                 failed.add(key)
@@ -162,6 +171,8 @@ def main(argv):
             return drive_fast(args)
         finally:
             finish_runs(args.run, args.remote_run, args.remote_tools, dry_run=args.dry_run, linux_host=args.linux_host)
+    if (args.run / "candidate.json").is_file():
+        require_engine(args.run / "candidate.json")
     coordinator = args.run / "coordinator"
     previous = status(coordinator)
     if previous.get("outcome") in {"failed", "timed-out", "environment-blocked"}:

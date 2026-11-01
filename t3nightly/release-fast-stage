@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from t3nightly.release_actions import run_fast_action
 from t3nightly.release_config import FastConfig
+from t3nightly.release_engine import require_engine
 from t3nightly.release_outputs import fast_output
 
 
@@ -32,6 +33,8 @@ def main():
     config.run.mkdir(parents=True, exist_ok=True)
     print(json.dumps({"stage": args.stage, "host": args.host, "run": str(config.run)}), flush=True)
     try:
+        if config.manifest.is_file():
+            require_engine(config.manifest, config.tools)
         code = run_fast_action(args.stage, config, sys.stdout)
         sys.stdout.flush()
         if code == 0 and not fast_output(args.stage, config):
