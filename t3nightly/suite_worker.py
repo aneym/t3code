@@ -126,10 +126,30 @@ def shielded(action):
         return action()
 
 
-def cow_gate(host, log):
+def cow_gate(host, log, wait):
     if host != "ax42":
         return 0
-    return execute(host, ["python3", "-c", COW_GATE, str(COW_LIMIT), "7200"], log, 7300)
+    return execute(host, ["python3", "-c", COW_GATE, str(COW_LIMIT), str(wait)], log, wait + 100)
+
+
+def admit(host, tree, logs, resources):
+    gate_deadline = time.monotonic() + 7200
+    while True:
+        with (logs / "cow-gate.log").open("a") as log:
+            if cow_gate(host, log, max(0, round(gate_deadline - time.monotonic()))):
+                raise RuntimeError(f"/srv/cow stayed at or above {COW_LIMIT}% for 7200s")
+        slot = ExitStack()
+        try:
+            slot_log = slot.enter_context((logs / "slot.log").open("a"))
+            held = slot.enter_context(host_slot(host, tree, slot_log))
+            with (logs / "cow-gate.log").open("a") as log:
+                if not cow_gate(host, log, 0):
+                    resources.enter_context(slot)
+                    return held
+        except BaseException:
+            slot.close()
+            raise
+        slot.close()
 
 
 def interpolate(value, temp):
@@ -282,11 +302,7 @@ def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep
     attempted = False
     try:
         try:
-            with (logs / "cow-gate.log").open("w") as log:
-                if cow_gate(host, log):
-                    raise RuntimeError(f"/srv/cow stayed at or above {COW_LIMIT}% for 7200s")
-            slot_log = resources.enter_context((logs / "slot.log").open("w"))
-            result["hostSlot"] = resources.enter_context(host_slot(host, tree, slot_log))
+            result["hostSlot"] = admit(host, tree, logs, resources)
             admitted = time.monotonic()
             with (logs / "worktree.log").open("w") as log:
                 attempted = True
@@ -304,6 +320,8 @@ def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep
                     try:
                         with (logs / "tmp.log").open("a") as log:
                             result["tmpPeakBytes"] = max(result["tmpPeakBytes"], tmp_report(host, "measure", tree, log)["bytes"])
+                    except WorkerTerminated:
+                        raise
                     except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
                         result.setdefault("tmpMeasureErrors", []).append(str(error))
                 stopped = stopped or row["result"] != "pass"
