@@ -323,8 +323,7 @@ def run_fast_action(stage, config, log):
     if stage in WINDOWS_STAGES:
         return run_windows(stage, config, head, log)
     if stage == "LR":
-        publish_landings(config, log)
-        return 0
+        return publish_landings(config, log)
     if stage == "LM":
         return command([str(config.home / ".local/bin/t3-link-mesh"), "--json"], log)
     if stage == "H":
