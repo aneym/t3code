@@ -1,9 +1,9 @@
 import json
 import os
-import re
 import shlex
 import signal
 import subprocess
+import tempfile
 import time
 import uuid
 from datetime import datetime, timezone
@@ -12,11 +12,12 @@ from pathlib import Path
 from .release_manifest import digest
 from .suite_plan import load, slug, write
 from .suite_provision import linux_exports, setup_script, studio_path
+from .suite_resources import CLEANUP
 
 
 RESULT_SCHEMA = "t3nightly.advisory-result/1"
 HOSTS = {
-    "ax42": ("/home/jobs/repos/t3code", "/home/jobs/repos/t3code-wt"),
+    "ax42": ("/home/jobs/repos/t3code", "/srv/cow/t3-wt/t3code-advisory"),
     "forge": ("/home/jobs/repos/t3code", "/home/jobs/repos/t3code-wt"),
     "pc-wsl": ("/home/jobs/repos/t3code", "/home/jobs/repos/t3code-wt"),
     "studio": ("/Volumes/StudioExt/repos/t3code", "/Volumes/StudioExt/repos/t3code-wt"),
@@ -72,17 +73,15 @@ def install_dependencies(host, tree, log):
         env["CI"] = "true"
         code = execute(host, ["vp", "install", "--frozen-lockfile"], log, 600, cwd=tree, env=env)
     else:
-        command = f"cd {shlex.quote(tree)} && export PATH={path(tree)} CI=true && {linux_exports()} && vp install --frozen-lockfile"
+        store = "/srv/cow/t3-wt/.advisory-pnpm-store" if host == "ax42" else "$HOME/.local/share/t3nightly/pnpm-store"
+        command = f"cd {shlex.quote(tree)} && export PATH={path(tree)} CI=true && {linux_exports()} && PNPM_CONFIG_VIRTUAL_STORE_TYPE=global PNPM_CONFIG_GLOBAL_VIRTUAL_STORE_DIR=\"{store}/links\" vp install --frozen-lockfile -- --store-dir \"{store}\" --package-import-method auto"
         code = execute(host, ["bash", "-c", command], log, 600)
     if code:
         raise RuntimeError(f"dependency install failed on {host}; vp exited {code}")
 
 
 def cleanup(host, repo, tree, log):
-    code = execute(host, ["git", "-C", repo, "worktree", "remove", "--force", tree], log, 60)
-    if not code:
-        code = execute(host, ["rm", "-f", "--", tree], log, 15)
-    return code
+    return execute(host, ["python3", "-c", CLEANUP, repo, tree], log, 300)
 
 
 def interpolate(value, temp):
@@ -125,7 +124,7 @@ def remote_environment(step, tree, temp):
         else:
             encoded = shlex.quote(value)
         exports.append(f"{key}={encoded}")
-    return "export " + " ".join(exports) + "; " + linux_exports()
+    return "export " + " ".join(exports) + " && " + linux_exports()
 
 
 def unavailable(host, tree, tools_required, log):
@@ -158,20 +157,25 @@ def run_step(host, step, tree, log_path, deadline):
                 row.update(result="unavailable", missingTools=missing, exit=None)
             else:
                 command = interpolate(step["command"], temp)
-                missing_file = f"{step_temp}/missing-packages"
+                missing_file = f"{temp}/apt-missing-packages" if "apt-status" in command else f"{step_temp}/missing-packages"
                 command = f"export PATH={shlex.quote(step_temp + '/shims')}:$PATH T3NIGHTLY_MISSING_PACKAGES={shlex.quote(missing_file)}\n" + command
-                command += "\nwait\n"
-                if "apt-status" in step["command"] and "&" in step["command"]:
-                    command += 'cat "$RUNNER_TEMP/apt.log"; exit "$(cat "$RUNNER_TEMP/apt-status")"\n'
                 if host == "studio":
                     words = ["bash", "-eo", "pipefail", "-c", command]
                     code = execute(host, words, log, deadline - time.monotonic(), cwd=tree, env=environment(step, tree, temp))
                 else:
                     remote = f"cd {shlex.quote(tree)} && {remote_environment(step, tree, temp)} && bash -eo pipefail -c {shlex.quote(command)}"
                     code = execute(host, ["bash", "-c", remote], log, deadline - time.monotonic())
-                execute(host, ["bash", "-c", f"test ! -f {shlex.quote(missing_file)} || cat {shlex.quote(missing_file)}"], log, 15)
-                log.flush()
-                packages = sorted(set(re.findall(r"T3NIGHTLY_MISSING_PACKAGE:([^\s]+)", log_path.read_text())))
+                packages = []
+                if code != 0:
+                    with tempfile.TemporaryFile(mode="w+") as missing_log:
+                        read = execute(host, ["bash", "-c", f"test ! -f {shlex.quote(missing_file)} || cat {shlex.quote(missing_file)}"], missing_log, 15)
+                        missing_log.seek(0)
+                        if read == 0:
+                            for line in missing_log:
+                                record = json.loads(line)
+                                if record.get("exit") == 100:
+                                    packages.extend(record["missingPackages"])
+                    packages = sorted(set(packages))
                 row.update(result="unavailable" if packages else ("pass" if code == 0 else "fail"), exit=code)
                 if packages:
                     row["missingPackages"] = packages
@@ -197,6 +201,8 @@ def run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep=
     default_repo, root = HOSTS[host]
     repo = repo or default_repo
     tree = tree or f"{root}/advisory-{value['digest'][:12]}-{slug(job_id)}-{uuid.uuid4().hex[:10]}"
+    if host == "ax42" and not os.path.normpath(tree).startswith(root + "/"):
+        raise ValueError(f"ax42 advisory worktrees must be under {root}")
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     logs = out.parent / f"{out.stem}-logs"

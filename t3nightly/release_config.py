@@ -87,7 +87,7 @@ class FastConfig:
     base: str = ""
     linux_host: str = "ax42"
     override_reason: str = ""
-    advisory_workers: int = 4
+    advisory_workers: int = 2
 
     @property
     def number(self):
