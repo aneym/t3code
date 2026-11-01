@@ -6,13 +6,14 @@ import subprocess
 import tempfile
 import time
 import uuid
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .release_manifest import digest
 from .suite_plan import load, slug, write
 from .suite_provision import linux_exports, setup_script, studio_path
-from .suite_resources import CLEANUP
+from .suite_resources import CLEANUP, WorkerTerminated, cache_exports, host_slot, worker_signals
 
 
 RESULT_SCHEMA = "t3nightly.advisory-result/1"
@@ -41,6 +42,9 @@ def execute(host, words, log, timeout, cwd=None, env=None):
     )
     try:
         return process.wait(timeout=max(1, int(wait)))
+    except WorkerTerminated:
+        process.wait()
+        raise
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGTERM)
         try:
@@ -74,14 +78,14 @@ def install_dependencies(host, tree, log):
         code = execute(host, ["vp", "install", "--frozen-lockfile"], log, 600, cwd=tree, env=env)
     else:
         store = "/srv/cow/t3-wt/.advisory-pnpm-store" if host == "ax42" else "$HOME/.local/share/t3nightly/pnpm-store"
-        command = f"cd {shlex.quote(tree)} && export PATH={path(tree)} CI=true && {linux_exports()} && PNPM_CONFIG_VIRTUAL_STORE_TYPE=global PNPM_CONFIG_GLOBAL_VIRTUAL_STORE_DIR=\"{store}/links\" vp install --frozen-lockfile -- --store-dir \"{store}\" --package-import-method auto"
+        command = f"cd {shlex.quote(tree)} && export PATH={path(tree)} CI=true && {linux_exports()} && {cache_exports(host)} && PNPM_CONFIG_VIRTUAL_STORE_TYPE=global PNPM_CONFIG_GLOBAL_VIRTUAL_STORE_DIR=\"{store}/links\" vp install --frozen-lockfile -- --store-dir \"{store}\" --package-import-method clone-or-copy"
         code = execute(host, ["bash", "-c", command], log, 600)
     if code:
         raise RuntimeError(f"dependency install failed on {host}; vp exited {code}")
 
 
 def cleanup(host, repo, tree, log):
-    return execute(host, ["python3", "-c", CLEANUP, repo, tree], log, 300)
+    return execute(host, ["python3", "-c", CLEANUP, repo, tree, HOSTS[host][1]], log, 300)
 
 
 def interpolate(value, temp):
@@ -107,7 +111,7 @@ def environment(step, tree, temp):
     return env
 
 
-def remote_environment(step, tree, temp):
+def remote_environment(step, tree, temp, host):
     values = {
         "PATH": path(tree),
         "RUNNER_TEMP": temp,
@@ -124,7 +128,7 @@ def remote_environment(step, tree, temp):
         else:
             encoded = shlex.quote(value)
         exports.append(f"{key}={encoded}")
-    return "export " + " ".join(exports) + " && " + linux_exports()
+    return "export " + " ".join(exports) + " && " + linux_exports() + " && " + cache_exports(host)
 
 
 def unavailable(host, tree, tools_required, log):
@@ -157,24 +161,27 @@ def run_step(host, step, tree, log_path, deadline):
                 row.update(result="unavailable", missingTools=missing, exit=None)
             else:
                 command = interpolate(step["command"], temp)
-                missing_file = f"{temp}/apt-missing-packages" if "apt-status" in command else f"{step_temp}/missing-packages"
+                missing_file = f"{step_temp}/missing-packages"
                 command = f"export PATH={shlex.quote(step_temp + '/shims')}:$PATH T3NIGHTLY_MISSING_PACKAGES={shlex.quote(missing_file)}\n" + command
                 if host == "studio":
                     words = ["bash", "-eo", "pipefail", "-c", command]
                     code = execute(host, words, log, deadline - time.monotonic(), cwd=tree, env=environment(step, tree, temp))
                 else:
-                    remote = f"cd {shlex.quote(tree)} && {remote_environment(step, tree, temp)} && bash -eo pipefail -c {shlex.quote(command)}"
+                    remote = f"cd {shlex.quote(tree)} && {remote_environment(step, tree, temp, host)} && bash -eo pipefail -c {shlex.quote(command)}"
                     code = execute(host, ["bash", "-c", remote], log, deadline - time.monotonic())
                 packages = []
-                if code != 0:
+                if code == 100:
                     with tempfile.TemporaryFile(mode="w+") as missing_log:
                         read = execute(host, ["bash", "-c", f"test ! -f {shlex.quote(missing_file)} || cat {shlex.quote(missing_file)}"], missing_log, 15)
                         missing_log.seek(0)
                         if read == 0:
                             for line in missing_log:
-                                record = json.loads(line)
-                                if record.get("exit") == 100:
-                                    packages.extend(record["missingPackages"])
+                                try:
+                                    record = json.loads(line)
+                                    if isinstance(record, dict) and record["exit"] == 100 and isinstance(record["missingPackages"], list):
+                                        packages.extend(package for package in record["missingPackages"] if isinstance(package, str))
+                                except (ValueError, KeyError):
+                                    continue
                     packages = sorted(set(packages))
                 row.update(result="unavailable" if packages else ("pass" if code == 0 else "fail"), exit=code)
                 if packages:
@@ -185,7 +192,7 @@ def run_step(host, step, tree, log_path, deadline):
     return row
 
 
-def run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep=False):
+def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep=False):
     value = load(plan_path)
     job = next((row for row in value["jobs"] if row["id"] == job_id), None)
     if job is None:
@@ -225,14 +232,18 @@ def run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep=
         "unexecutedSteps": [row["id"] for row in steps],
         "startedAt": now(),
     }
+    resources = ExitStack()
     attempted = False
     try:
         try:
+            slot_log = resources.enter_context((logs / "slot.log").open("w"))
+            result["hostSlot"] = resources.enter_context(host_slot(host, tree, slot_log))
+            admitted = time.monotonic()
             with (logs / "worktree.log").open("w") as log:
                 attempted = True
                 prepare(host, repo, tree, value["source"], log)
                 install_dependencies(host, tree, log)
-            deadline = started + job["timeoutSeconds"]
+            deadline = admitted + job["timeoutSeconds"]
             rows = []
             stopped = False
             for index, step in enumerate(steps, 1):
@@ -251,19 +262,27 @@ def run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep=
             result["error"] = str(error)
             result["result"] = "unavailable"
     finally:
-        if attempted and not keep:
-            try:
-                with (logs / "cleanup.log").open("w") as log:
-                    result["cleanupExit"] = cleanup(host, repo, tree, log)
-                if result["cleanupExit"]:
-                    result["cleanupError"] = f"worktree cleanup exited {result['cleanupExit']}"
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                result["cleanupError"] = f"worktree cleanup failed: {error}"
-            if "cleanupError" in result:
-                result["result"] = "unavailable"
-                result.setdefault("error", result["cleanupError"])
+        try:
+            if attempted and not keep:
+                try:
+                    with (logs / "cleanup.log").open("w") as log:
+                        result["cleanupExit"] = cleanup(host, repo, tree, log)
+                    if result["cleanupExit"]:
+                        result["cleanupError"] = f"worktree cleanup exited {result['cleanupExit']}"
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    result["cleanupError"] = f"worktree cleanup failed: {error}"
+                if "cleanupError" in result:
+                    result["result"] = "unavailable"
+                    result.setdefault("error", result["cleanupError"])
+        finally:
+            resources.close()
     result["seconds"] = round(time.monotonic() - started, 3)
     result["finishedAt"] = now()
     result["digest"] = digest(result)
     write(out, result)
     return result
+
+
+def run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep=False):
+    with worker_signals():
+        return _run(plan_path, job_id, host, out, selected, repo, tree, keep)

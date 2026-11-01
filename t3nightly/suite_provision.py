@@ -27,10 +27,10 @@ if name == "sudo":
             break
         takes_value = False
         if option.startswith("--"):
-            takes_value = option in ("--user", "--group", "--host", "--prompt", "--close-from", "--command-timeout", "--chdir", "--chroot")
+            takes_value = option in ("--user", "--group", "--host", "--prompt", "--close-from", "--command-timeout", "--chdir", "--chroot", "--role", "--type", "--other-user")
         else:
             for index, flag in enumerate(option[1:], 1):
-                if flag in "ughpCTDR":
+                if flag in "ughpCTDRrtU":
                     takes_value = index == len(option) - 1
                     break
         if takes_value:
@@ -40,7 +40,29 @@ if name == "sudo":
             args.pop(0)
     os.environ.update(assignments)
     if args and Path(args[0]).name == "sed" and "-i" in args:
-        targets = args[args.index("-i") + 2:]
+        targets = []
+        expression = False
+        remaining = args[1:]
+        while remaining:
+            value = remaining.pop(0)
+            if value in ("-e", "--expression", "-f", "--file"):
+                if not remaining:
+                    break
+                remaining.pop(0)
+                expression = True
+            elif value.startswith(("--expression=", "--file=", "-e", "-f")):
+                expression = True
+            elif value == "--":
+                if not expression and remaining:
+                    remaining.pop(0)
+                targets.extend(remaining)
+                break
+            elif value.startswith("-"):
+                continue
+            elif not expression:
+                expression = True
+            else:
+                targets.append(value)
         if targets and all(str(Path(target).resolve()).startswith("/etc/apt/") for target in targets):
             sys.exit(0)
     if not args:

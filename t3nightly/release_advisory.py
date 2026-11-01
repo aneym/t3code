@@ -19,7 +19,7 @@ def fast_advisory(config, log):
             return command([sys.executable, str(config.tools / "suite-worker"), "--plan", str(out / "plan.json"), "--job", job["id"],
                             "--host", job["hosts"][0], "--out", str(target)], handle)
 
-    with ThreadPoolExecutor(max_workers=max(1, min(2, config.advisory_workers))) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, config.advisory_workers)) as pool:
         codes = list(pool.map(one, jobs))
     (out / "summary.json").write_text(json.dumps({"jobs": len(jobs), "passed": codes.count(0), "notPassed": len(codes) - codes.count(0)}) + "\n")
     return 0 if not any(codes) else 1
