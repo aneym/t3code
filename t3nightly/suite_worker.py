@@ -47,7 +47,8 @@ def execute(host, words, log, timeout, cwd=None, env=None):
         return process.wait(timeout=max(1, int(wait)))
     except WorkerTerminated:
         if pidfile:
-            stop = f"test -s {shlex.quote(pidfile)} && kill -TERM \"$(cat {shlex.quote(pidfile)})\"; rm -f {shlex.quote(pidfile)}"
+            quoted = shlex.quote(pidfile)
+            stop = f"for i in $(seq 50); do test -s {quoted} && break; sleep 0.1; done; test -s {quoted} && kill -TERM \"$(cat {quoted})\"; rm -f {quoted}"
             try:
                 subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, stop],
                                stdout=log, stderr=subprocess.STDOUT, timeout=20, check=False)
