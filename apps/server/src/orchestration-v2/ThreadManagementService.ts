@@ -137,6 +137,7 @@ export interface ThreadManagementWaitInput {
   readonly threadId: ThreadId;
   readonly runId?: RunId;
   readonly timeoutMs: number;
+  readonly returnOnFreeze?: boolean;
   /**
    * Also wait until the thread's own delegated work settles: an ended run
    * still owes the thread's answer while a child, a background task or a
@@ -846,7 +847,9 @@ const make = Effect.gen(function* () {
       Stream.filter((current) => current.settled),
       Stream.runHead,
       Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
-      Effect.raceFirst(awaitServerFreeze().pipe(Effect.as(Option.none()))),
+      Effect.raceFirst(
+        awaitServerFreeze(input.returnOnFreeze === true).pipe(Effect.as(Option.none())),
+      ),
     );
     const waited = Option.flatten(yield* wait);
     if (Option.isSome(waited)) return settledResult(waited.value);

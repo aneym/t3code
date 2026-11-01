@@ -2851,12 +2851,13 @@ const make = Effect.gen(function* () {
         .waitForThread({
           projectId: target.thread.projectId,
           threadId: input.threadId,
-          ...(input.runId === undefined ? {} : { runId: input.runId }),
+          runId: input.runId,
+          returnOnFreeze: true,
           timeoutMs: Math.min(
             MAX_WAIT_TIMEOUT_MS,
             Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
           ),
-          ...(input.untilDelegatedWorkSettled === true ? { untilDelegatedWorkSettled: true } : {}),
+          untilDelegatedWorkSettled: input.untilDelegatedWorkSettled,
         })
         .pipe(Effect.mapError(threadManagementFailure));
       const status = result.run === null ? "idle" : runOutcome(result.run);

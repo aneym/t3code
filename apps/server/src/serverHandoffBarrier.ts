@@ -14,8 +14,8 @@ let admitted = 0;
 let idle = Promise.withResolvers<void>();
 let freezing = Deferred.makeUnsafe<void>();
 
-export const awaitServerFreeze = Effect.fn("serverHandoffBarrier.awaitFreeze")(() =>
-  Deferred.await(freezing),
+export const awaitServerFreeze = Effect.fn("serverHandoffBarrier.awaitFreeze")(
+  (enabled: boolean) => (enabled ? Deferred.await(freezing) : Effect.never),
 );
 
 const leave = () => {
