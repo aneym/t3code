@@ -6,8 +6,8 @@ import sys
 from pathlib import Path
 
 from .codex_isolation import isolated_codex_home
+from .headless_lb import agent_lb_url
 
-AGENT_LB_URL = "http://127.0.0.1:2455"
 LB_TOKEN = "t3nightly-headless"
 NOT_FOUND = 44
 
@@ -15,7 +15,7 @@ NOT_FOUND = 44
 def claude_lb_lines(bin_dir):
     return [
         "unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN CLAUDE_LB_GUARD",
-        f"export ANTHROPIC_BASE_URL={AGENT_LB_URL} ANTHROPIC_AUTH_TOKEN={LB_TOKEN} CLAUDE_GUARD_OFF=1 DISABLE_AUTOUPDATER=1",
+        f"export ANTHROPIC_BASE_URL={shlex.quote(agent_lb_url())} ANTHROPIC_AUTH_TOKEN={LB_TOKEN} CLAUDE_GUARD_OFF=1 DISABLE_AUTOUPDATER=1",
         'bypass="127.0.0.1,localhost,::1${NO_PROXY:+,$NO_PROXY}${no_proxy:+,$no_proxy}"',
         'export NO_PROXY="$bypass" no_proxy="$bypass"',
         f"export PATH={shlex.quote(str(bin_dir))}:\"$PATH\"",
