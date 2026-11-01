@@ -98,6 +98,8 @@ class Rehearsal:
             command.extend(["--rpc-tree", str(self.args.rpc_tree.resolve()), "--drain-s", str(self.args.drain_s), "--rehearsal-inject", self.args.inject])
             if getattr(self.args, "rollback_fallback_proof", False):
                 command.append("--rollback-fallback-proof")
+            if getattr(self.args, "strict_drain_proof", False):
+                command.append("--strict-drain-proof")
             for name in ("launcher_artifact", "connector_artifact"):
                 if getattr(self.args, name):
                     command.extend(["--" + name.replace("_", "-"), getattr(self.args, name)])

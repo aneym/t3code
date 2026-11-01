@@ -20,6 +20,10 @@ def render(tree, home, unit, program, log, environment, kind="server", connector
 
 def boot(sandbox, argv, log):
     environment = sandbox.service_environment()
+    if getattr(sandbox.args, "strict_drain_proof", False):
+        from .rehearsal_drain import configure_replay
+
+        configure_replay(sandbox)
     if sys.platform == "darwin":
         from .rehearsal_internal import internal
 

@@ -44,5 +44,3 @@ def swap(run, bearer, version, downgrade=False):
 
 def binary_compatible(compatibility, history):
     return binary_rollback(compatibility) and history == compatibility["candidateMigrations"]["history"]
-
-

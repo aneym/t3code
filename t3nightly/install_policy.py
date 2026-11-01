@@ -63,6 +63,16 @@ def enforce(args):
     extra = getattr(args, "live_home", [])
     if any(getattr(args, name, False) for name in ("rehearsal", "force_rollback", "compatibility_probe", "restart_probe", "drain_proof")):
         refuse_probe(home, port, service, extra)
+    if getattr(args, "strict_drain_proof", False):
+        if not args.rehearsal:
+            raise ValueError("strict drain proof requires --rehearsal")
+        refuse_probe(home, port, service, extra)
+        identity = Path(home).expanduser().resolve() / ".rehearsal-unit.json"
+        if identity.is_symlink():
+            raise ValueError("strict drain proof refused symlinked sandbox identity")
+        target = json.loads(identity.read_text())
+        if target.get("home") != str(Path(home).expanduser().resolve()) or target.get("port") != port or target.get("label") != service.removesuffix(".service"):
+            raise ValueError("strict drain proof requires the recorded validated rehearsal home")
     sandbox = isolated(home, port, service, extra)
     if args.dry_run or args.check_only or args.prepare_only:
         return {"isolated": sandbox, "mutation": False}

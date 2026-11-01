@@ -1,4 +1,5 @@
 import json
+import threading
 
 from .hot_swap_retention import reserve
 from .install_hot_swap import measure_candidate
@@ -16,9 +17,32 @@ class RollbackFallbackRehearsal(Rehearsal):
         baseline = Workload(self.sandbox).baseline()
         measured = measure_candidate(self.sandbox, self.manifest)
         self.phase = "install"
-        self.install()
+        strict = getattr(self.args, "strict_drain_proof", False)
+        stopped = threading.Event()
+        worker = None
+        if strict:
+            from .rehearsal_drain import hold_after_rollback
+
+            worker = threading.Thread(target=hold_after_rollback, args=(self.sandbox, stopped), daemon=True)
+            worker.start()
+        try:
+            try:
+                self.install()
+            except RuntimeError:
+                if not strict:
+                    raise
+        finally:
+            stopped.set()
+            if worker:
+                worker.join(timeout=125)
+                if worker.is_alive():
+                    raise ValueError("Replay proof observer did not stop")
         self.phase = "verify"
         state = json.loads((self.sandbox.evidence / "installer-state/last.json").read_text())
+        if strict:
+            from .rehearsal_drain import verify_refusal
+
+            return verify_refusal(self.sandbox, state, baseline, measured)
         steps = state["steps"]
         required = ("hot-swap-rolled-back", "hot-swap-fallback", "restart-drain-start", "restart-drain", "hard-service-stop", "hard-service-start", "hard-install-receipt")
         positions = [next(index for index, row in enumerate(steps) if row["step"] == name) for name in required]
