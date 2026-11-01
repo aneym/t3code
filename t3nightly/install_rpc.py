@@ -5,6 +5,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -29,10 +30,15 @@ def restart_session(run, previous):
             directory = Path(raw)
             bearer = directory / "bearer"
             revoker = directory / "t3"
-            try:
-                os.link(binary, revoker)
-            except OSError:
-                shutil.copy2(binary, revoker)
+            from .rehearsal_storage import clone_file, enabled
+
+            if sys.platform == "darwin" and enabled(run.home):
+                clone_file(binary, revoker)
+            else:
+                try:
+                    os.link(binary, revoker)
+                except OSError:
+                    shutil.copy2(binary, revoker)
             try:
                 issued = subprocess.run(args, capture_output=True, text=True, timeout=60, check=False)
                 if issued.returncode:
