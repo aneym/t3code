@@ -48,7 +48,7 @@ import {
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   hasRunMcpApp,
-  isGrowingMcpApp,
+  useMcpAppFollow,
   TIMELINE_MAINTAIN_SCROLL_AT_END,
   TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH,
 } from "./timelineMcpFollow";
@@ -946,14 +946,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
         ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
         : TIMELINE_MAINTAIN_SCROLL_AT_END;
 
+  const followMcpApp = useMcpAppFollow(listRef, maintainScrollAtEnd);
   const handleItemSizeChanged = (info: {
     itemData: MessagesTimelineRow;
     size: number;
     previous: number;
   }) => {
-    if (maintainScrollAtEnd === TIMELINE_MAINTAIN_SCROLL_AT_END && isGrowingMcpApp(info)) {
-      void listRef.current?.scrollToEnd({ animated: false });
-    }
+    followMcpApp(info);
     if (disclosurePinsEndRef.current) {
       queueMicrotask(pinDisclosureToEnd);
       scheduleDisclosureSettle();
