@@ -3,11 +3,12 @@ import * as NodeFS from "node:fs";
 import * as NodeSqlite from "node:sqlite";
 
 import { migrationManifest } from "./Migrations.ts";
+import { isRelocatedForkMigration } from "./reconcileForkMigrationIds.ts";
 
 export const BUILD_MIGRATION_HEAD = Math.max(...migrationManifest.map(([id]) => id));
 
-/** Migrations the database records, read-only. A missing or new database records none; one that
- * exists but cannot be read is null, since its history is unknown. */
+/** Migrations the database records once startup relocates old fork ids, read-only. A missing or new
+ * database records none; one that exists but cannot be read is null, since its history is unknown. */
 export function recordedMigrations(
   databasePath: string,
 ): ReadonlyArray<{ readonly id: number; readonly name: string }> | null {
@@ -27,7 +28,8 @@ export function recordedMigrations(
     return db
       .prepare("SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id")
       .all()
-      .map((row) => ({ id: Number(row.migration_id), name: String(row.name) }));
+      .map((row) => ({ id: Number(row.migration_id), name: String(row.name) }))
+      .filter((row) => !isRelocatedForkMigration(row));
   } catch {
     return null;
   } finally {
