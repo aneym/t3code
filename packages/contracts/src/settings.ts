@@ -1572,6 +1572,7 @@ export const ServerSettingsPatch = Schema.Struct({
       ...WorktreeCleanupRulesPatchFields,
       browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
       logsAfterDays: Schema.optionalKey(StorageRetentionDays),
+      threadHistoryAfterDays: Schema.optionalKey(StorageRetentionDays),
       worktreeDisposableIgnoredPaths: Schema.optionalKey(DisposableIgnoredPaths),
       worktreeOrphans: Schema.optionalKey(Schema.Boolean),
     }),

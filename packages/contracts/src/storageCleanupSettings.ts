@@ -78,6 +78,9 @@ export const StorageCleanupSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   logsAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  threadHistoryAfterDays: StorageRetentionDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   worktreeOrphans: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeDisposableIgnoredPaths: DisposableIgnoredPaths.pipe(
     Schema.withDecodingDefault(Effect.succeed([])),

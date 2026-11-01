@@ -100,6 +100,7 @@ function setup() {
       logsAfterDays: null,
       worktreeDisposableIgnoredPaths: [],
       worktreeOrphans: false,
+      threadHistoryAfterDays: null,
     },
     projectSettingsOverrides: {},
   };
