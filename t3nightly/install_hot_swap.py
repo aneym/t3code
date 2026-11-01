@@ -254,7 +254,7 @@ def install(run):
                 raise
             restore_runtime(run.home, previous, store)
             try:
-                fallback = clean_rollback(run, previous, observed["oldRuntime.digest"], original_launcher) if fallback_enabled else None
+                fallback = clean_rollback(run, previous, observed["oldRuntime.digest"], original_launcher)
                 recover(run, bearer, previous, compatibility, before, connect, baseline)
                 outcome = "rolled-back"
             except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
