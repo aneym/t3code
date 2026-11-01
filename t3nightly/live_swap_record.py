@@ -54,6 +54,9 @@ def main():
     run = (args.run_dir or Path.home() / ".agent-rails/lanes/t3-hot-swap-cutover/proof" / f"live-swap-{args.host}-{stamp}").expanduser().absolute()
     if not run.name.startswith("live-swap-") or run.exists():
         parser.error("run directory must be a new live-swap-* directory")
+    protected = (Path.home() / ".t3/userdata").resolve()
+    if run.resolve() == protected or run.resolve().is_relative_to(protected):
+        parser.error("recorder output cannot be inside live userdata")
     if sys.platform == "darwin" and (str(run.resolve()).startswith("/Volumes/") or str(tree).startswith("/Volumes/")):
         parser.error("Studio recorder run and RPC tree must be internal storage")
     run.mkdir(parents=True, mode=0o700)

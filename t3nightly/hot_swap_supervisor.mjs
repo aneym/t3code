@@ -106,7 +106,7 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
           cursor = Math.max(cursor ?? 0, item.sequence);
         }
         save();
-      })), Stream.catchCause(() => { data.wsFailures++; save(); return Stream.empty; }));
+      })), Stream.catchCause(() => { if (!existsSync(opts.stop)) { data.wsFailures++; save(); } return Stream.empty; }));
     }), Stream.runDrain, Effect.forkScoped);
     yield* Effect.promise(stopped);
   })).pipe(Effect.provide(layers));
