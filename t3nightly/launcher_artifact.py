@@ -102,7 +102,7 @@ def ensure_launcher(run, version):
     pin.write_text(json.dumps(value) + "\n")
     pin.chmod(0o600)
     if manifest.get("hotSwapProtocol") == 1:
-        config_path.write_text(json.dumps({**ingress, "drainTimeoutMs": run.args.drain_s * 1000}) + "\n")
+        config_path.write_text(json.dumps({**ingress, "measuredStartupMs": ingress["holdBudgetMs"] // 2, "drainTimeoutMs": run.args.drain_s * 1000}) + "\n")
         config_path.chmod(0o600)
     run.step("launcher-artifact-pinned", protocol=manifest["protocol"], digest=manifest["sha256"], last_known_good=str(backup) if backup else None)
     return target / "t3"
@@ -147,7 +147,7 @@ def changed(run):
         return True
     if manifest.get("hotSwapProtocol") == 1:
         config = run.home / "runtime/launcher-config.json"
-        expected = {**manifest["ingress"], "drainTimeoutMs": run.args.drain_s * 1000}
+        expected = {**manifest["ingress"], "measuredStartupMs": manifest["ingress"]["holdBudgetMs"] // 2, "drainTimeoutMs": run.args.drain_s * 1000}
         return not config.is_file() or json.loads(config.read_text()) != expected
     return False
 
