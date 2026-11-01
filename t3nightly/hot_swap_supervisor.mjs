@@ -4,7 +4,7 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
     load(`${src}/connection/connectivity.ts`), load(`${src}/connection/wakeups.ts`), load(`${src}/connection/presentation.ts`),
     load(`${effectRoot}/dist/Option.js`), load(`${effectRoot}/dist/SubscriptionRef.js`),
   ]);
-  const { readFileSync } = await import("node:fs");
+  const { readFileSync, existsSync } = await import("node:fs");
   const token = readFileSync(opts["bearer-file"], "utf8").trim();
   const first = await Effect.runPromise(Descriptor.fetchRemoteEnvironmentDescriptor({ httpBaseUrl: opts.origin }).pipe(Effect.provide(layers)));
   const target = new Model.BearerConnectionTarget({ environmentId: first.environmentId, label: first.label, connectionId: `rehearsal:${first.environmentId}:${opts.origin}` });
@@ -36,10 +36,15 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
         Effect.forkScoped,
       );
     }
-    const connect = (connection) => factory.connect(connection).pipe(Effect.map((session) => {
+    const connect = (connection) => factory.connect(connection).pipe(Effect.flatMap((session) => Effect.gen(function* () {
       data.wsConnections++;
       const identity = { id: data.wsConnections, serverVersion: preparedVersions.get(connection), atMs: elapsed() };
       data.sessions.push(identity);
+      data.wsEvents ??= [];
+      data.wsEvents.push({ event: "connected", at: new Date().toISOString(), atMs: elapsed(), sessionId: identity.id });
+      yield* session.closed.pipe(Effect.onExit((exit) => Effect.sync(() => {
+        if (!existsSync(opts.stop)) { data.wsEvents.push({ event: "disconnected", at: new Date().toISOString(), atMs: elapsed(), sessionId: identity.id, outcome: exit._tag }); save(); }
+      })), Effect.ignore, Effect.forkScoped);
       const client = new Proxy(session.client, { get(object, method) {
         const original = Reflect.get(object, method);
         if (method !== "subscribeServerLifecycle" && method !== "server.probe") return original;
@@ -63,7 +68,7 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
       sessionIdentities.set(observed, identity);
       save();
       return observed;
-    }));
+    })));
     const driver = yield* Driver.make.pipe(Effect.provideService(Resolver.ConnectionResolver, Resolver.ConnectionResolver.of({ prepare, prepareForUpdate: prepare })), Effect.provideService(RpcSession.RpcSessionFactory, RpcSession.RpcSessionFactory.of({ connect })));
     const supervisor = yield* Supervisor.make(entry, { initiallyDesired: true }).pipe(
       Effect.provideService(Driver.ConnectionDriver, driver),
@@ -73,7 +78,7 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
     yield* SubscriptionRef.changes(supervisor.state).pipe(Stream.runForEach((state) => Effect.sync(() => {
       const presentation = Presentation.presentConnectionState(state);
       const firstConnected = data.presentations.some((item) => item.presentation.phase === "connected");
-      const row = { atMs: elapsed(), state: { phase: state.phase, stage: state.stage, generation: state.generation, attempt: state.attempt }, presentation };
+      const row = { atMs: elapsed(), state: { phase: state.phase, stage: state.stage, generation: state.generation, attempt: state.attempt, desired: state.desired, network: state.network, retryAt: state.retryAt, lastFailure: state.lastFailure ? { tag: state.lastFailure._tag, reason: state.lastFailure.reason } : null }, presentation };
       data.presentations.push(row);
       if (firstConnected && ["offline", "reconnecting", "error", "unsupported"].includes(presentation.phase)) data.presentationViolations.push(row);
       save();

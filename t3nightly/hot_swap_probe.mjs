@@ -6,6 +6,7 @@ export async function monitor(context) {
   const { opts, Effect, Stream, layers } = context;
   const started = performance.now();
   const data = { httpSamples: 0, refusedConnections: 0, httpFailures: 0, maxHttpGapMs: 0, flipGapMs: null, servedVersions: [], httpObservations: [], keepAlive: { requests: 0, reused: 0, failures: 0, errors: [], versions: [], sockets: [] }, wsConnections: 0, wsFailures: 0, snapshots: [], sequences: [], resnapshots: 0, ready: false, presentations: [], presentationViolations: [], handoffCalls: [], handoffReplies: [], handoffSettlements: [], handoffEvents: [], sessions: [], subscriptions: [], receivedEvents: [] };
+  const interval = Math.max(100, Number(opts["interval-ms"] ?? 100));
   let lastOk = started;
   let lastSequence;
   const elapsed = () => Math.round(performance.now() - started);
@@ -14,10 +15,11 @@ export async function monitor(context) {
     renameSync(`${opts.output}.next`, opts.output);
   };
   const stopped = async () => {
-    while (!existsSync(opts.stop)) await delay(100);
+    while (!existsSync(opts.stop)) await delay(interval);
   };
   const http = async () => {
     while (!existsSync(opts.stop)) {
+      const requestStarted = performance.now();
       try {
         const environment = await new Promise((resolve, reject) => {
           const request = nodeHttp.get(`${opts.origin}/.well-known/t3/environment`, { agent: false, timeout: 2000 }, (response) => {
@@ -29,7 +31,7 @@ export async function monitor(context) {
           request.on("timeout", () => request.destroy(new Error("fresh HTTP deadline")));
           request.on("error", reject);
         });
-        data.httpObservations.push({ at: new Date().toISOString(), atMs: elapsed(), version: environment.serverVersion });
+        data.httpObservations.push({ at: new Date().toISOString(), atMs: elapsed(), version: environment.serverVersion, latencyMs: Math.round(performance.now() - requestStarted) });
         const now = performance.now();
         const gap = Math.round(now - lastOk);
         data.maxHttpGapMs = Math.max(data.maxHttpGapMs, gap);
@@ -37,12 +39,14 @@ export async function monitor(context) {
         lastOk = now;
         if (data.servedVersions.at(-1)?.version !== environment.serverVersion) data.servedVersions.push({ version: environment.serverVersion, atMs: elapsed() });
       } catch (error) {
+        data.httpErrors ??= [];
+        data.httpErrors.push({ at: new Date().toISOString(), atMs: elapsed(), code: error?.code ?? error?.cause?.code ?? "HTTP_FAILED", latencyMs: Math.round(performance.now() - requestStarted) });
         data.httpFailures++;
         if (error?.code === "ECONNREFUSED" || error?.cause?.code === "ECONNREFUSED") data.refusedConnections++;
       }
       data.httpSamples++;
       save();
-      await delay(100);
+      await delay(interval);
     }
   };
   const keepAlive = async () => {
@@ -75,7 +79,7 @@ export async function monitor(context) {
           request.on("timeout", () => request.destroy(new Error("keep-alive deadline")));
           request.on("error", (error) => { data.keepAlive.failures++; data.keepAlive.errors.push({ atMs: elapsed(), code: error.code ?? null, reusedSocket: request.reusedSocket }); resolve(); });
         });
-        await delay(100);
+        await delay(interval);
       }
     } finally { agent.destroy(); }
   };
