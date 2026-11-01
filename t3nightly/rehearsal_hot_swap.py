@@ -20,7 +20,10 @@ class HotSwapRehearsal(Rehearsal):
         self.probe_path = sandbox.evidence / "connection-probe.json"
         self.stop_path = sandbox.evidence / "probe.stop"
         environment = sandbox.version()
-        self.hot = {"oldChildPid": json.loads((sandbox.home / "userdata/server-runtime.json").read_text())["pid"], "previousMeasuredStartupMs": self.manifest.get("hotSwap", {}).get("previousMeasuredStartupMs"), "injection": self.args.inject, "oldVersion": environment, "checks": {}, "unitRenderer": sandbox.unit_renderer}
+        from .install_hot_swap import measure_candidate
+
+        measured = measure_candidate(sandbox, self.manifest)
+        self.hot = {"startupMeasurement": measured, "oldChildPid": json.loads((sandbox.home / "userdata/server-runtime.json").read_text())["pid"], "previousMeasuredStartupMs": (self.manifest.get("hotSwap") or {}).get("previousMeasuredStartupMs"), "injection": self.args.inject, "oldVersion": environment, "checks": {}, "unitRenderer": sandbox.unit_renderer}
         if self.args.inject != "none" and not (sandbox.home / "runtime/launcher-config.json").is_file():
             self.hot["status"] = "hot-swap-unsupported"
             raise ValueError("hot-swap-unsupported: crash injection requires a capability-qualified sandbox launcher")
@@ -131,7 +134,8 @@ class HotSwapRehearsal(Rehearsal):
             method = installer.get("hotSwap", {}).get("method")
             maintenance = method == "maintenance"
             fallback = method != "launcher-ipc"
-            hot["status"] = "maintenance" if maintenance or legacy else "hot-swap-unsupported" if fallback else "hot-swap"
+            outcome = installer.get("outcome")
+            hot["status"] = outcome if outcome != "installed" else "maintenance" if maintenance or legacy else "hot-swap-unsupported" if fallback else "hot-swap"
             hot["fallbackAccepted"] = installer.get("outcome") == "installed"
             if fallback and not (maintenance or legacy) and result.get("result") in ("PASS", "COMPATIBILITY-PROBE"):
                 result.update(result="COMPATIBILITY-PROBE", releaseEligible=False)
@@ -155,7 +159,8 @@ class HotSwapRehearsal(Rehearsal):
         if hot.get("walAfter"):
             hot["checks"]["wal-writes"] = {"status": "passed" if hot["walAfter"]["events"] > hot["walBefore"]["events"] and hot["databaseIntegrity"] == [("ok",)] else "failed"}
         probe = hot.get("swapProbe", hot.get("probe", {}))
-        hot["candidateMeasuredStartupMs"] = probe.get("flipGapMs")
+        if hot.get("install", {}).get("hotSwap", {}).get("method") == "launcher-ipc":
+            hot["candidateMeasuredStartupMs"] = hot["startupMeasurement"]["candidateMeasuredStartupMs"]
         if hot.get("install"):
             steps = hot["install"]["steps"]
             ipc = hot.get("launcherIPC", [])
@@ -181,7 +186,7 @@ class HotSwapRehearsal(Rehearsal):
                 receipt["result"] = "FAIL"
             elif hot.get("status") == "hot-swap-unsupported":
                 receipt["result"] = "HOT-SWAP-UNSUPPORTED"
-            receipt["hotSwap"] = {key: hot[key] for key in ("status", "sequenceContinuity", "candidateMeasuredStartupMs", "previousMeasuredStartupMs", "checks") if key in hot}
+            receipt["hotSwap"] = {key: hot[key] for key in ("status", "sequenceContinuity", "candidateMeasuredStartupMs", "previousMeasuredStartupMs", "startupMeasurement", "checks") if key in hot}
             queue_failed = self.args.queue_mode != "none" and hot.get("checks", {}).get("queue-saturation", {}).get("status") != "passed"
             presentation_failed = self.args.queue_mode != "budget" and self.args.inject == "none" and hot.get("checks", {}).get("presentation", {}).get("status") != "passed"
             normal = self.args.inject == "none" and not self.args.force_rollback and self.args.queue_mode == "none"

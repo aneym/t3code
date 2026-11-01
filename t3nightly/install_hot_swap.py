@@ -1,7 +1,11 @@
 import json
+import math
+import socket
 import sqlite3
 import subprocess
+import tempfile
 import time
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,16 +29,97 @@ def supported(environment, run=None):
     return capabilities.get("serverSelfUpdate") == "boot-service" and capabilities.get("serverHotSwap") is True and (ingress_qualified(run) if run is not None else True)
 
 
-def mark_candidate(run, manifest, rehearsal, compatibility):
-    qualification = (rehearsal or {}).get("hotSwap", {}) if not run.args.rehearsal else manifest.get("hotSwap", {})
-    measured = qualification.get("candidateMeasuredStartupMs")
-    if not isinstance(measured, int) or measured <= 0:
+def measure_candidate(sandbox, manifest):
+    from .headless_env import pin_settings
+    from .rehearsal_storage import seed_database
+    from .rehearsal_waiter import identity
+
+    version = manifest["version"]
+    binary = stage_runtime(sandbox.home, version, sandbox.args.assets)
+    root = sandbox.home / "snapshots"
+    root.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="candidate-startup-", dir=root) as raw:
+        home = Path(raw)
+        (home / "userdata").mkdir()
+        (home / "runtime/tmp").mkdir(parents=True)
+        seed = seed_database(sandbox.args.seed, home / "userdata/statev2.sqlite")
+        pin_settings(home / "userdata/settings.json", home / "runtime", sandbox.evidence / "security-refusals.log")
+        with socket.socket() as endpoint:
+            endpoint.bind(("127.0.0.1", 0))
+            port = endpoint.getsockname()[1]
+        from .install_policy import refuse_probe
+
+        refuse_probe(home, port, sandbox.label)
+        environment = {key: value.replace(str(sandbox.home), str(home)) for key, value in sandbox.service_environment().items()}
+        environment["T3CODE_PORT"] = str(port)
+        receipt = {"version": version, "candidateDigest": manifest["digest"], "runtimeDigest": file_digest(binary), "home": str(home), "port": port, "seed": seed, "candidateMeasuredStartupMs": None}
+        evidence = sandbox.evidence / "candidate-startup.json"
+        with (sandbox.evidence / "candidate-startup.log").open("w") as log:
+            started = time.monotonic()
+            process = subprocess.Popen([str(binary), "serve", "--base-dir", str(home), "--host", "127.0.0.1", "--port", str(port), "--no-browser"], env=environment, cwd=home, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+            try:
+                receipt.update(pid=process.pid, identity=identity(process.pid))
+                evidence.write_text(json.dumps(receipt, indent=2) + "\n")
+                while time.monotonic() - started < sandbox.args.health_s:
+                    if process.poll() is not None:
+                        raise ValueError("candidate startup measurement exited before serving")
+                    try:
+                        with urllib.request.urlopen(f"http://127.0.0.1:{port}/.well-known/t3/environment", timeout=1) as response:
+                            served = json.load(response)
+                        if served.get("serverVersion") == version:
+                            receipt["candidateMeasuredStartupMs"] = max(1, math.ceil((time.monotonic() - started) * 1000))
+                            break
+                    except (OSError, ValueError):
+                        pass
+                    time.sleep(0.05)
+                if receipt["candidateMeasuredStartupMs"] is None:
+                    raise ValueError("candidate startup measurement timed out before serving")
+            finally:
+                try:
+                    if process.poll() is None:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=20)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait(timeout=10)
+                finally:
+                    receipt["exitCode"] = process.poll()
+                    evidence.write_text(json.dumps(receipt, indent=2) + "\n")
+    return receipt
+
+
+def mark_candidate(run, manifest, rehearsal, compatibility, observed):
+    qualification = (rehearsal or {}).get("hotSwap") or {}
+    if run.args.rehearsal:
+        path = run.state.parent / "candidate-startup.json"
+        qualification = json.loads(path.read_text()) if path.is_file() else {}
+        if any(qualification.get(key) != value for key, value in {"version": run.args.version, "candidateDigest": manifest["digest"], "runtimeDigest": file_digest(run.runtime(run.args.version))}.items()):
+            run.step("hot-swap-fallback", reason="candidate-startup-evidence-missing-or-mismatched")
+            return False
+    elif qualification.get("status") != "hot-swap" or qualification.get("sequenceContinuity") is not True:
+        run.step("hot-swap-fallback", reason="rehearsal-not-hot-swap-or-sequence-discontinuous", rehearsal_status=qualification.get("status"))
         return False
-    if not run.args.rehearsal and (qualification.get("status") != "hot-swap" or qualification.get("sequenceContinuity") is not True):
+    if not run.args.rehearsal:
+        startup = qualification.get("startupMeasurement") or {}
+        if startup.get("version") != run.args.version:
+            run.step("hot-swap-fallback", reason="rehearsal-startup-version-mismatch")
+            return False
+        if startup.get("runtimeDigest") != observed["candidateRuntime.digest"]:
+            run.step("hot-swap-fallback", reason="rehearsal-startup-runtime-digest-mismatch")
+            return False
+        if startup.get("candidateMeasuredStartupMs") != qualification.get("candidateMeasuredStartupMs"):
+            run.step("hot-swap-fallback", reason="rehearsal-startup-measurement-mismatch")
+            return False
+    measured = qualification.get("candidateMeasuredStartupMs")
+    if type(measured) is not int or measured <= 0:
+        run.step("hot-swap-fallback", reason="candidate-startup-measurement-missing-or-invalid")
         return False
     config = json.loads((run.home / "runtime/launcher-config.json").read_text())
     if measured > config["measuredStartupMs"]:
+        run.step("hot-swap-fallback", reason="candidate-startup-exceeds-launcher-budget", measured_ms=measured, budget_ms=config["measuredStartupMs"])
         return False
+    run.step("hot-swap-candidate-qualified", measured_ms=measured, budget_ms=config["measuredStartupMs"])
     from .hot_swap_marker import write as write_marker
 
     write_marker(run, run.args.version, measured, manifest)
@@ -96,14 +181,19 @@ def install(run):
     environment = run.environment()
     run.report["capabilities"] = (environment or {}).get("capabilities", {})
     run.report["environmentObserved"] = isinstance(environment, dict)
-    maintenance = bool(changed(run) or compatibility.get("migrationFiles") or compatibility.get("maintenance") or manifest.get("maintenance") or compatibility.get("eligibility") == RESTORE_CLASS)
+    reasons = [name for name, required in (("service-artifact-change", changed(run)), ("migration-files", compatibility.get("migrationFiles")), ("compatibility-maintenance", compatibility.get("maintenance")), ("manifest-maintenance", manifest.get("maintenance")), ("restore-rollback-class", compatibility.get("eligibility") == RESTORE_CLASS)) if required]
+    maintenance = bool(reasons)
     available = supported(environment, run) and qualification["qualified"] and not maintenance
-    if available and not mark_candidate(run, manifest, rehearsal, compatibility):
+    if available and not mark_candidate(run, manifest, rehearsal, compatibility, observed):
         available, maintenance = False, True
     run.report["hotSwap"] = {"supported": available, "method": "launcher-ipc" if available else "maintenance" if maintenance else "hot-swap-unsupported", "qualification": qualification}
     if not available:
         if not supported(environment, run):
-            run.step("hot-swap-unsupported", fallback="drain-then-hard-install")
+            run.step("hot-swap-unsupported", reason="server-capability-or-ingress-unsupported", fallback="drain-then-hard-install")
+        if not qualification["qualified"]:
+            run.step("hot-swap-fallback", reason="host-not-qualified", qualification=qualification)
+        for reason in reasons:
+            run.step("hot-swap-fallback", reason=reason)
         if maintenance:
             run.step("maintenance-required", fallback="drain-then-hard-install")
         with restart_session(run, previous) as bearer:
