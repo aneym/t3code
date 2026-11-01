@@ -1,3 +1,5 @@
+import hashlib
+import os
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -182,7 +184,7 @@ while True:
 
 
 def job_tmp(tree):
-    return f"{TMP_ROOT}/advisory-{Path(tree).name[-10:]}"
+    return f"{TMP_ROOT}/advisory-{hashlib.sha256(os.path.normpath(tree).encode()).hexdigest()[:16]}"
 
 
 def cache_exports(host, tree):
