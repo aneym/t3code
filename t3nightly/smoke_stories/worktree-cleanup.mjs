@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -17,7 +17,10 @@ if (!(await readFile(server)).includes('worktreeContentIntegration')) {
   console.log(`SKIP: ${server} has no worktreeContentIntegration setting`);
   process.exit(0);
 }
-assert((await readFile(`${tree}/packages/contracts/src/settings.ts`)).includes('worktreeContentIntegration'), `${tree} contracts lack worktreeContentIntegration; its client would drop the cleanup guards`);
+const contracts = `${tree}/packages/contracts/src`;
+const contractSources = (await readdir(contracts)).filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'));
+const declared = await Promise.all(contractSources.map(async (name) => (await readFile(join(contracts, name))).includes('worktreeContentIntegration')));
+assert(declared.some(Boolean), `${tree} contracts lack worktreeContentIntegration; its client would drop the cleanup guards`);
 assert.notEqual(await realpath(home), await realpath(join(homedir(), '.t3')).catch(() => join(homedir(), '.t3')));
 await mkdir(out, { recursive: true });
 const execute = promisify(execFile);
