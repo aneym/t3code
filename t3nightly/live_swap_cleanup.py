@@ -32,8 +32,13 @@ def unload(run, job):
     if sys.platform == "darwin":
         subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"], capture_output=True, timeout=30)
         command = ["launchctl", "print", f"gui/{os.getuid()}/{label}"]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=10)
-        absent = result.returncode != 0 and "Could not find service" in result.stderr
+        deadline = time.monotonic() + 10
+        while True:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+            absent = result.returncode != 0 and "Could not find service" in result.stderr
+            if absent or time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
     else:
         subprocess.run(["systemctl", "--user", "stop", label + ".service"], capture_output=True, timeout=30)
         subprocess.run(["systemctl", "--user", "reset-failed", label + ".service"], capture_output=True, timeout=10)
