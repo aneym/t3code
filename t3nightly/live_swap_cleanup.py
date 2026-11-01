@@ -21,7 +21,7 @@ def request_unload(run, job):
     if not re.fullmatch(r"com\.agent-rails\.t3-live-swap-[a-f0-9]{16}", job["label"]):
         raise ValueError("refused unrecorded recorder unit label")
     (run / "cleanup.request").touch()
-    command = ["launchctl", "bootout", f"gui/{os.getuid()}/{job['label']}"] if sys.platform == "darwin" else ["systemctl", "--user", "stop", job["label"] + ".service"]
+    command = ["launchctl", "bootout", f"gui/{os.getuid()}/{job['label']}"] if sys.platform == "darwin" else ["systemctl", "--user", "--no-block", "stop", job["label"] + ".service"]
     subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
@@ -40,11 +40,16 @@ def unload(run, job):
                 break
             time.sleep(0.1)
     else:
-        subprocess.run(["systemctl", "--user", "stop", label + ".service"], capture_output=True, timeout=30)
+        subprocess.run(["systemctl", "--user", "--no-block", "stop", label + ".service"], capture_output=True, timeout=10)
         subprocess.run(["systemctl", "--user", "reset-failed", label + ".service"], capture_output=True, timeout=10)
         command = ["systemctl", "--user", "show", label + ".service", "--property=LoadState", "--value"]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=10)
-        absent = result.stdout.strip() == "not-found"
+        deadline = time.monotonic() + 15
+        while True:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+            absent = result.stdout.strip() == "not-found"
+            if absent or time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
     return {"label": label, "unitAbsent": absent, "command": command, "exit": result.returncode, "stdout": result.stdout if absent else "unit remains loaded", "stderr": result.stderr if absent else ""}
 
 
