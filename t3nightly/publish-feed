@@ -98,10 +98,14 @@ def publish(directory, desktop, feed):
         raise ValueError(f"not a fork nightly version: {version}")
     checksums = directory / "SHA256SUMS"
     evidence = getattr(publish, "evidence", None)
+    deferred = {}
     if evidence:
         proven = fast_evidence(evidence, version)
+        deferred = {host: row["reason"] for host, row in proven["hosts"].items() if row["outcome"] == "deferred"}
         expected = {}
         for host, row in proven["hosts"].items():
+            if row["outcome"] == "deferred":
+                continue
             name = f"t3-{version}-{'darwin-arm64' if host == 'studio' else 'linux-x64'}.tar.gz"
             if name in expected and expected[name] != row["archive"]:
                 raise ValueError("Linux targets did not install the same canonical archive")
@@ -145,6 +149,7 @@ def publish(directory, desktop, feed):
                 atomic_copy(source, desktop_target / source.name)
         row = {
             "version": version,
+            **({"deferredHosts": deferred} if deferred else {}),
             "builtAt": previous["builtAt"] if previous else timestamp,
             "cli": sorted(f"{match['platform']}-{match['arch']}" for match in matches if match is not None),
             "desktop": ["mac-arm64"] if assets else (previous["desktop"] if previous else []),

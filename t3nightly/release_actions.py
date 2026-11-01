@@ -20,7 +20,7 @@ from .release_linux import prepare_dependencies, require_host_ready, stage_linux
 from .release_targets import LINUX_TARGETS, stage_action, stage_target
 from .release_land_receipts import publish as publish_landings
 from .release_manifest import digest, eligible, freeze, history_digest, load
-from .release_outputs import fast_evidence
+from .release_outputs import deferred_hosts, fast_evidence
 from .release_publish_stage import stage_payload, validate as validate_staged
 from .release_ownership import ownership
 from .release_readiness import readiness
@@ -242,12 +242,18 @@ def fast_swap(config, log):
 def fast_publish(config, log):
     remote = config.on(config.build_host)
     source = config.run / config.build_host
+    deferred = deferred_hosts(config.run)
     for host, address in LINUX_TARGETS.items():
         own, local = config.on(host), config.run / host
         local.mkdir(exist_ok=True)
         proof = (own.receipt("rollback-proof"),) if required(load(config.manifest), host) else ()
-        for path in (own.manifest, own.receipt("rehearsal"), own.receipt("install"), *proof):
+        install = () if host in deferred else (own.receipt("install"),)
+        for path in (own.manifest, own.receipt("rehearsal"), *install, *proof):
             transfer(f"{address}:{path}", str(local) + "/", log)
+        if host in deferred:
+            evidence = local / f"e2e-{host}"
+            evidence.mkdir(exist_ok=True)
+            transfer(f"{address}:{own.run}/e2e-{host}/smoke-verdict.json", str(evidence) + "/", log)
         if host != config.build_host:
             shutil.copy2(source / remote.artifact().name, local / remote.artifact().name)
             archive = local / remote.archive()
@@ -278,7 +284,7 @@ def fast_health(config, log):
                             "--linux-host", LINUX_TARGETS.get(host, "ax42"), "--out", str(config.run / "health" / host)], handle)
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        return max(pool.map(one, ("studio", *LINUX_TARGETS)))
+        return max(pool.map(one, ("studio", *(host for host in LINUX_TARGETS if host not in deferred_hosts(config.run)))))
 
 
 def run_fast_action(stage, config, log):
