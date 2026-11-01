@@ -94,8 +94,13 @@ export const makeHandoffDrain = Effect.gen(function* () {
   }, Effect.uninterruptible);
   const drain = Effect.fn("RestartDrain.drainForHandoff")(
     function* (epoch: string, timeoutMs: number) {
-      if (hold !== undefined && hold.epoch !== epoch)
-        return yield* new ServerPrepareRestartError({ cause: "A different handoff is draining." });
+      if (hold !== undefined && hold.epoch !== epoch) {
+        yield* Effect.logWarning("Releasing stale service handoff drain", {
+          epoch: hold.epoch,
+          nextEpoch: epoch,
+        });
+        yield* release(hold.epoch);
+      }
       hold ??= { epoch, scope: yield* Scope.fork(owner, "sequential") };
       const result = yield* drainBeforeRestart(epoch, Duration.millis(timeoutMs)).pipe(
         Effect.provideService(Scope.Scope, hold.scope),

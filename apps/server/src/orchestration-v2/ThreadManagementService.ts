@@ -803,8 +803,7 @@ const make = Effect.gen(function* () {
     const initial = yield* evaluate(target.runs);
     if (initial.settled) return settledResult(initial);
 
-    // A declined continuation records no event, so its effect settling wakes
-    // the wait too.
+    // Effect settlement wakes a declined continuation, which records no event.
     const wait = Stream.merge(
       Stream.mergeAll(
         (
