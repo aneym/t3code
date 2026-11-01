@@ -65,35 +65,30 @@ const localEnvironmentId = EnvironmentId.make("environment-local");
 
 describe("filterSidebarV2VisibleThreads", () => {
   it.each(["pinned", "active", "working", "snoozed", "settled"] as const)(
-    "hides bound and automation-created threads from %s while retaining manual threads",
+    "hides bound and automation-run threads from %s while retaining manual threads",
     (section) => {
-      const fields = {
+      const f = {
         pinnedAt: section === "pinned" ? "2026-10-26T00:00:00.000Z" : null,
         settledOverride: section === "settled" ? ("settled" as const) : null,
         snoozedUntil: section === "snoozed" ? "2027-01-01T00:00:00.000Z" : null,
         latestUserMessageAt: section === "working" ? "2026-10-26T00:00:00.000Z" : null,
       };
-      const manual = makeThreadFixture({ ...fields, automationTaskId: null });
-      const created = makeThreadFixture({
-        ...fields,
-        id: ThreadId.make("created"),
+      const manual = makeThreadFixture({ ...f, automationTaskId: null });
+      const run = makeThreadFixture({
+        ...f,
+        id: ThreadId.make("run"),
         automationTaskId: ScheduledTaskId.make("scheduled-task:test"),
       });
-      const bound = makeThreadFixture({ ...fields, id: ThreadId.make("bound") });
-      const otherEnvironment = { ...bound, environmentId: EnvironmentId.make("other") };
-      const bindings = new Set([`${bound.environmentId}:${bound.id}`]);
+      const bound = makeThreadFixture({ ...f, id: ThreadId.make("bound") });
+      const other = { ...bound, environmentId: EnvironmentId.make("other") };
+      const keys = new Set([
+        bound.environmentId,
+        `${bound.environmentId}:${bound.id}`,
+        `${run.environmentId}:${run.automationTaskId}`,
+      ]);
       expect(
-        filterSidebarV2VisibleThreads(
-          [manual, created, bound, otherEnvironment],
-          null,
-          new Set(),
-          bindings,
-        ),
-      ).toEqual(
-        section === "pinned"
-          ? [manual, created, bound, otherEnvironment]
-          : [manual, otherEnvironment],
-      );
+        filterSidebarV2VisibleThreads([manual, run, bound, other], null, new Set(), keys),
+      ).toEqual(section === "pinned" ? [manual, run, bound, other] : [manual, other]);
     },
   );
 });

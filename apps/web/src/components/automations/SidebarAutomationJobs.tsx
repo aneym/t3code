@@ -51,7 +51,7 @@ function LastRunLabel({ value }: { readonly value: string }) {
 }
 
 export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () => void }) {
-  const tasks = useAutomations();
+  const { automations: tasks, threadKeys } = useAutomations();
   const environments = useEnvironmentIdentities();
   const threads = useQuietThreadShells();
   const byKey = new Map(threads.map((thread) => [`${thread.environmentId}:${thread.id}`, thread]));
@@ -66,7 +66,7 @@ export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () 
     false,
     Schema.Boolean,
   );
-  const standaloneThreads = automationThreadsWithoutJobs(threads, automations);
+  const standaloneThreads = automationThreadsWithoutJobs(threads, automations, threadKeys);
   if (automations.length === 0 && standaloneThreads.length === 0) return null;
   const grouped = new Map<
     string,

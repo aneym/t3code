@@ -31,10 +31,14 @@ function useLoadedScheduledTasks(): ReadonlyArray<{
   return loaded;
 }
 
-export function useAutomations(): ReadonlyArray<EnvironmentAutomation> {
-  return useLoadedScheduledTasks().flatMap(({ environmentId, tasks }) =>
-    tasks.map((task) => ({ environmentId, task })),
-  );
+export function useAutomations() {
+  const loaded = useLoadedScheduledTasks();
+  return {
+    automations: loaded.flatMap(({ environmentId, tasks }) =>
+      tasks.map((task) => ({ environmentId, task })),
+    ),
+    threadKeys: retainAutomationThreadKeys(loaded),
+  };
 }
 
 const retainedAutomationThreadKeys = new Map<string, ReadonlySet<string>>();
@@ -45,13 +49,17 @@ function sameKeys(left: ReadonlySet<string>, right: ReadonlySet<string>): boolea
   return true;
 }
 
-export function useAutomationThreadKeys(): ReadonlySet<string> {
-  for (const { environmentId, tasks } of useLoadedScheduledTasks()) {
-    const next = new Set(
-      tasks
-        .filter((task) => task.threadId !== null)
-        .map((task) => `${environmentId}:${task.threadId}`),
-    );
+function retainAutomationThreadKeys(
+  loaded: ReturnType<typeof useLoadedScheduledTasks>,
+): ReadonlySet<string> {
+  for (const { environmentId, tasks } of loaded) {
+    const next = new Set([
+      environmentId,
+      ...tasks.flatMap((task) => [
+        `${environmentId}:${task.id}`,
+        ...(task.threadId === null ? [] : [`${environmentId}:${task.threadId}`]),
+      ]),
+    ]);
     if (!sameKeys(retainedAutomationThreadKeys.get(environmentId) ?? new Set(), next)) {
       retainedAutomationThreadKeys.set(environmentId, next);
     }
@@ -62,4 +70,8 @@ export function useAutomationThreadKeys(): ReadonlySet<string> {
     for (const key of environmentKeys) keys.add(key);
   }
   return keys;
+}
+
+export function useAutomationThreadKeys(): ReadonlySet<string> {
+  return retainAutomationThreadKeys(useLoadedScheduledTasks());
 }

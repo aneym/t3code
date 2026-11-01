@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { threadNotFound } from "./threadAccess.ts";
 
@@ -125,6 +126,7 @@ function resultFromThread(input: {
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
+  const scheduledTasks = yield* ScheduledTaskService;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
 
   const update = Effect.fn("ThreadMetadataMcpService.update")(function* (
@@ -157,6 +159,21 @@ const make = Effect.gen(function* () {
       );
     if (shell === null || shell.deletedAt !== null) {
       return yield* threadNotFound(threadManagement, threadId, `Thread ${threadId} was not found.`);
+    }
+    if (
+      input.action === "mark_automation" &&
+      input.automationTaskId !== undefined &&
+      input.automationTaskId !== `automation:thread:${threadId}`
+    ) {
+      const { tasks } = yield* scheduledTasks
+        .list()
+        .pipe(Effect.mapError((error) => failure("orchestration_error", errorMessage(error))));
+      if (!tasks.some((task) => task.id === input.automationTaskId)) {
+        return yield* failure(
+          "invalid_request",
+          "automationTaskId must name an existing scheduled task in this environment or this thread's automation self-mark. Omit it to mark this thread manually.",
+        );
+      }
     }
     const requestKey =
       input.clientRequestId === undefined
@@ -219,5 +236,5 @@ const make = Effect.gen(function* () {
 export const layer: Layer.Layer<
   ThreadMetadataMcpService,
   never,
-  Crypto.Crypto | ThreadManagementService.ThreadManagementService
+  Crypto.Crypto | ThreadManagementService.ThreadManagementService | ScheduledTaskService
 > = Layer.effect(ThreadMetadataMcpService, make);
