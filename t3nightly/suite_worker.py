@@ -340,7 +340,10 @@ def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep
                 try:
                     with (logs / "tmp.log").open("a") as log:
                         result["tmpCleanup"] = shielded(lambda: tmp_report(host, "remove", tree, log))
-                    if result["tmpCleanup"]["after"]["exists"]:
+                    after = result["tmpCleanup"]["after"]
+                    if after.get("kept"):
+                        result["cleanupError"] = f"advisory tmp kept for holders {after['holders']} holding {after['heldDeleted']} deleted bytes, folder {after['bytes']} bytes: {job_tmp(tree)}"
+                    elif after["exists"]:
                         result["cleanupError"] = f"advisory tmp still present: {job_tmp(tree)}"
                 except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
                     result["cleanupError"] = f"advisory tmp cleanup failed: {error}"

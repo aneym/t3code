@@ -151,6 +151,10 @@ deadline = time.monotonic() + 120
 while holders and time.monotonic() < deadline:
     time.sleep(2)
     _, holders = held()
+if holders:
+    held_bytes, holders = held()
+    print(json.dumps({"before": before, "after": {"cowAvail": cow(), "heldDeleted": held_bytes, "bytes": size(), "holders": holders, "exists": tmp.exists(), "kept": True}}))
+    sys.exit(0)
 shutil.rmtree(tmp, ignore_errors=True)
 after_held, holders = held()
 print(json.dumps({"before": before, "after": {"cowAvail": cow(), "heldDeleted": after_held, "holders": holders, "exists": tmp.exists()}}))
