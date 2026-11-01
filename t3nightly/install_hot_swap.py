@@ -93,13 +93,15 @@ def install(run):
     from .launcher_artifact import changed, qualify
 
     qualification = qualify(run)
+    environment = run.environment()
+    run.report["capabilities"] = (environment or {}).get("capabilities", {})
     maintenance = bool(changed(run) or compatibility.get("migrationFiles") or compatibility.get("maintenance") or manifest.get("maintenance") or compatibility.get("eligibility") == RESTORE_CLASS)
-    available = supported(run.environment(), run) and qualification["qualified"] and not maintenance
+    available = supported(environment, run) and qualification["qualified"] and not maintenance
     if available and not mark_candidate(run, manifest, rehearsal, compatibility):
         available, maintenance = False, True
     run.report["hotSwap"] = {"supported": available, "method": "launcher-ipc" if available else "maintenance" if maintenance else "hot-swap-unsupported", "qualification": qualification}
     if not available:
-        if not supported(run.environment(), run):
+        if not supported(environment, run):
             run.step("hot-swap-unsupported", fallback="drain-then-hard-install")
         if maintenance:
             run.step("maintenance-required", fallback="drain-then-hard-install")
