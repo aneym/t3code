@@ -35,6 +35,8 @@ def stop_gates(run):
     for path in run.glob("gate-*.json"):
         try:
             value = json.loads(path.read_text())
+            if not isinstance(value, dict):
+                continue
             pid = value["pid"]
             if not isinstance(pid, int) or pid <= 1:
                 continue
@@ -43,7 +45,7 @@ def stop_gates(run):
                 rows.append({"pid": pid, "outcome": "terminated-captured-pid"})
             else:
                 rows.append({"pid": pid, "outcome": "already-exited"})
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
             rows.append({"receipt": path.name, "outcome": "unreadable-no-signal"})
     (run / "gate-cleanup.json").write_text(json.dumps(rows, indent=2) + "\n")
 
@@ -70,13 +72,14 @@ def main():
     process = None
     session = None
     version = None
+    owner = None
     changed = None
     try:
         while time.time() < job["start"]:
             time.sleep(min(0.5, job["start"] - time.time()))
         first = environment(job["port"])
         version = first["serverVersion"]
-        args = SimpleNamespace(drain_s=max(0, int(job["until"] - time.time())), port=job["port"])
+        args = SimpleNamespace(drain_s=max(0, int(job["until"] - time.time())), port=job["port"], auth_scopes=("orchestration:read",))
         owner = SimpleNamespace(args=args, home=home, state=run, runtime=lambda value: home / "runtime/versions" / value / "t3")
         session = restart_session(owner, version)
         bearer = session.__enter__()
@@ -90,12 +93,15 @@ def main():
             gate = [sys.executable, "-m", "t3nightly.live_swap_gate", "--run", str(run), "--deadline", str(job["until"] - 45)]
             command = "env PYTHONPATH=" + shlex.quote(str(Path(__file__).resolve().parent.parent)) + " " + shlex.join(gate)
             prompt = f"Call the Bash tool with timeout=600000 and run_in_background=false to run exactly: {command}\nThe explicit 600000 ms Bash timeout is mandatory so the tool does not turn this into a background command. Wait in this one provider turn until that same Bash call returns; do not background it, do not finish this turn while the command runs, and do not reply with a waiting message. Then reply with exactly {nonce} and nothing else. If the server automatically continues this interrupted turn, finish this same command and reply with the same nonce. Do not send messages, edit files, or do other work."
-            submitted = cli(home, version, "thread", "start", "--provider", job["provider"], "--model", job["model"], "--title", "Live swap recorder", str(project), prompt)
-            turn = {"threadId": submitted["threadId"], "runId": submitted["runId"], "nonce": nonce, "provider": job["provider"], "model": job["model"], "submittedVersion": version, "newPromptsSent": 1}
+            provider_instance = "claudeAgent"
+            if job["provider"] != "claude" or job["model"] != "claude-haiku-4-5":
+                raise ValueError("recorder requires pinned Claude Haiku")
+            submitted = cli(home, version, "thread", "start", "--provider", provider_instance, "--model", job["model"], "--title", "Live swap recorder", str(project), prompt)
+            turn = {"threadId": submitted["threadId"], "runId": submitted["runId"], "nonce": nonce, "provider": job["provider"], "providerInstance": provider_instance, "model": job["model"], "submittedVersion": version, "newPromptsSent": 1}
             thread = turn["threadId"]
             (run / "turn.json").write_text(json.dumps(turn, indent=2) + "\n")
         stop = run / "probe.stop"
-        command = ["node", str(Path(__file__).with_name("client.mjs")), "hot-swap-probe", "--tree", job["rpcTree"], "--origin", f"http://127.0.0.1:{job['port']}", "--bearer-file", str(bearer), "--thread", thread, "--output", str(run / "probe.json"), "--stop", str(stop), "--interval-ms", "500"]
+        command = ["node", str(Path(__file__).with_name("client.mjs")), "hot-swap-probe", "--tree", job["rpcTree"], "--origin", f"http://127.0.0.1:{job['port']}", "--bearer-file", str(bearer), "--thread", thread, "--output", str(run / "probe.json"), "--stop", str(stop), "--interval-ms", "20", "--save-interval-ms", "250"]
         process = subprocess.Popen(command, cwd=run, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         (run / "probe-process.json").write_text(json.dumps({"pid": process.pid, "identity": identity(process.pid)}) + "\n")
         while time.time() < min(job["until"], changed + 60 if changed else job["until"]):
@@ -105,8 +111,10 @@ def main():
                 probe = json.loads((run / "probe.json").read_text())
             versions = probe.get("servedVersions", [])
             current = versions[-1]["version"] if versions else version
-            if current != version and changed is None:
-                changed = time.time()
+            if current != version:
+                changed = changed or time.time()
+            else:
+                changed = None
             if turn:
                 status = turn_state(home, turn)
                 if status.get("completedRun"):
@@ -127,32 +135,52 @@ def main():
     except BaseException as failure:
         error = type(failure).__name__ + (": " + str(failure) if isinstance(failure, (ValueError, TimeoutError)) else "")
     finally:
-        for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        watched = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM)
+        signal.pthread_sigmask(signal.SIG_BLOCK, watched)
+        for number in watched:
             signal.signal(number, signal.SIG_IGN)
-        (run / "probe.stop").touch()
-        stop_gates(run)
-        if process is not None:
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
-        if (run / "probe.json").exists():
-            probe = json.loads((run / "probe.json").read_text())
-        if session is not None:
-            try:
-                session.__exit__(None, None, None)
-            except BaseException:
-                error = error or "auth-revoke-or-cleanup-failed"
         signal.alarm(0)
-        job["settledAfterSwapSeconds"] = time.time() - changed if changed else 0
-        value = receipt(run, job, probe, turn, status, cursor, error)
-        (run / "finished.json").write_text(json.dumps({"grade": value["grade"], "pid": os.getpid(), "finishedAt": time.time(), "authFileRemoved": not any(run.glob(".restart-rpc-*"))}) + "\n")
-    return 1 if value["grade"] == "FAIL" else 0
+        teardown = []
+
+        def attempt(name, action):
+            try:
+                return action()
+            except BaseException as failure:
+                teardown.append({"step": name, "error": type(failure).__name__})
+                return None
+
+        observed = probe.get("servedVersions", [])
+        last = probe.get("httpObservations", [])
+        job["settledAfterSwapSeconds"] = max(0, (last[-1]["atMs"] - observed[-1]["atMs"]) / 1000) if len(observed) > 1 and last and observed[-1]["version"] != observed[0]["version"] else 0
+        job["observationEndedAt"] = time.time()
+        attempt("freeze-observation", lambda: (run / "probe.stop").touch())
+        if session is not None:
+            attempt("revoke-session", lambda: session.__exit__(None, None, None))
+        auth = dict(getattr(owner, "session_auth", {}))
+        auth["authFileRemoved"] = auth.get("authFileRemoved") is True and not any(run.glob(".restart-rpc-*"))
+        job["auth"] = auth
+        attempt("stop-gates", lambda: stop_gates(run))
+        if process is not None:
+            attempt("wait-probe", lambda: process.wait(timeout=10))
+            if process.poll() is None:
+                attempt("terminate-probe", process.terminate)
+                attempt("wait-terminated-probe", lambda: process.wait(timeout=5))
+            if process.poll() is None:
+                attempt("kill-probe", process.kill)
+                attempt("reap-probe", lambda: process.wait(timeout=5))
+        if (run / "probe.json").exists():
+            final_probe = attempt("read-final-probe", lambda: json.loads((run / "probe.json").read_text()))
+            if final_probe is not None:
+                probe = final_probe
+        job["teardownErrors"] = teardown
+        inputs = {"job": job, "probe": probe, "turn": turn, "status": status, "cursor": cursor, "error": error}
+        attempt("save-receipt-inputs", lambda: (run / "receipt-inputs.json").write_text(json.dumps(inputs) + "\n"))
+        value = receipt(run, **inputs)
+        (run / "finished.json").write_text(json.dumps({"grade": value["grade"], "pid": os.getpid(), "finishedAt": time.time(), "authFileRemoved": auth["authFileRemoved"], "revokeVerified": auth.get("revokeVerified", False), "watcherFinalized": False}) + "\n")
+        from .live_swap_cleanup import request_unload
+
+        attempt("unload-recorder-unit", lambda: request_unload(run, job))
+    return 1 if error else 0
 
 
 if __name__ == "__main__":

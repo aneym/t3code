@@ -6,11 +6,14 @@ export async function monitor(context) {
   const { opts, Effect, Stream, layers } = context;
   const started = performance.now();
   const data = { httpSamples: 0, refusedConnections: 0, httpFailures: 0, maxHttpGapMs: 0, flipGapMs: null, servedVersions: [], httpObservations: [], keepAlive: { requests: 0, reused: 0, failures: 0, errors: [], versions: [], sockets: [] }, wsConnections: 0, wsFailures: 0, snapshots: [], sequences: [], resnapshots: 0, ready: false, presentations: [], presentationViolations: [], handoffCalls: [], handoffReplies: [], handoffSettlements: [], handoffEvents: [], sessions: [], subscriptions: [], receivedEvents: [] };
-  const interval = Math.max(100, Number(opts["interval-ms"] ?? 100));
+  const interval = Math.max(10, Number(opts["interval-ms"] ?? 100));
   let lastOk = started;
-  let lastSequence;
+  data.httpProbeIntervalMs = interval;
   const elapsed = () => Math.round(performance.now() - started);
-  const save = () => {
+  let lastSaved = -Infinity;
+  const save = (force = false) => {
+    if (!force && performance.now() - lastSaved < Number(opts["save-interval-ms"] ?? 0)) return;
+    lastSaved = performance.now();
     writeFileSync(`${opts.output}.next`, JSON.stringify({ ...data, elapsedMs: elapsed() }));
     renameSync(`${opts.output}.next`, opts.output);
   };
@@ -31,7 +34,7 @@ export async function monitor(context) {
           request.on("timeout", () => request.destroy(new Error("fresh HTTP deadline")));
           request.on("error", reject);
         });
-        data.httpObservations.push({ at: new Date().toISOString(), atMs: elapsed(), version: environment.serverVersion, latencyMs: Math.round(performance.now() - requestStarted) });
+        data.httpObservations.push({ at: new Date().toISOString(), atMs: elapsed(), version: environment.serverVersion, startedAtMs: Math.round(requestStarted - started), latencyMs: Math.round(performance.now() - requestStarted) });
         const now = performance.now();
         const gap = Math.round(now - lastOk);
         data.maxHttpGapMs = Math.max(data.maxHttpGapMs, gap);
@@ -89,6 +92,6 @@ export async function monitor(context) {
   };
   await Promise.all([http(), keepAlive(), websocket()]);
   data.maxHttpGapMs = Math.max(data.maxHttpGapMs, Math.round(performance.now() - lastOk));
-  save();
+  save(true);
   return data;
 }

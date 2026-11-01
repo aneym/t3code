@@ -33,7 +33,7 @@ def main():
     parser.add_argument("--duration-s", type=int, default=900)
     parser.add_argument("--thread", default="")
     parser.add_argument("--turn", action="store_true", help="one Haiku turn in registered ~/.t3/scratch, held until swap or final minute")
-    parser.add_argument("--provider", default="claudeAgent")
+    parser.add_argument("--provider", choices=("claude",), default="claude")
     parser.add_argument("--model", default="claude-haiku-4-5")
     parser.add_argument("--run-dir", type=Path)
     args = parser.parse_args()
@@ -77,6 +77,9 @@ def main():
         invocation = ["systemd-run", "--user", "--collect", f"--unit={label}", "--property=Type=exec", f"--property=WorkingDirectory={engine.parent}", f"--property=RuntimeMaxSec={max(1, int(until + 95 - time.time()))}", f"--property=StandardOutput=append:{log}", f"--property=StandardError=append:{log}", "--", *command]
     else:
         parser.error("detached recorder requires launchd or systemd-user")
+    from .live_swap_cleanup import start_watcher
+
+    start_watcher(run, engine.parent)
     result = subprocess.run(invocation, capture_output=True, timeout=30)
     if result.returncode:
         raise ValueError("detached submission failed; inspect recorded job, do not replay blindly")

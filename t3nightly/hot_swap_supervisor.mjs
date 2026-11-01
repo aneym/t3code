@@ -76,11 +76,12 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
       Effect.provideService(Wakeups.ConnectionWakeups, { changes: Stream.never }),
     );
     yield* SubscriptionRef.changes(supervisor.state).pipe(Stream.runForEach((state) => Effect.sync(() => {
+      if (existsSync(opts.stop)) return;
       const presentation = Presentation.presentConnectionState(state);
       const firstConnected = data.presentations.some((item) => item.presentation.phase === "connected");
       const row = { atMs: elapsed(), state: { phase: state.phase, stage: state.stage, generation: state.generation, attempt: state.attempt, desired: state.desired, network: state.network, retryAt: state.retryAt, lastFailure: state.lastFailure ? { tag: state.lastFailure._tag, reason: state.lastFailure.reason } : null }, presentation };
       data.presentations.push(row);
-      if (firstConnected && ["offline", "reconnecting", "error", "unsupported"].includes(presentation.phase)) data.presentationViolations.push(row);
+      if (firstConnected && presentation.phase !== "connected") data.presentationViolations.push(row);
       save();
     })), Effect.forkScoped);
     let cursor;

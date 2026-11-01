@@ -42,15 +42,38 @@ def continuity(home, thread, probe):
 
 def receipt(run, job, probe, turn, status, cursor, error=None):
     versions = probe.get("servedVersions", [])
-    changed = len(versions) >= 2
+    changed = len(versions) >= 2 and versions[-1]["version"] != versions[0]["version"]
     violations = probe.get("presentationViolations", [])
     new = versions[-1]["version"] if versions else None
     completed = status.get("completedRun")
     continued = bool(completed and completed.get("restartContinuationOfRunId") and turn.get("completedVersion") == new)
+    auth = job.get("auth", {})
+    cleanup = job.get("unitCleanup", {})
+    handoff = []
+    for event in probe.get("handoffEvents", []):
+        replies = [row for row in probe.get("handoffReplies", []) if row.get("sessionId") == event.get("sessionId") and row.get("sequence") == event.get("sequence") and row.get("confirmation") is False]
+        for reply in replies:
+            matches = lambda row: row.get("sessionId") == reply.get("sessionId") and row.get("sequence") == reply.get("sequence") and row.get("clientId") == reply.get("clientId")
+            acknowledgments = [row for row in probe.get("handoffSettlements", []) if matches(row) and row.get("outcome") == "Success"]
+            confirmed = any(matches(row) and row.get("confirmation") is True for row in probe.get("handoffReplies", []))
+            if confirmed and any(row.get("confirmation") is False for row in acknowledgments) and any(row.get("confirmation") is True for row in acknowledgments):
+                handoff.append({"sessionId": reply["sessionId"], "sequence": reply["sequence"], "clientId": reply["clientId"], "replyResolved": True, "confirmationResolved": True})
     failures = []
     for condition, label in ((probe.get("ready") is True, "client-never-ready"), (not violations, "client-presentation-disconnect"), (cursor.get("verified") is True, "event-continuity-unverified"), (probe.get("refusedConnections", 0) == 0, "refused-connections"), (probe.get("httpFailures", 0) == 0, "failed-http"), (probe.get("wsFailures", 0) == 0, "failed-thread-stream"), (not error, "recorder-error")):
         if not condition:
             failures.append(label)
+    if len(versions) > 1 and not changed:
+        failures.append("version-reverted-to-original")
+    if changed and not handoff:
+        failures.append("handoff-event-reply-confirmation-settlement-unproved")
+    if not auth.get("revokeVerified"):
+        failures.append("session-revoke-unverified")
+    if not auth.get("authFileRemoved"):
+        failures.append("auth-file-not-removed")
+    if not cleanup.get("unitAbsent"):
+        failures.append("recorder-unit-cleanup-unverified")
+    if job.get("teardownErrors"):
+        failures.append("recorder-teardown-errors")
     if status.get("newUserPromptsAfterStart", 0):
         failures.append("unexpected-new-user-prompt")
     if job["turn"] and not completed:
@@ -62,8 +85,8 @@ def receipt(run, job, probe, turn, status, cursor, error=None):
     if not job["turn"] and changed:
         failures.append("no-provider-turn-proof")
     grade = "FAIL" if failures else "PASS" if changed else "NO-SWAP-OBSERVED"
-    value = {"schema": "t3nightly.live-swap-record/1", "grade": grade, "failures": failures, "host": job["host"], "start": job["start"], "until": job["until"], "finishedAt": datetime.now(timezone.utc).isoformat(), "versionChangeObserved": changed, "settledAfterSwapSeconds": job.get("settledAfterSwapSeconds", 0), "servedVersions": versions, "flipGapMs": probe.get("flipGapMs"), "refusedConnections": probe.get("refusedConnections", 0), "httpFailures": probe.get("httpFailures", 0), "clientDisconnects": len(violations), "missedEvents": cursor.get("missedEvents", []), "continuity": cursor, "probe": probe, "turn": {**turn, **status, "automaticCompletionOnNew": continued}, "error": error, "authPath": "installer restart_session: t3 auth session issue/revoke; private 0600 bearer file", "detached": True}
+    value = {"schema": "t3nightly.live-swap-record/1", "grade": grade, "failures": failures, "host": job["host"], "start": job["start"], "until": job["until"], "finishedAt": datetime.now(timezone.utc).isoformat(), "versionChangeObserved": changed, "settledAfterSwapSeconds": job.get("settledAfterSwapSeconds", 0), "servedVersions": versions, "flipGapMs": probe.get("flipGapMs"), "refusedConnections": probe.get("refusedConnections", 0), "httpFailures": probe.get("httpFailures", 0), "clientDisconnects": len(violations), "missedEvents": cursor.get("missedEvents", []), "continuity": cursor, "probe": probe, "turn": {**turn, **status, "automaticCompletionOnNew": continued}, "error": error, "auth": auth, "unitCleanup": cleanup, "handoffProof": handoff, "teardownErrors": job.get("teardownErrors", []), "observationEndedAt": job.get("observationEndedAt"), "authPath": "installer restart_session: t3 auth session issue/revoke; private 0600 bearer file", "detached": True}
     (run / "receipt.json").write_text(json.dumps(value, indent=2) + "\n")
-    md = f"# Live swap recording: {grade}\n\nHost: {job['host']}; versions: " + " → ".join(row["version"] for row in versions) + f"\n\nClient disconnects: {len(violations)}; missed events: {len(value['missedEvents'])}; refused: {value['refusedConnections']}; HTTP failures: {value['httpFailures']}; gap: {value['flipGapMs']} ms.\n\nTurn completed: {bool(completed)}; automatic completion on NEW: {continued}.\n\nFailures: {', '.join(failures) or 'none'}. No swap means NO-SWAP-OBSERVED, never PASS.\n\nAuth: install acceptance CLI-issued session; credential never printed, bearer file 0600, revoked at teardown.\n\nRaw HTTP/WS/presentation/handoff observations: [probe.json](probe.json). Full cursor and turn proof: [receipt.json](receipt.json). Detached PID/PGID and deadline: [process.json](process.json).\n"
+    md = f"# Live swap recording: {grade}\n\nHost: {job['host']}; versions: " + " → ".join(row["version"] for row in versions) + f"\n\nClient disconnects: {len(violations)}; missed events: {len(value['missedEvents'])}; refused: {value['refusedConnections']}; HTTP failures: {value['httpFailures']}; gap: {value['flipGapMs']} ms.\n\nTurn completed: {bool(completed)}; automatic completion on NEW: {continued}.\n\nFailures: {', '.join(failures) or 'none'}. No swap means NO-SWAP-OBSERVED, never PASS.\n\nAuth: install acceptance CLI-issued session; credential never printed, bearer file 0600, revoke verified: {auth.get('revokeVerified', False)}; bearer removed: {auth.get('authFileRemoved', False)}. Unit absent: {cleanup.get('unitAbsent', False)}.\n\nRaw HTTP/WS/presentation/handoff observations: [probe.json](probe.json). Full cursor and turn proof: [receipt.json](receipt.json). Detached PID/PGID and deadline: [process.json](process.json).\n"
     (run / "receipt.md").write_text(md)
     return value
