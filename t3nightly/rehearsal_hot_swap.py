@@ -20,7 +20,10 @@ class HotSwapRehearsal(Rehearsal):
         self.probe_path = sandbox.evidence / "connection-probe.json"
         self.stop_path = sandbox.evidence / "probe.stop"
         environment = sandbox.version()
-        self.hot = {"oldChildPid": json.loads((sandbox.home / "userdata/server-runtime.json").read_text())["pid"], "previousMeasuredStartupMs": self.manifest.get("hotSwap", {}).get("previousMeasuredStartupMs"), "injection": self.args.inject, "oldVersion": environment, "checks": {}, "unitRenderer": sandbox.unit_renderer}
+        from .install_hot_swap import measure_candidate
+
+        measured = measure_candidate(sandbox, self.manifest)
+        self.hot = {"startupMeasurement": measured, "oldChildPid": json.loads((sandbox.home / "userdata/server-runtime.json").read_text())["pid"], "previousMeasuredStartupMs": (self.manifest.get("hotSwap") or {}).get("previousMeasuredStartupMs"), "injection": self.args.inject, "oldVersion": environment, "checks": {}, "unitRenderer": sandbox.unit_renderer}
         if self.args.inject != "none" and not (sandbox.home / "runtime/launcher-config.json").is_file():
             self.hot["status"] = "hot-swap-unsupported"
             raise ValueError("hot-swap-unsupported: crash injection requires a capability-qualified sandbox launcher")
@@ -155,7 +158,8 @@ class HotSwapRehearsal(Rehearsal):
         if hot.get("walAfter"):
             hot["checks"]["wal-writes"] = {"status": "passed" if hot["walAfter"]["events"] > hot["walBefore"]["events"] and hot["databaseIntegrity"] == [("ok",)] else "failed"}
         probe = hot.get("swapProbe", hot.get("probe", {}))
-        hot["candidateMeasuredStartupMs"] = probe.get("flipGapMs")
+        if hot.get("install", {}).get("hotSwap", {}).get("method") == "launcher-ipc":
+            hot["candidateMeasuredStartupMs"] = hot["startupMeasurement"]["candidateMeasuredStartupMs"]
         if hot.get("install"):
             steps = hot["install"]["steps"]
             ipc = hot.get("launcherIPC", [])
