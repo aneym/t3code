@@ -1,3 +1,4 @@
+import { prepareResumeRecovery, writeResumeRecoveryNotice } from "./ResumeRecovery.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -919,7 +920,6 @@ export const layer: Layer.Layer<
             )
             .map((source) => source.id),
         );
-        // Row identity survives recovery; only accepted native input and delivered history occupy the new session.
         const nativeContextEstimate = Effect.gen(function* () {
           return sameNativeThread
             ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
@@ -1028,42 +1028,19 @@ export const layer: Layer.Layer<
           return retryHandoff;
         },
       );
-      const prepareRecoveryHandoff = Effect.fn("ProviderTurnStartService.prepareRecoveryHandoff")(
-        function* () {
-          const transferId = yield* idAllocator.allocate.contextTransfer({
-            sourceThreadId: projection.thread.id,
-            targetThreadId: projection.thread.id,
-            type: "provider_resume_fallback",
-          });
-          const createdAt = yield* DateTime.now;
-          const handoff = yield* contextHandoffService.prepareProviderHandoff({
-            threadId: projection.thread.id,
-            targetRunId: run.id,
-            transferId,
-            fromProviderThreadIds: [providerThread.id],
-            toProviderThreadId: providerThread.id,
-            fromProviderInstanceId: providerThread.providerInstanceId,
-            toProviderInstanceId: run.providerInstanceId,
-            coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
-            strategy: "full_thread_summary",
-            runs: projection.runs,
-            items: unpromptedHistory(
-              yield* projectionStore.getTurnStartHistory(input.threadId),
-              projection.runs,
-              run,
-              unacceptedChain,
-              foldedItems,
-            ),
-            createdAt,
-          });
-          return { handoff, transferId, createdAt };
-        },
+      const recoveryHandoff = yield* Effect.cached(
+        prepareResumeRecovery({
+          contextHandoffService,
+          idAllocator,
+          projectionStore,
+          projection,
+          run,
+          providerThread,
+          items: (items) =>
+            unpromptedHistory(items, projection.runs, run, unacceptedChain, foldedItems),
+        }),
       );
-      const recoveryHandoff = yield* Effect.cached(prepareRecoveryHandoff());
       const withRecoveryHandoff = (handoff: OrchestrationV2ContextHandoff) => {
-        // Delivery ranks later handoffs as newer history. Pending handoffs from
-        // earlier runs predate this summary; handoffs for this run (provider-switch
-        // delta, merge-back) are newer and must stay last.
         return [
           ...effectiveHandoffs.filter((candidate) => candidate.targetRunId !== run.id),
           handoff,
@@ -1124,12 +1101,24 @@ export const layer: Layer.Layer<
             }),
           );
         }
-        const uncertainDelivery = projection.contextHandoffs.some(
-          (handoff) =>
-            handoff.toProviderThreadId === providerThread.id &&
-            handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
-            handoff.delivery?.status === "pending",
-        );
+        const rejectedClaudeResume =
+          session.driver === "claudeAgent" &&
+          projection.turnItems.some(
+            (item) =>
+              item.providerThreadId === providerThread.id &&
+              item.runId ===
+                projection.runs.findLast((candidate) => candidate.ordinal < run.ordinal)?.id &&
+              item.type === "error" &&
+              /No conversation found/i.test(item.failure.message),
+          );
+        const uncertainDelivery =
+          rejectedClaudeResume ||
+          projection.contextHandoffs.some(
+            (handoff) =>
+              handoff.toProviderThreadId === providerThread.id &&
+              handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
+              handoff.delivery?.status === "pending",
+          );
         const resumed = yield* Effect.result(
           uncertainDelivery
             ? Effect.fail(
@@ -1225,13 +1214,19 @@ export const layer: Layer.Layer<
             modelSelection: run.modelSelection,
             runtimePolicy: resolvedRuntimePolicy,
             providerSessionId,
-            // Clear the native ref to force a fresh session while preserving row identity.
             existingProviderThread: { ...providerThread, nativeThreadRef: null },
             forceNewNativeThread: true,
           }),
         );
         if (replacement === undefined) return undefined;
         const { handoff, transferId, createdAt } = yield* recoveryHandoff;
+        yield* writeResumeRecoveryNotice({
+          eventSink,
+          idAllocator,
+          run,
+          providerThread,
+          createdAt,
+        });
         effectiveHandoffs = withRecoveryHandoff(handoff);
         resumeFellBack = true;
         yield* eventSink.write({

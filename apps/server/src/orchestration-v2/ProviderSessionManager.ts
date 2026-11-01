@@ -421,7 +421,6 @@ export const layerWithOptions = (
           : mcpPrepareLock.withLock(
               threadId,
               Effect.gen(function* () {
-                // Live providers build MCP clients once; reuse credentials across workspace handoffs.
                 const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
                   yield* agentAccessSettings(threadId);
                 const capabilities = new Set<
@@ -1720,7 +1719,9 @@ export const layerWithOptions = (
                 isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey }),
               ),
               Effect.flatMap((loaded) =>
-                loaded ? Effect.succeed(input.providerThread) : runtime.resumeThread(input),
+                loaded && runtime.driver !== "claudeAgent"
+                  ? Effect.succeed(input.providerThread)
+                  : runtime.resumeThread(input),
               ),
               Effect.tap((providerThread) =>
                 markProviderThreadLoaded({
@@ -2364,7 +2365,6 @@ export const layerWithOptions = (
               yield* cancelIdleFiber(detachResult.value.idleUnloadFiber);
             }
             const detached = Option.map(detachResult, (result) => result.entry);
-            // Plain detaches preserve credentials held by live shared providers across workspace handoffs.
             if (input.revokeMcpCredential === true) {
               yield* clearMcpSession(input.threadId);
             }

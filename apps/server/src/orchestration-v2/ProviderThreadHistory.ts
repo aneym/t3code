@@ -15,7 +15,11 @@ export function rootProviderThreadsForProvider(
       (providerThread) =>
         providerThread.providerInstanceId === providerInstanceId &&
         providerThread.appThreadId === projection.thread.id &&
-        providerThread.ownerNodeId === null,
+        providerThread.ownerNodeId === null &&
+        (providerThread.driver !== "claudeAgent" ||
+          projection.providerThreads.find(
+            (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+          )?.providerInstanceId === providerInstanceId),
     )
     .toSorted(
       (left, right) =>

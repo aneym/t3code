@@ -696,7 +696,6 @@ describe("ClaudeAdapterV2 device instructions", () => {
   });
 
   it("gives native subagents the device block only in a session with device access", async () => {
-    // Subagents start from their task prompt, not the parent's system prompt.
     const subagentContext = (input: {
       readonly mcp: boolean;
       readonly deviceToolsAvailable: boolean;
@@ -791,7 +790,6 @@ describe("ClaudeAdapterV2 approval presentation", () => {
 });
 
 describe("ClaudeAdapterV2 session permissions", () => {
-  // regression: #15892 an explicit user refusal must stay user_reject, not a tool failure
   it("keeps explicit user refusals classified as user_reject", () => {
     const result = ClaudeAdapterV2.permissionResultFromDecision({
       toolName: "Bash",
@@ -1081,7 +1079,6 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
     ),
   );
 
-  // regression: #15073 the SDK replaced the --settings launch argument with T3's settings
   it.effect.each([
     `--settings '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false}'`,
     "--settings user-settings.json",
@@ -1109,7 +1106,6 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
     ),
   );
 
-  // regression: #20413 malformed append-system-prompt launch args fail before a query opens
   it.effect.each([
     [
       "--append-system-prompt-file missing.md",
@@ -1147,7 +1143,6 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
         }).message,
     ],
     ["--settings '{not json}'", () => new ClaudeAdapterV2.ClaudeSettingsLaunchArgError({}).message],
-    // Without a closing brace this must not become a file path that echoes the secret.
     [
       `--settings '{"env":{"ANTHROPIC_API_KEY":"secret-settings-key"},'`,
       () => new ClaudeAdapterV2.ClaudeSettingsLaunchArgError({}).message,
@@ -1351,17 +1346,19 @@ describe("ClaudeAdapterV2 resumeThread", () => {
         });
         assert.equal(saved.nativeThreadRef?.nativeId, "native-thread-saved");
 
-        const missing = yield* runtime.resumeThread({
-          providerThread: {
-            ...providerThread,
-            nativeThreadRef: {
-              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-              nativeId: "native-thread-missing",
-              strength: "strong",
+        const missing = yield* Effect.result(
+          runtime.resumeThread({
+            providerThread: {
+              ...providerThread,
+              nativeThreadRef: {
+                driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                nativeId: "native-thread-missing",
+                strength: "strong",
+              },
             },
-          },
-        });
-        assert.equal(missing.nativeThreadRef?.nativeId, "native-thread-missing");
+          }),
+        );
+        assert.equal(missing._tag, "Failure");
       }),
     ).pipe(
       Effect.provide(
@@ -1841,7 +1838,6 @@ describe("ClaudeAdapterV2 attachments", () => {
               nativeTurnId: `turn:${attemptId}`,
             });
             const imagePath = path.join(attachmentsDir, attachmentRelativePath(attachment)!);
-            // The on-disk length deliberately disagrees with sizeBytes.
             yield* fileSystem.writeFile(imagePath, Buffer.alloc(4 * 1024 * 1024));
             if (["later-images", "partial-images"].includes(budget)) {
               const documentPath = path.join(attachmentsDir, attachmentRelativePath(document)!);
@@ -2692,7 +2688,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly isError?: boolean;
     readonly errors?: ReadonlyArray<string>;
     readonly apiErrorStatus?: number;
-    // null omits the field, as the CLI does on a zero-turn result.
     readonly terminalReason?: SDKResultMessage["terminal_reason"] | null;
     readonly usage?: {
       readonly input_tokens: number;
@@ -2768,9 +2763,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     terminalReason: null,
   });
 
-  // Harnesses notify after every recorded event, continuation, or prompt, so a
-  // wait re-checks exactly when the state it reads changes. Subscribing before
-  // the first check means a change that lands in between is not lost.
   const makeChangeSignal = Effect.gen(function* () {
     const changes = yield* PubSub.unbounded<void>();
     const until = (predicate: () => boolean): Effect.Effect<void> =>
@@ -2783,8 +2775,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     return { notify: PubSub.publish(changes, undefined), until };
   });
 
-  // Fixed quiet windows for asserting that nothing happens after input the
-  // harness cannot observe being handled (a shut-down query, a replaced process).
   const yieldTicks = (ticks: number): Effect.Effect<void> =>
     Effect.gen(function* () {
       for (let tick = 0; tick < ticks; tick++) yield* Effect.yieldNow;
@@ -2814,6 +2804,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-claude-v2-wake-",
       });
+      const path = yield* Path.Path;
+      const projects = path.join(attachmentsDir, "projects", "sandbox");
+      yield* fileSystem.makeDirectory(projects, { recursive: true });
+      for (const id of [WAKE_NATIVE_SESSION, "forked-native-session"]) {
+        yield* fileSystem.writeFileString(path.join(projects, `${id}.jsonl`), '{"type":"user"}\n');
+      }
       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
       const processQueues: Array<Queue.Queue<SDKMessage>> = [];
       const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
@@ -2863,7 +2859,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
-        environment: options?.environment ?? {},
+        environment: { CLAUDE_CONFIG_DIR: attachmentsDir, ...options?.environment },
         attachmentsDir,
         fileSystem,
         path: yield* Path.Path,
@@ -3150,7 +3146,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.join(pending);
         }
-        // Flush the budget update through the event stream before trying again.
         yield* harness.offerAndWait(
           makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000814", result: "Read." }),
         );
@@ -3355,7 +3350,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               assert.equal(budget?.pagesUsed, 100);
               assert.isAbove(budget?.bytesUsed ?? 0, 25 * 1024 * 1024);
             }
-            // Exercise the same schema boundary as the persisted provider thread.
             return yield* decodeProviderThreadJson(
               yield* encodeProviderThreadJson({
                 ...event.providerThread,
@@ -3646,8 +3640,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* start("/unrestricted");
         assert.equal(harness.getOpenedOptions()?.permissionMode, "bypassPermissions");
         assert.equal(harness.getOpenedOptions()?.allowDangerouslySkipPermissions, true);
-        // Forwarded asks (including ask rules and settings fallback) still need a decision
-        // before queued init/status frames arrive.
         for (const { phase, frame } of [
           {
             phase: "init",
@@ -3774,7 +3766,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
-    // regression: #21806 bypass policy reads the custom home and project, never ambient ~/.claude
     it.effect(
       "combines a normalized custom home with project policy without reading the ambient user tier",
       () =>
@@ -3788,7 +3779,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* fileSystem.writeFileString(
             path.join(home, "profile", "settings.json"),
             `{
-          // Claude accepts comments and trailing commas.
           "permissions": { "disableBypassPermissionsMode": "disable", },
         }`,
           );
