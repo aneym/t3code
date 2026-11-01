@@ -88,9 +88,12 @@ def arm(record, path, delay):
     delay = max(60, int(delay))
     root = engine(path.parent)
     unit = f"t3nightly-restore-hold-{uuid.uuid4().hex[:12]}"
-    command = ["systemd-run", "--user", f"--unit={unit}", f"--on-active={delay}", "--timer-property=AccuracySec=1min", f"--setenv=PYTHONPATH={root}",
+    deadline = now() + timedelta(seconds=delay)
+    if deadline.microsecond:
+        deadline = deadline.replace(microsecond=0) + timedelta(seconds=1)
+    command = ["systemd-run", "--user", f"--unit={unit}", f"--on-calendar={deadline.strftime('%Y-%m-%d %H:%M:%S UTC')}", "--timer-property=AccuracySec=1s", f"--setenv=PYTHONPATH={root}",
                f"--working-directory={root}", "--", sys.executable, "-m", "t3nightly.install_restore_hold", "--record", str(path)]
-    record.update(engine=str(root), unit=unit, dueAt=(now() + timedelta(seconds=delay)).isoformat(), outcome="scheduled", reason=None)
+    record.update(engine=str(root), unit=unit, dueAt=deadline.isoformat(), outcome="scheduled", reason=None)
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
         if result.returncode:
