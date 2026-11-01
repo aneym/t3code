@@ -27,6 +27,18 @@ def private_directory(path):
 
 
 def payload_locations(state, home, version, backups):
+    if sys.platform == "darwin":
+        from .rehearsal_storage import enabled
+
+        if enabled(home):
+            from .rehearsal_internal import internal
+
+            root = Path(home).absolute() / "snapshots/install"
+            if internal(root) != root:
+                raise ValueError("rehearsal installer payload path is redirected")
+            retained = root / "backups"
+            retained.mkdir(parents=True, exist_ok=True, mode=0o700)
+            return root, retained
     if sys.platform != "darwin":
         return private_directory(state), private_directory(Path(backups).expanduser())
     if not version or Path(version).name != version or version in (".", ".."):
