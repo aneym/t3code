@@ -21,7 +21,7 @@ export function LoadBalancingSettings(props: {
   const result = useAtomValue(mobilePreferencesAtom);
   const update = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
   const preferences = result._tag === "Success" ? result.value : null;
-  if (props.environments.length < 2) return null;
+  if (props.environments.length === 0) return null;
   const enabled = preferences?.loadBalancingEnabled === true;
   return (
     <>

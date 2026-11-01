@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./scheduled-task-once": {
+      "types": "./src/scheduledTaskOnce.ts",
+      "default": "./src/scheduledTaskOnce.ts"
+    },
     "./zip/bounded-zip": {
       "types": "./src/zip/boundedZip.ts",
       "default": "./src/zip/boundedZip.ts"

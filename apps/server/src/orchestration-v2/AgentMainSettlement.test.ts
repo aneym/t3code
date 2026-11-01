@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
-import { isAutoSettlementCandidate } from "./ThreadSettlementService.ts";
+import { isAutoSettlementCandidate } from "./AutoSettlementPolicy.ts";
 import type { ProjectionSettlementCandidate } from "./ProjectionStore.ts";
 
 it("protects agent main threads until unbound", () => {

@@ -1,3 +1,4 @@
+import { scheduledTaskStateLabel } from "@t3tools/client-runtime/scheduled-task-once";
 import { isAutomationOnlyThread } from "./threadPlacement";
 import { AutomationThreadRows, automationThreadsWithoutJobs } from "./AutomationThreadRows";
 import {
@@ -51,7 +52,7 @@ function LastRunLabel({ value }: { readonly value: string }) {
 }
 
 export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () => void }) {
-  const tasks = useAutomations();
+  const { automations: tasks, threadKeys } = useAutomations();
   const environments = useEnvironmentIdentities();
   const threads = useQuietThreadShells();
   const byKey = new Map(threads.map((thread) => [`${thread.environmentId}:${thread.id}`, thread]));
@@ -66,7 +67,7 @@ export function SidebarAutomationJobs({ onNavigate }: { readonly onNavigate: () 
     false,
     Schema.Boolean,
   );
-  const standaloneThreads = automationThreadsWithoutJobs(threads, automations);
+  const standaloneThreads = automationThreadsWithoutJobs(threads, automations, threadKeys);
   if (automations.length === 0 && standaloneThreads.length === 0) return null;
   const grouped = new Map<
     string,
@@ -168,7 +169,7 @@ function AutomationJobRow({
             </span>
           </span>
         ) : !task.enabled ? (
-          "Paused"
+          scheduledTaskStateLabel(task)
         ) : failed ? (
           <span className="inline-flex items-center gap-1 font-medium text-error-foreground">
             <CircleAlertIcon aria-hidden className="size-4 shrink-0" />

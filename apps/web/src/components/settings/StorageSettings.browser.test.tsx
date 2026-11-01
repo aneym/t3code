@@ -98,6 +98,9 @@ function setup() {
       worktreeContentIntegration: false,
       browserArtifactsAfterDays: null,
       logsAfterDays: null,
+      worktreeDisposableIgnoredPaths: [],
+      worktreeOrphans: false,
+      threadHistoryAfterDays: null,
     },
     projectSettingsOverrides: {},
   };

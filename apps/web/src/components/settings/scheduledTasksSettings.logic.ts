@@ -1,3 +1,4 @@
+import { onceScheduleFromInput } from "@t3tools/client-runtime/scheduled-task-once";
 import { isWebhookDedupeTemplate } from "@t3tools/contracts";
 import {
   EnvironmentId,
@@ -52,7 +53,7 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
   };
 }
 
-export type ScheduleMode = "fixed" | "interval" | "webhook";
+export type ScheduleMode = "once" | "fixed" | "interval" | "webhook";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -63,6 +64,7 @@ export interface DraftState {
   readonly scheduleMode: ScheduleMode;
   readonly intervalMinutes: string;
   readonly timeOfDay: string;
+  readonly onceAt: string;
   readonly weekdays: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
@@ -144,6 +146,7 @@ export function webhookDeliveryLabel(delivery: {
 }
 
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
+  if (draft.scheduleMode === "once") return onceScheduleFromInput(draft.onceAt);
   if (draft.scheduleMode === "webhook") {
     if (webhookDraftErrors(draft).length > 0) return null;
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
@@ -206,10 +209,10 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     title: task.title,
     prompt: task.prompt,
     enabled: task.enabled,
-    scheduleMode:
-      schedule.type === "interval" ? "interval" : schedule.type === "webhook" ? "webhook" : "fixed",
+    scheduleMode: schedule.type === "fixed_time" ? "fixed" : schedule.type,
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
+    onceAt: schedule.type === "once" ? schedule.at : "",
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
     weekdays,
     projectId: task.projectId,

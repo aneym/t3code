@@ -3,6 +3,7 @@ export function autoSettlementSettingsKey(
   settings: import("@t3tools/contracts").ServerSettings,
 ): string {
   return JSON.stringify([
+    settings.settleIdleChildren,
     settings.sidebarAutoSettleOnMerge,
     settings.sidebarAutoSettleAfterDays,
     settings.sidebarAutoSettleKeepPullRequests,
@@ -23,4 +24,17 @@ export function autoSettlementSettingsKey(
         entry.sidebarAutoSettleKeepPullRequests ?? "inherit",
       ]),
   ]);
+}
+
+export function autoSettlementConfigured(
+  settings: import("@t3tools/contracts").ServerSettings,
+): boolean {
+  if (settings.sidebarAutoSettleOnMerge || settings.sidebarAutoSettleAfterDays !== null) {
+    return true;
+  }
+  return Object.values(settings.projectSettingsOverrides).some(
+    (entry) =>
+      entry.sidebarAutoSettleOnMerge === true ||
+      (entry.sidebarAutoSettleAfterDays !== undefined && entry.sidebarAutoSettleAfterDays !== null),
+  );
 }

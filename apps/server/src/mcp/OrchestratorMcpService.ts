@@ -97,7 +97,7 @@ import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
+import { isSnoozed } from "../orchestration-v2/AutoSettlementPolicy.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -1798,7 +1798,15 @@ const make = Effect.gen(function* () {
     listScheduledTasks: Effect.fn("OrchestratorMcpService.listScheduledTasks")(
       function* (scope, input) {
         const { parent, limits } = yield* loadCaller(scope);
-        const projectId = input.projectId ?? parent?.thread.projectId;
+        if (input.allProjects && input.projectId !== undefined) {
+          return yield* failure(
+            "invalid_request",
+            "Use either projectId or allProjects, not both.",
+          );
+        }
+        const projectId = input.allProjects
+          ? undefined
+          : (input.projectId ?? parent?.thread.projectId);
         const { tasks } = yield* scheduledTasks
           .list()
           .pipe(
@@ -1806,10 +1814,16 @@ const make = Effect.gen(function* () {
               failure("orchestration_error", `Could not list scheduled tasks: ${error.message}`),
             ),
           );
+        const selected = tasks.filter(
+          (task) => projectId === undefined || task.projectId === projectId,
+        );
         return {
-          tasks: yield* Effect.forEach(
-            tasks.filter((task) => projectId === undefined || task.projectId === projectId),
-            (task) => summarizeScheduledTask(scope, { parent, limits }, task),
+          projectId: projectId ?? null,
+          next: projectId === undefined ? null : "All projects: call with allProjects=true.",
+          total: selected.length,
+          environmentTotal: tasks.length,
+          tasks: yield* Effect.forEach(selected, (task) =>
+            summarizeScheduledTask(scope, { parent, limits }, task),
           ),
         };
       },

@@ -62,11 +62,16 @@ branch name remains.
 
 ## Scheduled tasks on mobile
 
-Open **Settings → Scheduled tasks** to create recurring tasks or manage existing
+Open **Settings → Scheduled tasks** to create one-time or recurring tasks, or manage existing
 ones across your connected environments. Use the settings filter to narrow the
 list by environment or project. Each task runs on the environment you choose,
 using its project, model, and workspace settings. Fixed-time schedules use that
 environment's time zone, which may differ from your phone's.
+
+Choose **Once** for one-time work. It runs at or after the selected time and
+automatically disables after one attempt, including a failed start. The task stays
+saved: resume it to run again, or edit its time to re-arm it for a later run.
+One-time dates use your device’s local time; daily and weekly schedules repeat.
 
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.
@@ -227,6 +232,13 @@ Results also list folders in the worktree folder that no thread uses, with their
 
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
+
+**Shorten old tool output** keeps the first and last 2,048 characters of long command and tool
+output once a thread has been settled, archived or deleted for the chosen number of days, and notes
+how much was removed. Messages, workflow results and file changes are kept. The removed output
+cannot be restored, so keep a backup if you need it. Devices that already showed a thread may keep
+showing its full output until they reload it. It is off by default and runs with the six-hourly
+database maintenance.
 
 ## Project icons
 

@@ -1,4 +1,8 @@
-import { MIN_SCHEDULED_TASK_INTERVAL_MS, type ScheduledTaskSchedule } from "@t3tools/contracts";
+import {
+  MIN_SCHEDULED_TASK_INTERVAL_MS,
+  type ScheduledTask,
+  type ScheduledTaskSchedule,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 const MINUTE_MS = 60_000;
@@ -13,6 +17,7 @@ export function nextScheduledRunAt(
   schedule: ScheduledTaskSchedule,
   from: DateTime.DateTime,
 ): DateTime.DateTime | null {
+  if (schedule.type === "once") return DateTime.makeUnsafe(schedule.at);
   if (schedule.type === "webhook") return null;
   if (schedule.type === "interval") {
     // Intervals advance elapsed time, including across daylight-saving changes.
@@ -44,6 +49,7 @@ function weekdayKey(weekdays: ReadonlyArray<number> | undefined): string {
 }
 
 export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedule): boolean {
+  if (a.type === "once") return b.type === "once" && Date.parse(a.at) === Date.parse(b.at);
   if (a.type === "interval") {
     return b.type === "interval" && a.everyMs === b.everyMs;
   }
@@ -70,4 +76,18 @@ export function isMissedFixedTimeRun(
 ): boolean {
   if (schedule.type !== "fixed_time") return false;
   return DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt) > MISSED_FIXED_TIME_GRACE_MS;
+}
+
+export function isOnceScheduleRearmed(
+  task: ScheduledTask | null,
+  schedule: ScheduledTaskSchedule,
+): boolean {
+  return (
+    task !== null &&
+    !task.enabled &&
+    task.schedule.type === "once" &&
+    (task.runCount > 0 || task.lastRunStatus === "running") &&
+    schedule.type === "once" &&
+    !isSameSchedule(task.schedule, schedule)
+  );
 }

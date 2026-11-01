@@ -6,7 +6,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import type * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { SCAN_CACHE_FILE_NAME } from "./usage/usageScanCache.ts";
@@ -497,10 +496,9 @@ const runCleanupTest = <A, E>(
   effect: Effect.Effect<
     A,
     E,
-    | FileSystem.FileSystem
+    | Layer.Success<typeof NodeServices.layer>
     | ServerConfig.ServerConfig
     | GitVcsDriver.GitVcsDriver
-    | Path.Path
     | Scope.Scope
   >,
 ) => effect.pipe(Effect.provide(cleanupTestLayer), Effect.scoped);

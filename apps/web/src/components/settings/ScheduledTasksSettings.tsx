@@ -1,3 +1,8 @@
+import {
+  onceScheduleLabel,
+  scheduledTaskStateLabel,
+} from "@t3tools/client-runtime/scheduled-task-once";
+import { ScheduledTaskTimeFields } from "./ScheduledTaskTimeFields";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
@@ -115,9 +120,7 @@ import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
 } from "./settingsLayout";
 
-const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
-const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
 
 const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   worktree: "Create a new worktree",
@@ -133,6 +136,7 @@ const EMPTY_DRAFT: DraftState = {
   scheduleMode: "fixed",
   intervalMinutes: "15",
   timeOfDay: "09:00",
+  onceAt: "",
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
   threadId: "",
@@ -282,6 +286,7 @@ function splitModelKey(value: string): ModelSelection | null {
 }
 
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
+  if (schedule.type === "once") return onceScheduleLabel(schedule.at);
   if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
@@ -741,7 +746,7 @@ function ScheduledTaskRow({
       status={
         <div className="flex flex-wrap items-center gap-2">
           <span>
-            {task.enabled ? "Enabled" : "Paused"} · {scheduleLabel(task.schedule)} ·{" "}
+            {scheduledTaskStateLabel(task)} · {scheduleLabel(task.schedule)} ·{" "}
             {isWebhook ? (
               "Listening"
             ) : task.nextRunAt ? (
@@ -1243,6 +1248,7 @@ function ScheduledTaskEditorForm({
     }
     const schedule = scheduleFromDraft(draft);
     if (schedule === null) {
+      if (draft.scheduleMode === "once") reportFailure("Invalid time", "Choose a date and time.");
       for (const error of webhookDraftErrors(draft)) reportFailure(error.title, error.description);
       return;
     }
@@ -1540,7 +1546,12 @@ function ScheduledTaskEditorForm({
                 value={[draft.scheduleMode]}
                 onValueChange={(values) => {
                   const mode = values[0] as ScheduleMode | undefined;
-                  if (mode === "fixed" || mode === "interval" || mode === "webhook")
+                  if (
+                    mode === "once" ||
+                    mode === "fixed" ||
+                    mode === "interval" ||
+                    mode === "webhook"
+                  )
                     setDraft((current) => ({
                       ...current,
                       scheduleMode: mode,
@@ -1551,7 +1562,8 @@ function ScheduledTaskEditorForm({
                     }));
                 }}
               >
-                <Toggle value="fixed">At a time</Toggle>
+                <Toggle value="once">Once</Toggle>
+                <Toggle value="fixed">Daily / weekly</Toggle>
                 <Toggle value="interval">Every interval</Toggle>
                 <Toggle value="webhook">On webhook</Toggle>
               </ToggleGroup>
@@ -1727,60 +1739,8 @@ function ScheduledTaskEditorForm({
                   </div>
                 ) : null}
               </div>
-            ) : draft.scheduleMode === "fixed" ? (
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="scheduled-task-time">Run at</Label>
-                  <Input
-                    type="time"
-                    id="scheduled-task-time"
-                    nativeInput
-                    className="w-32"
-                    value={draft.timeOfDay}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
-                    }
-                  />
-                  <span className="text-xs text-muted-foreground">on</span>
-                </div>
-                <ToggleGroup
-                  multiple
-                  variant="outline"
-                  size="sm"
-                  aria-label="Days to run"
-                  value={[...draft.weekdays].map(String)}
-                  onValueChange={(values) => {
-                    if (values.length === 0) return;
-                    setDraft((current) => ({
-                      ...current,
-                      weekdays: new Set(values.map(Number)),
-                    }));
-                  }}
-                >
-                  {WEEKDAY_ORDER.map((day) => (
-                    <Toggle key={day} value={String(day)} aria-label={WEEKDAY_LABELS[day]}>
-                      {WEEKDAY_SHORT[day]}
-                    </Toggle>
-                  ))}
-                </ToggleGroup>
-              </div>
             ) : (
-              <div className="flex items-center gap-2">
-                <Label htmlFor="scheduled-task-interval">Run every</Label>
-                <Input
-                  type="number"
-                  id="scheduled-task-interval"
-                  nativeInput
-                  min={1}
-                  step="any"
-                  className="w-24"
-                  value={draft.intervalMinutes}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, intervalMinutes: event.target.value }))
-                  }
-                />
-                <span className="text-xs text-muted-foreground">minutes</span>
-              </div>
+              <ScheduledTaskTimeFields draft={draft} setDraft={setDraft} />
             )}
           </div>
 

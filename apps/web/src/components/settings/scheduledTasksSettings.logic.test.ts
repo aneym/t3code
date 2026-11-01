@@ -325,3 +325,11 @@ it("rejects dedupe templates without a request placeholder", () => {
   expect(scheduleFromDraft({ ...draft, replayKey: "literal" })).toBeNull();
   expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
 });
+
+it("keeps a one-shot instant through local editor round trips", () => {
+  const schedule = { type: "once", at: "2026-11-01T06:15:00.123Z" } as const;
+  const draft = taskToDraft({ ...legacyTask, schedule });
+  expect(draft.scheduleMode).toBe("once");
+  expect(scheduleFromDraft(draft)).toEqual(schedule);
+  expect(scheduleFromDraft({ ...draft, onceAt: "" })).toBeNull();
+});

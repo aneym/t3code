@@ -240,6 +240,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
   const checkoutStateReason = Effect.fnUntraced(function* (
     cwd: string,
     submodules: ReadonlySet<string>,
+    disposable: ReadonlyArray<string>,
   ) {
     if (yield* fs.exists(path.join(cwd, ".lane"))) return "has excluded local state (.lane/)";
     const git = yield* GitVcsDriver.GitVcsDriver;
@@ -297,30 +298,57 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       "refs/replace/",
     ]);
     if (replaced.stdout.trim() !== "") return "repository has replace refs";
-    const personal = yield* git.execute({
-      operation: "StorageCleanup.personalIgnoredFiles",
+    const ignoreCaseSetting = yield* git.execute({
+      operation: "StorageCleanup.ignoreCase",
       cwd,
-      args: [
-        "-c",
-        "core.fsmonitor=false",
-        "ls-files",
-        "--others",
-        "--ignored",
-        "-z",
-        "--exclude-standard",
-        "--exclude-per-directory=/",
-      ],
-      maxOutputBytes: 16 * 1024 * 1024,
+      args: ["config", "--bool", "core.ignoreCase"],
+      allowNonZeroExit: true,
     });
-    if (personal.stdoutTruncated) return "excluded files exceed the inspection limit";
-    const file = personal.stdout.split("\0").find((entry) => entry !== "");
-    if (file !== undefined) return `has excluded local state (${file})`;
+    if (
+      ignoreCaseSetting.stdout.trim() === "true" &&
+      ((yield* fs.readDirectory(cwd)).filter((entry) => entry.toLowerCase() === ".git").join() !==
+        ".git" ||
+        !(yield* fs.exists(path.join(cwd, ".GIT"))))
+    )
+      return "Git ignores case on a case-sensitive filesystem";
+    for (const ignoreCase of ["true", "false"]) {
+      const personal = yield* git.execute({
+        operation: "StorageCleanup.personalIgnoredFiles",
+        cwd,
+        args: [
+          "-c",
+          "core.fsmonitor=false",
+          "-c",
+          `core.ignoreCase=${ignoreCase}`,
+          "ls-files",
+          "--others",
+          "--ignored",
+          "-z",
+          "--exclude-standard",
+          "--exclude-per-directory=/",
+          "--",
+          ...disposable.map((pattern) => `:(exclude,glob)${pattern}`),
+        ],
+        env: {
+          GIT_LITERAL_PATHSPECS: "0",
+          GIT_GLOB_PATHSPECS: "0",
+          GIT_NOGLOB_PATHSPECS: "0",
+          GIT_ICASE_PATHSPECS: "0",
+        },
+        maxOutputBytes: 16 * 1024 * 1024,
+      });
+      if (personal.stdoutTruncated) return "excluded files exceed the inspection limit";
+      if (personal.stderr.trim() !== "") return "excluded file inspection reported a warning";
+      const file = personal.stdout.split("\0").find((entry) => entry !== "");
+      if (file !== undefined) return `has excluded local state (${file})`;
+    }
     const nested = yield* nestedRepository(cwd, submodules);
     return nested === null ? null : `has a nested repository (${nested})`;
   });
 
   const personalStateReason = Effect.fn("StorageCleanup.personalStateReason")(function* (
     cwd: string,
+    disposable: ReadonlyArray<string>,
   ) {
     const git = yield* GitVcsDriver.GitVcsDriver;
     const submodules = new Set<string>();
@@ -341,10 +369,10 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       for (const submodule of populated.stdout.split("\0").filter(Boolean))
         submodules.add(yield* fs.realPath(submodule));
     }
-    const own = yield* checkoutStateReason(cwd, submodules);
+    const own = yield* checkoutStateReason(cwd, submodules, disposable);
     if (own !== null) return own;
     for (const submodule of submodules) {
-      const reason = yield* checkoutStateReason(submodule, submodules);
+      const reason = yield* checkoutStateReason(submodule, submodules, disposable);
       if (reason !== null) return `submodule ${reason}`;
     }
     return null;

@@ -1,3 +1,4 @@
+import { scheduledTaskStateLabel } from "@t3tools/client-runtime/scheduled-task-once";
 import { AutomationPlacementControl } from "./AutomationPlacementControl";
 import { useThreadShell } from "../../state/entities";
 import { useAtomValue } from "@effect/atom-react";
@@ -51,7 +52,7 @@ function taskScheduleLine(task: ScheduledTask) {
       ) : task.enabled ? (
         ""
       ) : (
-        " · paused"
+        ` · ${scheduledTaskStateLabel(task).toLowerCase()}`
       )}
     </>
   );

@@ -1,3 +1,17 @@
+import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
+import {
+  StorageRetentionDays,
+  DisposableIgnoredPaths,
+  WorktreeCleanupRulesPatchFields,
+  WorktreeCleanup,
+  StorageCleanupSettings,
+} from "./storageCleanupSettings.ts";
+export {
+  WorktreeKeepWhen,
+  WorktreeCleanupRules,
+  WorktreeCleanup,
+  StorageCleanupSettings,
+} from "./storageCleanupSettings.ts";
 import { SidebarAgentsSettings } from "./sidebarAgents.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
@@ -1044,56 +1058,6 @@ export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph"]);
 export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
 
-const StorageRetentionDays = Schema.NullOr(
-  Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
-);
-const SettledWorktreeRetentionDays = Schema.NullOr(
-  Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3650 })),
-);
-
-export const WorktreeKeepWhen = Schema.Literals([
-  "any-local-files",
-  "uncommitted-changes",
-  "tracked-changes",
-]);
-export type WorktreeKeepWhen = typeof WorktreeKeepWhen.Type;
-
-export const WorktreeCleanupRules = Schema.Struct({
-  worktreeKeepWhen: WorktreeKeepWhen.pipe(
-    Schema.withDecodingDefault(Effect.succeed("uncommitted-changes")),
-  ),
-  worktreeAfterDays: StorageRetentionDays,
-  worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  worktreeOnMerge: Schema.Boolean,
-  worktreeOnDelete: Schema.Boolean,
-  worktreeUnchanged: Schema.Boolean,
-  worktreeRequireIntegrated: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeContentIntegration: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(false)),
-  ),
-});
-export type WorktreeCleanupRules = typeof WorktreeCleanupRules.Type;
-const WorktreeCleanupRulesPatchFields = {
-  worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
-  worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
-  worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
-  worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
-  worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
-  worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
-  worktreeRequireIntegrated: Schema.optionalKey(Schema.Boolean),
-  worktreeContentIntegration: Schema.optionalKey(Schema.Boolean),
-};
-
-export const WorktreeCleanup = Schema.NullOr(
-  Schema.Union([
-    Schema.Struct({ mode: Schema.Literal("off") }),
-    Schema.Struct({ mode: Schema.Literal("custom"), rules: WorktreeCleanupRules }),
-  ]),
-);
-export type WorktreeCleanup = typeof WorktreeCleanup.Type;
-
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "worktreeCleanup",
   "defaultModelSelection",
@@ -1234,28 +1198,6 @@ export const StorageCleanupReport = Schema.Struct({
 });
 export type StorageCleanupReport = typeof StorageCleanupReport.Type;
 
-export const StorageCleanupSettings = Schema.Struct({
-  worktreeKeepWhen: WorktreeKeepWhen.pipe(
-    Schema.withDecodingDefault(Effect.succeed("uncommitted-changes")),
-  ),
-  worktreeAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeUnchanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeRequireIntegrated: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeContentIntegration: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(false)),
-  ),
-  browserArtifactsAfterDays: StorageRetentionDays.pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  logsAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-});
-export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
-
 export const ServerSettings = Schema.Struct({
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1279,10 +1221,7 @@ export const ServerSettings = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
-  retainAutomationPlacement: DefaultTrue,
-  queuedMessagesAnswerPendingInput: DefaultTrue,
-  batchQueuedMessages: DefaultTrue,
-  queueSendAll: DefaultTrue,
+  ...ForkThreadSettingsFields,
 
   enableAgentBrowserAccess: DefaultTrue,
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
@@ -1633,16 +1572,16 @@ export const ServerSettingsPatch = Schema.Struct({
       ...WorktreeCleanupRulesPatchFields,
       browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
       logsAfterDays: Schema.optionalKey(StorageRetentionDays),
+      threadHistoryAfterDays: Schema.optionalKey(StorageRetentionDays),
+      worktreeDisposableIgnoredPaths: Schema.optionalKey(DisposableIgnoredPaths),
+      worktreeOrphans: Schema.optionalKey(Schema.Boolean),
     }),
   ),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
-  retainAutomationPlacement: Schema.optionalKey(Schema.Boolean),
-  queuedMessagesAnswerPendingInput: Schema.optionalKey(Schema.Boolean),
-  batchQueuedMessages: Schema.optionalKey(Schema.Boolean),
-  queueSendAll: Schema.optionalKey(Schema.Boolean),
+  ...ForkThreadSettingsPatchFields,
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
