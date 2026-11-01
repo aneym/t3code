@@ -6,7 +6,7 @@ from urllib.parse import unquote
 
 from .install_rpc import restart_session
 from .rehearsal_run import Rehearsal
-from .rehearsal_sandbox import wait_for
+from .rehearsal_wait import wait_for
 from .release_rollback_proof import hard_rolled_back, legacy_launcher
 
 

@@ -5,7 +5,7 @@ import sys
 import time
 
 from .install_policy import refuse_probe
-from .rehearsal_sandbox import wait_for
+from .rehearsal_wait import wait_for
 
 
 def main_pid(label):

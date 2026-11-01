@@ -2,13 +2,12 @@ import json
 import time
 
 from .install_rpc import restart_rpc
+from .launcher_qualify import ingress_qualified
 from .release_eligibility import binary_rollback
 
 
 def supported(environment, run=None):
     capabilities = (environment or {}).get("capabilities", {})
-    from .launcher_artifact import ingress_qualified
-
     return capabilities.get("serverSelfUpdate") == "boot-service" and capabilities.get("serverHotSwap") is True and (ingress_qualified(run) if run is not None else True)
 
 

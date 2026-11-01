@@ -17,6 +17,7 @@ from pathlib import Path
 from .codex_isolation import isolated_codex_home
 from .headless_env import claude_lb_lines, headless_bin, pin_settings
 from .install_strays import port_listeners
+from .rehearsal_wait import wait_for
 from .release_manifest import history_digest
 
 SERVER_OWNED_EXIT = 78
@@ -26,16 +27,6 @@ OWNED_RETRIES = 3
 def sha256(path):
     with Path(path).open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
-
-
-def wait_for(fn, seconds, what):
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        value = fn()
-        if value:
-            return value
-        time.sleep(0.25)
-    raise TimeoutError(f"timed out waiting for {what}")
 
 
 def provider_wrapper(binary, evidence, destination):

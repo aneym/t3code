@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from .rehearsal_sandbox import wait_for
+from .rehearsal_wait import wait_for
 
 
 def automatic(workload):

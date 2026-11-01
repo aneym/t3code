@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from .release_manifest import digest
-from .rehearsal_sandbox import wait_for
+from .rehearsal_wait import wait_for
 
 
 TERMINAL = ("completed", "failed", "cancelled", "interrupted", "rolled_back")

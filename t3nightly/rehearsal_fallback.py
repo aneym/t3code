@@ -3,6 +3,7 @@ import threading
 
 from .hot_swap_retention import reserve
 from .install_hot_swap import measure_candidate
+from .rehearsal_drain import hold_after_rollback, verify_refusal
 from .rehearsal_run import Rehearsal
 from .rehearsal_workload import Workload
 
@@ -21,8 +22,6 @@ class RollbackFallbackRehearsal(Rehearsal):
         stopped = threading.Event()
         worker = None
         if strict:
-            from .rehearsal_drain import hold_after_rollback
-
             worker = threading.Thread(target=hold_after_rollback, args=(self.sandbox, stopped), daemon=True)
             worker.start()
         try:
@@ -40,8 +39,6 @@ class RollbackFallbackRehearsal(Rehearsal):
         self.phase = "verify"
         state = json.loads((self.sandbox.evidence / "installer-state/last.json").read_text())
         if strict:
-            from .rehearsal_drain import verify_refusal
-
             return verify_refusal(self.sandbox, state, baseline, measured)
         steps = state["steps"]
         required = ("hot-swap-rolled-back", "hot-swap-fallback", "restart-drain-start", "restart-drain", "hard-service-stop", "hard-service-start", "hard-install-receipt")

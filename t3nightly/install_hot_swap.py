@@ -14,7 +14,7 @@ from . import install_offbox
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_copy import backup_database
 from .install_hard import connect_returns, install as hard_install
-from .install_provenance import eligibility, file_digest, migration_history, validate
+from .install_provenance import eligibility, file_digest, validate
 from .install_rpc import restart_rpc, restart_session
 from .install_runtime import restore_runtime, retain_runtime, stage_runtime
 from .install_seamless import prepare_with_drain
@@ -155,7 +155,8 @@ def install(run):
     compatibility = manifest["targets"][host]["compatibility"]
     if previous == args.version:
         return hard_install(run)
-    from .launcher_artifact import changed, qualify
+    from .launcher_artifact import changed
+    from .launcher_qualify import qualify
 
     qualification = qualify(run)
     environment = run.environment()
