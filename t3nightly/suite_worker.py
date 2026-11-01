@@ -119,6 +119,13 @@ def tmp_report(host, mode, tree, log):
     return json.loads(lines[-1])
 
 
+def shielded(action):
+    try:
+        return action()
+    except WorkerTerminated:
+        return action()
+
+
 def cow_gate(host, log):
     if host != "ax42":
         return 0
@@ -314,7 +321,7 @@ def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep
             if attempted and host == "ax42":
                 try:
                     with (logs / "tmp.log").open("a") as log:
-                        result["tmpCleanup"] = tmp_report(host, "remove", tree, log)
+                        result["tmpCleanup"] = shielded(lambda: tmp_report(host, "remove", tree, log))
                     if result["tmpCleanup"]["after"]["exists"]:
                         result["cleanupError"] = f"advisory tmp still present: {job_tmp(tree)}"
                 except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
@@ -322,7 +329,7 @@ def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep
             if attempted and not keep:
                 try:
                     with (logs / "cleanup.log").open("w") as log:
-                        result["cleanupExit"] = cleanup(host, repo, tree, log)
+                        result["cleanupExit"] = shielded(lambda: cleanup(host, repo, tree, log))
                     if result["cleanupExit"]:
                         result["cleanupError"] = f"worktree cleanup exited {result['cleanupExit']}"
                 except (OSError, RuntimeError, subprocess.SubprocessError) as error:

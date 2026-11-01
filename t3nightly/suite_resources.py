@@ -106,7 +106,7 @@ from pathlib import Path
 
 mode, requested, root = sys.argv[1:]
 tmp = Path(requested)
-if tmp.is_symlink() or not tmp.name.startswith("advisory-") or tmp.parent != Path(root):
+if tmp.is_symlink() or not tmp.name.startswith("advisory-") or tmp.parent != Path(root) or Path(root).resolve() != Path(root):
     raise RuntimeError(f"refusing unsafe advisory tmp path: {requested}")
 prefix = str(tmp) + "/"
 def size():
