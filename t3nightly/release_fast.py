@@ -102,7 +102,8 @@ def drive_fast(args):
     start = existing.get("monotonicStart", invocation.get("monotonicStart", time.monotonic()))
     started_at = existing.get("start", utc_now())
     advisory = {node.id for node in graph if not node.gating}
-    done, failed, running = set(), set(existing.get("failed", [])) & advisory, {}
+    blocked = set(existing.get("blocked", []))
+    done, failed, running = set(), (set(existing.get("failed", [])) - blocked) & advisory, {}
     pending = {node.id: node for node in graph if not (args.rehearse_only and (node.id in LIVE_NODES or stage_action(node.id) == "install"))}
     recorded = set(existing.get("recorded", [])) - set(existing.get("failed", []))
     completed_at = existing.get("releaseSeconds")
@@ -145,6 +146,7 @@ def drive_fast(args):
         for key, node in list(pending.items()):
             if node.host in unavailable or set(node.needs) & failed:
                 failed.add(key)
+                blocked.add(key)
                 del pending[key]
                 now = time.monotonic()
                 timeline.record_fast(node, {"outcome": "failed", "reason": "host-unavailable" if node.host in unavailable else "dependency-failed",
@@ -196,7 +198,8 @@ def drive_fast(args):
             completed_at = time.monotonic() - start
         write_status(state, {"start": started_at, "monotonicStart": start,
                             "seconds": time.monotonic() - start, "releaseSeconds": completed_at,
-                            "done": sorted(done), "failed": sorted(failed), "recorded": sorted(recorded)})
+                            "done": sorted(done), "failed": sorted(failed), "blocked": sorted(blocked & failed),
+                            "recorded": sorted(recorded)})
         if running and not args.dry_run:
             time.sleep(0.2)
     gating_failures = failed & {node.id for node in graph if node.gating}
