@@ -63,9 +63,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import {
-  makeChangeSignal as changeSignal,
+  assertMissingTranscript,
   writeWakeTranscripts,
 } from "./ClaudeTranscriptAvailability.testkit.ts";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -1354,19 +1355,7 @@ describe("ClaudeAdapterV2 resumeThread", () => {
         });
         assert.equal(saved.nativeThreadRef?.nativeId, "native-thread-saved");
 
-        const missing = yield* Effect.result(
-          runtime.resumeThread({
-            providerThread: {
-              ...providerThread,
-              nativeThreadRef: {
-                driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-                nativeId: "native-thread-missing",
-                strength: "strong",
-              },
-            },
-          }),
-        );
-        assert.equal(missing._tag, "Failure");
+        yield* assertMissingTranscript(runtime, providerThread);
       }),
     ).pipe(
       Effect.provide(
@@ -2776,7 +2765,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   // Harnesses notify after every recorded event, continuation, or prompt, so a
   // wait re-checks exactly when the state it reads changes. Subscribing before
   // the first check means a change that lands in between is not lost.
-  const makeChangeSignal = changeSignal;
+  const makeChangeSignal = Effect.gen(function* () {
+    const changes = yield* PubSub.unbounded<void>();
+    const until = (predicate: () => boolean): Effect.Effect<void> =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const subscription = yield* PubSub.subscribe(changes);
+          while (!predicate()) yield* PubSub.take(subscription);
+        }),
+      );
+    return { notify: PubSub.publish(changes, undefined), until };
+  });
 
   // Fixed quiet windows for asserting that nothing happens after input the
   // harness cannot observe being handled (a shut-down query, a replaced process).

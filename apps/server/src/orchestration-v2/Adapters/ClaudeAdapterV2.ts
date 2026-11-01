@@ -10740,6 +10740,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
         yield* Effect.addFinalizer(() => closeSession());
 
+        // Metadata-only transcripts cannot be resumed or recreated; fail resumeThread to trigger a fresh session and handoff.
         const hasEmptyClaudeTranscript = Effect.fn("ClaudeAdapterV2.hasEmptyClaudeTranscript")(
           function* (nativeThreadId: string) {
             const configuredDir = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
@@ -10854,6 +10855,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 nativeThreadId !== null &&
                 // A live process holds the conversation even before saving it.
                 (yield* Ref.get(queryContext))?.nativeThreadId !== nativeThreadId &&
+                // An unreadable transcript leaves the resume to the CLI.
                 (yield* hasEmptyClaudeTranscript(nativeThreadId).pipe(
                   Effect.orElseSucceed(() => false),
                 ))

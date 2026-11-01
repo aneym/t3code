@@ -1691,10 +1691,10 @@ export const layerWithOptions = (
             ),
           resumeThread: (input) => {
             const threadId = input.threadId ?? input.providerThread.appThreadId;
-            if (threadId == null) {
+            if (threadId === null || threadId === undefined) {
               return runtime.resumeThread(input);
             }
-            const key = providerThreadLoadKey(input);
+            const providerThreadKey = providerThreadLoadKey(input);
             return observeActivity(
               providerSessionId,
               ensureThreadAttached({
@@ -1711,7 +1711,7 @@ export const layerWithOptions = (
                 }),
               ),
               Effect.andThen(
-                isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey: key }),
+                isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey }),
               ),
               Effect.flatMap((loaded) =>
                 loaded && runtime.driver !== "claudeAgent"

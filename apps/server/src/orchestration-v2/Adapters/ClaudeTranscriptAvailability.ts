@@ -17,37 +17,38 @@ export const claudeTranscriptUnavailable = Effect.fn("ClaudeAdapterV2.transcript
     readonly nativeThreadId: string;
     readonly cwd: string;
   }) {
-    const localProject = input.cwd.replace(/[^a-zA-Z0-9]/g, "-");
-    const localTranscript = input.path.join(
-      input.projectsDir,
-      localProject,
-      `${input.nativeThreadId}.jsonl`,
-    );
-    const localExists = yield* input.fileSystem.exists(localTranscript);
-    const projects = localExists
-      ? Option.some([localProject])
-      : yield* input.fileSystem.readDirectory(input.projectsDir).pipe(Effect.option);
-    if (Option.isNone(projects)) return false;
-    const candidates = projects.value;
-    for (const project of candidates) {
+    const hasMessages = Effect.fn("ClaudeAdapterV2.transcriptHasMessages")(function* (
+      project: string,
+    ) {
       const transcript = input.path.join(
         input.projectsDir,
         project,
         `${input.nativeThreadId}.jsonl`,
       );
-      if (!(yield* input.fileSystem.exists(transcript))) continue;
-      const message = yield* input.fileSystem.stream(transcript).pipe(
-        Stream.decodeText,
-        Stream.splitLines,
-        Stream.filter((line) =>
-          Option.match(decodeLine(line), {
-            onNone: () => false,
-            onSome: (entry) => entry.type === "user" || entry.type === "assistant",
-          }),
+      // Stray files beside the project dirs fail with ENOTDIR.
+      if (!(yield* input.fileSystem.exists(transcript).pipe(Effect.orElseSucceed(() => false))))
+        return false;
+      return Option.isSome(
+        yield* input.fileSystem.stream(transcript).pipe(
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.filter((line) =>
+            Option.match(decodeLine(line), {
+              onNone: () => false,
+              onSome: (entry) => entry.type === "user" || entry.type === "assistant",
+            }),
+          ),
+          Stream.runHead,
         ),
-        Stream.runHead,
       );
-      if (Option.isSome(message)) return false;
+    });
+    const localProject = input.cwd.replace(/[^a-zA-Z0-9]/g, "-");
+    if (yield* hasMessages(localProject)) return false;
+    const projects = yield* input.fileSystem.readDirectory(input.projectsDir).pipe(Effect.option);
+    if (Option.isNone(projects)) return false;
+    // Any message in any transcript copy means Claude may still resume it.
+    for (const project of projects.value) {
+      if (project !== localProject && (yield* hasMessages(project))) return false;
     }
     return true;
   },
