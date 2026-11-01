@@ -7,9 +7,10 @@ import time
 from pathlib import Path
 
 from .release_engine import require_engine, require_remote_engine
-from .release_graph import FAST_DEADLINE, FAST_GRAPH, SUCCESS_OUTCOMES, critical_path
+from .release_graph import FAST_DEADLINE, SUCCESS_OUTCOMES, critical_path, fast_graph
 from .release_job_runner import TERM_GRACE_S
 from .release_jobs import HostJobs, TERMINAL, status, submit, write_status
+from .release_targets import LINUX_TARGETS, linux_target, stage_action
 from .release_timeline import Timeline, utc_now
 from .run_retention import finish_runs
 
@@ -24,7 +25,7 @@ def stage_spec(node, args):
     command = [python, f"{tools}/release-fast-stage", "--stage", node.id, "--host", node.host,
                "--version", args.version, "--topic", args.topic, "--run", root, "--advisory-workers", str(args.advisory_workers),
                "--remote-run", args.remote_run, "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason]
-    install = node.id in ("IM", "IL")
+    install = stage_action(node.id) == "install"
     return {"label": f"com.agent-rails.t3fast-{args.version}-{node.id}",
             "command": command, "host": node.host,
             "budget": node.budget * HANG_GUARD, "resources": node.resources, "outcomes": node.outcomes,
@@ -41,11 +42,13 @@ def remote_engine():
 
 def drive_fast(args):
     args.engine_verified = False
+    graph = fast_graph(args.linux_host)
     manifest = args.run / "candidate.json"
     engine_checked = False
     if not args.dry_run and manifest.is_file():
         require_engine(manifest)
-        require_remote_engine(manifest, args.remote_tools, args.linux_host)
+        for address in LINUX_TARGETS.values():
+            require_remote_engine(manifest, args.remote_tools, address)
         engine_checked = True
         args.engine_verified = True
     args.run.mkdir(parents=True, exist_ok=True)
@@ -69,9 +72,9 @@ def drive_fast(args):
     invocation = json.loads(coordinator_status.read_text()) if coordinator_status.exists() else {}
     start = existing.get("monotonicStart", invocation.get("monotonicStart", time.monotonic()))
     started_at = existing.get("start", utc_now())
-    advisory = {node.id for node in FAST_GRAPH if not node.gating}
+    advisory = {node.id for node in graph if not node.gating}
     done, failed, running = set(), set(existing.get("failed", [])) & advisory, {}
-    pending = {node.id: node for node in FAST_GRAPH if not (args.rehearse_only and node.id in LIVE_NODES)}
+    pending = {node.id: node for node in graph if not (args.rehearse_only and (node.id in LIVE_NODES or stage_action(node.id) == "install"))}
     recorded = set(existing.get("recorded", []))
     completed_at = existing.get("releaseSeconds")
     if not args.dry_run:
@@ -79,7 +82,7 @@ def drive_fast(args):
             row = jobs.request(node, "status")
             if row.get("outcome") == "status-unavailable":
                 raise RuntimeError(f"cannot recover durable job status for {key}; retry without changing job inputs")
-            success = row.get("outcome") in SUCCESS_OUTCOMES if key in ("IM", "IL") else row.get("outcome") == "passed"
+            success = row.get("outcome") in SUCCESS_OUTCOMES if stage_action(key) == "install" else row.get("outcome") == "passed"
             if success:
                 row = jobs.request(node, "submit", stage_spec(node, args))
                 done.add(key)
@@ -93,7 +96,8 @@ def drive_fast(args):
     while pending or running:
         if not args.dry_run and not engine_checked and "A" in done and manifest.is_file():
             require_engine(manifest)
-            require_remote_engine(manifest, args.remote_tools, args.linux_host)
+            for address in LINUX_TARGETS.values():
+                require_remote_engine(manifest, args.remote_tools, address)
             engine_checked = True
             args.engine_verified = True
         for key, node in list(pending.items()):
@@ -136,9 +140,9 @@ def drive_fast(args):
                 running[key] = (node, row, submitted_at)
             if row["outcome"] not in TERMINAL:
                 continue
-            if args.dry_run and node.id in ("IM", "IL"):
+            if args.dry_run and stage_action(node.id) == "install":
                 row = dict(row, outcome="installed")
-            success = row["outcome"] in SUCCESS_OUTCOMES if node.id in ("IM", "IL") else row["outcome"] == "passed"
+            success = row["outcome"] in SUCCESS_OUTCOMES if stage_action(node.id) == "install" else row["outcome"] == "passed"
             (done if success else failed).add(key)
             if key not in recorded:
                 timeline.record_fast(node, row)
@@ -151,7 +155,7 @@ def drive_fast(args):
                             "done": sorted(done), "failed": sorted(failed), "recorded": sorted(recorded)})
         if running and not args.dry_run:
             time.sleep(0.2)
-    gating_failures = failed & {node.id for node in FAST_GRAPH if node.gating}
+    gating_failures = failed & {node.id for node in graph if node.gating}
     print(json.dumps({"done": sorted(done), "failed": sorted(failed), "releaseSeconds": completed_at,
                       "dryRun": args.dry_run, "rehearseOnly": args.rehearse_only, "gatingFailures": sorted(gating_failures)}))
     if args.rehearse_only:
@@ -173,7 +177,7 @@ def main(argv):
     parser.add_argument("--remote-run")
     parser.add_argument("--advisory-workers", type=int, default=4, help="maximum parallel advisory suite workers (default: 4)")
     parser.add_argument("--remote-tools")
-    parser.add_argument("--linux-host", default="ax42", help="Linux SSH destination (default: ax42)")
+    parser.add_argument("--linux-host", default="ax42", choices=(*LINUX_TARGETS, "pc-wsl"), help="shared Linux artifact builder; all Linux targets still install (default: ax42)")
     parser.add_argument("--base", default="", help="base ref to build on instead of the serving release head; must contain it")
     args = parser.parse_args(argv)
     if args.advisory_workers < 1:
@@ -182,14 +186,16 @@ def main(argv):
         parser.error("--linux-host must be an SSH alias or hostname")
     if not re.fullmatch(r"\d+\.\d+\.\d+-nightly\.\d+\.\d+\.aneym\.\d+", args.version):
         parser.error("version must be an upstream nightly plus .aneym.N")
+    args.linux_host = LINUX_TARGETS[linux_target(args.linux_host)]
+    graph = fast_graph(args.linux_host)
     args.run = (args.run or Path.home() / ".t3nightly/runs" / args.version / "fast").resolve()
     args.remote_run = args.remote_run or f"/home/jobs/t3nightly/runs/{args.version}/fast"
     args.remote_tools = args.remote_tools or remote_engine()
     if args.plan:
-        path, seconds = critical_path()
+        path, seconds = critical_path(graph)
         print(json.dumps({"deadline": FAST_DEADLINE, "criticalPath": path, "criticalSeconds": seconds,
                           "nodes": [dict(id=node.id, name=node.name, needs=node.needs,
-                                         gating=node.gating, **stage_spec(node, args)) for node in FAST_GRAPH]}, indent=2))
+                                         gating=node.gating, **stage_spec(node, args)) for node in graph]}, indent=2))
         return 0
     if args.dry_run or args.coordinator:
         try:
@@ -198,11 +204,13 @@ def main(argv):
             if args.dry_run or getattr(args, "engine_verified", False):
                 if not args.dry_run:
                     require_engine(args.run / "candidate.json")
-                    require_remote_engine(args.run / "candidate.json", args.remote_tools, args.linux_host)
-                finish_runs(args.run, args.remote_run, args.remote_tools, dry_run=args.dry_run, linux_host=args.linux_host)
+                    for address in LINUX_TARGETS.values():
+                        require_remote_engine(args.run / "candidate.json", args.remote_tools, address)
+                finish_runs(args.run, args.remote_run, args.remote_tools, dry_run=args.dry_run, linux_host=args.linux_host, hosts=LINUX_TARGETS)
     if (args.run / "candidate.json").is_file():
         require_engine(args.run / "candidate.json")
-        require_remote_engine(args.run / "candidate.json", args.remote_tools, args.linux_host)
+        for address in LINUX_TARGETS.values():
+            require_remote_engine(args.run / "candidate.json", args.remote_tools, address)
     coordinator = args.run / "coordinator"
     previous = status(coordinator)
     if previous.get("outcome") in {"failed", "timed-out", "environment-blocked"}:
@@ -215,7 +223,7 @@ def main(argv):
                "--run", str(args.run), "--remote-run", args.remote_run, "--advisory-workers", str(args.advisory_workers),
                "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, "--coordinator", *(["--rehearse-only"] if args.rehearse_only else [])]
     spec = {"label": f"com.agent-rails.t3fast-{args.version}-coordinator-{coordinator.name}", "host": "studio",
-            "command": command, "budget": sum(node.budget for node in FAST_GRAPH) * HANG_GUARD + 60,
+            "command": command, "budget": sum(node.budget for node in graph) * HANG_GUARD + 60,
             "resources": ["fast-release-run"], "lockRoot": str(Path.home() / ".t3nightly/resource-locks")}
     print(json.dumps(submit(coordinator, spec)))
     return 0

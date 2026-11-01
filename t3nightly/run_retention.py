@@ -152,7 +152,7 @@ def retain(root, active_run, *, dry_run=False):
     return report
 
 
-def finish_runs(run, remote_run, remote_tools, *, dry_run=False, linux_host="ax42"):
+def finish_runs(run, remote_run, remote_tools, *, dry_run=False, linux_host="ax42", hosts=None):
     run = Path(run)
     local_root = run.parent.parent if run.name.startswith("fast") else run.parent
     remote = Path(remote_run)
@@ -165,12 +165,13 @@ def finish_runs(run, remote_run, remote_tools, *, dry_run=False, linux_host="ax4
     command = ["python3", str(Path(remote_tools) / "run_retention.py"), "--root", str(remote_root), "--active-run", str(remote)]
     if dry_run:
         command.append("--dry-run")
-    try:
-        command = ["env", f"PYTHONPATH={Path(remote_tools).parent}", *command]
-        result = subprocess.run(["ssh", "-o", "BatchMode=yes", linux_host, shlex.join(command)], capture_output=True, text=True, check=True, timeout=180)
-        results["ax42"] = json.loads(result.stdout)
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
-        results["ax42"] = {"error": str(error)}
+    command = ["env", f"PYTHONPATH={Path(remote_tools).parent}", *command]
+    for host, address in (hosts or {"ax42": linux_host}).items():
+        try:
+            result = subprocess.run(["ssh", "-o", "BatchMode=yes", address, shlex.join(command)], capture_output=True, text=True, check=True, timeout=180)
+            results[host] = json.loads(result.stdout)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            results[host] = {"error": str(error)}
     descriptor = open_directory(run)
     try:
         fd = os.open("run-retention.json", os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)

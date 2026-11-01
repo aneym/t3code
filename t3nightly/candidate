@@ -27,7 +27,7 @@ def main():
     frozen.add_argument("--version", required=True)
     frozen.add_argument("--out", type=Path, required=True)
     frozen.add_argument("--old-release", type=host_value, action="append", default=[], metavar="HOST=VERSION")
-    frozen.add_argument("--serving-head", type=host_value, action="append", default=[], metavar="HOST=COMMIT", help="installed release head per host; defaults to --base")
+    frozen.add_argument("--serving-head", type=host_value, action="append", default=[], metavar="HOST=COMMIT", help="required installed release head for each target")
     shown = commands.add_parser("show", help="verify and print a frozen candidate.json")
     shown.add_argument("manifest", type=Path)
     commands.add_parser("graph", help="print the fast release graph and its budgeted critical path")

@@ -12,12 +12,13 @@ from t3nightly.release_actions import run_fast_action
 from t3nightly.release_config import FastConfig
 from t3nightly.release_engine import require_engine
 from t3nightly.release_outputs import fast_output
+from t3nightly.release_targets import LINUX_TARGETS, stage_action
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run one fast-release graph node on this host and validate its outputs.")
     parser.add_argument("--stage", required=True)
-    parser.add_argument("--host", required=True, choices=("studio", "ax42"))
+    parser.add_argument("--host", required=True, choices=("studio", *LINUX_TARGETS))
     parser.add_argument("--version", required=True)
     parser.add_argument("--topic", required=True)
     parser.add_argument("--run", type=Path, required=True)
@@ -44,7 +45,7 @@ def main():
             raise ValueError("stage exited zero but its outputs are missing or invalid")
     except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as error:
         print(json.dumps({"stage": args.stage, "error": f"{type(error).__name__}: {error}"}), flush=True)
-        if args.stage in ("IM", "IL") and config.outcome().is_file():
+        if stage_action(args.stage) == "install" and config.outcome().is_file():
             prior = json.loads(config.outcome().read_text())
             config.outcome().write_text(json.dumps({**prior, "outcome": "failed", "validationError": str(error), "installerOutcome": prior.get("outcome")}) + "\n")
         return 1

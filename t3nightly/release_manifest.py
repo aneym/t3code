@@ -9,11 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .release_assemble import PACKAGE_FILES
-from .release_eligibility import classify
+from .release_eligibility import RESTORE_CLASS, classify
 
 
 CANDIDATE_SCHEMA = "t3nightly.candidate/1"
-TARGETS = {"studio": ("darwin", "arm64"), "ax42": ("linux", "x64")}
+TARGETS = {"studio": ("darwin", "arm64"), **{host: ("linux", "x64") for host in ("ax42", "forge", "owl")}}
 MIGRATIONS_FILE = "apps/server/src/persistence/Migrations.ts"
 MIGRATION_PATHS = (MIGRATIONS_FILE, "apps/server/src/persistence/Migrations/")
 PERSISTED_STATE_PATHS = ("apps/server/src/persistence/",)
@@ -361,15 +361,25 @@ def freeze(tree, base, version, out, old_releases=None, engine=None, serving_hea
     unknown = sorted((set(old_releases) | set(serving_heads)) - set(TARGETS))
     if unknown:
         raise ValueError(f"unknown target hosts: {', '.join(unknown)}")
+    missing = sorted(set(TARGETS) - (set(old_releases) & set(serving_heads)))
+    if missing:
+        raise ValueError(f"installed release and source head required for every target: {missing}")
     targets, computed = {}, {}
     for host, (platform, arch) in TARGETS.items():
-        serving = ancestor(tree, serving_heads[host], head) if serving_heads.get(host) else base_commit
+        if not old_releases[host] or not serving_heads[host]:
+            raise ValueError(f"{host}: installed release and source head are missing")
+        serving = git(tree, "rev-parse", f"{serving_heads[host]}^{{commit}}").strip()
+        if host != "owl":
+            serving = ancestor(tree, serving, head)
         if serving not in computed:
             computed[serving] = compatibility(tree, serving, head)
             if computed[serving]["upstreamTag"]["candidate"] != f"v{match.group(1)}":
                 computed[serving]["fastPath"]["reasons"].append("version-tag-mismatch")
                 computed[serving]["fastPath"]["eligible"] = False
-        targets[host] = {"platform": platform, "arch": arch, "oldRelease": old_releases.get(host), "servingHead": serving, "compatibility": classify(computed[serving], host)}
+        graded = classify(computed[serving], host)
+        if host == "owl" and graded.get("eligibility") != RESTORE_CLASS:
+            ancestor(tree, serving, head)
+        targets[host] = {"platform": platform, "arch": arch, "oldRelease": old_releases[host], "servingHead": serving, "compatibility": graded}
     manifest = {
         "schema": CANDIDATE_SCHEMA,
         "version": version,

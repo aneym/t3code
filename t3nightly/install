@@ -61,7 +61,7 @@ def parse():
     parser.add_argument("--manifest", default="")
     parser.add_argument("--artifact-manifest", default="")
     parser.add_argument("--install-receipt", default="")
-    parser.add_argument("--receipt-host", choices=("studio", "ax42"))
+    parser.add_argument("--receipt-host", choices=("studio", "ax42", "forge", "owl"))
     parser.add_argument("--rehearsal", action="store_true")
     parser.add_argument("--compatibility-probe", action="store_true")
     parser.add_argument("--force-rollback", action="store_true")

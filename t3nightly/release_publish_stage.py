@@ -21,8 +21,8 @@ def files(config, stage):
         directory = config.run / 'desktop'
         name = f'T3-Code-{config.version}-arm64.zip'
         return directory, directory / 'artifact-desktop-darwin-arm64.json', [name, f'{name}.blockmap', 'nightly-mac.yml']
-    remote = config.on('ax42')
-    return config.run / 'ax42', config.run / 'ax42' / remote.artifact().name, [remote.archive()]
+    remote = config.on(config.build_host)
+    return config.run / config.build_host, config.run / config.build_host / remote.artifact().name, [remote.archive()]
 
 
 def verify_local(config, stage):
@@ -38,7 +38,7 @@ def verify_local(config, stage):
 
 
 def remote_verify(config, stage, hashes):
-    root = config.on('ax42').run / 'publish-staged' / stage
+    root = config.on(config.build_host).run / 'publish-staged' / stage
     script = "import hashlib,pathlib,sys; p=pathlib.Path(sys.argv[1]); pairs=zip(sys.argv[2::2],sys.argv[3::2]); sys.exit(any(hashlib.file_digest((p/n).open('rb'),'sha256').hexdigest()!=h for n,h in pairs))"
     args = ['python3', '-c', script, str(root), *(item for pair in hashes.items() for item in pair)]
     result = subprocess.run(['ssh', '-o', 'BatchMode=yes', config.linux_host, shlex.join(args)], capture_output=True, text=True, check=False)
@@ -61,11 +61,11 @@ def validate(config, stage):
 
 
 def stage_payload(config, stage, log):
-    remote = config.on('ax42')
+    remote = config.on(config.build_host)
     if stage == 'SL':
-        directory = config.run / 'ax42'
+        directory = config.run / config.build_host
         directory.mkdir(exist_ok=True)
-        require(['rsync', '-a', '--partial', '--', f'{config.linux_host}:{remote.artifact()}', f'{config.linux_host}:{remote.build_out() / remote.archive()}', str(directory) + '/'], log)
+        require(['rsync', '-a', '--partial', '--', f'{config.linux_host}:{remote.build_out()}/', str(directory) + '/'], log)
     directory, manifest, hashes = verify_local(config, stage)
     if stage in ('SM', 'SD'):
         dest = remote.run / 'publish-staged' / stage

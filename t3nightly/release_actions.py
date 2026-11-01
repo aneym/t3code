@@ -16,8 +16,9 @@ from .release_assemble import assemble, stamp
 from .release_approval import approved
 from .release_continuation import require_studio_proof
 from .build_artifacts import tree_digest
-from .install_offbox import REMOTE_ROOT
-from .release_graph import SUCCESS_OUTCOMES
+from .release_install import fast_install
+from .release_linux import prepare_dependencies, require_host_ready, stage_linux
+from .release_targets import LINUX_TARGETS, stage_action, stage_target
 from .release_land_receipts import publish as publish_landings
 from .release_manifest import digest, eligible, freeze, history_digest, load
 from .release_outputs import fast_evidence
@@ -168,16 +169,22 @@ def fast_assemble(config, log):
         (config.run / "assembly.json").write_text(json.dumps({"base": base, "head": head, "topics": config.topic.split(","), "topicShas": ready["topicShas"]}, indent=2) + "\n")
         bundle = config.run / "candidate.bundle"
         require(["git", "-C", str(tree), "bundle", "create", str(bundle), "HEAD", f"^v{config.nightly}"], log)
-        remote = config.on("ax42").run
         names = ("candidate.json", "assembly.json", "candidate.bundle", "readiness.json")
-        require(["rsync", "-a", f"--rsync-path=mkdir -p {shlex.quote(str(remote))}/receipts && rsync", "--",
-                 *(str(config.run / name) for name in names), f"{config.linux_host}:{remote}/"], log)
+        staged = {}
+        for host, address in LINUX_TARGETS.items():
+            remote = config.on(host).run
+            staged[host] = command(["rsync", "-a", "--partial", f"--rsync-path=mkdir -p {shlex.quote(str(remote))}/receipts && rsync", "--",
+                                    *(str(config.run / name) for name in names), f"{address}:{remote}/"], log)
+        (config.run / "host-staging.json").write_text(json.dumps(staged) + "\n")
         return 0
     finally:
         ownership("release", tree, log)
 
 
 def fast_prepare(config, log):
+    require_host_ready(config)
+    head = json.loads((config.run / "assembly.json").read_text())["head"]
+    prepare_dependencies(config, head, log, fast_tree)
     manifest = load(config.manifest)
     old = manifest["targets"][config.host]["oldRelease"]
     runtime = config.home / ".t3/runtime/versions" / old
@@ -227,36 +234,6 @@ def fast_e2e(config, log):
                     "--version", config.version, "--out", str(config.run / f"e2e-{config.host}"), "--tree", str(tree)], log)
 
 
-def fast_install(config, log):
-    config.install_state().mkdir(parents=True, exist_ok=True)
-    state, env, prefix = config.install_state(), None, []
-    if config.host == "ax42":
-        backups = (config.home / ".t3nightly" / "backups").resolve()
-        state = backups.parent / "fast-install" / config.version
-        state.mkdir(parents=True, exist_ok=True)
-        env = {**os.environ, "AGENT_LANE": "t3-nightly", "AGENT_THREAD_ID": "mcp:a2795f2f-43aa-40c5-890c-98de1291379a"}
-        prefix = ["ionice", "-c3"]
-    words = [*prefix, sys.executable, str(config.tools / "install"), "--seamless", "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")), "--version", config.version, "--assets", str(config.build_out()),
-             "--manifest", str(config.manifest), "--artifact-manifest", str(config.artifact()), "--receipt", str(config.receipt("rehearsal")),
-             "--receipt-host", config.host, "--install-receipt", str(config.receipt("install")), "--state-dir", str(state),
-             "--chat-project", str(config.chat_project()), "--load-max", "64", "--health-s", "300", "--override-reason", config.override_reason,
-             "--smoke-verdict", str(config.run / f"e2e-{config.host}" / "smoke-verdict.json"), "--rollback-proof", str(config.receipt("rollback-proof"))]
-    if config.host == "ax42":
-        words.extend(["--service-label", "t3code.service", "--backups", str(backups), "--offbox", f"studio:{REMOTE_ROOT}/ax42", "--offbox-stage", "/srv/cow/t3nightly-offbox-stage"])
-        if load(config.manifest)["targets"][config.host]["compatibility"].get("eligibility") == "restore-rollback":
-            words.extend(["--offbox-stop-s", "900"])
-    words.extend(config.target_artifacts())
-    config.receipt("install").unlink(missing_ok=True)
-    code = command(words, log, env=env)
-    outcome = "failed"
-    if config.receipt("install").is_file():
-        outcome = json.loads(config.receipt("install").read_text())["outcome"]
-    if code and outcome in SUCCESS_OUTCOMES:
-        outcome = "failed"
-    (config.outcome()).write_text(json.dumps({"outcome": outcome, "installerExit": code}) + "\n")
-    return 0
-
-
 def fast_swap(config, log):
     archive = config.run / "desktop" / f"T3-Code-{config.version}-arm64.zip"
     code = command([sys.executable, str(config.tools / "desktop-swap"), str(archive), "--fast-evidence", str(config.run), "--override-reason", config.override_reason], log)
@@ -271,11 +248,19 @@ def fast_swap(config, log):
 
 
 def fast_publish(config, log):
-    remote, local = config.on("ax42"), config.run / "ax42"
-    local.mkdir(exist_ok=True)
-    proof = (remote.receipt("rollback-proof"),) if required(load(config.manifest), "ax42") else ()
-    for path in (remote.manifest, remote.receipt("rehearsal"), remote.receipt("install"), *proof):
-        transfer(f"{config.linux_host}:{path}", str(local) + "/", log)
+    remote = config.on(config.build_host)
+    source = config.run / config.build_host
+    for host, address in LINUX_TARGETS.items():
+        own, local = config.on(host), config.run / host
+        local.mkdir(exist_ok=True)
+        proof = (own.receipt("rollback-proof"),) if required(load(config.manifest), host) else ()
+        for path in (own.manifest, own.receipt("rehearsal"), own.receipt("install"), *proof):
+            transfer(f"{address}:{path}", str(local) + "/", log)
+        if host != config.build_host:
+            shutil.copy2(source / remote.artifact().name, local / remote.artifact().name)
+            archive = local / remote.archive()
+            archive.unlink(missing_ok=True)
+            os.link(source / remote.archive(), archive)
     for stage in ("SM", "SL", "SD"):
         validate_staged(config, stage)
     publish = config.run / "publish"
@@ -298,40 +283,46 @@ def fast_health(config, log):
     def one(host):
         with (config.run / f"health-{host}.log").open("a") as handle:
             return command([sys.executable, str(config.tools / "release-observe"), "--host", host, "--expected-version", config.version,
-                            "--linux-host", config.linux_host, "--out", str(config.run / "health" / host)], handle)
+                            "--linux-host", LINUX_TARGETS.get(host, "ax42"), "--out", str(config.run / "health" / host)], handle)
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        return max(pool.map(one, ("studio", "ax42")))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        return max(pool.map(one, ("studio", *LINUX_TARGETS)))
 
 
 def run_fast_action(stage, config, log):
+    target = stage_target(stage)
+    stage = stage_action(stage)
     head = json.loads((config.run / "assembly.json").read_text())["head"] if stage not in ("Q", "A") else None
     if stage == "Q":
         return readiness(config, log)
     if stage == "A":
         return fast_assemble(config, log)
     if stage == "M":
+        require_host_ready(config, build=True)
         temporary = config.tree("mac-cli").parent / ".aneym-fast-mac-tmp"
         shutil.rmtree(temporary, ignore_errors=True)
         temporary.mkdir(parents=True)
         env = dict(os.environ, T3NIGHTLY_MAC_SIGN="1", T3NIGHTLY_TMP=str(temporary))
         return fast_build(config, "mac-cli", head, config.build_out(), "build-cli", log, env)
     if stage == "L":
+        require_host_ready(config, build=True)
         require(["git", "-C", str(config.repo), "fetch", str(config.run / "candidate.bundle"), "HEAD"], log)
         return fast_build(config, "linux-cli", head, config.build_out(), "build-cli", log)
     if stage == "D":
         return fast_build(config, "desktop", head, config.run / "desktop", "build-desktop", log)
     if stage in ("SM", "SL", "SD"):
         return stage_payload(config, stage, log)
-    if stage in ("PM", "PL"):
+    if stage == "stage-linux":
+        return stage_linux(config, target, log)
+    if stage == "prepare":
         return fast_prepare(config, log)
-    if stage in ("RM", "RL"):
+    if stage == "rehearse":
         return fast_rehearse(config, log)
-    if stage in ("EM", "EL"):
+    if stage == "e2e":
         return fast_e2e(config, log)
-    if stage in ("XM", "XL"):
+    if stage == "rollback-proof":
         return fast_rollback_proof(config, log)
-    if stage in ("IM", "IL"):
+    if stage == "install":
         return fast_install(config, log)
     if stage == "S":
         return fast_swap(config, log)

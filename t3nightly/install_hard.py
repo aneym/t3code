@@ -210,7 +210,9 @@ def install(run):
             if file_digest(staged) != observed["candidateRuntime.digest"]:
                 raise ValueError("staged candidate runtime changed after provenance check")
             run.step("hard-retain-runtime", version=previous, path=str(retain_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")))
-            backup = install_offbox.capture(run, previous, stop, rollback_gate, keep_local=restore_class) if args.offbox else capture(run, previous, stop, rollback_gate)
+            backup = install_offbox.capture(run, previous, stop, rollback_gate, keep_local=restore_class) if args.offbox else capture(run, previous, stop, rollback_gate, keep_local=restore_class)
+            if restore_class and not backup.get("local"):
+                raise ValueError("restore-rollback requires a verified local restore copy")
             stopped = False
             activate(run, args.version)
             serving(run, args.version, observed["candidateRuntime.digest"])
@@ -268,7 +270,7 @@ def install(run):
                 from .launcher_artifact import rollback_launcher
 
                 rollback_launcher(run)
-                if backup.get("method") == install_offbox.METHOD:
+                if restore_class or backup.get("method") == install_offbox.METHOD:
                     from .install_db_rollback import rollback_database
 
                     rollback_database(run, backup, compatibility)
@@ -321,7 +323,7 @@ def install(run):
     path = Path(args.install_receipt) if args.install_receipt else run.state / "receipts" / f"install-{host}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     local = backup.get("local")
-    if local and Path(local["path"]).is_file():
+    if local and backup.get("method") == install_offbox.METHOD and Path(local["path"]).is_file():
         from .install_offbox_reship import start
         from .install_restore_boot import ensure
         from .install_restore_hold import schedule

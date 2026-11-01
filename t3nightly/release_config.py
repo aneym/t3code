@@ -6,11 +6,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .release_graph import GRAPH
+from .release_targets import LINUX_TARGETS, linux_target
 
 
 HOSTS = {
     "studio": {"repo": Path("/Volumes/StudioExt/repos/t3code"), "trees": Path("/Volumes/StudioExt/repos/t3code-wt"), "key": "darwin-arm64"},
-    "ax42": {"repo": Path("/home/jobs/repos/t3code"), "trees": Path("/home/jobs/repos/t3code-wt"), "key": "linux-x64"},
+    **{host: {"repo": Path("/home/jobs/repos/t3code"), "trees": Path("/home/jobs/repos/t3code-wt"), "key": "linux-x64"} for host in LINUX_TARGETS},
 }
 CHAT_PROJECT = ".t3/scratch"
 SEEDS = ".t3nightly/rehearsal-seeds"
@@ -110,7 +111,7 @@ class FastConfig:
 
     @property
     def home(self):
-        return Path.home() if self.host == "studio" else Path("/home/jobs")
+        return Path.home()
 
     @property
     def manifest(self):
@@ -120,8 +121,12 @@ class FastConfig:
     def held(self):
         return (self.home / ".t3nightly" / f"hold-install{self.number}").exists()
 
+    @property
+    def build_host(self):
+        return linux_target(self.linux_host)
+
     def on(self, host):
-        run = Path(self.remote_run) if host == "ax42" and self.host == "studio" else self.run
+        run = Path(self.remote_run) if host in LINUX_TARGETS and self.host == "studio" else self.run
         return FastConfig(self.version, self.topic, run, host, self.remote_run, self.remote_tools, self.base, linux_host=self.linux_host, override_reason=self.override_reason, advisory_workers=self.advisory_workers)
 
     def tree(self, stage):

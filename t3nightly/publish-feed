@@ -100,7 +100,12 @@ def publish(directory, desktop, feed):
     evidence = getattr(publish, "evidence", None)
     if evidence:
         proven = fast_evidence(evidence, version)
-        expected = {f"t3-{version}-{'darwin-arm64' if host == 'studio' else 'linux-x64'}.tar.gz": row["archive"] for host, row in proven["hosts"].items()}
+        expected = {}
+        for host, row in proven["hosts"].items():
+            name = f"t3-{version}-{'darwin-arm64' if host == 'studio' else 'linux-x64'}.tar.gz"
+            if name in expected and expected[name] != row["archive"]:
+                raise ValueError("Linux targets did not install the same canonical archive")
+            expected[name] = row["archive"]
         if {path.name: hashlib.file_digest(path.open("rb"), "sha256").hexdigest() for path in archives} != expected:
             raise ValueError("feed archives are not exactly the installed and verified artifacts")
         if not desktop:

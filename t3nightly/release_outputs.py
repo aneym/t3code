@@ -8,6 +8,7 @@ from .install_offbox import METHOD as OFFBOX_METHOD
 from .release_approval import approved
 from .release_graph import SUCCESS_OUTCOMES
 from .release_manifest import digest, eligible, load
+from .release_targets import LINUX_TARGETS, stage_action, stage_target
 from .release_publish_stage import validate as validate_staged
 from .release_rollback_proof import proven, required
 from .release_receipts import INSTALL_SCHEMA, REHEARSAL_SCHEMA, parse, provenance, timestamp
@@ -190,12 +191,12 @@ def eligibility_evidence(receipts, manifest, artifact, host, install, rehearsal)
 def host_evidence(run, version, host, build):
     key = "darwin-arm64" if host == "studio" else "linux-x64"
     own = build / "candidate.json"
-    manifest = load(own if host == "ax42" and own.is_file() else run / "candidate.json")
+    manifest = load(own if host in LINUX_TARGETS and own.is_file() else run / "candidate.json")
     artifact = fast_artifact(build / f"artifact-{key}.json", version, key)
     archive = build / f"t3-{version}-{key}.tar.gz"
     if sha256(archive) != artifact["archive"]["sha256"]:
         raise ValueError(f"{archive}: bytes differ from the artifact manifest")
-    receipts = build if host == "ax42" else run / "receipts"
+    receipts = build if host in LINUX_TARGETS else run / "receipts"
     rehearsal = fast_rehearsal(receipts / f"rehearsal-{host}.json", manifest, artifact, host)
     return manifest, artifact, rehearsal, receipts
 
@@ -220,7 +221,8 @@ def fast_evidence(run, version):
     run = Path(run)
     rows = {}
     release = load(run / "candidate.json")
-    for host, build in (("studio", run / "mac"), ("ax42", run / "ax42")):
+    for host in release["targets"]:
+        build = run / ("mac" if host == "studio" else host)
         manifest, artifact, rehearsal, receipts = host_evidence(run, version, host, build)
         install = fast_install(receipts / f"install-{host}.json", manifest, artifact, rehearsal, host)
         if release_identity(manifest) != release_identity(release):
@@ -242,7 +244,11 @@ def fast_evidence(run, version):
 
 
 def fast_output(stage, config):
+    target = stage_target(stage)
+    stage = stage_action(stage)
     run = config.run
+    if stage == "stage-linux":
+        return json.loads((run / f"payload-{target}.json").read_text())["archive"]
     if stage in ("SM", "SL", "SD"):
         return validate_staged(config, stage)
     if stage == "Q":
@@ -256,19 +262,19 @@ def fast_output(stage, config):
     if stage == "D":
         fast_artifact(run / "desktop/artifact-desktop-darwin-arm64.json", config.version, "darwin-arm64", "desktop")
         return True
-    if stage in ("PM", "PL"):
+    if stage == "prepare":
         return (run / f"sandbox-{config.host}.json").is_file()
-    if stage in ("RM", "RL"):
+    if stage == "rehearse":
         fast_rehearsal(config.receipt("rehearsal"), load(config.manifest), fast_artifact(config.artifact(), config.version, config.key), config.host)
         return True
-    if stage in ("XM", "XL"):
+    if stage == "rollback-proof":
         manifest = load(config.manifest)
         return not required(manifest, config.host) or proven(config.receipt("rollback-proof"), manifest, fast_artifact(config.artifact(), config.version, config.key)["archive"]["sha256"])
-    if stage in ("EM", "EL"):
+    if stage == "e2e":
         verdict = json.loads((run / f"e2e-{config.host}" / "smoke-verdict.json").read_text())
         artifact = fast_artifact(config.artifact(), config.version, config.key)
         return verdict["ok"] is True and verdict["version"] == config.version and verdict["archiveSha256"] == artifact["archive"]["sha256"]
-    if stage in ("IM", "IL"):
+    if stage == "install":
         outcome = json.loads(config.outcome().read_text())["outcome"]
         if outcome in SUCCESS_OUTCOMES:
             manifest, artifact = load(config.manifest), fast_artifact(config.artifact(), config.version, config.key)

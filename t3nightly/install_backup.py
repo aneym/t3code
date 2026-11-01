@@ -39,7 +39,7 @@ def quiescent(db):
         raise ValueError("database users remain or lsof could not establish quiescence")
 
 
-def capture(run, previous, stop, rollback_gate):
+def capture(run, previous, stop, rollback_gate, *, keep_local=False):
     started = time.monotonic()
     root = run.home / "runtime" / "rollback"
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -68,14 +68,24 @@ def capture(run, previous, stop, rollback_gate):
         destination.rmdir()
         run.step("hard-backup", **metadata)
         return metadata
-    if clone:
+    if keep_local:
+        from .install_restore_copy import identity, verify
+
+        expected = identity(source)
+        database_copy(source, target, time.monotonic() + 120 + size / copy_rate(source))
+        os.chmod(target, 0o600)
+        check = verify(target, expected)
+        local = {"path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous}
+    elif clone:
         for suffix in ("", "-wal"):
             original = Path(str(source) + suffix)
             if original.exists():
                 subprocess.run(["/bin/cp", "-c", str(original), str(target) + suffix], check=True, capture_output=True, timeout=30)
     else:
         database_copy(source, target, time.monotonic() + 120 + size / copy_rate(source))
-    metadata = {"path": str(target), "method": "apfs-clone" if clone else "sqlite-backup", "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
+    metadata = {"path": str(target), "method": "apfs-clone" if clone and not keep_local else "sqlite-backup", "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
+    if keep_local:
+        metadata["local"] = local
     (destination / "payload.json").write_text(json.dumps(metadata))
     run.step("hard-backup", **metadata)
     return metadata

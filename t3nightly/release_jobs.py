@@ -10,6 +10,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from .release_targets import LINUX_TARGETS
+
 
 TERMINAL = {"passed", "failed", "environment-blocked", "timed-out", "installed", "current", "rolled-back"}
 
@@ -123,11 +125,11 @@ class HostJobs:
         if node.host == "studio":
             return submit(directory, spec) if operation == "submit" else status(directory)
         argv = [f"{self.remote_tools}/release-job", operation, directory]
-        result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", self.linux_host,
+        result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", LINUX_TARGETS[node.host],
                                  shlex.join(argv)], input=json.dumps(spec) if spec else None,
                                 capture_output=True, text=True, timeout=20, check=False)
         if result.returncode:
             if operation == "status":
                 return {"outcome": "status-unavailable", "error": result.stderr.strip()}
-            raise RuntimeError(f"ax42 {operation} unacknowledged; reconnect without replay: {result.stderr.strip()}")
+            raise RuntimeError(f"{node.host} {operation} unacknowledged; reconnect without replay: {result.stderr.strip()}")
         return json.loads(result.stdout)
