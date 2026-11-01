@@ -1,6 +1,5 @@
 import json
 import subprocess
-from pathlib import Path
 
 from .release_config import CHAT_PROJECT, SEEDS
 from .release_manifest import migration_identity

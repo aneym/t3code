@@ -1,41 +1,16 @@
-import fcntl
 import hashlib
 import json
-import os
-import stat
-import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
 
 from .release_config import FastConfig
 from .release_host_readiness import probe_host
 from .release_manifest import engine_identity
-
-
-def atomic_write(path, content):
-    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
-            os.fchmod(stream.fileno(), mode)
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
+from .release_readiness_store import atomic_write, readiness_lock
 
 
 def refresh(args, log):
-    path = args.run / "readiness.json"
     config = FastConfig(args.version, args.topic, args.run, "studio", args.remote_run, args.remote_tools, args.base)
-    with (args.run / ".readiness-refresh.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with readiness_lock(args.run) as path:
         before = path.read_bytes()
         value = json.loads(before)
         if engine_identity(config.tools)["digest"] != value["engine"]["digest"]:
@@ -53,4 +28,4 @@ def refresh(args, log):
         atomic_write(path, after)
         atomic_write(receipt_path, (json.dumps(receipt, indent=2) + "\n").encode())
         log.write(json.dumps({**receipt, "receipt": str(receipt_path), "ok": value["ok"]}) + "\n")
-        return 0 if value["ok"] and all(value["hostChecks"][args.refresh_readiness].values()) else 1
+        return 0 if all(value["hostChecks"][args.refresh_readiness].values()) else 1

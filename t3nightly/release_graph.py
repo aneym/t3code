@@ -94,7 +94,7 @@ def fast_graph(linux_host="ax42"):
         FastNode("S", "desktop-swap", "studio", ("D", "IM"), 5, ("desktop-app:studio",)),
         FastNode("F", "publish-feed", "studio", ("S", *installs[1:], "SM", "SL", "SD"), 15, ("feed",)),
         FastNode("LM", "link-mesh", "studio", installs, 60, ("link-mesh",), gating=False),
-        FastNode("LR", "land-receipts", "studio", installs, 60, (), gating=False),
+        FastNode("LR", "land-receipts", "studio", (*installs, "F"), 60, (), gating=False),
         FastNode("H", "health-watch", "studio", ("F",), 600, (), gating=False),
         FastNode("AS", "advisory-suites", "studio", ("F",), 3600, (), gating=False),
         FastNode("W", "desktop-windows", "studio", ("A",), 1500, ("build-host:pc",), gating=False),

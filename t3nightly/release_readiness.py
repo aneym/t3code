@@ -6,10 +6,10 @@ import subprocess
 import time
 import urllib.request
 from contextlib import closing
-from pathlib import Path
 
 from .release_host_readiness import probe_host, serving_head, source_history
 from .release_manifest import contained, engine_identity, history_digest
+from .release_readiness_store import atomic_write, readiness_lock
 from .release_targets import LINUX_TARGETS
 
 
@@ -45,6 +45,11 @@ def live_history(path):
 
 
 def readiness(config, log):
+    with readiness_lock(config.run) as path:
+        return collect_readiness(config, log, path)
+
+
+def collect_readiness(config, log, readiness_path):
     started = time.monotonic()
     checks, evidence, host_checks = {}, {}, {"studio": {}}
     engine = engine_identity(config.tools)
@@ -97,7 +102,6 @@ def readiness(config, log):
              "topicShas": topics, "baseHead": base_head, "servingHead": studio_head, "baseHistory": history,
              "oldReleases": old_releases, "servingHeads": heads, "servingHistories": histories,
              "seconds": round(time.monotonic() - started, 3)}
-    Path(config.run).mkdir(parents=True, exist_ok=True)
-    (Path(config.run) / "readiness.json").write_text(json.dumps(value, indent=2) + "\n")
+    atomic_write(readiness_path, (json.dumps(value, indent=2) + "\n").encode())
     log.write(json.dumps({"ok": value["ok"], "failed": failed}) + "\n")
     return 0 if not failed else 1
