@@ -157,6 +157,7 @@ def drive_fast(args):
             elif set(node.needs) <= done:
                 spec = stage_spec(node, args)
                 del pending[key]
+                blocked.discard(key)
                 try:
                     jobs.stage_inputs(node)
                     row = jobs.request(node, "submit", spec)
