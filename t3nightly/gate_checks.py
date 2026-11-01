@@ -1,6 +1,7 @@
 import json
 import os
 import secrets
+import shlex
 import signal
 import subprocess
 import re
@@ -12,7 +13,6 @@ from .gate_proc import CheckFailed, run
 
 CLAUDE_MODEL = os.environ.get("T3NIGHTLY_CLAUDE_MODEL", "claude-haiku-5-5")
 CODEX_MODEL = os.environ.get("T3NIGHTLY_CODEX_MODEL", "gpt-6-luna")
-BACKGROUND_SLEEP = 25
 
 
 def t3(ctx, name, deadline, words, *args, cap=None, secret_out=None):
@@ -262,11 +262,17 @@ def codex_turn(ctx, deadline):
 
 def background_wait(ctx, deadline):
     marker = "BG%s-done" % secrets.token_hex(4)
+    release = ctx.work / (marker + ".release")
+    command = (
+        "i=0; while [ ! -e %s ] && [ \"$i\" -lt 240 ]; do sleep 1; i=$((i + 1)); done; "
+        "[ -e %s ] && echo %s"
+    ) % (shlex.quote(str(release)), shlex.quote(str(release)), marker)
     prompt = (
-        "Run this exact shell command as a background task (Bash tool with run_in_background set to true): sleep %d; echo %s\n"
+        "Run this exact shell command as a background task (Bash tool with run_in_background set to true): %s\n"
+        "The command waits for a file another process creates; do not create, touch or delete that file. "
         "Then call the t3_background_wait tool with that background task id. Do not poll, sleep or read its output yourself. "
         "When the task finishes and you are notified, reply with only the line the command printed."
-        % (BACKGROUND_SLEEP, marker)
+        % command
     )
     pair_file = pairing(ctx, "background-wait", deadline)
     code, out = t3(
@@ -297,17 +303,19 @@ def background_wait(ctx, deadline):
         thread_id,
         "--marker",
         marker,
-        "--min-release",
-        str(BACKGROUND_SLEEP - 8),
+        "--release-file",
+        str(release),
         "--timeout",
         str(int(deadline.left()) - 15),
     )
     return (
-        "held Working from %ss to %ss for a %ds task, follow-up run settled completed with the task output; idle gaps at %s"
+        "held Working from %ss to %ss; release file written at %ss after %.3fs held, wake at %ss, follow-up run settled completed with the task output; idle gaps at %s"
         % (
             result["heldAtSeconds"],
             result["releasedAtSeconds"],
-            BACKGROUND_SLEEP,
+            result["releaseWrittenAtSeconds"],
+            result["heldBeforeReleaseSeconds"],
+            result["wakeAtSeconds"],
             result["idleWhileHeldRunAtSeconds"],
         )
     )

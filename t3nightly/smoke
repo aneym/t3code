@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from t3nightly.gate_checks import pair, t3  # noqa: E402
+from t3nightly.gate_checks import background_wait, pair, t3  # noqa: E402
 from t3nightly.gate_env import (  # noqa: E402
     free_port,
     guard_isolated,
@@ -30,7 +30,7 @@ from t3nightly.release_approval import file_sha256, smoke_record, verdict_path  
 from t3nightly.smoke_checks import AGENT_HANDLE, AGENT_NAME, CHECKS  # noqa: E402
 from t3nightly.smoke_extra import story_steps  # noqa: E402
 from t3nightly.smoke_ui import ui  # noqa: E402
-from t3nightly.gate_checks import background_wait, queue_complete, queue_interrupt, starting_send  # noqa: E402
+from t3nightly.gate_checks import queue_complete, queue_interrupt, starting_send  # noqa: E402
 
 
 class Context:
@@ -130,7 +130,6 @@ def teardown(ctx, _deadline):
     if not stopped or ctx.work.exists():
         raise CheckFailed("; ".join(notes) or "temp dir survived removal")
     return "; ".join(notes) or "no server started"
-
 
 DELIVERY = [("background-wait", 300, background_wait), ("queue-drain", 300, queue_complete), ("queue-interrupt", 300, queue_interrupt), ("starting-send", 240, starting_send)]
 STEPS = [("boot", 600, boot), ("pair", 120, pair), *CHECKS, *DELIVERY, ("ui", 420, ui), *story_steps()]

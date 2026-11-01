@@ -1,5 +1,5 @@
 import { queueDrain } from "./gate_queue.mjs";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const [mode, ...rest] = process.argv.slice(2);
@@ -184,25 +184,39 @@ const programs = {
     let heldAt = null;
     let heldRunId = null;
     let releasedAt = null;
+    let releaseWrittenAt = null;
+    let wakeAt = null;
+    let violation = null;
     let idleBeforeHold = null;
     const idleGaps = [];
     const observe = (thread) => {
-      const seconds = Math.round((Date.now() - started) / 100) / 10;
-      const sample = { t: seconds, status: thread.status, active: thread.activeRunId !== null, held: holds(thread) };
+      const seconds = (Date.now() - started) / 1000;
+      const sample = { t: Math.round(seconds * 1000) / 1000, status: thread.status, active: thread.activeRunId !== null, held: holds(thread) };
       const last = samples.at(-1);
       if (!last || last.status !== sample.status || last.active !== sample.active || last.held !== sample.held) samples.push(sample);
       const working = sample.active || sample.held;
-      if (sample.held && heldAt === null) {
+      if (sample.held && !sample.active && heldAt === null) {
         heldAt = seconds;
         heldRunId = thread.latestRunId;
       }
       if (heldAt === null && !working && idleBeforeHold === null) idleBeforeHold = seconds;
-      if (heldAt !== null && !sample.held && releasedAt === null) releasedAt = seconds;
+      if (heldAt !== null && !sample.held && releasedAt === null) {
+        releasedAt = seconds;
+        if (releaseWrittenAt === null) violation = "hold dropped before the release file was written";
+      }
+      if (heldAt !== null && thread.latestRunId !== heldRunId && wakeAt === null) {
+        wakeAt = seconds;
+        if (releaseWrittenAt === null) violation = "wake run started before the release file was written";
+      }
+      if (heldAt !== null && releaseWrittenAt === null && sample.held && seconds - heldAt >= 5 && violation === null) {
+        writeFileSync(opts["release-file"], "released\n", { flag: "wx" });
+        releaseWrittenAt = (Date.now() - started) / 1000;
+      }
       if (heldAt !== null && !working && thread.latestRunId === heldRunId) idleGaps.push(seconds);
       current = thread;
-      return heldAt !== null && !working && thread.latestRunId !== heldRunId && settledStatuses.has(thread.status);
+      return violation !== null || heldAt !== null && !working && thread.latestRunId !== heldRunId && settledStatuses.has(thread.status);
     };
-    yield* session.client["orchestration.subscribeShell"]({}).pipe(
+    const observed = yield* session.client["orchestration.subscribeShell"]({}).pipe(
       Stream.flatMap((item) =>
         item.kind === "snapshot"
           ? Stream.fromIterable(item.snapshot.threads.filter((thread) => thread.id === threadId))
@@ -210,25 +224,40 @@ const programs = {
             ? Stream.make(item.thread)
             : Stream.empty,
       ),
+      Stream.merge(Stream.tick("100 millis").pipe(Stream.map(() => current), Stream.filter((thread) => thread !== null))),
       Stream.takeUntil(observe),
       Stream.runDrain,
       Effect.timeout(`${Number(opts.timeout ?? 180)} seconds`),
+      Effect.exit,
     );
-    const detail = yield* firstOf(session.client["orchestration.subscribeThread"]({ threadId }), "snapshot", "60 seconds");
-    const reply = detail.projection.messages.filter((message) => message.role === "assistant").map((message) => message.text).join("\n");
+    const snapshot = yield* firstOf(session.client["orchestration.subscribeThread"]({ threadId }), "snapshot", "5 seconds").pipe(Effect.exit);
+    const detail = snapshot._tag === "Success" ? snapshot.value : null;
+    const replies = (detail?.projection.messages ?? []).filter((message) => message.role === "assistant" && message.runId !== heldRunId);
     const result = {
       samples,
       heldAtSeconds: heldAt,
       releasedAtSeconds: releasedAt,
+      releaseWrittenAtSeconds: releaseWrittenAt,
+      heldBeforeReleaseSeconds: releaseWrittenAt === null ? null : releaseWrittenAt - heldAt,
+      wakeAtSeconds: wakeAt,
       idleBeforeHoldAtSeconds: idleBeforeHold,
       idleWhileHeldRunAtSeconds: idleGaps,
       finalStatus: current?.status ?? null,
-      markerInReply: reply.includes(opts.marker),
-      runs: detail.projection.runs?.length ?? null,
+      markerInReply: replies.some((message) => message.text.trim() === opts.marker),
+      runs: detail?.projection.runs?.length ?? null,
     };
-    const fail = (message) => Object.assign(new Error(message), { result });
+    const fail = (message) => Object.assign(new Error(message), { result: {
+      ...result,
+      detail: {
+        runs: (detail?.projection.runs ?? []).map(({ id, status, queueHeld }) => ({ id, status, queueHeld })),
+        messages: (detail?.projection.messages ?? []).map(({ runId, role, text }) => ({ runId, role, text: text.trim().slice(0, 300) })),
+      },
+    } });
+    if (observed._tag === "Failure") throw fail("background wait observation failed or timed out");
+    if (snapshot._tag === "Failure") throw fail("thread detail unavailable");
+    if (violation !== null) throw fail(violation);
     if (idleBeforeHold !== null) throw fail("thread went idle before the agent marked its background task");
-    if (releasedAt === null || releasedAt < Number(opts["min-release"] ?? 0)) throw fail(`hold released at ${releasedAt}s, before the task could finish`);
+    if (releaseWrittenAt === null || releasedAt === null || releasedAt < releaseWrittenAt || wakeAt === null || wakeAt < releaseWrittenAt) throw fail("hold release or wake preceded the release file write");
     if (!result.markerInReply) throw fail("assistant reply lacks the background task output");
     if (result.finalStatus !== "completed") throw fail(`thread settled as ${result.finalStatus}`);
     return result;
@@ -246,6 +275,6 @@ try {
   process.exit(0);
 } catch (error) {
   const message = String(error?.message ?? error).replace(/(token|ticket)=[^&\s"]+/gi, "$1=REDACTED");
-  console.log(JSON.stringify({ ok: false, error: message, ...(error?.result ?? {}) }));
+  console.log(JSON.stringify({ ok: false, error: message, ...(error?.result ?? {}) }).replace(/(token|ticket)=[^&\s"\\]+/gi, "$1=REDACTED"));
   process.exit(1);
 }
