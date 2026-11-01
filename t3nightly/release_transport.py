@@ -28,24 +28,6 @@ def ssh(words, log, linux_host):
     return command(["ssh", "-o", "BatchMode=yes", linux_host, shlex.join([str(word) for word in words])], log)
 
 
-def remote_disk_free(log, linux_host):
-    result = subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", linux_host, "df -Pk /"],
-        capture_output=True, text=True, check=False,
-    )
-    if result.returncode:
-        log.write(result.stderr)
-        raise RuntimeError("unable to check ax42 disk space")
-    rows = result.stdout.splitlines()
-    if len(rows) < 2:
-        raise RuntimeError("invalid ax42 disk space response")
-    fields = rows[-1].split()
-    try:
-        return int(fields[3]) * 1024
-    except (IndexError, ValueError) as error:
-        raise RuntimeError("invalid ax42 disk space response") from error
-
-
 def remote_worker(config, action, log):
     seed = os.environ.get("T3NIGHTLY_GATE_SEED") if action == "gate" else None
     prefix = ["env", f"T3NIGHTLY_GATE_SEED={seed}"] if seed is not None else []

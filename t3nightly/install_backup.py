@@ -91,6 +91,31 @@ def capture(run, previous, stop, rollback_gate, *, keep_local=False):
     return metadata
 
 
+def prune(run, backup):
+    from .install_payload_gc import backup_marker, contained, discard, discard_snapshot
+
+    root = run.home / "runtime" / "rollback"
+    if not root.exists():
+        return
+    if root.is_symlink():
+        raise ValueError("rollback retention root cannot be a symlink")
+    current = Path(backup["path"]).resolve() if backup.get("path") else None
+    for directory in root.iterdir():
+        if directory.is_symlink() or not directory.is_dir() or len(directory.name) != 32 or any(char not in "0123456789abcdef" for char in directory.name):
+            continue
+        db = contained(root, directory / "statev2.sqlite")
+        if db.resolve() == run.db.resolve():
+            raise ValueError("rollback retention refused the live database")
+        if db.resolve() == current:
+            continue
+        metadata = backup_marker(root, directory) or {}
+        if metadata.get("complete") is not True or metadata.get("method") not in ("sqlite-backup", "apfs-clone") or metadata.get("path") != str(db):
+            continue
+        discard_snapshot(root, db, run.state, "discard-local-rollback-backup")
+        discard(root, directory / "payload.json", run.state, "discard-local-rollback-backup")
+        directory.rmdir()
+
+
 def advisory(backup, output):
     started = time.monotonic()
     try:

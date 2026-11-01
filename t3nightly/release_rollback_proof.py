@@ -15,7 +15,7 @@ def required(manifest, host):
 def legacy_launcher(installer):
     steps = {step.get("step") for step in installer.get("steps", [])}
     hot_swap = installer.get("hotSwap", {})
-    return (installer.get("capabilities", {}).get("serverHotSwap") is not True and hot_swap.get("qualification", {}).get("qualified") is True
+    return (installer.get("capabilities", {}).get("serverHotSwap") is False and hot_swap.get("qualification", {}).get("qualified") is True
             and hot_swap.get("method") == "hot-swap-unsupported" and "hot-swap-unsupported" in steps)
 
 

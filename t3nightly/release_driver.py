@@ -14,7 +14,6 @@ from .release_fast import main as fast_main
 from .release_ownership import ownership, release_local, verify_tree
 from .release_outputs import completed, valid_output, remote_archive_exists
 from .release_timeline import Timeline
-from .release_transport import remote_disk_free
 from .run_retention import finish_runs
 
 
@@ -32,7 +31,6 @@ HEAVY = {
 }
 STUDIO_EXT_MIN_FREE = 60 * 1024**3
 INTERNAL_MIN_FREE = 25 * 1024**3
-REMOTE_MIN_FREE = 25 * 1024**3
 
 
 def selected_graph(until, *, studio_first=False):
@@ -56,8 +54,6 @@ def execute(stage, config, log):
                 raise RuntimeError(
                     f"disk guard: {path} has under {floor >> 30} GiB free"
                 )
-        if remote_disk_free(log, config.linux_host) < REMOTE_MIN_FREE:
-            raise RuntimeError("disk guard: ax42 / has under 25 GiB free")
     if stage.name in HEAVY and stage.host == "studio" and stage.name not in INSTALLS:
         with heavy_owner(config.run, stage.name, log) as admitted:
             code = run_action(stage.name, config, log) if admitted else 10

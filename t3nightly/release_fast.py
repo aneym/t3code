@@ -40,15 +40,44 @@ def remote_engine():
     return f"/home/jobs/t3nightly/engine-{commit[:12]}/t3nightly"
 
 
+def remote_engine_failures(args):
+    failures = {}
+    for host, address in LINUX_TARGETS.items():
+        try:
+            require_remote_engine(args.run / "candidate.json", args.remote_tools, address)
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+            failures[host] = f"{type(error).__name__}: {error}"
+            print(f"release: warning: {host} engine verification failed: {error}", file=sys.stderr)
+    return failures
+
+
+def finish_fast(args):
+    if not args.dry_run and not getattr(args, "engine_verified", False):
+        return
+    if not args.dry_run:
+        try:
+            require_engine(args.run / "candidate.json")
+        except Exception as error:
+            print(f"release: warning: final engine verification failed: {error}", file=sys.stderr)
+        try:
+            remote_engine_failures(args)
+        except Exception as error:
+            print(f"release: warning: final remote engine verification failed: {error}", file=sys.stderr)
+    try:
+        finish_runs(args.run, args.remote_run, args.remote_tools, dry_run=args.dry_run, linux_host=args.linux_host, hosts=LINUX_TARGETS)
+    except Exception as error:
+        print(f"release: warning: run retention failed: {error}", file=sys.stderr)
+
+
 def drive_fast(args):
     args.engine_verified = False
     graph = fast_graph(args.linux_host)
     manifest = args.run / "candidate.json"
     engine_checked = False
+    unavailable = {}
     if not args.dry_run and manifest.is_file():
         require_engine(manifest)
-        for address in LINUX_TARGETS.values():
-            require_remote_engine(manifest, args.remote_tools, address)
+        unavailable = remote_engine_failures(args)
         engine_checked = True
         args.engine_verified = True
     args.run.mkdir(parents=True, exist_ok=True)
@@ -75,16 +104,30 @@ def drive_fast(args):
     advisory = {node.id for node in graph if not node.gating}
     done, failed, running = set(), set(existing.get("failed", [])) & advisory, {}
     pending = {node.id: node for node in graph if not (args.rehearse_only and (node.id in LIVE_NODES or stage_action(node.id) == "install"))}
-    recorded = set(existing.get("recorded", []))
+    recorded = set(existing.get("recorded", [])) - set(existing.get("failed", []))
     completed_at = existing.get("releaseSeconds")
     if not args.dry_run:
         for key, node in list(pending.items()):
-            row = jobs.request(node, "status")
+            if node.host in unavailable:
+                continue
+            try:
+                row = jobs.request(node, "status")
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                if node.host == "studio":
+                    raise
+                row = {"outcome": "status-unavailable", "error": f"{type(error).__name__}: {error}"}
             if row.get("outcome") == "status-unavailable":
-                raise RuntimeError(f"cannot recover durable job status for {key}; retry without changing job inputs")
+                unavailable[node.host] = row.get("error") or f"cannot recover durable job status for {key}; retry without changing job inputs"
+                continue
             success = row.get("outcome") in SUCCESS_OUTCOMES if stage_action(key) == "install" else row.get("outcome") == "passed"
             if success:
-                row = jobs.request(node, "submit", stage_spec(node, args))
+                try:
+                    row = jobs.request(node, "submit", stage_spec(node, args))
+                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                    if node.host == "studio":
+                        raise
+                    unavailable[node.host] = f"{type(error).__name__}: {error}"
+                    continue
                 done.add(key)
                 failed.discard(key)
                 del pending[key]
@@ -96,16 +139,16 @@ def drive_fast(args):
     while pending or running:
         if not args.dry_run and not engine_checked and "A" in done and manifest.is_file():
             require_engine(manifest)
-            for address in LINUX_TARGETS.values():
-                require_remote_engine(manifest, args.remote_tools, address)
+            unavailable.update(remote_engine_failures(args))
             engine_checked = True
             args.engine_verified = True
         for key, node in list(pending.items()):
-            if set(node.needs) & failed:
+            if node.host in unavailable or set(node.needs) & failed:
                 failed.add(key)
                 del pending[key]
                 now = time.monotonic()
-                timeline.record_fast(node, {"outcome": "failed", "reason": "dependency-failed",
+                timeline.record_fast(node, {"outcome": "failed", "reason": "host-unavailable" if node.host in unavailable else "dependency-failed",
+                                           "error": unavailable.get(node.host),
                                            "evidence": [], "resourceWaitSeconds": 0,
                                            "monotonicStart": now, "monotonicEnd": now,
                                            "seconds": 0, "start": utc_now(), "end": utc_now()})
@@ -113,9 +156,10 @@ def drive_fast(args):
                 spec = stage_spec(node, args)
                 del pending[key]
                 try:
+                    jobs.stage_inputs(node)
                     row = jobs.request(node, "submit", spec)
                 except (OSError, RuntimeError, ValueError, subprocess.SubprocessError, json.JSONDecodeError) as error:
-                    if node.gating:
+                    if node.gating and node.host == "studio":
                         raise
                     failed.add(key)
                     now = time.monotonic()
@@ -129,7 +173,7 @@ def drive_fast(args):
             if row["outcome"] not in TERMINAL:
                 try:
                     latest = jobs.request(node, "status")
-                except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
                     latest = {"outcome": "status-unavailable"}
                 if latest.get("outcome") != "status-unavailable":
                     row = latest
@@ -201,16 +245,9 @@ def main(argv):
         try:
             return drive_fast(args)
         finally:
-            if args.dry_run or getattr(args, "engine_verified", False):
-                if not args.dry_run:
-                    require_engine(args.run / "candidate.json")
-                    for address in LINUX_TARGETS.values():
-                        require_remote_engine(args.run / "candidate.json", args.remote_tools, address)
-                finish_runs(args.run, args.remote_run, args.remote_tools, dry_run=args.dry_run, linux_host=args.linux_host, hosts=LINUX_TARGETS)
+            finish_fast(args)
     if (args.run / "candidate.json").is_file():
         require_engine(args.run / "candidate.json")
-        for address in LINUX_TARGETS.values():
-            require_remote_engine(args.run / "candidate.json", args.remote_tools, address)
     coordinator = args.run / "coordinator"
     previous = status(coordinator)
     if previous.get("outcome") in {"failed", "timed-out", "environment-blocked"}:

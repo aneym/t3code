@@ -1,7 +1,6 @@
 import hashlib
 import json
 import os
-import shlex
 import shutil
 import socket
 import sqlite3
@@ -169,13 +168,6 @@ def fast_assemble(config, log):
         (config.run / "assembly.json").write_text(json.dumps({"base": base, "head": head, "topics": config.topic.split(","), "topicShas": ready["topicShas"]}, indent=2) + "\n")
         bundle = config.run / "candidate.bundle"
         require(["git", "-C", str(tree), "bundle", "create", str(bundle), "HEAD", f"^v{config.nightly}"], log)
-        names = ("candidate.json", "assembly.json", "candidate.bundle", "readiness.json")
-        staged = {}
-        for host, address in LINUX_TARGETS.items():
-            remote = config.on(host).run
-            staged[host] = command(["rsync", "-a", "--partial", f"--rsync-path=mkdir -p {shlex.quote(str(remote))}/receipts && rsync", "--",
-                                    *(str(config.run / name) for name in names), f"{address}:{remote}/"], log)
-        (config.run / "host-staging.json").write_text(json.dumps(staged) + "\n")
         return 0
     finally:
         ownership("release", tree, log)

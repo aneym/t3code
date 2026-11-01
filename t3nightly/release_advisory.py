@@ -17,7 +17,7 @@ def fast_advisory(config, log):
         target = out / (job["id"].replace("/", "-") + ".json")
         with (out / (target.stem + ".log")).open("a") as handle:
             return command([sys.executable, str(config.tools / "suite-worker"), "--plan", str(out / "plan.json"), "--job", job["id"],
-                            "--host", job["hosts"][0], "--linux-host", config.linux_host, "--out", str(target)], handle)
+                            "--host", job["hosts"][0], "--out", str(target)], handle)
 
     with ThreadPoolExecutor(max_workers=config.advisory_workers) as pool:
         codes = list(pool.map(one, jobs))

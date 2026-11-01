@@ -30,7 +30,7 @@ def execute(host, words, log, timeout, cwd=None, env=None, *, linux_host="ax42")
     wait = timeout
     if host != "studio":
         remote = ["timeout", "--signal=TERM", f"{max(1, int(timeout))}s", *words]
-        command = ["ssh", "-o", "BatchMode=yes", linux_host if host == "ax42" else host, shlex.join([str(word) for word in remote])]
+        command = ["ssh", "-o", "BatchMode=yes", host, shlex.join([str(word) for word in remote])]
         wait += 5
     process = subprocess.Popen(
         command, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT,

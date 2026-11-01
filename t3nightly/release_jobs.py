@@ -10,7 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from .release_targets import LINUX_TARGETS
+from .release_targets import LINUX_TARGETS, stage_action
 
 
 TERMINAL = {"passed", "failed", "environment-blocked", "timed-out", "installed", "current", "rolled-back"}
@@ -112,6 +112,15 @@ class HostJobs:
     def directory(self, node):
         root = str(self.local_run) if node.host == "studio" else self.remote_run
         return f"{root}/jobs/{node.id}"
+
+    def stage_inputs(self, node):
+        if self.dry_run or node.host == "studio" or (node.id != "L" and stage_action(node.id) != "prepare"):
+            return
+        names = ("candidate.json", "assembly.json", "candidate.bundle", "readiness.json")
+        subprocess.run(["rsync", "-a", "--partial", "--timeout=20", "-e", "ssh -oBatchMode=yes -oConnectTimeout=5",
+                        f"--rsync-path=mkdir -p {shlex.quote(self.remote_run)}/receipts && rsync", "--",
+                        *(str(self.local_run / name) for name in names), f"{LINUX_TARGETS[node.host]}:{self.remote_run}/"],
+                       capture_output=True, text=True, timeout=180, check=True)
 
     def request(self, node, operation, spec=None):
         directory = self.directory(node)

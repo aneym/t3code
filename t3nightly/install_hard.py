@@ -16,7 +16,7 @@ from .install_chat import candidate_writes, identities, prove, retained
 from .install_process import serving_process
 from .install_strays import managed_strays, reap_strays
 from .install_provenance import eligibility, file_digest, migration_history, validate
-from .install_runtime import pin_runtime, restore_runtime, retain_runtime, stage_runtime
+from .install_runtime import restore_runtime, retain_runtime, stage_runtime
 from .release_eligibility import RESTORE_CLASS, binary_rollback, restore_refusal
 from .release_receipts import INSTALL_SCHEMA, write
 from .release_signatures import cli_binary
