@@ -1,5 +1,6 @@
 BINARY_CLASSES = ("compatible", "fork-additive", "rollback-proven")
 RESTORE_CLASS = "restore-rollback"
+FORCED_ROLLBACK = "forced rehearsal rollback"
 RESTORE_HOSTS = ("ax42", "owl")
 RESTORE_WAIVABLE = {"migrations-changed", "persisted-state-changed", "upstream-rebase"}
 

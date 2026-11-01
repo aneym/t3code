@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .release_manifest import identity_digest, load
+from .release_eligibility import FORCED_ROLLBACK
 from .release_transport import command
 
 
@@ -21,15 +22,17 @@ def legacy_launcher(installer):
 
 def maintenance_rolled_back(installer):
     steps = installer.get("steps", [])
-    names = [step.get("step") for step in steps]
     hot_swap = installer.get("hotSwap", {})
     previous = installer.get("previous")
-    if hot_swap.get("method") != "maintenance" or "hard-failure" not in names or not previous:
+    if hot_swap.get("method") != "maintenance" or not previous or hot_swap.get("rollbackUpdate", {}).get("targetVersion") != previous:
         return False
-    after = names[names.index("hard-failure"):]
-    serving = [step for step in steps if step.get("step") == "hard-serving"]
-    return ("launcher-request-update" in after and hot_swap.get("rollbackUpdate", {}).get("targetVersion") == previous
-            and bool(serving) and serving[-1].get("version") == previous)
+    forced = next((index for index, step in enumerate(steps) if step.get("step") == "hard-failure" and step.get("error") == FORCED_ROLLBACK), None)
+    if forced is None:
+        return False
+    update = next((index for index in range(forced + 1, len(steps)) if steps[index].get("step") == "launcher-request-update" and steps[index].get("target") == previous), None)
+    if update is None:
+        return False
+    return any(step.get("step") == "hard-serving" and step.get("version") == previous for step in steps[update + 1:])
 
 
 def hard_rolled_back(installer):

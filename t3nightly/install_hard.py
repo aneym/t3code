@@ -17,7 +17,7 @@ from .install_process import serving_process
 from .install_strays import managed_strays, reap_strays
 from .install_provenance import eligibility, file_digest, migration_history, validate
 from .install_runtime import restore_runtime, retain_runtime, stage_runtime
-from .release_eligibility import RESTORE_CLASS, binary_rollback, restore_refusal
+from .release_eligibility import FORCED_ROLLBACK, RESTORE_CLASS, binary_rollback, restore_refusal
 from .release_receipts import INSTALL_SCHEMA, write
 from .release_signatures import cli_binary
 
@@ -227,7 +227,7 @@ def install(run):
             post = prove(run, args.version, baseline)
             if args.force_rollback:
                 candidate_writes(run, args.version, post["proof"])
-                raise ValueError("forced rehearsal rollback")
+                raise ValueError(FORCED_ROLLBACK)
             if not args.rehearsal:
                 run.link_cli(args.version)
             outcome = "installed"
