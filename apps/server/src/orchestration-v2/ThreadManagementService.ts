@@ -1,4 +1,5 @@
 import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
+import { awaitServerFreeze } from "../serverHandoffBarrier.ts";
 import { makeSettlementCommands } from "./ThreadSettlementCommands.ts";
 import type {
   OrchestrationV2SearchThreadInput,
@@ -845,12 +846,10 @@ const make = Effect.gen(function* () {
       Stream.filter((current) => current.settled),
       Stream.runHead,
       Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
+      Effect.raceFirst(awaitServerFreeze().pipe(Effect.as(Option.none()))),
     );
     const waited = Option.flatten(yield* wait);
     if (Option.isSome(waited)) return settledResult(waited.value);
-    // The run may have reached a terminal status while the timeout was
-    // winning the race; the final projection read decides what actually
-    // happened, so only a still-active run counts as timed out.
     return settledResult(yield* evaluate((yield* getProjectThreadRecords(input, ["runs"])).runs));
   });
 
