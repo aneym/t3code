@@ -114,13 +114,12 @@ def host_slot(host, tree, log):
         raise RuntimeError(f"host slot connection ended before acquisition: {host}")
     finally:
         process.stdin.close()
-        for line in process.stdout:
-            log.write(line)
         try:
             process.wait(timeout=30)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+        log.write(process.stdout.read())
 
 
 @contextmanager

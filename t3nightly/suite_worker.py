@@ -32,9 +32,12 @@ def now():
 def execute(host, words, log, timeout, cwd=None, env=None):
     command = words
     wait = timeout
+    pidfile = None
     if host != "studio":
-        remote = ["timeout", "--signal=TERM", f"{max(1, int(timeout))}s", *words]
-        command = ["ssh", "-o", "BatchMode=yes", host, shlex.join([str(word) for word in remote])]
+        pidfile = f"/tmp/t3nightly-advisory-{uuid.uuid4().hex}.pid"
+        inner = shlex.join(["timeout", "--signal=TERM", f"{max(1, int(timeout))}s", *[str(word) for word in words]])
+        script = f"{inner} </dev/null & child=$!; echo $child > {shlex.quote(pidfile)}; wait $child; code=$?; rm -f {shlex.quote(pidfile)}; exit $code"
+        command = ["ssh", "-o", "BatchMode=yes", host, shlex.join(["bash", "-c", script])]
         wait += 5
     process = subprocess.Popen(
         command, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT,
@@ -43,6 +46,13 @@ def execute(host, words, log, timeout, cwd=None, env=None):
     try:
         return process.wait(timeout=max(1, int(wait)))
     except WorkerTerminated:
+        if pidfile:
+            stop = f"test -s {shlex.quote(pidfile)} && kill -TERM \"$(cat {shlex.quote(pidfile)})\"; rm -f {shlex.quote(pidfile)}"
+            try:
+                subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, stop],
+                               stdout=log, stderr=subprocess.STDOUT, timeout=20, check=False)
+            except subprocess.TimeoutExpired:
+                log.write(f"remote stop timed out for {pidfile}\n")
         os.killpg(process.pid, signal.SIGTERM)
         try:
             process.wait(timeout=5)
