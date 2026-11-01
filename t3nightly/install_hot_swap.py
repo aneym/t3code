@@ -1,11 +1,11 @@
 import json
 import math
 import socket
-import tempfile
-import urllib.request
 import sqlite3
 import subprocess
+import tempfile
 import time
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +30,7 @@ def supported(environment, run=None):
 
 
 def measure_candidate(sandbox, manifest):
+    from .headless_env import pin_settings
     from .rehearsal_storage import seed_database
     from .rehearsal_waiter import identity
 
@@ -42,7 +43,7 @@ def measure_candidate(sandbox, manifest):
         (home / "userdata").mkdir()
         (home / "runtime/tmp").mkdir(parents=True)
         seed = seed_database(sandbox.args.seed, home / "userdata/statev2.sqlite")
-        (home / "userdata/settings.json").write_text(json.dumps({"providerInstances": {}}) + "\n")
+        pin_settings(home / "userdata/settings.json", home / "runtime", sandbox.evidence / "security-refusals.log")
         with socket.socket() as endpoint:
             endpoint.bind(("127.0.0.1", 0))
             port = endpoint.getsockname()[1]
