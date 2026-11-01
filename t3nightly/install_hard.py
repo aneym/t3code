@@ -192,7 +192,13 @@ def install(run):
         drain = getattr(run, "drain_before_stop", None)
         run.drain_before_stop = None
         if drain:
-            drain()
+            receipt = drain()
+            reported = receipt.get("drain") or {}
+            if reported.get("drained") is not True:
+                active_run_ids = reported.get("activeRunIds", [])
+                run.report["restartDrain"] = {**run.report.get("restartDrain", {}), "outcome": "timed-out" if reported else "unreported", "stopRefused": True, "activeRunIds": active_run_ids}
+                run.step("hard-stop-refused", active_run_ids=active_run_ids)
+                raise ValueError(f"restart drain did not report drained: true; nothing stopped; active_run_ids={active_run_ids}")
         service(run, "stop")
         stopped = True
         attempts = 0
