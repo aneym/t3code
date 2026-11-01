@@ -175,34 +175,13 @@ def readiness(config, log):
     histories = {"studio": studio_history}
     evidence["studioLiveHistory"] = studio_live
     pressure = {"studioLoad": os.getloadavg()[0], "studioCpus": os.cpu_count()}
-    for host in LINUX_TARGETS:
-        remote = remote_probe(config, log, host)
-        evidence[host] = remote
-        remote_old = remote.get("serving")
-        remote_head = remote.get("head") or serving_head(config, remote_old)
-        if not remote_head and remote_old and remote_old == old:
-            remote_head = studio_head
-        remote_history = source_history(config.repo, remote_head)
-        old_releases[host] = remote_old
-        heads[host] = remote_head
-        histories[host] = remote_history
-        evidence[f"{host}ServingHead"] = remote_head
-        checks[f"{host}-base-assembly"] = bool(remote_old and remote_head and remote_history)
-        checks[f"{host}-live-history"] = bool(remote_history and remote.get("liveHistory") == remote_history)
-        checks[f"{host}-engine"] = remote.get("engine") == engine["digest"]
-        local = host_checks[host] = {
-            "reachable": bool(remote),
-            "seed": bool(remote_history and remote.get("seedHistories", {}).get(remote_history) == remote_history),
-            "old-runtime": bool(remote_old) and remote_old in remote.get("runtimes", []),
-            "not-held": remote.get("held") is False,
-            "disk": remote.get("disk", 0) >= REMOTE_FLOOR,
-            "chat-project": remote.get("chatProject") is True,
-        }
-        for name in (".local/bin/claude", ".vite-plus/bin/vp", ".cargo/bin/cargo", ".config/t3nightly/public-config.env", CHAT_PROJECT):
-            local[name] = remote.get("files", {}).get(name) is True
-        pressure[f"{host}Load"] = remote.get("load")
-        pressure[f"{host}Cpus"] = remote.get("cpus")
+    from .release_host_readiness import probe_host
+
     evidence["pressure"] = pressure
+    value = {"checks": checks, "hostChecks": host_checks, "evidence": evidence, "engine": engine,
+             "oldReleases": old_releases, "servingHeads": heads, "servingHistories": histories, "servingHead": studio_head}
+    for host in LINUX_TARGETS:
+        probe_host(config, log, host, value)
     failed = sorted(name for name, ok in checks.items() if not ok)
     value = {"ok": not failed, "failed": failed, "checks": checks, "hostChecks": host_checks, "evidence": evidence, "engine": engine,
              "topicShas": topics, "baseHead": base_head, "servingHead": studio_head, "baseHistory": history,

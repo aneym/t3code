@@ -212,6 +212,8 @@ def main(argv):
     parser.add_argument("--fast", action="store_true", required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--topic", required=True)
+    parser.add_argument("--refresh-readiness", choices=tuple(LINUX_TARGETS))
+    parser.add_argument("--refresh-reason", default="")
     parser.add_argument("--plan", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--rehearse-only", action="store_true")
@@ -235,6 +237,14 @@ def main(argv):
     args.run = (args.run or Path.home() / ".t3nightly/runs" / args.version / "fast").resolve()
     args.remote_run = args.remote_run or f"/home/jobs/t3nightly/runs/{args.version}/fast"
     args.remote_tools = args.remote_tools or remote_engine()
+    if args.refresh_readiness:
+        if not args.refresh_reason.strip():
+            parser.error("--refresh-readiness requires --refresh-reason")
+        if args.plan or args.dry_run or args.coordinator:
+            parser.error("readiness refresh cannot schedule or simulate a release")
+        from .release_readiness_refresh import refresh
+
+        return refresh(args, sys.stdout)
     if args.plan:
         path, seconds = critical_path(graph)
         print(json.dumps({"deadline": FAST_DEADLINE, "criticalPath": path, "criticalSeconds": seconds,
