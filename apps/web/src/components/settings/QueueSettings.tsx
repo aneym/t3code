@@ -11,6 +11,13 @@ export function QueueSettings() {
     <>
       {[
         {
+          key: "settleIdleChildren",
+          searchId: "settle-idle-children",
+          label: "Settle idle child threads",
+          description:
+            "Settle idle child threads when their parent is settled. Keep running, waiting, pinned, snoozed, and explicitly active children open.",
+        },
+        {
           key: "batchQueuedMessages",
           searchId: "batch-queued-messages",
           label: "Send queued messages together",
@@ -25,7 +32,7 @@ export function QueueSettings() {
             "Show Send all to release and send up to 20 compatible queued messages together, into the current turn or as one new turn.",
         },
       ].map(({ key, searchId, label, description }) => {
-        const settingKey = key as "batchQueuedMessages" | "queueSendAll";
+        const settingKey = key as "batchQueuedMessages" | "queueSendAll" | "settleIdleChildren";
         return (
           <SettingsRow
             key={key}

@@ -1,4 +1,4 @@
-import { QueuedInputDeliverySetting } from "./components/QueuedInputDeliverySetting";
+import { ForkThreadSettings } from "./components/ForkThreadSettings";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
@@ -59,7 +59,7 @@ export function SettingsFollowUpRouteScreen() {
           />
         ))}
       </SettingsSection>
-      <QueuedInputDeliverySetting />
+      <ForkThreadSettings />
       <Text className="px-2 text-sm text-foreground-muted">
         Long-press the send button to use the other option for a single message. With a hardware
         keyboard, hold Command while sending.

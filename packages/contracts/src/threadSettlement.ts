@@ -19,6 +19,7 @@ export const ThreadAutoSettleCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   snapshotAt: Schema.DateTimeUtc,
+  settledParentThreadId: Schema.optional(ThreadId),
   settledAt: Schema.optional(Schema.DateTimeUtc),
 });
 export const ThreadLifecycleFields = {
