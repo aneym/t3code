@@ -19,6 +19,8 @@ LIVE_NODES = {"IM", "IL", "S", "F", "LM", "LR", "H", "AS", "W", "FW"}
 
 
 def stage_spec(node, args):
+    if node.defer_reason:
+        return {"outcome": "deferred", "reason": node.defer_reason, "budget": 0, "resources": node.resources}
     root = str(args.run) if node.host == "studio" else args.remote_run
     tools = str(Path(__file__).resolve().parent) if node.host == "studio" else args.remote_tools
     python = sys.executable if node.host == "studio" else "python3"
@@ -71,7 +73,7 @@ def finish_fast(args):
 
 def drive_fast(args):
     args.engine_verified = False
-    graph = fast_graph(args.linux_host)
+    graph = fast_graph(args.linux_host, args.defer_host, args.defer_reason)
     manifest = args.run / "candidate.json"
     engine_checked = False
     unavailable = {}
@@ -86,6 +88,7 @@ def drive_fast(args):
     inputs = {"version": args.version, "topic": args.topic,
               "remoteRun": args.remote_run, "remoteTools": args.remote_tools, "dryRun": args.dry_run,
               "rehearseOnly": args.rehearse_only, "overrideReason": args.override_reason,
+              **({"deferredHosts": {args.defer_host: args.defer_reason}} if args.defer_host else {}),
               **({"advisoryWorkers": args.advisory_workers} if args.advisory_workers != 4 else {}),
               **({"linuxHost": args.linux_host} if args.linux_host != "ax42" else {})}
     binding = args.run / "fast-inputs.json"
@@ -109,7 +112,7 @@ def drive_fast(args):
     completed_at = existing.get("releaseSeconds")
     if not args.dry_run:
         for key, node in list(pending.items()):
-            if node.host in unavailable:
+            if node.defer_reason or node.host in unavailable:
                 continue
             try:
                 row = jobs.request(node, "status")
@@ -155,6 +158,21 @@ def drive_fast(args):
                                            "monotonicStart": now, "monotonicEnd": now,
                                            "seconds": 0, "start": utc_now(), "end": utc_now()})
             elif set(node.needs) <= done:
+                if node.defer_reason:
+                    now = time.monotonic()
+                    row = {"outcome": "deferred", "reason": node.defer_reason, "seconds": 0,
+                           "monotonicStart": now, "monotonicEnd": now, "start": utc_now(), "end": utc_now()}
+                    outcome = args.run / f"install-{node.host}/outcome.json"
+                    outcome.parent.mkdir(parents=True, exist_ok=True)
+                    write_status(outcome, row)
+                    if key not in recorded:
+                        timeline.record_fast(node, row)
+                        recorded.add(key)
+                    done.add(key)
+                    failed.discard(key)
+                    blocked.discard(key)
+                    del pending[key]
+                    continue
                 spec = stage_spec(node, args)
                 del pending[key]
                 blocked.discard(key)
@@ -205,7 +223,8 @@ def drive_fast(args):
             time.sleep(0.2)
     gating_failures = failed & {node.id for node in graph if node.gating}
     print(json.dumps({"done": sorted(done), "failed": sorted(failed), "releaseSeconds": completed_at,
-                      "dryRun": args.dry_run, "rehearseOnly": args.rehearse_only, "gatingFailures": sorted(gating_failures)}))
+                      "dryRun": args.dry_run, "rehearseOnly": args.rehearse_only, "gatingFailures": sorted(gating_failures),
+                      "deferredHosts": inputs.get("deferredHosts", {})}))
     if args.rehearse_only:
         return 1 if gating_failures else 0
     return 1 if gating_failures or completed_at is None or completed_at >= 900 else 0
@@ -227,9 +246,14 @@ def main(argv):
     parser.add_argument("--remote-run")
     parser.add_argument("--advisory-workers", type=int, default=4, help="maximum parallel advisory suite workers (default: 4)")
     parser.add_argument("--remote-tools")
-    parser.add_argument("--linux-host", default="ax42", choices=(*LINUX_TARGETS, "pc-wsl"), help="shared Linux artifact builder; all Linux targets still install (default: ax42)")
+    parser.add_argument("--linux-host", default="ax42", choices=(*LINUX_TARGETS, "pc-wsl"), help="shared Linux artifact builder (default: ax42)")
+    parser.add_argument("--defer-host", choices=tuple(LINUX_TARGETS), help="skip one Linux install; keep its sandbox proofs gating")
+    parser.add_argument("--defer-reason", default="", help="operator decision authorizing the deferral")
     parser.add_argument("--base", default="", help="base ref to build on instead of the serving release head; must contain it")
     args = parser.parse_args(argv)
+    args.defer_reason = args.defer_reason.strip()
+    if bool(args.defer_host) != bool(args.defer_reason):
+        parser.error("--defer-host and a nonempty --defer-reason are required together")
     if args.advisory_workers < 1:
         parser.error("--advisory-workers must be positive")
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", args.linux_host):
@@ -237,7 +261,7 @@ def main(argv):
     if not re.fullmatch(r"\d+\.\d+\.\d+-nightly\.\d+\.\d+\.aneym\.\d+", args.version):
         parser.error("version must be an upstream nightly plus .aneym.N")
     args.linux_host = LINUX_TARGETS[linux_target(args.linux_host)]
-    graph = fast_graph(args.linux_host)
+    graph = fast_graph(args.linux_host, args.defer_host, args.defer_reason)
     args.run = (args.run or Path.home() / ".t3nightly/runs" / args.version / "fast").resolve()
     args.remote_run = args.remote_run or f"/home/jobs/t3nightly/runs/{args.version}/fast"
     args.remote_tools = args.remote_tools or remote_engine()
@@ -272,7 +296,7 @@ def main(argv):
     command = [sys.executable, str(Path(__file__).resolve().with_name("release")),
                "--fast", "--version", args.version, "--topic", args.topic,
                "--run", str(args.run), "--remote-run", args.remote_run, "--advisory-workers", str(args.advisory_workers),
-               "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, "--coordinator", *(["--rehearse-only"] if args.rehearse_only else [])]
+               "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, "--coordinator", *(["--defer-host", args.defer_host, "--defer-reason", args.defer_reason] if args.defer_host else []), *(["--rehearse-only"] if args.rehearse_only else [])]
     spec = {"label": f"com.agent-rails.t3fast-{args.version}-coordinator-{coordinator.name}", "host": "studio",
             "command": command, "budget": sum(node.budget for node in graph) * HANG_GUARD + 60,
             "resources": ["fast-release-run"], "lockRoot": str(Path.home() / ".t3nightly/resource-locks")}

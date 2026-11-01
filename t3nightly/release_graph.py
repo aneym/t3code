@@ -44,7 +44,7 @@ def studio_first_graph():
     return tuple(graph)
 
 
-INSTALL_OUTCOMES = ("installed", "current", "rolled-back", "failed")
+INSTALL_OUTCOMES = ("installed", "current", "rolled-back", "failed", "deferred")
 SUCCESS_OUTCOMES = ("installed", "current")
 STAGE_OUTCOMES = ("passed", "failed", "environment-blocked", "timed-out")
 
@@ -59,9 +59,11 @@ class FastNode:
     resources: tuple[str, ...]
     gating: bool = True
     outcomes: tuple[str, ...] = STAGE_OUTCOMES
+    defer_reason: str = ""
 
 
-def linux_nodes(host, builder):
+def linux_nodes(host, builder, defer_host=None, defer_reason=""):
+    reason = defer_reason if host == defer_host else ""
     suffix = TARGET_SUFFIXES[host]
     payload = "L" if host == builder else f"T{suffix}"
     transfer = () if host == builder else (FastNode(payload, f"stage-linux-{host}", "studio", ("SL",), 900, (f"payload:{host}",)),)
@@ -70,10 +72,14 @@ def linux_nodes(host, builder):
             FastNode(f"R{suffix}", f"rehearse-{host}", host, (payload, f"P{suffix}"), 150, (f"sandbox:{host}",)),
             FastNode(f"X{suffix}", f"rollback-proof-{host}", host, (payload, f"P{suffix}", f"R{suffix}"), 150, (f"rollback-sandbox:{host}",)),
             FastNode(f"E{suffix}", f"e2e-{host}", host, (payload, f"P{suffix}"), 360, (f"e2e:{host}",)),
-            FastNode(f"I{suffix}", f"install-{host}", host, (f"R{suffix}", f"E{suffix}", f"X{suffix}"), 1200, (f"live-install:{host}",), outcomes=INSTALL_OUTCOMES))
+            FastNode(f"I{suffix}", f"install-{host}", host, (f"R{suffix}", f"E{suffix}", f"X{suffix}"), 0 if reason else 1200, () if reason else (f"live-install:{host}",), outcomes=INSTALL_OUTCOMES, defer_reason=reason))
 
 
-def fast_graph(linux_host="ax42"):
+def fast_graph(linux_host="ax42", defer_host=None, defer_reason=""):
+    if bool(defer_host) != bool(defer_reason.strip()):
+        raise ValueError("deferral requires a Linux host and a nonempty reason")
+    if defer_host is not None and defer_host not in LINUX_TARGETS:
+        raise ValueError("only Linux targets can be deferred")
     builder = linux_target(linux_host)
     installs = tuple(f"I{suffix}" for suffix in TARGET_SUFFIXES.values())
     return (
@@ -88,7 +94,7 @@ def fast_graph(linux_host="ax42"):
         FastNode("SM", "prestage-mac", "studio", ("M",), 900, ("prestage:mac",)),
         FastNode("SL", "prestage-linux", "studio", ("L",), 900, ("prestage:linux",)),
         FastNode("SD", "prestage-desktop", "studio", ("D",), 900, ("prestage:desktop",)),
-        *(node for host in LINUX_TARGETS for node in linux_nodes(host, builder)),
+        *(node for host in LINUX_TARGETS for node in linux_nodes(host, builder, defer_host, defer_reason)),
         FastNode("EM", "e2e-studio", "studio", ("M",), 300, ("e2e:studio",)),
         FastNode("IM", "install-studio", "studio", ("RM", "EM", "XM"), 180, ("live-install:studio",), outcomes=INSTALL_OUTCOMES),
         FastNode("S", "desktop-swap", "studio", ("D", "IM"), 5, ("desktop-app:studio",)),

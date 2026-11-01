@@ -217,11 +217,25 @@ def release_identity(manifest):
     return {**rest, "source": source, "topics": topics}
 
 
+def deferred_hosts(run):
+    binding = Path(run) / "fast-inputs.json"
+    hosts = json.loads(binding.read_text()).get("deferredHosts", {}) if binding.is_file() else {}
+    if not isinstance(hosts, dict) or any(host not in LINUX_TARGETS or not isinstance(reason, str) or not reason.strip() for host, reason in hosts.items()):
+        raise ValueError("invalid Linux host deferral in fast run inputs")
+    return hosts
+
+
 def fast_evidence(run, version):
     run = Path(run)
     rows = {}
     release = load(run / "candidate.json")
+    deferred = deferred_hosts(run)
+    if deferred.keys() - release["targets"].keys():
+        raise ValueError("deferred host is not a candidate target")
     for host in release["targets"]:
+        if host in deferred:
+            rows[host] = {"outcome": "deferred", "reason": deferred[host]}
+            continue
         build = run / ("mac" if host == "studio" else host)
         manifest, artifact, rehearsal, receipts = host_evidence(run, version, host, build)
         install = fast_install(receipts / f"install-{host}.json", manifest, artifact, rehearsal, host)
