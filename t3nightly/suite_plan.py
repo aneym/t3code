@@ -2,7 +2,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import subprocess
 from pathlib import Path
 
@@ -33,15 +32,6 @@ KINDS = {
     "quality": "release-quality",
 }
 SETUP = re.compile(r"^(ensure|install|resolve|start|finish)\b", re.IGNORECASE)
-HOST_PROVISIONING = re.compile(r"(?<![A-Za-z0-9_-])(sudo|apt|apt-get|install-deps)(?![A-Za-z0-9_-])")
-
-
-def host_provisioning(command):
-    try:
-        normalized = " ".join(shlex.split(str(command)))
-    except ValueError:
-        return True
-    return bool(HOST_PROVISIONING.search(normalized))
 
 
 def load_workflow(path):
@@ -118,7 +108,6 @@ def planned_steps(job, shard, shard_count):
             "condition": expressions(step.get("if"), shard, shard_count),
             "environment": expressions(step.get("env", {}), shard, shard_count),
             "setup": bool(SETUP.search(name)),
-            "hostProvisioning": host_provisioning(command),
             "tools": tools(command),
         })
     if not rows:
