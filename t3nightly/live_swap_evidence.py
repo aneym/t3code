@@ -51,9 +51,9 @@ def receipt(run, job, probe, turn, status, cursor, error=None):
     cleanup = job.get("unitCleanup", {})
     handoff = []
     for event in probe.get("handoffEvents", []):
-        replies = [row for row in probe.get("handoffReplies", []) if row.get("sessionId") == event.get("sessionId") and row.get("sequence") == event.get("sequence") and row.get("confirmation") is False]
+        replies = [row for row in probe.get("handoffReplies", []) if row.get("clientId") == event.get("clientId") and row.get("sequence") == event.get("sequence") and row.get("confirmation") is False]
         for reply in replies:
-            matches = lambda row: row.get("sessionId") == reply.get("sessionId") and row.get("sequence") == reply.get("sequence") and row.get("clientId") == reply.get("clientId")
+            matches = lambda row: row.get("sequence") == reply.get("sequence") and row.get("clientId") == reply.get("clientId")
             acknowledgments = [row for row in probe.get("handoffSettlements", []) if matches(row) and row.get("outcome") == "Success"]
             confirmed = any(matches(row) and row.get("confirmation") is True for row in probe.get("handoffReplies", []))
             if confirmed and any(row.get("confirmation") is False for row in acknowledgments) and any(row.get("confirmation") is True for row in acknowledgments):

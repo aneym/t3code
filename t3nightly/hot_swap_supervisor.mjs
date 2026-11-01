@@ -57,10 +57,10 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
           if (method !== "subscribeServerLifecycle") return result.pipe(Effect.tap(() => Effect.sync(() => {
             if (input?.handoffSequence !== undefined) { data.handoffReplies.push({ atMs: elapsed(), sessionId: identity.id, clientId: input.handoffClientId, sequence: input.handoffSequence, confirmation: input.handoffReplyReceived === true }); save(); }
           })), Effect.onExit((exit) => Effect.sync(() => {
-            if (input?.handoffSequence !== undefined) { data.handoffSettlements.push({ atMs: elapsed(), sessionId: identity.id, clientId: input.handoffClientId, sequence: input.handoffSequence, outcome: exit._tag }); save(); }
+            if (input?.handoffSequence !== undefined) { data.handoffSettlements.push({ atMs: elapsed(), sessionId: identity.id, clientId: input.handoffClientId, sequence: input.handoffSequence, confirmation: input.handoffReplyReceived === true, outcome: exit._tag }); save(); }
           })));
           return result.pipe(Stream.tap((event) => Effect.sync(() => {
-            if (event.type === "handoff") { data.handoffEvents.push({ atMs: elapsed(), sessionId: identity.id, sequence: event.sequence, reconnectWithinMs: event.payload.reconnectWithinMs }); save(); }
+            if (event.type === "handoff") { data.handoffEvents.push({ atMs: elapsed(), sessionId: identity.id, clientId: input?.handoffClientId, sequence: event.sequence, reconnectWithinMs: event.payload.reconnectWithinMs }); save(); }
           })));
         };
       } });

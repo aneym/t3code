@@ -25,7 +25,7 @@ def restart_session(run, previous):
     session = None
     directory = None
     try:
-        with tempfile.TemporaryDirectory(prefix=".restart-rpc-", dir=run.state) as raw:
+        with tempfile.TemporaryDirectory(prefix=".restart-rpc-", dir=run.state, ignore_cleanup_errors=not getattr(run.args, "strict_auth_cleanup", False)) as raw:
             directory = Path(raw)
             bearer = directory / "bearer"
             revoker = directory / "t3"

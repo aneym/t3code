@@ -1,4 +1,4 @@
-import { existsSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, renameSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import nodeHttp from "node:http";
 
@@ -10,10 +10,29 @@ export async function monitor(context) {
   let lastOk = started;
   data.httpProbeIntervalMs = interval;
   const elapsed = () => Math.round(performance.now() - started);
+  const streamed = opts["stream-http"] === "true";
+  if (streamed) {
+    data.httpSampleLog = `${opts.output}.http.jsonl`;
+    data.httpObservationWindow = 128;
+  }
+  const sample = (kind, row) => {
+    if (streamed) appendFileSync(data.httpSampleLog, JSON.stringify({ kind, ...row }) + "\n");
+    const rows = kind === "response" ? data.httpObservations : (data.httpErrors ??= []);
+    rows.push(row);
+    if (streamed && rows.length > 128) rows.shift();
+  };
   let lastSaved = -Infinity;
+  let lastSnapshot = -Infinity;
   const save = (force = false) => {
     if (!force && performance.now() - lastSaved < Number(opts["save-interval-ms"] ?? 0)) return;
     lastSaved = performance.now();
+    if (streamed) {
+      const status = { servedVersions: data.servedVersions, latestHttpObservation: data.httpObservations.at(-1), subscriptions: data.subscriptions.length, ready: data.ready, elapsedMs: elapsed() };
+      writeFileSync(`${opts.output}.status.next`, JSON.stringify(status));
+      renameSync(`${opts.output}.status.next`, `${opts.output}.status`);
+      if (!force && performance.now() - lastSnapshot < 5000) return;
+      lastSnapshot = performance.now();
+    }
     writeFileSync(`${opts.output}.next`, JSON.stringify({ ...data, elapsedMs: elapsed() }));
     renameSync(`${opts.output}.next`, opts.output);
   };
@@ -34,7 +53,7 @@ export async function monitor(context) {
           request.on("timeout", () => request.destroy(new Error("fresh HTTP deadline")));
           request.on("error", reject);
         });
-        data.httpObservations.push({ at: new Date().toISOString(), atMs: elapsed(), version: environment.serverVersion, startedAtMs: Math.round(requestStarted - started), latencyMs: Math.round(performance.now() - requestStarted) });
+        sample("response", { at: new Date().toISOString(), atMs: elapsed(), version: environment.serverVersion, startedAtMs: Math.round(requestStarted - started), latencyMs: Math.round(performance.now() - requestStarted) });
         const now = performance.now();
         const gap = Math.round(now - lastOk);
         data.maxHttpGapMs = Math.max(data.maxHttpGapMs, gap);
@@ -42,8 +61,7 @@ export async function monitor(context) {
         lastOk = now;
         if (data.servedVersions.at(-1)?.version !== environment.serverVersion) data.servedVersions.push({ version: environment.serverVersion, atMs: elapsed() });
       } catch (error) {
-        data.httpErrors ??= [];
-        data.httpErrors.push({ at: new Date().toISOString(), atMs: elapsed(), code: error?.code ?? error?.cause?.code ?? "HTTP_FAILED", latencyMs: Math.round(performance.now() - requestStarted) });
+        sample("error", { at: new Date().toISOString(), atMs: elapsed(), code: error?.code ?? error?.cause?.code ?? "HTTP_FAILED", latencyMs: Math.round(performance.now() - requestStarted) });
         data.httpFailures++;
         if (error?.code === "ECONNREFUSED" || error?.cause?.code === "ECONNREFUSED") data.refusedConnections++;
       }

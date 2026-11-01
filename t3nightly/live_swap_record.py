@@ -79,10 +79,10 @@ def main():
         parser.error("detached recorder requires launchd or systemd-user")
     from .live_swap_cleanup import start_watcher
 
-    start_watcher(run, engine.parent)
     result = subprocess.run(invocation, capture_output=True, timeout=30)
     if result.returncode:
         raise ValueError("detached submission failed; inspect recorded job, do not replay blindly")
+    start_watcher(run, engine.parent)
     print(json.dumps({"label": label, "run": str(run), "start": start, "until": until, "hardDeadline": job["hardDeadline"], "detached": True}))
     return 0
 
