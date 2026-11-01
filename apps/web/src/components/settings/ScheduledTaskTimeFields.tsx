@@ -1,7 +1,4 @@
-import {
-  localOnceInput,
-  onceScheduleFromInput,
-} from "@t3tools/client-runtime/scheduled-task-once";
+import { localOnceInput, onceScheduleFromInput } from "@t3tools/client-runtime/scheduled-task-once";
 import type { Dispatch, SetStateAction } from "react";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";

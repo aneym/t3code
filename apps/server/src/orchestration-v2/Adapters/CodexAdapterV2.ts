@@ -4903,7 +4903,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               if (
                 appResourceUri !== undefined &&
                 payload.item.type === "mcpToolCall" &&
-                payload.item.status === "completed" &&
                 payload.item.result != null &&
                 payload.item.error == null
               ) {

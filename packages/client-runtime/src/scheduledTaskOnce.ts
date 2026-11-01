@@ -17,7 +17,9 @@ export function localOnceInput(at: string): string {
   return DateTime.toDate(local).toISOString().slice(0, -1);
 }
 
-export function onceScheduleFromInput(value: string): ScheduledTaskUpsertSchedule | null {
+export function onceScheduleFromInput(
+  value: string,
+): Extract<ScheduledTaskUpsertSchedule, { readonly type: "once" }> | null {
   if (!value.trim()) return null;
   const millis = Date.parse(value);
   return Number.isFinite(millis)
