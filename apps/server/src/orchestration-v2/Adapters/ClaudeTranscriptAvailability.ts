@@ -15,14 +15,21 @@ export const claudeTranscriptUnavailable = Effect.fn("ClaudeAdapterV2.transcript
     readonly projectsDir: string;
     readonly path: Path.Path;
     readonly nativeThreadId: string;
+    readonly cwd: string;
   }) {
-    const projects = yield* input.fileSystem.readDirectory(input.projectsDir).pipe(
-      Effect.catchIf(
-        (error) => error.reason._tag === "NotFound",
-        () => Effect.succeed([]),
-      ),
+    const localProject = input.cwd.replace(/[^a-zA-Z0-9]/g, "-");
+    const localTranscript = input.path.join(
+      input.projectsDir,
+      localProject,
+      `${input.nativeThreadId}.jsonl`,
     );
-    for (const project of projects) {
+    const localExists = yield* input.fileSystem.exists(localTranscript);
+    const projects = localExists
+      ? Option.some([localProject])
+      : yield* input.fileSystem.readDirectory(input.projectsDir).pipe(Effect.option);
+    if (Option.isNone(projects)) return false;
+    const candidates = projects.value;
+    for (const project of candidates) {
       const transcript = input.path.join(
         input.projectsDir,
         project,

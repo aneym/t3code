@@ -10753,6 +10753,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 "projects",
               ),
               nativeThreadId,
+              cwd: session.cwd,
             });
           },
         );

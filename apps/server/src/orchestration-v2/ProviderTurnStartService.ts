@@ -920,6 +920,7 @@ export const layer: Layer.Layer<
             )
             .map((source) => source.id),
         );
+        // Row identity survives recovery; only accepted native input and delivered history occupy the new session.
         const nativeContextEstimate = Effect.gen(function* () {
           return sameNativeThread
             ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
@@ -1041,6 +1042,9 @@ export const layer: Layer.Layer<
         }),
       );
       const withRecoveryHandoff = (handoff: OrchestrationV2ContextHandoff) => {
+        // Delivery ranks later handoffs as newer history. Pending handoffs from
+        // earlier runs predate this summary; handoffs for this run (provider-switch
+        // delta, merge-back) are newer and must stay last.
         return [
           ...effectiveHandoffs.filter((candidate) => candidate.targetRunId !== run.id),
           handoff,
@@ -1101,13 +1105,15 @@ export const layer: Layer.Layer<
             }),
           );
         }
+        const previousRunId = projection.runs.findLast(
+          (candidate) => candidate.ordinal < run.ordinal,
+        )?.id;
         const rejectedClaudeResume =
           session.driver === "claudeAgent" &&
           projection.turnItems.some(
             (item) =>
               item.providerThreadId === providerThread.id &&
-              item.runId ===
-                projection.runs.findLast((candidate) => candidate.ordinal < run.ordinal)?.id &&
+              (item.runId === previousRunId || item.runId === run.id) &&
               item.type === "error" &&
               /No conversation found/i.test(item.failure.message),
           );
@@ -1214,6 +1220,7 @@ export const layer: Layer.Layer<
             modelSelection: run.modelSelection,
             runtimePolicy: resolvedRuntimePolicy,
             providerSessionId,
+            // Clear the native ref to force a fresh session while preserving row identity.
             existingProviderThread: { ...providerThread, nativeThreadRef: null },
             forceNewNativeThread: true,
           }),

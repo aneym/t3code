@@ -421,6 +421,7 @@ export const layerWithOptions = (
           : mcpPrepareLock.withLock(
               threadId,
               Effect.gen(function* () {
+                // Live providers build MCP clients once; reuse credentials across workspace handoffs.
                 const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
                   yield* agentAccessSettings(threadId);
                 const capabilities = new Set<
@@ -1690,16 +1691,10 @@ export const layerWithOptions = (
             ),
           resumeThread: (input) => {
             const threadId = input.threadId ?? input.providerThread.appThreadId;
-            if (threadId === null || threadId === undefined) {
+            if (threadId == null) {
               return runtime.resumeThread(input);
             }
-            const providerThreadKey = providerThreadLoadKey({
-              providerThread: input.providerThread,
-              ...(input.modelSelection === undefined
-                ? {}
-                : { modelSelection: input.modelSelection }),
-              ...(input.runtimePolicy === undefined ? {} : { runtimePolicy: input.runtimePolicy }),
-            });
+            const key = providerThreadLoadKey(input);
             return observeActivity(
               providerSessionId,
               ensureThreadAttached({
@@ -1716,7 +1711,7 @@ export const layerWithOptions = (
                 }),
               ),
               Effect.andThen(
-                isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey }),
+                isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey: key }),
               ),
               Effect.flatMap((loaded) =>
                 loaded && runtime.driver !== "claudeAgent"
@@ -2365,6 +2360,7 @@ export const layerWithOptions = (
               yield* cancelIdleFiber(detachResult.value.idleUnloadFiber);
             }
             const detached = Option.map(detachResult, (result) => result.entry);
+            // Plain detaches preserve credentials held by live shared providers across workspace handoffs.
             if (input.revokeMcpCredential === true) {
               yield* clearMcpSession(input.threadId);
             }
