@@ -314,6 +314,7 @@ def install(run):
         "oldRuntime": {"version": previous, "digest": observed["oldRuntime.digest"]},
         "servingRuntime": {"version": serving_version, "digest": serving_digest},
         "installWindow": run.report.get("installWindow"), "hotSwap": {**(run.report.get("hotSwap") or {}), "forwardRepairRequired": run.report.get("forwardRepairRequired", False)},
+        **({"restartDrain": run.report["restartDrain"]} if "restartDrain" in run.report else {}),
         "backup": backup, "chat": post["proof"], "outcome": outcome, "reapedSshLaunch": run.reaped,
         "startedAt": run.report["started_at"], "finishedAt": moment,
     }

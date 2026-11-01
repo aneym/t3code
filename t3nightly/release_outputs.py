@@ -226,7 +226,8 @@ def fast_evidence(run, version):
             raise ValueError(f"{host}: candidate {manifest['digest']} is not the same release source as {release['digest']}")
         rows[host] = {"candidate": manifest["digest"], "engine": manifest["engine"]["commit"], "frozenAt": manifest["frozenAt"], "artifact": artifact["digest"], "archive": artifact["archive"]["sha256"], "runtime": artifact["runtime"]["sha256"],
                       "rehearsal": rehearsal["digest"], "install": install["digest"], "outcome": install["outcome"],
-                      "eligibility": eligibility_evidence(receipts, manifest, artifact, host, install, rehearsal)}
+                      "eligibility": eligibility_evidence(receipts, manifest, artifact, host, install, rehearsal),
+                      "restartDrain": install.get("restartDrain")}
     desktop = fast_artifact(run / "desktop/artifact-desktop-darwin-arm64.json", version, "darwin-arm64", "desktop")
     swap = json.loads((run / "desktop-swap.json").read_text())
     if swap["digest"] != digest({key: value for key, value in swap.items() if key != "digest"}):

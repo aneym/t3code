@@ -15,8 +15,10 @@ def prepare_with_drain(run, bearer, epoch):
     )
     drain = receipt.get("drain")
     if drain is None:
+        run.report["restartDrain"] = {"outcome": "unreported", "deadlineS": drain_s}
         run.step("restart-drain-unreported", deadline_s=drain_s)
     else:
+        run.report["restartDrain"] = {**drain, "deadlineS": drain_s, "outcome": "drained" if drain["drained"] else "timed-out"}
         run.step(
             "restart-drain",
             deadline_s=drain_s,

@@ -66,6 +66,9 @@ class Run:
         print(json.dumps(row), flush=True)
 
     def finish(self, outcome, line):
+        drain = self.report.get("restartDrain")
+        if drain:
+            line += f"; restart drain {drain['outcome']}, waited_ms={drain.get('waitedMs')}, active_run_ids={drain.get('activeRunIds', [])}"
         self.report.update(outcome=outcome, line=line, finished_at=now().isoformat())
         path = self.state / f"report-{stamp()}.json"
         path.write_text(json.dumps(self.report, indent=1))
