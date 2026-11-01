@@ -39,7 +39,7 @@ def boot(sandbox, argv, log):
             environment["T3_REHEARSAL_LAUNCHER_DEATHS"] = str(sandbox.evidence / "launcher-deaths.jsonl")
         environment["T3_REHEARSAL_VALIDATED_HOLD_MS"] = str(hold)
         environment["T3_REHEARSAL_IPC_RECEIPT"] = str(sandbox.evidence / "launcher-ipc.jsonl")
-        environment.update(NODE_OPTIONS="--require=" + json.dumps(str(fault)), T3_REHEARSAL_FAULT="" if sandbox.args.inject == "none" else sandbox.args.inject, T3_REHEARSAL_FAULT_RECEIPT=str(sandbox.evidence / "fault-injected.json"))
+        environment.update(NODE_OPTIONS="--require=" + json.dumps(str(fault)), T3_REHEARSAL_FAULT="post-flip" if getattr(sandbox.args, "rollback_fallback_proof", False) else "" if sandbox.args.inject == "none" else sandbox.args.inject, T3_REHEARSAL_FAULT_RECEIPT=str(sandbox.evidence / "fault-injected.json"))
     unit_path = sandbox.unit if sys.platform == "darwin" else sandbox.systemd_unit
     from .connector_artifact import identity
 

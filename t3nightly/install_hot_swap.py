@@ -18,6 +18,7 @@ from .install_provenance import eligibility, file_digest, migration_history, val
 from .install_rpc import restart_rpc, restart_session
 from .install_runtime import restore_runtime, retain_runtime, stage_runtime
 from .install_seamless import prepare_with_drain
+from .install_trial_rollback import clean_rollback, launcher_identity, recover
 from .release_eligibility import RESTORE_CLASS, binary_rollback
 from .release_receipts import INSTALL_SCHEMA, write
 
@@ -182,40 +183,9 @@ def drain_then_hard(run, previous):
                     (run.state / "last.json").write_text(json.dumps(run.report, indent=1))
 
 
-def launcher_identity(run, version, expected):
-    from .install_process import serving_process
-
-    serving_process(run, version, expected)
-    serving = run.report["steps"][-1]
-    return {"servicePid": serving["servicePid"], **{name: file_digest(run.home / "runtime" / name) for name in ("launcher/t3", "launcher-pin.json", "launcher-config.json")}}
-
-
-def clean_rollback(run, previous, expected, original):
-    requested = run.report["hotSwap"].get("update") or {}
-    state = json.loads((run.home / "runtime/service-state.json").read_text())
-    update = state.get("update") or {}
-    if not requested.get("updateId") or update.get("id") != requested["updateId"] or update.get("status") not in ("rolled-back", "failed") or update.get("fromVersion") != previous or update.get("targetVersion") != run.args.version or state.get("activeVersion") != previous:
-        return None
-    if any(word in str(update.get("reason", "")).lower() for word in ("watchdog", "last-known-good", "lkg")) or any(step["step"].startswith("launcher-watchdog") for step in run.report["steps"]):
-        return None
-    deadline = time.monotonic() + run.args.health_s
-    while time.monotonic() < deadline:
-        if run.server_version() == previous:
-            if launcher_identity(run, previous, expected) != original:
-                return None
-            try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{run.args.port}/api/health", timeout=5) as response:
-                    if response.status == 200:
-                        current = json.loads((run.home / "runtime/service-state.json").read_text())
-                        return update if current == state else None
-            except OSError:
-                pass
-        time.sleep(0.25)
-    raise ValueError("launcher rollback did not restore healthy OLD within the health deadline")
-
-
 def install(run):
     args = run.args
+    fallback_enabled = not args.rehearsal or (not args.force_rollback and getattr(args, "inject", "none") == "none")
     previous = run.server_version()
     if not previous:
         raise ValueError("running server unavailable; nothing changed")
@@ -256,7 +226,10 @@ def install(run):
     backup = install_offbox.live_backup(run, previous) if args.offbox else {"path": str(backup_database(run, previous, preparing=True))}
     store = run.home / "runtime/.rollback-runtime"
     retain_runtime(run.home, previous, store)
-    original_launcher = launcher_identity(run, previous, observed["oldRuntime.digest"])
+    try:
+        original_launcher = launcher_identity(run, previous, observed["oldRuntime.digest"])
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        original_launcher = None
     outcome, post, update = "failed", baseline, None
     fallback = None
     with restart_session(run, previous) as bearer:
@@ -281,27 +254,24 @@ def install(run):
                 raise
             restore_runtime(run.home, previous, store)
             try:
-                fallback = clean_rollback(run, previous, observed["oldRuntime.digest"], original_launcher)
-                if run.server_version() == previous:
-                    wait_version(run, previous)
-                    method = "launcher-automatic"
-                elif binary_compatible(compatibility, migration_history(run)) and supported(run.environment(), run):
-                    swap(run, bearer, previous, True)
-                    method = "launcher-ipc"
-                else:
-                    run.report["hotSwap"]["forwardRepairRequired"] = True
-                    raise ValueError("acceptance failed after routing; incompatible binary rollback refused; current database preserved for forward repair")
-                retained(run, before)
-                if connect and not connect_returns(run, previous):
-                    raise ValueError("rollback managed tunnel acceptance failed")
-                prove(run, previous, baseline)
-                run.report["hotSwap"]["rollback"] = method
+                fallback = clean_rollback(run, previous, observed["oldRuntime.digest"], original_launcher) if fallback_enabled else None
+                recover(run, bearer, previous, compatibility, before, connect, baseline)
                 outcome = "rolled-back"
             except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
                 run.step("hot-swap-rollback-failed", error_type=type(rollback).__name__)
                 outcome = "broken"
-    if fallback is not None and outcome == "rolled-back":
-        run.report["hotSwap"].update(method="maintenance", fallback="drain-then-hard-install", launcherRollback=fallback)
+    if fallback is not None and outcome == "rolled-back" and fallback_enabled and run.report["hotSwap"].get("rollback") == "launcher-automatic":
+        if run.server_version() != previous:
+            fallback = None
+            try:
+                with restart_session(run, previous) as bearer:
+                    recover(run, bearer, previous, compatibility, before, connect, baseline)
+            except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
+                run.step("hot-swap-rollback-failed", error_type=type(rollback).__name__)
+                outcome = "broken"
+    if fallback is not None and outcome == "rolled-back" and fallback_enabled and run.report["hotSwap"].get("rollback") == "launcher-automatic":
+        trial = run.report["hotSwap"].pop("rollback")
+        run.report["hotSwap"].update(method="maintenance", fallback="drain-then-hard-install", trialRollback={"method": trial, **fallback})
         run.step("hot-swap-rolled-back", update_id=fallback["id"], reason=fallback.get("reason", "unspecified"))
         run.step("hot-swap-fallback", reason="verified-launcher-rollback", fallback="drain-then-hard-install")
         return drain_then_hard(run, previous)

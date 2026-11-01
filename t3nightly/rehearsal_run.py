@@ -95,7 +95,9 @@ class Rehearsal:
                 command.append("--force-rollback")
         if getattr(self.args, "hot_swap", False):
             command[command.index("--hard")] = "--seamless"
-            command.extend(["--rpc-tree", str(self.args.rpc_tree.resolve()), "--drain-s", str(self.args.drain_s)])
+            command.extend(["--rpc-tree", str(self.args.rpc_tree.resolve()), "--drain-s", str(self.args.drain_s), "--rehearsal-inject", self.args.inject])
+            if getattr(self.args, "rollback_fallback_proof", False):
+                command.append("--rollback-fallback-proof")
             for name in ("launcher_artifact", "connector_artifact"):
                 if getattr(self.args, name):
                     command.extend(["--" + name.replace("_", "-"), getattr(self.args, name)])
