@@ -1694,13 +1694,7 @@ export const layerWithOptions = (
             if (threadId === null || threadId === undefined) {
               return runtime.resumeThread(input);
             }
-            const providerThreadKey = providerThreadLoadKey({
-              providerThread: input.providerThread,
-              ...(input.modelSelection === undefined
-                ? {}
-                : { modelSelection: input.modelSelection }),
-              ...(input.runtimePolicy === undefined ? {} : { runtimePolicy: input.runtimePolicy }),
-            });
+            const providerThreadKey = providerThreadLoadKey(input);
             return observeActivity(
               providerSessionId,
               ensureThreadAttached({
@@ -1720,7 +1714,9 @@ export const layerWithOptions = (
                 isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey }),
               ),
               Effect.flatMap((loaded) =>
-                loaded ? Effect.succeed(input.providerThread) : runtime.resumeThread(input),
+                loaded && runtime.driver !== "claudeAgent"
+                  ? Effect.succeed(input.providerThread)
+                  : runtime.resumeThread(input),
               ),
               Effect.tap((providerThread) =>
                 markProviderThreadLoaded({

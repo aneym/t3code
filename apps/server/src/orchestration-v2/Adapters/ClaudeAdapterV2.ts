@@ -1,3 +1,4 @@
+import { claudeTranscriptUnavailable } from "./ClaudeTranscriptAvailability.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
@@ -1883,16 +1884,6 @@ function makeProviderThread(input: {
     updatedAt: input.now,
   };
 }
-
-const decodeClaudeTranscriptLine = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ type: Schema.String })),
-);
-
-const isClaudeConversationLine = (line: string): boolean =>
-  Option.match(decodeClaudeTranscriptLine(line), {
-    onNone: () => false,
-    onSome: (entry) => entry.type === "user" || entry.type === "assistant",
-  });
 
 const getNativeThreadId = Effect.fnUntraced(function* (
   providerThread: OrchestrationV2ProviderThread,
@@ -10753,36 +10744,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const hasEmptyClaudeTranscript = Effect.fn("ClaudeAdapterV2.hasEmptyClaudeTranscript")(
           function* (nativeThreadId: string) {
             const configuredDir = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
-            const projectsDir = path.join(
-              configuredDir.length > 0
-                ? path.resolve(session.cwd, configuredDir)
-                : path.join(yield* HostProcess.HomeDirectory, ".claude"),
-              "projects",
-            );
-            // Any message in any transcript copy means Claude may still resume it.
-            let found = false;
-            for (const project of yield* fileSystem.readDirectory(projectsDir)) {
-              const transcriptPath = path.join(projectsDir, project, `${nativeThreadId}.jsonl`);
-              // Stray files beside the project dirs fail with ENOTDIR.
-              if (
-                !(yield* fileSystem.exists(transcriptPath).pipe(Effect.orElseSucceed(() => false)))
-              ) {
-                continue;
-              }
-              const conversationLine = yield* fileSystem
-                .stream(transcriptPath)
-                .pipe(
-                  Stream.decodeText,
-                  Stream.splitLines,
-                  Stream.filter(isClaudeConversationLine),
-                  Stream.runHead,
-                );
-              if (Option.isSome(conversationLine)) {
-                return false;
-              }
-              found = true;
-            }
-            return found;
+            return yield* claudeTranscriptUnavailable({
+              fileSystem,
+              path,
+              projectsDir: path.join(
+                configuredDir
+                  ? path.resolve(session.cwd, configuredDir)
+                  : path.join(yield* HostProcess.HomeDirectory, ".claude"),
+                "projects",
+              ),
+              nativeThreadId,
+              cwd: session.cwd,
+            });
           },
         );
 

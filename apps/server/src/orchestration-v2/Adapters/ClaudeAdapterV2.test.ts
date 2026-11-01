@@ -62,6 +62,10 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import {
+  assertMissingTranscript,
+  writeWakeTranscripts,
+} from "./ClaudeTranscriptAvailability.testkit.ts";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -1351,17 +1355,7 @@ describe("ClaudeAdapterV2 resumeThread", () => {
         });
         assert.equal(saved.nativeThreadRef?.nativeId, "native-thread-saved");
 
-        const missing = yield* runtime.resumeThread({
-          providerThread: {
-            ...providerThread,
-            nativeThreadRef: {
-              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-              nativeId: "native-thread-missing",
-              strength: "strong",
-            },
-          },
-        });
-        assert.equal(missing.nativeThreadRef?.nativeId, "native-thread-missing");
+        yield* assertMissingTranscript(runtime, providerThread);
       }),
     ).pipe(
       Effect.provide(
@@ -2814,6 +2808,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-claude-v2-wake-",
       });
+      yield* writeWakeTranscripts(attachmentsDir, WAKE_NATIVE_SESSION);
       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
       const processQueues: Array<Queue.Queue<SDKMessage>> = [];
       const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
@@ -2863,7 +2858,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
-        environment: options?.environment ?? {},
+        environment: { CLAUDE_CONFIG_DIR: attachmentsDir, ...options?.environment },
         attachmentsDir,
         fileSystem,
         path: yield* Path.Path,
