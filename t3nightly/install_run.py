@@ -450,7 +450,7 @@ class Run:
                 )
         except errors as error:
             problem = str(error)
-        from t3nightly.install_hot_swap import binary_compatible, supported, swap
+        from t3nightly.launcher_update import binary_compatible, supported, swap
         from t3nightly.install_rpc import restart_session
         from t3nightly.install_provenance import install_host, migration_history
         from t3nightly.release_manifest import load

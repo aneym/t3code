@@ -32,11 +32,15 @@ def main():
     parser.add_argument("--drain-s", type=int, default=300)
     parser.add_argument("--inject", choices=("none", "warm-death", "post-flip"), default="none")
     parser.add_argument("--require-hot-swap", action="store_true")
+    parser.add_argument("--rollback-fallback-proof", action="store_true", help="non-release trial rollback followed by drained hard installation")
     parser.add_argument("--focused", action="store_true", help="normal capable swap and continuation/client evidence only; no launcher crash injection")
     parser.add_argument("--stock-client", action="store_true", help="keep a legacy lifecycle subscriber connected without handoff identity or confirmation")
     parser.add_argument("--queue-mode", choices=("none", "capacity", "budget"), default="none")
     parser.add_argument("--live-home", action="append", default=[])
     args = parser.parse_args()
+    if args.rollback_fallback_proof:
+        if not args.hot_swap or args.inject != "none" or args.force_rollback or args.focused or args.queue_mode != "none" or args.stock_client:
+            parser.error("--rollback-fallback-proof requires --hot-swap without other proof modes")
     if args.focused:
         if not args.hot_swap or args.inject != "none" or args.queue_mode != "none" or args.force_rollback:
             parser.error("--focused requires a normal --hot-swap without faults, pressure or forced rollback")
@@ -44,6 +48,10 @@ def main():
     if args.hot_swap:
         if not args.rpc_tree or not 0 <= args.drain_s <= 1200:
             parser.error("--hot-swap requires --rpc-tree and --drain-s in 0..1200")
+        if args.rollback_fallback_proof:
+            from t3nightly.rehearsal_fallback import RollbackFallbackRehearsal
+
+            return RollbackFallbackRehearsal(args).main()
         from t3nightly.rehearsal_hot_swap import HotSwapRehearsal
 
         return HotSwapRehearsal(args).main()

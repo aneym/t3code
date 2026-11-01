@@ -1,3 +1,4 @@
+import http.client
 import json
 import subprocess
 import time
@@ -32,7 +33,7 @@ def clean_rollback(run, previous, expected, original):
                 with urllib.request.urlopen(f"http://127.0.0.1:{run.args.port}/api/health", timeout=max(0.1, min(1, deadline - time.monotonic()))) as response:
                     if response.status == 200 and json.loads(path.read_text()) == state:
                         return update
-        except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, http.client.HTTPException, subprocess.SubprocessError):
             pass
         if time.monotonic() >= deadline:
             return None
@@ -42,7 +43,7 @@ def clean_rollback(run, previous, expected, original):
 def recover(run, bearer, previous, compatibility, before, connect, baseline):
     from .install_chat import prove, retained
     from .install_hard import connect_returns
-    from .install_hot_swap import binary_compatible, supported, swap, wait_version
+    from .launcher_update import binary_compatible, supported, swap, wait_version
     from .install_provenance import migration_history
 
     if run.server_version() == previous:

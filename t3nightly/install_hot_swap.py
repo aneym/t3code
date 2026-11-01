@@ -19,15 +19,9 @@ from .install_rpc import restart_rpc, restart_session
 from .install_runtime import restore_runtime, retain_runtime, stage_runtime
 from .install_seamless import prepare_with_drain
 from .install_trial_rollback import clean_rollback, launcher_identity, recover
-from .release_eligibility import RESTORE_CLASS, binary_rollback
+from .launcher_update import supported, swap
+from .release_eligibility import RESTORE_CLASS
 from .release_receipts import INSTALL_SCHEMA, write
-
-
-def supported(environment, run=None):
-    capabilities = (environment or {}).get("capabilities", {})
-    from .launcher_artifact import ingress_qualified
-
-    return capabilities.get("serverSelfUpdate") == "boot-service" and capabilities.get("serverHotSwap") is True and (ingress_qualified(run) if run is not None else True)
 
 
 def measure_candidate(sandbox, manifest):
@@ -131,40 +125,6 @@ def mark_candidate(run, manifest, rehearsal, compatibility, observed):
     return True
 
 
-def wait_version(run, version, update_id=None):
-    end = time.monotonic() + run.args.health_s + run.args.drain_s
-    while time.monotonic() < end:
-        environment = run.environment()
-        state = json.loads((run.home / "runtime/service-state.json").read_text())
-        update = state.get("update", {})
-        if update_id and update.get("id") == update_id and update.get("status") in ("failed", "rolled-back"):
-            raise ValueError("launcher rejected/rolled back this exact trial before routing")
-        if environment and environment.get("serverVersion") == version:
-            if update_id is None or (update.get("id") == update_id and update.get("status") == "committed" and state.get("activeVersion") == version):
-                return
-        time.sleep(0.25)
-    raise ValueError("bounded hot-swap health/version/update-identity gate failed")
-
-
-def swap(run, bearer, version, downgrade=False):
-    from .install_policy import begin_recovery, recheck
-
-    if downgrade:
-        begin_recovery(run)
-    recheck(run)
-    result = restart_rpc(run, bearer, "update", {"targetVersion": version, "allowDowngrade": downgrade, "continueRunningThreads": True}, timeout=run.args.health_s)
-    if result.get("targetVersion") != version or result.get("method") != "boot-service" or not result.get("updateId"):
-        raise ValueError("self-update returned no exact launcher update identity")
-    run.step("launcher-request-update", target=version, update_id=result["updateId"])
-    run.report["hotSwap"]["rollbackUpdate" if downgrade else "update"] = result
-    wait_version(run, version, result["updateId"])
-    return result
-
-
-def binary_compatible(compatibility, history):
-    return binary_rollback(compatibility) and history == compatibility["candidateMigrations"]["history"]
-
-
 def drain_then_hard(run, previous):
     with restart_session(run, previous) as bearer:
         epoch = f"t3nightly:{uuid.uuid4()}"
@@ -260,6 +220,7 @@ def install(run):
             except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
                 run.step("hot-swap-rollback-failed", error_type=type(rollback).__name__)
                 outcome = "broken"
+                run.report["hotSwap"].pop("rollback", None)
     if fallback is not None and outcome == "rolled-back" and fallback_enabled and run.report["hotSwap"].get("rollback") == "launcher-automatic":
         if run.server_version() != previous:
             fallback = None
@@ -269,9 +230,10 @@ def install(run):
             except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
                 run.step("hot-swap-rollback-failed", error_type=type(rollback).__name__)
                 outcome = "broken"
+                run.report["hotSwap"].pop("rollback", None)
     if fallback is not None and outcome == "rolled-back" and fallback_enabled and run.report["hotSwap"].get("rollback") == "launcher-automatic":
         trial = run.report["hotSwap"].pop("rollback")
-        run.report["hotSwap"].update(method="maintenance", fallback="drain-then-hard-install", trialRollback={"method": trial, **fallback})
+        run.report["hotSwap"].update(method="maintenance", fallback="drain-then-hard-install", trialRollback={**fallback, "method": trial})
         run.step("hot-swap-rolled-back", update_id=fallback["id"], reason=fallback.get("reason", "unspecified"))
         run.step("hot-swap-fallback", reason="verified-launcher-rollback", fallback="drain-then-hard-install")
         return drain_then_hard(run, previous)

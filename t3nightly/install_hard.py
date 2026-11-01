@@ -249,7 +249,7 @@ def install(run):
         begin_recovery(run)
         if routed and not restore_class:
             try:
-                from .install_hot_swap import binary_compatible, supported, swap
+                from .launcher_update import binary_compatible, supported, swap
                 from .install_rpc import restart_session
 
                 if not binary_compatible(compatibility, migration_history(run)):
