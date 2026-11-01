@@ -186,7 +186,7 @@ def install(run):
 
     def stop():
         nonlocal stopped
-        from .install_policy import recheck
+        from .install_policy import isolated, recheck
 
         recheck(run)
         drain = getattr(run, "drain_before_stop", None)
@@ -197,7 +197,7 @@ def install(run):
             if reported.get("drained") is not True:
                 active_run_ids = reported.get("activeRunIds", [])
                 drain_outcome = "timed-out" if reported else "unreported"
-                if getattr(run.args, "rehearsal", False):
+                if getattr(run.args, "rehearsal", False) and isolated(run.home, run.args.port, run.args.service_label, getattr(run.args, "live_home", [])):
                     run.report["restartDrain"] = {**run.report.get("restartDrain", {}), "outcome": drain_outcome, "stopForcedInRehearsal": True, "activeRunIds": active_run_ids}
                     run.step("rehearsal-stop-after-drain", active_run_ids=active_run_ids)
                 else:
