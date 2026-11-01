@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 
-from .release_engine import require_engine
+from .release_engine import require_engine, require_remote_engine
 from .release_graph import FAST_DEADLINE, FAST_GRAPH, SUCCESS_OUTCOMES, critical_path
 from .release_job_runner import TERM_GRACE_S
 from .release_jobs import HostJobs, TERMINAL, status, submit, write_status
@@ -40,11 +40,14 @@ def remote_engine():
 
 
 def drive_fast(args):
+    args.engine_verified = False
     manifest = args.run / "candidate.json"
     engine_checked = False
     if not args.dry_run and manifest.is_file():
         require_engine(manifest)
+        require_remote_engine(manifest, args.remote_tools, args.linux_host)
         engine_checked = True
+        args.engine_verified = True
     args.run.mkdir(parents=True, exist_ok=True)
     jobs = HostJobs(args.run, args.remote_run, args.remote_tools, args.dry_run, linux_host=args.linux_host)
     timeline = Timeline(args.run / "timeline.jsonl")
@@ -88,9 +91,11 @@ def drive_fast(args):
             elif key in failed:
                 del pending[key]
     while pending or running:
-        if not args.dry_run and not engine_checked and manifest.is_file():
+        if not args.dry_run and not engine_checked and "A" in done and manifest.is_file():
             require_engine(manifest)
+            require_remote_engine(manifest, args.remote_tools, args.linux_host)
             engine_checked = True
+            args.engine_verified = True
         for key, node in list(pending.items()):
             if set(node.needs) & failed:
                 failed.add(key)
@@ -190,9 +195,14 @@ def main(argv):
         try:
             return drive_fast(args)
         finally:
-            finish_runs(args.run, args.remote_run, args.remote_tools, dry_run=args.dry_run, linux_host=args.linux_host)
+            if args.dry_run or getattr(args, "engine_verified", False):
+                if not args.dry_run:
+                    require_engine(args.run / "candidate.json")
+                    require_remote_engine(args.run / "candidate.json", args.remote_tools, args.linux_host)
+                finish_runs(args.run, args.remote_run, args.remote_tools, dry_run=args.dry_run, linux_host=args.linux_host)
     if (args.run / "candidate.json").is_file():
         require_engine(args.run / "candidate.json")
+        require_remote_engine(args.run / "candidate.json", args.remote_tools, args.linux_host)
     coordinator = args.run / "coordinator"
     previous = status(coordinator)
     if previous.get("outcome") in {"failed", "timed-out", "environment-blocked"}:
