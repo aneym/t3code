@@ -26,10 +26,13 @@ def main():
     parser.add_argument("--linux-host", default="ax42")
     parser.add_argument("--base", default="")
     parser.add_argument("--override-reason", default="")
+    parser.add_argument("--advisory-workers", type=int, default=4)
     args = parser.parse_args()
+    if args.advisory_workers < 1:
+        parser.error("--advisory-workers must be positive")
     home = Path.home()
     os.environ["PATH"] = os.pathsep.join([str(home / ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", os.environ.get("PATH", "/usr/bin:/bin")])
-    config = FastConfig(args.version, args.topic, args.run.resolve(), args.host, args.remote_run, args.remote_tools, args.base, linux_host=args.linux_host, override_reason=args.override_reason)
+    config = FastConfig(args.version, args.topic, args.run.resolve(), args.host, args.remote_run, args.remote_tools, args.base, linux_host=args.linux_host, override_reason=args.override_reason, advisory_workers=args.advisory_workers)
     config.run.mkdir(parents=True, exist_ok=True)
     print(json.dumps({"stage": args.stage, "host": args.host, "run": str(config.run)}), flush=True)
     try:

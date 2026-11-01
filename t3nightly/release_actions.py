@@ -25,6 +25,7 @@ from .release_ownership import ownership
 from .release_readiness import readiness
 from .release_rollback_proof import fast_rollback_proof, required
 from .release_seed_remotes import seed
+from .release_advisory import fast_advisory
 from .release_transport import command, git_tree, prepare_remote, remote_worker, require, transfer
 from .release_windows import WINDOWS_STAGES, run_windows
 
@@ -291,26 +292,6 @@ def fast_publish(config, log):
     final = {"published": config.version, "evidence": evidence, "evidenceDigest": digest(evidence)}
     (config.run / "final-receipt.json").write_text(json.dumps(final, indent=2) + "\n")
     return 0
-
-
-def fast_advisory(config, log):
-    out = config.run / "advisory"
-    tree = config.tree("mac-cli")
-    words = [sys.executable, str(config.tools / "suite-plan"), "--tree", str(tree), "--out", str(out / "plan.json")]
-    if not (out / "plan.json").is_file() and command(words, log):
-        return 1
-    jobs = json.loads((out / "plan.json").read_text())["jobs"]
-
-    def one(job):
-        target = out / (job["id"].replace("/", "-") + ".json")
-        with (out / (target.stem + ".log")).open("a") as handle:
-            return command([sys.executable, str(config.tools / "suite-worker"), "--plan", str(out / "plan.json"), "--job", job["id"],
-                            "--host", job["hosts"][0], "--linux-host", config.linux_host, "--out", str(target)], handle)
-
-    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
-        codes = list(pool.map(one, jobs))
-    (out / "summary.json").write_text(json.dumps({"jobs": len(jobs), "passed": codes.count(0), "notPassed": len(codes) - codes.count(0)}) + "\n")
-    return 0 if not any(codes) else 1
 
 
 def fast_health(config, log):

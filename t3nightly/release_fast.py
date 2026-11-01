@@ -22,7 +22,7 @@ def stage_spec(node, args):
     tools = str(Path(__file__).resolve().parent) if node.host == "studio" else args.remote_tools
     python = sys.executable if node.host == "studio" else "python3"
     command = [python, f"{tools}/release-fast-stage", "--stage", node.id, "--host", node.host,
-               "--version", args.version, "--topic", args.topic, "--run", root,
+               "--version", args.version, "--topic", args.topic, "--run", root, "--advisory-workers", str(args.advisory_workers),
                "--remote-run", args.remote_run, "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason]
     install = node.id in ("IM", "IL")
     return {"label": f"com.agent-rails.t3fast-{args.version}-{node.id}",
@@ -51,6 +51,7 @@ def drive_fast(args):
     inputs = {"version": args.version, "topic": args.topic,
               "remoteRun": args.remote_run, "remoteTools": args.remote_tools, "dryRun": args.dry_run,
               "rehearseOnly": args.rehearse_only, "overrideReason": args.override_reason,
+              **({"advisoryWorkers": args.advisory_workers} if args.advisory_workers != 4 else {}),
               **({"linuxHost": args.linux_host} if args.linux_host != "ax42" else {})}
     binding = args.run / "fast-inputs.json"
     try:
@@ -149,10 +150,13 @@ def main(argv):
     parser.add_argument("--coordinator", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--run", type=Path)
     parser.add_argument("--remote-run")
+    parser.add_argument("--advisory-workers", type=int, default=4, help="maximum parallel advisory suite workers (default: 4)")
     parser.add_argument("--remote-tools")
     parser.add_argument("--linux-host", default="ax42", help="Linux SSH destination (default: ax42)")
     parser.add_argument("--base", default="", help="base ref to build on instead of the serving release head; must contain it")
     args = parser.parse_args(argv)
+    if args.advisory_workers < 1:
+        parser.error("--advisory-workers must be positive")
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", args.linux_host):
         parser.error("--linux-host must be an SSH alias or hostname")
     if not re.fullmatch(r"\d+\.\d+\.\d+-nightly\.\d+\.\d+\.aneym\.\d+", args.version):
@@ -182,7 +186,7 @@ def main(argv):
         coordinator = args.run / f"coordinator-{attempt}"
     command = [sys.executable, str(Path(__file__).resolve().with_name("release")),
                "--fast", "--version", args.version, "--topic", args.topic,
-               "--run", str(args.run), "--remote-run", args.remote_run,
+               "--run", str(args.run), "--remote-run", args.remote_run, "--advisory-workers", str(args.advisory_workers),
                "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, "--coordinator", *(["--rehearse-only"] if args.rehearse_only else [])]
     spec = {"label": f"com.agent-rails.t3fast-{args.version}-coordinator-{coordinator.name}", "host": "studio",
             "command": command, "budget": sum(node.budget for node in FAST_GRAPH) * HANG_GUARD + 60,

@@ -238,11 +238,16 @@ def run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep=
             result["result"] = "unavailable"
     finally:
         if attempted and not keep:
-            with (logs / "cleanup.log").open("w") as log:
-                result["cleanupExit"] = cleanup(host, repo, tree, log, linux_host)
-            if result["cleanupExit"]:
+            try:
+                with (logs / "cleanup.log").open("w") as log:
+                    result["cleanupExit"] = cleanup(host, repo, tree, log, linux_host)
+                if result["cleanupExit"]:
+                    result["cleanupError"] = f"worktree cleanup exited {result['cleanupExit']}"
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                result["cleanupError"] = f"worktree cleanup failed: {error}"
+            if "cleanupError" in result:
                 result["result"] = "unavailable"
-                result["error"] = f"worktree cleanup exited {result['cleanupExit']}"
+                result.setdefault("error", result["cleanupError"])
     result["seconds"] = round(time.monotonic() - started, 3)
     result["finishedAt"] = now()
     result["digest"] = digest(result)

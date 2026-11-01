@@ -86,6 +86,7 @@ class FastConfig:
     base: str = ""
     linux_host: str = "ax42"
     override_reason: str = ""
+    advisory_workers: int = 4
 
     @property
     def number(self):
@@ -121,7 +122,7 @@ class FastConfig:
 
     def on(self, host):
         run = Path(self.remote_run) if host == "ax42" and self.host == "studio" else self.run
-        return FastConfig(self.version, self.topic, run, host, self.remote_run, self.remote_tools, self.base, linux_host=self.linux_host, override_reason=self.override_reason)
+        return FastConfig(self.version, self.topic, run, host, self.remote_run, self.remote_tools, self.base, linux_host=self.linux_host, override_reason=self.override_reason, advisory_workers=self.advisory_workers)
 
     def tree(self, stage):
         return HOSTS[self.host]["trees"] / f"aneym-fast-{stage}"
