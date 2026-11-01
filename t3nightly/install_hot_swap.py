@@ -95,6 +95,7 @@ def install(run):
     qualification = qualify(run)
     environment = run.environment()
     run.report["capabilities"] = (environment or {}).get("capabilities", {})
+    run.report["environmentObserved"] = isinstance(environment, dict)
     maintenance = bool(changed(run) or compatibility.get("migrationFiles") or compatibility.get("maintenance") or manifest.get("maintenance") or compatibility.get("eligibility") == RESTORE_CLASS)
     available = supported(environment, run) and qualification["qualified"] and not maintenance
     if available and not mark_candidate(run, manifest, rehearsal, compatibility):

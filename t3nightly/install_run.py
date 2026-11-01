@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from t3nightly.install_copy import refresh_snapshot, backup_database
 from t3nightly.release_signatures import verify_cli
-from t3nightly.install_runtime import mark_update_restart, pin_runtime, stage_runtime
+from t3nightly.install_runtime import mark_update_restart, stage_runtime
 from t3nightly.install_diagnostics import persist_memory_diagnostics
 from t3nightly.install_feed import persist_release_feed, verify_release_feed
 from t3nightly.install_storage import payload_locations, snapshot_path
@@ -66,10 +66,10 @@ class Run:
         print(json.dumps(row), flush=True)
 
     def finish(self, outcome, line):
-        if outcome in ("installed", "current"):
+        backup = next((row for row in reversed(self.report["steps"]) if row["step"] == "hard-backup"), {})
+        if outcome == "installed" and backup.get("path"):
             from .install_backup import prune
 
-            backup = next((row for row in reversed(self.report["steps"]) if row["step"] == "hard-backup"), {})
             try:
                 prune(self, backup)
             except (OSError, ValueError) as error:

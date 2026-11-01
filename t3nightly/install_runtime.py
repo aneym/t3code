@@ -75,20 +75,6 @@ def stage_runtime(home, version, assets):
     return versions / version / "t3"
 
 
-def pin_runtime(home, version):
-    runtime = Path(home) / "runtime"
-    source = runtime / "versions" / version
-    verify_cli(source / "t3")
-    with tempfile.TemporaryDirectory(prefix=".launcher-", dir=runtime) as raw:
-        staged = Path(raw) / "launcher"
-        if sys.platform == "darwin":
-            subprocess.run(["cp", "-c", "-R", str(source), str(staged)], check=True, timeout=240)
-        else:
-            shutil.copytree(source, staged, symlinks=True)
-        backup = activate(staged, runtime / "launcher")
-    return runtime / "launcher" / "t3", backup
-
-
 def link_or_copy(source, destination):
     try:
         os.link(source, destination)
