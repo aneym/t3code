@@ -85,7 +85,7 @@ class WorkerTerminated(RuntimeError):
 def cache_exports(host):
     if host != "ax42":
         return "true"
-    return "{ mkdir -p /srv/cow/t3-wt/.advisory-cache/pnpm /srv/cow/t3-wt/.advisory-tmp && export TMPDIR=/srv/cow/t3-wt/.advisory-tmp XDG_CACHE_HOME=/srv/cow/t3-wt/.advisory-cache PNPM_CONFIG_CACHE_DIR=/srv/cow/t3-wt/.advisory-cache/pnpm; }"
+    return "{ mkdir -p /srv/cow/t3-wt/.advisory-cache/pnpm /srv/cow/t3-wt/.advisory-tmp && export TMPDIR=/srv/cow/t3-wt/.advisory-tmp XDG_CACHE_HOME=/srv/cow/t3-wt/.advisory-cache PNPM_CONFIG_CACHE_DIR=/srv/cow/t3-wt/.advisory-cache/pnpm PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright electron_config_cache=$HOME/.cache/electron; }"
 
 
 @contextmanager
@@ -98,14 +98,17 @@ def host_slot(host, tree, log):
     if host != "ax42":
         yield None
         return
-    process = subprocess.Popen(["ssh", "-o", "BatchMode=yes", host, shlex.join(["python3", "-c", LOCK])], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True)
+    process = subprocess.Popen(["ssh", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4", host, shlex.join(["python3", "-c", LOCK])], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True)
     started = time.monotonic()
     try:
         for line in process.stdout:
             log.write(line)
             log.flush()
-            record = json.loads(line)
-            if record["state"] == "acquired":
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict) and record.get("state") == "acquired":
                 yield {"slot": record["slot"], "waitSeconds": round(time.monotonic() - started, 3)}
                 return
         raise RuntimeError(f"host slot connection ended before acquisition: {host}")
@@ -113,7 +116,11 @@ def host_slot(host, tree, log):
         process.stdin.close()
         for line in process.stdout:
             log.write(line)
-        process.wait(timeout=30)
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
 
 
 @contextmanager

@@ -43,7 +43,12 @@ def execute(host, words, log, timeout, cwd=None, env=None):
     try:
         return process.wait(timeout=max(1, int(wait)))
     except WorkerTerminated:
-        process.wait()
+        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
         raise
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGTERM)
