@@ -155,7 +155,8 @@ class FastConfig:
         if pin.is_file():
             artifact = json.loads(pin.read_text())
             if artifact.get("hotSwapProtocol") == 1:
-                artifact.update(schema="t3nightly.launcher-artifact/1", runtimeDir=str(self.home / ".t3/runtime/launcher"))
+                artifact.setdefault("runtimeDir", str(self.home / ".t3/runtime/launcher"))
+                artifact["schema"] = "t3nightly.launcher-artifact/1"
                 path = directory / "old-launcher.json"
                 path.write_text(json.dumps(artifact) + "\n")
                 words += ["--old-launcher-artifact", str(path)]
