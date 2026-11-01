@@ -147,12 +147,12 @@ def drive_fast(args):
             engine_checked = True
             args.engine_verified = True
         for key, node in list(pending.items()):
-            if node.host in unavailable or set(node.needs) & failed:
+            if (node.host in unavailable and not node.defer_reason) or set(node.needs) & failed:
                 failed.add(key)
                 blocked.add(key)
                 del pending[key]
                 now = time.monotonic()
-                timeline.record_fast(node, {"outcome": "failed", "reason": "host-unavailable" if node.host in unavailable else "dependency-failed",
+                timeline.record_fast(node, {"outcome": "failed", "reason": "host-unavailable" if node.host in unavailable and not node.defer_reason else "dependency-failed",
                                            "error": unavailable.get(node.host),
                                            "evidence": [], "resourceWaitSeconds": 0,
                                            "monotonicStart": now, "monotonicEnd": now,
@@ -224,7 +224,7 @@ def drive_fast(args):
     gating_failures = failed & {node.id for node in graph if node.gating}
     print(json.dumps({"done": sorted(done), "failed": sorted(failed), "releaseSeconds": completed_at,
                       "dryRun": args.dry_run, "rehearseOnly": args.rehearse_only, "gatingFailures": sorted(gating_failures),
-                      "deferredHosts": inputs.get("deferredHosts", {})}))
+                      **({"deferredHosts": inputs["deferredHosts"]} if "deferredHosts" in inputs else {})}))
     if args.rehearse_only:
         return 1 if gating_failures else 0
     return 1 if gating_failures or completed_at is None or completed_at >= 900 else 0

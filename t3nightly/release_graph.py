@@ -44,7 +44,7 @@ def studio_first_graph():
     return tuple(graph)
 
 
-INSTALL_OUTCOMES = ("installed", "current", "rolled-back", "failed", "deferred")
+INSTALL_OUTCOMES = ("installed", "current", "rolled-back", "failed")
 SUCCESS_OUTCOMES = ("installed", "current")
 STAGE_OUTCOMES = ("passed", "failed", "environment-blocked", "timed-out")
 
@@ -72,7 +72,7 @@ def linux_nodes(host, builder, defer_host=None, defer_reason=""):
             FastNode(f"R{suffix}", f"rehearse-{host}", host, (payload, f"P{suffix}"), 150, (f"sandbox:{host}",)),
             FastNode(f"X{suffix}", f"rollback-proof-{host}", host, (payload, f"P{suffix}", f"R{suffix}"), 150, (f"rollback-sandbox:{host}",)),
             FastNode(f"E{suffix}", f"e2e-{host}", host, (payload, f"P{suffix}"), 360, (f"e2e:{host}",)),
-            FastNode(f"I{suffix}", f"install-{host}", host, (f"R{suffix}", f"E{suffix}", f"X{suffix}"), 0 if reason else 1200, () if reason else (f"live-install:{host}",), outcomes=INSTALL_OUTCOMES, defer_reason=reason))
+            FastNode(f"I{suffix}", f"install-{host}", host, (f"R{suffix}", f"E{suffix}", f"X{suffix}"), 0 if reason else 1200, () if reason else (f"live-install:{host}",), outcomes=("deferred",) if reason else INSTALL_OUTCOMES, defer_reason=reason))
 
 
 def fast_graph(linux_host="ax42", defer_host=None, defer_reason=""):

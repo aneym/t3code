@@ -244,13 +244,16 @@ def fast_publish(config, log):
     source = config.run / config.build_host
     deferred = deferred_hosts(config.run)
     for host, address in LINUX_TARGETS.items():
-        if host in deferred:
-            continue
         own, local = config.on(host), config.run / host
         local.mkdir(exist_ok=True)
         proof = (own.receipt("rollback-proof"),) if required(load(config.manifest), host) else ()
-        for path in (own.manifest, own.receipt("rehearsal"), own.receipt("install"), *proof):
+        install = () if host in deferred else (own.receipt("install"),)
+        for path in (own.manifest, own.receipt("rehearsal"), *install, *proof):
             transfer(f"{address}:{path}", str(local) + "/", log)
+        if host in deferred:
+            evidence = local / f"e2e-{host}"
+            evidence.mkdir(exist_ok=True)
+            transfer(f"{address}:{own.run}/e2e-{host}/smoke-verdict.json", str(evidence) + "/", log)
         if host != config.build_host:
             shutil.copy2(source / remote.artifact().name, local / remote.artifact().name)
             archive = local / remote.archive()

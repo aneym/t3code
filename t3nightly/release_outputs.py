@@ -220,8 +220,12 @@ def release_identity(manifest):
 def deferred_hosts(run):
     binding = Path(run) / "fast-inputs.json"
     hosts = json.loads(binding.read_text()).get("deferredHosts", {}) if binding.is_file() else {}
-    if not isinstance(hosts, dict) or any(host not in LINUX_TARGETS or not isinstance(reason, str) or not reason.strip() for host, reason in hosts.items()):
+    if not isinstance(hosts, dict) or len(hosts) > 1 or any(host not in LINUX_TARGETS or not isinstance(reason, str) or not reason.strip() for host, reason in hosts.items()):
         raise ValueError("invalid Linux host deferral in fast run inputs")
+    for host, reason in hosts.items():
+        outcome = json.loads((Path(run) / f"install-{host}/outcome.json").read_text())
+        if outcome.get("outcome") != "deferred" or outcome.get("reason") != reason:
+            raise ValueError(f"{host}: deferral does not match its install outcome")
     return hosts
 
 
@@ -233,14 +237,19 @@ def fast_evidence(run, version):
     if deferred.keys() - release["targets"].keys():
         raise ValueError("deferred host is not a candidate target")
     for host in release["targets"]:
-        if host in deferred:
-            rows[host] = {"outcome": "deferred", "reason": deferred[host]}
-            continue
         build = run / ("mac" if host == "studio" else host)
         manifest, artifact, rehearsal, receipts = host_evidence(run, version, host, build)
-        install = fast_install(receipts / f"install-{host}.json", manifest, artifact, rehearsal, host)
         if release_identity(manifest) != release_identity(release):
             raise ValueError(f"{host}: candidate {manifest['digest']} is not the same release source as {release['digest']}")
+        if host in deferred:
+            verdict = json.loads((build / f"e2e-{host}/smoke-verdict.json").read_text())
+            if verdict.get("ok") is not True or verdict.get("version") != version or verdict.get("archiveSha256") != artifact["archive"]["sha256"]:
+                raise ValueError(f"{host}: deferred host has no matching passing E2E proof")
+            if required(manifest, host) and not proven(receipts / f"rollback-proof-{host}.json", manifest, artifact["archive"]["sha256"]):
+                raise ValueError(f"{host}: deferred host has no passing forced-rollback proof")
+            rows[host] = {"outcome": "deferred", "reason": deferred[host]}
+            continue
+        install = fast_install(receipts / f"install-{host}.json", manifest, artifact, rehearsal, host)
         rows[host] = {"candidate": manifest["digest"], "engine": manifest["engine"]["commit"], "frozenAt": manifest["frozenAt"], "artifact": artifact["digest"], "archive": artifact["archive"]["sha256"], "runtime": artifact["runtime"]["sha256"],
                       "rehearsal": rehearsal["digest"], "install": install["digest"], "outcome": install["outcome"],
                       "eligibility": eligibility_evidence(receipts, manifest, artifact, host, install, rehearsal),
