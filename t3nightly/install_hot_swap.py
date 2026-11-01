@@ -164,6 +164,48 @@ def binary_compatible(compatibility, history):
     return binary_rollback(compatibility) and history == compatibility["candidateMigrations"]["history"]
 
 
+def drain_then_hard(run, previous):
+    with restart_session(run, previous) as bearer:
+        epoch = f"t3nightly:{uuid.uuid4()}"
+        try:
+            run.drain_before_stop = lambda: prepare_with_drain(run, bearer, epoch)
+            return hard_install(run)
+        finally:
+            run.drain_before_stop = None
+            try:
+                restart_rpc(run, bearer, "abort", {"epoch": epoch}, timeout=30)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                run.step("fallback-drain-abort-unavailable")
+                drain = run.report.get("restartDrain") or {}
+                if drain.get("stopRefused"):
+                    drain["abortFailed"] = True
+                    (run.state / "last.json").write_text(json.dumps(run.report, indent=1))
+
+
+def launcher_identity(run, version, expected):
+    from .install_process import serving_process
+
+    serving_process(run, version, expected)
+    serving = run.report["steps"][-1]
+    return {"servicePid": serving["servicePid"], "childPid": serving["pid"], **{name: file_digest(run.home / "runtime" / name) for name in ("launcher/t3", "launcher-pin.json", "launcher-config.json")}}
+
+
+def clean_rollback(run, previous, expected, original):
+    requested = run.report["hotSwap"].get("update") or {}
+    state = json.loads((run.home / "runtime/service-state.json").read_text())
+    update = state.get("update") or {}
+    if not requested.get("updateId") or update.get("id") != requested["updateId"] or update.get("status") not in ("rolled-back", "failed") or update.get("fromVersion") != previous or update.get("targetVersion") != run.args.version or state.get("activeVersion") != previous:
+        return None
+    if any(word in str(update.get("reason", "")).lower() for word in ("watchdog", "last-known-good", "lkg")) or any(step["step"].startswith("launcher-watchdog") for step in run.report["steps"]):
+        return None
+    if launcher_identity(run, previous, expected) != original:
+        return None
+    with urllib.request.urlopen(f"http://127.0.0.1:{run.args.port}/api/health", timeout=5) as response:
+        if response.status != 200:
+            return None
+    return update
+
+
 def install(run):
     args = run.args
     previous = run.server_version()
@@ -196,20 +238,7 @@ def install(run):
             run.step("hot-swap-fallback", reason=reason)
         if maintenance:
             run.step("maintenance-required", fallback="drain-then-hard-install")
-        with restart_session(run, previous) as bearer:
-            epoch = f"t3nightly:{uuid.uuid4()}"
-            try:
-                run.drain_before_stop = lambda: prepare_with_drain(run, bearer, epoch)
-                return hard_install(run)
-            finally:
-                try:
-                    restart_rpc(run, bearer, "abort", {"epoch": epoch}, timeout=30)
-                except (OSError, ValueError, subprocess.SubprocessError):
-                    run.step("fallback-drain-abort-unavailable")
-                    drain = run.report.get("restartDrain") or {}
-                    if drain.get("stopRefused"):
-                        drain["abortFailed"] = True
-                        (run.state / "last.json").write_text(json.dumps(run.report, indent=1))
+        return drain_then_hard(run, previous)
     from .connector_artifact import ensure_connector
 
     ensure_connector(run)
@@ -219,7 +248,9 @@ def install(run):
     backup = install_offbox.live_backup(run, previous) if args.offbox else {"path": str(backup_database(run, previous, preparing=True))}
     store = run.home / "runtime/.rollback-runtime"
     retain_runtime(run.home, previous, store)
+    original_launcher = launcher_identity(run, previous, observed["oldRuntime.digest"])
     outcome, post, update = "failed", baseline, None
+    fallback = None
     with restart_session(run, previous) as bearer:
         epoch = f"t3nightly:{uuid.uuid4()}"
         requested = False
@@ -257,9 +288,16 @@ def install(run):
                 prove(run, previous, baseline)
                 run.report["hotSwap"]["rollback"] = method
                 outcome = "rolled-back"
+                if method == "launcher-automatic":
+                    fallback = clean_rollback(run, previous, observed["oldRuntime.digest"], original_launcher)
             except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
                 run.step("hot-swap-rollback-failed", error_type=type(rollback).__name__)
                 outcome = "broken"
+    if fallback is not None and outcome == "rolled-back":
+        run.report["hotSwap"].update(method="maintenance", fallback="drain-then-hard-install", launcherRollback=fallback)
+        run.step("hot-swap-rolled-back", update_id=fallback["id"], reason=fallback.get("reason", "unspecified"))
+        run.step("hot-swap-fallback", reason="verified-launcher-rollback", fallback="drain-then-hard-install")
+        return drain_then_hard(run, previous)
     serving_version = run.server_version() or "unavailable"
     serving_binary = run.runtime(serving_version)
     serving_digest = file_digest(serving_binary) if serving_binary.is_file() else ""
