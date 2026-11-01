@@ -55,7 +55,7 @@ export function LoadBalancingSettings({
   }));
   const settingsHydrated = useClientSettingsHydrated();
 
-  if (environments.length < 2) return null;
+  if (environments.length === 0) return null;
 
   const { id, title } = searchableSetting("load-balancing");
   return (
