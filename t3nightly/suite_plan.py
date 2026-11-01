@@ -33,7 +33,7 @@ KINDS = {
     "quality": "release-quality",
 }
 SETUP = re.compile(r"^(ensure|install|resolve|start|finish)\b", re.IGNORECASE)
-HOST_PROVISIONING = re.compile(r"(?<![A-Za-z0-9_-])(sudo|apt|apt-get|install-deps)(?![A-Za-z0-9_-])")
+HOST_PROVISIONING = re.compile(r"(?<![A-Za-z0-9_-])(sudo|apt|apt-get|install-deps|--with-deps)(?![A-Za-z0-9_-])")
 
 
 def host_provisioning(command):

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -9,7 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .release_manifest import digest
-from .suite_plan import host_provisioning, load, slug, write
+from .suite_plan import load, slug, write
+from .suite_provision import linux_exports, setup_script, studio_path
 
 
 RESULT_SCHEMA = "t3nightly.advisory-result/1"
@@ -66,11 +68,11 @@ def prepare(host, repo, tree, source, log):
 def install_dependencies(host, tree, log):
     if host == "studio":
         env = os.environ.copy()
-        env["PATH"] = f"{tree}/node_modules/.bin:{Path.home()}/.vite-plus/bin:" + env.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+        env["PATH"] = studio_path(tree)
         env["CI"] = "true"
         code = execute(host, ["vp", "install", "--frozen-lockfile"], log, 600, cwd=tree, env=env)
     else:
-        command = f"cd {shlex.quote(tree)} && export PATH={path(tree)} CI=true && vp install --frozen-lockfile"
+        command = f"cd {shlex.quote(tree)} && export PATH={path(tree)} CI=true && {linux_exports()} && vp install --frozen-lockfile"
         code = execute(host, ["bash", "-c", command], log, 600)
     if code:
         raise RuntimeError(f"dependency install failed on {host}; vp exited {code}")
@@ -94,7 +96,7 @@ def path(tree):
 def environment(step, tree, temp):
     env = {key: os.environ[key] for key in ("HOME", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
     env.update({
-        "PATH": f"{tree}/node_modules/.bin:{Path.home()}/.vite-plus/bin:" + os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "PATH": studio_path(tree),
         "RUNNER_TEMP": temp,
         "GITHUB_OUTPUT": f"{temp}/github-output",
         "GITHUB_STEP_SUMMARY": f"{temp}/github-summary",
@@ -123,13 +125,16 @@ def remote_environment(step, tree, temp):
         else:
             encoded = shlex.quote(value)
         exports.append(f"{key}={encoded}")
-    return "export " + " ".join(exports)
+    return "export " + " ".join(exports) + "; " + linux_exports()
 
 
 def unavailable(host, tree, tools_required, log):
     missing = []
     for tool in tools_required:
-        command = f"export PATH={path(tree)}; command -v {shlex.quote(tool)} >/dev/null"
+        search_path = shlex.quote(studio_path(tree)) if host == "studio" else path(tree)
+        command = f"export PATH={search_path}; command -v {shlex.quote(tool)} >/dev/null"
+        if tool == "sudo":
+            continue
         if tool == "rustfmt":
             command += " && rustfmt --version >/dev/null 2>&1"
         code = execute(host, ["bash", "-c", command], log, 10)
@@ -143,15 +148,8 @@ def run_step(host, step, tree, log_path, deadline):
     started = time.monotonic()
     row = {"id": step["id"], "name": step["name"], "startedAt": now()}
     with log_path.open("w") as log:
-        if step.get("hostProvisioning") or host_provisioning(step["command"]):
-            reason = "host provisioning step was not executed"
-            log.write(reason + "\n")
-            row.update(result="unavailable", reason=reason, exit=None)
-            row["seconds"] = round(time.monotonic() - started, 3)
-            row["finishedAt"] = now()
-            row["log"] = str(log_path)
-            return row
-        setup = execute(host, ["mkdir", "-p", temp], log, 15)
+        step_temp = f"{temp}/{step['id']}"
+        setup = execute(host, setup_script(step_temp), log, 15)
         if setup:
             row.update(result="unavailable", exit=setup)
         else:
@@ -160,13 +158,23 @@ def run_step(host, step, tree, log_path, deadline):
                 row.update(result="unavailable", missingTools=missing, exit=None)
             else:
                 command = interpolate(step["command"], temp)
+                missing_file = f"{step_temp}/missing-packages"
+                command = f"export PATH={shlex.quote(step_temp + '/shims')}:$PATH T3NIGHTLY_MISSING_PACKAGES={shlex.quote(missing_file)}\n" + command
+                command += "\nwait\n"
+                if "apt-status" in step["command"] and "&" in step["command"]:
+                    command += 'cat "$RUNNER_TEMP/apt.log"; exit "$(cat "$RUNNER_TEMP/apt-status")"\n'
                 if host == "studio":
                     words = ["bash", "-eo", "pipefail", "-c", command]
                     code = execute(host, words, log, deadline - time.monotonic(), cwd=tree, env=environment(step, tree, temp))
                 else:
                     remote = f"cd {shlex.quote(tree)} && {remote_environment(step, tree, temp)} && bash -eo pipefail -c {shlex.quote(command)}"
                     code = execute(host, ["bash", "-c", remote], log, deadline - time.monotonic())
-                row.update(result="pass" if code == 0 else "fail", exit=code)
+                execute(host, ["bash", "-c", f"test ! -f {shlex.quote(missing_file)} || cat {shlex.quote(missing_file)}"], log, 15)
+                log.flush()
+                packages = sorted(set(re.findall(r"T3NIGHTLY_MISSING_PACKAGE:([^\s]+)", log_path.read_text())))
+                row.update(result="unavailable" if packages else ("pass" if code == 0 else "fail"), exit=code)
+                if packages:
+                    row["missingPackages"] = packages
     row["seconds"] = round(time.monotonic() - started, 3)
     row["finishedAt"] = now()
     row["log"] = str(log_path)
