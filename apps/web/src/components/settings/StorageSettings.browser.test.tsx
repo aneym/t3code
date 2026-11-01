@@ -99,6 +99,7 @@ function setup() {
       browserArtifactsAfterDays: null,
       logsAfterDays: null,
       worktreeDisposableIgnoredPaths: [],
+      worktreeOrphans: false,
     },
     projectSettingsOverrides: {},
   };
