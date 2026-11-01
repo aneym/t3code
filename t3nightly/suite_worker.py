@@ -13,7 +13,7 @@ from pathlib import Path
 from .release_manifest import digest
 from .suite_plan import load, slug, write
 from .suite_provision import linux_exports, setup_script, studio_path
-from .suite_resources import CLEANUP, WorkerTerminated, cache_exports, host_slot, worker_signals
+from .suite_resources import CLEANUP, COW_GATE, COW_LIMIT, TMP, TMP_ROOT, WorkerTerminated, cache_exports, host_slot, job_tmp, worker_signals
 
 
 RESULT_SCHEMA = "t3nightly.advisory-result/1"
@@ -97,7 +97,7 @@ def install_dependencies(host, tree, log):
         code = execute(host, ["vp", "install", "--frozen-lockfile"], log, 600, cwd=tree, env=env)
     else:
         store = "/srv/cow/t3-wt/.advisory-pnpm-store" if host == "ax42" else "$HOME/.local/share/t3nightly/pnpm-store"
-        command = f"cd {shlex.quote(tree)} && export PATH={path(tree)} CI=true && {linux_exports()} && {cache_exports(host)} && PNPM_CONFIG_VIRTUAL_STORE_TYPE=global PNPM_CONFIG_GLOBAL_VIRTUAL_STORE_DIR=\"{store}/links\" vp install --frozen-lockfile -- --store-dir \"{store}\" --package-import-method clone-or-copy"
+        command = f"cd {shlex.quote(tree)} && export PATH={path(tree)} CI=true && {linux_exports()} && {cache_exports(host, tree)} && PNPM_CONFIG_VIRTUAL_STORE_TYPE=global PNPM_CONFIG_GLOBAL_VIRTUAL_STORE_DIR=\"{store}/links\" vp install --frozen-lockfile -- --store-dir \"{store}\" --package-import-method clone-or-copy"
         code = execute(host, ["bash", "-c", command], log, 600)
     if code:
         raise RuntimeError(f"dependency install failed on {host}; vp exited {code}")
@@ -105,6 +105,24 @@ def install_dependencies(host, tree, log):
 
 def cleanup(host, repo, tree, log):
     return execute(host, ["python3", "-c", CLEANUP, repo, tree, HOSTS[host][1]], log, 300)
+
+
+def tmp_report(host, mode, tree, log):
+    with tempfile.TemporaryFile(mode="w+") as output:
+        code = execute(host, ["python3", "-c", TMP, mode, job_tmp(tree), TMP_ROOT], output, 300)
+        output.seek(0)
+        text = output.read()
+    log.write(text)
+    lines = [line for line in text.splitlines() if line.startswith("{")]
+    if code or not lines:
+        raise RuntimeError(f"advisory tmp {mode} exited {code}")
+    return json.loads(lines[-1])
+
+
+def cow_gate(host, log):
+    if host != "ax42":
+        return 0
+    return execute(host, ["python3", "-c", COW_GATE, str(COW_LIMIT), "7200"], log, 7300)
 
 
 def interpolate(value, temp):
@@ -147,7 +165,7 @@ def remote_environment(step, tree, temp, host):
         else:
             encoded = shlex.quote(value)
         exports.append(f"{key}={encoded}")
-    return "export " + " ".join(exports) + " && " + linux_exports() + " && " + cache_exports(host)
+    return "export " + " ".join(exports) + " && " + linux_exports() + " && " + cache_exports(host, tree)
 
 
 def unavailable(host, tree, tools_required, log):
@@ -251,10 +269,15 @@ def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep
         "unexecutedSteps": [row["id"] for row in steps],
         "startedAt": now(),
     }
+    if host == "ax42":
+        result["tmpPeakBytes"] = 0
     resources = ExitStack()
     attempted = False
     try:
         try:
+            with (logs / "cow-gate.log").open("w") as log:
+                if cow_gate(host, log):
+                    raise RuntimeError(f"/srv/cow stayed at or above {COW_LIMIT}% for 7200s")
             slot_log = resources.enter_context((logs / "slot.log").open("w"))
             result["hostSlot"] = resources.enter_context(host_slot(host, tree, slot_log))
             admitted = time.monotonic()
@@ -270,6 +293,12 @@ def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep
                     continue
                 row = run_step(host, step, tree, logs / f"{index:02d}-{step['id']}.log", deadline)
                 rows.append(row)
+                if host == "ax42":
+                    try:
+                        with (logs / "tmp.log").open("a") as log:
+                            result["tmpPeakBytes"] = max(result["tmpPeakBytes"], tmp_report(host, "measure", tree, log)["bytes"])
+                    except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
+                        result.setdefault("tmpMeasureErrors", []).append(str(error))
                 stopped = stopped or row["result"] != "pass"
             outcomes = {row["result"] for row in rows}
             status = "fail" if "fail" in outcomes else ("unavailable" if "unavailable" in outcomes else "pass")
@@ -282,6 +311,14 @@ def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep
             result["result"] = "unavailable"
     finally:
         try:
+            if attempted and host == "ax42":
+                try:
+                    with (logs / "tmp.log").open("a") as log:
+                        result["tmpCleanup"] = tmp_report(host, "remove", tree, log)
+                    if result["tmpCleanup"]["after"]["exists"]:
+                        result["cleanupError"] = f"advisory tmp still present: {job_tmp(tree)}"
+                except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
+                    result["cleanupError"] = f"advisory tmp cleanup failed: {error}"
             if attempted and not keep:
                 try:
                     with (logs / "cleanup.log").open("w") as log:
@@ -290,9 +327,9 @@ def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep
                         result["cleanupError"] = f"worktree cleanup exited {result['cleanupExit']}"
                 except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                     result["cleanupError"] = f"worktree cleanup failed: {error}"
-                if "cleanupError" in result:
-                    result["result"] = "unavailable"
-                    result.setdefault("error", result["cleanupError"])
+            if "cleanupError" in result:
+                result["result"] = "unavailable"
+                result.setdefault("error", result["cleanupError"])
         finally:
             resources.close()
     result["seconds"] = round(time.monotonic() - started, 3)

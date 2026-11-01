@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from pathlib import Path
 
 
 CLEANUP = r'''
@@ -6,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 repo, requested, advisory_root = sys.argv[1:]
@@ -22,7 +24,9 @@ while pid > 1:
         pid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
     except OSError:
         break
-if Path("/proc").is_dir():
+def holder():
+    if not Path("/proc").is_dir():
+        return None
     for proc in Path("/proc").iterdir():
         if not proc.name.isdigit() or int(proc.name) in ancestors:
             continue
@@ -30,9 +34,15 @@ if Path("/proc").is_dir():
             cwd = (proc / "cwd").resolve()
             args = (proc / "cmdline").read_bytes().decode(errors="replace")
             if cwd == tree or tree in cwd.parents or str(alias) in args or str(tree) in args:
-                raise RuntimeError(f"advisory worktree still in use by pid {proc.name}: {tree}")
+                return proc.name
         except (FileNotFoundError, PermissionError, ProcessLookupError):
             continue
+    return None
+deadline = time.monotonic() + 120
+while (pid := holder()) and time.monotonic() < deadline:
+    time.sleep(2)
+if pid:
+    raise RuntimeError(f"advisory worktree still in use by pid {pid} after 120s: {tree}")
 listing = subprocess.run(["git", "-C", repo, "worktree", "list", "--porcelain"], capture_output=True, text=True, check=True).stdout
 record = next((part for part in listing.split("\n\n") if part and Path(part.splitlines()[0].removeprefix("worktree ")).resolve() == tree), "")
 branch = next((line.removeprefix("branch refs/heads/") for line in record.splitlines() if line.startswith("branch refs/heads/")), None)
@@ -82,10 +92,100 @@ class WorkerTerminated(RuntimeError):
     pass
 
 
-def cache_exports(host):
+TMP_ROOT = "/srv/cow/t3-wt/.advisory-tmp"
+COW_LIMIT = 81.0
+
+
+TMP = r'''
+import json
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
+
+mode, requested, root = sys.argv[1:]
+tmp = Path(requested)
+if tmp.is_symlink() or not tmp.name.startswith("advisory-") or tmp.parent != Path(root):
+    raise RuntimeError(f"refusing unsafe advisory tmp path: {requested}")
+prefix = str(tmp) + "/"
+def size():
+    total = 0
+    for base, dirs, files in os.walk(tmp):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(base, name)).st_blocks * 512
+            except OSError:
+                continue
+    return total
+def held():
+    seen, total, holders = set(), 0, set()
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit() or int(proc.name) == os.getpid():
+            continue
+        try:
+            if (os.readlink(proc / "cwd") + "/").startswith(prefix):
+                holders.add(int(proc.name))
+            for fd in (proc / "fd").iterdir():
+                target = os.readlink(fd)
+                if not target.startswith(prefix):
+                    continue
+                holders.add(int(proc.name))
+                if target.endswith(" (deleted)"):
+                    info = os.stat(fd)
+                    if (info.st_dev, info.st_ino) not in seen:
+                        seen.add((info.st_dev, info.st_ino))
+                        total += info.st_blocks * 512
+        except OSError:
+            continue
+    return total, sorted(holders)
+def cow():
+    info = os.statvfs("/srv/cow")
+    return info.f_bavail * info.f_frsize
+if mode == "measure":
+    print(json.dumps({"bytes": size() if tmp.exists() else 0}))
+    sys.exit(0)
+before = {"cowAvail": cow(), "bytes": size() if tmp.exists() else 0}
+before["heldDeleted"], holders = held()
+deadline = time.monotonic() + 120
+while holders and time.monotonic() < deadline:
+    time.sleep(2)
+    _, holders = held()
+shutil.rmtree(tmp, ignore_errors=True)
+after_held, holders = held()
+print(json.dumps({"before": before, "after": {"cowAvail": cow(), "heldDeleted": after_held, "holders": holders, "exists": tmp.exists()}}))
+'''
+
+
+COW_GATE = r'''
+import json
+import os
+import sys
+import time
+
+limit, wait = float(sys.argv[1]), float(sys.argv[2])
+deadline = time.monotonic() + wait
+while True:
+    info = os.statvfs("/srv/cow")
+    used = 100 * (info.f_blocks - info.f_bfree) / info.f_blocks
+    print(json.dumps({"cowUsedPercent": round(used, 3), "at": time.time()}), flush=True)
+    if used < limit:
+        sys.exit(0)
+    if time.monotonic() >= deadline:
+        sys.exit(3)
+    time.sleep(30)
+'''
+
+
+def job_tmp(tree):
+    return f"{TMP_ROOT}/{Path(tree).name}"
+
+
+def cache_exports(host, tree):
     if host != "ax42":
         return "true"
-    return "{ mkdir -p /srv/cow/t3-wt/.advisory-cache/pnpm /srv/cow/t3-wt/.advisory-tmp && export TMPDIR=/srv/cow/t3-wt/.advisory-tmp XDG_CACHE_HOME=/srv/cow/t3-wt/.advisory-cache PNPM_CONFIG_CACHE_DIR=/srv/cow/t3-wt/.advisory-cache/pnpm PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright electron_config_cache=$HOME/.cache/electron; }"
+    tmp = job_tmp(tree)
+    return f"{{ mkdir -p /srv/cow/t3-wt/.advisory-cache/pnpm {tmp} && export TMPDIR={tmp} XDG_CACHE_HOME=/srv/cow/t3-wt/.advisory-cache PNPM_CONFIG_CACHE_DIR=/srv/cow/t3-wt/.advisory-cache/pnpm PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright electron_config_cache=$HOME/.cache/electron; }}"
 
 
 @contextmanager
