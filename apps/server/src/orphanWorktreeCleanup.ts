@@ -88,30 +88,44 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
     }
     return null;
   });
-  const holderReason = Effect.fn("StorageCleanup.orphanHolders")(
-    function* (cwd: string) {
-      if (platform !== "darwin" && platform !== "linux") return "lsof-unavailable";
+  const inspectHolders = Effect.fn("StorageCleanup.orphanHolders")(
+    function* () {
+      if (platform !== "darwin" && platform !== "linux")
+        return { reason: "lsof-unavailable", paths: [] };
       const result = yield* processRunner.run({
         command: "lsof",
-        args: ["-n", "-P", "-a", "-d", "cwd", "-Fpn"],
+        args: ["-w", "-n", "-P", "-a", "-d", "cwd", "-Fpn"],
         cwd: config.cwd,
         timeout: "30 seconds",
         maxOutputBytes: 8 * 1024 * 1024,
+        outputMode: "truncate",
+        env: { LC_ALL: "C" },
       });
-      if (result.stdoutTruncated || result.stderrTruncated) return "lsof-output-truncated";
-      if (result.stdoutInvalidUtf8 || result.stderrInvalidUtf8) return "lsof-invalid-utf8";
-      if (result.stderr.trim() !== "") return "lsof-noise";
-      if (result.code !== 0) return "lsof-failed";
-      for (const line of new Set(result.stdout.split("\n"))) {
+      if (result.stdoutTruncated || result.stderrTruncated)
+        return { reason: "lsof-output-truncated", paths: [] };
+      if (result.stdoutInvalidUtf8 || result.stderrInvalidUtf8)
+        return { reason: "lsof-invalid-utf8", paths: [] };
+      const errors = result.stderr
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(
+          (line) =>
+            line !== "" &&
+            !/^(?:lsof: )?WARNING: can't stat\(\)/.test(line) &&
+            !/^(?:lsof: )?Output information may be incomplete\.?$/.test(line),
+        );
+      if (errors.length > 0) return { reason: "lsof-stderr-error", paths: [] };
+      if (result.code !== 0) return { reason: "lsof-failed", paths: [] };
+      const paths = new Set<string>();
+      for (const line of result.stdout.split("\n")) {
         if (!line.startsWith("n/")) continue;
         const current = line.slice(1);
-        if (contains(cwd, current)) return "live process cwd";
-        const real = yield* fs.realPath(current).pipe(Effect.orElseSucceed(() => current));
-        if (contains(cwd, real)) return "live process cwd";
+        paths.add(current);
+        paths.add(yield* fs.realPath(current).pipe(Effect.orElseSucceed(() => current)));
       }
-      return null;
+      return { reason: null, paths: [...paths] };
     },
-    Effect.orElseSucceed(() => "lsof-failed"),
+    Effect.orElseSucceed(() => ({ reason: "lsof-execution-failed", paths: [] })),
   );
 
   return Effect.fn("StorageCleanup.cleanOrphans")(function* (
@@ -162,6 +176,7 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
           return Effect.logWarning("orphan worktree discovery failed");
         }),
       );
+    const holders = candidates.size > 0 ? yield* inspectHolders() : { reason: null, paths: [] };
     for (const cwd of candidates) {
       const entry: StorageCleanupReportEntry = {
         kind: "worktree",
@@ -178,15 +193,17 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
         skipped[reason] = (skipped[reason] ?? 0) + 1;
         if (!entries.some((previous) => previous.path === cwd)) entries.push({ ...entry, reason });
       };
-      let failureReason = "inspection-failed";
+      let failureReason = "inspection-failed: bindings";
       yield* Effect.gen(function* () {
         const initialBinding = yield* bindingReason(cwd);
         if (initialBinding !== null) return keep(initialBinding);
+        failureReason = "inspection-failed: worktree-stat";
         const modified = Option.getOrNull((yield* fs.stat(cwd)).mtime);
         if (modified === null || modified.getTime() > (yield* Clock.currentTimeMillis) - 3_600_000)
           return keep("worktree was created or modified recently");
         const run = (args: string[]) =>
           git.execute({ operation: "StorageCleanup.orphan", cwd, args });
+        failureReason = "inspection-failed: git-registration";
         const admin = (yield* run(["rev-parse", "--absolute-git-dir"])).stdout.trim();
         const common = yield* fs.realPath(
           (yield* run(["rev-parse", "--path-format=absolute", "--git-common-dir"])).stdout.trim(),
@@ -200,6 +217,7 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
         const repository = registered[0];
         if (repository === undefined || !registered.some((target) => key(target) === key(cwd)))
           return keep("worktree registration is unavailable");
+        failureReason = "inspection-failed: branch-head";
         const branch = (yield* run(["symbolic-ref", "--quiet", "HEAD"])).stdout
           .trim()
           .replace(/^refs\/heads\//, "");
@@ -243,19 +261,25 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
           return null;
         });
         const ready = Effect.fn("StorageCleanup.orphanReady")(function* () {
+          failureReason = "inspection-failed: identity";
           const moved = yield* identity();
           if (moved !== null) return moved;
-          const holder = yield* holderReason(cwd);
-          if (holder !== null) return holder;
+          if (holders.reason !== null) return holders.reason;
+          if (holders.paths.some((current) => contains(cwd, current))) return "live process cwd";
+          failureReason = "inspection-failed: submodules";
           const submodules = yield* safety.submoduleKeepReason(cwd, rules);
           if (submodules !== null) return submodules;
+          failureReason = "inspection-failed: personal-state";
           const personal = yield* trash.personalStateReason(cwd, disposable);
           if (personal !== null) return personal;
+          failureReason = "inspection-failed: keep-marker";
           for (const marker of ["keep-lane-state", ".keep-lane-state"])
             if (yield* fs.exists(path.join(cwd, marker))) return "keep-lane-state marker exists";
+          failureReason = "inspection-failed: local-changes";
           const changes = yield* safety.localChangesReason(cwd, rules);
           if (changes !== null) return changes;
           if (hasTerminal(cwd)) return "open terminal";
+          failureReason = "inspection-failed: settings";
           const current = yield* settingsService.getSettings;
           if (
             !current.storageCleanup.worktreeOrphans ||
@@ -267,12 +291,15 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
             )
           )
             return "settings changed since check";
+          failureReason = "inspection-failed: final-identity";
           const finalIdentity = yield* identity();
           if (finalIdentity !== null) return finalIdentity;
+          failureReason = "inspection-failed: final-bindings";
           return yield* bindingReason(cwd);
         });
         const early = yield* ready();
         if (early !== null) return keep(early);
+        failureReason = "inspection-failed: upstream";
         let published = false;
         let remoteMissing = false;
         const upstream = yield* run([
@@ -338,15 +365,14 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
               ? "remote-branch-missing-not-integrated"
               : "branch-not-published-or-integrated",
           );
-        failureReason = "inspection-failed";
+        failureReason = "inspection-failed: final-readiness";
         const final = yield* ready();
         if (final !== null) return keep(final);
         failureReason = "removal-failed";
-        yield* git.execute({
-          operation: "StorageCleanup.removeOrphan",
-          cwd: repository,
-          args: ["worktree", "remove", "--", cwd],
-        });
+        const root = roots.find((root) => contains(root, cwd));
+        if (root === undefined) return keep("managed root changed since check");
+        const removal = yield* trash.remove(root, cwd, repository, () => ready());
+        if (removal !== null) return keep(removal);
         removed++;
         entries.push({
           ...entry,
@@ -361,7 +387,7 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
               error._tag === "GitCommandError" &&
                 error.operation === "GitVcsDriver.fetchRemoteTrackingBranch"
                 ? "fetch-failed"
-                : failureReason,
+                : `${failureReason} (${error._tag})`,
             ),
           ),
         ),
