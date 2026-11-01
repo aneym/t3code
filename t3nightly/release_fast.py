@@ -68,9 +68,25 @@ def drive_fast(args):
     started_at = existing.get("start", utc_now())
     advisory = {node.id for node in FAST_GRAPH if not node.gating}
     done, failed, running = set(), set(existing.get("failed", [])) & advisory, {}
-    pending = {node.id: node for node in FAST_GRAPH if not (args.rehearse_only and node.id in LIVE_NODES) and node.id not in failed}
+    pending = {node.id: node for node in FAST_GRAPH if not (args.rehearse_only and node.id in LIVE_NODES)}
     recorded = set(existing.get("recorded", []))
     completed_at = existing.get("releaseSeconds")
+    if not args.dry_run:
+        for key, node in list(pending.items()):
+            row = jobs.request(node, "status")
+            if row.get("outcome") == "status-unavailable":
+                raise RuntimeError(f"cannot recover durable job status for {key}; retry without changing job inputs")
+            success = row.get("outcome") in SUCCESS_OUTCOMES if key in ("IM", "IL") else row.get("outcome") == "passed"
+            if success:
+                row = jobs.request(node, "submit", stage_spec(node, args))
+                done.add(key)
+                failed.discard(key)
+                del pending[key]
+                if key not in recorded:
+                    timeline.record_fast(node, row)
+                    recorded.add(key)
+            elif key in failed:
+                del pending[key]
     while pending or running:
         if not args.dry_run and not engine_checked and manifest.is_file():
             require_engine(manifest)
