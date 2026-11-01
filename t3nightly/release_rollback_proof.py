@@ -19,8 +19,24 @@ def legacy_launcher(installer):
             and hot_swap.get("method") == "hot-swap-unsupported" and "hot-swap-unsupported" in steps)
 
 
+def maintenance_rolled_back(installer):
+    steps = installer.get("steps", [])
+    names = [step.get("step") for step in steps]
+    hot_swap = installer.get("hotSwap", {})
+    previous = installer.get("previous")
+    if hot_swap.get("method") != "maintenance" or "hard-failure" not in names or not previous:
+        return False
+    after = names[names.index("hard-failure"):]
+    serving = [step for step in steps if step.get("step") == "hard-serving"]
+    return ("launcher-request-update" in after and hot_swap.get("rollbackUpdate", {}).get("targetVersion") == previous
+            and bool(serving) and serving[-1].get("version") == previous)
+
+
 def hard_rolled_back(installer):
-    return legacy_launcher(installer) and installer.get("outcome") == "rolled-back" and any(step.get("step") == "hard-binary-rollback" for step in installer.get("steps", []))
+    if installer.get("outcome") != "rolled-back":
+        return False
+    legacy = legacy_launcher(installer) and any(step.get("step") == "hard-binary-rollback" for step in installer.get("steps", []))
+    return legacy or maintenance_rolled_back(installer)
 
 
 def proven(path, manifest, archive_sha):
