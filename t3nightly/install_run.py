@@ -67,7 +67,7 @@ class Run:
 
     def finish(self, outcome, line):
         backup = next((row for row in reversed(self.report["steps"]) if row["step"] == "hard-backup"), {})
-        if outcome == "installed" and backup.get("path"):
+        if outcome == "installed":
             from .install_backup import prune
 
             try:
