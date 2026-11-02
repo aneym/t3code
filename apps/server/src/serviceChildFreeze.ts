@@ -55,7 +55,9 @@ export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* 
       : ("freeze-failed" as const);
   const admittedRequests = yield* Effect.sync(() => {
     mayRelinquish = false;
-    return admittedRequestCount();
+    const count = admittedRequestCount();
+    reopenServerAdmissions();
+    return count;
   });
   const snapshot = yield* outbox.runningEffects.pipe(
     Effect.map((effects) =>
@@ -69,15 +71,14 @@ export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* 
     Effect.catchCause(() => Effect.succeed({ error: "read-failed" })),
     Effect.forkDetach,
   );
-  const runningEffects = yield* Fiber.join(snapshot).pipe(
-    Effect.timeoutOption(Math.max(0, Math.min(50, (holdDeadline - now()) / 10))),
-  );
-  if (Option.isNone(runningEffects)) yield* Fiber.interrupt(snapshot).pipe(Effect.forkDetach);
-  yield* Effect.sync(reopenServerAdmissions);
   yield* sendServiceMessage({ type: "freeze-aborted", updateId, reason }).pipe(
     Effect.timeoutOption(Math.max(1, holdDeadline - now())),
     Effect.ignore,
   );
+  const runningEffects = yield* Fiber.join(snapshot).pipe(
+    Effect.timeoutOption(Math.max(0, Math.min(1000, (holdDeadline - now()) / 10))),
+  );
+  if (Option.isNone(runningEffects)) yield* Fiber.interrupt(snapshot).pipe(Effect.forkDetach);
   yield* Effect.logWarning("Service handoff aborted before ownership release", {
     updateId,
     reason,
