@@ -3,6 +3,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import time
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,11 +12,13 @@ from t3nightly.install_resources import copy_snapshot
 from t3nightly.install_storage import record_payload
 from t3nightly.install_payload_gc import discard_snapshot, prune_backups
 from t3nightly.live_snapshot import clone_file, take
+from t3nightly.snapshot_space import database_bytes, require_space
 
 
 def refresh_snapshot(run):
     if getattr(run.args, "offbox", ""):
         raise ValueError("--offbox never takes a live read snapshot; nothing stopped")
+    started = time.monotonic()
     run.snapshot_ready = False
     replaced_bytes = run.snapshot.stat().st_size if run.snapshot.exists() else 0
     staged = Path(str(run.snapshot) + ".partial")
@@ -35,9 +38,9 @@ def refresh_snapshot(run):
         bytes=run.snapshot.stat().st_size,
         source=str(run.db),
         replaced_bytes=replaced_bytes,
-        lifecycle="reuse-run-owned-derived-snapshot",
+        lifecycle="fresh-install-owned-derived-snapshot",
     )
-    run.step("read-snapshot", path=str(run.snapshot), bytes=run.snapshot.stat().st_size)
+    run.step("read-snapshot", path=str(run.snapshot), bytes=run.snapshot.stat().st_size, elapsed_s=round(time.monotonic() - started, 3))
 
 
 def backup_database(run, version, *, preparing=False):
@@ -50,6 +53,8 @@ def backup_database(run, version, *, preparing=False):
         raise ValueError(
             "provider turns became active before the backup; nothing changed"
         )
+    root = run.backups
+    require_space(root, database_bytes(run.db))
     refresh_snapshot(run)
     if not preparing and (run.streaming_runs() or run.streaming_runs(live=True)):
         run.step(
@@ -58,19 +63,14 @@ def backup_database(run, version, *, preparing=False):
         raise ValueError(
             "provider turns became active before the backup; nothing changed"
         )
-    size = run.db.stat().st_size
-    root = run.backups
-    free = shutil.disk_usage(root).free
-    if free < size * 2:
-        raise ValueError(
-            f"backup space {free >> 30} GiB under twice the {size >> 30} GiB database"
-        )
+    require_space(root, run.snapshot.stat().st_size)
     target = (
         root / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}-{version}"
     )
     run.payloads.hold(root, target)
     target.mkdir(mode=0o700)
     dest = target / "statev2.sqlite"
+    started = time.monotonic()
     with run.readonly() as source:
         try:
             clone_file(run.snapshot, dest, getattr(run.args, "snapshot_max_s", 1200))
@@ -84,6 +84,7 @@ def backup_database(run, version, *, preparing=False):
             with closing(sqlite3.connect(dest)) as copy:
                 copy_snapshot(run, source, copy)
             method = "sqlite-backup"
+    copied = time.monotonic()
     with closing(sqlite3.connect(dest.as_uri() + "?mode=ro", uri=True)) as copy:
         check = copy.execute("pragma quick_check").fetchone()[0]
     os.chmod(dest, 0o600)
@@ -108,5 +109,5 @@ def backup_database(run, version, *, preparing=False):
         quick_check=check,
         method=method,
     )
-    run.step("backup", path=str(dest), bytes=dest.stat().st_size, method=method)
+    run.step("backup", path=str(dest), bytes=dest.stat().st_size, method=method, copy_s=round(copied - started, 3), quick_check_s=round(time.monotonic() - copied, 3))
     return dest

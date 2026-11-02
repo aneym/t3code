@@ -1,4 +1,3 @@
-import argparse
 import ctypes
 import errno
 import fcntl
@@ -9,10 +8,13 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from contextlib import ExitStack, closing
 from pathlib import Path
 
 from .io_priority import background_command
+from . import live_read_guard as guard
+from .snapshot_space import database_bytes, require_space
 
 
 MAX_AGE = 6 * 60 * 60
@@ -49,17 +51,21 @@ def clone_file(original, copy, timeout):
         raise OSError(code, os.strerror(code), str(original), None, str(copy))
 
 
-def clone_database(source, destination, timeout):
-    with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=30, isolation_level=None)) as reader:
-        reader.execute("BEGIN")
-        reader.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
-        try:
-            for suffix in ("", "-wal"):
-                original = Path(str(source) + suffix)
-                if original.exists():
-                    clone_file(original, Path(str(destination) + suffix), timeout)
-        finally:
-            reader.execute("ROLLBACK")
+def read_snapshot(source, destination, timeout, method):
+    seconds = min(timeout, 2 if method == "clone" else 30)
+    command = [sys.executable, "-m", "t3nightly.snapshot_reader", method, str(source), str(destination), *guard.guard_words(seconds)]
+    command = ["nice", "-n", "19", *command] if sys.platform == "darwin" else ["ionice", "-c2", "-n7", *command]
+    root = str(Path(__file__).resolve().parent.parent)
+    env = dict(os.environ, PYTHONPATH=root + os.pathsep + os.environ.get("PYTHONPATH", ""))
+    result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=seconds + guard.GRACE_S + 5)
+    if result.returncode:
+        reason = result.stderr.strip()[-1000:]
+        if result.returncode == guard.WAL_EXIT:
+            raise guard.WalAbort(reason or "live WAL limit exceeded; snapshot refused")
+        if result.returncode == guard.DEADLINE_EXIT:
+            raise TimeoutError(reason or "live snapshot reader exceeded its deadline")
+        raise subprocess.CalledProcessError(result.returncode, command, result.stdout, result.stderr)
+    print("snapshot reader: " + result.stdout.strip(), file=sys.stderr, flush=True)
 
 
 def fold_wal(destination):
@@ -72,23 +78,6 @@ def fold_wal(destination):
         Path(str(destination) + suffix).unlink(missing_ok=True)
 
 
-def backup_database(source, destination, timeout):
-    end = time.monotonic() + timeout
-
-    def progress(status, remaining, total):
-        if time.monotonic() >= end:
-            raise TimeoutError("stepwise snapshot backup exceeded its deadline")
-
-    with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=30, isolation_level=None)) as reader:
-        reader.execute("BEGIN")
-        reader.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
-        try:
-            with closing(sqlite3.connect(destination)) as writer:
-                reader.backup(writer, pages=256, progress=progress, sleep=0.05)
-        finally:
-            reader.execute("ROLLBACK")
-
-
 def take(dest, *, home=None, timeout=1200):
     home = Path(home) if home is not None else Path.home() / ".t3"
     source = (home / "userdata/statev2.sqlite").resolve()
@@ -98,14 +87,29 @@ def take(dest, *, home=None, timeout=1200):
     if not source.is_file():
         raise FileNotFoundError("no database to snapshot at %s" % source)
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if timeout <= 0:
+        raise ValueError("snapshot deadline must be positive")
+    size = database_bytes(source)
+    staging = snapshot_root(home)
+    require_space(staging, size)
+    if destination.parent.stat().st_dev != staging.stat().st_dev:
+        require_space(destination.parent, size)
     started = time.monotonic()
+    end = started + timeout
+
+    def remaining():
+        left = end - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("snapshot exceeded its deadline")
+        return left
+
     with ExitStack() as stack:
-        raw = stack.enter_context(tempfile.TemporaryDirectory(prefix=".snapshot-", dir=snapshot_root(home)))
+        raw = stack.enter_context(tempfile.TemporaryDirectory(prefix=".snapshot-", dir=staging))
         staged = Path(raw) / "statev2.sqlite"
         try:
-            clone_database(source, staged, timeout)
+            read_snapshot(source, staged, remaining(), "clone")
             method = "apfs-clone" if sys.platform == "darwin" else "reflink"
-        except InterruptedError:
+        except (InterruptedError, guard.WalAbort, TimeoutError):
             raise
         except (OSError, subprocess.CalledProcessError) as error:
             if sys.platform == "darwin":
@@ -113,14 +117,12 @@ def take(dest, *, home=None, timeout=1200):
             for path in Path(raw).iterdir():
                 path.unlink()
             staged = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix=".snapshot-", dir=destination.parent))) / "statev2.sqlite"
-            command = background_command([sys.executable, "-m", "t3nightly.live_snapshot", str(source), str(staged), str(timeout)])
-            print("snapshot clone unavailable (%s); stepwise sqlite backup: %s" % (type(error).__name__, " ".join(command[:6])), file=sys.stderr, flush=True)
-            env = dict(os.environ)
-            root = str(Path(__file__).resolve().parent.parent)
-            env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
-            subprocess.run(command, cwd=root, env=env, check=True, timeout=timeout)
+            read_snapshot(source, staged, remaining(), "backup")
             method = "background-stepwise-backup"
+        folded = time.monotonic()
         fold_wal(staged)
+        print("snapshot WAL fold in %.3fs" % (time.monotonic() - folded), file=sys.stderr, flush=True)
+        remaining()
         os.chmod(staged, 0o600)
         try:
             os.replace(staged, destination)
@@ -129,7 +131,7 @@ def take(dest, *, home=None, timeout=1200):
                 raise
             with tempfile.TemporaryDirectory(prefix=".snapshot-publish-", dir=destination.parent) as publication:
                 copied = Path(publication) / "statev2.sqlite"
-                subprocess.run(background_command(["cp", str(staged), str(copied)]), check=True, capture_output=True, timeout=timeout)
+                subprocess.run(background_command(["cp", str(staged), str(copied)]), check=True, capture_output=True, timeout=remaining())
                 os.chmod(copied, 0o600)
                 os.replace(copied, destination)
         os.utime(destination, None)
@@ -142,7 +144,7 @@ def for_run(key, *, home=None, timeout=1200):
         raise ValueError("snapshot run key must not be empty")
     home = Path(home) if home is not None else Path.home() / ".t3"
     root = snapshot_root(home)
-    digest = hashlib.sha256(str(key).encode()).hexdigest()
+    digest = hashlib.sha256(str(key).encode()).hexdigest() + "-" + uuid.uuid4().hex
     destination = checked_path(root / ("statev2-run-%s.sqlite" % digest), home)
     end = time.monotonic() + timeout
     with checked_path(root / ".nightly-snapshot.lock", home).open("a") as lock:
@@ -154,11 +156,10 @@ def for_run(key, *, home=None, timeout=1200):
                 if time.monotonic() >= end:
                     raise TimeoutError("timed out waiting for the run snapshot")
                 time.sleep(0.1)
-        if not destination.is_file():
-            remaining = end - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("run snapshot deadline expired")
-            take(destination, home=home, timeout=remaining)
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("run snapshot deadline expired")
+        take(destination, home=home, timeout=remaining)
         if destination not in LEASES:
             lease = checked_path(destination.with_suffix(".lock"), home).open("a")
             fcntl.flock(lease, fcntl.LOCK_SH)
@@ -176,12 +177,3 @@ def for_run(key, *, home=None, timeout=1200):
                 for suffix in ("", "-wal", "-shm"):
                     checked_path(Path(str(old) + suffix), home).unlink(missing_ok=True)
     return destination
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("source", type=Path)
-    parser.add_argument("destination", type=Path)
-    parser.add_argument("timeout", type=float)
-    args = parser.parse_args()
-    backup_database(args.source, args.destination, args.timeout)

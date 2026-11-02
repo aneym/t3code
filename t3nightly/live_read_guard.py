@@ -68,24 +68,36 @@ def bind_to_parent(parent):
 
 
 class Watch:
-    def __init__(self, source, limit, seconds):
-        shm = f"{source}-shm"
-        self.shm = os.open(shm, os.O_RDONLY) if os.path.exists(shm) else None
+    def __init__(self, source, limit, seconds, parent):
+        self.source, self.parent = source, parent
         self.limit, self.deadline = limit, time.monotonic() + seconds
-        self.connection, self.code = None, 0
+        self.connection, self.code, self.peak = None, 0, 0
         self.done = threading.Event()
         self.thread = threading.Thread(target=self.watch, daemon=True)
 
+    def sample(self):
+        if os.getppid() != self.parent:
+            os._exit(1)
+        wal = wal_in_use(self.source)
+        self.peak = max(self.peak, wal)
+        if self.code:
+            return
+        if wal >= self.limit:
+            self.code, reason = WAL_EXIT, f"live WAL reached {wal / 2**20:.1f} MiB, over the {self.limit / 2**20:.1f} MiB limit"
+        elif time.monotonic() >= self.deadline:
+            self.code, reason = DEADLINE_EXIT, "live read passed its deadline"
+        else:
+            return
+        print(reason, file=sys.stderr, flush=True)
+
     def watch(self):
         while not self.done.wait(POLL_S):
-            wal = wal_frames(os.pread(self.shm, 48, 0)) if self.shm is not None else 0
-            if wal >= self.limit:
-                self.code, reason = WAL_EXIT, f"live WAL reached {wal / 2**20:.1f} MiB, over the {self.limit / 2**20:.1f} MiB limit"
-            elif time.monotonic() >= self.deadline:
-                self.code, reason = DEADLINE_EXIT, "live read passed its deadline"
-            else:
+            try:
+                self.sample()
+            except OSError:
+                self.code = WAL_EXIT
+            if not self.code:
                 continue
-            print(reason, file=sys.stderr, flush=True)
             try:
                 self.connection.interrupt()
             except Exception:
@@ -95,6 +107,7 @@ class Watch:
             return
 
     def check(self, *_):
+        self.sample()
         if self.code:
             raise InterruptedError("live read aborted by its watchdog")
 
@@ -102,9 +115,10 @@ class Watch:
 @contextmanager
 def guarded(source, limit, seconds, parent):
     bind_to_parent(parent)
-    watch = Watch(source, limit, seconds)
+    watch = Watch(source, limit, seconds, parent)
     watch.thread.start()
     try:
+        watch.check()
         yield watch
     except Exception:
         if not watch.code:
@@ -112,8 +126,6 @@ def guarded(source, limit, seconds, parent):
     finally:
         watch.done.set()
         watch.thread.join()
-        if watch.shm is not None:
-            os.close(watch.shm)
     if watch.code:
         sys.exit(watch.code)
 
