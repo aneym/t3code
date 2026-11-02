@@ -60,7 +60,12 @@ export type ServiceLauncherChildMessage =
   | { readonly type: "warm"; readonly updateId: string; readonly willMigrate: boolean }
   | { readonly type: "drained"; readonly updateId: string }
   | { readonly type: "drain-failed"; readonly updateId: string }
-  | { readonly type: "validated"; readonly updateId: string; readonly port: number }
+  | {
+      readonly type: "validated";
+      readonly updateId: string;
+      readonly port: number;
+      readonly recovering?: boolean;
+    }
   | { readonly type: "listening"; readonly port: number }
   | { readonly type: "state-dir-owned" }
   | {
@@ -329,7 +334,12 @@ export function decodeServiceLauncherChildMessage(
     typeof value.updateId === "string" &&
     typeof value.port === "number"
   )
-    return { type: value.type, updateId: value.updateId, port: value.port };
+    return {
+      type: value.type,
+      updateId: value.updateId,
+      port: value.port,
+      ...(value.recovering === true ? { recovering: true } : {}),
+    };
   if (value.type === "listening" && typeof value.port === "number")
     return { type: value.type, port: value.port };
   if (value.type === "state-dir-owned") return { type: value.type };
