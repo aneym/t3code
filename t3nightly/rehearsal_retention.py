@@ -27,7 +27,8 @@ def rollback_root(path):
     if not plan.is_file():
         return None, "sandbox plan missing"
     try:
-        rollback = Path(json.loads(plan.read_text())["rollbackRoot"])
+        value = json.loads(plan.read_text())
+        rollback = Path(value["rollbackRoot"]) if "rollbackRoot" in value else path.parent / f"{Path(value['home']).parent.name}-rollback"
         if rollback.parent != path.parent or rollback.resolve().parent != path.parent or not rollback.name.startswith(PREFIX) or rollback.is_symlink():
             return None, "recorded rollback sandbox escaped the nightly root"
         return rollback, None
@@ -151,33 +152,47 @@ def newest_passing(dirs):
 
 
 def run_holds(dirs):
-    holds = {}
+    holds, reasons = {}, {}
     now = datetime.now(timezone.utc).timestamp()
-    for runs in (nightly_root() / "runs", Path.home() / "t3nightly/runs"):
-        for run in sorted(runs.rglob("fast")):
+    coordinator_runs = nightly_root() / "runs"
+    for runs in (coordinator_runs, Path.home() / "t3nightly/runs"):
+        for run in sorted(runs.glob("*/fast")):
             if not run.is_dir():
                 continue
+            plans = sorted(run.glob("sandbox-*.json"))
+            timeline = run / "timeline.jsonl"
+            released = False
             try:
-                if (run / "final-receipt.json").is_file() and now - (run / "timeline.jsonl").stat().st_mtime > 24 * 60 * 60:
-                    continue
+                if runs == coordinator_runs:
+                    released = (run / "final-receipt.json").is_file() and now - timeline.stat().st_mtime > 24 * 60 * 60
+                elif plans:
+                    activity = plans + ([timeline] if timeline.exists() else [])
+                    released = now - max(path.stat().st_mtime for path in activity) > 24 * 60 * 60
             except OSError:
                 pass
-            for plan in sorted(run.glob("sandbox-*.json")):
+            for plan in plans:
+                names = set()
                 try:
                     value = json.loads(plan.read_text())
-                    home, rollback = value["home"], value["rollbackRoot"]
-                    if not all(isinstance(path, str) and Path(path).is_absolute() for path in (home, rollback)) or Path(home).name != "home":
-                        raise ValueError("invalid sandbox paths")
-                    names = {Path(home).parent.name, Path(rollback).name}
-                    if not all(name.startswith(PREFIX) for name in names):
-                        raise ValueError("invalid sandbox root names")
+                    if isinstance(value, dict) and isinstance(value.get("rollbackRoot"), str):
+                        names.add(Path(value["rollbackRoot"]).name)
+                    name = Path(value["home"]).parent.name
+                    names.update((name, f"{name}-rollback"))
+                    if released:
+                        continue
                     reason = f"resumable run: {run}"
                 except (OSError, ValueError, KeyError, TypeError) as error:
-                    names = {path.name for path in dirs}
                     reason = f"unreadable or malformed run plan {plan}: {error}"
+                    reasons[str(plan)] = reason
+                    try:
+                        recent = now - plan.stat().st_mtime < 24 * 60 * 60
+                    except OSError:
+                        recent = True
+                    if recent:
+                        names.update(path.name for path in dirs)
                 for name in names:
                     holds.setdefault(name, []).append(reason)
-    return holds
+    return holds, reasons
 
 
 def retain(sandbox_dir):
@@ -189,10 +204,10 @@ def retain(sandbox_dir):
     with (root / "rehearsal-retention.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         dirs = listed(root)
-        holds = run_holds(dirs)
+        holds, reasons = run_holds(dirs)
         target = installer_target(root)
         references, protected = live_references()
-        report = {"kept": [], "dropped": [], "held": [], "holdReasons": {}, "legacySandboxes": []}
+        report = {"kept": [], "dropped": [], "held": [], "holdReasons": reasons, "legacySandboxes": []}
         legacy = [path for path in dirs if not (path / "sandbox-plan.json").is_file()]
         plans = {path: rollback_root(path) for path in dirs}
         newest = newest_passing(dirs)
