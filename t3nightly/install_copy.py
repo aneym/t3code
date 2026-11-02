@@ -11,8 +11,8 @@ from pathlib import Path
 from t3nightly.install_resources import copy_snapshot
 from t3nightly.install_storage import record_payload
 from t3nightly.install_payload_gc import discard_snapshot, prune_backups
-from t3nightly.live_snapshot import clone_file, take
-from t3nightly.snapshot_space import database_bytes, require_space
+from t3nightly.live_snapshot import clone_file, snapshot_root, take
+from t3nightly.snapshot_space import clone_supported, require_install_space, require_space
 
 
 def refresh_snapshot(run):
@@ -54,7 +54,9 @@ def backup_database(run, version, *, preparing=False):
             "provider turns became active before the backup; nothing changed"
         )
     root = run.backups
-    require_space(root, database_bytes(run.db))
+    if getattr(run.args, "offbox", ""):
+        raise ValueError("offbox install must use the offbox backup path; nothing stopped")
+    require_install_space(run.db, snapshot_root(run.home), run.snapshots, root)
     refresh_snapshot(run)
     if not preparing and (run.streaming_runs() or run.streaming_runs(live=True)):
         run.step(
@@ -63,7 +65,7 @@ def backup_database(run, version, *, preparing=False):
         raise ValueError(
             "provider turns became active before the backup; nothing changed"
         )
-    require_space(root, run.snapshot.stat().st_size)
+    require_space(root, run.snapshot.stat().st_size, clone=clone_supported(run.snapshot.parent, root))
     target = (
         root / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}-{version}"
     )
@@ -81,12 +83,15 @@ def backup_database(run, version, *, preparing=False):
         except (OSError, subprocess.SubprocessError) as error:
             dest.unlink(missing_ok=True)
             run.step("backup-clone-unavailable", reason=f"{type(error).__name__}: {error}")
+            require_space(root, run.snapshot.stat().st_size)
             with closing(sqlite3.connect(dest)) as copy:
                 copy_snapshot(run, source, copy)
             method = "sqlite-backup"
     copied = time.monotonic()
     with closing(sqlite3.connect(dest.as_uri() + "?mode=ro", uri=True)) as copy:
         check = copy.execute("pragma quick_check").fetchone()[0]
+    for suffix in ("-wal", "-shm"):
+        Path(str(dest) + suffix).unlink(missing_ok=True)
     os.chmod(dest, 0o600)
     if check != "ok":
         raise ValueError(f"backup quick_check {check}")

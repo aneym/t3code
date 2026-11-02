@@ -47,11 +47,11 @@ def guard_words(seconds, limit=WAL_LIMIT):
     return ["--parent", str(os.getpid()), "--wal-limit", str(limit), "--seconds", str(seconds)]
 
 
-def retried(attempt, note):
-    for wait in (*RETRY_WAITS, None):
+def retried(attempt, note, *, waits=RETRY_WAITS, errors=(WalAbort,)):
+    for wait in (*waits, None):
         try:
             return attempt()
-        except WalAbort as error:
+        except errors as error:
             if wait is None:
                 raise
             note(wait, error)
@@ -86,6 +86,15 @@ class Watch:
                     self.shm = os.open(f"{self.source}-shm", os.O_RDONLY)
                 except FileNotFoundError:
                     pass
+            if self.shm is not None:
+                retained = os.fstat(self.shm)
+                try:
+                    current = os.stat(f"{self.source}-shm")
+                except FileNotFoundError:
+                    current = None
+                if current is None or (retained.st_dev, retained.st_ino) != (current.st_dev, current.st_ino):
+                    self.code = WAL_EXIT
+                    print("live shared-memory inode changed", file=sys.stderr, flush=True)
             wal = wal_frames(os.pread(self.shm, 48, 0)) if self.shm is not None else 0
         self.peak = max(self.peak, wal)
         if self.code:
@@ -98,10 +107,6 @@ class Watch:
             return
         print(reason, file=sys.stderr, flush=True)
 
-    def expire(self):
-        if not self.done.is_set():
-            os._exit(self.code)
-
     def watch(self):
         while not self.done.wait(POLL_S):
             try:
@@ -110,16 +115,12 @@ class Watch:
                 self.code = WAL_EXIT
             if not self.code:
                 continue
-            killer = threading.Timer(GRACE_S, self.expire)
-            killer.daemon = True
-            killer.start()
             try:
                 self.connection.interrupt()
             except Exception:
                 pass
             if not self.done.wait(GRACE_S):
                 os._exit(self.code)
-            killer.cancel()
             return
 
     def check(self, *_):

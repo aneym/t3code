@@ -9,12 +9,12 @@ import sys
 import tempfile
 import time
 import uuid
-from contextlib import ExitStack, closing
+from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
 
 from .io_priority import background_command
 from . import live_read_guard as guard
-from .snapshot_space import database_bytes, require_space
+from .snapshot_space import backup_seconds, clone_supported, database_bytes, require_space
 
 
 MAX_AGE = 6 * 60 * 60
@@ -52,9 +52,9 @@ def clone_file(original, copy, timeout):
 
 
 def read_snapshot(source, destination, timeout, method):
-    seconds = min(timeout, 2 if method == "clone" else 30)
+    seconds = min(timeout, 2 if method == "clone" else backup_seconds(database_bytes(source)))
     command = [sys.executable, "-m", "t3nightly.snapshot_reader", method, str(source), str(destination), *guard.guard_words(seconds)]
-    command = ["nice", "-n", "19", *command] if sys.platform == "darwin" else ["ionice", "-c2", "-n7", *command]
+    command = background_command(command)
     root = str(Path(__file__).resolve().parent.parent)
     env = dict(os.environ, PYTHONPATH=root + os.pathsep + os.environ.get("PYTHONPATH", ""))
     result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=seconds + guard.GRACE_S + 5)
@@ -77,7 +77,7 @@ def fold_wal(destination):
         Path(str(destination) + suffix).unlink(missing_ok=True)
 
 
-def take(dest, *, home=None, timeout=1200):
+def _take(dest, *, home=None, timeout=1200):
     home = Path(home) if home is not None else Path.home() / ".t3"
     source = (home / "userdata/statev2.sqlite").resolve()
     destination = checked_path(dest, home)
@@ -90,9 +90,10 @@ def take(dest, *, home=None, timeout=1200):
         raise ValueError("snapshot deadline must be positive")
     size = database_bytes(source)
     staging = snapshot_root(home)
-    require_space(staging, size)
-    if destination.parent.stat().st_dev != staging.stat().st_dev:
-        require_space(destination.parent, size)
+    clone = clone_supported(staging, staging)
+    if clone:
+        require_space(staging, size, clone=True)
+    require_space(destination.parent, size, clone=clone and destination.parent.stat().st_dev == staging.stat().st_dev)
     started = time.monotonic()
     end = started + timeout
 
@@ -106,15 +107,18 @@ def take(dest, *, home=None, timeout=1200):
         raw = stack.enter_context(tempfile.TemporaryDirectory(prefix=".snapshot-", dir=staging))
         staged = Path(raw) / "statev2.sqlite"
         try:
+            if not clone:
+                raise OSError("snapshot filesystem does not support cloning")
             read_snapshot(source, staged, remaining(), "clone")
             method = "apfs-clone" if sys.platform == "darwin" else "reflink"
-        except (InterruptedError, guard.WalAbort, TimeoutError):
+        except (guard.WalAbort, TimeoutError, subprocess.TimeoutExpired):
             raise
         except (OSError, subprocess.CalledProcessError) as error:
             if sys.platform == "darwin":
                 raise RuntimeError("APFS snapshot clone failed; refusing a live database backup") from error
             for path in Path(raw).iterdir():
                 path.unlink()
+            require_space(destination.parent, size)
             staged = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix=".snapshot-", dir=destination.parent))) / "statev2.sqlite"
             read_snapshot(source, staged, remaining(), "backup")
             method = "background-stepwise-backup"
@@ -136,6 +140,39 @@ def take(dest, *, home=None, timeout=1200):
         os.utime(destination, None)
     print("snapshot %s: %s in %.3fs" % (method, destination, time.monotonic() - started), file=sys.stderr, flush=True)
     return destination
+
+
+def take(dest, *, home=None, timeout=1200):
+    end = time.monotonic() + timeout
+
+    def attempt():
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("snapshot retry deadline expired")
+        return _take(dest, home=home, timeout=remaining)
+
+    return guard.retried(attempt, lambda wait, error: print(f"snapshot retry in {wait}s: {error}", file=sys.stderr, flush=True), waits=(1, 2), errors=(guard.WalAbort, TimeoutError, subprocess.TimeoutExpired))
+
+
+def release(snapshot):
+    snapshot = Path(snapshot)
+    lease = LEASES.pop(snapshot, None)
+    try:
+        for suffix in ("", "-wal", "-shm"):
+            Path(str(snapshot) + suffix).unlink(missing_ok=True)
+        snapshot.with_suffix(".lock").unlink(missing_ok=True)
+    finally:
+        if lease is not None:
+            lease.close()
+
+
+@contextmanager
+def leased_run(key, *, home=None, timeout=1200):
+    snapshot = for_run(key, home=home, timeout=timeout)
+    try:
+        yield snapshot
+    finally:
+        release(snapshot)
 
 
 def for_run(key, *, home=None, timeout=1200):
@@ -175,4 +212,8 @@ def for_run(key, *, home=None, timeout=1200):
                     continue
                 for suffix in ("", "-wal", "-shm"):
                     checked_path(Path(str(old) + suffix), home).unlink(missing_ok=True)
+            old.with_suffix(".lock").unlink(missing_ok=True)
+        for orphan in root.glob("statev2-run-*.lock"):
+            if not orphan.with_suffix(".sqlite").exists():
+                checked_path(orphan, home).unlink(missing_ok=True)
     return destination
