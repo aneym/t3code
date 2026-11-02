@@ -20,7 +20,7 @@ def refresh_snapshot(run):
     replaced_bytes = run.snapshot.stat().st_size if run.snapshot.exists() else 0
     staged = Path(str(run.snapshot) + ".partial")
     try:
-        take(staged, home=run.home, timeout=getattr(run.args, "snapshot_max_s", 1200), mib_s=getattr(run.args, "snapshot_mib_s", 32))
+        take(staged, home=run.home, timeout=getattr(run.args, "snapshot_max_s", 1200))
         os.chmod(staged, 0o600)
         os.replace(staged, run.snapshot)
     finally:
@@ -50,8 +50,7 @@ def backup_database(run, version, *, preparing=False):
         raise ValueError(
             "provider turns became active before the backup; nothing changed"
         )
-    if not run.snapshot_ready:
-        refresh_snapshot(run)
+    refresh_snapshot(run)
     if not preparing and (run.streaming_runs() or run.streaming_runs(live=True)):
         run.step(
             "backup-refused", reason="provider turns became active; nothing changed"
