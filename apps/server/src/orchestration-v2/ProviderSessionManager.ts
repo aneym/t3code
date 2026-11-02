@@ -52,6 +52,7 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { releaseInBoundedBatch } from "./shutdownReleaseBatch.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
@@ -971,7 +972,7 @@ export const layerWithOptions = (
           readonly onlyIfIdleGeneration?: number;
           readonly gracefulSubscribers?: boolean;
         },
-        batch?: Array<ReleaseRecords>,
+        collect?: (records: ReleaseRecords) => boolean,
       ) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1011,8 +1012,7 @@ export const layerWithOptions = (
                     releasedBackgroundTasks,
                     releasedAt,
                   };
-                  if (batch !== undefined) batch.push(records);
-                  else {
+                  if (collect?.(records) !== true) {
                     const recorded = yield* Effect.exit(
                       writeReleaseRecords({ ...records, replaced: false }),
                     );
@@ -1993,29 +1993,9 @@ export const layerWithOptions = (
         );
       };
 
-      const sessionScopes = yield* Scope.make("parallel");
-      const shutdown = Effect.gen(function* () {
-        const batch: Array<ReleaseRecords> = [];
-        const activeSessions = [...(yield* Ref.get(sessions)).values()];
-        yield* Effect.forEach(
-          activeSessions,
-          (entry) =>
-            releaseEntry(
-              {
-                providerSessionId: entry.runtime.providerSessionId,
-                reason: "server_shutdown",
-              },
-              batch,
-            ).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("orchestration-v2.driver-session.shutdown-release-failed", {
-                  providerSessionId: entry.runtime.providerSessionId,
-                  cause,
-                }),
-              ),
-            ),
-          { concurrency: "unbounded", discard: true },
-        );
+      const writeReleaseBatch = Effect.fn("ProviderSessionManager.writeReleaseBatch")(function* (
+        batch: ReadonlyArray<ReleaseRecords>,
+      ) {
         const writeBatch = Effect.gen(function* () {
           const events: Array<OrchestrationV2DomainEvent> = [];
           for (const records of batch) {
@@ -2052,6 +2032,22 @@ export const layerWithOptions = (
             { concurrency: "unbounded", discard: true },
           );
         }
+      });
+
+      const sessionScopes = yield* Scope.make("parallel");
+      const shutdown = Effect.gen(function* () {
+        yield* releaseInBoundedBatch({
+          entries: [...(yield* Ref.get(sessions)).values()],
+          release: (entry, collect) =>
+            releaseEntry(
+              {
+                providerSessionId: entry.runtime.providerSessionId,
+                reason: "server_shutdown",
+              },
+              collect,
+            ).pipe(logReleaseFailure(entry.runtime.providerSessionId)),
+          writeBatch: writeReleaseBatch,
+        });
       });
       yield* Effect.addFinalizer(() =>
         shutdown.pipe(
