@@ -104,7 +104,7 @@ export const exchangeServiceMessage = Effect.fn("serviceChildTransport.exchange"
 let listener: NodeHttp.Server | undefined;
 let privatePort = 0;
 let prepared = false;
-export const descriptorDuringRecovery = () => prepared && hotSwapContext()?.hotSwap?.warm === true;
+export const servingDuringRecovery = () => prepared && hotSwapContext()?.hotSwap?.warm === true;
 let frozen = false;
 const connections = new Set<NodeNet.Socket>();
 const webSockets = new Map<NodeNet.Socket, Effect.Effect<void, Socket.SocketError>>();
@@ -297,6 +297,5 @@ export const serviceCommandReady = Effect.gen(function* () {
       acquireToValidatedMs: validatedAt - acquireAt,
       acquireToReadyMs: (yield* Clock.currentTimeMillis) - acquireAt,
     });
-  if (descriptorDuringRecovery())
-    yield* sendServiceMessage({ type: "listening", port: privatePort });
+  if (servingDuringRecovery()) yield* sendServiceMessage({ type: "listening", port: privatePort });
 });
