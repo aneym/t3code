@@ -1,3 +1,4 @@
+import { secretOwnerChain } from "../orchestration-v2/SecretRequestRecord.ts";
 // Answers stay in the secret store behind one-use refs; orchestration records only request status.
 // Consuming tools keep values out of transcripts, projections, clients and model context.
 // A `file` request instead moves its value to an owner-only file for the agent's own shell.
@@ -100,8 +101,33 @@ const make = Effect.gen(function* () {
       if (item.secretStatus !== "pending") {
         return yield* new SecretRequestError({ reason: "already_answered" });
       }
-      const run = records.runs.find((candidate) => candidate.id === item.runId);
-      if (run === undefined || ThreadManagementService.isTerminalRunStatus(run.status)) {
+      const chainRuns = records.runs.filter((candidate) =>
+        secretOwnerChain(records.runs, candidate.id).has(item.runId!),
+      );
+      const live = chainRuns.some(
+        (candidate) => !ThreadManagementService.isTerminalRunStatus(candidate.status),
+      );
+      if (!live) {
+        const last = chainRuns.at(-1);
+        if (last?.restartContinuationOfRunId !== undefined || last?.status !== "cancelled") {
+          yield* threadManagement
+            .dispatch({
+              type: "secret_request.record",
+              commandId: CommandId.make(`secret-request:${item.id}:cancelled`),
+              threadId: input.threadId,
+              runId: item.runId,
+              nodeId: item.nodeId,
+              turnItemId: item.id,
+              label: item.label,
+              reason: item.reason,
+              secretStatus: "cancelled",
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) => new SecretRequestError({ reason: "record_failed", cause }),
+              ),
+            );
+        }
         return yield* new SecretRequestError({ reason: "agent_stopped" });
       }
       // Create before recording so racing answers cannot overwrite values or show saved before storage.

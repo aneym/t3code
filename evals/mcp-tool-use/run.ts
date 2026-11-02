@@ -59,6 +59,7 @@ import {
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
+import { secretResult, resolveSecretPrompt } from "./secrets.ts";
 import { DeviceExpect, gradeDevice } from "./device-grading.ts";
 import {
   AGENT_DEVICE_SHELL,
@@ -875,7 +876,7 @@ export const buildMessages = (sample: Sample) => {
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+  push("user", text(role === "delegated-child" ? childPrompt() : resolveSecretPrompt(prompt)));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
     push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));
@@ -978,15 +979,8 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
       sample.linked.add(pr().url);
       return { ...pr(), alreadyLinked };
     }
-    case "request_secret": {
-      // T3 names both a ref and a file with 32 hex characters, and keeps files in its secrets dir.
-      const id = "5f0c9e2a7b4d4183a6e1c8d2b9f07a64";
-      const home =
-        /^\/(?:home|Users)\/[^/]+/.exec(sample.base.environment.cwd)?.[0] ?? "/home/user";
-      return input.delivery === "file"
-        ? { status: "saved", file: `${home}/.t3/userdata/secrets/files/${id}` }
-        : { status: "saved", secretRef: `secret-ref:${id}` };
-    }
+    case "request_secret":
+      return secretResult(sample, input);
     case "unlink_pull_request":
       return { ...pr(), wasLinked: sample.linked.delete(pr().url) };
     case "watch_pull_request":
@@ -1279,6 +1273,8 @@ const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* 
     const result = yield* sample.devices.call(name, input, failure);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
   }
+  if (name === "request_secret" && typeof mock === "string" && mock !== "default")
+    return toolResult(call.id, secretResult(sample, input, mock));
   if (mock !== undefined && mock !== "default")
     return toolResult(
       call.id,

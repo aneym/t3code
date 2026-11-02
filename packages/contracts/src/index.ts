@@ -48,6 +48,7 @@ export * from "./guestShare.ts";
 export * from "./guestStream.ts";
 export * from "./applicationEvent.ts";
 export * from "./orchestratorMcp.ts";
+export * from "./orchestratorMcpSecret.ts";
 export * from "./orchestratorMcpScheduledTask.ts";
 export * from "./orchestratorMcpThreadList.ts";
 export * from "./orchestratorMcpThreadSend.ts";

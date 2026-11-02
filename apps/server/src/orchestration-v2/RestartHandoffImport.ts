@@ -6,6 +6,7 @@ import {
   RuntimeRequestId,
   type RunId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
   TurnItemId,
   type OrchestrationV2DomainEvent,
   type ServerRestartHandoff,
@@ -117,8 +118,7 @@ export const restartReapprovalEvents = Effect.fn("RestartHandoffImport.restartRe
         item.type === "secret_request" &&
         item.runId !== null &&
         sourceIds.includes(item.runId) &&
-        item.secretStatus !== "saved" &&
-        item.secretStatus !== "declined"
+        item.secretStatus === "cancelled"
       ) {
         pausedRunIds.add(item.runId);
         needsReapproval = true;
@@ -329,3 +329,7 @@ export const legacyRestartHandoffs = Effect.fn("RestartHandoffImport.legacyResta
   },
   Effect.mapError((cause) => new ServerImportRestartHandoffError({ cause })),
 );
+
+export const survivesRestart = (item: OrchestrationV2TurnItem, handoff?: ServerRestartHandoff) =>
+  item.type === "link_request" ||
+  (handoff !== undefined && item.type === "secret_request" && item.secretStatus === "pending");

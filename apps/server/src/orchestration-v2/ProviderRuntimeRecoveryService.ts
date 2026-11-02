@@ -1,3 +1,4 @@
+import { survivesRestart } from "./RestartHandoffImport.ts";
 import { sessionsLiveAtStart, type RecoverySession } from "./RuntimeRecoverySessions.ts";
 import { makeHandoffDrain } from "./RestartDrain.ts";
 import {
@@ -387,8 +388,7 @@ export const make = Effect.gen(function* () {
             candidate.runId === run.id &&
             (candidate.nodeId === null || !messageRequestNodeIds.has(candidate.nodeId)) &&
             !isAppOwnedDelegationItem(candidate) &&
-            // A link card waits on the user, not the run, and answers by message.
-            candidate.type !== "link_request" &&
+            !survivesRestart(candidate, handoff) &&
             (candidate.status === "pending" ||
               candidate.status === "running" ||
               candidate.status === "waiting"),

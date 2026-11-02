@@ -48,3 +48,18 @@ export class SecretRequestError extends Schema.TaggedError<SecretRequestError>()
     return SECRET_REQUEST_FAILURE_MESSAGES[this.reason];
   }
 }
+
+export const secretRequestTurnItemId = (threadId: ThreadId, key: string) =>
+  TurnItemId.make(
+    `turn-item:secret-request:${encodeURIComponent(threadId)}:${encodeURIComponent(key)}`,
+  );
+
+export const secretRequestClientRequestId = (turnItemId: TurnItemId) => {
+  const match = /^turn-item:secret-request:[^:]+:(.+)$/.exec(turnItemId);
+  if (!match) return undefined;
+  try {
+    return decodeURIComponent(match[1]!);
+  } catch {
+    return undefined;
+  }
+};

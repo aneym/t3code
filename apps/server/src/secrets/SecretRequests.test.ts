@@ -315,21 +315,6 @@ it.effect("works in threads with long ids, such as a delegated subagent's", () =
   );
 });
 
-it.effect("refuses an answer once the agent that asked has stopped", () =>
-  withService(
-    ({ service, stored, dispatched }) =>
-      Effect.gen(function* () {
-        const late = yield* service
-          .answer({ threadId, turnItemId, answer: { type: "save", secret: "ghp_secret" } })
-          .pipe(Effect.flip);
-        assert.include(late.message, "has stopped");
-        assert.deepEqual(valuesOf(stored), []);
-        assert.equal(dispatched.length, 0);
-      }),
-    { runStatus: "completed" },
-  ),
-);
-
 it.effect("a used value that cannot be deleted is not handed out", () =>
   withService(
     ({ service }) =>

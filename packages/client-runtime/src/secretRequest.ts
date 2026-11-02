@@ -10,6 +10,8 @@ export const secretRequestPrivacyNote = (item: Pick<SecretRequestItem, "delivery
   item.delivery === "file"
     ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
     : "Stored securely, never shown to the agent";
+export const SECRET_REQUEST_RESTART_RETRY =
+  "T3 Code restarted before this was saved. Save it again.";
 export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
 
 export type SecretRequestDisplay =
