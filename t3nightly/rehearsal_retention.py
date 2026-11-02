@@ -40,9 +40,11 @@ def legacy_sandbox(path):
     try:
         stat = path.stat()
         value["ageSeconds"] = max(0, round(datetime.now(timezone.utc).timestamp() - getattr(stat, "st_birthtime", stat.st_mtime)))
-        result = subprocess.run(["du", "-sk", str(path)], capture_output=True, text=True, timeout=60, check=True)
+        result = subprocess.run(["du", "-sk", str(path)], capture_output=True, text=True, timeout=60, check=False)
         value["sizeBytes"] = int(result.stdout.split()[0]) * 1024
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        if result.returncode:
+            value["error"] = result.stderr.strip() or f"du exited {result.returncode}"
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError) as error:
         value["error"] = str(error)
     return value
 
@@ -148,6 +150,36 @@ def newest_passing(dirs):
     return max(passing)[1] if passing else None
 
 
+def run_holds(dirs):
+    holds = {}
+    now = datetime.now(timezone.utc).timestamp()
+    for runs in (nightly_root() / "runs", Path.home() / "t3nightly/runs"):
+        for run in sorted(runs.rglob("fast")):
+            if not run.is_dir():
+                continue
+            try:
+                if (run / "final-receipt.json").is_file() and now - (run / "timeline.jsonl").stat().st_mtime > 24 * 60 * 60:
+                    continue
+            except OSError:
+                pass
+            for plan in sorted(run.glob("sandbox-*.json")):
+                try:
+                    value = json.loads(plan.read_text())
+                    home, rollback = value["home"], value["rollbackRoot"]
+                    if not all(isinstance(path, str) and Path(path).is_absolute() for path in (home, rollback)) or Path(home).name != "home":
+                        raise ValueError("invalid sandbox paths")
+                    names = {Path(home).parent.name, Path(rollback).name}
+                    if not all(name.startswith(PREFIX) for name in names):
+                        raise ValueError("invalid sandbox root names")
+                    reason = f"resumable run: {run}"
+                except (OSError, ValueError, KeyError, TypeError) as error:
+                    names = {path.name for path in dirs}
+                    reason = f"unreadable or malformed run plan {plan}: {error}"
+                for name in names:
+                    holds.setdefault(name, []).append(reason)
+    return holds
+
+
 def retain(sandbox_dir):
     root = nightly_root()
     sandbox_dir = Path(sandbox_dir).resolve()
@@ -157,20 +189,24 @@ def retain(sandbox_dir):
     with (root / "rehearsal-retention.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         dirs = listed(root)
+        holds = run_holds(dirs)
         target = installer_target(root)
         references, protected = live_references()
         report = {"kept": [], "dropped": [], "held": [], "holdReasons": {}, "legacySandboxes": []}
+        legacy = [path for path in dirs if not (path / "sandbox-plan.json").is_file()]
         plans = {path: rollback_root(path) for path in dirs}
         newest = newest_passing(dirs)
         keep = {newest, plans[newest][0]} if newest else set()
         for path in dirs:
             home = path / "home"
             _, reason = plans[path]
+            if path.name in holds:
+                report["held"].append(path.name)
+                report["holdReasons"][path.name] = "; ".join(holds[path.name])
+                continue
             if reason:
                 report["held"].append(path.name)
                 report["holdReasons"][path.name] = reason
-                if not (path / "sandbox-plan.json").is_file():
-                    report["legacySandboxes"].append(legacy_sandbox(path))
                 continue
             if path in keep:
                 report["kept"].append(path.name)
@@ -186,4 +222,5 @@ def retain(sandbox_dir):
                 for tree in removable:
                     shutil.rmtree(tree)
                 report["dropped"].append(path.name)
+    report["legacySandboxes"] = [legacy_sandbox(path) for path in legacy]
     return report

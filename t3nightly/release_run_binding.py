@@ -1,13 +1,15 @@
 import json
+import os
 import shlex
 import subprocess
+import tempfile
 import uuid
 
 from .release_targets import LINUX_TARGETS
 
 
 REMOTE_BIND = '''
-import fcntl, json, sys
+import fcntl, json, os, sys, tempfile
 from pathlib import Path
 value = json.load(sys.stdin)
 root = Path(value.pop("remoteRun"))
@@ -21,8 +23,13 @@ with (root / ".coordinator.lock").open("a") as lock:
     elif any(path.name != ".coordinator.lock" for path in root.iterdir()):
         sys.exit("remote run already holds state without this coordinator identity")
     else:
-        with binding.open("x") as handle:
-            json.dump(value, handle, sort_keys=True)
+        fd, temporary = tempfile.mkstemp(dir=root, prefix=".coordinator-identity-")
+        try:
+            with os.fdopen(fd, "w") as handle:
+                json.dump(value, handle, sort_keys=True)
+            os.link(temporary, binding)
+        finally:
+            os.unlink(temporary)
 '''
 
 
@@ -31,11 +38,15 @@ def bind_remote_runs(args):
         return
     args.run.mkdir(parents=True, exist_ok=True)
     path = args.run / "coordinator-identity.json"
+    fd, temporary = tempfile.mkstemp(dir=args.run, prefix=".coordinator-identity-")
     try:
-        with path.open("x") as handle:
+        with os.fdopen(fd, "w") as handle:
             json.dump({"id": uuid.uuid4().hex, "run": str(args.run)}, handle, sort_keys=True)
+        os.link(temporary, path)
     except FileExistsError:
         pass
+    finally:
+        os.unlink(temporary)
     value = {"coordinator": json.loads(path.read_text()), "version": args.version, "remoteRun": args.remote_run}
     for host, address in LINUX_TARGETS.items():
         result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", address,
