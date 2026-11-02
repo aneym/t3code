@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Relinquishing ownership exits the native service child.
+import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Clock from "effect/Clock";
@@ -20,6 +21,7 @@ import {
 } from "./serviceChildTransport.ts";
 
 export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* (updateId: string) {
+  const analytics = yield* AnalyticsService.AnalyticsService;
   const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
   const lifecycle = yield* ServerLifecycleEvents.ServerLifecycleEvents;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
@@ -47,6 +49,7 @@ export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* 
         if (!claimed) return false;
         yield* flushHandoffResponses(Math.min(250, (preparationDeadline - now()) / 4));
         yield* freezeServiceConnections(Math.min(250, (preparationDeadline - now()) / 2));
+        yield* analytics.skipShutdownFlush;
         process.kill(process.pid, "SIGTERM");
         return true;
       }).pipe(Effect.uninterruptible),

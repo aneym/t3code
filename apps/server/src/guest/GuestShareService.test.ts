@@ -74,7 +74,6 @@ const layerOrchestration = Layer.mergeAll(
   ),
 );
 
-// The Connect hostname the fake tunnel reports. Tests set it to null to simulate an unlink.
 const hostname = Ref.makeUnsafe<string | null>("env.t3.test");
 const layerConnect = Layer.mock(CloudManagedEndpointRuntime)({
   inspectConnector: Effect.map(Ref.get(hostname), (value) => ({
@@ -123,6 +122,7 @@ const layerAnalytics = Layer.effectContext(
           record: (event, properties) =>
             Ref.update(recorded, (events) => [...events, { event, ...properties }]),
           flush: Effect.void,
+          skipShutdownFlush: Effect.void,
           recordOwners: () => Effect.void,
         }),
       ),
