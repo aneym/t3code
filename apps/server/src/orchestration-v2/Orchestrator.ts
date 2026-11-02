@@ -1,3 +1,4 @@
+import { restartAdmission, admittedDispatchMode } from "./RestartAdmission.ts";
 import { makeAutoSettlementValidation } from "./SettlementValidation.ts";
 import {
   OrchestratorCommandRejectedError,
@@ -1321,7 +1322,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly sendAll?: boolean;
       },
     ) {
-      if ((yield* effectOutbox.restartPrepared) !== undefined) return;
+      if ((yield* restartAdmission(effectOutbox)) !== "open") return;
       {
         const view = yield* readCommandProjection(threadId);
         const latest = latestExecutedRun(view.runs);
@@ -5430,8 +5431,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         dispatchMode = { type: "start_immediately" };
       }
     }
-    if ((yield* effectOutbox.restartPrepared) !== undefined)
-      dispatchMode = { type: "queue_after_active" };
+    const admission = yield* restartAdmission(effectOutbox);
+    dispatchMode = admittedDispatchMode(dispatchMode, admission);
     // Stop leaves the run reading as running until its provider stops. A plain
     // send in that window queues behind the stopped queue instead of steering
     // text the agent never receives, and like any user send it releases the
@@ -5682,9 +5683,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode.type === "queue_after_active";
     const completionBlocked = completionQueueBlocked(projection, delegatedCompletion);
     const shouldQueue =
-      ((yield* effectOutbox.restartPrepared) !== undefined ||
-        queueBehindRun !== undefined ||
-        completionBlocked) &&
+      (admission !== "open" || queueBehindRun !== undefined || completionBlocked) &&
       startsOrQueuesRun;
     // Client messages resume held queues; server continuations and scheduled tasks do not.
     // Provider failure or usage limits re-hold the queue.
@@ -5725,11 +5724,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.providerThreads.find(
           (candidate) => candidate.id === queueBehindRun?.providerThreadId,
         );
-      if (
-        queueProviderThread === undefined &&
-        !completionBlocked &&
-        (yield* effectOutbox.restartPrepared) === undefined
-      ) {
+      if (queueProviderThread === undefined && !completionBlocked && admission === "open") {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,

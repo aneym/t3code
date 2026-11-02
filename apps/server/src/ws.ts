@@ -1,3 +1,4 @@
+import { restartAbortRpc } from "./orchestration-v2/RestartAbortResume.ts";
 import { makeStorageCleanupRpcHandlers } from "./storageCleanupRpcHandlers.ts";
 import { subscribeServerLifecycle } from "./serverLifecycleSubscription.ts";
 import { acknowledgeHandoff } from "./serverHandoffDelivery.ts";
@@ -2486,8 +2487,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverListForkReleases]: () => forkReleases.list(),
         [WS_METHODS.serverGetRestartStatus]: (input) =>
           providerRuntimeRecovery.getRestartStatus(input.epoch),
-        [WS_METHODS.serverAbortRestart]: (input) =>
-          providerRuntimeRecovery.abortRestart(input.epoch),
+        ...restartAbortRpc,
         [WS_METHODS.serverImportRestartHandoff]: (input) =>
           providerRuntimeRecovery.importRestartHandoff(input),
         [WS_METHODS.serverPrepareRestart]: (input) =>
