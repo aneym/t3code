@@ -13,7 +13,7 @@ from .gate_proc import CheckFailed, Deadline, clean_env, run, spawn, stop_group
 from .gate_seed import CACHE_ROOT, populate_home
 from .headless_env import pin_settings, provider_env
 from .io_priority import background_command
-from .live_snapshot import for_run
+from .live_snapshot import leased_run
 
 LIVE_HOME = Path.home() / ".t3"
 QUIET_SETTINGS = {
@@ -68,27 +68,27 @@ def guard_isolated(home):
 
 def build_seed(ctx, home, deadline):
     guard_isolated(home)
-    snapshot = for_run(ctx.version, home=LIVE_HOME, timeout=deadline.left())
-    code, _ = run(
-        background_command([
-            ctx.node,
-            "scripts/migrate-dev-db.ts",
-            "--base-dir",
-            str(home),
-            "--source",
-            str(snapshot),
-            "--projects",
-            "2",
-            "--threads-per-project",
-            "3",
-        ]),
-        ctx.log("boot"),
-        deadline,
-        cwd=str(Path(ctx.tree) / "apps/server"),
-    )
-    if code != 0:
-        raise CheckFailed("migrate-dev-db exited %d" % code)
-    return snapshot.stat().st_size
+    with leased_run(ctx.version, home=LIVE_HOME, timeout=deadline.left()) as snapshot:
+        code, _ = run(
+            background_command([
+                ctx.node,
+                "scripts/migrate-dev-db.ts",
+                "--base-dir",
+                str(home),
+                "--source",
+                str(snapshot),
+                "--projects",
+                "2",
+                "--threads-per-project",
+                "3",
+            ]),
+            ctx.log("boot"),
+            deadline,
+            cwd=str(Path(ctx.tree) / "apps/server"),
+        )
+        if code != 0:
+            raise CheckFailed("migrate-dev-db exited %d" % code)
+        return snapshot.stat().st_size
 
 
 def seed_home(ctx, deadline):

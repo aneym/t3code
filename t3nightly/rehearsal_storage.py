@@ -11,6 +11,8 @@ import tempfile
 from contextlib import closing
 from pathlib import Path
 
+from .snapshot_space import database_bytes, require_space
+
 
 def clone_file(source, destination):
     command = ["cp", "-c", str(source), str(destination)] if sys.platform == "darwin" else ["cp", "--reflink=always", str(source), str(destination)]
@@ -145,6 +147,9 @@ def seed_database(seed, destination):
     with (store_root() / ".store.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         with tempfile.TemporaryDirectory(prefix=".snapshot-", dir=root) as raw:
+            size = database_bytes(seed)
+            require_space(root, size)
+            require_space(Path(destination).parent, size)
             snapshot = Path(raw) / "statev2.sqlite"
             with closing(sqlite3.connect(f"file:{seed.resolve()}?mode=ro", uri=True)) as source, closing(sqlite3.connect(snapshot)) as target:
                 source.backup(target)

@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from t3nightly.headless_env import pin_settings, provider_env
 from t3nightly.io_priority import background_command
-from t3nightly.live_snapshot import for_run
+from t3nightly.live_snapshot import leased_run
 from t3nightly.stage_owners import ensure_owners
 
 NODE_BIN = Path.home() / ".vite-plus" / "js_runtime" / "node" / "26.12.1" / "bin"
@@ -34,14 +34,14 @@ def run(cmd, cwd, env, log):
 
 
 def seed(worktree, home, env, log, key, *, source_home=None):
-    snapshot = for_run(key, home=source_home)
-    command = background_command(["vp", "run", "migrate-dev-db", "--base-dir", str(home), "--source", str(snapshot), "--projects", "2", "--threads-per-project", "3"])
-    if run(command, worktree, env, log) != 0:
-        raise SystemExit(f"migrate-dev-db failed; see {log}")
-    dev_db = home / "userdata" / "statev2.sqlite"
-    with closing(sqlite3.connect(snapshot.as_uri() + "?mode=ro", uri=True, timeout=30)) as source:
-        source.row_factory = sqlite3.Row
-        rows = [dict(row) for row in source.execute("select * from scheduled_tasks")]
+    with leased_run(key, home=source_home) as snapshot:
+        command = background_command(["vp", "run", "migrate-dev-db", "--base-dir", str(home), "--source", str(snapshot), "--projects", "2", "--threads-per-project", "3"])
+        if run(command, worktree, env, log) != 0:
+            raise SystemExit(f"migrate-dev-db failed; see {log}")
+        dev_db = home / "userdata" / "statev2.sqlite"
+        with closing(sqlite3.connect(snapshot.as_uri() + "?mode=ro", uri=True, timeout=30)) as source:
+            source.row_factory = sqlite3.Row
+            rows = [dict(row) for row in source.execute("select * from scheduled_tasks")]
     with sqlite3.connect(dev_db, timeout=30) as dev:
         columns = {row[1] for row in dev.execute("pragma table_info(scheduled_tasks)")}
         groups = list(dict.fromkeys(row["thread_id"] or row["task_id"] for row in rows))
