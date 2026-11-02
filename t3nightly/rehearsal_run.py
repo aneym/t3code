@@ -108,7 +108,7 @@ class Rehearsal:
         installer_home = Path.home() if (self.engine / "install_hard.py").is_file() else sandbox.os_home
         environment = dict(os.environ, HOME=str(installer_home), LOAD_GUARD_STATE=str(Path.home() / ".agent-rails/state/load-guard"))
         drains = 2 if self.args.force_rollback or getattr(self.args, "rollback_fallback_proof", False) else 1
-        timeout = 260 + drains * self.args.rehearsal_drain_s
+        timeout = 260 + drains * (self.args.health_s + self.args.rehearsal_drain_s)
         with (sandbox.evidence / "installer.log").open("w") as output:
             result = subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=timeout, check=False)
         report = json.loads((sandbox.evidence / "installer-state/last.json").read_text())

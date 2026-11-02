@@ -4,7 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 PREFIX = "rehearsal-fast-"
@@ -25,11 +25,26 @@ def finished(path):
 def rollback_root(path):
     plan = path / "sandbox-plan.json"
     if not plan.is_file():
-        return None
-    rollback = Path(json.loads(plan.read_text())["rollbackRoot"])
-    if rollback.parent != path.parent or not rollback.name.startswith(PREFIX):
-        raise ValueError("recorded rollback sandbox escaped the nightly root")
-    return rollback
+        return None, "sandbox plan missing"
+    try:
+        rollback = Path(json.loads(plan.read_text())["rollbackRoot"])
+        if rollback.parent != path.parent or rollback.resolve().parent != path.parent or not rollback.name.startswith(PREFIX) or rollback.is_symlink():
+            return None, "recorded rollback sandbox escaped the nightly root"
+        return rollback, None
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return None, f"invalid sandbox plan: {error}"
+
+
+def legacy_sandbox(path):
+    value = {"path": str(path)}
+    try:
+        stat = path.stat()
+        value["ageSeconds"] = max(0, round(datetime.now(timezone.utc).timestamp() - getattr(stat, "st_birthtime", stat.st_mtime)))
+        result = subprocess.run(["du", "-sk", str(path)], capture_output=True, text=True, timeout=60, check=True)
+        value["sizeBytes"] = int(result.stdout.split()[0]) * 1024
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        value["error"] = str(error)
+    return value
 
 
 def installer_target(root):
@@ -144,16 +159,21 @@ def retain(sandbox_dir):
         dirs = listed(root)
         target = installer_target(root)
         references, protected = live_references()
-        report = {"kept": [], "dropped": [], "held": []}
+        report = {"kept": [], "dropped": [], "held": [], "holdReasons": {}, "legacySandboxes": []}
+        plans = {path: rollback_root(path) for path in dirs}
+        newest = newest_passing(dirs)
+        keep = {newest, plans[newest][0]} if newest else set()
         for path in dirs:
             home = path / "home"
-            newest = newest_passing(listed(root))
-            keep = {newest, rollback_root(newest)} if newest else set()
+            _, reason = plans[path]
+            if reason:
+                report["held"].append(path.name)
+                report["holdReasons"][path.name] = reason
+                if not (path / "sandbox-plan.json").is_file():
+                    report["legacySandboxes"].append(legacy_sandbox(path))
+                continue
             if path in keep:
                 report["kept"].append(path.name)
-                continue
-            if not (path / "sandbox-plan.json").is_file():
-                report["held"].append(path.name)
                 continue
             removable = [tree for tree in (home, path / "evidence/installer-state/rollback-runtime") if tree.is_dir() and tree.resolve() == tree and tree.is_relative_to(root)]
             if not removable:

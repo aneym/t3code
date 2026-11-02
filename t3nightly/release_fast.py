@@ -13,6 +13,7 @@ from .release_jobs import HostJobs, TERMINAL, status, submit, write_status
 from .release_targets import LINUX_TARGETS, linux_target, stage_action
 from .release_timeline import Timeline, utc_now
 from .run_retention import finish_runs
+from .release_run_binding import bind_remote_runs
 
 HANG_GUARD = 10
 LIVE_NODES = {"IM", "IL", "S", "F", "LM", "LR", "H", "AS", "W", "FW"}
@@ -73,6 +74,7 @@ def finish_fast(args):
 
 def drive_fast(args):
     args.engine_verified = False
+    bind_remote_runs(args)
     graph = fast_graph(args.linux_host, args.defer_host, args.defer_reason)
     manifest = args.run / "candidate.json"
     engine_checked = False
@@ -288,6 +290,7 @@ def main(argv):
             finish_fast(args)
     if (args.run / "candidate.json").is_file():
         require_engine(args.run / "candidate.json")
+    bind_remote_runs(args)
     coordinator = args.run / "coordinator"
     previous = status(coordinator)
     if previous.get("outcome") in {"failed", "timed-out", "environment-blocked"}:

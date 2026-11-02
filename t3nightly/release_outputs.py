@@ -286,7 +286,11 @@ def fast_output(stage, config):
         fast_artifact(run / "desktop/artifact-desktop-darwin-arm64.json", config.version, "darwin-arm64", "desktop")
         return True
     if stage == "prepare":
-        return (run / f"sandbox-{config.host}.json").is_file()
+        plan = json.loads((run / f"sandbox-{config.host}.json").read_text())
+        root = config.sandbox_root()
+        return ((root / "sandbox-plan.json").is_file()
+                and json.loads((root / "sandbox-plan.json").read_text()) == plan
+                and (Path(plan["oldRuntime"]) / "t3").is_file())
     if stage == "rehearse":
         fast_rehearsal(config.receipt("rehearsal"), load(config.manifest), fast_artifact(config.artifact(), config.version, config.key), config.host)
         return True

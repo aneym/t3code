@@ -187,7 +187,8 @@ def fast_prepare(config, log):
             raise ValueError(f"seed {seed_path} does not carry the base migration history")
     if not (runtime / "t3").is_file():
         raise ValueError(f"old runtime missing: {runtime}")
-    root = config.sandbox_root()
+    root = (config.sandbox_root() if (config.run / f"sandbox-{config.host}.json").exists()
+            else _allocate_sandbox(config))
     if root.exists():
         raise ValueError(f"rehearsal sandbox already allocated: {root}")
     clone = root / "old-runtime" / old if sys.platform == "darwin" else runtime
@@ -205,6 +206,10 @@ def fast_prepare(config, log):
         subprocess.run(["cp", "-c", "-R", str(runtime), str(clone)], check=True, timeout=120)
     log.write(json.dumps(plan) + "\n")
     return 0
+
+
+def _allocate_sandbox(config):
+    return config.home / ".t3nightly" / f"rehearsal-fast-{config.number}-{config.host}-{uuid.uuid4().hex[:12]}"
 
 
 def fast_rehearse(config, log):
