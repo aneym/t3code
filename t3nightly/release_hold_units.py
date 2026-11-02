@@ -83,6 +83,8 @@ def snapshot(source, host, row):
         write_status(root / f"{host}.json", row)
         if row.get("ready"):
             (root / f"{host}.ready").touch(exist_ok=True)
+        else:
+            (root / f"{host}.ready").unlink(missing_ok=True)
     return {"gate": Path(source["gate"]).is_file(),
             "scheduler": read(Path(source["run"]) / "scheduler.json", {}),
             "coordinator": read(Path(source["run"]) / "coordinator/status.json", {})}

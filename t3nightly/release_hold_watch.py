@@ -1,4 +1,5 @@
 import fcntl
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -30,7 +31,9 @@ def secret_parked(config, root):
             count = read(root / "secret-parked.json", {"secretParked": 0})["secretParked"]
         else:
             database = Path.home() / ".t3/userdata/statev2.sqlite"
-            with sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=2) as connection:
+            with closing(sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=2)) as connection:
+                deadline = time.monotonic() + 5
+                connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
                 count = connection.execute(
                     "SELECT count(*) FROM orchestration_v2_projection_runs r "
                     "CROSS JOIN orchestration_v2_projection_turn_items i ON i.run_id = r.run_id "
@@ -64,6 +67,7 @@ def policy(config, root, row, observed):
     suffix = SUFFIX[config["host"]]
     proofs = {prefix + suffix for prefix in "REX"}
     if proofs & failed or (config["host"] == "ax42" and "TL" in failed):
+        (root / "ax42.ready").unlink(missing_ok=True)
         save(root, row, outcome="proofs-failed", ready=False)
     elif row.get("outcome") != "proofs-failed" and proofs <= done and observed["gate"]:
         if config["host"] == "ax42":
