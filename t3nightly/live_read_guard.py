@@ -70,6 +70,8 @@ def bind_to_parent(parent):
 class Watch:
     def __init__(self, source, limit, seconds, parent):
         self.source, self.parent = source, parent
+        self.shm = None
+        self.sample_lock = threading.Lock()
         self.limit, self.deadline = limit, time.monotonic() + seconds
         self.connection, self.code, self.peak = None, 0, 0
         self.done = threading.Event()
@@ -78,7 +80,13 @@ class Watch:
     def sample(self):
         if os.getppid() != self.parent:
             os._exit(1)
-        wal = wal_in_use(self.source)
+        with self.sample_lock:
+            if self.shm is None:
+                try:
+                    self.shm = os.open(f"{self.source}-shm", os.O_RDONLY)
+                except FileNotFoundError:
+                    pass
+            wal = wal_frames(os.pread(self.shm, 48, 0)) if self.shm is not None else 0
         self.peak = max(self.peak, wal)
         if self.code:
             return
@@ -90,6 +98,10 @@ class Watch:
             return
         print(reason, file=sys.stderr, flush=True)
 
+    def expire(self):
+        if not self.done.is_set():
+            os._exit(self.code)
+
     def watch(self):
         while not self.done.wait(POLL_S):
             try:
@@ -98,12 +110,16 @@ class Watch:
                 self.code = WAL_EXIT
             if not self.code:
                 continue
+            killer = threading.Timer(GRACE_S, self.expire)
+            killer.daemon = True
+            killer.start()
             try:
                 self.connection.interrupt()
             except Exception:
                 pass
             if not self.done.wait(GRACE_S):
                 os._exit(self.code)
+            killer.cancel()
             return
 
     def check(self, *_):
@@ -126,6 +142,8 @@ def guarded(source, limit, seconds, parent):
     finally:
         watch.done.set()
         watch.thread.join()
+        if watch.shm is not None:
+            os.close(watch.shm)
     if watch.code:
         sys.exit(watch.code)
 
