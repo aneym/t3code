@@ -179,6 +179,8 @@ export function buildSidebarProjectSnapshots(input: {
       memberProjects: members,
       memberProjectRefs: group.memberProjectRefs,
       remoteEnvironmentLabels,
+      pinOrder: group.pinOrder,
+      pinnedAt: group.pinnedAt,
       pinned: group.pinned,
       archived: group.archived,
     };

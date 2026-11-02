@@ -1,8 +1,5 @@
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
-import {
-  projectPinChanges,
-  projectPinReorderChanges,
-} from "@t3tools/client-runtime/state/project-pins";
+import { projectPinReorderChanges } from "@t3tools/client-runtime/state/project-pins";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -13,7 +10,7 @@ import { projectEnvironment } from "../state/projects";
 import { useEnvironmentsWithScope, readEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 
-export function useProjectPins(groups: readonly SidebarProjectSnapshot[]) {
+export function useProjectPinReorder(groups: readonly SidebarProjectSnapshot[]) {
   const update = useOrchestrationCommand(projectEnvironment.update, { reportFailure: false });
   const editable = useEnvironmentsWithScope(
     groups.flatMap((group) => group.memberProjects),
@@ -58,7 +55,6 @@ export function useProjectPins(groups: readonly SidebarProjectSnapshot[]) {
   };
   return {
     canPin,
-    togglePin: (key: string) => apply(projectPinChanges(groups, key)),
     reorderPins: (activeKey: string, overKey: string) =>
       apply(projectPinReorderChanges(groups, activeKey, overKey)),
   };

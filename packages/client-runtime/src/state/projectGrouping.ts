@@ -1,3 +1,4 @@
+import { comparePinnedProjects } from "./projectPins.ts";
 import { scopedProjectKey, scopeProjectRef } from "../environment/scoped.ts";
 import {
   repositoryGroupingDisplayNameOf,
@@ -250,16 +251,35 @@ export interface ProjectGroup<TProject extends EnvironmentProject = EnvironmentP
   readonly members: ReadonlyArray<ProjectGroupMember<TProject>>;
   readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
   /** Clients write every member together. When members still disagree, the project stays visible. */
+  readonly pinOrder: string | null;
+  readonly pinnedAt: string | null;
   readonly pinned: boolean;
   readonly archived: boolean;
 }
 
 /** The groups a project picker offers: archived groups left out, pinned ones first. */
 export function pickableProjectGroups<
-  TGroup extends { readonly pinned: boolean; readonly archived: boolean },
+  TGroup extends {
+    readonly key?: string;
+    readonly projectKey?: string;
+    readonly pinOrder?: string | null | undefined;
+    readonly pinnedAt?: string | null | undefined;
+    readonly pinned: boolean;
+    readonly archived: boolean;
+  },
 >(groups: ReadonlyArray<TGroup>): TGroup[] {
   const open = groups.filter((group) => !group.archived);
-  return [...open.filter((group) => group.pinned), ...open.filter((group) => !group.pinned)];
+  return [
+    ...open
+      .filter((group) => group.pinned)
+      .sort((left, right) =>
+        comparePinnedProjects(
+          { ...left, key: left.key ?? left.projectKey ?? "" },
+          { ...right, key: right.key ?? right.projectKey ?? "" },
+        ),
+      ),
+    ...open.filter((group) => !group.pinned),
+  ];
 }
 
 function projectFreshnessTime(project: EnvironmentProject): number {
@@ -381,6 +401,14 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
       representative,
       members,
       memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],
+      pinOrder:
+        members
+          .flatMap((member) => (member.project.pinOrder == null ? [] : [member.project.pinOrder]))
+          .sort()[0] ?? null,
+      pinnedAt:
+        members
+          .flatMap((member) => (member.project.pinnedAt == null ? [] : [member.project.pinnedAt]))
+          .sort()[0] ?? null,
       pinned: members.some((member) => member.project.pinnedAt != null),
       archived: members.every((member) => member.project.archivedAt != null),
     };

@@ -225,6 +225,52 @@ const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* 
 });
 
 it.layer(layerTest)("ProjectService", (it) => {
+  it.effect("reconciles legacy ordering with upstream pin and archive state", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const projectId = ProjectId.make("pin-reconcile");
+      yield* service.create({
+        commandId: CommandId.make("pin:create"),
+        projectId,
+        title: "Pins",
+        workspaceRoot: "/work/pins",
+      });
+      const legacy = yield* service.update({
+        commandId: CommandId.make("pin:legacy"),
+        projectId,
+        pinOrder: "a",
+      });
+      assert.isNotNull(legacy.pinnedAt);
+      const archived = yield* service.update({
+        commandId: CommandId.make("pin:archive"),
+        projectId,
+        archived: true,
+      });
+      assert.equal(archived.pinnedAt, legacy.pinnedAt);
+      const unpinned = yield* service.update({
+        commandId: CommandId.make("pin:clear"),
+        projectId,
+        pinOrder: null,
+      });
+      assert.isNull(unpinned.pinnedAt);
+      const pinned = yield* service.update({
+        commandId: CommandId.make("pin:upstream"),
+        projectId,
+        pinned: true,
+      });
+      assert.isNotNull(pinned.pinnedAt);
+      assert.isNull(pinned.pinOrder);
+      yield* service.update({ commandId: CommandId.make("pin:reorder"), projectId, pinOrder: "b" });
+      const cleared = yield* service.update({
+        commandId: CommandId.make("pin:unpin"),
+        projectId,
+        pinned: false,
+      });
+      assert.isNull(cleared.pinOrder);
+      assert.isNull(cleared.pinnedAt);
+      yield* service.delete({ commandId: CommandId.make("pin:delete"), projectId });
+    }),
+  );
   it.effect("creates, updates, resolves, snapshots, and soft-deletes projects", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;

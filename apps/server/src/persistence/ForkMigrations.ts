@@ -8,6 +8,8 @@ import ProjectionProjectsPinOrder from "./ForkMigrations/003_ProjectionProjectsP
 import ChildSettlementIndexes from "./ForkMigrations/004_ChildSettlementIndexes.ts";
 import RemoveUnusedEventCorrelationIndex from "./ForkMigrations/005_RemoveUnusedEventCorrelationIndex.ts";
 
+import ProjectPinOrderToPinnedAt from "./ForkMigrations/006_ProjectPinOrderToPinnedAt.ts";
+
 const run = Migrator.make({});
 const loader = Migrator.fromRecord({
   "1_CompletionDeliveryIndexes": CompletionDeliveryIndexes,
@@ -15,6 +17,7 @@ const loader = Migrator.fromRecord({
   "3_ProjectionProjectsPinOrder": ProjectionProjectsPinOrder,
   "4_ChildSettlementIndexes": ChildSettlementIndexes,
   "5_RemoveUnusedEventCorrelationIndex": RemoveUnusedEventCorrelationIndex,
+  "6_ProjectPinOrderToPinnedAt": ProjectPinOrderToPinnedAt,
 });
 
 export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {

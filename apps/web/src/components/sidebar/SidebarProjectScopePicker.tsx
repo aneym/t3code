@@ -1,15 +1,14 @@
+import { useProjectPin } from "../../hooks/useProjectGroupUpdate";
+import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import type {
   EnvironmentId,
   EnvironmentMachineKind,
   ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import {
-  pinnedProjectGroups,
-  projectGroupPinOrder,
-} from "@t3tools/client-runtime/state/project-pins";
+import { pinnedProjectGroups } from "@t3tools/client-runtime/state/project-pins";
 import { CheckIcon, FolderIcon, ListFilterIcon, PinIcon, SettingsIcon } from "lucide-react";
 import { useReducer, useRef, type RefObject } from "react";
-import { useProjectPins } from "../../hooks/useProjectPins";
+import { useProjectPinReorder } from "../../hooks/useProjectPinReorder";
 import { readLocalApi } from "../../localApi";
 import {
   projectGroupsSpanEnvironments,
@@ -61,7 +60,7 @@ export function SidebarProjectScopePicker({
   primaryEnvironmentId: EnvironmentId | null;
   machines: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>;
 }) {
-  const groups = useAgentProjectGroups(projectGroups);
+  const groups = useAgentProjectGroups(pickableProjectGroups(projectGroups));
   const byKey = new Map(groups.map((group) => [group.projectKey, group]));
   const scopedProjects = scopedGroups.map((group) => byKey.get(group.projectKey) ?? group);
   const [menu, dispatch] = useReducer(reduceSidebarProjectScopeMenuState, {
@@ -71,13 +70,14 @@ export function SidebarProjectScopePicker({
   const filter = useComboboxFilter();
   const highlighted = useRef<string | null>(null);
   const suppressSelection = useRef(false);
-  const { canPin, togglePin, reorderPins } = useProjectPins(groups);
+  const { reorderPins } = useProjectPinReorder(groups);
+  const { canPinProjectGroup: canPin, toggleProjectGroupPin } = useProjectPin();
   const pinned = pinnedProjectGroups(groups);
   const triggerProject =
     scopedProjects.find(
       (scoped) => !pinned.slice(0, 5).some((project) => project.projectKey === scoped.projectKey),
     ) ?? null;
-  const ordered = [...pinned, ...groups.filter((group) => projectGroupPinOrder(group) === null)];
+  const ordered = [...pinned, ...groups.filter((group) => !group.pinned)];
   const folderNames = new Map(projectGroups.map((group) => [group.projectKey, group.displayName]));
   const items = [
     { value: "all", label: "All projects", searchLabels: ["All projects"] },
@@ -120,14 +120,14 @@ export function SidebarProjectScopePicker({
       [
         {
           id: "pin",
-          label: projectGroupPinOrder(project) === null ? "Pin project" : "Unpin project",
+          label: !project.pinned ? "Pin project" : "Unpin project",
           disabled: !canPin(project),
         },
         { id: "settings", label: "Project settings", icon: "settings" },
       ],
       position,
     );
-    if (action === "pin") await togglePin(project.projectKey);
+    if (action === "pin") await toggleProjectGroupPin(project);
     if (action === "settings") settings(project);
   };
   return (
@@ -206,7 +206,7 @@ export function SidebarProjectScopePicker({
               if (project && canPin(project) && isProjectPinShortcut(event, keybindings)) {
                 event.preventDefault();
                 event.stopPropagation();
-                void togglePin(project.projectKey);
+                void toggleProjectGroupPin(project);
                 return;
               }
               if (event.ctrlKey || event.altKey || event.metaKey) return;
@@ -230,7 +230,7 @@ export function SidebarProjectScopePicker({
           <ComboboxList aria-multiselectable>
             {(item: (typeof items)[number]) => {
               const project = byKey.get(item.value) ?? null;
-              const isPinned = project !== null && projectGroupPinOrder(project) !== null;
+              const isPinned = project !== null && project.pinned;
               const isSelected = project ? scopeKeys.includes(item.value) : allSelected;
               return (
                 <div key={item.value}>
@@ -298,7 +298,7 @@ export function SidebarProjectScopePicker({
                             onClick={(event) => {
                               event.preventDefault();
                               event.stopPropagation();
-                              void togglePin(project.projectKey);
+                              void toggleProjectGroupPin(project);
                             }}
                           >
                             <PinIcon
