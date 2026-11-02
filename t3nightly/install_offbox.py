@@ -224,8 +224,11 @@ def stopped_work(run, host, replica, seeded, size):
         if check != "ok":
             raise ValueError(f"seeded off-box replica quick_check {check}; nothing stopped")
         proof = {"how": "remote-check", "replica": str(replica), "quickCheck": "ok"}
-    estimate = restore_copy.estimate(size)
-    rollback = restore_copy.estimate(size, rollback=True)
+    from .install_calibration import rates
+
+    host_rates = rates(run.state, size, run.db.resolve())
+    estimate = restore_copy.estimate(size, rates=host_rates)
+    rollback = restore_copy.estimate(size, rates=host_rates, rollback=True, hash_passes=1 if shutil.disk_usage(run.db.resolve().parent).free >= size + (512 << 20) else 2)
     budget = run.args.offbox_stop_s
     seconds = max(estimate["totalSeconds"], rollback["totalSeconds"])
     run.step("hard-backup-estimate", stoppedWork=["local-restore-copy", "quick_check", "identity", "sha256"], localRestoreCopy=estimate, rollback=rollback, estimateSeconds=seconds, budgetSeconds=budget)

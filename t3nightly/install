@@ -17,7 +17,8 @@ FORK_BASE_URL = "https://github.com/aneym/t3code/releases/download"
 
 def parse():
     parser = argparse.ArgumentParser(prog="t3nightly-install")
-    parser.add_argument("--version", required=True)
+    parser.add_argument("--version", default="")
+    parser.add_argument("--calibrate", action="store_true")
     parser.add_argument("--home", default="~/.t3")
     parser.add_argument("--port", type=int, default=3773)
     parser.add_argument("--base-url", default=FORK_BASE_URL)
@@ -85,6 +86,10 @@ def parse():
     parser.add_argument("--offbox-stage-floor-gib", type=int, default=60)
     parser.add_argument("--offbox-copy-s", type=int, default=600)
     args = parser.parse_args()
+    if not args.version and not args.calibrate:
+        parser.error("--version is required unless --calibrate")
+    if args.calibrate and any((args.hard, args.seamless, args.prepare_only, args.rehearsal)):
+        parser.error("--calibrate cannot be combined with installation modes")
     if args.backup_keep < 1:
         parser.error("--backup-keep must be at least one")
     if not 0 <= args.drain_s <= 300:
@@ -126,6 +131,11 @@ def parse():
 if __name__ == "__main__":
     args = parse()
     try:
+        if args.calibrate:
+            from t3nightly.install_calibration import calibrate
+
+            calibrate(args)
+            sys.exit(0)
         if args.version == "previous":
             args.version = json.loads(
                 (Path(args.state_dir).expanduser() / "last.json").read_text()

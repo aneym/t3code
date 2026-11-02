@@ -89,10 +89,14 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
     if keep_local and not binary:
         from .install_restore_copy import estimate
 
-        work = estimate(size, copy_bps=copy_rate(source))
-        rollback = estimate(size, copy_bps=copy_rate(source), rollback=True)
+        from .install_calibration import rates
+
+        host_rates = rates(run.state, size, source)
+        work = estimate(size, clone=clone, rates=host_rates, check_passes=2 if clone else 1)
+        restore_clone = clone and root.stat().st_dev == source.parent.stat().st_dev
+        rollback = estimate(size, clone=restore_clone, rates=host_rates, rollback=True, hash_passes=1 if restore_clone or shutil.disk_usage(source.parent).free >= size + (512 << 20) else 2)
         budget = run.args.offbox_stop_s
-        run.step("hard-backup-estimate", stoppedWork=["sqlite-backup", "quick_check", "identity", "sha256"], localRestoreCopy=work, rollback=rollback, estimateSeconds=max(work["totalSeconds"], rollback["totalSeconds"]), budgetSeconds=budget)
+        run.step("hard-backup-estimate", stoppedWork=["apfs-clone" if clone else "sqlite-backup", "quick_check", "identity", "sha256"], localRestoreCopy=work, rollback=rollback, estimateSeconds=max(work["totalSeconds"], rollback["totalSeconds"]), budgetSeconds=budget)
         if max(work["totalSeconds"], rollback["totalSeconds"]) > budget:
             raise ValueError(f"local backup or rollback exceeds --offbox-stop-s {budget} estimate; nothing stopped")
     require_space(run.backups, size)
@@ -138,6 +142,14 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
                     run.backup_attempt_directories.append(destination)
                     target = destination / "statev2.sqlite"
         if method == "sqlite-backup":
+            from .install_calibration import rates
+            from .install_restore_copy import estimate
+
+            full = estimate(size, rates=rates(run.state, size, source))
+            remaining = deadline - time.monotonic()
+            run.step("hard-backup-full-copy-budget", estimate=full, remainingSeconds=remaining)
+            if full["totalSeconds"] > remaining:
+                raise ValueError("full-copy backup fallback exceeds remaining stop budget; old database preserved, restart old service")
             database_copy(source, target, min(deadline, time.monotonic() + 120 + size / copy_rate(source)))
         os.chmod(target, 0o600)
         fsync(target)

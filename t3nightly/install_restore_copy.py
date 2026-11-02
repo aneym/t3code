@@ -74,11 +74,14 @@ def precheck(run, source):
     room(run, staging(run), source.stat().st_size + wal_bytes(source), stopped=False)
 
 
-def estimate(size, *, copy_bps=None, rollback=False):
-    copy = size / (copy_bps or (COPY_MIB_S << 20)) * (2 if rollback else 1)
-    check = size / (CHECK_MIB_S << 20) * (3 if rollback else 1)
-    hashing = size / (HASH_MIB_S << 20) * (3 if rollback else 1)
-    return {"copySeconds": round(copy, 3), "checkSeconds": round(check, 3), "checksumSeconds": round(hashing, 3), "totalSeconds": round(copy + check + hashing + 30, 3), "copyMiBs": (copy_bps / (1 << 20)) if copy_bps else COPY_MIB_S, "checkMiBs": CHECK_MIB_S, "checksumMiBs": HASH_MIB_S}
+def estimate(size, *, copy_bps=None, rollback=False, clone=False, rates=None, check_passes=None, hash_passes=None):
+    rates = rates or {"copyBps": copy_bps or (COPY_MIB_S << 20), "checkBps": CHECK_MIB_S << 20, "hashBps": HASH_MIB_S << 20, "source": "constants"}
+    checks = check_passes if check_passes is not None else (2 if rollback else 1)
+    hashes = hash_passes if hash_passes is not None else 1
+    copy = 0 if clone else size / rates["copyBps"]
+    check = size / rates["checkBps"] * checks
+    hashing = size / rates["hashBps"] * hashes
+    return {"copySeconds": round(copy, 3), "checkSeconds": round(check, 3), "checksumSeconds": round(hashing, 3), "totalSeconds": round(copy + check + hashing + 30, 3), "copyMiBs": rates["copyBps"] / (1 << 20), "checkMiBs": rates["checkBps"] / (1 << 20), "checksumMiBs": rates["hashBps"] / (1 << 20), "checkPasses": checks, "hashPasses": hashes, "method": "apfs-clone" if clone else "full-copy", "rates": rates}
 
 
 def ionice(*words):
@@ -190,13 +193,32 @@ def copy_checked(copy, target, record, deadline):
     return verify(target, record["identity"], deadline)
 
 
-def beside(copy, db, mode, record, deadline):
+def beside(copy, db, mode, record, deadline, *, note=None):
     free = shutil.disk_usage(db.parent).free
-    if free < copy.stat().st_size + LOCAL_MARGIN:
+    clone = sys.platform == "darwin" and copy.stat().st_dev == db.parent.stat().st_dev
+    if not clone and free < copy.stat().st_size + LOCAL_MARGIN:
         raise OSError(f"{free >> 20} MiB beside the database cannot hold the {copy.stat().st_size >> 20} MiB restore copy")
     staged = db.with_name(f".{db.name}.restore-{uuid.uuid4().hex}")
     try:
-        check = copy_checked(copy, staged, record, deadline)
+        cloned = False
+        if clone:
+            try:
+                check_deadline(deadline)
+                subprocess.run(["/bin/cp", "-c", str(copy), str(staged)], check=True, capture_output=True, timeout=max(0.001, min(30, deadline - time.monotonic())) if deadline else 30)
+                cloned = True
+            except (OSError, subprocess.SubprocessError):
+                remove(staged)
+        if cloned:
+            if checksum(staged, deadline) != record["sha256"]:
+                raise ValueError("restore clone checksum differs from the copy taken at install")
+            check = verify(staged, record["identity"], deadline)
+        else:
+            seconds = estimate(copy.stat().st_size)["totalSeconds"]
+            if deadline is not None and deadline - time.monotonic() < seconds:
+                raise RecoveryRequired(f"full-copy restore fallback needs {seconds:.0f} s; database preserved")
+            check = copy_checked(copy, staged, record, deadline)
+        if note is not None:
+            note("hard-restore-local-copy", method="apfs-clone" if cloned else "full-copy", quickCheck=check)
         os.chmod(staged, mode)
         fsync(staged)
         check_deadline(deadline)
@@ -235,7 +257,7 @@ def restore(record, db, note, deadline=None, *, verified=False):
     mode = db.stat().st_mode & 0o777 if db.exists() else 0o600
     with foreground_io(note):
         try:
-            check, into = beside(copy, db, mode, record, deadline), "beside"
+            check, into = beside(copy, db, mode, record, deadline, note=note), "beside"
         except OSError as error:
             check_deadline(deadline)
             note("hard-restore-local-beside-failed", copy=str(copy), error=str(error), next="delete the failed database and WAL, then copy in place")
