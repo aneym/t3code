@@ -1,4 +1,18 @@
+import * as Schema from "effect/Schema";
+import { OrchestratorMcpRequestSecretResult } from "../../packages/contracts/src/orchestratorMcpSecret.ts";
 import { restartSecretNote } from "../../apps/server/src/orchestration-v2/RestartSecretNote.ts";
+
+const statuses = OrchestratorMcpRequestSecretResult.members.map((member) => member.fields.status);
+export const secretResultGuidance = JSON.stringify(
+  Schema.toJsonSchemaDocument(OrchestratorMcpRequestSecretResult),
+);
+
+export const secretObservation = (result: unknown) => {
+  if (typeof result !== "object" || result === null || !("status" in result)) return result;
+  const status = statuses.find((schema) => Schema.is(schema)(result.status));
+  const guidance = status && Schema.resolveAnnotations(status)?.description;
+  return guidance === undefined ? result : { ...result, guidance };
+};
 
 const attempts = new WeakMap<object, { key: unknown; count: number }>();
 
@@ -7,7 +21,7 @@ export const resolveSecretPrompt = (prompt: string) => {
   return match ? restartSecretNote({ label: match[1]!, clientRequestId: match[2]! }) : prompt;
 };
 
-export const secretResult = (
+const resultFor = (
   sample: { readonly base: { readonly environment: { readonly cwd: string } } },
   input: Readonly<Record<string, unknown>>,
   mode = "default",
@@ -39,6 +53,9 @@ export const secretResult = (
   return saved;
 };
 
+export const secretResult = (...args: Parameters<typeof resultFor>) =>
+  secretObservation(resultFor(...args));
+
 export const gradeSecretRetry = (
   calls: ReadonlyArray<{
     readonly tool: string;
@@ -52,7 +69,7 @@ export const gradeSecretRetry = (
       call.tool === "request_secret" && /"status"\s*:\s*"restarting"/.test(call.output ?? ""),
   );
   const first = calls[index];
-  const next = calls[index + 1];
+  const next = calls.slice(index + 1).find((call) => call.tool !== "exec" && call.tool !== "wait");
   let key: unknown;
   try {
     key = JSON.parse(first?.output ?? "{}").clientRequestId;
