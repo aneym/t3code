@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from .gate_checks import pairing, t3
+from .gate_client import pairing, t3
 from .gate_proc import CheckFailed, run
 from .smoke_checks import AGENT_HANDLE, AGENT_NAME, agent_file, bind_to, marker, start_thread
 

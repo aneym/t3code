@@ -5,7 +5,8 @@ import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 
-from .gate_checks import CLAUDE_MODEL, t3
+from .gate_checks import CLAUDE_MODEL
+from .gate_client import t3
 from .gate_proc import CheckFailed
 from .gate_tools import Mcp, last_reply, wait_for
 

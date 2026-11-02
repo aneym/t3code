@@ -272,7 +272,7 @@ def main():
     offbox.add_argument("--service", required=True)
     args = parser.parse_args()
     if args.command == "restore-offbox":
-        from .install_offbox import sync
+        from .install_sqlite_sync import sync
 
         if service_active(args.service):
             sys.exit(f"{args.service} is active; stop it before restoring")

@@ -37,7 +37,7 @@ def delegated_install(ctx, deadline):
 
 
 def managed_install(ctx, deadline):
-    from .gate_checks import client, pairing
+    from .gate_client import client, pairing
     from .install_hard import service
     from .install_policy import admit, window
     from .install_rpc import restart_session

@@ -5,7 +5,8 @@ import time
 import urllib.error
 import urllib.request
 
-from .gate_checks import CLAUDE_MODEL, t3
+from .gate_checks import CLAUDE_MODEL
+from .gate_client import t3
 from .gate_completion import acknowledged_wake_completion
 from .gate_proc import CheckFailed
 

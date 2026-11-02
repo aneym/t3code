@@ -18,10 +18,9 @@ from .db_publish import LOCAL_MARGIN, wal_bytes
 from . import live_read_guard as guard
 from .install_storage import record_payload
 from .io_priority import background_command
+from .install_sqlite_sync import SSH, sync
 
 REMOTE_ROOT = PurePosixPath("/Volumes/StudioExt/t3nightly-install-data/remote")
-REMOTE_EXE = "/Users/aneyman/.local/bin/sqlite3_rsync"
-SSH = Path(__file__).with_name("offbox-ssh")
 REMOTE_ZSTD = "/opt/homebrew/bin/zstd"
 CHUNK = 1024 * 1024
 ZSTD_THREADS = 4
@@ -130,22 +129,6 @@ def ship(run, host, replica, source, size, deadline, *, first):
             metrics["stageFreeAfter"] = shutil.disk_usage(directory).free
             run.step("offbox-stage", remote=f"{host}:{replica}", **metrics)
     return metrics
-
-
-def executable():
-    found = shutil.which("sqlite3_rsync") or str(Path.home() / ".local/bin/sqlite3_rsync")
-    if not Path(found).is_file():
-        raise ValueError("sqlite3_rsync is not installed locally")
-    return found
-
-
-def sync(origin, replica, deadline, *, background=False, hang_guard=None):
-    command = [executable(), str(origin), str(replica), "--exe", REMOTE_EXE, "--ssh", str(SSH)]
-    started = time.monotonic()
-    result = subprocess.run(background_command(command) if background else command, capture_output=True, text=True, timeout=hang_guard if hang_guard is not None else max(1, deadline - time.monotonic()), check=False)
-    if result.returncode:
-        raise ValueError(f"sqlite3_rsync {origin} -> {replica} failed: {result.stderr.strip()[-300:]}")
-    return time.monotonic() - started
 
 
 def remote_check(host, replica, deadline):

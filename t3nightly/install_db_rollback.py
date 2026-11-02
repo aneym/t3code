@@ -10,7 +10,8 @@ from pathlib import Path, PurePosixPath
 
 from . import install_restore_copy as restore_copy
 from .db_publish import LOCAL_MARGIN, local_check, publish, wal_bytes
-from .install_offbox import rate, restore_space, schema_state, sync, target
+from .install_offbox import rate, restore_space, schema_state, target
+from .install_sqlite_sync import sync
 from .release_eligibility import binary_rollback
 
 
