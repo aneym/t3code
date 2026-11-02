@@ -74,7 +74,7 @@ def attempt(value):
     replica = PurePosixPath(raw)
     try:
         offbox.target(f"{host}:{replica.parent}")
-        offbox.sync(copy, value["remote"], deadline, background=True)
+        offbox.sync(copy, value["remote"], deadline, background=True, step=Run(value["stateDir"]).step)
         value["backup"] = offbox.verified(Run(value["stateDir"]), host, replica.parent.parent.parent, replica, deadline,
                                           {"bytes": value["bytes"], "source": "local-restore-copy", "reship": True})
     except (OSError, ValueError, subprocess.SubprocessError) as error:

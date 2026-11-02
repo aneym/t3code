@@ -32,7 +32,7 @@ def restore(run, backup, *, beside=None):
     if beside:
         staged = db.with_name(f".{db.name}.restore-{uuid.uuid4().hex}")
         try:
-            sync(address, staged, deadline)
+            sync(address, staged, deadline, step=run.step)
             check = local_check(staged)
             if check != "ok":
                 raise ValueError(f"restored database quick_check {check}")
@@ -42,7 +42,7 @@ def restore(run, backup, *, beside=None):
             for suffix in ("", "-wal", "-shm", "-journal"):
                 Path(f"{staged}{suffix}").unlink(missing_ok=True)
     else:
-        sync(address, db, deadline)
+        sync(address, db, deadline, step=run.step)
         check = local_check(db)
         if check != "ok":
             raise ValueError(f"restored database quick_check {check}")

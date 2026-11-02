@@ -64,7 +64,8 @@ def remote_directory(host, path, deadline):
 def seed(host, root, replica, deadline):
     path = shlex.quote(str(replica))
     script = (f"set -e; if test -e {path}; then echo existing; exit 0; fi; marker=$(ls -1t {shlex.quote(str(root))}/*/rollback/verified.json 2>/dev/null | head -1); "
-              f"[ -n \"$marker\" ] || exit 0; newest=\"${{marker%verified.json}}statev2.sqlite\"; [ -f \"$newest\" ] && [ ! -L \"$newest\" ] || exit 0; cp -c \"$newest\" {path}.seed && chmod 600 {path}.seed "
+              f"[ -n \"$marker\" ] || exit 0; [ -n \"$(find \"$marker\" -mmin -{FRESH_H * 60})\" ] || exit 0; "
+              f"newest=\"${{marker%verified.json}}statev2.sqlite\"; [ -f \"$newest\" ] && [ ! -L \"$newest\" ] || exit 0; cp -c \"$newest\" {path}.seed && chmod 600 {path}.seed "
               f"&& mv {path}.seed {path} && echo \"$newest\"")
     return remote(host, script, deadline).strip() or None
 
@@ -121,7 +122,7 @@ def ship(run, host, replica, source, size, deadline, *, first):
             sent = stream(host, staged, replica, deadline)
             metrics.update(shipMethod="zstd-stream", compressedBytes=sent, compressionRatio=round(metrics["stageBytes"] / max(sent, 1), 3))
         else:
-            sync(staged, f"{host}:{replica}", deadline, background=True)
+            sync(staged, f"{host}:{replica}", deadline, background=True, step=run.step)
             metrics["shipMethod"] = "sqlite3-rsync-stage"
     finally:
         if staged is not None:
@@ -139,13 +140,24 @@ def executable():
     return found
 
 
-def sync(origin, replica, deadline, *, background=False):
-    command = [executable(), str(origin), str(replica), "--exe", REMOTE_EXE, "--ssh", str(SSH)]
+def sync(origin, replica, deadline, *, background=False, step=None):
+    command = [executable(), "-v", str(origin), str(replica), "--exe", REMOTE_EXE, "--ssh", str(SSH)]
     started = time.monotonic()
-    result = subprocess.run(background_command(command) if background else command, capture_output=True, text=True, timeout=max(1, deadline - time.monotonic()), check=False)
+    try:
+        result = subprocess.run(background_command(command) if background else command, capture_output=True, text=True, timeout=max(1, deadline - time.monotonic()), check=False)
+    except subprocess.TimeoutExpired as error:
+        tail = error.stderr or b""
+        tail = tail.decode(errors="replace") if isinstance(tail, bytes) else tail
+        if step:
+            step("offbox-sync", origin=str(origin), replica=str(replica), exit=None, timedOut=True, seconds=round(time.monotonic() - started, 3), stderrTail=tail[-16384:])
+        raise
+    elapsed = time.monotonic() - started
+    tail = result.stderr.strip()[-16384:]
+    if step:
+        step("offbox-sync", origin=str(origin), replica=str(replica), exit=result.returncode, seconds=round(elapsed, 3), stderrTail=tail, stdoutTail=result.stdout.strip()[-16384:])
     if result.returncode:
-        raise ValueError(f"sqlite3_rsync {origin} -> {replica} failed: {result.stderr.strip()[-300:]}")
-    return time.monotonic() - started
+        raise ValueError(f"sqlite3_rsync {origin} -> {replica} exited {result.returncode}: {tail}")
+    return elapsed
 
 
 def remote_check(host, replica, deadline):
@@ -301,7 +313,7 @@ def capture(run, previous, stop, rollback_gate, keep_local=False):
                     "stoppedSeconds": round(time.monotonic() - stopped, 3), "seconds": round(time.monotonic() - started, 3), "previous": previous, "local": copy, "complete": True}
         run.step("offbox-replica-deferred", remote=metadata["remote"], primary="local-restore-copy", next="sync and verify in the background from the restore copy after restart")
     else:
-        sync(source, f"{host}:{replica}", window)
+        sync(source, f"{host}:{replica}", window, step=run.step)
         metadata = verified(run, host, root, replica, window, {"bytes": size, "schemaState": state, "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3),
                                                                "seconds": round(time.monotonic() - started, 3), "previous": previous})
     (destination / "payload.json").write_text(json.dumps(metadata))
