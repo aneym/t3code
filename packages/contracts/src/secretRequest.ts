@@ -14,6 +14,7 @@ export const SecretRequestAnswerInput = Schema.Struct({
 export type SecretRequestAnswerInput = typeof SecretRequestAnswerInput.Type;
 
 const SECRET_REQUEST_FAILURE_MESSAGES = {
+  restarting: "T3 Code is restarting. Your answer wasn't saved. Save it again.",
   load_failed: "Could not load the secret request.",
   not_found: "This secret request no longer exists.",
   already_answered: "This secret request was already answered.",
@@ -48,3 +49,18 @@ export class SecretRequestError extends Schema.TaggedError<SecretRequestError>()
     return SECRET_REQUEST_FAILURE_MESSAGES[this.reason];
   }
 }
+
+export const secretRequestTurnItemId = (threadId: ThreadId, key: string) =>
+  TurnItemId.make(
+    `turn-item:secret-request:${encodeURIComponent(threadId)}:${encodeURIComponent(key)}`,
+  );
+
+export const secretRequestClientRequestId = (turnItemId: TurnItemId) => {
+  const match = /^turn-item:secret-request:[^:]+:(.+)$/.exec(turnItemId);
+  if (!match) return undefined;
+  try {
+    return decodeURIComponent(match[1]!);
+  } catch {
+    return undefined;
+  }
+};

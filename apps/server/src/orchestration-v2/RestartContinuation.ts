@@ -1,3 +1,4 @@
+import { restartSecretNote } from "./RestartSecretNote.ts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -8,6 +9,7 @@ import {
   type OrchestrationV2Run,
   type RunId,
   type ThreadId,
+  secretRequestClientRequestId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -75,11 +77,10 @@ function restartContinuationBlocked(
     (item) =>
       item.type === "secret_request" &&
       item.runId === source.id &&
-      (item.secretStatus === "pending" ||
-        (item.secretStatus === "cancelled" &&
-          item.completedAt !== null &&
-          source.completedAt !== null &&
-          DateTime.Equivalence(item.completedAt, source.completedAt))),
+      item.secretStatus === "cancelled" &&
+      item.completedAt !== null &&
+      source.completedAt !== null &&
+      DateTime.Equivalence(item.completedAt, source.completedAt),
   );
 }
 
@@ -345,7 +346,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const replayUnacceptedPrompt = !projection.providerTurns.some(
       (turn) => turn.runAttemptId === source.activeAttemptId,
     );
-    const text =
+    const baseText =
       replayUnacceptedPrompt && sourceMessage !== undefined
         ? sourceMessage.text
         : noteText === undefined
@@ -353,6 +354,25 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
           : note.settled
             ? noteText
             : `${noteText}\n\n${CONTINUE_PROMPT}`;
+    const secretNotes = projection.turnItems.flatMap((item) => {
+      if (
+        item.type !== "secret_request" ||
+        item.secretStatus === "cancelled" ||
+        item.runId !== source.id ||
+        !(
+          item.secretStatus === "pending" ||
+          (item.completedAt !== null &&
+            source.completedAt !== null &&
+            DateTime.toEpochMillis(item.completedAt) >= DateTime.toEpochMillis(source.completedAt))
+        )
+      )
+        return [];
+      const clientRequestId = secretRequestClientRequestId(item.id);
+      return clientRequestId === undefined
+        ? []
+        : [restartSecretNote({ label: item.label, clientRequestId, status: item.secretStatus })];
+    });
+    const text = [baseText, ...secretNotes].join("\n\n");
     return yield* threads
       .dispatch({
         type: "message.dispatch",

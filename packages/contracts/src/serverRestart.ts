@@ -17,6 +17,7 @@ export const ServerRestartHandoff = Schema.Struct({
   delegatedTaskIds: Schema.Array(NodeId),
   pausedRunIds: Schema.optional(Schema.Array(RunId)),
   paused: Schema.Boolean,
+  drained: Schema.optional(Schema.Boolean),
 });
 export type ServerRestartHandoff = typeof ServerRestartHandoff.Type;
 

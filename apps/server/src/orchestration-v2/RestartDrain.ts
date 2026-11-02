@@ -35,10 +35,7 @@ const executing = {
   rolled_back: false,
 } satisfies Record<OrchestrationV2Run["status"], boolean>;
 
-export const restartPausedRunIds = (
-  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
-  secrets = true,
-) => {
+export const restartPausedRunIds = (projection: ProjectionStore.ProjectionRuntimeRecoveryState) => {
   const pendingNodeIds = new Set(
     projection.runtimeRequests
       .filter(
@@ -52,18 +49,7 @@ export const restartPausedRunIds = (
   const paused = new Set(
     projection.nodes.filter((node) => pendingNodeIds.has(node.id)).map((node) => node.runId),
   );
-  const secretRuns = new Set(
-    projection.turnItems.flatMap((item) =>
-      item.type === "secret_request" && item.secretStatus === "pending" ? [item.runId] : [],
-    ),
-  );
-  return projection.runs
-    .filter((run) =>
-      secrets
-        ? paused.has(run.id) || secretRuns.has(run.id)
-        : paused.has(run.id) && !secretRuns.has(run.id),
-    )
-    .map((run) => run.id);
+  return projection.runs.filter((run) => paused.has(run.id)).map((run) => run.id);
 };
 
 const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
@@ -100,7 +86,15 @@ const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
         for (const threadId of threadIds ?? (yield* projections.getRecoveryThreadIds("runtime"))) {
           const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
           const paused = new Set(restartPausedRunIds(projection));
-          const skippable = new Set(restartPausedRunIds(projection, false));
+          const secretRuns = new Set(
+            projection.turnItems.flatMap((item) =>
+              item.type === "secret_request" &&
+              item.secretStatus === "pending" &&
+              item.runId !== null
+                ? [item.runId]
+                : [],
+            ),
+          );
           const workInFlight = new Set(
             projection.turnItems
               .filter(
@@ -115,21 +109,27 @@ const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
           for (const task of projection.subagents) {
             if (isOrchestrationV2WorkActive(task.status)) workInFlight.add(task.runId);
           }
+          for (const runId of secretRuns) {
+            if (workInFlight.has(runId) || effectsInFlight.has(runId)) secretRuns.delete(runId);
+          }
           const activeNodeIds = new Set(
             projection.providerTurns
               .filter((turn) => isOrchestrationV2WorkActive(turn.status))
               .map((turn) => turn.nodeId),
           );
           for (const thread of projection.providerThreads) {
-            if (thread.ownerNodeId !== null && (thread.pendingBackgroundTasks?.length ?? 0) > 0)
+            if (thread.ownerNodeId !== null && (thread.pendingBackgroundTasks?.length ?? 0) > 0) {
               activeNodeIds.add(thread.ownerNodeId);
+              const runId = projection.nodes.find((node) => node.id === thread.ownerNodeId)?.runId;
+              if (runId != null) secretRuns.delete(runId);
+            }
           }
           for (const node of projection.nodes) {
             if (activeNodeIds.has(node.id)) workInFlight.add(node.runId);
           }
           for (const run of projection.runs) {
             if (
-              !(mode === "hot-swap" && skippable.has(run.id)) &&
+              !(mode === "hot-swap" && (paused.has(run.id) || secretRuns.has(run.id))) &&
               ((executing[run.status] &&
                 !(
                   run.status === "starting" &&
@@ -137,7 +137,10 @@ const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
                   !effectsInFlight.has(run.id)
                 )) ||
                 (run.status === "waiting" &&
-                  (effectsInFlight.has(run.id) || paused.has(run.id) || workInFlight.has(run.id))))
+                  (effectsInFlight.has(run.id) ||
+                    paused.has(run.id) ||
+                    secretRuns.has(run.id) ||
+                    workInFlight.has(run.id))))
             )
               active.set(threadId, [...(active.get(threadId) ?? []), run.id]);
           }

@@ -67,7 +67,15 @@ import {
 import { withRestartNotice } from "./restart-notices.ts";
 import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
-import { DeviceExpect, gradeDevice } from "./device-grading.ts";
+import {
+  secretResult,
+  resolveSecretPrompt,
+  secretObservation,
+  secretResultGuidance,
+} from "./secrets.ts";
+import { gradeSample, failedEarly } from "./sample-grading.ts";
+export { gradeSample, failedEarly } from "./sample-grading.ts";
+import { DeviceExpect } from "./device-grading.ts";
 import {
   AGENT_DEVICE_SHELL,
   deviceFailure,
@@ -140,15 +148,10 @@ const PriorToolCall = Schema.Struct({
   result: Schema.Unknown,
 });
 
-/**
- * One expected call. `args` match partially: `~text` is a case-insensitive substring,
- * `"<=N"` / `">=N"` bound a number, and keys may be dotted paths.
- */
 const McpToolUseCall = Schema.Struct({
   tool: Schema.String,
   args: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 });
-type McpToolUseCall = typeof McpToolUseCall.Type;
 
 /** Grading rules. Tool names are bare: `delegate_task`, `Bash`, `Agent`. */
 const McpToolUseExpect = Schema.Struct({
@@ -161,6 +164,7 @@ const McpToolUseExpect = Schema.Struct({
   order: Schema.optional(Schema.Array(Schema.String)),
   minCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
   maxCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
+  secretRetry: Schema.optional(Schema.Boolean),
   /** The last step with tool calls includes this tool, then the turn ends. */
   endsTurnAfter: Schema.optional(Schema.String),
   /** Regexes that no shell command may match. */
@@ -397,7 +401,7 @@ const t3InputDecoders = new Map(
 );
 const t3Tools: ReadonlyArray<ApiTool> = t3SourceTools.map((tool) => ({
   name: `${T3_PREFIX}${tool.name}`,
-  description: Tool.getDescription(tool) ?? "",
+  description: `${Tool.getDescription(tool) ?? ""}${tool.name === "request_secret" ? `\nResult JSON schema: ${secretResultGuidance}` : ""}`,
   input_schema: advertisedJsonSchema(tool),
 }));
 const enabledWhen = (predicate: () => boolean) =>
@@ -599,7 +603,7 @@ type Base = ReturnType<typeof buildBase> & {
 };
 
 /** Keep the captured harness prompt and tools; replace app-owned context and the real user. */
-const buildCodexBase = (
+export const buildCodexBase = (
   template: typeof ResponsesRequest.Type,
   options: {
     readonly model: Model;
@@ -907,7 +911,15 @@ export const buildMessages = (sample: Sample) => {
         normalizeToolName(tool.name) === "orchestrator_capabilities"
           ? capabilities(sample, result)
           : (sample.priorResults.get(prior) ?? result);
-      push("user", toolResult(id, replayed));
+      push(
+        "user",
+        toolResult(
+          id,
+          normalizeToolName(tool.name) === "request_secret"
+            ? secretObservation(replayed)
+            : replayed,
+        ),
+      );
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
@@ -927,7 +939,7 @@ export const buildMessages = (sample: Sample) => {
           userText,
         );
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+  push("user", text(role === "delegated-child" ? childPrompt() : resolveSecretPrompt(prompt)));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
     push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));
@@ -1062,15 +1074,8 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
         ...(invalidUrls.length > 0 ? { invalidUrls } : {}),
       };
     }
-    case "request_secret": {
-      // T3 names both a ref and a file with 32 hex characters, and keeps files in its secrets dir.
-      const id = "5f0c9e2a7b4d4183a6e1c8d2b9f07a64";
-      const home =
-        /^\/(?:home|Users)\/[^/]+/.exec(sample.base.environment.cwd)?.[0] ?? "/home/user";
-      return input.delivery === "file"
-        ? { status: "saved", file: `${home}/.t3/userdata/secrets/files/${id}` }
-        : { status: "saved", secretRef: `secret-ref:${id}` };
-    }
+    case "request_secret":
+      return secretResult(sample, input);
     case "unlink_pull_request":
       return { ...pr(), wasLinked: sample.linked.delete(pr().url) };
     case "unlink_pull_requests": {
@@ -1381,6 +1386,8 @@ const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* 
     const result = yield* sample.devices.call(name, input, failure);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
   }
+  if (name === "request_secret" && typeof mock === "string" && mock !== "default")
+    return toolResult(call.id, secretResult(sample, input, mock));
   if (mock !== undefined && mock !== "default")
     return toolResult(
       call.id,
@@ -1412,96 +1419,6 @@ const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* 
     ? failed(output)
     : toolResult(call.id, output);
 });
-
-const BOUND = /^([<>]=)(-?\d+(?:\.\d+)?)$/;
-/** Partial match: `~text` is a case-insensitive substring, `<=N` / `>=N` bound a number. */
-const matches = (expected: unknown, actual: unknown): boolean => {
-  const bound = typeof expected === "string" ? BOUND.exec(expected) : null;
-  if (bound !== null) {
-    const limit = Number(bound[2]);
-    return typeof actual === "number" && (bound[1] === "<=" ? actual <= limit : actual >= limit);
-  }
-  if (typeof expected === "string" && expected.startsWith("~")) {
-    return valueText(actual).toLowerCase().includes(expected.slice(1).toLowerCase());
-  }
-  if (Array.isArray(expected)) {
-    return (
-      Array.isArray(actual) && expected.every((item) => actual.some((at) => matches(item, at)))
-    );
-  }
-  if (!isRecord(expected)) return expected === actual;
-  const at = (path: string) =>
-    path
-      .split(".")
-      .reduce<unknown>((value, key) => (isRecord(value) ? value[key] : undefined), actual);
-  return Object.entries(expected).every(([path, value]) => matches(value, at(path)));
-};
-
-/** delegate_task takes `target.options` as an object or `[{id, value}]`. Grade both as an object. */
-const withOptionsObject = (input: unknown) => {
-  if (!isRecord(input) || !isRecord(input.target) || !Array.isArray(input.target.options)) {
-    return input;
-  }
-  const options = Object.fromEntries(
-    input.target.options.flatMap((option) =>
-      isRecord(option) ? [[valueText(option.id), option.value]] : [],
-    ),
-  );
-  return { ...input, target: { ...input.target, options } };
-};
-
-export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun) => {
-  const checks: Array<{ readonly check: string; readonly pass: boolean }> = [];
-  const add = (check: string, pass: boolean) => checks.push({ check, pass });
-  const calls = run.calls.map((call) => ({ ...call, input: withOptionsObject(call.input) }));
-  const count = (tool: string) => calls.filter((call) => call.tool === tool).length;
-  // `tool` may list alternatives, as in "link_pull_request|watch_pull_request".
-  const found = ({ tool, args = {} }: McpToolUseCall) =>
-    calls.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
-  const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
-  for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));
-  for (const call of expect.callsMustNot ?? []) add(`callsMustNot ${label(call)}`, !found(call));
-  for (const tool of expect.notCalls ?? []) add(`notCalls ${tool}`, count(tool) === 0);
-  if (expect.order !== undefined) {
-    const firsts = expect.order.map((tool) => calls.findIndex((call) => call.tool === tool));
-    const inOrder = firsts.every((at, i) => at > (firsts[i - 1] ?? -1));
-    add(`order ${expect.order.join(" > ")}`, inOrder);
-  }
-  for (const [t, n] of Object.entries(expect.minCalls ?? {}))
-    add(`minCalls ${t} >= ${n}`, count(t) >= n);
-  for (const [t, n] of Object.entries(expect.maxCalls ?? {}))
-    add(`maxCalls ${t} <= ${n}`, count(t) <= n);
-  if (expect.endsTurnAfter !== undefined) {
-    const lastStep = Math.max(-1, ...calls.map((call) => call.step));
-    const last = calls.filter((call) => call.step === lastStep).map((call) => call.tool);
-    const ended = run.stopReason === "end_turn" && last.includes(expect.endsTurnAfter);
-    add(`endsTurnAfter ${expect.endsTurnAfter}`, ended);
-  }
-  // Bash and Monitor both take a shell `command`.
-  const shell = calls.flatMap((call) =>
-    isRecord(call.input) && typeof call.input.command === "string" ? [call.input.command] : [],
-  );
-  const test = (pattern: string, value: string) => new RegExp(pattern).test(value);
-  for (const p of expect.shellMustNot ?? [])
-    add(`shellMustNot /${p}/`, !shell.some((c) => test(p, c)));
-  for (const p of expect.textMust ?? []) add(`textMust /${p}/`, test(p, run.text));
-  for (const p of expect.textMustNot ?? []) add(`textMustNot /${p}/`, !test(p, run.text));
-  const isLinked = (url: string) => (run.linked ?? []).some((at) => matches(url, at));
-  for (const url of expect.linked ?? []) add(`linked ${url}`, isLinked(url));
-  if (expect.linkedNumbers !== undefined) {
-    const numbers = (run.linked ?? []).map((url) => Number(/(\d+)\/?$/.exec(url)?.[1]));
-    const exact = valueText(numbers.toSorted((a, b) => a - b));
-    add("linkedNumbers", exact === valueText(expect.linkedNumbers.toSorted((a, b) => a - b)));
-  }
-  checks.push(...gradeDevice(expect.device, run));
-  return checks;
-};
-
-// Checks that can only go from pass to fail as a sample goes on.
-const SETTLED = /^(notCalls|callsMustNot|shellMustNot|maxCalls|textMustNot) /;
-/** True once the sample has failed for good, so the rest of it cannot change the result. */
-export const failedEarly = (expect: McpToolUseCase["expect"], run: SampleRun) =>
-  gradeSample(expect, run).some((check) => !check.pass && SETTLED.test(check.check));
 
 const requestBody = ({ base, tools }: Sample, effort: string, messages: unknown) => ({
   model: base.model,
@@ -1572,7 +1489,7 @@ export const executeCodex = async (
   return valueText(context.__output.join("\n"));
 };
 
-const codexCatalog = (base: Base) => [
+export const codexCatalog = (base: Base) => [
   ...base.t3.map((tool) => ({
     name: tool.name.replace("mcp__t3-code__", "mcp__t3_code__"),
     description: `${valueText(tool.description)}\nInput JSON schema: ${JSON.stringify(tool.input_schema)}`,
@@ -1699,7 +1616,6 @@ const recordedCall = (step: number, use: typeof ToolUse.Type): Call => {
   };
 };
 
-/** Records on a call what the agent saw, so graders can count failed attempts. */
 const settle = (call: Call | undefined, result: Block) => {
   if (call !== undefined) {
     call.failed = result.is_error === true;

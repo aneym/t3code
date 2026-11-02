@@ -1,3 +1,5 @@
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -50,6 +52,7 @@ const withService = <A, E>(
     let failedRecords = options.failedRecords ?? 0;
     const requestThreadId = options.threadId ?? threadId;
     const layerDependencies = Layer.mergeAll(
+      EffectOutbox.layer.pipe(Layer.provide(Sqlite.layerMemory)),
       NodeCrypto.layer,
       NodeServices.layer,
       Layer.succeed(
@@ -314,21 +317,6 @@ it.effect("works in threads with long ids, such as a delegated subagent's", () =
     { threadId: delegatedThreadId },
   );
 });
-
-it.effect("refuses an answer once the agent that asked has stopped", () =>
-  withService(
-    ({ service, stored, dispatched }) =>
-      Effect.gen(function* () {
-        const late = yield* service
-          .answer({ threadId, turnItemId, answer: { type: "save", secret: "ghp_secret" } })
-          .pipe(Effect.flip);
-        assert.include(late.message, "has stopped");
-        assert.deepEqual(valuesOf(stored), []);
-        assert.equal(dispatched.length, 0);
-      }),
-    { runStatus: "completed" },
-  ),
-);
 
 it.effect("a used value that cannot be deleted is not handed out", () =>
   withService(

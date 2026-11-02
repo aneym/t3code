@@ -6,6 +6,7 @@ import {
   RuntimeRequestId,
   type RunId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
   TurnItemId,
   type OrchestrationV2DomainEvent,
   type ServerRestartHandoff,
@@ -120,8 +121,7 @@ const restartReapprovalEvents = Effect.fn("RestartHandoffImport.restartReapprova
         item.type === "secret_request" &&
         item.runId !== null &&
         sourceIds.includes(item.runId) &&
-        item.secretStatus !== "saved" &&
-        item.secretStatus !== "declined"
+        item.secretStatus === "cancelled"
       ) {
         pausedRunIds.add(item.runId);
         needsReapproval = true;
@@ -221,6 +221,49 @@ const restartReapprovalEvents = Effect.fn("RestartHandoffImport.restartReapprova
       });
     }
     return { events, requestIds, pausedRunIds: [...pausedRunIds] };
+  },
+);
+
+const recoverRestartReapprovals = Effect.fn("RestartHandoffImport.recoverRestartReapprovals")(
+  function* (
+    threadId: ThreadId,
+    epoch: string,
+    handoff: ServerRestartHandoff,
+    secretsOnly: boolean,
+  ) {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const store = yield* EventSink.EventSinkV2;
+    const full = yield* projections.getThreadRecords(threadId, [
+      "runs",
+      "runtimeRequests",
+      "nodes",
+      "turnItems",
+      "providerTurns",
+      "subagents",
+    ]);
+    const reapproval = yield* restartReapprovalEvents(
+      secretsOnly
+        ? {
+            ...full,
+            runtimeRequests: full.runtimeRequests.filter(
+              (request) => request.id === `restart-reapproval:${epoch}:${threadId}`,
+            ),
+          }
+        : full,
+      epoch,
+      handoff.runIds,
+      secretsOnly
+        ? []
+        : [
+            ...new Set([
+              ...handoff.requestIds,
+              ...full.runtimeRequests
+                .filter((request) => request.status === "pending")
+                .map((request) => request.id),
+            ]),
+          ],
+    );
+    if (reapproval.events.length > 0) yield* store.write({ events: reapproval.events });
   },
 );
 
@@ -325,6 +368,7 @@ export const legacyRestartHandoffs = Effect.fn("RestartHandoffImport.legacyResta
           .filter((task) => ["pending", "running", "waiting"].includes(task.status))
           .map((task) => task.id),
         paused: excluded,
+        drained: old?.drained ?? false,
         pausedRunIds: reapproval.pausedRunIds,
       });
     }
@@ -333,35 +377,21 @@ export const legacyRestartHandoffs = Effect.fn("RestartHandoffImport.legacyResta
   Effect.mapError((cause) => new ServerImportRestartHandoffError({ cause })),
 );
 
+export const survivesRestart = (item: OrchestrationV2TurnItem, handoff?: ServerRestartHandoff) =>
+  item.type === "link_request" ||
+  (handoff?.drained === true && item.type === "secret_request" && item.secretStatus === "pending");
+
 export const makeRestartReapproval = Effect.gen(function* () {
-  const projections = yield* ProjectionStore.ProjectionStoreV2;
-  const eventSink = yield* EventSink.EventSinkV2;
-  const ids = yield* IdAllocator.IdAllocatorV2;
+  const context = yield* Effect.context<
+    ProjectionStore.ProjectionStoreV2 | EventSink.EventSinkV2 | IdAllocator.IdAllocatorV2
+  >();
   return Effect.fn("RestartHandoffImport.reapproveRestartHandoff")(function* (
     threadId: ThreadId,
     handoff: { readonly epoch: string; readonly handoff: ServerRestartHandoff },
+    secretsOnly: boolean,
   ) {
-    const records = yield* projections.getThreadRecords(threadId, [
-      "runs",
-      "runtimeRequests",
-      "nodes",
-      "turnItems",
-      "providerTurns",
-      "subagents",
-    ]);
-    const reapproval = yield* restartReapprovalEvents(
-      records,
-      handoff.epoch,
-      handoff.handoff.runIds,
-      [
-        ...new Set([
-          ...handoff.handoff.requestIds,
-          ...records.runtimeRequests
-            .filter((request) => request.status === "pending")
-            .map((request) => request.id),
-        ]),
-      ],
-    ).pipe(Effect.provideService(IdAllocator.IdAllocatorV2, ids));
-    if (reapproval.events.length > 0) yield* eventSink.write({ events: reapproval.events });
+    yield* recoverRestartReapprovals(threadId, handoff.epoch, handoff.handoff, secretsOnly).pipe(
+      Effect.provide(context),
+    );
   });
 });

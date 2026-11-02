@@ -1,6 +1,7 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { restartRunUpdates, cancelledRuntimeDetail } from "./RestartRunRecovery.ts";
 import type { RecoverySession } from "./RuntimeRecoverySessions.ts";
+import { survivesRestart } from "./RestartHandoffImport.ts";
 import { makeHandoffDrain } from "./RestartDrain.ts";
 import {
   nonterminalRuns,
@@ -398,7 +399,7 @@ export const make = Effect.gen(function* () {
             candidate.runId === run.id &&
             (candidate.nodeId === null || !messageRequestNodeIds.has(candidate.nodeId)) &&
             !isAppOwnedDelegationItem(candidate) &&
-            candidate.type !== "link_request" &&
+            !survivesRestart(candidate, handoff) &&
             (candidate.status === "pending" ||
               candidate.status === "running" ||
               candidate.status === "waiting"),
@@ -695,21 +696,22 @@ export const make = Effect.gen(function* () {
         resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
           .continueThreadsAfterServerUpdate;
       const handoff = handoffs.find((effect) => effect.threadId === threadId)?.request;
-      if (
-        trigger === "startup" &&
+      const reapprove = (secretsOnly: boolean) =>
+        (trigger === "startup" &&
         handoff?.type === "provider-runtime.restart-handoff" &&
         handoff.handoff.runIds.length > 0 &&
         projection.thread.archivedAt === null &&
         projection.thread.deletedAt === null &&
         projection.thread.settledOverride !== "settled"
-      ) {
-        yield* reapproveRestartHandoff(threadId, handoff).pipe(
+          ? reapproveRestartHandoff(threadId, handoff, secretsOnly)
+          : Effect.void
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new ProviderRuntimeRecoveryError({ operation: "reconcile", threadId, cause }),
           ),
         );
-      }
+      yield* reapprove(false);
       const result = yield* reconcileProjection(
         projection,
         trigger,
@@ -717,6 +719,7 @@ export const make = Effect.gen(function* () {
         stoppedThisPass,
         handoff?.type === "provider-runtime.restart-handoff" ? handoff.handoff : undefined,
       );
+      yield* reapprove(true);
       for (const session of projection.providerSessions) {
         if (session.status !== "stopped" && session.status !== "error") {
           stoppedThisPass.set(session.id, session);
