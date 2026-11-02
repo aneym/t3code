@@ -144,7 +144,9 @@ const make = Effect.gen(function* () {
           (error) =>
             error.code === "invalid_request" ||
             error.code === "thread_not_found" ||
-            error.code === "capability_denied",
+            error.code === "capability_denied" ||
+            error.code === "runtime_mode_escalation_denied" ||
+            error.code === "interaction_mode_escalation_denied",
           (error) => {
             failureMessage = ` ${error.message}`;
             return Effect.succeedNone;
