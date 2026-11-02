@@ -5,7 +5,12 @@ import * as Clock from "effect/Clock";
 import * as Fiber from "effect/Fiber";
 import { awaitHandoffReceipts } from "./serverHandoffDelivery.ts";
 import { flushHandoffResponses } from "./serverHandoffProtocol.ts";
-import { freezeServerAdmissions, reopenServerAdmissions } from "./serverHandoffBarrier.ts";
+import {
+  admittedRequestCount,
+  freezeServerAdmissions,
+  reopenServerAdmissions,
+} from "./serverHandoffBarrier.ts";
+import * as EffectOutbox from "./orchestration-v2/EffectOutbox.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import {
@@ -17,6 +22,7 @@ import {
 export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* (updateId: string) {
   const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
   const lifecycle = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+  const outbox = yield* EffectOutbox.EffectOutboxV2;
   const clock = yield* Clock.Clock;
   const now = () => Number(clock.monotonicTimeNanosUnsafe() / 1_000_000n);
   const budget = hotSwapContext()?.hotSwap?.holdBudgetMs ?? 1;
@@ -56,24 +62,51 @@ export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* 
     Option.isNone(frozen) || now() >= preparationDeadline
       ? ("freeze-timeout" as const)
       : ("freeze-failed" as const);
-  const committed = yield* Effect.sync(() => {
-    if (relinquishing) return true;
+  const admitted = yield* Effect.sync(() => {
+    if (relinquishing) return Option.none<number>();
     mayRelinquish = false;
+    const count = admittedRequestCount();
     reopenServerAdmissions();
-    return false;
+    return Option.some(count);
   });
-  if (committed) {
+  if (Option.isNone(admitted)) {
     yield* Fiber.join(preparation).pipe(Effect.ignore);
     return;
   }
+  const admittedRequests = admitted.value;
+  const snapshot = yield* outbox.runningEffects.pipe(
+    Effect.map((effects) =>
+      effects.map(({ id, request, threadId, updatedAt }) => ({
+        id,
+        type: request.type,
+        threadId,
+        updatedAt,
+      })),
+    ),
+    Effect.catchCause(() => Effect.succeed({ error: "read-failed" })),
+    Effect.forkDetach,
+  );
   yield* sendServiceMessage({ type: "freeze-aborted", updateId, reason }).pipe(
     Effect.timeoutOption(Math.max(1, holdDeadline - now())),
     Effect.ignore,
   );
-  yield* Effect.logWarning("Service handoff aborted before ownership release", {
-    updateId,
-    reason,
-  });
+  yield* Fiber.join(snapshot).pipe(
+    Effect.timeoutOption(Math.max(0, Math.min(1000, (holdDeadline - now()) / 10))),
+    Effect.tap((runningEffects) =>
+      Option.isNone(runningEffects)
+        ? Fiber.interrupt(snapshot).pipe(Effect.forkDetach)
+        : Effect.void,
+    ),
+    Effect.flatMap((runningEffects) =>
+      Effect.logWarning("Service handoff aborted before ownership release", {
+        updateId,
+        reason,
+        admittedRequests,
+        runningEffects: Option.getOrElse(runningEffects, () => ({ error: "snapshot-timeout" })),
+      }),
+    ),
+    Effect.forkDetach,
+  );
   const cleanup = yield* Fiber.interrupt(preparation).pipe(
     Effect.andThen(recovery.abortRestart(updateId)),
     Effect.catchCause((cause) =>

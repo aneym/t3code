@@ -18,6 +18,10 @@ export const awaitServerFreeze = Effect.fn("serverHandoffBarrier.awaitFreeze")(
   (enabled: boolean) => (enabled ? Deferred.await(freezing) : Effect.never),
 );
 
+export function admittedRequestCount(): number {
+  return admitted;
+}
+
 const leave = () => {
   admitted -= 1;
   if (frozen && admitted === 0) idle.resolve();
