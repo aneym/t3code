@@ -5,6 +5,13 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
     load(`${effectRoot}/dist/Option.js`), load(`${effectRoot}/dist/SubscriptionRef.js`),
   ]);
   const { readFileSync, existsSync } = await import("node:fs");
+  const Authorization = await load(`${src}/authorization/service.ts`);
+  const bearerAuthorization = Layer.succeed(Authorization.RemoteEnvironmentAuthorization, Authorization.RemoteEnvironmentAuthorization.of({
+    authorizeBearer: (input) => Remote.resolveRemoteWebSocketConnectionUrl({ ...input, clientMetadata: { label: "Rehearsal supervisor", deviceType: "mobile", os: "iOS", surface: "mobile", appVersion: "t3nightly-gate" } }).pipe(Effect.map((socketUrl) => ({ environmentId: input.expectedEnvironmentId, httpBaseUrl: input.httpBaseUrl, socketUrl, httpAuthorization: { _tag: "Bearer", token: input.bearerToken } }))),
+    authorizeDpop: () => Effect.die(new Error("rehearsal requires bearer authorization")),
+    authorizeDpopHttp: () => Effect.die(new Error("rehearsal requires bearer authorization")),
+    renewDpopBeforeExpiry: () => Effect.die(new Error("rehearsal requires bearer authorization")),
+  }));
   const token = readFileSync(opts["bearer-file"], "utf8").trim();
   const first = await Effect.runPromise(Descriptor.fetchRemoteEnvironmentDescriptor({ httpBaseUrl: opts.origin }).pipe(Effect.provide(layers)));
   const target = new Model.BearerConnectionTarget({ environmentId: first.environmentId, label: first.label, connectionId: `rehearsal:${first.environmentId}:${opts.origin}` });
@@ -69,7 +76,7 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
       save();
       return observed;
     })));
-    const driver = yield* Driver.make.pipe(Effect.provideService(Resolver.ConnectionResolver, Resolver.ConnectionResolver.of({ prepare, prepareForUpdate: prepare })), Effect.provideService(RpcSession.RpcSessionFactory, RpcSession.RpcSessionFactory.of({ connect })));
+    const driver = yield* Driver.make.pipe(Effect.provide(bearerAuthorization), Effect.provideService(Resolver.ConnectionResolver, Resolver.ConnectionResolver.of({ prepare, prepareForUpdate: prepare })), Effect.provideService(RpcSession.RpcSessionFactory, RpcSession.RpcSessionFactory.of({ connect })));
     const supervisor = yield* Supervisor.make(entry, { initiallyDesired: true }).pipe(
       Effect.provideService(Driver.ConnectionDriver, driver),
       Effect.provideService(Connectivity.Connectivity, { status: Effect.succeed("online"), changes: Stream.never }),

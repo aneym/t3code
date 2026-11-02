@@ -150,9 +150,12 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
     if keep_local:
         metadata["local"] = local
     (destination / "payload.json").write_text(json.dumps(metadata))
-    from .install_backup_retention import best_effort
+    from .install_backup_retention import mark
 
-    run.step("backup-retention", **best_effort(root, target, run.home, metadata=metadata))
+    try:
+        mark(target, metadata, run.home)
+    except Exception as error:
+        run.step("backup-mark", error=f"{type(error).__name__}: {error}")
     run.step("hard-backup", **metadata)
     return metadata
 

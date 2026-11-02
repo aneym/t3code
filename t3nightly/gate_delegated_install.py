@@ -89,3 +89,11 @@ def managed_install(ctx, deadline):
         proof.update(ok=False, error=str(error))
         receipt.write_text(json.dumps(proof, indent=2) + "\n")
         raise
+    finally:
+        from .release_manifest import engine_identity
+
+        if receipt.exists():
+            proof = json.loads(receipt.read_text())
+            identity = engine_identity()
+            proof.update(engineDigest=identity["digest"], engineHead=identity["commit"])
+            receipt.write_text(json.dumps(proof, indent=2) + "\n")

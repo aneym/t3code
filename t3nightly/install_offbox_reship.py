@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 
 from . import install_offbox as offbox
+from .install_sqlite_sync import sync
 from .install_restore_copy import verify
 from .install_restore_hold import engine, flocked, record_path, write
 
@@ -74,7 +75,7 @@ def attempt(value):
     replica = PurePosixPath(raw)
     try:
         offbox.target(f"{host}:{replica.parent}")
-        offbox.sync(copy, value["remote"], deadline, background=True)
+        sync(copy, value["remote"], deadline, background=True)
         value["backup"] = offbox.verified(Run(value["stateDir"]), host, replica.parent.parent.parent, replica, deadline,
                                           {"bytes": value["bytes"], "source": "local-restore-copy", "reship": True})
     except (OSError, ValueError, subprocess.SubprocessError) as error:

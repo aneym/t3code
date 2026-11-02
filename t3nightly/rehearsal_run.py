@@ -35,6 +35,7 @@ class Rehearsal:
         self.phase = "preflight"
         self.manifest = load(args.candidate_manifest)
         self.engine = Path(__file__).resolve().parent
+        self.engine_identity = engine_identity(self.engine)
         self.restore_class = self.manifest["targets"][args.target_host]["compatibility"].get("eligibility") == RESTORE_CLASS
         args.managed_service = args.hot_swap or self.restore_class
 
@@ -178,7 +179,7 @@ class Rehearsal:
                 raise ValueError("candidate migration history differs from manifest")
             (self.sandbox.evidence / "workload.json").write_text(json.dumps(evidence, indent=2) + "\n")
             self.mark("verify", tick)
-            receipt = {"schema": REHEARSAL_SCHEMA, "release": self.version, "runId": uuid.uuid4().hex, "host": self.args.target_host, "platform": TARGETS[self.args.target_host][0], "arch": TARGETS[self.args.target_host][1], "candidateDigest": self.manifest["digest"], "sourceTree": self.manifest["source"]["stampedTree"], "artifactManifestDigest": self.artifact_digest, "engineDigest": self.manifest["engine"]["digest"], "oldRuntime": {"version": self.sandbox.old.name, "digest": sha256(self.sandbox.old / "t3")}, "candidateRuntime": {"version": self.version, "digest": self.candidate_digest}, "oldMigrationHistory": self.old_history, "candidateMigrationHistory": candidate_history, "baselineChat": baseline, "postCutoverChat": post, "workload": {name: {"outcome": "passed", "evidenceDigest": digest(evidence)} for name in ("stopped-history", "active-turn", "queued-message", "snoozed-thread", "resume", "dispositions")}, "result": "PASS", "startedAt": self.started, "finishedAt": now()}
+            receipt = {"schema": REHEARSAL_SCHEMA, "release": self.version, "runId": uuid.uuid4().hex, "host": self.args.target_host, "platform": TARGETS[self.args.target_host][0], "arch": TARGETS[self.args.target_host][1], "candidateDigest": self.manifest["digest"], "sourceTree": self.manifest["source"]["stampedTree"], "artifactManifestDigest": self.artifact_digest, "engineDigest": self.engine_identity["digest"], "engineHead": self.engine_identity["commit"], "oldRuntime": {"version": self.sandbox.old.name, "digest": sha256(self.sandbox.old / "t3")}, "candidateRuntime": {"version": self.version, "digest": self.candidate_digest}, "oldMigrationHistory": self.old_history, "candidateMigrationHistory": candidate_history, "baselineChat": baseline, "postCutoverChat": post, "workload": {name: {"outcome": "passed", "evidenceDigest": digest(evidence)} for name in ("stopped-history", "active-turn", "queued-message", "snoozed-thread", "resume", "dispositions")}, "result": "PASS", "startedAt": self.started, "finishedAt": now()}
             sealed = seal(receipt)
             reasons = provenance(sealed, self.manifest, self.args.target_host)
             if reasons and not self.args.compatibility_probe:
@@ -236,7 +237,7 @@ class Rehearsal:
                 signal.signal(number, handler)
 
     def report(self, result):
-        result = {**result, "timings": self.timings, "elapsedSeconds": round(time.monotonic() - self.clock, 3), "startedAt": self.started, "finishedAt": now()}
+        result = {**result, "engineDigest": self.engine_identity["digest"], "engineHead": self.engine_identity["commit"], "timings": self.timings, "elapsedSeconds": round(time.monotonic() - self.clock, 3), "startedAt": self.started, "finishedAt": now()}
         path = self.sandbox.evidence / "result.json"
         try:
             if self.sandbox.home.parent.name.startswith("rehearsal-hot-swap-"):

@@ -5,7 +5,6 @@ import shlex
 import signal
 import subprocess
 import time
-from pathlib import Path
 
 from .gate_env import QUIET_SETTINGS, make_project, seed_home, start_server, unpack
 from .gate_proc import CheckFailed, run

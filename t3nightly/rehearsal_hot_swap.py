@@ -34,7 +34,13 @@ class HotSwapRehearsal(Rehearsal):
                 command.extend(["--stock-client", "true"])
             self.probe_log = (sandbox.evidence / "connection-probe.log").open("w")
             self.probe_process = subprocess.Popen(command, stdout=self.probe_log, stderr=subprocess.STDOUT)
-            wait_for(self.probe_ready, 60, "persistent probe WS snapshot")
+            try:
+                wait_for(self.probe_ready, 60, "persistent probe WS snapshot")
+            except (ValueError, TimeoutError) as error:
+                self.hot["probeUnsupported"] = str(error)
+                self.stop_probe()
+                super().install()
+                return
             self.hot["walBefore"] = self.wal()
             self.hot["providerTurnBefore"] = sandbox.query("SELECT r.run_id,r.status,t.provider_turn_id,t.status FROM orchestration_v2_projection_runs r JOIN orchestration_v2_projection_provider_turns t ON r.thread_id=t.thread_id AND t.run_attempt_id=json_extract(r.payload_json,'$.activeAttemptId') WHERE r.run_id=?", (self.probe_run,))
             config = sandbox.home / "runtime/launcher-config.json"
@@ -88,6 +94,7 @@ class HotSwapRehearsal(Rehearsal):
 
     def collect_hot(self, result):
         hot = getattr(self, "hot", {"checks": {}})
+        hot.update(engineDigest=self.engine_identity["digest"], engineHead=self.engine_identity["commit"])
         injection = self.sandbox.evidence / "fault-injected.json"
         if injection.exists():
             hot["injected"] = json.loads(injection.read_text())
@@ -156,7 +163,7 @@ class HotSwapRehearsal(Rehearsal):
         from .hot_swap_client_evidence import client_checks
 
         client_checks(self, hot)
-        if hot.get("walAfter"):
+        if hot.get("walAfter") and hot.get("walBefore"):
             hot["checks"]["wal-writes"] = {"status": "passed" if hot["walAfter"]["events"] > hot["walBefore"]["events"] and hot["databaseIntegrity"] == [("ok",)] else "failed"}
         probe = hot.get("swapProbe", hot.get("probe", {}))
         if hot.get("install", {}).get("hotSwap", {}).get("method") == "launcher-ipc":
