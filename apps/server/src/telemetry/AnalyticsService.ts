@@ -149,7 +149,11 @@ export const make = Effect.gen(function* () {
       (error) => error._tag === "PlatformError" && error.reason._tag === "NotFound",
       () => Effect.void,
     ),
+    Effect.catch((cause) =>
+      Effect.logWarning("Ignored unreadable analytics handoff", { cause }).pipe(Effect.as([])),
+    ),
   );
+  const persistedRef = yield* Ref.make<string | undefined>(undefined);
   const skipShutdownFlushRef = yield* Ref.make(false);
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>(handoff ?? []);
   const deliveryRef = yield* Ref.make<DeliveryState>({
@@ -247,9 +251,15 @@ export const make = Effect.gen(function* () {
   const persistHandoff = Effect.gen(function* () {
     const buffered = yield* Ref.get(bufferRef);
     const { failedBatch } = yield* Ref.get(deliveryRef);
-    const contents = yield* encodeHandoffEvents([...failedBatch, ...buffered]).pipe(Effect.orDie);
-    yield* writeFileStringAtomically({ filePath: handoffPath, contents }).pipe(Effect.orDie);
-  }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
+    const contents = yield* encodeHandoffEvents([...failedBatch, ...buffered]);
+    if ((yield* Ref.get(persistedRef)) === contents) return;
+    yield* writeFileStringAtomically({ filePath: handoffPath, contents });
+    yield* Ref.set(persistedRef, contents);
+  }).pipe(
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.catch((cause) => Effect.logWarning("Analytics handoff persist failed", { cause })),
+  );
 
   // Back off even after dropping rejected batches so bad API keys cannot drain the queue in a tight loop.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
