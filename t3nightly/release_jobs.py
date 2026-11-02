@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from .release_targets import LINUX_TARGETS, stage_action
+from .unit_resources import systemd_arguments
 
 
 TERMINAL = {"passed", "failed", "environment-blocked", "timed-out", "installed", "current", "rolled-back"}
@@ -68,6 +69,7 @@ def submit(directory, spec):
         command = ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)]
     else:
         command = ["systemd-run", "--user", f"--unit={label}", "--collect",
+                   *systemd_arguments(),
                    "--property=Type=exec", f"--property=WorkingDirectory={directory}",
                    f"--property=StandardOutput=append:{output}",
                    f"--property=StandardError=append:{output}", "--", *argv]
