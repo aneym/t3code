@@ -209,7 +209,7 @@ def fast_prepare(config, log):
 
 
 def _allocate_sandbox(config):
-    return config.home / ".t3nightly" / f"rehearsal-fast-{config.number}-{config.host}-{uuid.uuid4().hex[:12]}"
+    return (config.home / ".t3nightly" / f"rehearsal-fast-{config.number}-{config.host}-{uuid.uuid4().hex[:12]}").resolve()
 
 
 def fast_rehearse(config, log):
