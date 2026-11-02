@@ -342,7 +342,11 @@ const layerHttpServer = Layer.unwrap(
       tailscaleServeEnabled: config.tailscaleServeEnabled,
       privateNetworkOnly: config.privateNetworkOnly,
     });
-    yield* ManagedLimits.closeTailscaleServeTo(policy, { host: bindHost, port: config.port });
+    const hotSwap = hotSwapContext() !== undefined;
+    // A hot-swap candidate binds loopback:0; the launcher's ingress owns config.port and its routes.
+    if (!hotSwap) {
+      yield* ManagedLimits.closeTailscaleServeTo(policy, { host: bindHost, port: config.port });
+    }
     return NodeHttpServer.layer(
       () => {
         const server = attachServiceIngress(
@@ -359,8 +363,8 @@ const layerHttpServer = Layer.unwrap(
         return server;
       },
       {
-        host: hotSwapContext() === undefined ? bindHost : "127.0.0.1",
-        port: hotSwapContext() === undefined ? config.port : 0,
+        host: hotSwap ? "127.0.0.1" : bindHost,
+        port: hotSwap ? 0 : config.port,
         gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
         websocket: { perMessageDeflate: true },
       },
