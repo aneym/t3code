@@ -2,6 +2,7 @@
 import { admitHttpRequest } from "./serverHandoffBarrier.ts";
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import { HttpMiddleware, HttpServerRequest } from "effect/http";
 import * as Socket from "effect/socket/Socket";
@@ -17,6 +18,13 @@ import { ServiceLauncherClientError } from "./cloud/serviceLauncherErrors.ts";
 
 let attachedContext: ReturnType<typeof decodeServiceLauncherContext>;
 let ingressAccepted = false;
+export const serviceBootTimeline = {
+  now: Clock.currentTimeMillis,
+  prewarmMs: 0,
+  acquireAt: 0,
+  ownershipAt: 0,
+  layersAt: 0,
+};
 
 export const hotSwapProtocolAccepted = () => ingressAccepted;
 
@@ -35,47 +43,52 @@ export function hotSwapContext() {
   return attachedContext;
 }
 
-export const exchangeServiceMessage = Effect.fn("serviceChildTransport.exchange")(function (
+export const exchangeServiceMessage = Effect.fn("serviceChildTransport.exchange")(function* (
   message: ServiceLauncherChildMessage,
   accept: (reply: ServiceLauncherParentMessage) => boolean,
 ) {
-  return Effect.callback<ServiceLauncherParentMessage, ServiceLauncherClientError>((resume) => {
-    let settled = false;
-    const cleanup = () => {
-      process.off("message", onMessage);
-      process.off("disconnect", onDisconnect);
-    };
-    const finish = (
-      result: Effect.Effect<ServiceLauncherParentMessage, ServiceLauncherClientError>,
-    ) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resume(result);
-    };
-    const onMessage = (value: unknown) => {
-      const reply = decodeServiceLauncherParentMessage(value);
-      if (reply !== undefined && accept(reply)) {
-        if (reply.type === "ingress-bound") ingressAccepted = true;
-        finish(Effect.succeed(reply));
+  const clock = yield* Clock.Clock;
+  return yield* Effect.callback<ServiceLauncherParentMessage, ServiceLauncherClientError>(
+    (resume) => {
+      let settled = false;
+      const cleanup = () => {
+        process.off("message", onMessage);
+        process.off("disconnect", onDisconnect);
+      };
+      const finish = (
+        result: Effect.Effect<ServiceLauncherParentMessage, ServiceLauncherClientError>,
+      ) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resume(result);
+      };
+      const onMessage = (value: unknown) => {
+        const reply = decodeServiceLauncherParentMessage(value);
+        if (reply !== undefined && accept(reply)) {
+          if (reply.type === "ingress-bound") ingressAccepted = true;
+          if (reply.type === "acquire")
+            serviceBootTimeline.acquireAt = clock.currentTimeMillisUnsafe();
+          finish(Effect.succeed(reply));
+        }
+      };
+      const onDisconnect = () =>
+        finish(Effect.fail(new ServiceLauncherClientError({ operation: "disconnect" })));
+      process.on("message", onMessage);
+      process.on("disconnect", onDisconnect);
+      try {
+        if (process.send === undefined) onDisconnect();
+        else
+          process.send(message, (cause) => {
+            if (cause !== null)
+              finish(Effect.fail(new ServiceLauncherClientError({ operation: "send", cause })));
+          });
+      } catch (cause) {
+        finish(Effect.fail(new ServiceLauncherClientError({ operation: "send", cause })));
       }
-    };
-    const onDisconnect = () =>
-      finish(Effect.fail(new ServiceLauncherClientError({ operation: "disconnect" })));
-    process.on("message", onMessage);
-    process.on("disconnect", onDisconnect);
-    try {
-      if (process.send === undefined) onDisconnect();
-      else
-        process.send(message, (cause) => {
-          if (cause !== null)
-            finish(Effect.fail(new ServiceLauncherClientError({ operation: "send", cause })));
-        });
-    } catch (cause) {
-      finish(Effect.fail(new ServiceLauncherClientError({ operation: "send", cause })));
-    }
-    return Effect.sync(cleanup);
-  }).pipe(
+      return Effect.sync(cleanup);
+    },
+  ).pipe(
     Effect.timeoutOrElse({
       duration: "30 minutes",
       orElse: () => Effect.fail(new ServiceLauncherClientError({ operation: "timeout" })),
@@ -196,6 +209,15 @@ export const prepareServiceRouting = Effect.fn("serviceChildTransport.prepareRou
   function* () {
     const context = hotSwapContext();
     if (context === undefined) return undefined;
+    if (serviceBootTimeline.acquireAt !== 0) {
+      const { prewarmMs, acquireAt, ownershipAt, layersAt } = serviceBootTimeline;
+      yield* Effect.logInfo("Service handoff boot timeline", {
+        prewarmMs,
+        acquireToOwnershipMs: ownershipAt - acquireAt,
+        acquireToLayersMs: layersAt - acquireAt,
+        acquireToValidatedMs: (yield* Clock.currentTimeMillis) - acquireAt,
+      });
+    }
     prepared = true;
     const pending = context.update?.status === "pending" ? context.update : undefined;
     if (pending !== undefined) {

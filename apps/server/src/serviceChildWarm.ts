@@ -1,19 +1,37 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Warm preflight reads SQLite without opening application services.
 import * as NodeSqlite from "node:sqlite";
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { migrationManifest } from "./persistence/Migrations.ts";
 import { runServicePreflight } from "./cloud/servicePreflight.ts";
-import { exchangeServiceMessage, hotSwapContext } from "./serviceChildTransport.ts";
+import {
+  exchangeServiceMessage,
+  hotSwapContext,
+  serviceBootTimeline,
+} from "./serviceChildTransport.ts";
+import { NodePtyModuleLoaderRef } from "./terminal/NodePtyAdapter.ts";
+import { probeLocalCodex } from "./provider/CodexLocalProbe.ts";
+import { fixPath } from "./os-jank.ts";
 import type * as ServerConfig from "./config.ts";
 
 class ServiceWarmError extends Schema.TaggedError<ServiceWarmError>()("ServiceWarmError", {
   cause: Schema.Defect(),
 }) {}
 
+const prewarmServiceChild = Effect.fn("serviceChildWarm.prewarm")(function* (baseDir: string) {
+  const path = yield* Path.Path;
+  const startedAt = yield* serviceBootTimeline.now;
+  const loadPty = yield* NodePtyModuleLoaderRef;
+  yield* Effect.tryPromise(loadPty).pipe(Effect.ignore);
+  yield* probeLocalCodex(path.join(baseDir, "tools", "codex"), true).pipe(Effect.ignore);
+  serviceBootTimeline.prewarmMs = (yield* serviceBootTimeline.now) - startedAt;
+});
+
 export const warmServiceChild = Effect.fn("serviceChildWarm.preflight")(function* (
   config: ServerConfig.ServerConfig["Service"],
 ) {
+  yield* fixPath({ shellEnvironmentPrepared: config.shellEnvironmentPrepared });
   const context = hotSwapContext();
   if (context === undefined || config.mode === "desktop") return false;
   const result = runServicePreflight({
@@ -44,6 +62,7 @@ export const warmServiceChild = Effect.fn("serviceChildWarm.preflight")(function
       },
       catch: (cause) => new ServiceWarmError({ cause }),
     });
+    yield* prewarmServiceChild(config.baseDir);
     yield* exchangeServiceMessage(
       { type: "warm", updateId: pending.id, willMigrate },
       (reply) => reply.type === "acquire" && reply.updateId === pending.id,

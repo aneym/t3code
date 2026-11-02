@@ -31,7 +31,6 @@ import {
   guardHttpResponseWriteErrors,
   rejectRequestsUntilServing,
 } from "./httpResponseErrorGuard.ts";
-import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
 import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -90,7 +89,6 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import { layerCommandReadiness } from "./serverCommandReadiness.ts";
-import * as ServerOwnership from "./serverOwnership.ts";
 import * as RuntimeTemp from "./runtimeTempBoot.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
@@ -169,7 +167,13 @@ import * as CloudCliState from "./cloud/CliState.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
-import { attachServiceIngress, hotSwapContext, handoff } from "./serviceChildTransport.ts";
+import {
+  serviceBootTimeline,
+  attachServiceIngress,
+  hotSwapContext,
+  handoff,
+} from "./serviceChildTransport.ts";
+import * as ServerOwnership from "./serverOwnership.ts";
 import { warmServiceChild } from "./serviceChildWarm.ts";
 import { makeTailscaleServeLayer } from "./serviceTailscaleServe.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -770,6 +774,7 @@ const layerMakeServer = Layer.unwrap(
     const config = yield* ServerConfig.ServerConfig;
     yield* warmServiceChild(config);
     const ownership = yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath);
+    serviceBootTimeline.ownershipAt = yield* serviceBootTimeline.now;
     const activation = yield* Deferred.make<void>();
     const awaitActivation = Deferred.await(activation);
     const layerActivation = Layer.succeed(ServerActivation.ServerActivation, awaitActivation);
@@ -778,8 +783,6 @@ const layerMakeServer = Layer.unwrap(
     const cloudLinkParked = yield* Deferred.make<void>();
     const routesReady = yield* Deferred.make<void>();
     const layerLauncher = ServiceLauncherClient.layer;
-
-    yield* fixPath({ shellEnvironmentPrepared: config.shellEnvironmentPrepared });
 
     const layerHttpListening = Layer.effectDiscard(
       Effect.gen(function* () {

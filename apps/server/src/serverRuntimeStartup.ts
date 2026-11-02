@@ -1,3 +1,4 @@
+import { serviceBootTimeline } from "./serviceChildTransport.ts";
 import { runServiceHandoff } from "./serviceChildHandoff.ts";
 import { importRestartManifest } from "./orchestration-v2/RestartManifest.ts";
 import {
@@ -489,7 +490,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
   );
 
   const startup = Effect.gen(function* () {
-    yield* Effect.logDebug("startup phase: starting keybindings runtime");
+    serviceBootTimeline.layersAt = yield* serviceBootTimeline.now;
     yield* runStartupPhase(
       "keybindings.start",
       keybindings.start.pipe(
@@ -503,7 +504,6 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       ),
     );
 
-    yield* Effect.logDebug("startup phase: starting server settings runtime");
     yield* runStartupPhase(
       "settings.start",
       serverSettings.start.pipe(
