@@ -12,7 +12,7 @@ import {
   latestStartedRun,
 } from "./RuntimeRecoveryPolicy.ts";
 import { restartStatus } from "./RestartStatus.ts";
-import { restartReapprovalEvents } from "./RestartHandoffImport.ts";
+import { makeRestartReapproval } from "./RestartHandoffImport.ts";
 import {
   prepareRestart,
   abortRestart,
@@ -115,6 +115,7 @@ export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
+  const reapproveRestartHandoff = yield* makeRestartReapproval;
 
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
     function* (
@@ -662,17 +663,29 @@ export const make = Effect.gen(function* () {
     let closedRequests = 0;
     let retiredEffects = 0;
     const stoppedThisPass = new Map<string, RecoverySession>();
-    for (const threadId of threadIds) {
-      const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderRuntimeRecoveryError({
-              operation: "read-projections",
-              threadId,
-              cause,
-            }),
+    const read = Effect.fn("ProviderRuntimeRecoveryService.readRecoveryProjection")(
+      (threadId: ThreadId) =>
+        projections.getRuntimeRecoveryProjection(threadId).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderRuntimeRecoveryError({
+                operation: "read-projections",
+                threadId,
+                cause,
+              }),
+          ),
         ),
-      );
+    );
+    const prefetched = yield* Effect.forEach(threadIds, read, { concurrency: 4 });
+    for (const initial of prefetched) {
+      const threadId = initial.thread.id;
+      const projection =
+        initial.providerThreads.some(
+          (thread) =>
+            thread.providerSessionId !== null && stoppedThisPass.has(thread.providerSessionId),
+        ) || initial.providerSessions.some((session) => stoppedThisPass.has(session.id))
+          ? yield* read(threadId)
+          : initial;
       const enabled =
         continueAfterRestart !== null &&
         resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
@@ -686,53 +699,12 @@ export const make = Effect.gen(function* () {
         projection.thread.deletedAt === null &&
         projection.thread.settledOverride !== "settled"
       ) {
-        const full = yield* projections
-          .getThreadRecords(threadId, [
-            "runs",
-            "runtimeRequests",
-            "nodes",
-            "turnItems",
-            "providerTurns",
-            "subagents",
-          ])
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderRuntimeRecoveryError({
-                  operation: "read-projections",
-                  threadId,
-                  cause,
-                }),
-            ),
-          );
-        const reapproval = yield* restartReapprovalEvents(
-          full,
-          handoff.epoch,
-          handoff.handoff.runIds,
-          [
-            ...new Set([
-              ...handoff.handoff.requestIds,
-              ...full.runtimeRequests
-                .filter((request) => request.status === "pending")
-                .map((request) => request.id),
-            ]),
-          ],
-        ).pipe(
-          Effect.provideService(IdAllocator.IdAllocatorV2, ids),
+        yield* reapproveRestartHandoff(threadId, handoff).pipe(
           Effect.mapError(
             (cause) =>
               new ProviderRuntimeRecoveryError({ operation: "reconcile", threadId, cause }),
           ),
         );
-        if (reapproval.events.length > 0)
-          yield* eventSink
-            .write({ events: reapproval.events })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderRuntimeRecoveryError({ operation: "reconcile", threadId, cause }),
-              ),
-            );
       }
       const result = yield* reconcileProjection(
         projection,
