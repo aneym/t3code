@@ -60,13 +60,14 @@ class FastNode:
     gating: bool = True
     outcomes: tuple[str, ...] = STAGE_OUTCOMES
     defer_reason: str = ""
+    writes: tuple[str, ...] = ()
 
 
 def linux_nodes(host, builder, defer_host=None, defer_reason=""):
     reason = defer_reason if host == defer_host else ""
     suffix = TARGET_SUFFIXES[host]
     payload = "L" if host == builder else f"T{suffix}"
-    transfer = () if host == builder else (FastNode(payload, f"stage-linux-{host}", "studio", ("SL",), 900, (f"payload:{host}",)),)
+    transfer = () if host == builder else (FastNode(payload, f"stage-linux-{host}", "studio", ("SL",), 900, (f"payload:{host}",), writes=(host,)),)
     return (*transfer,
             FastNode(f"P{suffix}", f"prepare-sandbox-{host}", host, ("A",), 180, (f"sandbox:{host}",)),
             FastNode(f"R{suffix}", f"rehearse-{host}", host, (payload, f"P{suffix}"), 150, (f"sandbox:{host}",)),
@@ -91,9 +92,9 @@ def fast_graph(linux_host="ax42", defer_host=None, defer_reason=""):
         FastNode("RM", "rehearse-studio", "studio", ("M", "PM"), 150, ("sandbox:studio",)),
         FastNode("XM", "rollback-proof-studio", "studio", ("M", "PM", "RM"), 150, ("rollback-sandbox:studio",)),
         FastNode("D", "desktop", "studio", ("M",), 330, ("build-tree:desktop", "mac-signing")),
-        FastNode("SM", "prestage-mac", "studio", ("M",), 900, ("prestage:mac",)),
+        FastNode("SM", "prestage-mac", "studio", ("M",), 900, ("prestage:mac",), writes=(builder,)),
         FastNode("SL", "prestage-linux", "studio", ("L",), 900, ("prestage:linux",)),
-        FastNode("SD", "prestage-desktop", "studio", ("D",), 900, ("prestage:desktop",)),
+        FastNode("SD", "prestage-desktop", "studio", ("D",), 900, ("prestage:desktop",), writes=(builder,)),
         *(node for host in LINUX_TARGETS for node in linux_nodes(host, builder, defer_host, defer_reason)),
         FastNode("EM", "e2e-studio", "studio", ("M",), 300, ("e2e:studio",)),
         FastNode("IM", "install-studio", "studio", ("RM", "EM", "XM"), 180, ("live-install:studio",), outcomes=INSTALL_OUTCOMES),

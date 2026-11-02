@@ -45,8 +45,7 @@ def remote_engine():
 
 
 def unavailable_host(node, unavailable):
-    targets = (node.host, *(resource.partition(":")[2] for resource in node.resources if resource.startswith("payload:")))
-    return next((host for host in targets if host in unavailable), None)
+    return next((host for host in (node.host, *node.writes) if host in unavailable), None)
 
 
 def wait_cap(node):
