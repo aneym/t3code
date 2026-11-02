@@ -2,7 +2,6 @@ import argparse
 import hashlib
 import json
 import re
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -178,9 +177,9 @@ class FastConfig:
 
     def sandbox_root(self):
         plan = self.run / f"sandbox-{self.host}.json"
-        if plan.exists():
-            return Path(json.loads(plan.read_text())["home"]).parent
-        return self.home / ".t3nightly" / f"rehearsal-fast-{self.number}-{self.host}-{uuid.uuid4().hex[:12]}"
+        if not plan.is_file():
+            raise ValueError(f"sandbox plan missing: {plan}; run prepare first")
+        return Path(json.loads(plan.read_text())["home"]).parent
 
     def receipt(self, kind):
         return self.run / "receipts" / f"{kind}-{self.host}.json"

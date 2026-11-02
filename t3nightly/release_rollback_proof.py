@@ -64,10 +64,12 @@ def fast_rollback_proof(config, log):
     if root.exists():
         raise ValueError(f"rollback sandbox already allocated: {root}")
     root.mkdir(parents=True, mode=0o700)
-    (root / "sandbox-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
+    rollback_plan = dict(plan, home=str(root / "home"), evidence=str(root / "evidence"),
+                         rollbackRoot=str(root), label=f"{plan['label']}-rollback", port=port)
+    (root / "sandbox-plan.json").write_text(json.dumps(rollback_plan, indent=2) + "\n")
     code = command([sys.executable, str(config.tools / "rehearse"), "--old-runtime", plan["oldRuntime"], "--candidate-manifest", str(config.manifest),
                     "--assets", str(config.build_out()), "--artifact-manifest", str(config.artifact()), "--seed", plan["seed"],
                     "--home", str(root / "home"), "--evidence", str(root / "evidence"), "--label", f"{plan['label']}-rollback", "--port", str(port),
