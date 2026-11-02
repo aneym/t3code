@@ -1,2 +1,5 @@
 #!/bin/sh
-exec ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$@"
+if [ "$(hostname -s)" = ax42 ]; then
+    set -- -o ProxyJump=forge "$@"
+fi
+exec ssh -o Compression=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$@"
