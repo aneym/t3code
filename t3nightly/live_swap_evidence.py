@@ -55,11 +55,19 @@ def receipt(run, job, probe, turn, status, cursor, error=None):
         for reply in replies:
             matches = lambda row: row.get("sequence") == reply.get("sequence") and row.get("clientId") == reply.get("clientId")
             acknowledgments = [row for row in probe.get("handoffSettlements", []) if matches(row) and row.get("outcome") == "Success"]
-            confirmed = any(matches(row) and row.get("confirmation") is True for row in probe.get("handoffReplies", []))
-            if confirmed and any(row.get("confirmation") is False for row in acknowledgments) and any(row.get("confirmation") is True for row in acknowledgments):
-                handoff.append({"sessionId": reply["sessionId"], "sequence": reply["sequence"], "clientId": reply["clientId"], "replyResolved": True, "confirmationResolved": True})
+            sent = [row["atMs"] for row in probe.get("handoffReplies", []) if matches(row) and row.get("confirmation") is True]
+            calls = [row["atMs"] for row in probe.get("handoffCalls", []) if matches(row) and row.get("confirmation") is True]
+            sent = sent or calls
+            if not sent or not any(row.get("confirmation") is False for row in acknowledgments):
+                continue
+            resolved = any(row.get("confirmation") is True for row in acknowledgments)
+            deadline = event["atMs"] + min(event.get("reconnectWithinMs", 0) / 4, 5_000)
+            closed = any(row.get("event") == "disconnected" and row.get("sessionId") == reply["sessionId"] and min(sent) <= row["atMs"] < deadline for row in probe.get("wsEvents", []))
+            if resolved or closed:
+                handoff.append({"sessionId": reply["sessionId"], "sequence": reply["sequence"], "clientId": reply["clientId"], "replyResolved": True, "confirmationResolved": resolved, "closedAfterConfirmation": closed and not resolved})
+    planned = sum(1 for row in handoff if row["closedAfterConfirmation"])
     failures = []
-    for condition, label in ((probe.get("ready") is True, "client-never-ready"), (not violations, "client-presentation-disconnect"), (cursor.get("verified") is True, "event-continuity-unverified"), (probe.get("refusedConnections", 0) == 0, "refused-connections"), (probe.get("httpFailures", 0) == 0, "failed-http"), (probe.get("wsFailures", 0) == 0, "failed-thread-stream"), (not error, "recorder-error")):
+    for condition, label in ((probe.get("ready") is True, "client-never-ready"), (not violations, "client-presentation-disconnect"), (cursor.get("verified") is True, "event-continuity-unverified"), (probe.get("refusedConnections", 0) == 0, "refused-connections"), (probe.get("httpFailures", 0) == 0, "failed-http"), (probe.get("wsFailures", 0) <= planned, "failed-thread-stream"), (not error, "recorder-error")):
         if not condition:
             failures.append(label)
     if len(versions) > 1 and not changed:
