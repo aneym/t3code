@@ -11,7 +11,7 @@ const isHandoffProbe = Schema.is(ServerHandoffProbe);
 const pending = new Set<Deferred.Deferred<void>>();
 let closing = false;
 
-export const flushHandoffResponses = Effect.fn("ServerHandoffDelivery.flushResponses")(function (
+export const flushHandoffResponses = Effect.fn("serverHandoffProtocol.flushResponses")(function (
   budgetMs: number,
 ) {
   closing = true;
@@ -21,7 +21,7 @@ export const flushHandoffResponses = Effect.fn("ServerHandoffDelivery.flushRespo
   }).pipe(Effect.timeoutOption(budgetMs));
 });
 
-export const handoffRpc = Effect.fn("ServerHandoffDelivery.makeProtocol")(function* () {
+export const handoffRpc = Effect.fn("serverHandoffProtocol.make")(function* () {
   const { protocol: socketProtocol, httpEffect } =
     yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
   const protocol = withTerminalOutputWindow(socketProtocol);
