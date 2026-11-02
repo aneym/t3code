@@ -114,7 +114,8 @@ def take(dest, *, home=None, timeout=1200, mib_s=32):
     with ExitStack() as stack:
         raw = stack.enter_context(tempfile.TemporaryDirectory(prefix=".snapshot-", dir=destination.parent))
         staged = Path(raw) / "statev2.sqlite"
-        command = background_command([sys.executable, "-m", "t3nightly.live_snapshot", str(source), str(staged), str(timeout), str(mib_s)])
+        command = [sys.executable, "-m", "t3nightly.live_snapshot", str(source), str(staged), str(timeout), str(mib_s)]
+        command = ["nice", "-n", "19", *command] if sys.platform == "darwin" else background_command(command)
         env = dict(os.environ)
         root = str(Path(__file__).resolve().parent.parent)
         env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
