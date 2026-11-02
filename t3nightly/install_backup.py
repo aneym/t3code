@@ -103,7 +103,8 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
     if binary:
         metadata = {"method": "binary-rollback", **binary, "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
         destination.rmdir()
-        run.step("hard-backup", **metadata)
+        (destination / "payload.json").write_text(json.dumps(metadata))
+    run.step("hard-backup", **metadata)
         return metadata
     if keep_local:
         from .install_restore_copy import checksum, fsync, identity, verify
@@ -157,6 +158,7 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
     except Exception as error:
         metadata["markError"] = f"{type(error).__name__}: {error}"
         run.step("backup-mark", path=str(target), error=metadata["markError"])
+    (destination / "payload.json").write_text(json.dumps(metadata))
     run.step("hard-backup", **metadata)
     return metadata
 
