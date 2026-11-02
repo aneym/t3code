@@ -1,15 +1,16 @@
 import fcntl
 from contextlib import closing
-import hashlib
 import json
 import os
 import shlex
+import signal
 import sqlite3
 import subprocess
 import time
 from pathlib import Path
 
-from .release_hold_units import event, read, save, snapshot
+from .release_hold_quarantine import add_quarantine, clear_quarantine, pending
+from .release_hold_state import event, read, save, snapshot, terminal
 from .release_timeline import utc_now
 
 SUFFIX = {"studio": "M", "owl": "O", "forge": "F", "ax42": "L"}
@@ -28,47 +29,42 @@ def lead_snapshot(config, row):
 def secret_parked(config, root):
     try:
         if config["sandbox"]:
-            count = read(root / "secret-parked.json", {"secretParked": 0})["secretParked"]
+            requests = read(root / "secret-parked.json", {"requests": []})["requests"]
         else:
             database = Path.home() / ".t3/userdata/statev2.sqlite"
             with closing(sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=2)) as connection:
                 deadline = time.monotonic() + 5
                 connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
-                count = connection.execute(
-                    "SELECT count(*) FROM orchestration_v2_projection_runs r "
+                requests = [{"threadId": thread, "runId": run} for thread, run in connection.execute(
+                    "SELECT DISTINCT r.thread_id, r.run_id FROM orchestration_v2_projection_runs r "
                     "CROSS JOIN orchestration_v2_projection_turn_items i ON i.run_id = r.run_id "
                     "WHERE r.status IN ('queued','preparing','starting','running','waiting') "
-                    "AND i.type = 'secret_request' AND i.status = 'waiting'"
-                ).fetchone()[0]
-        event(root, "secret-check", secretParked=count, warning=count != 0)
+                    "AND i.type = 'secret_request' AND i.status = 'waiting'").fetchall()]
+        event(root, "secret-check", secretParked=len(requests), requests=requests, warning=bool(requests))
     except (OSError, ValueError, KeyError, sqlite3.Error):
         event(root, "secret-check", warning=True, unavailable=True)
 
 
-def quarantine(config, root, action):
-    if not config["sandbox"]:
-        subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", "ax42",
-                        shlex.join(["fleet-drain", "forge", action, "quarantine"])],
-                       capture_output=True, timeout=60, check=True)
-    event(root, "quarantine-" + action, sandbox=config["sandbox"])
-
-
-def release(config, root, row, manual=False):
+def release(config, root, row, reason):
+    (root / f"{config['host']}.ready").unlink(missing_ok=True)
+    if row.get("released"):
+        save(root, row, ready=False)
+        return
     secret_parked(config, root)
+    save(root, row, outcome="released", released=utc_now(), ready=False, releaseReason=reason)
     (root / f"{config['host']}.stop").touch()
-    save(root, row, outcome="released", released=utc_now(), manual=manual)
-    event(root, "released", manual=manual)
+    event(root, "released", reason=reason)
 
 
 def policy(config, root, row, observed):
-    scheduler = observed["scheduler"]
-    done = set(scheduler.get("done", []))
-    failed = set(scheduler.get("failed", []))
-    suffix = SUFFIX[config["host"]]
-    proofs = {prefix + suffix for prefix in "REX"}
+    done = set(observed["scheduler"].get("done", []))
+    failed = set(observed["scheduler"].get("failed", []))
+    proofs = {prefix + SUFFIX[config["host"]] for prefix in "REX"}
     if proofs & failed or (config["host"] == "ax42" and "TL" in failed):
-        (root / "ax42.ready").unlink(missing_ok=True)
-        save(root, row, outcome="proofs-failed", ready=False)
+        (root / f"{config['host']}.ready").unlink(missing_ok=True)
+        if row.get("outcome") != "proofs-failed":
+            save(root, row, outcome="proofs-failed", ready=False)
+            event(root, "proofs-failed")
     elif row.get("outcome") != "proofs-failed" and proofs <= done and observed["gate"]:
         if config["host"] == "ax42":
             if not row.get("ready"):
@@ -77,77 +73,88 @@ def policy(config, root, row, observed):
                      next="Factory pause and disk-mover hold, then manual release")
                 event(root, "ready-manual")
         elif config["host"] == "forge":
-            if not row.get("quarantineAt"):
-                quarantine(config, root, "add")
-                save(root, row, quarantineAt=time.time())
-            if time.time() >= row["quarantineAt"] + config["quarantineSeconds"]:
-                release(config, root, row)
+            add_quarantine(config, root, row)
+            if row.get("quarantineAt") and time.time() >= row["quarantineAt"] + config["quarantineSeconds"]:
+                release(config, root, row, "proofs-passed")
         else:
-            release(config, root, row)
-    return done, failed
+            release(config, root, row, "proofs-passed")
 
 
-def worker(root):
+def exit_worker(signum, frame):
+    raise SystemExit(1)
+
+
+def worker(root, lock_fd):
     root = Path(root).resolve()
     config = read(root / "config.json")
     with (root / "worker.lock").open("a") as owner:
-        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return 0
         row = read(root / "state.json", {"outcome": "waiting-lock", "host": config["host"]})
-        save(root, row, pid=os.getpid(), parentPid=os.getppid())
+        save(root, row, pid=os.getpid(), parentPid=os.getppid(), watcher="watching")
         stop = root / f"{config['host']}.stop"
-        lock_root = Path(config["lockRoot"])
-        lock_root.mkdir(parents=True, exist_ok=True)
-        resource = "live-install:" + config["host"]
-        handle = (lock_root / hashlib.sha256(resource.encode()).hexdigest()).open("a")
+        expires = read(root / "deadline.json")["expiresAt"]
         held = False
         try:
+            signal.signal(signal.SIGTERM, exit_worker)
             while True:
+                expired = time.time() >= expires
+                stopping = (root / "watcher.stop").exists()
+                if expired or stopping or stop.exists():
+                    release(config, root, row, "expired" if expired else "stopped" if stopping else "manual")
+                if stop.exists():
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    held = False
+                finishing = expired or stopping or bool(row.get("finishReason"))
                 try:
-                    stopping = (root / "watcher.stop").exists()
-                    if stop.exists() and row.get("outcome") != "released" and not row.get("released"):
-                        release(config, root, row, manual=True)
-                    if stop.exists() and held:
-                        fcntl.flock(handle, fcntl.LOCK_UN)
-                        held = False
-                    if not stop.exists() and not held:
-                        try:
-                            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                            held = True
-                            save(root, row, outcome=row["outcome"] if row["outcome"] != "waiting-lock" else "held", acquired=utc_now())
-                            event(root, "holding", resource=resource)
-                        except BlockingIOError:
-                            pass
-                    if stopping:
-                        if row.get("quarantineAt") and not row.get("quarantineCleared"):
-                            quarantine(config, root, "clear")
-                            save(root, row, quarantineCleared=utc_now())
-                        save(root, row, watcher="stopped")
-                        try:
-                            lead_snapshot(config, row)
-                        except (OSError, ValueError, subprocess.SubprocessError):
-                            event(root, "stopped-offline")
-                        return 0
                     observed = lead_snapshot(config, row)
                     done = set(observed["scheduler"].get("done", []))
                     failed = set(observed["scheduler"].get("failed", []))
                     coordinator = observed["coordinator"].get("outcome")
+                    finishing |= terminal(coordinator) or {"IM", "IO", "IF", "IL"} <= done | failed
                     save(root, row, coordinator=coordinator,
                          feed="install-failed" if "IL" in failed else "published" if "F" in done else "waiting")
-                    terminal = bool(coordinator and coordinator not in ("running", "submitted"))
-                    if held and not terminal:
-                        done, failed = policy(config, root, row, observed)
-                    if stop.exists() and held:
-                        fcntl.flock(handle, fcntl.LOCK_UN)
-                        held = False
-                    if row.get("quarantineAt") and not row.get("quarantineCleared"):
-                        if "IF" in done | failed:
-                            quarantine(config, root, "clear")
-                            save(root, row, quarantineCleared=utc_now())
-                    save(root, row, watcher="watching")
-                    lead_snapshot(config, row)
+                    if finishing:
+                        reason = row.get("releaseReason") or ("coordinator-terminal" if terminal(coordinator) else "installs-ended")
+                        save(root, row, finishReason=reason)
+                        release(config, root, row, reason)
+                    if not stop.exists() and not held:
+                        try:
+                            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            held = True
+                            save(root, row, outcome="held" if row["outcome"] == "waiting-lock" else row["outcome"], acquired=utc_now())
+                            event(root, "holding", resource="live-install:" + config["host"])
+                        except BlockingIOError:
+                            pass
+                    if held and not finishing and not stop.exists():
+                        policy(config, root, row, observed)
+                    clear_needed = finishing or "IF" in done | failed
                 except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
                     save(root, row, watcher="retrying", error=type(error).__name__)
                     event(root, "retry", error=type(error).__name__)
-                time.sleep(config["interval"])
+                    clear_needed = finishing
+                if stop.exists():
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    held = False
+                if clear_needed:
+                    clear_quarantine(config, root, row)
+                if expired:
+                    event(root, "expired", quarantinePending=pending(row), warning=pending(row))
+                if finishing and (not pending(row) or expired):
+                    break
+                time.sleep(min(config["interval"], max(0, expires - time.time())))
         finally:
-            handle.close()
+            if pending(row):
+                clear_quarantine(config, root, row)
+            (root / f"{config['host']}.ready").unlink(missing_ok=True)
+            save(root, row, ready=False)
+            event(root, "worker-cleanup", quarantinePending=pending(row))
+            try:
+                lead_snapshot(config, row)
+            except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+                event(root, "exit-offline", warning=True)
+        save(root, row, watcher="exited")
+        event(root, "worker-exit", quarantinePending=pending(row))
+        return 0
