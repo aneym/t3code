@@ -11,7 +11,8 @@ from pathlib import Path
 from t3nightly.install_resources import copy_snapshot
 from t3nightly.install_storage import record_payload
 from t3nightly.install_payload_gc import discard_snapshot, prune_backups
-from t3nightly.live_snapshot import clone_file, snapshot_root, take
+from t3nightly.live_snapshot import snapshot_root, take
+from t3nightly.snapshot_clone import clone_file
 from t3nightly.snapshot_space import clone_supported, require_install_space, require_space
 
 
@@ -77,9 +78,6 @@ def backup_database(run, version, *, preparing=False):
         try:
             clone_file(run.snapshot, dest, getattr(run.args, "snapshot_max_s", 1200))
             method = "clone"
-        except InterruptedError:
-            dest.unlink(missing_ok=True)
-            raise
         except (OSError, subprocess.SubprocessError) as error:
             dest.unlink(missing_ok=True)
             run.step("backup-clone-unavailable", reason=f"{type(error).__name__}: {error}")

@@ -4,6 +4,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from .snapshot_clone import clone_file
+
 MARGIN = 1024**3
 BACKUP_MIB_S = 16
 CONSERVATIVE_MIB_S = 8
@@ -18,8 +20,6 @@ def backup_seconds(size):
 
 
 def clone_supported(source_directory, destination_directory):
-    from .live_snapshot import clone_file
-
     with tempfile.TemporaryDirectory(prefix=".clone-probe-", dir=source_directory) as raw, tempfile.TemporaryDirectory(prefix=".clone-probe-", dir=destination_directory) as out:
         source = Path(raw) / "probe"
         source.write_bytes(b"snapshot capability probe" * 256)
@@ -43,10 +43,8 @@ def require_space(directory, size, *, copies=1, clone=False, margin=MARGIN):
     return plan["freeBytes"]
 
 
-def install_plan(source, staging, snapshots, backups, *, offbox_stage=None, stage_floor=60 * 1024**3):
+def install_plan(source, staging, snapshots, backups):
     size = database_bytes(source)
-    if offbox_stage is not None:
-        return [space_plan(snapshots, size, copies=0), space_plan(offbox_stage, size, margin=stage_floor)]
     source_clone = clone_supported(staging, staging)
     publication_clone = source_clone and Path(staging).stat().st_dev == Path(snapshots).stat().st_dev
     backup_clone = clone_supported(snapshots, backups)

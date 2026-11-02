@@ -6,7 +6,7 @@ from contextlib import closing
 from pathlib import Path
 
 from . import live_read_guard as guard
-from .live_snapshot import clone_file
+from .snapshot_clone import clone_file
 from .snapshot_space import BACKUP_MIB_S
 
 
@@ -45,7 +45,7 @@ def capture(source, destination, method, watch):
                         watch.check()
                         paced = time.monotonic()
 
-                    reader.backup(writer, pages=max(1, 256 * 1024 // page_size), progress=progress, sleep=0.05)
+                    reader.backup(writer, pages=max(1, 256 * 1024 // page_size), progress=progress)
             watch.check()
         finally:
             if reader.in_transaction:
