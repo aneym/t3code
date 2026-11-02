@@ -32,7 +32,8 @@ def turn_state(home, turn):
 def coalescible_update_key(thread, event_type, payload, metadata):
     if not isinstance(payload, dict) or not isinstance(payload.get("id"), str):
         return None
-    prefix = f"{thread}\0{metadata.get('runId') or ''}\0{event_type}"
+    run = metadata.get("runId") if isinstance(metadata, dict) else None
+    prefix = f"{thread}\0{run or ''}\0{event_type}"
     if event_type == "message.updated":
         return f"{prefix}\0{payload['id']}" if payload.get("role") == "assistant" and payload.get("streaming") is True else None
     if event_type != "turn-item.updated" or payload.get("status") != "running":
@@ -72,10 +73,12 @@ def continuity(home, thread, probe, *, through_sequence=None):
         if key in latest_updates:
             superseded[latest_updates[key]] = sequence
         latest_updates[key] = sequence
+    resumed = {row.get("sessionId"): row["afterSequence"] for row in probe.get("subscriptions", []) if row.get("afterSequence") is not None}
+    received_in = {row["sequence"]: row.get("sessionId") for row in probe.get("receivedEvents", [])}
     covered = {sequence: sequence for sequence in observed}
     for sequence in reversed(expected):
         survivor = covered.get(superseded.get(sequence))
-        if survivor is not None:
+        if survivor is not None and resumed.get(received_in.get(survivor), sequence) < sequence:
             covered[sequence] = survivor
     coalesced = [sequence for sequence in expected if sequence not in observed and sequence in covered]
     missing = [sequence for sequence in expected if sequence not in covered]
