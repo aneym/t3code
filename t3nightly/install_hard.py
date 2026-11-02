@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .identity_snapshot import finish as finish_identities
 from . import install_offbox
+from .install_restore_copy import RecoveryRequired, recovery_required
 from .install_backup import capture
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_process import serving_process
@@ -303,6 +304,11 @@ def install(run):
                     run.link_cli(previous)
                 outcome = "rolled-back"
             except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
+                if isinstance(rollback, RecoveryRequired):
+                    path = Path(args.install_receipt) if args.install_receipt else run.state / "receipts" / f"install-{host}.json"
+                    database_rollback = recovery_required(backup, run.db.resolve(), run.service_label, path, rollback)
+                    outcome = "failed"
+                    run.step("database-recovery-required", **database_rollback)
                 run.step("hard-rollback-failed", error=str(rollback))
         elif stopped:
             try:

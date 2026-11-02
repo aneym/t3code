@@ -29,6 +29,7 @@ def restore(run, backup, *, beside=None):
     if not beside and free < restore_space(size, wal_bytes(db)):
         raise ValueError("insufficient local space for an in-place off-box restore")
     deadline = time.monotonic() + budget
+    deadline = min(deadline, getattr(run, "stop_deadline", deadline))
     if beside:
         staged = db.with_name(f".{db.name}.restore-{uuid.uuid4().hex}")
         try:
@@ -38,11 +39,19 @@ def restore(run, backup, *, beside=None):
                 raise ValueError(f"restored database quick_check {check}")
             os.chmod(staged, db.stat().st_mode & 0o777 if db.exists() else 0o600)
             publish(staged, db)
+        except subprocess.TimeoutExpired as error:
+            raise restore_copy.RecoveryRequired("off-box beside restore exceeded its stopped-work deadline before database replacement", backup_path=address) from error
         finally:
             for suffix in ("", "-wal", "-shm", "-journal"):
                 Path(f"{staged}{suffix}").unlink(missing_ok=True)
     else:
-        sync(address, db, deadline)
+        seconds = restore_copy.estimate(size, copy_bps=rate(run))["totalSeconds"]
+        if deadline - time.monotonic() < seconds:
+            raise restore_copy.RecoveryRequired(f"off-box in-place restore needs {seconds:.0f} s before its stopped-work deadline; database preserved", backup_path=address)
+        try:
+            sync(address, db, None, hang_guard=max(3600, seconds * 4))
+        except subprocess.TimeoutExpired as error:
+            raise restore_copy.RecoveryRequired("off-box in-place restore hang guard fired; database may be partially restored", "offbox-in-place-hang-guard", backup_path=address) from error
         check = local_check(db)
         if check != "ok":
             raise ValueError(f"restored database quick_check {check}")
@@ -82,5 +91,5 @@ def rollback_database(run, backup, compatibility):
     except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as error:
         intact = skippable and unchanged(run, backup)
         run.step("hard-restore-db-failed", error=str(error), databaseUnchanged=intact)
-        if not intact:
+        if not intact or isinstance(error, restore_copy.RecoveryRequired):
             raise

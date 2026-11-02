@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -23,9 +24,31 @@ COPY_MIB_S = 360
 HASH_MIB_S = 360
 
 
+class RecoveryRequired(ValueError):
+    def __init__(self, message, reason="deadline-before-restore", *, backup_path=None):
+        super().__init__(message)
+        self.reason = reason
+        self.backup_path = backup_path
+
+
+def recovery_required(backup, db, service, receipt, error):
+    local = backup.get("local") if error.backup_path is None else None
+    if local:
+        path = local["path"]
+        command = [sys.executable, "-B", "-m", "t3nightly.install_restore_copy", "restore", "--receipt", str(receipt), "--db", str(db), "--service", service]
+    else:
+        from .install_offbox import executable, REMOTE_EXE, SSH
+
+        path = error.backup_path or backup["remote"]
+        command = [executable(), path, str(db), "--exe", REMOTE_EXE, "--ssh", str(SSH)]
+    return {"recoveryRequired": True, "reason": error.reason, "backupPath": path,
+            "restoreCommand": f"cd {shlex.quote(str(Path(__file__).resolve().parent.parent))} && {shlex.join(command)}",
+            "detail": "Service intentionally remains stopped: the candidate-migrated database cannot run on the old runtime. Finish the restore with restoreCommand, verify the database, then restart the retained runtime.", "error": str(error)}
+
+
 def check_deadline(deadline):
     if deadline is not None and time.monotonic() >= deadline:
-        raise ValueError("restore copy exceeded its stopped-work deadline; database recovery required before restart")
+        raise RecoveryRequired("restore copy exceeded its stopped-work deadline; database recovery required before restart")
 
 
 def checksum(path, deadline=None):
@@ -106,10 +129,15 @@ def verify(path, expected, deadline=None):
         try:
             check = connection.execute("PRAGMA quick_check").fetchone()[0]
         except sqlite3.OperationalError as error:
+            check_deadline(deadline)
             raise ValueError(f"restore copy quick_check stopped at its deadline: {error}") from error
     if check != "ok":
         raise ValueError(f"restore copy quick_check {check}")
-    observed = identity(path, copy=True, deadline=deadline)
+    try:
+        observed = identity(path, copy=True, deadline=deadline)
+    except sqlite3.Error:
+        check_deadline(deadline)
+        raise
     check_deadline(deadline)
     if observed != expected:
         raise ValueError(f"restore copy identity {observed} differs from the stopped database {expected}")
@@ -203,7 +231,7 @@ def in_place(copy, db, mode, record, deadline):
     check_deadline(deadline)
     seconds = estimate(copy.stat().st_size)["totalSeconds"]
     if deadline is not None and deadline - time.monotonic() < seconds:
-        raise ValueError(f"in-place restore needs {seconds:.0f} s before its stopped-work deadline; database preserved")
+        raise RecoveryRequired(f"in-place restore needs {seconds:.0f} s before its stopped-work deadline; database preserved")
     remove(db)
     fsync(db.parent)
     check = copy_checked(copy, db, record, None)
@@ -229,8 +257,6 @@ def restore(record, db, note, deadline=None, *, verified=False):
             check_deadline(deadline)
             note("hard-restore-local-beside-failed", copy=str(copy), error=str(error), next="delete the failed database and WAL, then copy in place")
             check, into = in_place(copy, db, mode, record, deadline), "in-place"
-    if into != "in-place":
-        check_deadline(deadline)
     metadata = {"sha256": record["sha256"], "identity": record["identity"], "source": "local-restore-copy", "copy": str(copy), "into": into, "quickCheck": check, "seconds": round(time.monotonic() - started, 3)}
     note("hard-restore-db", **metadata)
     return metadata

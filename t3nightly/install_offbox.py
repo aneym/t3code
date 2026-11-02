@@ -139,10 +139,10 @@ def executable():
     return found
 
 
-def sync(origin, replica, deadline, *, background=False):
+def sync(origin, replica, deadline, *, background=False, hang_guard=None):
     command = [executable(), str(origin), str(replica), "--exe", REMOTE_EXE, "--ssh", str(SSH)]
     started = time.monotonic()
-    result = subprocess.run(background_command(command) if background else command, capture_output=True, text=True, timeout=max(1, deadline - time.monotonic()), check=False)
+    result = subprocess.run(background_command(command) if background else command, capture_output=True, text=True, timeout=hang_guard if hang_guard is not None else max(1, deadline - time.monotonic()), check=False)
     if result.returncode:
         raise ValueError(f"sqlite3_rsync {origin} -> {replica} failed: {result.stderr.strip()[-300:]}")
     return time.monotonic() - started
