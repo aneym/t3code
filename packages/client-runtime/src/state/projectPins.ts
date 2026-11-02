@@ -18,18 +18,9 @@ function projectGroupPinOrder(group: {
   return keys.sort()[0] ?? null;
 }
 
-export function comparePinnedProjects(
-  left: {
-    readonly pinOrder?: string | null | undefined;
-    readonly pinnedAt?: string | null | undefined;
-    readonly key: string;
-  },
-  right: {
-    readonly pinOrder?: string | null | undefined;
-    readonly pinnedAt?: string | null | undefined;
-    readonly key: string;
-  },
-): number {
+type OrderedProjectPin = PinnableProject & { readonly key: string };
+
+export function comparePinnedProjects(left: OrderedProjectPin, right: OrderedProjectPin): number {
   const a = left.pinOrder ?? null;
   const b = right.pinOrder ?? null;
   if (a !== b) return a === null ? 1 : b === null ? -1 : a < b ? -1 : 1;

@@ -397,11 +397,11 @@ describe("project pins and archives", () => {
 
   it("offers pinned projects first and leaves archived ones out", () => {
     const pickable = pickableProjectGroups([
-      { key: "a", pinned: false, archived: false },
-      { key: "b", pinned: true, archived: true },
+      { key: "a", pinned: false, archived: false, pinOrder: null, pinnedAt: null },
+      { key: "b", pinned: true, archived: true, pinOrder: null, pinnedAt: at },
       { key: "c", pinned: true, archived: false, pinOrder: null, pinnedAt: "2026-01-01" },
       { key: "e", pinned: true, archived: false, pinOrder: "a", pinnedAt: "2026-02-01" },
-      { key: "d", pinned: false, archived: true },
+      { key: "d", pinned: false, archived: true, pinOrder: null, pinnedAt: null },
     ]);
     expect(pickable.map((entry) => entry.key)).toEqual(["e", "c", "a"]);
   });

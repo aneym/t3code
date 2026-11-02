@@ -71,6 +71,8 @@ function group(
     allRemoteMembersAreDesktopLocal: false,
     allRemoteMembersAreWsl: false,
     remoteEnvironmentLabels: [],
+    pinOrder: null,
+    pinnedAt: null,
     pinned: false,
     archived: false,
   };

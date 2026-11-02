@@ -250,9 +250,9 @@ export interface ProjectGroup<TProject extends EnvironmentProject = EnvironmentP
   readonly representative: TProject;
   readonly members: ReadonlyArray<ProjectGroupMember<TProject>>;
   readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
-  /** Clients write every member together. When members still disagree, the project stays visible. */
   readonly pinOrder: string | null;
   readonly pinnedAt: string | null;
+  /** Clients write every member together. When members still disagree, the project stays visible. */
   readonly pinned: boolean;
   readonly archived: boolean;
 }
@@ -262,8 +262,8 @@ export function pickableProjectGroups<
   TGroup extends {
     readonly key?: string;
     readonly projectKey?: string;
-    readonly pinOrder?: string | null | undefined;
-    readonly pinnedAt?: string | null | undefined;
+    readonly pinOrder: string | null;
+    readonly pinnedAt: string | null;
     readonly pinned: boolean;
     readonly archived: boolean;
   },

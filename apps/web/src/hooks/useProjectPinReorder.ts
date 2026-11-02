@@ -7,17 +7,11 @@ import {
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 import { projectEnvironment } from "../state/projects";
-import { useEnvironmentsWithScope, readEnvironmentScope } from "../state/session";
+import { readEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 
 export function useProjectPinReorder(groups: readonly SidebarProjectSnapshot[]) {
   const update = useOrchestrationCommand(projectEnvironment.update, { reportFailure: false });
-  const editable = useEnvironmentsWithScope(
-    groups.flatMap((group) => group.memberProjects),
-    AuthOrchestrationOperateScope,
-  );
-  const canPin = (group: SidebarProjectSnapshot) =>
-    group.memberProjects.every((member) => editable.has(member.environmentId));
   const apply = async (changes: { group: SidebarProjectSnapshot; pinOrder: string | null }[]) => {
     if (
       changes.some(({ group }) =>
@@ -54,7 +48,6 @@ export function useProjectPinReorder(groups: readonly SidebarProjectSnapshot[]) 
     );
   };
   return {
-    canPin,
     reorderPins: (activeKey: string, overKey: string) =>
       apply(projectPinReorderChanges(groups, activeKey, overKey)),
   };
