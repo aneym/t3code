@@ -296,7 +296,6 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
 );
 
 it.effect("records only failed calls of tools that hand off no work", () => {
-  // Recording runs detached from the tool response, so the first event is awaited.
   const recorded = Deferred.makeUnsafe<{ event: string; properties: object }>();
   return Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -340,6 +339,7 @@ it.effect("records only failed calls of tools that hand off no work", () => {
                   Effect.asVoid,
                 ),
               flush: Effect.void,
+              skipShutdownFlush: Effect.void,
               recordOwners: () => Effect.void,
             }),
           ),

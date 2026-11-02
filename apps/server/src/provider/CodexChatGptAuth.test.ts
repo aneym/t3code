@@ -223,6 +223,7 @@ const makeHarnessFor = Effect.fnUntraced(function* (
             analyticsEvents.push({ event, properties });
           }),
     flush: Effect.void,
+    skipShutdownFlush: Effect.void,
     recordOwners: () => Effect.void,
   });
   const auth = yield* makeCodexChatGptAuth({
@@ -1637,7 +1638,6 @@ it.effect("a running session renews its bound profile but refuses a replacement 
       assert.deepEqual(renewed[0], renewed[1]);
       assert.equal(yield* h.auth.profileKey(renewed[0]), profileKey);
 
-      // Reconnecting the same account replaces its sign-in identity, too.
       yield* h.reconnectProfile("oaiapp_test");
       yield* h.phase("succeeded");
       const replacement = Option.getOrThrow(yield* h.auth.read);

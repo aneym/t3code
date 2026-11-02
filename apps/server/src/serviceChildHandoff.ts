@@ -1,3 +1,4 @@
+import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { freezeServiceChild } from "./serviceChildFreeze.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- Launcher handoff is a process lifecycle boundary.
 import { reopenServerAdmissions } from "./serverHandoffBarrier.ts";
@@ -11,6 +12,7 @@ import { hotSwapContext, sendServiceMessage } from "./serviceChildTransport.ts";
 export const runServiceHandoff = Effect.fn("serviceChildHandoff.run")(function* () {
   if (hotSwapContext() === undefined) return;
   const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+  const analytics = yield* AnalyticsService.AnalyticsService;
   const messages = yield* Queue.unbounded<unknown>();
   yield* Effect.acquireRelease(
     Effect.sync(() => {
@@ -27,7 +29,13 @@ export const runServiceHandoff = Effect.fn("serviceChildHandoff.run")(function* 
     Stream.runForEach((value) => {
       const message = decodeServiceLauncherParentMessage(value);
       if (message?.type === "drain")
-        return recovery.drainForHandoff(message.updateId, message.drainTimeoutMs).pipe(
+        return Effect.all(
+          [
+            recovery.drainForHandoff(message.updateId, message.drainTimeoutMs),
+            analytics.flush.pipe(Effect.timeoutOption(message.drainTimeoutMs), Effect.ignore),
+          ],
+          { concurrency: 2, discard: true },
+        ).pipe(
           Effect.andThen(sendServiceMessage({ type: "drained", updateId: message.updateId })),
           Effect.catchCause(() =>
             sendServiceMessage({ type: "drain-failed", updateId: message.updateId }).pipe(
