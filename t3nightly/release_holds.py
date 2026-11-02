@@ -11,6 +11,7 @@ from .release_hold_units import cleanup, inspect_hold, install, request_release
 from .release_hold_state import read, snapshot
 from .release_hold_keeper import supervise
 from .release_hold_watch import worker
+from .release_job_runner import HOLD_EXPIRY_S
 from .release_jobs import write_status
 from .release_targets import LINUX_TARGETS
 
@@ -63,7 +64,7 @@ def configure(args, run):
 def source_config(args, run):
     if args.interval <= 0 or args.quarantine_seconds < 0 or args.expiry_seconds <= 0 or args.quarantine_retry_seconds < 0:
         raise ValueError("invalid watcher interval or quarantine delay")
-    if not args.sandbox and (args.quarantine_seconds != 300 or args.quarantine_retry_seconds != 300 or args.expiry_seconds != 86400 or args.sandbox_quarantine_command):
+    if not args.sandbox and (args.quarantine_seconds != 300 or args.quarantine_retry_seconds != 300 or args.expiry_seconds != HOLD_EXPIRY_S or args.sandbox_quarantine_command):
         raise ValueError("live holds require 24-hour expiry and five-minute quarantine retry and delay")
     if args.sandbox and (not args.lock_root or not args.remote_lock_root):
         raise ValueError("sandbox requires explicit local and remote lock roots")
@@ -123,7 +124,7 @@ def main(argv):
     parser.add_argument("--lead-host", default="studio")
     parser.add_argument("--interval", type=float, default=20)
     parser.add_argument("--quarantine-seconds", type=float, default=300)
-    parser.add_argument("--expiry-seconds", type=float, default=86400)
+    parser.add_argument("--expiry-seconds", type=float, default=HOLD_EXPIRY_S)
     parser.add_argument("--quarantine-retry-seconds", type=float, default=300)
     parser.add_argument("--sandbox-quarantine-command", help="sandbox-only fake fleet-drain executable on each worker host")
     parser.add_argument("--sandbox", action="store_true", help="no live secret DB reads or fleet-drain calls")

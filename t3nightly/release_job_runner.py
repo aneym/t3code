@@ -13,6 +13,8 @@ from .release_timeline import utc_now
 
 TERM_GRACE_S = 60
 RESOURCE_WAIT_CAP_S = 3600
+HOLD_EXPIRY_S = 86400
+LIVE_HOLD_WAIT_S = HOLD_EXPIRY_S + 900
 
 
 def group_alive(pgid):

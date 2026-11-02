@@ -2,6 +2,7 @@ import json
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 import uuid
 
@@ -61,9 +62,18 @@ def bind_remote_runs(args):
         os.unlink(temporary)
     value = {"coordinator": json.loads(path.read_text()), "version": args.version, "remoteRun": args.remote_run}
     for host, address in LINUX_TARGETS.items():
-        result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", address,
-                                 shlex.join(["python3", "-c", REMOTE_BIND])],
-                                input=json.dumps(value), capture_output=True, text=True, timeout=20, check=False)
+        if host == getattr(args, "defer_host", None):
+            continue
+        try:
+            result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", address,
+                                     shlex.join(["python3", "-c", REMOTE_BIND])],
+                                    input=json.dumps(value), capture_output=True, text=True, timeout=20, check=False)
+        except subprocess.TimeoutExpired:
+            print(f"release: warning: {host} unreachable for remote run binding; left to engine verification", file=sys.stderr)
+            continue
+        if result.returncode == 255:
+            print(f"release: warning: {host} unreachable for remote run binding: {result.stderr.strip()[-300:]}", file=sys.stderr)
+            continue
         if result.returncode == 74:
             raise RuntimeError(f"{host}: {result.stderr.strip()}")
         if result.returncode:
