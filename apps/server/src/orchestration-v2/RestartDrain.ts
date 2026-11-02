@@ -64,12 +64,20 @@ const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
   return yield* outbox
     .withTransaction(
       Effect.gen(function* () {
+        const unsettled = yield* outbox.unsettledEffects([
+          "provider-turn.start",
+          "provider-turn.restart",
+          "checkpoint.capture",
+        ]);
+        const heldStarts = new Set(
+          unsettled.flatMap((effect) =>
+            effect.request.type === "provider-turn.start" && effect.status === "pending"
+              ? [effect.request.runId]
+              : [],
+          ),
+        );
         const effectsInFlight = new Set(
-          (yield* outbox.unsettledEffects([
-            "provider-turn.start",
-            "provider-turn.restart",
-            "checkpoint.capture",
-          ])).flatMap((effect) =>
+          unsettled.flatMap((effect) =>
             effect.request.type === "checkpoint.capture" ||
             effect.request.type === "provider-turn.restart" ||
             (effect.request.type === "provider-turn.start" && effect.status === "running")
@@ -110,7 +118,12 @@ const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
           for (const run of projection.runs) {
             if (
               !(mode === "hot-swap" && paused.has(run.id)) &&
-              (executing[run.status] ||
+              ((executing[run.status] &&
+                !(
+                  run.status === "starting" &&
+                  heldStarts.has(run.id) &&
+                  !effectsInFlight.has(run.id)
+                )) ||
                 (run.status === "waiting" &&
                   (effectsInFlight.has(run.id) || paused.has(run.id) || workInFlight.has(run.id))))
             )
