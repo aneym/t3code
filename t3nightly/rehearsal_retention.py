@@ -1,7 +1,6 @@
 import fcntl
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -9,7 +8,6 @@ from datetime import datetime
 from pathlib import Path
 
 PREFIX = "rehearsal-fast-"
-NAME = re.compile(r"rehearsal-fast-(?P<number>[^-]+)-(?P<host>[^-]+)(?:-attempt\d+)?")
 
 
 def nightly_root():
@@ -24,9 +22,14 @@ def finished(path):
     return result if isinstance(result, dict) else None
 
 
-def rollback_name(name):
-    match = NAME.fullmatch(name)
-    return f"{PREFIX}{match['number']}-rollback-{match['host']}" if match else None
+def rollback_root(path):
+    plan = path / "sandbox-plan.json"
+    if not plan.is_file():
+        return None
+    rollback = Path(json.loads(plan.read_text())["rollbackRoot"])
+    if rollback.parent != path.parent or not rollback.name.startswith(PREFIX):
+        raise ValueError("recorded rollback sandbox escaped the nightly root")
+    return rollback
 
 
 def installer_target(root):
@@ -145,9 +148,12 @@ def retain(sandbox_dir):
         for path in dirs:
             home = path / "home"
             newest = newest_passing(listed(root))
-            keep = {newest, root / rollback_name(newest.name)} if newest and rollback_name(newest.name) else {newest}
+            keep = {newest, rollback_root(newest)} if newest else set()
             if path in keep:
                 report["kept"].append(path.name)
+                continue
+            if not (path / "sandbox-plan.json").is_file():
+                report["held"].append(path.name)
                 continue
             removable = [tree for tree in (home, path / "evidence/installer-state/rollback-runtime") if tree.is_dir() and tree.resolve() == tree and tree.is_relative_to(root)]
             if not removable:

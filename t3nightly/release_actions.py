@@ -190,18 +190,19 @@ def fast_prepare(config, log):
     root = config.sandbox_root()
     if root.exists():
         raise ValueError(f"rehearsal sandbox already allocated: {root}")
-    root.mkdir(parents=True, mode=0o700)
-    if sys.platform == "darwin":
-        clone = root / "old-runtime" / old
-        clone.parent.mkdir(mode=0o700)
-        subprocess.run(["cp", "-c", "-R", str(runtime), str(clone)], check=True, timeout=120)
-        runtime = clone
+    clone = root / "old-runtime" / old if sys.platform == "darwin" else runtime
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    plan = {"oldRuntime": str(runtime), "seed": str(seed_path), "home": str(root / "home"), "evidence": str(root / "evidence"),
+    plan = {"oldRuntime": str(clone), "seed": str(seed_path), "home": str(root / "home"), "evidence": str(root / "evidence"),
+            "rollbackRoot": str(root.with_name(f"{root.name}-rollback")),
             "label": f"t3-rehearsal-fast-{config.number}-{config.host}-{uuid.uuid4().hex[:8]}", "port": port, "oldRelease": old}
     (config.run / f"sandbox-{config.host}.json").write_text(json.dumps(plan, indent=2) + "\n")
+    root.mkdir(parents=True, mode=0o700)
+    (root / "sandbox-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
+    if sys.platform == "darwin":
+        clone.parent.mkdir(mode=0o700)
+        subprocess.run(["cp", "-c", "-R", str(runtime), str(clone)], check=True, timeout=120)
     log.write(json.dumps(plan) + "\n")
     return 0
 

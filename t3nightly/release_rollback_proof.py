@@ -60,10 +60,11 @@ def fast_rollback_proof(config, log):
         log.write("rollback proof not required\n")
         return 0
     plan = json.loads((config.run / f"sandbox-{config.host}.json").read_text())
-    root = config.home / ".t3nightly" / f"rehearsal-fast-{config.number}-rollback-{config.host}"
+    root = Path(plan["rollbackRoot"])
     if root.exists():
         raise ValueError(f"rollback sandbox already allocated: {root}")
     root.mkdir(parents=True, mode=0o700)
+    (root / "sandbox-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
