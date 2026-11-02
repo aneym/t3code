@@ -20,6 +20,7 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as WorktreeExportService from "../../WorktreeExportService.ts";
 import * as WorktreeMcpService from "../../WorktreeMcpService.ts";
 
 const dependencies = [
@@ -99,9 +100,10 @@ const WorktreeExportTool = Tool.make("t3_worktree_export", {
     ThreadManagementService.ThreadManagementService,
     GitVcsDriver.GitVcsDriver,
     FileSystem.FileSystem,
+    WorktreeExportService.WorktreeExportService,
   ],
 })
-  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false);
 
 export const WorktreeToolkit = Toolkit.make(
