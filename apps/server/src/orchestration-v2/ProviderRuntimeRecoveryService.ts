@@ -2,6 +2,7 @@ import { sessionsLiveAtStart, type RecoverySession } from "./RuntimeRecoverySess
 import { makeHandoffDrain } from "./RestartDrain.ts";
 import {
   nonterminalRuns,
+  runtimeRecoveryDetail,
   isBackgroundCapableTurnItemType,
   isNonterminalTurnItemStatus,
   isAppOwnedDelegation,
@@ -186,7 +187,7 @@ export const make = Effect.gen(function* () {
           item.type === "subagent" && isAppOwnedDelegation(item) ? [item.subagentId] : [],
         ),
       ]);
-      const detail = `Cancelled because the server ${trigger === "startup" ? "restarted" : "shut down"} before the provider work completed.`;
+      const detail = runtimeRecoveryDetail(trigger, handoff);
       const commandId = CommandId.make(
         `command:runtime-reconcile:${trigger}:${projection.thread.id}:${DateTime.formatIso(now)}`,
       );

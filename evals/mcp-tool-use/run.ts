@@ -57,6 +57,7 @@ import {
   CLAUDE_PROVIDER,
   makeClaudeQueryOptions,
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { withRestartNotice } from "./restart-notices.ts";
 import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
 import { DeviceExpect, gradeDevice } from "./device-grading.ts";
@@ -68,7 +69,6 @@ import {
   launcherHelp,
   makeDeviceTools,
 } from "./devices.ts";
-/** Agent models by id, with the display name a harness gives them. */
 const MODELS = {
   "claude-sonnet-5-5": "Sonnet 5.5",
   "claude-opus-5-5": "Opus 5.5",
@@ -76,7 +76,6 @@ const MODELS = {
   "gpt-6-astra": "GPT-6 Astra",
 } as const;
 type Model = keyof typeof MODELS;
-/** GPT models replay a Codex capture through CLIProxyAPI, the rest a Claude Code capture. */
 const isCodex = (model: Model): model is Extract<Model, `gpt-${string}`> =>
   model.startsWith("gpt-");
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -1921,7 +1920,9 @@ const main = Effect.gen(function* () {
       .filter((name) => name.endsWith(".ndjson"))
       .toSorted()
       .map((name) => path.join(casesDir, name));
-  const cases = (yield* Effect.forEach(caseFiles, (file) => readNdjson(file, decodeCase))).flat();
+  const cases = (yield* Effect.forEach(caseFiles, (file) => readNdjson(file, decodeCase)))
+    .flat()
+    .map(withRestartNotice);
   const wanted = flags.case?.flatMap((ids) => ids.split(","));
   const codex = isCodex(flags.model);
   const harness = codex ? "codex" : "claude";
@@ -1931,8 +1932,6 @@ const main = Effect.gen(function* () {
       (setup.harness === undefined || setup.harness === harness),
   );
   if (selected.length === 0) return yield* Effect.die(new Error("No case matches --case."));
-  // Trimmed captures without user data ship beside the cases. `--template` also takes a raw
-  // CLIProxyAPI capture.
   const templatePath =
     flags.template ||
     path.join(import.meta.dirname, "templates", codex ? "codex.json.gz" : "claude.json.gz");

@@ -404,6 +404,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     effect.pipe(
       Effect.tap(
         Effect.gen(function* () {
+          if (input.prepared) return;
           const threads = yield* ThreadManagementService.ThreadManagementService;
           yield* threads.recoverDelegatedTask(input.threadId, input.sourceRunId);
         }),

@@ -111,6 +111,7 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
           },
         ],
       });
+      yield* threads.recoverDelegatedTask(input.threadId, sourceRunId);
     }
   },
 );
