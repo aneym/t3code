@@ -3,6 +3,8 @@ import {
   type OrchestrationV2Run,
   type RunId,
   type ServerRestartDrain,
+  type ThreadId,
+  isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Clock from "effect/Clock";
@@ -10,13 +12,28 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-const executing = (status: OrchestrationV2Run["status"]) =>
-  status === "running" || status === "preparing";
+const executing = {
+  preparing: true,
+  queued: false,
+  starting: true,
+  running: true,
+  waiting: false,
+  completed: false,
+  interrupted: false,
+  failed: false,
+  cancelled: false,
+  rolled_back: false,
+} satisfies Record<OrchestrationV2Run["status"], boolean>;
 
 export const restartPausedRunIds = (projection: ProjectionStore.ProjectionRuntimeRecoveryState) => {
   const pendingNodeIds = new Set(
@@ -38,33 +55,66 @@ export const restartPausedRunIds = (projection: ProjectionStore.ProjectionRuntim
   return projection.runs.filter((run) => paused.has(run.id)).map((run) => run.id);
 };
 
-const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* () {
+const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
+  mode: "hot-swap" | "cold",
+  threadIds?: ReadonlySet<ThreadId>,
+) {
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   return yield* outbox
     .withTransaction(
       Effect.gen(function* () {
-        const startsInFlight = new Set(
+        const effectsInFlight = new Set(
           (yield* outbox.unsettledEffects([
             "provider-turn.start",
             "provider-turn.restart",
+            "checkpoint.capture",
           ])).flatMap((effect) =>
+            effect.request.type === "checkpoint.capture" ||
             effect.request.type === "provider-turn.restart" ||
             (effect.request.type === "provider-turn.start" && effect.status === "running")
               ? [effect.request.runId]
               : [],
           ),
         );
-        const active = new Set<RunId>();
-        for (const threadId of yield* projections.getRecoveryThreadIds("runtime")) {
+        const active = new Map<ThreadId, RunId[]>();
+        for (const threadId of threadIds ?? (yield* projections.getRecoveryThreadIds("runtime"))) {
           const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
           const paused = new Set(restartPausedRunIds(projection));
+          const workInFlight = new Set(
+            projection.turnItems
+              .filter(
+                (item) =>
+                  (item.type === "command_execution" ||
+                    item.type === "dynamic_tool" ||
+                    item.type === "subagent") &&
+                  isOrchestrationV2WorkActive(item.status),
+              )
+              .map((item) => item.runId),
+          );
+          for (const task of projection.subagents) {
+            if (isOrchestrationV2WorkActive(task.status)) workInFlight.add(task.runId);
+          }
+          const activeNodeIds = new Set(
+            projection.providerTurns
+              .filter((turn) => isOrchestrationV2WorkActive(turn.status))
+              .map((turn) => turn.nodeId),
+          );
+          for (const thread of projection.providerThreads) {
+            if (thread.ownerNodeId !== null && (thread.pendingBackgroundTasks?.length ?? 0) > 0)
+              activeNodeIds.add(thread.ownerNodeId);
+          }
+          for (const node of projection.nodes) {
+            if (activeNodeIds.has(node.id)) workInFlight.add(node.runId);
+          }
           for (const run of projection.runs) {
             if (
-              !paused.has(run.id) &&
-              (executing(run.status) || (run.status === "starting" && startsInFlight.has(run.id)))
+              !(mode === "hot-swap" && paused.has(run.id)) &&
+              (executing[run.status] ||
+                (run.status === "waiting" &&
+                  (effectsInFlight.has(run.id) || paused.has(run.id) || workInFlight.has(run.id))))
             )
-              active.add(run.id);
+              active.set(threadId, [...(active.get(threadId) ?? []), run.id]);
           }
         }
         return active;
@@ -76,22 +126,55 @@ const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* () {
 export const drainBeforeRestart = Effect.fn("RestartDrain.drainBeforeRestart")(function* (
   epoch: string,
   deadline: Duration.Duration,
+  mode: "hot-swap" | "cold",
 ) {
   const outbox = yield* EffectOutbox.EffectOutboxV2;
+  const sink = yield* EventSink.EventSinkV2;
   const startedAt = yield* Clock.currentTimeMillis;
   yield* outbox.drainForRestart(epoch);
-  const settled = yield* Effect.gen(function* () {
-    let active = yield* activeRuns();
-    while (true) {
-      if (active.size === 0) {
-        active = yield* activeRuns();
-        if (active.size === 0) return active;
-      }
-      yield* Effect.sleep(Duration.millis(250));
-      active = yield* activeRuns();
-    }
-  }).pipe(Effect.timeoutOption(deadline));
-  const remaining = Option.isSome(settled) ? [] : [...(yield* activeRuns())];
+  const settled = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const wakes = yield* Queue.sliding<void>(1);
+      const pending = yield* Ref.make({ full: false, threadIds: new Set<ThreadId>() });
+      const afterSequence = yield* sink.latestSequence();
+      yield* sink.stream({ afterSequence }).pipe(
+        Stream.filter(
+          ({ event }) =>
+            event.type === "run.created" ||
+            event.type === "run.updated" ||
+            event.type === "node.updated" ||
+            event.type === "runtime-request.updated" ||
+            (event.type === "turn-item.updated" && event.payload.type === "secret_request"),
+        ),
+        Stream.runForEach(({ event }) =>
+          Ref.update(pending, (current) => ({
+            ...current,
+            threadIds: new Set([...current.threadIds, event.threadId]),
+          })).pipe(Effect.andThen(Queue.offer(wakes, undefined))),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Ref.update(pending, (current) => ({ ...current, full: true })).pipe(
+        Effect.andThen(Queue.offer(wakes, undefined)),
+        Effect.repeat(Schedule.spaced("5 seconds")),
+        Effect.delay("5 seconds"),
+        Effect.forkScoped,
+      );
+      const active = yield* Ref.make(yield* activeRuns(mode));
+      if ((yield* Ref.get(active)).size === 0) return;
+      yield* Effect.gen(function* () {
+        yield* Queue.take(wakes);
+        const wake = yield* Ref.getAndSet(pending, { full: false, threadIds: new Set<ThreadId>() });
+        const threadIds = new Set([...(yield* Ref.get(active)).keys(), ...wake.threadIds]);
+        const next = yield* activeRuns(mode, wake.full ? undefined : threadIds);
+        const confirmed = next.size === 0 && !wake.full ? yield* activeRuns(mode) : next;
+        yield* Ref.set(active, confirmed);
+        return confirmed.size === 0;
+      }).pipe(Effect.repeat({ schedule: Schedule.spaced("250 millis"), until: (done) => done }));
+    }),
+  ).pipe(Effect.timeoutOption(deadline));
+  const remaining = Option.isSome(settled) ? [] : [...(yield* activeRuns(mode)).values()].flat();
+  yield* Effect.annotateCurrentSpan({ mode, drained: remaining.length === 0 });
   return {
     drained: remaining.length === 0,
     waitedMs: (yield* Clock.currentTimeMillis) - startedAt,
@@ -126,7 +209,7 @@ export const makeHandoffDrain = Effect.gen(function* () {
         yield* release(hold.epoch);
       }
       hold ??= { epoch, scope: yield* Scope.fork(owner, "sequential") };
-      const result = yield* drainBeforeRestart(epoch, Duration.millis(timeoutMs)).pipe(
+      const result = yield* drainBeforeRestart(epoch, Duration.millis(timeoutMs), "hot-swap").pipe(
         Effect.provideService(Scope.Scope, hold.scope),
         Effect.onError(() => release(epoch)),
       );

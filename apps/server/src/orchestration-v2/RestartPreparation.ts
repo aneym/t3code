@@ -35,7 +35,7 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
       });
     const drain =
       preparedEpoch === undefined && drainTimeoutMs > 0
-        ? yield* drainBeforeRestart(epoch, Duration.millis(drainTimeoutMs))
+        ? yield* drainBeforeRestart(epoch, Duration.millis(drainTimeoutMs), "cold")
         : undefined;
     yield* outbox.prepareRestart(epoch);
     const receipt = yield* Effect.gen(function* () {
