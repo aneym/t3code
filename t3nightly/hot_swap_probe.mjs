@@ -2,12 +2,12 @@ import { appendFileSync, existsSync, renameSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import nodeHttp from "node:http";
 
-const HTTP_DEADLINE_MS = 30000;
+const HTTP_DEADLINE_MS = 8000;
 
 export async function monitor(context) {
   const { opts, Effect, Stream, layers } = context;
   const started = performance.now();
-  const data = { httpSamples: 0, refusedConnections: 0, httpFailures: 0, maxHttpGapMs: 0, flipGapMs: null, servedVersions: [], httpObservations: [], keepAlive: { requests: 0, reused: 0, failures: 0, errors: [], versions: [], sockets: [] }, wsConnections: 0, wsFailures: 0, snapshots: [], sequences: [], resnapshots: 0, ready: false, presentations: [], presentationViolations: [], handoffCalls: [], handoffReplies: [], handoffSettlements: [], handoffEvents: [], sessions: [], subscriptions: [], receivedEvents: [] };
+  const data = { httpSamples: 0, refusedConnections: 0, httpFailures: 0, maxHttpGapMs: 0, flipGapMs: null, servedVersions: [], httpObservations: [], keepAlive: { requests: 0, reused: 0, failures: 0, errors: [], versions: [], sockets: [] }, wsConnections: 0, wsFailures: 0, streamFailures: [], snapshots: [], sequences: [], resnapshots: 0, ready: false, presentations: [], presentationViolations: [], handoffCalls: [], handoffReplies: [], handoffSettlements: [], handoffEvents: [], sessions: [], subscriptions: [], receivedEvents: [] };
   const interval = Math.max(10, Number(opts["interval-ms"] ?? 100));
   let lastOk = started;
   data.httpProbeIntervalMs = interval;

@@ -107,7 +107,7 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
           cursor = Math.max(cursor ?? 0, item.sequence);
         }
         save();
-      })), Stream.catchCause(() => { if (!existsSync(opts.stop)) { data.wsFailures++; save(); } return Stream.empty; }));
+      })), Stream.catchCause(() => { if (!existsSync(opts.stop)) { data.wsFailures++; data.streamFailures.push({ atMs: elapsed(), sessionId: identity?.id }); save(); } return Stream.empty; }));
     }), Stream.runDrain, Effect.forkScoped);
     yield* Effect.promise(stopped);
   })).pipe(Effect.provide(layers));
