@@ -1400,6 +1400,42 @@ describe("deleted thread worktrees", () => {
 });
 
 describe("orphan worktree reports", () => {
+  it.live("reports a worktree removed after discovery as missing", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let orphan = "";
+        let inspections = 0;
+        const fixture = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeOrphans: true,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            stat: (target) =>
+              (target === orphan && ++inspections === 2
+                ? fs.remove(target, { recursive: true })
+                : Effect.void
+              ).pipe(Effect.andThen(fs.stat(target))),
+          }),
+        );
+        orphan = `${fixture.config.worktreesDir}/orphan`;
+        yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "orphan", orphan]);
+        yield* fs.utimes(orphan, 1, 1);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toContainEqual(
+          expect.objectContaining({
+            path: orphan,
+            outcome: "kept",
+            reason: "worktree no longer exists",
+          }),
+        );
+        expect(report.counts.failed).toBe(0);
+        expect(yield* fs.exists(orphan)).toBe(false);
+      }),
+    ),
+  );
+
   it.live("keeps orphan results visible when thread results fill the report", () =>
     runCleanupTest(
       Effect.gen(function* () {

@@ -213,7 +213,14 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
         const initialBinding = yield* bindingReason(cwd);
         if (initialBinding !== null) return keep(initialBinding);
         failureReason = "inspection-failed: worktree-stat";
-        const modified = Option.getOrNull((yield* fs.stat(cwd)).mtime);
+        const info = yield* fs.stat(cwd).pipe(
+          Effect.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            () => Effect.succeed(null),
+          ),
+        );
+        if (info === null) return keep("worktree no longer exists");
+        const modified = Option.getOrNull(info.mtime);
         if (modified === null || modified.getTime() > (yield* Clock.currentTimeMillis) - 3_600_000)
           return keep("worktree was created or modified recently");
         const run = (args: string[]) =>
