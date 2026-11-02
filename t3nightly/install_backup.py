@@ -103,8 +103,7 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
     if binary:
         metadata = {"method": "binary-rollback", **binary, "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
         destination.rmdir()
-        (destination / "payload.json").write_text(json.dumps(metadata))
-    run.step("hard-backup", **metadata)
+        run.step("hard-backup", **metadata)
         return metadata
     if keep_local:
         from .install_restore_copy import checksum, fsync, identity, verify
