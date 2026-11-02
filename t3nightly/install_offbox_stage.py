@@ -55,8 +55,8 @@ def fsync_directory(path):
         os.close(descriptor)
 
 
-def copy_command(source, target, seconds):
-    command = [sys.executable, "-m", "t3nightly.install_offbox_stage", str(source), str(target), *guard.guard_words(seconds)]
+def copy_command(source, target, seconds, limit):
+    command = [sys.executable, "-m", "t3nightly.install_offbox_stage", str(source), str(target), *guard.guard_words(seconds, limit)]
     ionice = shutil.which("ionice") if sys.platform != "darwin" else None
     return [ionice, "-c2", "-n7", *command] if ionice else command
 
@@ -68,14 +68,15 @@ def copy(run, directory, source, size):
 def attempt(run, directory, source, size):
     floor = run.args.offbox_stage_floor_gib << 30
     before = shutil.disk_usage(directory).free
-    metrics = {"stageFloorBytes": floor, "stageFreeBefore": before, "sourceBytes": size}
+    limit = guard.headroom_limit(source)
+    metrics = {"stageFloorBytes": floor, "stageFreeBefore": before, "sourceBytes": size, "walLimit": limit}
     if before < size + floor:
         run.step("offbox-stage-refused", **metrics)
         raise ValueError(f"offbox stage has {before >> 30} GiB free, under the {size >> 30} GiB copy plus the {floor >> 30} GiB floor; nothing stopped")
     waited = time.monotonic() + min(WAL_WAIT_S, run.args.offbox_copy_s)
-    while guard.wal_in_use(source) >= guard.WAL_LIMIT:
+    while guard.wal_in_use(source) >= limit:
         if time.monotonic() >= waited:
-            raise guard.WalAbort(f"live WAL stayed at {guard.wal_in_use(source) >> 20} MiB, over the {guard.WAL_LIMIT >> 20} MiB stage limit; nothing stopped")
+            raise guard.WalAbort(f"live WAL stayed at {guard.wal_in_use(source) >> 20} MiB, over the {limit >> 20} MiB stage limit; nothing stopped")
         time.sleep(1)
     target = directory / f"stage-{uuid.uuid4().hex}.sqlite"
     try:
@@ -92,12 +93,12 @@ def copied(run, directory, source, target, metrics):
     started = time.monotonic()
     root = str(Path(__file__).resolve().parent.parent)
     env = dict(os.environ, PYTHONPATH=root + os.pathsep + os.environ.get("PYTHONPATH", ""))
-    process = subprocess.Popen(copy_command(source, target, seconds), cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    process = subprocess.Popen(copy_command(source, target, seconds, metrics["walLimit"]), cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     peak, abort = metrics["walBefore"], None
     try:
         while process.poll() is None:
             peak = max(peak, guard.wal_in_use(source))
-            if peak >= guard.WAL_LIMIT:
+            if peak >= metrics["walLimit"]:
                 abort = guard.WAL_EXIT
             elif time.monotonic() >= backstop:
                 abort = guard.DEADLINE_EXIT
@@ -115,7 +116,7 @@ def copied(run, directory, source, target, metrics):
         if told:
             reason = told
         elif code == guard.WAL_EXIT:
-            reason = f"live WAL reached {peak / 2**20:.1f} MiB during the stage copy, over the {guard.WAL_LIMIT / 2**20:.1f} MiB limit"
+            reason = f"live WAL reached {peak / 2**20:.1f} MiB during the stage copy, over the {metrics['walLimit'] / 2**20:.1f} MiB limit"
         elif code == guard.DEADLINE_EXIT:
             reason = f"stage copy passed its {seconds} s deadline"
         else:

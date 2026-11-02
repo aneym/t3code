@@ -1,5 +1,6 @@
 import ctypes
 import os
+import shutil
 import signal
 import struct
 import sys
@@ -8,6 +9,8 @@ import time
 from contextlib import contextmanager
 
 WAL_LIMIT = 16 * 1024 * 1024
+WAL_CEILING = 1024 * 1024 * 1024
+WAL_HEADROOM_SHARE = 100
 RETRY_WAITS = (60, 120, 240)
 POLL_S = 0.2
 GRACE_S = 2
@@ -35,8 +38,13 @@ def wal_in_use(db):
         return 0
 
 
-def guard_words(seconds):
-    return ["--parent", str(os.getpid()), "--wal-limit", str(WAL_LIMIT), "--seconds", str(seconds)]
+def headroom_limit(db):
+    free = shutil.disk_usage(os.path.dirname(os.path.abspath(db))).free
+    return max(WAL_LIMIT, min(WAL_CEILING, free // WAL_HEADROOM_SHARE))
+
+
+def guard_words(seconds, limit=WAL_LIMIT):
+    return ["--parent", str(os.getpid()), "--wal-limit", str(limit), "--seconds", str(seconds)]
 
 
 def retried(attempt, note):
