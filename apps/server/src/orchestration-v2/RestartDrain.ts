@@ -35,7 +35,10 @@ const executing = {
   rolled_back: false,
 } satisfies Record<OrchestrationV2Run["status"], boolean>;
 
-export const restartPausedRunIds = (projection: ProjectionStore.ProjectionRuntimeRecoveryState) => {
+export const restartPausedRunIds = (
+  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
+  secrets = true,
+) => {
   const pendingNodeIds = new Set(
     projection.runtimeRequests
       .filter(
@@ -49,7 +52,7 @@ export const restartPausedRunIds = (projection: ProjectionStore.ProjectionRuntim
   const paused = new Set(
     projection.nodes.filter((node) => pendingNodeIds.has(node.id)).map((node) => node.runId),
   );
-  for (const item of projection.turnItems) {
+  for (const item of secrets ? projection.turnItems : []) {
     if (item.type === "secret_request" && item.secretStatus === "pending") paused.add(item.runId);
   }
   return projection.runs.filter((run) => paused.has(run.id)).map((run) => run.id);
@@ -89,6 +92,7 @@ const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
         for (const threadId of threadIds ?? (yield* projections.getRecoveryThreadIds("runtime"))) {
           const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
           const paused = new Set(restartPausedRunIds(projection));
+          const skippable = new Set(restartPausedRunIds(projection, false));
           const workInFlight = new Set(
             projection.turnItems
               .filter(
@@ -117,7 +121,7 @@ const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
           }
           for (const run of projection.runs) {
             if (
-              !(mode === "hot-swap" && paused.has(run.id)) &&
+              !(mode === "hot-swap" && skippable.has(run.id)) &&
               ((executing[run.status] &&
                 !(
                   run.status === "starting" &&
