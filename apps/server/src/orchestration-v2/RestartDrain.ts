@@ -1,8 +1,15 @@
-import { type OrchestrationV2Run, type RunId, type ServerRestartDrain } from "@t3tools/contracts";
+import {
+  ServerPrepareRestartError,
+  type OrchestrationV2Run,
+  type RunId,
+  type ServerRestartDrain,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -74,4 +81,38 @@ export const drainBeforeRestart = Effect.fn("RestartDrain.drainBeforeRestart")(f
     waitedMs: (yield* Clock.currentTimeMillis) - startedAt,
     activeRunIds: remaining,
   } satisfies ServerRestartDrain;
+});
+
+export const makeHandoffDrain = Effect.gen(function* () {
+  const owner = yield* Effect.scope;
+  let hold: { epoch: string; scope: Scope.Closeable } | undefined;
+  const release = Effect.fn("RestartDrain.releaseHandoff")(function* (epoch: string) {
+    if (hold?.epoch !== epoch) return;
+    const { scope } = hold;
+    hold = undefined;
+    yield* Scope.close(scope, Exit.void);
+  }, Effect.uninterruptible);
+  const drain = Effect.fn("RestartDrain.drainForHandoff")(
+    function* (epoch: string, timeoutMs: number) {
+      if (hold !== undefined && hold.epoch !== epoch) {
+        yield* Effect.logWarning("Releasing stale service handoff drain", {
+          epoch: hold.epoch,
+          nextEpoch: epoch,
+        });
+        yield* release(hold.epoch);
+      }
+      hold ??= { epoch, scope: yield* Scope.fork(owner, "sequential") };
+      const result = yield* drainBeforeRestart(epoch, Duration.millis(timeoutMs)).pipe(
+        Effect.provideService(Scope.Scope, hold.scope),
+        Effect.onError(() => release(epoch)),
+      );
+      if (!result.drained)
+        yield* Effect.logInfo("Service handoff drain deadline reached", {
+          epoch,
+          activeRuns: result.activeRunIds.length,
+        });
+    },
+    Effect.mapError((cause) => new ServerPrepareRestartError({ cause })),
+  );
+  return { drain, release };
 });

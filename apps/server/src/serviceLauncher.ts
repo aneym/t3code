@@ -584,9 +584,9 @@ export class Launcher {
       await this.#returnToPrevious(pending, "rolled-back", reason);
       return;
     }
-    if (!resumeOld && this.#child !== null && phase === "drain")
+    if (this.#child && (phase === "drain" || phase === "relinquish"))
       await sendMessage(this.#child.process, { type: "abort-drain", updateId: pending.id }).catch(
-        () => undefined,
+        () => {},
       );
     const next: ServiceState = {
       ...this.#state,

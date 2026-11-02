@@ -1,3 +1,4 @@
+import { makeStorageCleanupRpcHandlers } from "./storageCleanupRpcHandlers.ts";
 import { subscribeServerLifecycle } from "./serverLifecycleSubscription.ts";
 import { acknowledgeHandoff } from "./serverHandoffDelivery.ts";
 import { AgentHomeService } from "./agents/AgentHomeService.ts";
@@ -2507,8 +2508,7 @@ export const layerWsRpc = (
             const keybindingsConfig = yield* keybindings.removeKeybindingRule(rule);
             return { keybindings: keybindingsConfig, issues: [] };
           }),
-        [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
-        [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
+        ...makeStorageCleanupRpcHandlers(storageCleanup),
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
         ...peerLinkHandlers,
         [WS_METHODS.serverUpdateSettings]:

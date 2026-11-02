@@ -1,3 +1,4 @@
+import { inspectWorktreeSubmodules } from "./worktreeSubmodules.ts";
 import { GitCommandError, type ServerSettings } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -350,25 +351,9 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     cwd: string,
     disposable: ReadonlyArray<string>,
   ) {
-    const git = yield* GitVcsDriver.GitVcsDriver;
-    const submodules = new Set<string>();
-    if (yield* fs.exists(path.join(cwd, ".gitmodules"))) {
-      const populated = yield* git.execute({
-        operation: "StorageCleanup.submodules",
-        cwd,
-        args: [
-          "submodule",
-          "foreach",
-          "--recursive",
-          "--quiet",
-          'printf "%s\\0" "$toplevel/$sm_path"',
-        ],
-        maxOutputBytes: 64 * 1024,
-      });
-      if (populated.stdoutTruncated) return "submodule inspection exceeded the limit";
-      for (const submodule of populated.stdout.split("\0").filter(Boolean))
-        submodules.add(yield* fs.realPath(submodule));
-    }
+    const discovered = yield* inspectWorktreeSubmodules(cwd);
+    if (typeof discovered === "string") return discovered;
+    const submodules = new Set(discovered.paths);
     const own = yield* checkoutStateReason(cwd, submodules, disposable);
     if (own !== null) return own;
     for (const submodule of submodules) {

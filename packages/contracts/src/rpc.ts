@@ -1,3 +1,4 @@
+import { STORAGE_CLEANUP_WS_METHODS, StorageCleanupRpcs } from "./storageCleanupRpc.ts";
 import { ServerProviderRefreshInput } from "./serverProviderRefresh.ts";
 import { ServerHandoffProbe, ServerHandoffSubscription } from "./serverLifecycle.ts";
 import {
@@ -351,7 +352,6 @@ import {
 } from "./providerUsageLimits.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import {
-  StorageCleanupReport,
   DatabaseStorageStatus,
   ServerSettings,
   ServerSettingsError,
@@ -514,8 +514,7 @@ export const WS_METHODS = {
   serverCommitDesktopUpdate: "server.commitDesktopUpdate",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
-  serverRunStorageCleanup: "server.runStorageCleanup",
-  serverGetStorageCleanupReport: "server.getStorageCleanupReport",
+  ...STORAGE_CLEANUP_WS_METHODS,
   serverGetDatabaseStorage: "server.getDatabaseStorage",
   ...PEER_LINK_WS_METHODS,
   serverUpdateSettings: "server.updateSettings",
@@ -787,18 +786,6 @@ const WsServerCommitDesktopUpdateRpc = Rpc.make(WS_METHODS.serverCommitDesktopUp
   payload: DesktopUpdateCommitInput,
   success: ServerSelfUpdateResult,
   error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
-});
-
-const WsServerRunStorageCleanupRpc = Rpc.make(WS_METHODS.serverRunStorageCleanup, {
-  payload: Schema.Struct({}),
-  success: StorageCleanupReport,
-  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
-});
-const WsServerGetStorageCleanupReportRpc = Rpc.make(WS_METHODS.serverGetStorageCleanupReport, {
-  payload: Schema.Struct({}),
-  success: Schema.NullOr(StorageCleanupReport),
-  stream: true,
-  error: EnvironmentAuthorizationError,
 });
 
 const WsServerGetDatabaseStorageRpc = Rpc.make(WS_METHODS.serverGetDatabaseStorage, {
@@ -1995,8 +1982,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerCommitDesktopUpdateRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
-  WsServerRunStorageCleanupRpc,
-  WsServerGetStorageCleanupReportRpc,
+  ...StorageCleanupRpcs,
   WsServerGetDatabaseStorageRpc,
   WsServerUpdateSettingsRpc,
   ...PeerLinkRpcs,
