@@ -1,5 +1,6 @@
 import json
 import subprocess
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import unquote
@@ -27,6 +28,16 @@ class HotSwapRehearsal(Rehearsal):
         if self.args.inject != "none" and not (sandbox.home / "runtime/launcher-config.json").is_file():
             self.hot["status"] = "hot-swap-unsupported"
             raise ValueError("hot-swap-unsupported: crash injection requires a capability-qualified sandbox launcher")
+        with urllib.request.urlopen(f"http://127.0.0.1:{sandbox.port}/.well-known/t3/environment", timeout=5) as response:
+            descriptor = json.load(response)
+        if descriptor.get("capabilities", {}).get("connectionProbe") is not True:
+            reason = "old-runtime-probe-unsupported"
+            self.hot.update(probeUnsupported=True, probeFailureReason=reason)
+            measured.update(acquireToReadyMs=None, reason=reason, probeError=reason)
+            self.hot["startupMeasurement"] = measured
+            (sandbox.evidence / "candidate-startup.json").write_text(json.dumps(measured, indent=2) + "\n")
+            super().install()
+            return
         run = SimpleNamespace(args=SimpleNamespace(drain_s=self.args.rehearsal_drain_s), home=sandbox.home, state=sandbox.evidence, runtime=lambda version: sandbox.home / "runtime/versions" / version / "t3")
         with restart_session(run, sandbox.old.name) as bearer:
             command = ["node", str(self.engine / "client.mjs"), "hot-swap-probe", "--tree", str(self.args.rpc_tree.resolve()), "--origin", f"http://127.0.0.1:{sandbox.port}", "--bearer-file", str(bearer), "--thread", self.probe_thread, "--output", str(self.probe_path), "--stop", str(self.stop_path)]
@@ -37,14 +48,9 @@ class HotSwapRehearsal(Rehearsal):
             try:
                 wait_for(self.probe_ready, 60, "persistent probe WS snapshot")
             except (ValueError, TimeoutError) as error:
-                self.hot["probeUnsupported"] = str(error)
+                self.hot["probeFailureReason"] = str(error)
                 self.stop_probe()
-                startup = sandbox.evidence / "candidate-startup.json"
-                measurement = json.loads(startup.read_text())
-                measurement.update(acquireToReadyMs=None, reason="old-runtime-probe-unsupported", probeError=str(error))
-                startup.write_text(json.dumps(measurement, indent=2) + "\n")
-                super().install()
-                return
+                raise
             self.hot["walBefore"] = self.wal()
             self.hot["providerTurnBefore"] = sandbox.query("SELECT r.run_id,r.status,t.provider_turn_id,t.status FROM orchestration_v2_projection_runs r JOIN orchestration_v2_projection_provider_turns t ON r.thread_id=t.thread_id AND t.run_attempt_id=json_extract(r.payload_json,'$.activeAttemptId') WHERE r.run_id=?", (self.probe_run,))
             config = sandbox.home / "runtime/launcher-config.json"
@@ -197,7 +203,7 @@ class HotSwapRehearsal(Rehearsal):
                 receipt["result"] = "FAIL"
             elif hot.get("status") == "hot-swap-unsupported":
                 receipt["result"] = "HOT-SWAP-UNSUPPORTED"
-            receipt["hotSwap"] = {key: hot[key] for key in ("status", "sequenceContinuity", "candidateMeasuredStartupMs", "previousMeasuredStartupMs", "startupMeasurement", "checks") if key in hot}
+            receipt["hotSwap"] = {key: hot[key] for key in ("status", "sequenceContinuity", "candidateMeasuredStartupMs", "previousMeasuredStartupMs", "startupMeasurement", "probeUnsupported", "probeFailureReason", "checks") if key in hot}
             queue_failed = self.args.queue_mode != "none" and hot.get("checks", {}).get("queue-saturation", {}).get("status") != "passed"
             presentation_failed = self.args.queue_mode != "budget" and self.args.inject == "none" and hot.get("checks", {}).get("presentation", {}).get("status") != "passed"
             normal = self.args.inject == "none" and not self.args.force_rollback and self.args.queue_mode == "none"

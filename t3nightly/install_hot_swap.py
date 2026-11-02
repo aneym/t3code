@@ -75,7 +75,7 @@ def measure_startup_sample(sandbox, manifest, index, *, binary=None, version=Non
         return receipt
     root = sandbox.home / "snapshots"
     root.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="candidate-startup-", dir=root) as raw:
+    with tempfile.TemporaryDirectory(prefix="candidate-startup-", dir=root, ignore_cleanup_errors=True) as raw:
         home = Path(raw)
         (home / "userdata").mkdir()
         (home / "runtime/tmp").mkdir(parents=True)
@@ -125,6 +125,8 @@ def measure_startup_sample(sandbox, manifest, index, *, binary=None, version=Non
                     matches = re.findall(r'acquireToReadyMs[\"\s:=]+(\d+)', (sandbox.evidence / f"candidate-startup-{index}.log").read_text())
                     receipt["acquireToReadyMs"] = int(matches[-1]) if matches else None
                     evidence.write_text(json.dumps(receipt, indent=2) + "\n")
+    receipt["cleanupLeftover"] = str(home) if home.exists() else None
+    evidence.write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt
 
 
@@ -249,6 +251,8 @@ def install(run):
     before = identities(run)
     connect = run.managed_connect(previous)
     backup = install_offbox.live_backup(run, previous) if args.offbox else {"path": str(backup_database(run, previous, preparing=True))}
+    if run.report.get("backupMarkError"):
+        backup["markError"] = run.report["backupMarkError"]
     store = run.home / "runtime/.rollback-runtime"
     retain_runtime(run.home, previous, store)
     try:
@@ -309,6 +313,14 @@ def install(run):
     destination = Path(args.install_receipt) if args.install_receipt else run.state / "receipts" / f"install-{host}.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     write(destination, receipt)
+    if outcome == "installed" and backup.get("path"):
+        from .install_backup_retention import best_effort
+
+        retention = best_effort(Path(backup["path"]).parent.parent, backup["path"], run.home)
+        try:
+            (destination.parent / "backup-retention.json").write_text(json.dumps(retention, indent=2) + "\n")
+        except OSError as error:
+            run.step("backup-retention-receipt-failed", error=str(error))
     if outcome == "installed" and not args.rehearsal:
         run.link_cli(args.version)
     return run.finish(outcome, f"hot-swap {outcome}: {previous} -> {args.version}")

@@ -1,5 +1,6 @@
 import json
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -92,8 +93,13 @@ def managed_install(ctx, deadline):
     finally:
         from .release_manifest import engine_identity
 
-        if receipt.exists():
-            proof = json.loads(receipt.read_text())
-            identity = engine_identity()
-            proof.update(engineDigest=identity["digest"], engineHead=identity["commit"])
-            receipt.write_text(json.dumps(proof, indent=2) + "\n")
+        original = sys.exc_info()[1]
+        try:
+            if receipt.exists():
+                proof = json.loads(receipt.read_text())
+                identity = engine_identity()
+                proof.update(engineDigest=identity["digest"], engineHead=identity["commit"])
+                receipt.write_text(json.dumps(proof, indent=2) + "\n")
+        except Exception:
+            if original is None:
+                raise

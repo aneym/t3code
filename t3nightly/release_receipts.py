@@ -13,7 +13,7 @@ SHA256 = 64
 RUNTIME = {"version": str, "digest": str}
 REHEARSAL_FIELDS = {
     "schema": str, "release": str, "runId": str, "host": str, "platform": str, "arch": str,
-    "candidateDigest": str, "sourceTree": str, "artifactManifestDigest": str, "engineDigest": str,
+    "candidateDigest": str, "sourceTree": str, "artifactManifestDigest": str, "engineDigest": str, "engineHead": str,
     "oldRuntime": RUNTIME, "candidateRuntime": RUNTIME,
     "oldMigrationHistory": str, "candidateMigrationHistory": str,
     "baselineChat": dict, "postCutoverChat": dict, "workload": dict,
@@ -61,7 +61,7 @@ def receipt_digest(receipt):
 def validate(receipt):
     schema = receipt.get("schema") if isinstance(receipt, dict) else None
     if schema == REHEARSAL_SCHEMA:
-        shape(receipt, {**REHEARSAL_FIELDS, **({"engineHead": str} if "engineHead" in receipt else {}), **({"hotSwap": dict} if "hotSwap" in receipt else {})}, "receipt")
+        shape(receipt, {**REHEARSAL_FIELDS, **({"hotSwap": dict} if "hotSwap" in receipt else {})}, "receipt")
         for name in ("baselineChat", "postCutoverChat"):
             shape(receipt[name], CHAT_FIELDS, f"receipt.{name}")
         if not receipt["workload"]:

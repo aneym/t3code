@@ -155,7 +155,8 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
     try:
         mark(target, metadata, run.home)
     except Exception as error:
-        run.step("backup-mark", error=f"{type(error).__name__}: {error}")
+        metadata["markError"] = f"{type(error).__name__}: {error}"
+        run.step("backup-mark", path=str(target), error=metadata["markError"])
     run.step("hard-backup", **metadata)
     return metadata
 
