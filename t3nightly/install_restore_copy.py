@@ -12,7 +12,7 @@ import uuid
 from contextlib import closing, contextmanager
 from pathlib import Path
 
-from .db_publish import LOCAL_MARGIN, fsync, local_check, publish, wal_bytes
+from .db_publish import LOCAL_MARGIN, fsync, wal_bytes
 from .install_offbox_stage import staging
 from .install_restore_hold import COPY_LOCK, create, flocked, forget, remove
 from .install_storage import record_payload
@@ -20,16 +20,31 @@ from .install_storage import record_payload
 STEP_PAGES = 4096
 CHECK_MIB_S = 40
 COPY_MIB_S = 360
+HASH_MIB_S = 360
 
 
-def checksum(path):
+def check_deadline(deadline):
+    if deadline is not None and time.monotonic() >= deadline:
+        raise ValueError("restore copy exceeded its stopped-work deadline; database recovery required before restart")
+
+
+def checksum(path, deadline=None):
+    digest = hashlib.sha256()
     with Path(path).open("rb") as source:
-        return hashlib.file_digest(source, "sha256").hexdigest()
+        while True:
+            check_deadline(deadline)
+            chunk = source.read(1024 * 1024)
+            if not chunk:
+                return digest.hexdigest()
+            digest.update(chunk)
 
 
-def identity(path, *, copy=False):
+def identity(path, *, copy=False, deadline=None):
+    check_deadline(deadline)
     uri = f"{Path(path).resolve().as_uri()}?{'immutable=1' if copy else 'mode=rw'}"
     with closing(sqlite3.connect(uri, uri=True, timeout=30)) as connection:
+        if deadline is not None:
+            connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 10000)
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         return {
             "pageCount": connection.execute("PRAGMA page_count").fetchone()[0],
@@ -51,9 +66,11 @@ def precheck(run, source):
     room(run, staging(run), source.stat().st_size + wal_bytes(source), stopped=False)
 
 
-def estimate(size):
-    copy, check = size / (COPY_MIB_S << 20), size / (CHECK_MIB_S << 20)
-    return {"copySeconds": round(copy, 3), "checkSeconds": round(check, 3), "totalSeconds": round(copy + check + 30, 3), "copyMiBs": COPY_MIB_S, "checkMiBs": CHECK_MIB_S}
+def estimate(size, *, copy_bps=None, rollback=False):
+    copy = size / (copy_bps or (COPY_MIB_S << 20)) * (2 if rollback else 1)
+    check = size / (CHECK_MIB_S << 20) * (3 if rollback else 1)
+    hashing = size / (HASH_MIB_S << 20) * (3 if rollback else 1)
+    return {"copySeconds": round(copy, 3), "checkSeconds": round(check, 3), "checksumSeconds": round(hashing, 3), "totalSeconds": round(copy + check + hashing + 30, 3), "copyMiBs": (copy_bps / (1 << 20)) if copy_bps else COPY_MIB_S, "checkMiBs": CHECK_MIB_S, "checksumMiBs": HASH_MIB_S}
 
 
 def ionice(*words):
@@ -80,6 +97,7 @@ def foreground_io(note):
 
 
 def verify(path, expected, deadline=None):
+    check_deadline(deadline)
     if not Path(path).is_file():
         raise ValueError(f"restore copy {path} is missing")
     with closing(sqlite3.connect(f"{Path(path).resolve().as_uri()}?immutable=1", uri=True, timeout=30)) as connection:
@@ -91,7 +109,8 @@ def verify(path, expected, deadline=None):
             raise ValueError(f"restore copy quick_check stopped at its deadline: {error}") from error
     if check != "ok":
         raise ValueError(f"restore copy quick_check {check}")
-    observed = identity(path, copy=True)
+    observed = identity(path, copy=True, deadline=deadline)
+    check_deadline(deadline)
     if observed != expected:
         raise ValueError(f"restore copy identity {observed} differs from the stopped database {expected}")
     return check
@@ -102,7 +121,7 @@ def take(run, source, previous, window):
     room(run, directory, source.stat().st_size + wal_bytes(source), stopped=True)
     started = time.monotonic()
     deadline = min(started + run.args.offbox_copy_s, window)
-    expected = identity(source)
+    expected = identity(source, deadline=window)
     target = directory / f"restore-{run.args.version}-{uuid.uuid4().hex[:8]}.sqlite"
     part = Path(f"{target}.part")
 
@@ -123,13 +142,14 @@ def take(run, source, previous, window):
                 fsync(directory)
                 copied = time.monotonic()
                 check = verify(target, expected, window)
+                digest = checksum(target, window)
         except BaseException:
             remove(part)
             remove(target)
             forget(target)
             raise
     record = {"path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous, "seconds": round(time.monotonic() - started, 3),
-              "sha256": checksum(target), "copySeconds": round(copied - started, 3), "checkSeconds": round(time.monotonic() - copied, 3)}
+              "sha256": digest, "copySeconds": round(copied - started, 3), "checkSeconds": round(time.monotonic() - copied, 3)}
     record_payload(run.state, "restore-copy", target, bytes=record["bytes"])
     run.step("restore-copy", **record)
     return record
@@ -142,53 +162,73 @@ def discard(run, record):
     return freed
 
 
-def beside(copy, db, mode):
+def copy_checked(copy, target, record, deadline):
+    digest = hashlib.sha256()
+    with copy.open("rb") as source, target.open("wb") as output:
+        while True:
+            check_deadline(deadline)
+            chunk = source.read(1024 * 1024)
+            if not chunk:
+                break
+            output.write(chunk)
+            digest.update(chunk)
+    if digest.hexdigest() != record["sha256"]:
+        raise ValueError("restore copy checksum differs from the copy taken at install")
+    return verify(target, record["identity"], deadline)
+
+
+def beside(copy, db, mode, record, deadline):
     free = shutil.disk_usage(db.parent).free
     if free < copy.stat().st_size + LOCAL_MARGIN:
-        raise ValueError(f"{free >> 20} MiB beside the database cannot hold the {copy.stat().st_size >> 20} MiB restore copy")
+        raise OSError(f"{free >> 20} MiB beside the database cannot hold the {copy.stat().st_size >> 20} MiB restore copy")
     staged = db.with_name(f".{db.name}.restore-{uuid.uuid4().hex}")
     try:
-        shutil.copyfile(copy, staged)
+        check = copy_checked(copy, staged, record, deadline)
         os.chmod(staged, mode)
-        check = local_check(staged)
-        if check != "ok":
-            raise ValueError(f"restored database quick_check {check}")
-        publish(staged, db)
+        fsync(staged)
+        check_deadline(deadline)
+        for suffix in ("-wal", "-shm", "-journal"):
+            Path(f"{db}{suffix}").unlink(missing_ok=True)
+        os.replace(staged, db)
+        fsync(db.parent)
     finally:
         remove(staged)
     return check
 
 
-def in_place(copy, db, mode):
+def in_place(copy, db, mode, record, deadline):
+    check_deadline(deadline)
+    if checksum(copy, deadline) != record["sha256"]:
+        raise ValueError("restore copy checksum differs from the copy taken at install; database preserved")
+    check_deadline(deadline)
     remove(db)
     fsync(db.parent)
-    shutil.copyfile(copy, db)
+    check = copy_checked(copy, db, record, deadline)
     os.chmod(db, mode)
     fsync(db)
-    check = local_check(db)
-    if check != "ok":
-        raise ValueError(f"in-place restored database quick_check {check}")
+    check_deadline(deadline)
     return check
 
 
-def restore(record, db, note):
+def restore(record, db, note, deadline=None, *, verified=False):
     started = time.monotonic()
     copy = Path(record["path"])
-    verify(copy, record["identity"])
-    expected_digest = record.get("sha256") or checksum(copy)
-    if checksum(copy) != expected_digest:
-        raise ValueError("restore copy checksum differs from the copy taken at install")
+    if deadline is None:
+        deadline = started + max(120, estimate(copy.stat().st_size, rollback=True)["totalSeconds"])
+    if not verified:
+        verify(copy, record["identity"], deadline)
+    if not record.get("sha256"):
+        raise ValueError("restore copy has no recorded checksum; database preserved for forward repair")
     mode = db.stat().st_mode & 0o777 if db.exists() else 0o600
     with foreground_io(note):
         try:
-            check, into = beside(copy, db, mode), "beside"
-        except (OSError, ValueError, sqlite3.Error) as error:
+            check, into = beside(copy, db, mode, record, deadline), "beside"
+        except OSError as error:
+            check_deadline(deadline)
             note("hard-restore-local-beside-failed", copy=str(copy), error=str(error), next="delete the failed database and WAL, then copy in place")
-            check, into = in_place(copy, db, mode), "in-place"
-    restored = checksum(db)
-    if restored != expected_digest or identity(db) != record["identity"]:
-        raise ValueError("restored database differs from the pre-install copy")
-    metadata = {"sha256": restored, "identity": record["identity"], "source": "local-restore-copy", "copy": str(copy), "into": into, "quickCheck": check, "seconds": round(time.monotonic() - started, 3)}
+            check, into = in_place(copy, db, mode, record, deadline), "in-place"
+    check_deadline(deadline)
+    metadata = {"sha256": record["sha256"], "identity": record["identity"], "source": "local-restore-copy", "copy": str(copy), "into": into, "quickCheck": check, "seconds": round(time.monotonic() - started, 3)}
     note("hard-restore-db", **metadata)
     return metadata
 

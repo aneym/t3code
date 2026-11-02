@@ -242,10 +242,12 @@ def stopped_work(run, host, replica, seeded, size):
             raise ValueError(f"seeded off-box replica quick_check {check}; nothing stopped")
         proof = {"how": "remote-check", "replica": str(replica), "quickCheck": "ok"}
     estimate = restore_copy.estimate(size)
+    rollback = restore_copy.estimate(size, rollback=True)
     budget = run.args.offbox_stop_s
-    run.step("hard-backup-estimate", stoppedWork=["local-restore-copy", "quick_check", "identity"], localRestoreCopy=estimate, estimateSeconds=estimate["totalSeconds"], budgetSeconds=budget)
-    if estimate["totalSeconds"] > budget:
-        raise ValueError(f"stopped local copy and quick_check estimated at {estimate['totalSeconds']:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
+    seconds = max(estimate["totalSeconds"], rollback["totalSeconds"])
+    run.step("hard-backup-estimate", stoppedWork=["local-restore-copy", "quick_check", "identity", "sha256"], localRestoreCopy=estimate, rollback=rollback, estimateSeconds=seconds, budgetSeconds=budget)
+    if seconds > budget:
+        raise ValueError(f"stopped local copy or rollback estimated at {seconds:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
     return proof
 
 

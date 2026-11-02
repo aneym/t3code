@@ -60,6 +60,15 @@ def capture(run, previous, stop, rollback_gate, *, keep_local=False):
         copied.unlink(missing_ok=True)
         clone = result.returncode == 0
     binary = rollback_gate()
+    if keep_local and not binary:
+        from .install_restore_copy import estimate
+
+        work = estimate(size, copy_bps=copy_rate(source))
+        rollback = estimate(size, copy_bps=copy_rate(source), rollback=True)
+        budget = run.args.offbox_stop_s
+        run.step("hard-backup-estimate", stoppedWork=["sqlite-backup", "quick_check", "identity", "sha256"], localRestoreCopy=work, rollback=rollback, estimateSeconds=max(work["totalSeconds"], rollback["totalSeconds"]), budgetSeconds=budget)
+        if max(work["totalSeconds"], rollback["totalSeconds"]) > budget:
+            raise ValueError(f"local backup or rollback exceeds --offbox-stop-s {budget} estimate; nothing stopped")
     stop()
     if sys.platform == "darwin":
         quiescent(source)
@@ -71,13 +80,14 @@ def capture(run, previous, stop, rollback_gate, *, keep_local=False):
     if keep_local:
         from .install_restore_copy import checksum, fsync, identity, verify
 
-        expected = identity(source)
-        database_copy(source, target, time.monotonic() + 120 + size / copy_rate(source))
+        deadline = run.stop_deadline
+        expected = identity(source, deadline=deadline)
+        database_copy(source, target, min(deadline, time.monotonic() + 120 + size / copy_rate(source)))
         os.chmod(target, 0o600)
         fsync(target)
         fsync(destination)
-        check = verify(target, expected)
-        local = {"sha256": checksum(target), "path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous}
+        check = verify(target, expected, deadline)
+        local = {"sha256": checksum(target, deadline), "path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous}
     elif clone:
         for suffix in ("", "-wal"):
             original = Path(str(source) + suffix)

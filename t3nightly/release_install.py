@@ -28,7 +28,7 @@ def fast_install(config, log):
         words.extend(["--service-label", "t3code.service"])
     if config.host == "ax42":
         words.extend(["--backups", str(backups), "--offbox", f"studio:{REMOTE_ROOT}/ax42", "--offbox-stage", "/srv/cow/t3nightly-offbox-stage"])
-    if load(config.manifest)["targets"][config.host]["compatibility"].get("eligibility") == "restore-rollback":
+    if config.host == "ax42" and load(config.manifest)["targets"][config.host]["compatibility"].get("eligibility") == "restore-rollback":
         words.extend(["--offbox-stop-s", "900"])
     words.extend(config.target_artifacts())
     config.receipt("install").unlink(missing_ok=True)

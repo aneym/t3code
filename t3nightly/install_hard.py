@@ -173,6 +173,7 @@ def install(run):
     precheck(run, previous, observed["oldRuntime.digest"])
     try:
         baseline = prove(run, previous)
+        migration_evidence = {"before": migration_history(run)}
     except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as error:
         run.step("hard-baseline", outcome="environment-blocked", error=str(error))
         return run.finish("failed", "baseline environment-blocked; nothing stopped")
@@ -183,7 +184,6 @@ def install(run):
     stopped = False
     routed = False
     post = baseline
-    migration_evidence = {"before": migration_history(run)}
     database_rollback = {}
 
     def stop():
@@ -208,6 +208,7 @@ def install(run):
                     raise ValueError(f"restart drain did not report drained: true; nothing stopped; active_run_ids={active_run_ids}")
         service(run, "stop")
         stopped = True
+        run.stop_deadline = time.monotonic() + args.offbox_stop_s
         attempts = 0
         while reap_strays(run, attempts):
             attempts += 1
@@ -231,7 +232,7 @@ def install(run):
             serving(run, args.version, observed["candidateRuntime.digest"])
             routed = True
             migration_evidence["candidate"] = migration_history(run)
-            if migration_evidence["candidate"] != compatibility["candidateMigrations"]["history"]:
+            if restore_class and migration_evidence["candidate"] != compatibility["candidateMigrations"]["history"]:
                 raise ValueError("serving candidate migration history differs from manifest")
             if backup.get("method") == install_offbox.METHOD:
                 install_offbox.prune_backup(run, backup)

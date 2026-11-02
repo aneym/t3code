@@ -65,14 +65,15 @@ def rollback_database(run, backup, compatibility):
         return
     local = backup.get("local")
     if local:
+        deadline = run.stop_deadline
         try:
-            restore_copy.verify(local["path"], local["identity"])
+            restore_copy.verify(local["path"], local["identity"], deadline)
         except (OSError, ValueError, sqlite3.Error) as error:
             run.step("hard-restore-local-unusable", loud=True, copy=local["path"], error=str(error), fallback="forward-repair" if backup.get("replica") == "deferred" or not backup.get("remote") else "offbox-replica", replica=backup.get("replica", "verified"))
             if backup.get("replica") == "deferred" or not backup.get("remote"):
                 raise ValueError("restore copy unusable and no verified off-box replica is available; database preserved for forward repair") from error
         else:
-            return restore_copy.restore(local, run.db.resolve(), run.step)
+            return restore_copy.restore(local, run.db.resolve(), run.step, deadline, verified=True)
     if not backup.get("remote"):
         raise ValueError("restore copy missing and no off-box replica is available; database preserved for forward repair")
     try:

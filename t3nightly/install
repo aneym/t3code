@@ -152,16 +152,6 @@ if __name__ == "__main__":
                 if args.hard:
                     from t3nightly.install_hard import install as hard_install
 
-                    from t3nightly.release_eligibility import RESTORE_CLASS
-                    from t3nightly.release_manifest import load
-                    from t3nightly.install_provenance import install_host
-
-                    compatibility = load(args.manifest)["targets"][install_host(args)]["compatibility"]
-                    if compatibility.get("eligibility") == RESTORE_CLASS:
-                        from t3nightly.install_hot_swap import drain_then_hard
-
-                        run.report["hotSwap"] = {"supported": False, "method": "maintenance"}
-                        sys.exit(drain_then_hard(run, run.server_version()))
                     sys.exit(hard_install(run))
                 if args.seamless:
                     from t3nightly.install_hot_swap import install
