@@ -9,27 +9,10 @@ import uuid
 from contextlib import closing
 from pathlib import Path
 
-
-def database_copy(source, target, deadline):
-    def progress(status, remaining, total):
-        if time.monotonic() >= deadline:
-            raise TimeoutError("rollback backup exceeded its deadline")
-
-    with closing(sqlite3.connect(f"{source.as_uri()}?mode=ro", uri=True)) as reader:
-        with closing(sqlite3.connect(target)) as writer:
-            reader.backup(writer, pages=4096, progress=progress)
-
-
-def copy_rate(path):
-    if sys.platform == "darwin":
-        return 80_000_000
-    device = os.stat(path).st_dev
-    rotational = Path(f"/sys/dev/block/{os.major(device)}:{os.minor(device)}/queue/rotational")
-    try:
-        spinning = rotational.read_text().strip() == "1"
-    except OSError:
-        spinning = True
-    return 15_000_000 if spinning else 40_000_000
+from .install_database_copy import copy_rate, database_copy, require_space
+from .install_calibration import rates
+from .install_restore_copy import checksum, estimate, fsync, identity, verify
+from .install_backup_retention import mark
 
 
 def quiescent(db):
@@ -37,13 +20,6 @@ def quiescent(db):
     result = subprocess.run(["/usr/sbin/lsof", "-t", *paths], capture_output=True, text=True, timeout=15, check=False)
     if result.returncode not in (0, 1) or result.stdout.strip() or result.stderr.strip():
         raise ValueError("database users remain or lsof could not establish quiescence")
-
-
-def require_space(root, size, *, clone=False):
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    required = size * 2 if clone else size + max(size // 10, 512 * 1024 * 1024)
-    if shutil.disk_usage(root).free < required:
-        raise ValueError(f"insufficient rollback backup space on {root}; requires {required} bytes")
 
 
 def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
@@ -87,11 +63,7 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
             volume_reason = "APFS capability probe failed; configured-root full copy"
     binary = rollback_gate()
     if keep_local and not binary:
-        from .install_restore_copy import estimate
-
-        from .install_calibration import rates
-
-        host_rates = rates(run.state, size, source)
+        host_rates = rates(run.state, size, source, root=root, clone=clone)
         work = estimate(size, clone=clone, rates=host_rates, check_passes=2 if clone else 1)
         restore_clone = clone and root.stat().st_dev == source.parent.stat().st_dev
         rollback = estimate(size, clone=restore_clone, rates=host_rates, rollback=True, hash_passes=1 if restore_clone or shutil.disk_usage(source.parent).free >= size + (512 << 20) else 2)
@@ -110,8 +82,6 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
         run.step("hard-backup", **metadata)
         return metadata
     if keep_local:
-        from .install_restore_copy import checksum, fsync, identity, verify
-
         deadline = run.stop_deadline
         expected = identity(source, deadline=deadline)
         method = "sqlite-backup"
@@ -142,10 +112,7 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
                     run.backup_attempt_directories.append(destination)
                     target = destination / "statev2.sqlite"
         if method == "sqlite-backup":
-            from .install_calibration import rates
-            from .install_restore_copy import estimate
-
-            full = estimate(size, rates=rates(run.state, size, source))
+            full = estimate(size, rates=rates(run.state, size, source, root=root, clone=False))
             remaining = deadline - time.monotonic()
             run.step("hard-backup-full-copy-budget", estimate=full, remainingSeconds=remaining)
             if full["totalSeconds"] > remaining:
@@ -162,8 +129,6 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
     if keep_local:
         metadata["local"] = local
     (destination / "payload.json").write_text(json.dumps(metadata))
-    from .install_backup_retention import mark
-
     try:
         mark(target, metadata, run.home)
     except Exception as error:

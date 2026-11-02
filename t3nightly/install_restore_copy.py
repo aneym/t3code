@@ -213,9 +213,9 @@ def beside(copy, db, mode, record, deadline, *, note=None):
                 raise ValueError("restore clone checksum differs from the copy taken at install")
             check = verify(staged, record["identity"], deadline)
         else:
-            seconds = estimate(copy.stat().st_size)["totalSeconds"]
-            if deadline is not None and deadline - time.monotonic() < seconds:
-                raise RecoveryRequired(f"full-copy restore fallback needs {seconds:.0f} s; database preserved")
+            free = shutil.disk_usage(db.parent).free
+            if free < copy.stat().st_size + LOCAL_MARGIN:
+                raise OSError(f"{free >> 20} MiB beside the database cannot hold the {copy.stat().st_size >> 20} MiB restore copy")
             check = copy_checked(copy, staged, record, deadline)
         if note is not None:
             note("hard-restore-local-copy", method="apfs-clone" if cloned else "full-copy", quickCheck=check)

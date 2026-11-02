@@ -88,8 +88,8 @@ def parse():
     args = parser.parse_args()
     if not args.version and not args.calibrate:
         parser.error("--version is required unless --calibrate")
-    if args.calibrate and any((args.hard, args.seamless, args.prepare_only, args.rehearsal)):
-        parser.error("--calibrate cannot be combined with installation modes")
+    if args.calibrate and any((args.hard, args.seamless, args.prepare_only, args.rehearsal, args.version, args.wait, args.check_only, args.dry_run)):
+        parser.error("--calibrate cannot be combined with installation modes, --version, --wait, --check-only or --dry-run")
     if args.backup_keep < 1:
         parser.error("--backup-keep must be at least one")
     if not 0 <= args.drain_s <= 300:
