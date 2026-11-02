@@ -39,7 +39,7 @@ def wal_in_use(db):
 
 
 def headroom_limit(db):
-    free = shutil.disk_usage(os.path.dirname(os.path.abspath(db))).free
+    free = shutil.disk_usage(os.path.dirname(os.path.realpath(db))).free
     return max(WAL_LIMIT, min(WAL_CEILING, free // WAL_HEADROOM_SHARE))
 
 
