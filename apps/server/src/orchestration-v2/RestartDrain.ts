@@ -52,10 +52,18 @@ export const restartPausedRunIds = (
   const paused = new Set(
     projection.nodes.filter((node) => pendingNodeIds.has(node.id)).map((node) => node.runId),
   );
-  for (const item of secrets ? projection.turnItems : []) {
-    if (item.type === "secret_request" && item.secretStatus === "pending") paused.add(item.runId);
-  }
-  return projection.runs.filter((run) => paused.has(run.id)).map((run) => run.id);
+  const secretRuns = new Set(
+    projection.turnItems.flatMap((item) =>
+      item.type === "secret_request" && item.secretStatus === "pending" ? [item.runId] : [],
+    ),
+  );
+  return projection.runs
+    .filter((run) =>
+      secrets
+        ? paused.has(run.id) || secretRuns.has(run.id)
+        : paused.has(run.id) && !secretRuns.has(run.id),
+    )
+    .map((run) => run.id);
 };
 
 const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
