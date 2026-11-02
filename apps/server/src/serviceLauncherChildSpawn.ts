@@ -14,6 +14,7 @@ export interface ManagedChild {
   role: "active" | "trial";
   stateDirOwned: boolean;
   capable: boolean;
+  recovering?: boolean;
   readonly instanceId: string;
   readonly process: NodeChildProcess.ChildProcess;
 }

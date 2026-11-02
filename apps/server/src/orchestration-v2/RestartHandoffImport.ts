@@ -18,9 +18,12 @@ import * as Stream from "effect/Stream";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-export const restartReapprovalEvents = Effect.fn("RestartHandoffImport.restartReapprovalEvents")(
+const restartReapprovalEvents = Effect.fn("RestartHandoffImport.restartReapprovalEvents")(
   function* (
-    projection: OrchestrationV2ThreadProjection,
+    projection: Pick<
+      OrchestrationV2ThreadProjection,
+      "thread" | "runs" | "runtimeRequests" | "nodes" | "turnItems" | "providerTurns" | "subagents"
+    >,
     epoch: string,
     sourceIds: ReadonlyArray<RunId>,
     legacyRequestIds?: ReadonlyArray<RuntimeRequestId>,
@@ -329,3 +332,36 @@ export const legacyRestartHandoffs = Effect.fn("RestartHandoffImport.legacyResta
   },
   Effect.mapError((cause) => new ServerImportRestartHandoffError({ cause })),
 );
+
+export const makeRestartReapproval = Effect.gen(function* () {
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const eventSink = yield* EventSink.EventSinkV2;
+  const ids = yield* IdAllocator.IdAllocatorV2;
+  return Effect.fn("RestartHandoffImport.reapproveRestartHandoff")(function* (
+    threadId: ThreadId,
+    handoff: { readonly epoch: string; readonly handoff: ServerRestartHandoff },
+  ) {
+    const records = yield* projections.getThreadRecords(threadId, [
+      "runs",
+      "runtimeRequests",
+      "nodes",
+      "turnItems",
+      "providerTurns",
+      "subagents",
+    ]);
+    const reapproval = yield* restartReapprovalEvents(
+      records,
+      handoff.epoch,
+      handoff.handoff.runIds,
+      [
+        ...new Set([
+          ...handoff.handoff.requestIds,
+          ...records.runtimeRequests
+            .filter((request) => request.status === "pending")
+            .map((request) => request.id),
+        ]),
+      ],
+    ).pipe(Effect.provideService(IdAllocator.IdAllocatorV2, ids));
+    if (reapproval.events.length > 0) yield* eventSink.write({ events: reapproval.events });
+  });
+});

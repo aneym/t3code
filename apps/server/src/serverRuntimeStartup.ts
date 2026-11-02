@@ -1,4 +1,8 @@
-import { serviceBootTimeline } from "./serviceChildTransport.ts";
+import {
+  hotSwapContext,
+  serviceBootTimeline,
+  serviceCommandReady,
+} from "./serviceChildTransport.ts";
 import { runServiceHandoff } from "./serviceChildHandoff.ts";
 import { importRestartManifest } from "./orchestration-v2/RestartManifest.ts";
 import {
@@ -305,7 +309,6 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
           creationSource: "server",
         })
         .pipe(
-          // The bootstrap thread is optional; its launch must not prevent opening the app.
           Effect.catchTags({
             ThreadManagementProviderInstanceDisabledError: (error) =>
               Effect.logInfo("Skipped bootstrap thread because its provider instance is disabled", {
@@ -353,7 +356,6 @@ export const announceStartupPairingUrl = (pairingUrl: string) =>
     Effect.andThen(Console.log(`  pairingUrl: ${pairingUrl}`)),
   );
 
-// Pairing tokens belong only in announceStartupPairingUrl's stdout output.
 export const logBrowserAutoOpenUnavailable = Effect.logInfo("browser auto-open unavailable", {
   hint: "Open the pairing URL above in your browser.",
 });
@@ -368,8 +370,6 @@ export const maybeOpenBrowser = Effect.fn("serverRuntimeStartup.maybeOpenBrowser
   const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
 
   yield* externalLauncher.launchBrowser(target).pipe(
-    // The target carries the pairing token, and a failed launch records its
-    // command line on the span, so this call stays out of traces.
     Effect.withTracerEnabled(false),
     Effect.catch(() => logBrowserAutoOpenUnavailable),
   );
@@ -377,7 +377,6 @@ export const maybeOpenBrowser = Effect.fn("serverRuntimeStartup.maybeOpenBrowser
 
 const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
-    // Use span attributes; annotations would follow long-lived forked fibers for the server's lifetime.
     Effect.withSpan(`server.startup.${phase}`, { attributes: { "startup.phase": phase } }),
   );
 
@@ -489,6 +488,13 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
     ),
   );
 
+  const prepareRouting = runStartupPhase("http.wait", Deferred.await(httpListening)).pipe(
+    Effect.andThen(
+      runStartupPhase("auxiliary-roots.parked", options?.awaitAuxiliaryParked ?? Effect.void),
+    ),
+    Effect.andThen(launcher.prepareTrial),
+  );
+  const warm = hotSwapContext()?.hotSwap?.warm === true;
   const startup = Effect.gen(function* () {
     serviceBootTimeline.layersAt = yield* serviceBootTimeline.now;
     yield* runStartupPhase(
@@ -532,6 +538,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         },
       });
     }
+    let updateOutcome = warm ? yield* prepareRouting : undefined;
     const { recovery, bootstrap: bootstrapTargets } = yield* runOrderedV2StartupPhases({
       importLegacyShells: runStartupPhase(
         "orchestration-v2.legacy-v1.import-shells",
@@ -634,10 +641,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       }),
     );
 
-    yield* runStartupPhase("http.wait", Deferred.await(httpListening));
-    yield* runStartupPhase("auxiliary-roots.parked", options?.awaitAuxiliaryParked ?? Effect.void);
-
-    const updateOutcome = yield* launcher.prepareTrial;
+    if (!warm) updateOutcome = yield* prepareRouting;
 
     yield* Effect.logDebug("startup phase: publishing welcome event", {
       environmentId: environment.environmentId,
@@ -662,6 +666,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
     yield* options?.activate ?? Effect.void;
     yield* Effect.logDebug("Accepting commands");
     yield* commandGate.signalCommandReady;
+    yield* serviceCommandReady;
     yield* runStartupPhase(
       "ready.publish",
       lifecycleEvents.publish({
@@ -690,7 +695,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
   );
 
   yield* Effect.forkScoped(
-    Effect.exit(startup).pipe(
+    Effect.exit(warm ? startup.pipe(Effect.timeout("30 minutes")) : startup).pipe(
       Effect.flatMap((startupExit) => {
         if (Exit.isSuccess(startupExit)) return Effect.void;
         const error = new ServerRuntimeStartupError({

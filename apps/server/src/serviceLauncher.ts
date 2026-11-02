@@ -1,6 +1,7 @@
 import { acceptServiceUpdate } from "./serviceLauncherUpdateRequest.ts";
 import {
   terminalUpdate,
+  rollbackPendingUpdate,
   sendMessage,
   stopMarkerPath,
   writeStopMarker,
@@ -9,7 +10,6 @@ import {
 import { waitForServiceReadiness } from "./serviceLauncherReadiness.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalTimers:off
-// The launcher must survive unloadable server versions; use Node built-ins without Effect.
 import { spawnServiceChild, type ManagedChild } from "./serviceLauncherChildSpawn.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -41,17 +41,15 @@ import {
   clearOwnershipGrant,
   sweepGrantTemps,
 } from "./serviceLauncherOwnership.ts";
-import { ServiceLauncherExitDeadline } from "./serviceLauncherExitDeadline.ts";
+import {
+  ServiceLauncherExitDeadline,
+  servicePreparedDeadlineMs,
+} from "./serviceLauncherExitDeadline.ts";
 import { readServiceEnvironment } from "./serviceEnvironment.ts";
 
 import { decodeServiceLauncherChildMessage, SERVICE_STATE_FILE } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
-/**
- * Migrations count toward it and can scale with the database: tens of GB on a cold page cache
- * take minutes. A missed window rolls back the database, so the next attempt pays the same cost.
- */
-const PREPARED_TIMEOUT_MS = 30 * 60_000;
 
 import { runtimeExists, readServiceState, writeServiceState } from "./serviceLauncherState.ts";
 
@@ -153,7 +151,6 @@ export class Launcher {
       });
       const marker = this.#guards.terminator.holdSignalsUntil(writeStopMarker(this.#baseDir));
       this.#clearTimer();
-      // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
       this.#enqueue(async () => {
         this.#stopping = true;
         this.#clearTimer();
@@ -176,7 +173,6 @@ export class Launcher {
   }
 
   async #recover(): Promise<void> {
-    // Clear old stop markers to preserve future tunnels; clear restart-pending only for the awaited version to avoid CLI races.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     const restartPending = restartPendingPath(this.#baseDir);
     const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
@@ -285,6 +281,7 @@ export class Launcher {
       () =>
         this.#child === managed &&
         managed.role === "active" &&
+        !managed.recovering &&
         (!managed.capable || this.#routedInstance === managed.instanceId),
     ).then((ready) => {
       if (ready && this.#child === managed && !this.#stopping) process.send?.({ launcherReady: 1 });
@@ -293,7 +290,7 @@ export class Launcher {
     if (role === "trial") {
       this.#timer = setTimeout(
         () => this.#enqueue(() => this.#handlePreparedTimeout(managed)),
-        PREPARED_TIMEOUT_MS,
+        servicePreparedDeadlineMs(this.#environment),
       );
     }
   }
@@ -365,6 +362,8 @@ export class Launcher {
         await this.#handshakeFailed(child, "listening-probe-failed");
         return;
       }
+      child.recovering = false;
+      this.#clearTimer();
       await clearOwnershipGrant(this.#baseDir);
       this.#ingress.route(child.process);
       this.#routedInstance = child.instanceId;
@@ -455,6 +454,7 @@ export class Launcher {
         return;
       }
       try {
+        child.recovering = message.recovering === true && message.reportsCommandReady === true;
         await this.#handlePrepared(child, message.updateId);
       } catch {
         await this.#returnToPrevious(pending, "rolled-back", "commit-failed", child);
@@ -537,7 +537,7 @@ export class Launcher {
     await this.#startTrial(pending);
   }
 
-  async #handlePrepared(child: ManagedChild, updateId: string): Promise<void> {
+  async #handlePrepared(child: ManagedChild, updateId: string) {
     const pending = this.#state.update;
     if (
       child.role !== "trial" ||
@@ -551,7 +551,7 @@ export class Launcher {
       }
       throw new Error("Trial child reported prepared for an unexpected update.");
     }
-    this.#clearTimer();
+    if (!child.recovering) this.#clearTimer();
     const committed = terminalUpdate({ pending, status: "committed" });
     const next: ServiceState = {
       ...this.#state,
@@ -602,17 +602,25 @@ export class Launcher {
     this.#state = next;
   }
 
-  async #handlePreparedTimeout(child: ManagedChild): Promise<void> {
+  async #handlePreparedTimeout(child: ManagedChild) {
     if (this.#warming === child) {
       await this.#dropWarm("warm-timeout");
       return;
     }
     const pending = this.#state.update;
-    if (this.#child !== child || child.role !== "trial" || pending?.status !== "pending") {
-      return;
+    if (this.#child !== child || !pending) return;
+    if (pending.status === "committed" && child.recovering && this.#canRollbackCommitted) {
+      this.#timer = undefined;
+      await this.#returnToPrevious(
+        rollbackPendingUpdate(pending, this.#baseDir),
+        "rolled-back",
+        "prepared-timeout",
+        child,
+      );
+    } else if (child.role === "trial" && pending.status === "pending") {
+      this.#timer = undefined;
+      await this.#returnToPrevious(pending, "rolled-back", "prepared-timeout", child);
     }
-    this.#timer = undefined;
-    await this.#returnToPrevious(pending, "rolled-back", "prepared-timeout", child);
   }
 
   async #handleExit(
@@ -706,11 +714,7 @@ export class Launcher {
     }
     if (pending?.status === "committed" && this.#canRollbackCommitted) {
       await this.#returnToPrevious(
-        {
-          ...pending,
-          status: "pending",
-          dbPath: NodePath.join(this.#baseDir, "userdata", "statev2.sqlite"),
-        },
+        rollbackPendingUpdate(pending, this.#baseDir),
         "rolled-back",
         "activation-exited",
       );

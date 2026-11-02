@@ -1,3 +1,7 @@
+import {
+  armServiceRecoveryDeadline,
+  clearServiceRecoveryDeadline,
+} from "./serviceLauncherExitDeadline.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- Node HTTP and IPC handles are application boundaries.
 import { admitHttpRequest } from "./serverHandoffBarrier.ts";
 import * as NodeHttp from "node:http";
@@ -24,6 +28,7 @@ export const serviceBootTimeline = {
   acquireAt: 0,
   ownershipAt: 0,
   layersAt: 0,
+  validatedAt: 0,
 };
 
 export const hotSwapProtocolAccepted = () => ingressAccepted;
@@ -99,6 +104,7 @@ export const exchangeServiceMessage = Effect.fn("serviceChildTransport.exchange"
 let listener: NodeHttp.Server | undefined;
 let privatePort = 0;
 let prepared = false;
+export const descriptorDuringRecovery = () => prepared && hotSwapContext()?.hotSwap?.warm === true;
 let frozen = false;
 const connections = new Set<NodeNet.Socket>();
 const webSockets = new Map<NodeNet.Socket, Effect.Effect<void, Socket.SocketError>>();
@@ -209,22 +215,21 @@ export const prepareServiceRouting = Effect.fn("serviceChildTransport.prepareRou
   function* () {
     const context = hotSwapContext();
     if (context === undefined) return undefined;
-    if (serviceBootTimeline.acquireAt !== 0) {
-      const { prewarmMs, acquireAt, ownershipAt, layersAt } = serviceBootTimeline;
-      yield* Effect.logInfo("Service handoff boot timeline", {
-        prewarmMs,
-        acquireToOwnershipMs: ownershipAt - acquireAt,
-        acquireToLayersMs: layersAt - acquireAt,
-        acquireToValidatedMs: (yield* Clock.currentTimeMillis) - acquireAt,
-      });
-    }
+    serviceBootTimeline.validatedAt = yield* Clock.currentTimeMillis;
     prepared = true;
     const pending = context.update?.status === "pending" ? context.update : undefined;
     if (pending !== undefined) {
       yield* exchangeServiceMessage(
-        { type: "validated", updateId: pending.id, port: privatePort },
+        {
+          type: "validated",
+          updateId: pending.id,
+          port: privatePort,
+          recovering: context.hotSwap?.warm === true,
+          reportsCommandReady: true,
+        },
         (reply) => reply.type === "committed" && reply.updateId === pending.id,
       );
+      if (context.hotSwap?.warm === true) yield* Effect.sync(armServiceRecoveryDeadline);
       return {
         id: pending.id,
         fromVersion: pending.fromVersion,
@@ -280,3 +285,18 @@ export const freezeServiceConnections = Effect.fn("serviceChildTransport.freezeC
     for (const socket of connections) socket.end();
   },
 );
+
+export const serviceCommandReady = Effect.gen(function* () {
+  yield* Effect.sync(clearServiceRecoveryDeadline);
+  const { prewarmMs, acquireAt, ownershipAt, layersAt, validatedAt } = serviceBootTimeline;
+  if (acquireAt !== 0)
+    yield* Effect.logInfo("Service handoff boot timeline", {
+      prewarmMs,
+      acquireToOwnershipMs: ownershipAt - acquireAt,
+      acquireToLayersMs: layersAt - acquireAt,
+      acquireToValidatedMs: validatedAt - acquireAt,
+      acquireToReadyMs: (yield* Clock.currentTimeMillis) - acquireAt,
+    });
+  if (descriptorDuringRecovery())
+    yield* sendServiceMessage({ type: "listening", port: privatePort });
+});
