@@ -54,9 +54,9 @@ def proven(path, manifest, archive_sha):
     return swapped and receipt.get("result") == "ROLLBACK-PROOF" and receipt.get("manifest") == identity_digest(manifest) and receipt.get("archive") == archive_sha
 
 
-def fast_rollback_proof(config, log):
+def fast_rollback_proof(config, log, *, force=False):
     manifest = load(config.manifest)
-    if not required(manifest, config.host):
+    if not force and not required(manifest, config.host):
         log.write("rollback proof not required\n")
         return 0
     plan = json.loads((config.run / f"sandbox-{config.host}.json").read_text())
