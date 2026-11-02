@@ -61,7 +61,7 @@ def receipt_digest(receipt):
 def validate(receipt):
     schema = receipt.get("schema") if isinstance(receipt, dict) else None
     if schema == REHEARSAL_SCHEMA:
-        shape(receipt, {**REHEARSAL_FIELDS, **({"hotSwap": dict} if "hotSwap" in receipt else {})}, "receipt")
+        shape(receipt, {**REHEARSAL_FIELDS, **({"engineHead": str} if "engineHead" in receipt else {}), **({"hotSwap": dict} if "hotSwap" in receipt else {})}, "receipt")
         for name in ("baselineChat", "postCutoverChat"):
             shape(receipt[name], CHAT_FIELDS, f"receipt.{name}")
         if not receipt["workload"]:
