@@ -1,7 +1,7 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { restartRunUpdates, cancelledRuntimeDetail } from "./RestartRunRecovery.ts";
 import type { RecoverySession } from "./RuntimeRecoverySessions.ts";
-import { survivesRestart } from "./RestartHandoffImport.ts";
+import { makeRestartReapproval, survivesRestart } from "./RestartHandoffImport.ts";
 import { makeHandoffDrain } from "./RestartDrain.ts";
 import {
   nonterminalRuns,
@@ -15,7 +15,6 @@ import {
   latestStartedRun,
 } from "./RuntimeRecoveryPolicy.ts";
 import { restartStatus } from "./RestartStatus.ts";
-import { makeRestartReapproval } from "./RestartHandoffImport.ts";
 import {
   prepareRestart,
   abortRestart,
@@ -117,7 +116,7 @@ export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
-  const reapproveRestartHandoff = yield* makeRestartReapproval;
+  const reapproveHandoff = yield* makeRestartReapproval;
 
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
     function* (
@@ -185,7 +184,7 @@ export const make = Effect.gen(function* () {
       );
       const delegatedTaskNodeIds = new Set<string>([
         ...(projection.subagents ?? []).filter(isAppOwnedDelegation).map((subagent) => subagent.id),
-        ...(projection.turnItems ?? []).flatMap((item) =>
+        ...projection.turnItems.flatMap((item) =>
           item.type === "subagent" && isAppOwnedDelegation(item) ? [item.subagentId] : [],
         ),
       ]);
@@ -441,10 +440,9 @@ export const make = Effect.gen(function* () {
           payload: { ...task, completionWake: "always", updatedAt: now },
         });
       }
-      const recoveredNonterminalRunIds = new Set(runs.map((run) => run.id));
       const cancelledStaleNodeIds = new Set<string>();
-      for (const item of projection.turnItems ?? []) {
-        if (item.runId !== null && recoveredNonterminalRunIds.has(item.runId)) {
+      for (const item of projection.turnItems) {
+        if (item.runId !== null && cutRunIds.has(item.runId)) {
           continue;
         }
         if (!isBackgroundCapableTurnItemType(item.type)) {
@@ -703,7 +701,7 @@ export const make = Effect.gen(function* () {
         projection.thread.archivedAt === null &&
         projection.thread.deletedAt === null &&
         projection.thread.settledOverride !== "settled"
-          ? reapproveRestartHandoff(threadId, handoff, secretsOnly)
+          ? reapproveHandoff(threadId, handoff, secretsOnly)
           : Effect.void
         ).pipe(
           Effect.mapError(
@@ -719,7 +717,12 @@ export const make = Effect.gen(function* () {
         stoppedThisPass,
         handoff?.type === "provider-runtime.restart-handoff" ? handoff.handoff : undefined,
       );
-      yield* reapprove(true);
+      if (
+        projection.turnItems.some(
+          (item) => item.type === "secret_request" && item.secretStatus === "pending",
+        )
+      )
+        yield* reapprove(true);
       for (const session of projection.providerSessions) {
         if (session.status !== "stopped" && session.status !== "error") {
           stoppedThisPass.set(session.id, session);
