@@ -21,7 +21,7 @@ with (root / ".coordinator.lock").open("a") as lock:
     if binding.exists():
         if json.loads(binding.read_text()) != value:
             sys.exit("remote run belongs to a different coordinator identity")
-    elif any(path.name != ".coordinator.lock" and not path.name.startswith(".coordinator-identity-") for path in root.iterdir()):
+    elif any(path.name not in (".coordinator.lock", "release-holds") and not path.name.startswith(".coordinator-identity-") for path in root.iterdir()):
         sys.exit("remote run already holds state without this coordinator identity")
     else:
         try:
