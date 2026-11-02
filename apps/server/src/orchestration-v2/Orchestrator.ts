@@ -19,6 +19,11 @@ import {
   isHandoffSourceRun,
   lastDeliveredRunForProviderThread,
 } from "./ProviderThreadHistory.ts";
+import {
+  awaitRestartContinuation,
+  awaitsRestartContinuation,
+  childAwaitsRestartContinuation,
+} from "./RestartAwaits.ts";
 import { restartDispatchAllowed } from "./RestartDispatchPolicy.ts";
 import {
   makeThreadSelectionPlanner,
@@ -43,7 +48,6 @@ import type {
 import {
   latestExecutedRun,
   latestRootProviderFailure,
-  runRanAfter,
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
@@ -1375,7 +1379,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       if (options?.explicitResume !== true) {
         for (const run of projection.runs) {
-          if (yield* awaitsRestartContinuation(run)) return;
+          if (yield* awaitsRestartContinuation(effectOutbox, run)) return;
         }
       }
 
@@ -2166,8 +2170,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const resumedThread = yield* Effect.gen(function* () {
         const projection = yield* readCommandProjection(threadId);
         for (const run of projection.runs) {
-          if (yield* awaitsRestartContinuation(run)) {
-            yield* effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`);
+          if (yield* awaitsRestartContinuation(effectOutbox, run)) {
+            yield* awaitRestartContinuation(effectOutbox, run);
           }
         }
         yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
@@ -10504,7 +10508,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         (run.status === "cancelled" ||
           (run.status === "failed" && run.restartContinuationOfRunId !== undefined)) &&
-        (yield* awaitsRestartContinuation(run).pipe(mapDispatchError(input.command)))
+        (yield* awaitsRestartContinuation(effectOutbox, run).pipe(mapDispatchError(input.command)))
       ) {
         yield* markStoppedRun({ ...input, thread, run });
       }
@@ -11320,7 +11324,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ) &&
             !child.runtimeRequests.some((request) => request.status === "pending") &&
             child.turnItems.length === 0 &&
-            Option.isNone(yield* Effect.findFirst(child.runs, awaitsRestartContinuation)));
+            Option.isNone(
+              yield* Effect.findFirst(child.runs, (run) =>
+                awaitsRestartContinuation(effectOutbox, run),
+              ),
+            ));
         idleChildren.set(task.childThreadId, idle);
         if (!idle) continue;
         // Stop can cancel an idle orphan without guessing which completed run owned its result.
@@ -11732,29 +11740,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
-  const awaitsRestartContinuation = (run: OrchestrationV2Run) =>
-    effectOutbox
-      .get(`effect:restart-continuation:${run.id}`)
-      .pipe(
-        Effect.map(
-          Option.exists((effect) => effect.status === "pending" || effect.status === "running"),
-        ),
-      );
-
-  const childAwaitsRestartContinuation = (
-    runs: ReadonlyArray<OrchestrationV2Run>,
-    resultRun: OrchestrationV2Run,
-    settledContinuationOf?: RunId,
-  ) =>
-    Effect.forEach(
-      runs.filter(
-        (run) =>
-          run.id !== settledContinuationOf &&
-          (run.id === resultRun.id || runRanAfter(run, resultRun)),
-      ),
-      awaitsRestartContinuation,
-    ).pipe(Effect.map((pending) => pending.includes(true)));
-
   const planDelegatedCompletionDelivery = Effect.fn(
     "orchestrationV2.planDelegatedCompletionDelivery",
   )(function* (input: {
@@ -12028,6 +12013,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       if (
         yield* childAwaitsRestartContinuation(
+          effectOutbox,
           taskRuns.length === 0 ? childControls.runs : taskRuns,
           childRun,
           options?.settledContinuationOf,
@@ -12285,6 +12271,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (status !== "cancelled" && status !== "interrupted") return;
     if (
       yield* childAwaitsRestartContinuation(
+        effectOutbox,
         childControls.runs,
         resultRun,
         options?.settledContinuationOf,
@@ -13434,12 +13421,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
         const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
         if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
-        return yield* childAwaitsRestartContinuation(runs, run);
+        return yield* childAwaitsRestartContinuation(effectOutbox, runs, run);
       }
       const progress = delegatedTaskProgress(child);
       if (progress.state !== "result_available") return true;
       if (progress.resultRun === undefined) return false;
-      return yield* childAwaitsRestartContinuation(child.runs, progress.resultRun);
+      return yield* childAwaitsRestartContinuation(effectOutbox, child.runs, progress.resultRun);
     },
     (effect, childThreadId, _taskId?) =>
       effect.pipe(
@@ -13479,7 +13466,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     delegatedTaskResultPending,
     restartContinuationPending: Effect.fn("OrchestratorV2.restartContinuationPending")(
       function (run) {
-        return awaitsRestartContinuation(run).pipe(Effect.orElseSucceed(() => false));
+        return awaitsRestartContinuation(effectOutbox, run).pipe(Effect.orElseSucceed(() => false));
       },
     ),
     awaitRestartContinuation: Effect.fn("OrchestratorV2.awaitRestartContinuation")(function (run) {
