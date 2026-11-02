@@ -93,21 +93,24 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
       return Stream.unwrap(Effect.sync(() => {
         data.subscriptions.push(subscription);
         save();
-        return session.client["orchestration.subscribeThread"]({ threadId: opts.thread, ...(cursor === undefined ? {} : { afterSequence: cursor }) });
+        return session.client["orchestration.subscribeThread"]({ threadId: opts.thread, requestCompletionMarker: true, ...(cursor === undefined ? {} : { afterSequence: cursor }) });
       })).pipe(Stream.tap((item) => Effect.sync(() => {
         if (item.kind === "snapshot") {
           if (cursor !== undefined) data.resnapshots++;
           data.snapshots.push(item.snapshotSequence);
           cursor = item.snapshotSequence;
           data.ready = true;
+        } else if (item.kind === "synchronized") {
+          subscription.synchronizedAtMs ??= elapsed();
         } else if (item.sequence !== undefined) {
-          data.receivedEvents.push({ at: new Date().toISOString(), atMs: elapsed(), sessionId: identity?.id, serverVersion: identity?.serverVersion, sequence: item.sequence });
+          const replayAfter = subscription.afterSequence !== null && subscription.synchronizedAtMs === undefined ? { replayAfter: subscription.afterSequence } : {};
+          data.receivedEvents.push({ at: new Date().toISOString(), atMs: elapsed(), sessionId: identity?.id, serverVersion: identity?.serverVersion, sequence: item.sequence, ...replayAfter });
           subscription.events++;
           if (!data.sequences.includes(item.sequence)) data.sequences.push(item.sequence);
           cursor = Math.max(cursor ?? 0, item.sequence);
         }
         save();
-      })), Stream.catchCause(() => { if (!existsSync(opts.stop)) { data.wsFailures++; save(); } return Stream.empty; }));
+      })), Stream.catchCause(() => { if (!existsSync(opts.stop)) { data.wsFailures++; data.streamFailures.push({ atMs: elapsed(), sessionId: identity?.id }); save(); } return Stream.empty; }));
     }), Stream.runDrain, Effect.forkScoped);
     yield* Effect.promise(stopped);
   })).pipe(Effect.provide(layers));
