@@ -73,12 +73,14 @@ def continuity(home, thread, probe, *, through_sequence=None):
         if key in latest_updates:
             superseded[latest_updates[key]] = sequence
         latest_updates[key] = sequence
-    resumed = {row.get("sessionId"): row["afterSequence"] for row in probe.get("subscriptions", []) if row.get("afterSequence") is not None}
-    received_in = {row["sequence"]: row.get("sessionId") for row in probe.get("receivedEvents", [])}
+    replays = {}
+    for row in probe.get("receivedEvents", []):
+        if isinstance(row.get("replayAfter"), int):
+            replays.setdefault(row["sequence"], []).append(row["replayAfter"])
     covered = {sequence: sequence for sequence in observed}
     for sequence in reversed(expected):
         survivor = covered.get(superseded.get(sequence))
-        if survivor is not None and resumed.get(received_in.get(survivor), sequence) < sequence:
+        if survivor is not None and any(after < sequence for after in replays.get(survivor, [])):
             covered[sequence] = survivor
     coalesced = [sequence for sequence in expected if sequence not in observed and sequence in covered]
     missing = [sequence for sequence in expected if sequence not in covered]
