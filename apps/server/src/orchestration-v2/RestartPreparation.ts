@@ -128,7 +128,9 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
 export const abortRestart = Effect.fn("RestartPreparation.abortRestart")(
   function* (epoch: string) {
     const outbox = yield* EffectOutbox.EffectOutboxV2;
-    if ((yield* outbox.restartPrepared) !== epoch)
+    const preparedEpoch = yield* outbox.restartPrepared;
+    if (preparedEpoch === undefined) return { epoch, aborted: true as const };
+    if (preparedEpoch !== epoch)
       return yield* new ServerPrepareRestartError({
         cause: "Restart epoch is not prepared by this process.",
       });

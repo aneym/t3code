@@ -2838,6 +2838,8 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const eventSink = yield* EventSink.EventSinkV2;
+      const claim = outbox.claimNext({ workerId: "drain-worker" });
+      yield* RestartPreparation.abortRestart("epoch:drain");
       const run = yield* seedRunningRun("restart-drain");
       const commandId = CommandId.make("command:restart-drain:queued");
       yield* outbox.enqueue([
@@ -2859,9 +2861,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       );
       yield* TestClock.adjust("1 second");
 
-      const cleanup = yield* outbox.claimNext({ workerId: "drain-worker" });
+      const cleanup = yield* claim;
       assert.equal(Option.getOrUndefined(cleanup)?.id, "effect:restart-drain:cleanup");
-      assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId: "drain-worker" })));
+      assert.isTrue(Option.isNone(yield* claim));
       assert.isTrue(Option.isNone(yield* outbox.nextClaimableAt));
       yield* outbox.succeed({ effectId: "effect:restart-drain:cleanup", workerId: "drain-worker" });
 
@@ -2882,10 +2884,10 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const receipt = yield* Fiber.join(prepare);
       assert.deepEqual(receipt.drain, { drained: true, waitedMs: 1_000, activeRunIds: [] });
       assert.deepEqual(receipt.threads, []);
-      assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId: "drain-worker" })));
+      assert.isTrue(Option.isNone(yield* claim));
 
       yield* RestartPreparation.abortRestart("epoch:drain");
-      const released = yield* outbox.claimNext({ workerId: "drain-worker" });
+      const released = yield* claim;
       assert.equal(Option.getOrUndefined(released)?.id, "effect:restart-drain:start");
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
