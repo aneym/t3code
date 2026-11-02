@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import * as Clock from "effect/Clock";
 import * as Fiber from "effect/Fiber";
 import { awaitHandoffReceipts } from "./serverHandoffDelivery.ts";
+import { flushHandoffResponses } from "./serverHandoffProtocol.ts";
 import { freezeServerAdmissions, reopenServerAdmissions } from "./serverHandoffBarrier.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -30,9 +31,11 @@ export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* 
     Effect.tap((event) => awaitHandoffReceipts(event.sequence, budget)),
     Effect.andThen(sendServiceMessage({ type: "drained", updateId })),
     Effect.andThen(
-      Effect.sync(() => {
+      Effect.gen(function* () {
         if (!mayRelinquish || now() >= preparationDeadline) return false;
-        relinquish();
+        yield* flushHandoffResponses(Math.min(250, (preparationDeadline - now()) / 4));
+        yield* freezeServiceConnections(Math.min(250, (preparationDeadline - now()) / 2));
+        process.kill(process.pid, "SIGTERM");
         return true;
       }),
     ),
@@ -79,8 +82,3 @@ export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* 
     Effect.forkDetach,
   );
 });
-
-function relinquish(): void {
-  freezeServiceConnections();
-  process.kill(process.pid, "SIGTERM");
-}
