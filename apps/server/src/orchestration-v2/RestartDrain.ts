@@ -2,6 +2,7 @@ import {
   ServerPrepareRestartError,
   type OrchestrationV2Run,
   type RunId,
+  type OrchestrationV2StoredEvent,
   type ServerRestartDrain,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -19,8 +20,32 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 const executing = (status: OrchestrationV2Run["status"]) =>
   status === "running" || status === "preparing";
 
-const pending = (status: OrchestrationV2Run["status"]) =>
-  status === "starting" || status === "queued";
+export const restartPausedRunIds = (projection: ProjectionStore.ProjectionRuntimeRecoveryState) => {
+  const pendingNodeIds = new Set(
+    projection.runtimeRequests
+      .filter(
+        (request) =>
+          request.status === "pending" &&
+          request.kind !== "dynamic_tool_call" &&
+          request.kind !== "auth_refresh",
+      )
+      .map((request) => request.nodeId),
+  );
+  const paused = new Set(
+    projection.nodes.filter((node) => pendingNodeIds.has(node.id)).map((node) => node.runId),
+  );
+  for (const item of projection.turnItems) {
+    if (item.type === "secret_request" && item.secretStatus === "pending") paused.add(item.runId);
+  }
+  return projection.runs.filter((run) => paused.has(run.id)).map((run) => run.id);
+};
+
+const restartActivityChanged = ({ event }: OrchestrationV2StoredEvent) =>
+  event.type === "run.created" ||
+  event.type === "run.updated" ||
+  event.type === "node.updated" ||
+  event.type === "runtime-request.updated" ||
+  (event.type === "turn-item.updated" && event.payload.type === "secret_request");
 
 const activeRuns = Effect.gen(function* () {
   const outbox = yield* EffectOutbox.EffectOutboxV2;
@@ -36,9 +61,13 @@ const activeRuns = Effect.gen(function* () {
   );
   const active = new Set<RunId>();
   for (const threadId of yield* projections.getRecoveryThreadIds("runtime")) {
-    const { runs } = yield* projections.getRuntimeRecoveryProjection(threadId);
-    for (const run of runs) {
-      if (executing(run.status) || (run.status === "starting" && startsInFlight.has(run.id)))
+    const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
+    const paused = new Set(restartPausedRunIds(projection));
+    for (const run of projection.runs) {
+      if (
+        !paused.has(run.id) &&
+        (executing(run.status) || (run.status === "starting" && startsInFlight.has(run.id)))
+      )
         active.add(run.id);
     }
   }
@@ -58,18 +87,9 @@ export const drainBeforeRestart = Effect.fn("RestartDrain.drainBeforeRestart")(f
   const settled =
     initial.size === 0
       ? Option.some(initial)
-      : yield* sink.stream({ afterSequence, eventType: "run.updated" }).pipe(
-          Stream.scan(
-            () => initial,
-            (active: ReadonlySet<RunId>, stored) => {
-              if (stored.event.type !== "run.updated") return active;
-              const next = new Set(active);
-              const { id, status } = stored.event.payload;
-              if (executing(status)) next.add(id);
-              else if (!pending(status)) next.delete(id);
-              return next;
-            },
-          ),
+      : yield* sink.stream({ afterSequence }).pipe(
+          Stream.filter(restartActivityChanged),
+          Stream.mapEffect(() => activeRuns),
           Stream.filter((active) => active.size === 0),
           Stream.runHead,
           Effect.timeoutOption(deadline),
@@ -81,6 +101,35 @@ export const drainBeforeRestart = Effect.fn("RestartDrain.drainBeforeRestart")(f
     waitedMs: (yield* Clock.currentTimeMillis) - startedAt,
     activeRunIds: remaining,
   } satisfies ServerRestartDrain;
+});
+
+export const awaitRestartEffects = Effect.fn("RestartDrain.awaitRestartEffects")(function* () {
+  const outbox = yield* EffectOutbox.EffectOutboxV2;
+  const sink = yield* EventSink.EventSinkV2;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  while (true) {
+    const afterSequence = yield* sink.latestSequence();
+    const running = yield* outbox.runningEffects;
+    const blocking = [];
+    for (const effect of running) {
+      if (
+        effect.request.type === "provider-turn.start" ||
+        effect.request.type === "provider-turn.restart"
+      ) {
+        const projection = yield* projections.getRuntimeRecoveryProjection(effect.threadId);
+        if (restartPausedRunIds(projection).includes(effect.request.runId)) continue;
+      }
+      blocking.push(effect);
+    }
+    if (blocking.length === 0) return;
+    yield* Effect.raceFirst(
+      Effect.forEach(blocking, (effect) => outbox.awaitSettled(effect.id), {
+        concurrency: "unbounded",
+        discard: true,
+      }),
+      sink.stream({ afterSequence }).pipe(Stream.filter(restartActivityChanged), Stream.runHead),
+    );
+  }
 });
 
 export const makeHandoffDrain = Effect.gen(function* () {

@@ -14,7 +14,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as EffectOutbox from "./EffectOutbox.ts";
-import { drainBeforeRestart } from "./RestartDrain.ts";
+import { awaitRestartEffects, drainBeforeRestart, restartPausedRunIds } from "./RestartDrain.ts";
 import { legacyRestartHandoffs } from "./RestartHandoffImport.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -39,8 +39,7 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
         : undefined;
     yield* outbox.prepareRestart(epoch);
     const receipt = yield* Effect.gen(function* () {
-      const running = yield* outbox.runningEffects;
-      yield* Effect.forEach(running, (effect) => outbox.awaitSettled(effect.id), { discard: true });
+      yield* awaitRestartEffects();
       return yield* outbox.withTransaction(
         Effect.gen(function* () {
           const threadIds = yield* projections.getRecoveryThreadIds("runtime");
@@ -69,25 +68,7 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
                     task.status === "waiting",
                 )
                 .map((task) => task.id),
-              pausedRunIds: projection.runs
-                .filter(
-                  (run) =>
-                    requests.some(
-                      (request) =>
-                        request.kind !== "dynamic_tool_call" &&
-                        request.kind !== "auth_refresh" &&
-                        projection.nodes.some(
-                          (node) => node.id === request.nodeId && node.runId === run.id,
-                        ),
-                    ) ||
-                    projection.turnItems.some(
-                      (item) =>
-                        item.type === "secret_request" &&
-                        item.secretStatus === "pending" &&
-                        item.runId === run.id,
-                    ),
-                )
-                .map((run) => run.id),
+              pausedRunIds: restartPausedRunIds(projection),
               paused:
                 projection.thread.archivedAt !== null ||
                 projection.thread.deletedAt !== null ||
