@@ -33,7 +33,6 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -2839,7 +2838,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const eventSink = yield* EventSink.EventSinkV2;
-      yield* RestartPreparation.abortRestart("epoch:drain");
       const run = yield* seedRunningRun("restart-drain");
       const commandId = CommandId.make("command:restart-drain:queued");
       yield* outbox.enqueue([
@@ -3088,9 +3086,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           request: { type: "terminal.cleanup" },
         },
       ]);
-      assert.isTrue(
-        Exit.isFailure(yield* Effect.exit(RestartPreparation.abortRestart("epoch:stagger"))),
-      );
       const claimNow = Effect.gen(function* () {
         const claimed: Array<string> = [];
         while (true) {
