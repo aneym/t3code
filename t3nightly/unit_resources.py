@@ -1,7 +1,7 @@
 import socket
 
 
-DEFAULT_PROPERTIES = {"CPUQuota": "200%", "CPUWeight": "20", "IOWeight": "20"}
+DEFAULT_PROPERTIES = {"CPUQuota": "200%", "CPUWeight": "20"}
 HOST_OVERRIDES = {}
 
 
