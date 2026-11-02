@@ -48,6 +48,7 @@ def secret_parked(config, root):
 def release(config, root, row, reason):
     (root / f"{config['host']}.ready").unlink(missing_ok=True)
     if row.get("released"):
+        (root / f"{config['host']}.stop").touch()
         save(root, row, ready=False)
         return
     secret_parked(config, root)
@@ -95,6 +96,8 @@ def worker(root, lock_fd):
         row = read(root / "state.json", {"outcome": "waiting-lock", "host": config["host"]})
         save(root, row, pid=os.getpid(), parentPid=os.getppid(), watcher="watching")
         stop = root / f"{config['host']}.stop"
+        if row.get("released"):
+            stop.touch()
         expires = read(root / "deadline.json")["expiresAt"]
         held = False
         try:
