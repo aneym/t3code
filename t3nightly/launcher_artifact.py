@@ -10,12 +10,14 @@ from .install_runtime import activate
 from .release_signatures import verify_cli
 
 
-def ensure_launcher(run, version):
+def ensure_launcher(run, version, *, update_config=True):
     runtime = run.home / "runtime"
     target = runtime / "launcher"
     pin = runtime / "launcher-pin.json"
     validate_drain_pin(run)
     raw = getattr(run.args, "launcher_artifact", "")
+    if not update_config and (not target.is_dir() or changed(run)):
+        raise ValueError("launcher change requires a stopped service window")
     if raw and target.is_dir() and not changed(run):
         raw = ""
     if target.is_dir() and (not raw or getattr(run, "launcher_applied", False)):
@@ -27,7 +29,7 @@ def ensure_launcher(run, version):
         if not pin.exists():
             atomic_text(pin, json.dumps({"protocol": 3, "digest": file_digest(target / "t3"), "source": "adopted-existing", "lastKnownGood": str(target)}) + "\n")
         config_path = runtime / "launcher-config.json"
-        if config_path.is_file():
+        if update_config and config_path.is_file():
             validate_drain_pin(run)
             config = json.loads(config_path.read_text())
             desired = run.args.drain_s * 1000

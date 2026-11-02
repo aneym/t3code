@@ -53,10 +53,10 @@ def service(run, action):
         raise ValueError(f"intended service {action} failed")
 
 
-def activate(run, version):
+def activate(run, version, *, rollback=False):
     from .launcher_artifact import ensure_launcher
 
-    launcher = ensure_launcher(run, version)
+    launcher = run.home / "runtime/launcher/t3" if rollback else ensure_launcher(run, version)
     sandbox = run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal."))
     if sandbox:
         if launcher != run.home / "runtime/launcher/t3":
@@ -278,7 +278,10 @@ def install(run):
                 else:
                     stop()
                     restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")
-                    activate(run, previous)
+                    from .launcher_artifact import rollback_launcher
+
+                    rollback_launcher(run)
+                    activate(run, previous, rollback=True)
                     stopped = False
                     run.step("hard-binary-rollback", method="maintenance", database_preserved=True)
                 serving(run, previous, observed["oldRuntime.digest"])
@@ -307,7 +310,7 @@ def install(run):
                         raise ValueError("restored migration history differs from pre-install database")
                 if restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime"):
                     run.step("hard-restore-runtime", version=previous)
-                activate(run, previous)
+                activate(run, previous, rollback=True)
                 stopped = False
                 serving(run, previous, observed["oldRuntime.digest"])
                 if not args.rehearsal:
@@ -376,7 +379,7 @@ def install(run):
     if outcome in ("installed", "current"):
         from .install_backup_retention import best_effort
         root = Path(backup["path"]).parent.parent if backup.get("path") else run.backups
-        receipt["backupRetention"] = best_effort(root, backup.get("path"), run.home)
-    write(path, receipt)
+        retention = best_effort(root, backup.get("path"), run.home)
+        (path.parent / "backup-retention.json").write_text(json.dumps(retention, indent=2) + "\n")
     run.step("hard-install-receipt", path=str(path), outcome=outcome)
     return run.finish(outcome, f"hard install {outcome}: {previous} -> {args.version}")

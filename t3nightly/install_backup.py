@@ -39,6 +39,13 @@ def quiescent(db):
         raise ValueError("database users remain or lsof could not establish quiescence")
 
 
+def require_space(root, size, *, clone=False):
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    required = size * 2 if clone else size + max(size // 10, 512 * 1024 * 1024)
+    if shutil.disk_usage(root).free < required:
+        raise ValueError(f"insufficient rollback backup space on {root}; requires {required} bytes")
+
+
 def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
     started = time.monotonic()
     source = run.db.resolve()
@@ -54,12 +61,11 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
         else:
             volume_reason = "same-volume space guard refused clone; configured-root full copy"
 
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    require_space(run.backups, size)
+    require_space(root, size, clone=root == clone_root)
     destination = root / uuid.uuid4().hex
     destination.mkdir(mode=0o700)
     run.backup_attempt_directories.append(destination)
-    if shutil.disk_usage(root).free < max(size * 2, 512 * 1024 * 1024):
-        raise ValueError("insufficient rollback backup disk space")
     target = destination / "statev2.sqlite"
     clone = sys.platform == "darwin" and root == clone_root and source.stat().st_dev == root.stat().st_dev
     if clone:
@@ -73,7 +79,7 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
         if not clone:
             destination.rmdir()
             root = run.backups
-            root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            require_space(root, size)
             destination = root / uuid.uuid4().hex
             destination.mkdir(mode=0o700)
             run.backup_attempt_directories.append(destination)
@@ -89,6 +95,8 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
         run.step("hard-backup-estimate", stoppedWork=["sqlite-backup", "quick_check", "identity", "sha256"], localRestoreCopy=work, rollback=rollback, estimateSeconds=max(work["totalSeconds"], rollback["totalSeconds"]), budgetSeconds=budget)
         if max(work["totalSeconds"], rollback["totalSeconds"]) > budget:
             raise ValueError(f"local backup or rollback exceeds --offbox-stop-s {budget} estimate; nothing stopped")
+    require_space(run.backups, size)
+    require_space(root, size, clone=clone)
     stop()
     if sys.platform == "darwin":
         quiescent(source)
@@ -124,7 +132,7 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
                 if root != run.backups:
                     destination.rmdir()
                     root = run.backups
-                    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    require_space(root, size)
                     destination = root / uuid.uuid4().hex
                     destination.mkdir(mode=0o700)
                     run.backup_attempt_directories.append(destination)
@@ -136,20 +144,15 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
         fsync(destination)
         check = verify(target, expected, deadline)
         local = {"sha256": checksum(target, deadline), "path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous, "method": method, "methodReason": reason, "volumeDevice": root.stat().st_dev, "backupRoot": str(root)}
-        from .install_backup_retention import mark
-
-        mark(target, local, run.home)
-    elif clone:
-        for suffix in ("", "-wal"):
-            original = Path(str(source) + suffix)
-            if original.exists():
-                subprocess.run(["/bin/cp", "-c", str(original), str(target) + suffix], check=True, capture_output=True, timeout=30)
     else:
         database_copy(source, target, time.monotonic() + 120 + size / copy_rate(source))
     metadata = {"path": str(target), "method": method if keep_local else ("apfs-clone" if clone else "sqlite-backup"), "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
     if keep_local:
         metadata["local"] = local
     (destination / "payload.json").write_text(json.dumps(metadata))
+    from .install_backup_retention import best_effort
+
+    run.step("backup-retention", **best_effort(root, target, run.home, metadata=metadata))
     run.step("hard-backup", **metadata)
     return metadata
 

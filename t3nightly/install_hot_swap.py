@@ -29,8 +29,10 @@ from .release_receipts import INSTALL_SCHEMA, write
 
 
 def measure_candidate(sandbox, manifest):
-    baseline = [measure_startup_sample(sandbox, manifest, f"baseline-{index}", binary=sandbox.old / "t3", version=sandbox.old.name) for index in range(1, 4)]
-    samples = [measure_startup_sample(sandbox, manifest, index) for index in range(1, 4)]
+    baseline, samples = [], []
+    for index in range(1, 4):
+        baseline.append(measure_startup_sample(sandbox, manifest, f"baseline-{index}", binary=sandbox.old / "t3", version=sandbox.old.name))
+        samples.append(measure_startup_sample(sandbox, manifest, index))
     measured = [sample["candidateMeasuredStartupMs"] for sample in samples]
     valid = all(type(value) is int for value in measured)
     receipt = {**samples[-1], "candidateMeasuredStartupMs": int(statistics.median(measured)) if valid else None, "samplesMs": measured, "aggregation": "median", "samples": samples}
@@ -62,7 +64,7 @@ def measure_startup_sample(sandbox, manifest, index, *, binary=None, version=Non
             host_idle = (after[1] - before[1]) / max(1, after[0] - before[0]) >= 0.2
         else:
             host_idle = os.getloadavg()[0] <= max(1, (os.cpu_count() or 1) * 0.5)
-        return host_idle and sandbox.query("SELECT count(*) FROM orchestration_v2_projection_runs WHERE status IN ('running','starting','preparing')") == [(0,)]
+        return host_idle
     idle_deadline = time.monotonic() + getattr(sandbox.args, "startup_idle_s", 60)
     while not idle() and time.monotonic() < idle_deadline:
         time.sleep(0.5)
@@ -99,12 +101,13 @@ def measure_startup_sample(sandbox, manifest, index, *, binary=None, version=Non
                     if process.poll() is not None:
                         log.flush()
                         if process.returncode:
-                            raise ValueError("candidate warm startup probe failed")
+                            receipt["reason"] = "warm-startup-probe-unsupported-or-failed"
+                            break
                         receipt["candidateMeasuredStartupMs"] = max(1, math.ceil((time.monotonic() - started) * 1000))
                         break
                     time.sleep(0.05)
                 if receipt["candidateMeasuredStartupMs"] is None:
-                    raise ValueError("candidate startup measurement timed out before serving")
+                    receipt.setdefault("reason", "startup-probe-timeout")
             finally:
                 try:
                     if process.poll() is None:
@@ -152,7 +155,7 @@ def mark_candidate(run, manifest, rehearsal, compatibility, observed):
     host = platform.node()
     measured = startup.get("acquireToReadyMs")
     budget = baseline.get("acquireToReadyMs")
-    if startup.get("host") != host or baseline.get("host") != host or startup.get("idle") is not True or baseline.get("idle") is not True or time.time() - startup.get("measuredAt", 0) > 3600:
+    if startup.get("host") != host or baseline.get("host") != host or startup.get("idle") is not True or baseline.get("idle") is not True or not 0 <= time.time() - startup.get("measuredAt", 0) <= 3600:
         run.step("hot-swap-fallback", reason="fresh-idle-host-startup-baseline-required")
         return False
     if baseline.get("runtimeDigest") != observed["oldRuntime.digest"]:
@@ -165,7 +168,12 @@ def mark_candidate(run, manifest, rehearsal, compatibility, observed):
         run.step("hot-swap-fallback", reason="candidate-startup-measurement-missing-or-invalid")
         return False
     config = json.loads((run.home / "runtime/launcher-config.json").read_text())
-    budget = min(budget + max(math.ceil(budget * 0.15), 500), config["holdBudgetMs"])
+    baseline_samples = [sample.get("acquireToReadyMs") for sample in baseline.get("samples", [])]
+    if len(baseline_samples) != 3 or any(type(value) is not int or value <= 0 for value in baseline_samples):
+        run.step("hot-swap-fallback", reason="independent-host-baseline-samples-required")
+        return False
+    margin = min(max(math.ceil(budget * 0.15), 500, max(baseline_samples) - min(baseline_samples)), config["holdBudgetMs"])
+    budget = min(budget + margin, config["holdBudgetMs"])
     if measured > budget:
         run.step("hot-swap-fallback", reason="candidate-startup-exceeds-launcher-budget", measured_ms=measured, budget_ms=budget)
         return False
@@ -222,7 +230,7 @@ def install(run):
     available = supported(environment, run) and qualification["qualified"] and not maintenance
     if available and not mark_candidate(run, manifest, rehearsal, compatibility, observed):
         available, maintenance = False, True
-    run.report["hotSwap"] = {"supported": available, "method": "launcher-ipc" if available else "maintenance" if maintenance else "hot-swap-unsupported", "qualification": qualification}
+    run.report["hotSwap"] = {"fallbackReasons": [step for step in run.report.get("steps", []) if step.get("step") == "hot-swap-fallback"], "supported": available, "method": "launcher-ipc" if available else "maintenance" if maintenance else "hot-swap-unsupported", "qualification": qualification}
     if not available:
         if not supported(environment, run):
             run.step("hot-swap-unsupported", reason="server-capability-or-ingress-unsupported", fallback="drain-then-hard-install")
@@ -232,6 +240,7 @@ def install(run):
             run.step("hot-swap-fallback", reason=reason)
         if maintenance:
             run.step("maintenance-required", fallback="drain-then-hard-install")
+        run.report["hotSwap"]["fallbackReasons"] = [step for step in run.report["steps"] if step.get("step") in ("hot-swap-fallback", "hot-swap-unsupported")]
         return drain_then_hard(run, previous)
     from .connector_artifact import ensure_connector
 

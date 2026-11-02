@@ -84,8 +84,10 @@ def main():
     print(json.dumps({"count": len(rows), "logicalBytes": sum(row["bytes"] for row in rows), "allocatedBytes": sum(row["allocatedBytes"] for row in rows), "privateBytes": sum(row["allocatedBytes"] for row in rows) if sys.platform != "darwin" else None, "privateSizeReason": "Linux full copies use allocated blocks; APFS shared extent ownership requires volume df before/after", "backups": rows, "legacyOrForeign": [row for row in all_rows if not row["marked"]]}))
 
 
-def best_effort(root, current, home):
+def best_effort(root, current, home, *, metadata=None):
     try:
+        if current and metadata is not None:
+            mark(current, metadata, home)
         return retain(root, current, home)
     except Exception as error:
         return {"error": f"{type(error).__name__}: {error}"}

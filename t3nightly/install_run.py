@@ -298,7 +298,7 @@ class Run:
 
         validate_drain_pin(self)
 
-        launcher = ensure_launcher(self, version)
+        launcher = ensure_launcher(self, version, update_config=False)
         with self.service_plist.open("rb") as handle:
             unit = plistlib.load(handle)
         before = plistlib.dumps(unit)

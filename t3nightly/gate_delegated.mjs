@@ -1,58 +1,66 @@
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 
 export function delegatedDrain({ session, opts, Effect, Stream, applyEvent, cli }) {
   return Effect.gen(function* () {
-    const observations = [];
+    const path = opts.evidence;
+    const proof = opts.phase === "before" ? { check: "delegated-child-drain", checks: [], observations: [] } : JSON.parse(readFileSync(path, "utf8"));
     const states = new Map();
-    const listeners = new Set();
-    const fail = (message) => {
-      console.error(JSON.stringify({ check: "delegated-child-drain", error: message, observations }));
-      return new Error(message);
+    const persist = () => writeFileSync(path, JSON.stringify(proof, null, 2) + "\n");
+    const mark = (name, ok, detail) => {
+      proof.checks.push({ name, ok, at: new Date().toISOString(), ...detail });
+      persist();
     };
     const subscribe = (threadId) => session.client["orchestration.subscribeThread"]({ threadId }).pipe(
       Stream.runForEach(item => Effect.sync(() => {
         const p = item.kind === "snapshot" ? item.projection : applyEvent(states.get(threadId), item.event);
         states.set(threadId, p);
-        observations.push({ threadId, runs: p.runs.map(({id, status}) => ({id, status})), tasks: p.subagents.map(({id, status, childThreadId, completionDelivery}) => ({id, status, childThreadId, completionDelivery})) });
-        for (const check of [...listeners]) check();
+        proof.observations.push({ at: new Date().toISOString(), threadId, runs: p.runs, tasks: p.subagents });
+        persist();
       })), Effect.forkScoped);
-    const wait = (label, predicate) => Effect.callback(resume => {
-      let done = false;
-      const check = () => { if (!done && predicate()) { done = true; listeners.delete(check); resume(Effect.void); } };
-      listeners.add(check); check();
-      const timer = setInterval(check, 100);
-      return Effect.sync(() => { clearInterval(timer); listeners.delete(check); });
-    }).pipe(Effect.timeout("35 seconds"), Effect.catchCause(() => Effect.fail(fail(`fixture failed waiting for ${label}`))));
-    const parent = yield* cli("start", "--provider", "drainReplay", "--model", "showcase", opts.project, "DRAIN_PARENT");
-    yield* subscribe(parent.threadId);
-    const parentState = () => states.get(parent.threadId);
-    yield* wait("real delegated task and waiting parent", () => parentState()?.subagents.some(t => t.childThreadId));
-    const task = parentState().subagents.find(t => t.childThreadId);
-    yield* subscribe(task.childThreadId);
-    const childState = () => states.get(task.childThreadId);
-    yield* wait("child hold", () => childState()?.runs.some(r => r.status === "running") && existsSync(`${opts.home}/runtime/drain-replay/observations.ndjson`) && readFileSync(`${opts.home}/runtime/drain-replay/observations.ndjson`, "utf8").includes("child-hold-entered"));
-    const child = childState().runs.find(r => r.status === "running");
-    const parentWaitingBeforeDrain = parentState().runs.find(r => r.id === parent.runId)?.status === "waiting";
-    observations.push({milestone: "before-drain", parentWaiting: parentWaitingBeforeDrain, childRunning: true, realMcpDelegation: true});
-    const epoch = randomUUID();
-    let drain;
-    try {
-      ({ drain } = yield* session.client["server.prepareRestart"]({epoch, drainTimeoutMs: 120000}));
-      const parentWaiting = parentState().runs.find(r => r.id === parent.runId)?.status === "waiting";
-      const taskNotCancelled = !["cancelled", "failed", "interrupted"].includes(parentState().subagents.find(t => t.id === task.id)?.status);
-      const childContinues = childState().runs.find(r => r.id === child.id)?.status === "running";
-      observations.push({ milestone: "after-drain-before-release", parentWaiting, taskNotCancelled, childContinues, drain });
-      writeFileSync(`${opts.home}/runtime/drain-replay/parent-release`, "release\n");
-      writeFileSync(`${opts.home}/runtime/drain-replay/release`, "release\n");
-      if (!parentWaitingBeforeDrain) throw fail("fixture: parent did not enter waiting before drain; product verdict unavailable");
-      if (!parentWaiting || !taskNotCancelled || !childContinues) throw fail("product: drain cut delegated work or cancelled the waiting parent task");
-    } finally {
-      yield* session.client["server.abortRestart"]({epoch});
+    const wait = (label, predicate) => Effect.promise(async () => {
+      const deadline = Date.now() + 60000;
+      while (!predicate()) {
+        if (Date.now() > deadline) { mark(label, false, {}); throw new Error(`waiting for ${label}`); }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    });
+    const open = task => task != null && ["pending", "running", "working", "waiting"].includes(task.status) && task.result == null;
+    const agentPath = `${opts.home}/runtime/drain-replay/`;
+    if (opts.phase === "before") {
+      proof.parent = yield* cli("start", "--provider", "drainReplay", "--model", "showcase", opts.project, "DRAIN_PARENT");
+      yield* subscribe(proof.parent.threadId);
+      const parent = () => states.get(proof.parent.threadId);
+      yield* wait("real-mcp-delegation", () => parent()?.subagents.some(t => t.childThreadId));
+      proof.task = parent().subagents.find(t => t.childThreadId);
+      yield* subscribe(proof.task.childThreadId);
+      const child = () => states.get(proof.task.childThreadId);
+      yield* wait("child-held", () => child()?.runs.some(r => r.status === "running") && existsSync(`${agentPath}observations.ndjson`) && readFileSync(`${agentPath}observations.ndjson`, "utf8").includes("child-hold-entered"));
+      proof.child = child().runs.find(r => r.status === "running");
+      writeFileSync(`${agentPath}parent-release`, "release\n");
+      yield* wait("parent-first-run-completed", () => parent().runs.some(r => r.id === proof.parent.runId && r.status === "completed"));
+      const ok = open(parent().subagents.find(t => t.id === proof.task.id));
+      mark("before-drain", ok, { parent: parent().subagents, childRuns: child().runs, realMcpDelegation: true });
+      if (!ok) throw new Error("parent task was not open before drain");
+    } else {
+      yield* subscribe(proof.parent.threadId);
+      yield* subscribe(proof.task.childThreadId);
+      const parent = () => states.get(proof.parent.threadId);
+      const child = () => states.get(proof.task.childThreadId);
+      yield* wait("restart-projections", () => parent() && child());
+      const task = parent().subagents.find(t => t.id === proof.task.id);
+      mark("after-restart", open(task), { task, childRuns: child().runs, sameTaskId: task?.id === proof.task.id });
+      if (!open(task)) { proof.ok = false; persist(); return proof; }
+      yield* wait("child-resumed", () => child().runs.some(r => r.status === "running"));
+      mark("child-resumed", true, { sameTaskId: true, runs: child().runs });
+      writeFileSync(`${agentPath}release`, "release\n");
+      yield* wait("child-completed", () => child().runs.some(r => r.status === "completed"));
+      mark("child-completed", true, { runs: child().runs });
+      yield* wait("parent-completion-delivered", () => parent().subagents.find(t => t.id === proof.task.id)?.result != null && parent().runs.some(r => r.ordinal > 1 && r.status === "completed") && parent().messages.some(m => m.role === "assistant" && m.text.includes("PARENT_RECEIVED_CHILD_FINISHED")));
+      mark("parent-completion-delivered", true, { runs: parent().runs, tasks: parent().subagents, messages: parent().messages });
+      proof.agentObservations = readFileSync(`${agentPath}observations.ndjson`, "utf8").trim().split("\n").map(JSON.parse);
+      proof.ok = proof.checks.every(c => c.ok);
+      persist();
     }
-    yield* wait("same child run completed", () => childState().runs.find(r => r.id === child.id)?.status === "completed");
-    yield* wait("parent received completion", () => parentState().messages.some(m => m.role === "assistant" && m.text.includes("PARENT_RECEIVED_CHILD_FINISHED")));
-    const agentObservations = readFileSync(`${opts.home}/runtime/drain-replay/observations.ndjson`, "utf8").trim().split("\n").map(JSON.parse);
-    return {check: "delegated-child-drain", parentThreadId: parent.threadId, parentRunId: parent.runId, taskId: task.id, childThreadId: task.childThreadId, childRunId: child.id, parentWaiting: true, taskNotCancelled: true, sameChildRunCompleted: true, parentReceivedCompletion: true, drain, observations, agentObservations};
+    return proof;
   });
 }

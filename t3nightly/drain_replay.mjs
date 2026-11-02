@@ -1,4 +1,4 @@
-import { existsSync, appendFileSync } from "node:fs";
+import { existsSync, appendFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL(".", import.meta.url));
 const record = (observation) => appendFileSync(`${root}observations.ndjson`, JSON.stringify({ observation, at: new Date().toISOString() }) + "\n");
@@ -30,7 +30,8 @@ export async function drainTurn(params, sessionId, count, send, signal) {
     if (!existsSync(`${root}parent-release`)) throw new Error("Replay parent setup deadline");
     reply("Delegated; waiting for child.");
     record("parent-provider-turn-returned");
-  } else if (prompt.includes("DRAIN_CHILD") && !prompt.includes("DRAIN_PARENT")) {
+  } else if ((prompt.includes("DRAIN_CHILD") && !prompt.includes("DRAIN_PARENT")) || existsSync(`${root}child-session-${sessionId}`)) {
+    writeFileSync(`${root}child-session-${sessionId}`, "child\n");
     record("child-hold-entered");
     reply("CHILD_HOLD");
     const deadline = Date.now() + 240000;
