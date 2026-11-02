@@ -153,7 +153,7 @@ def advisory(run, backup):
     output = run.state / "backup-quick-check.json"
     log = run.state / "backup-quick-check.log"
     with log.open("ab") as handle:
-        process = subprocess.Popen([sys.executable, "-B", "-m", "t3nightly.install_backup", backup["path"], str(output)], cwd=Path(__file__).resolve().parent.parent, stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True)
+        process = subprocess.Popen([sys.executable, "-B", "-m", "t3nightly.install_backup", str(Path(backup["path"]).resolve()), str(output.resolve())], cwd=Path(__file__).resolve().parent.parent, stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True)
     run.step("advisory-backup-check", pid=process.pid, output=str(output), log=str(log))
 
 
