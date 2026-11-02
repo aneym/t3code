@@ -314,6 +314,7 @@ export const make = Effect.gen(function* () {
         ...(yield* restartRunUpdates({
           threadId: projection.thread.id,
           runs,
+          allRuns: projection.runs,
           source: continuationSource,
           continueAfterRestart,
           now,
