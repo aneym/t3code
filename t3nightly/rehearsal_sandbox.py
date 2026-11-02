@@ -19,6 +19,7 @@ from .headless_env import claude_lb_lines, headless_bin, pin_settings
 from .install_strays import port_listeners
 from .rehearsal_wait import wait_for
 from .release_manifest import history_digest
+from .unit_resources import properties
 
 SERVER_OWNED_EXIT = 78
 OWNED_RETRIES = 3
@@ -244,6 +245,7 @@ class Sandbox:
                 environment = self.service_environment()
                 assignments = " ".join(f'{key}="{value}"' for key, value in environment.items())
                 handle.write(f"[Unit]\nDescription=T3 isolated rehearsal\n[Service]\nExecStart={command}\nEnvironment={assignments}\nWorkingDirectory={self.home}\nRestart=on-failure\nStandardOutput=append:{log}\nStandardError=append:{log}\n")
+                handle.write("\n".join(f"{key}={value}" for key, value in properties().items()) + "\n")
             subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=30)
             subprocess.run(["systemctl", "--user", "start", f"{self.label}.service"], check=True, timeout=60)
             self.started = True
