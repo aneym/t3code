@@ -70,7 +70,7 @@ def measure_startup_sample(sandbox, manifest, index, *, binary=None, version=Non
         time.sleep(0.5)
     idle_before = idle()
     if not idle_before:
-        receipt = {"idle": False, "candidateMeasuredStartupMs": None, "acquireToReadyMs": None, "reason": "idle-wait-deadline", "version": version}
+        receipt = {"idle": False, "candidateMeasuredStartupMs": None, "acquireToReadyMs": None, "reason": "idle-wait-deadline", "version": version, "candidateDigest": manifest["digest"], "runtimeDigest": file_digest(binary)}
         (sandbox.evidence / f"candidate-startup-{index}.json").write_text(json.dumps(receipt) + "\n")
         return receipt
     root = sandbox.home / "snapshots"
