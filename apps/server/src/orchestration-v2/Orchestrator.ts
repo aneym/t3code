@@ -26,6 +26,7 @@ import {
   restartHandoffRunIds,
   awaitsRestartContinuation,
   childAwaitsRestartContinuation,
+  threadAwaitsRestartContinuation,
 } from "./RestartAwaits.ts";
 import { restartDispatchAllowed } from "./RestartDispatchPolicy.ts";
 import {
@@ -849,7 +850,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
-  /** The driver when this provider runs `/goal` natively, else undefined. */
   const goalDriverFor = Effect.fn("Orchestrator.goalDriverFor")(function* (
     command: OrchestrationV2ServerCommand,
     providerInstanceId: ProviderInstanceId,
@@ -5678,12 +5678,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const shouldQueue =
       ((yield* effectOutbox.restartPrepared) !== undefined ||
         (command.restartContinuationOfRunId === undefined &&
-          projection.runs.some((run) => run.restartHandoffPending)) ||
+          (yield* mapDispatchError(command)(
+            threadAwaitsRestartContinuation(effectOutbox, projection.runs),
+          ))) ||
         queueBehindRun !== undefined ||
         completionBlocked) &&
       startsOrQueuesRun;
-    // Client messages resume held queues; server continuations and scheduled tasks do not.
-    // Provider failure or usage limits re-hold the queue.
     const worktreeSetupUnresolved = worktreeSetupPending(projection);
     const sentByUserFromClient =
       command.retrySteeringBatch !== true &&
@@ -12012,6 +12012,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         yield* childAwaitsRestartContinuation(
           effectOutbox,
+          projectionStore,
           taskRuns.length === 0 ? childControls.runs : taskRuns,
           childRun,
           options?.settledContinuationOf,
@@ -12270,13 +12271,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       yield* childAwaitsRestartContinuation(
         effectOutbox,
+        projectionStore,
         childControls.runs,
         resultRun,
         options?.settledContinuationOf,
       )
     )
       return;
-    // Callers hold the parent lock; dismiss takes the child lock, as follow-up intake does.
     const { runtimeRequests } = yield* projectionStore.getThreadRecords(childThreadId, [
       "runtimeRequests",
     ]);
@@ -13356,7 +13357,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 threadId,
                 Effect.gen(function* () {
                   const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
-                  // Only the current delivery's run can settle its cohort; revisiting historical delivery runs repeatedly reloads the thread.
                   const openDeliveryMessageIds = projection.runs.flatMap((run) =>
                     run.delegatedCompletion?.delivery == null
                       ? []

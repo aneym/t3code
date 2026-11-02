@@ -496,7 +496,6 @@ export const make = Effect.gen(function* () {
           })),
         );
       }
-      // Native subagent threads have no runs to settle their runless root turns.
       events.push(
         ...(yield* endRunlessRootTurns({
           threadId: projection.thread.id,
@@ -681,7 +680,7 @@ export const make = Effect.gen(function* () {
         ),
       );
       const enabled =
-        continueAfterRestart !== null &&
+        continueAfterRestart === null ||
         resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
           .continueThreadsAfterServerUpdate;
       const handoff = handoffs.find((effect) => effect.threadId === threadId)?.request;

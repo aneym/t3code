@@ -515,7 +515,6 @@ export default function ChatView(props: ChatViewProps) {
     status: threadStatus,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
-  // Held back briefly, so a quick sync does not flash a status line at the end of the timeline.
   const delayedThreadSyncPhase = useDelayedStatus(routeThreadKey, threadSyncPhase);
   const activeProviderThread = serverProjection?.providerThreads.find(
     (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
@@ -560,8 +559,6 @@ export default function ChatView(props: ChatViewProps) {
   const clientSettingsHydrated = useClientSettingsHydrated();
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
-  // Selects primitives: an object here is new on every router store update, which
-  // re-renders ChatView on unrelated navigation state changes.
   const citationHref = useLocation({ select: (location) => location.href });
   const citationKey = useLocation({
     select: (location) => location.state.assistantCitationActivation ?? location.state.__TSR_key,
@@ -3011,7 +3008,8 @@ export default function ChatView(props: ChatViewProps) {
   const scrollToEndSummary = threadQueueSummary(childInputNow !== null, queuedRunCount);
   // The end of the timeline holds the thread's present and next turns: what it is doing now,
   // its lifecycle status, guest messages awaiting you, then your queued messages.
-  const restartPause = restartPauseLabel(serverProjection?.runs ?? []);
+  const restartRuns = serverProjection?.runs;
+  const restartPause = restartRuns === undefined ? null : restartPauseLabel(restartRuns);
   const timelineFooter =
     restartPause === null &&
     pendingHandoff === null &&

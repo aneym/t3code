@@ -21,10 +21,10 @@ export const delegatedRestartPending = Effect.fn("DelegatedRestartPending.read")
     const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
     const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
     if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
-    return yield* childAwaitsRestartContinuation(outbox, runs, run);
+    return yield* childAwaitsRestartContinuation(outbox, projections, runs, run);
   }
   const progress = delegatedTaskProgress(child);
   if (progress.state !== "result_available") return true;
   if (progress.resultRun === undefined) return false;
-  return yield* childAwaitsRestartContinuation(outbox, child.runs, progress.resultRun);
+  return yield* childAwaitsRestartContinuation(outbox, projections, child.runs, progress.resultRun);
 });

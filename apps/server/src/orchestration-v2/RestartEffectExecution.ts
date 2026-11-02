@@ -30,11 +30,20 @@ export const executeRestartEffect = Effect.fn("RestartEffectExecution.execute")(
         sourceRunId: request.sourceRunId,
         attempt: effect.attemptCount,
       });
-      if (declined !== undefined) {
-        const { runs } = yield* threads.getThreadRecords(effect.threadId, ["runs"]);
-        const source = runs.find((run) => run.id === request.sourceRunId);
-        if (source !== undefined) yield* recordRestartDeclined(effect.threadId, source, declined);
-      }
+      const { runs, runtimeRequests } = yield* threads.getThreadRecords(effect.threadId, [
+        "runs",
+        "runtimeRequests",
+      ]);
+      const source = runs.find((run) => run.id === request.sourceRunId);
+      if (
+        source !== undefined &&
+        !runs.some((run) => run.restartContinuationOfRunId === source.id) &&
+        !runtimeRequests.some(
+          (request) =>
+            request.status === "pending" && request.restartContinuationRunIds?.includes(source.id),
+        )
+      )
+        yield* recordRestartDeclined(effect.threadId, source, declined);
       yield* threads.recoverDelegatedTask(effect.threadId, request.sourceRunId);
       return;
     }

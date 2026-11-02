@@ -171,7 +171,7 @@ export function makeSubagentConversationArtifacts(input: {
 
 export function subagentResultForRun(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
-  run: Pick<OrchestrationV2Run, "id" | "status" | "restartDeclined">,
+  run: Pick<OrchestrationV2Run, "id" | "status" | "restartDeclined" | "restartHandoffPending">,
 ): {
   readonly text: string;
   readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
@@ -216,7 +216,8 @@ export function subagentResultForRun(
       ? "Child task completed without an assistant result."
       : `Child task ended with status ${run.status}.`;
   const text =
-    run.restartDeclined === undefined
+    run.status === "completed" ||
+    (run.restartDeclined === undefined && run.restartHandoffPending !== false)
       ? (failureText ?? output ?? fallback)
       : [failureText, output, "Child task stopped by a T3 Code update; resend to continue."]
           .filter((text): text is string => text !== undefined && text.length > 0)

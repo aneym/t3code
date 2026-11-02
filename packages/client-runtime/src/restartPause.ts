@@ -13,7 +13,10 @@ type RestartRun = Pick<
 function restartPausedRunIds(runs: ReadonlyArray<RestartRun>) {
   const continued = new Set(
     runs.flatMap((run) =>
-      run.restartContinuationOfRunId === undefined ? [] : [run.restartContinuationOfRunId],
+      run.restartContinuationOfRunId === undefined ||
+      !["queued", "preparing", "starting", "running", "waiting"].includes(run.status)
+        ? []
+        : [run.restartContinuationOfRunId],
     ),
   );
   return new Set(

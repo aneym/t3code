@@ -209,7 +209,6 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
   }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
-    if (!enabled) return;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
     const projection = yield* threads.getThreadRecords(
@@ -219,10 +218,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     );
     if (
       !input.prepared &&
+      enabled !== null &&
       !resolveProjectSettings(enabled, projection.thread.projectId).settings
         .continueThreadsAfterServerUpdate
     )
-      return "continuation_disabled" as const;
+      return;
     if (
       projection.messages.some((message) => message.id === messageId) ||
       projection.runs.some((run) => run.restartContinuationOfRunId === input.sourceRunId)
@@ -265,7 +265,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     )
       return;
     if (!input.prepared && restartSourceSuperseded(projection.runs, source)) return;
-    if (projection.thread.providerInstanceId !== source.providerInstanceId) return;
+    if (projection.thread.providerInstanceId !== source.providerInstanceId)
+      return "dispatch_failed" as const;
     // A turn that keeps crashing the server would otherwise restart it forever.
     let chainLength = 0;
     const loopWindowStart =
