@@ -1,3 +1,4 @@
+import { createStorageCleanupAtoms } from "./storageCleanup.ts";
 import {
   type EnvironmentId,
   type ProviderInstanceId,
@@ -1165,11 +1166,7 @@ export function createServerEnvironmentAtoms<R, E>(
 
   return {
     configValueAtom,
-    runStorageCleanup: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:run-storage-cleanup",
-      tag: WS_METHODS.serverRunStorageCleanup,
-      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
-    }),
+    ...createStorageCleanupAtoms(runtime),
     prepareTriage: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:prepare-triage",
       tag: WS_METHODS.serverPrepareTriage,
@@ -1177,11 +1174,6 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     databaseStorage,
     databaseCompactionRecommendations,
-    storageCleanupReport: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:server:storage-cleanup-report",
-      tag: WS_METHODS.serverGetStorageCleanupReport,
-      idleTtlMs: 0,
-    }),
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,

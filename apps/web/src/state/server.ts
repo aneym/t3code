@@ -1,5 +1,7 @@
+import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import {
   DEFAULT_SERVER_SETTINGS,
+  WS_METHODS,
   type EditorId,
   type EnvironmentId,
   type EnvironmentTheme,
@@ -33,12 +35,21 @@ import { environmentSession } from "./session";
 import { reuseProvidersIgnoringCheckedAt } from "./serverProviders.logic";
 
 // Subscribe to every environment's themes; primary can change without reconnecting or updating the subscription.
-export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
+const sharedServerEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
   environmentThemes: true,
   usageLimitSources: true,
   usageLimitsCommand: true,
 });
+export const serverEnvironment = {
+  ...sharedServerEnvironment,
+  storageCleanupReport: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "web-storage-cleanup-report",
+    tag: WS_METHODS.serverReadStorageCleanupReport,
+    idleTtlMs: 0,
+    refreshTrigger: (target) => sharedServerEnvironment.storageCleanupReport(target),
+  }),
+};
 export const environmentUpdateStatesAtom = environmentAtomList(
   "web-environment-update-states",
   serverEnvironment.updateStateAtom,
