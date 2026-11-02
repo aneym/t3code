@@ -35,6 +35,7 @@ def add_quarantine(config, root, row):
             return
         event(root, "quarantine-failed", warning=True, error=type(error).__name__)
         save(root, row, quarantineFailed=True)
+        return
     save(root, row, quarantineAt=time.time())
 
 

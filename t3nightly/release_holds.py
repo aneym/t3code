@@ -150,5 +150,6 @@ def main(argv):
                 raise RuntimeError("stop files written; units still exiting, inspect status (no runs killed)")
             time.sleep(min(source["interval"], 1))
             values = {host: request(host_config(source, host), "status") for host in hosts}
+        values = {host: request(host_config(source, host), "status") for host in hosts}
     print(json.dumps({"version": args.version, "run": str(run), "hosts": values}, sort_keys=True))
     return 0

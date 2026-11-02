@@ -75,7 +75,9 @@ def policy(config, root, row, observed):
                 event(root, "ready-manual")
         elif config["host"] == "forge":
             add_quarantine(config, root, row)
-            if row.get("quarantineAt") and time.time() >= row["quarantineAt"] + config["quarantineSeconds"]:
+            if row.get("quarantineFailed"):
+                release(config, root, row, "quarantine-failed")
+            elif row.get("quarantineAt") and time.time() >= row["quarantineAt"] + config["quarantineSeconds"]:
                 release(config, root, row, "proofs-passed")
         else:
             release(config, root, row, "proofs-passed")
@@ -92,7 +94,7 @@ def worker(root, lock_fd):
         try:
             fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            return 0
+            return 75
         row = read(root / "state.json", {"outcome": "waiting-lock", "host": config["host"]})
         save(root, row, pid=os.getpid(), parentPid=os.getppid(), watcher="watching")
         stop = root / f"{config['host']}.stop"
@@ -149,8 +151,6 @@ def worker(root, lock_fd):
                     break
                 time.sleep(min(config["interval"], max(0, expires - time.time())))
         finally:
-            if pending(row):
-                clear_quarantine(config, root, row)
             (root / f"{config['host']}.ready").unlink(missing_ok=True)
             save(root, row, ready=False)
             event(root, "worker-cleanup", quarantinePending=pending(row))

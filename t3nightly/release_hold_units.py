@@ -33,14 +33,18 @@ def submit_unit(directory, spec):
         plist = directory / "unit.plist"
         with plist.open("wb") as handle:
             plistlib.dump({"Label": spec["label"], "ProgramArguments": argv, "RunAtLoad": True,
-                          "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 1, "AbandonProcessGroup": True,
+                          "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 1, "AbandonProcessGroup": False,
                           "StandardOutPath": output, "StandardErrorPath": output,
                           "EnvironmentVariables": {"HOME": str(Path.home()), "PATH": os.environ.get("PATH", "/usr/bin:/bin")}}, handle)
         command = ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)]
     else:
+        linger = subprocess.run(["loginctl", "show-user", str(os.getuid()), "--property=Linger", "--value"],
+                                capture_output=True, text=True, timeout=15, check=False)
+        if linger.returncode or linger.stdout.strip().lower() != "yes":
+            raise RuntimeError("hold watcher requires systemd-user and Linger=yes")
         command = ["systemd-run", "--user", f"--unit={spec['label']}", "--collect",
                    "--property=Type=exec", "--property=Restart=on-failure", "--property=RestartSec=1",
-                   "--property=StartLimitIntervalSec=0", "--property=KillMode=process", f"--property=StandardOutput=append:{output}",
+                   "--property=StartLimitIntervalSec=0", "--property=KillMode=control-group", f"--property=StandardOutput=append:{output}",
                    f"--property=StandardError=append:{output}", "--", *argv]
     subprocess.run(command, capture_output=True, text=True, timeout=20, check=True)
 
@@ -89,12 +93,14 @@ def request_release(config, stop=False):
     (root / f"{config['host']}.ready").unlink(missing_ok=True)
     if stop:
         (root / "watcher.stop").touch()
+        cleanup(config)
     return inspect_hold(config)
 
 
 def cleanup(config):
     root = Path(config["run"]) / "release-holds"
     current = read(root / "unit.json", {})
-    if current and sys.platform == "darwin" and read(root / "state.json", {}).get("watcher") == "exited":
+    if current and sys.platform == "darwin" and (read(root / "state.json", {}).get("watcher") == "exited"
+                                                or ((root / "watcher.stop").exists() and not unit_active(current["directory"]))):
         subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{current['label']}"],
                        capture_output=True, timeout=20, check=False)
