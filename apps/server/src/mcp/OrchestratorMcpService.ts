@@ -2851,12 +2851,13 @@ const make = Effect.gen(function* () {
         .waitForThread({
           projectId: target.thread.projectId,
           threadId: input.threadId,
-          ...(input.runId === undefined ? {} : { runId: input.runId }),
+          ...(input.runId && { runId: input.runId }),
+          returnOnFreeze: true,
           timeoutMs: Math.min(
             MAX_WAIT_TIMEOUT_MS,
             Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
           ),
-          ...(input.untilDelegatedWorkSettled === true ? { untilDelegatedWorkSettled: true } : {}),
+          ...(input.untilDelegatedWorkSettled && { untilDelegatedWorkSettled: true }),
         })
         .pipe(Effect.mapError(threadManagementFailure));
       const status = result.run === null ? "idle" : runOutcome(result.run);
@@ -2872,7 +2873,7 @@ const make = Effect.gen(function* () {
             task.childThreadId === input.threadId &&
             task.completionDelivery?.state !== "disposed",
         ) === true;
-      // A child waiting on a question or approval needs an answer, not a wake.
+      // A child awaiting an answer or approval needs no wake.
       const childRequests = ownedTask
         ? (yield* threadManagement
             .getThreadRecords(input.threadId, ["runtimeRequests"])

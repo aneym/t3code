@@ -2,6 +2,7 @@
 import type * as NodeHttp from "node:http";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import { hotSwapContext } from "./serviceChildTransport.ts";
 
 const admittedExecution = Context.Reference<{ active: boolean } | undefined>("t3/serverAdmission", {
@@ -11,6 +12,11 @@ const responses = new Set<NodeHttp.ServerResponse>();
 let frozen = false;
 let admitted = 0;
 let idle = Promise.withResolvers<void>();
+let freezing = Deferred.makeUnsafe<void>();
+
+export const awaitServerFreeze = Effect.fn("serverHandoffBarrier.awaitFreeze")(
+  (enabled: boolean) => (enabled ? Deferred.await(freezing) : Effect.never),
+);
 
 const leave = () => {
   admitted -= 1;
@@ -65,6 +71,7 @@ export const withServerAdmission = <A, E, R>(
 export const freezeServerAdmissions = Effect.fn("serverHandoffBarrier.freeze")(function* () {
   yield* Effect.sync(() => {
     frozen = true;
+    Deferred.doneUnsafe(freezing, Effect.void);
     for (const response of responses) {
       const contentType = response.getHeader("content-type");
       if (typeof contentType === "string" && contentType.includes("text/event-stream"))
@@ -78,4 +85,5 @@ export const freezeServerAdmissions = Effect.fn("serverHandoffBarrier.freeze")(f
 export function reopenServerAdmissions(): void {
   frozen = false;
   idle = Promise.withResolvers<void>();
+  freezing = Deferred.makeUnsafe<void>();
 }

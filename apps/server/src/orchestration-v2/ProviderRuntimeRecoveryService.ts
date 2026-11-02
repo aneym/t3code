@@ -1,6 +1,5 @@
 import { sessionsLiveAtStart, type RecoverySession } from "./RuntimeRecoverySessions.ts";
-import * as Duration from "effect/Duration";
-import { drainBeforeRestart } from "./RestartDrain.ts";
+import { makeHandoffDrain } from "./RestartDrain.ts";
 import {
   nonterminalRuns,
   isBackgroundCapableTurnItemType,
@@ -769,27 +768,28 @@ export const make = Effect.gen(function* () {
     | IdAllocator.IdAllocatorV2
     | ServerSettings.ServerSettingsService
   >();
+  const handoff = yield* makeHandoffDrain;
   return ProviderRuntimeRecoveryService.of({
     drainForHandoff: Effect.fn("ProviderRuntimeRecoveryService.drainForHandoff")(
-      (epoch, timeoutMs) =>
-        Effect.scoped(drainBeforeRestart(epoch, Duration.millis(timeoutMs))).pipe(
-          Effect.provide(restartContext),
-          Effect.asVoid,
-          Effect.mapError((cause) => new ServerPrepareRestartError({ cause })),
-        ),
+      (epoch, timeoutMs) => handoff.drain(epoch, timeoutMs).pipe(Effect.provide(restartContext)),
     ),
     getRestartStatus: Effect.fn("ProviderRuntimeRecoveryService.getRestartStatus")((epoch) =>
       restartStatus(epoch).pipe(Effect.provide(restartContext)),
     ),
     abortRestart: Effect.fn("ProviderRuntimeRecoveryService.abortRestart")((epoch) =>
-      abortRestart(epoch).pipe(Effect.provide(restartContext)),
+      handoff
+        .release(epoch)
+        .pipe(Effect.andThen(abortRestart(epoch)), Effect.provide(restartContext)),
     ),
     importRestartHandoff: Effect.fn("ProviderRuntimeRecoveryService.importRestartHandoff")(
       (input) => importRestartHandoff(input).pipe(Effect.provide(restartContext)),
     ),
     prepareRestart: Effect.fn("ProviderRuntimeRecoveryService.prepareRestart")(
       (epoch, drainTimeoutMs) =>
-        prepareRestart(epoch, drainTimeoutMs).pipe(Effect.provide(restartContext)),
+        prepareRestart(epoch, drainTimeoutMs).pipe(
+          Effect.tap(() => handoff.release(epoch)),
+          Effect.provide(restartContext),
+        ),
     ),
     reconcile,
     prepareForShutdown: prepareForShutdown.pipe(

@@ -1,4 +1,5 @@
 import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
+import { awaitServerFreeze } from "../serverHandoffBarrier.ts";
 import { makeSettlementCommands } from "./ThreadSettlementCommands.ts";
 import type {
   OrchestrationV2SearchThreadInput,
@@ -136,6 +137,7 @@ export interface ThreadManagementWaitInput {
   readonly threadId: ThreadId;
   readonly runId?: RunId;
   readonly timeoutMs: number;
+  readonly returnOnFreeze?: boolean;
   /**
    * Also wait until the thread's own delegated work settles: an ended run
    * still owes the thread's answer while a child, a background task or a
@@ -801,8 +803,7 @@ const make = Effect.gen(function* () {
     const initial = yield* evaluate(target.runs);
     if (initial.settled) return settledResult(initial);
 
-    // A declined continuation records no event, so its effect settling wakes
-    // the wait too.
+    // Effect settlement wakes a declined continuation, which records no event.
     const wait = Stream.merge(
       Stream.mergeAll(
         (
@@ -845,12 +846,12 @@ const make = Effect.gen(function* () {
       Stream.filter((current) => current.settled),
       Stream.runHead,
       Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
+      Effect.raceFirst(
+        awaitServerFreeze(input.returnOnFreeze === true).pipe(Effect.as(Option.none())),
+      ),
     );
     const waited = Option.flatten(yield* wait);
     if (Option.isSome(waited)) return settledResult(waited.value);
-    // The run may have reached a terminal status while the timeout was
-    // winning the race; the final projection read decides what actually
-    // happened, so only a still-active run counts as timed out.
     return settledResult(yield* evaluate((yield* getProjectThreadRecords(input, ["runs"])).runs));
   });
 
