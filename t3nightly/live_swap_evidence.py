@@ -65,11 +65,11 @@ def receipt(run, job, probe, turn, status, cursor, error=None):
             closes = [row["atMs"] for row in probe.get("wsEvents", []) if row.get("event") == "disconnected" and row.get("sessionId") == reply["sessionId"] and min(sent) <= row["atMs"] < min(deadline, min(sent) + 1_000)]
             later = [row for row in probe.get("sessions", []) if closes and row.get("atMs", 0) > closes[0]]
             closed = bool(closes) and bool(later) and later[0].get("serverVersion") == new
-            if resolved or closed:
-                handoff.append({"sessionId": reply["sessionId"], "sequence": reply["sequence"], "clientId": reply["clientId"], "replyResolved": True, "confirmationResolved": resolved, "closedAfterConfirmation": closed and not resolved})
-    planned = {row["sessionId"] for row in handoff if row["closedAfterConfirmation"]}
+            if resolved:
+                handoff.append({"sessionId": reply["sessionId"], "sequence": reply["sequence"], "clientId": reply["clientId"], "replyResolved": True, "confirmationResolved": True, "plannedClose": closed, "confirmationSentAtMs": min(sent)})
+    planned = {row["sessionId"]: row["confirmationSentAtMs"] for row in handoff if row["plannedClose"]}
     streams = probe.get("streamFailures")
-    streamFailed = probe.get("wsFailures", 0) != 0 if streams is None else any(row.get("sessionId") not in planned for row in streams)
+    streamFailed = probe.get("wsFailures", 0) != 0 if streams is None else any(row.get("sessionId") not in planned or row.get("atMs", 0) < planned[row["sessionId"]] for row in streams)
     failures = []
     for condition, label in ((probe.get("ready") is True, "client-never-ready"), (not violations, "client-presentation-disconnect"), (cursor.get("verified") is True, "event-continuity-unverified"), (probe.get("refusedConnections", 0) == 0, "refused-connections"), (probe.get("httpFailures", 0) == 0, "failed-http"), (not streamFailed, "failed-thread-stream"), (not error, "recorder-error")):
         if not condition:
