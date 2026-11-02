@@ -1,8 +1,9 @@
-import { sessionsLiveAtStart, type RecoverySession } from "./RuntimeRecoverySessions.ts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { restartRunUpdates, cancelledRuntimeDetail } from "./RestartRunRecovery.ts";
+import type { RecoverySession } from "./RuntimeRecoverySessions.ts";
 import { makeHandoffDrain } from "./RestartDrain.ts";
 import {
   nonterminalRuns,
-  runtimeRecoveryDetail,
   isBackgroundCapableTurnItemType,
   isNonterminalTurnItemStatus,
   isAppOwnedDelegation,
@@ -22,7 +23,6 @@ import {
 } from "./RestartPreparation.ts";
 import { recoveryQueueHold } from "./QueueHoldPolicy.ts";
 import { rearmCancelledBackgroundWork } from "./RestartBackgroundRearm.ts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   ServerPrepareRestartError,
@@ -51,7 +51,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { restartContinuationRun, unacceptedRestartRun } from "./RestartContinuation.ts";
+import { restartRecoverySource } from "./RestartRecoverySource.ts";
 import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
 import {
   endOrphanedNativeSubagent,
@@ -187,7 +187,7 @@ export const make = Effect.gen(function* () {
           item.type === "subagent" && isAppOwnedDelegation(item) ? [item.subagentId] : [],
         ),
       ]);
-      const detail = runtimeRecoveryDetail(trigger, handoff);
+      const detail = cancelledRuntimeDetail(trigger);
       const commandId = CommandId.make(
         `command:runtime-reconcile:${trigger}:${projection.thread.id}:${DateTime.formatIso(now)}`,
       );
@@ -304,16 +304,24 @@ export const make = Effect.gen(function* () {
           },
         });
       }
-      for (const run of runs) {
-        events.push({
-          id: yield* allocateEventId(),
-          type: "run.updated",
+      const continuationSource = restartRecoverySource(
+        projection,
+        trigger,
+        stoppedThisPass,
+        handoff,
+      );
+      events.push(
+        ...(yield* restartRunUpdates({
           threadId: projection.thread.id,
-          runId: run.id,
-          providerInstanceId: run.providerInstanceId,
-          occurredAt: now,
-          payload: { ...run, status: "cancelled", queuePosition: null, completedAt: now },
-        });
+          runs,
+          source: continuationSource,
+          continueAfterRestart,
+          now,
+          handoff,
+          allocateEventId,
+        })),
+      );
+      for (const run of runs) {
         for (const attempt of projection.attempts.filter(
           (candidate) =>
             candidate.runId === run.id &&
@@ -570,13 +578,7 @@ export const make = Effect.gen(function* () {
           },
         });
       }
-      const continuationRun =
-        handoff === undefined && continueAfterRestart && trigger === "startup"
-          ? (restartContinuationRun({
-              ...projection,
-              providerSessions: sessionsLiveAtStart(projection, stoppedThisPass),
-            }) ?? unacceptedRestartRun(projection))
-          : undefined;
+      const continuationRun = continueAfterRestart ? continuationSource : undefined;
       const effects: Array<EffectOutboxModel.PendingOrchestrationEffectV2> = continuationRun
         ? [
             {

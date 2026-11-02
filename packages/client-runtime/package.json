@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./restart-pause": {
+      "types": "./src/restartPause.ts",
+      "default": "./src/restartPause.ts"
+    },
     "./scheduled-task-once": {
       "types": "./src/scheduledTaskOnce.ts",
       "default": "./src/scheduledTaskOnce.ts"

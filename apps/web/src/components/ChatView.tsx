@@ -1,3 +1,4 @@
+import { threadQueueSummary } from "./chat/threadQueueSummary";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -90,7 +91,8 @@ import {
   threadSupportsProviderHandoff,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
-import { HandoffRow } from "./chat/V2LifecycleRow";
+import { ThreadRestartNotices } from "./chat/ThreadRestartNotices";
+import { restartPauseLabel } from "@t3tools/client-runtime/restart-pause";
 import {
   codexFeedbackMessage,
   isCompleteTurnItemRow,
@@ -3006,32 +3008,24 @@ export default function ChatView(props: ChatViewProps) {
         message.inputIntent === "queued_turn" &&
         !serverProjection?.messages.some((committed) => committed.id === message.id),
     );
-  const scrollToEndSummary =
-    [
-      childInputNow === null ? null : "Subagent waiting",
-      queuedRunCount === 0 ? null : `${queuedRunCount} queued`,
-    ]
-      .filter((part) => part !== null)
-      .join(" · ") || null;
+  const scrollToEndSummary = threadQueueSummary(childInputNow !== null, queuedRunCount);
   // The end of the timeline holds the thread's present and next turns: what it is doing now,
   // its lifecycle status, guest messages awaiting you, then your queued messages.
+  const restartPause = restartPauseLabel(serverProjection?.runs ?? []);
   const timelineFooter =
+    restartPause === null &&
     pendingHandoff === null &&
     !hasThreadNow &&
     threadStatusLine === null &&
     pendingGuestMessageCount === 0 &&
     !hasQueuedTurns ? null : (
       <>
-        {pendingHandoff === null ? null : (
-          <div className="chat-content-lane">
-            <HandoffRow
-              environmentId={environmentId}
-              endpoints={pendingHandoff}
-              providers={providerStatuses}
-              pending
-            />
-          </div>
-        )}
+        <ThreadRestartNotices
+          label={restartPause}
+          environmentId={environmentId}
+          endpoints={pendingHandoff}
+          providers={providerStatuses}
+        />
         <ThreadNow
           key={routeThreadKey}
           attention={childInputNow}

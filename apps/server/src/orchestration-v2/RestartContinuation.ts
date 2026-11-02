@@ -222,7 +222,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       !resolveProjectSettings(enabled, projection.thread.projectId).settings
         .continueThreadsAfterServerUpdate
     )
-      return;
+      return "continuation_disabled" as const;
     if (
       projection.messages.some((message) => message.id === messageId) ||
       projection.runs.some((run) => run.restartContinuationOfRunId === input.sourceRunId)
@@ -399,15 +399,4 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         Effect.map((declined) => (declined === "provider_disabled" ? declined : undefined)),
       );
   },
-  // Declined child continuations still owe parent results; existing continuation runs settle them instead.
-  (effect, input) =>
-    effect.pipe(
-      Effect.tap(
-        Effect.gen(function* () {
-          if (input.prepared) return;
-          const threads = yield* ThreadManagementService.ThreadManagementService;
-          yield* threads.recoverDelegatedTask(input.threadId, input.sourceRunId);
-        }),
-      ),
-    ),
 );

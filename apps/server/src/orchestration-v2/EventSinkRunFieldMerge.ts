@@ -18,7 +18,16 @@ export const mergeRunField = Effect.fnUntraced(function* (
       const current = runs[0];
       return current === undefined
         ? event
-        : { ...event, payload: { ...current, [field]: event.payload[field] } };
+        : {
+            ...event,
+            payload: {
+              ...current,
+              [field]: event.payload[field],
+              ...(field === "restartDeclined"
+                ? { restartHandoffPending: event.payload.restartHandoffPending }
+                : {}),
+            },
+          };
     }),
   );
 });

@@ -99,9 +99,3 @@ export function latestStartedRun(
     undefined,
   );
 }
-
-export function runtimeRecoveryDetail(trigger: "startup" | "shutdown", handoff: unknown) {
-  return trigger === "shutdown" && handoff !== undefined
-    ? "Paused by a T3 Code update; continues in the next run."
-    : `Cancelled because the server ${trigger === "startup" ? "restarted" : "shut down"} before the provider work completed.`;
-}

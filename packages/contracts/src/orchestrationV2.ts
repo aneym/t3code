@@ -9,6 +9,7 @@ import {
   ThreadAutoSettleCommand,
 } from "./threadSettlement.ts";
 import { OrchestrationV2DelegatedCompletionCohort } from "./delegatedCompletionDelivery.ts";
+import { RestartRunState } from "./restartRunState.ts";
 import { QueueHoldState, QueueHoldStateJson } from "./queueHoldReason.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
@@ -680,15 +681,13 @@ export const OrchestrationV2Run = Schema.Struct({
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   checkpointId: Schema.NullOr(CheckpointId),
   contextHandoffId: Schema.NullOr(ContextHandoffId),
-  restartContinuationOfRunId: Schema.optional(RunId),
+  ...RestartRunState.fields,
   delegatedTaskId: Schema.optional(NodeId),
   workStartedAt: Schema.optional(Schema.DateTimeUtc),
   restartCancelledBackgroundWork: Schema.optional(
     Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
   ),
-  restartDeclined: Schema.optional(
-    Schema.Literals(["chain_limit", "provider_disabled", "native_maintenance", "dispatch_failed"]),
-  ),
+
   sourcePlanRef: Schema.optional(
     Schema.Struct({
       threadId: ThreadId,

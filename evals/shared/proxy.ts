@@ -9,18 +9,13 @@ const decodeProxyConfig = Schema.decodeUnknownSync(
 );
 /** Reads the `vibeproxy` CLIProxyAPI provider from `~/.codex/config.toml`. */
 export const proxyConfig = () =>
-  process.env.T3_EVAL_PROXY_URL
-    ? {
-        url: process.env.T3_EVAL_PROXY_URL,
-        headers: { "x-agent-lb-seat": process.env.AGENT_LB_SEAT ?? "t3-evals" },
-      }
-    : decodeProxyConfig(
-        JSON.parse(
-          NodeChildProcess.execFileSync(
-            "python3",
-            [
-              "-c",
-              `
+  decodeProxyConfig(
+    JSON.parse(
+      NodeChildProcess.execFileSync(
+        "python3",
+        [
+          "-c",
+          `
 import json, os, pathlib, tomllib
 home = pathlib.Path.home() / '.codex'
 p = tomllib.loads((home / 'config.toml').read_text())['model_providers']['vibeproxy']
@@ -31,8 +26,8 @@ if not key and p.get('requires_openai_auth'): key = json.loads((home / 'auth.jso
 if key: h['Authorization'] = 'Bearer ' + key
 print(json.dumps({'url': p['base_url'].rstrip('/'), 'headers': h}))
 `,
-            ],
-            { encoding: "utf8" },
-          ),
-        ),
-      );
+        ],
+        { encoding: "utf8" },
+      ),
+    ),
+  );

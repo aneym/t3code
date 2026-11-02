@@ -209,15 +209,18 @@ export function subagentResultForRun(
           .filter((item) => item.runId === run.id && item.type === "error")
           .toSorted((left, right) => right.ordinal - left.ordinal)[0]
       : undefined;
+  const failureText = failure?.type === "error" ? failure.failure.message : undefined;
+  const output = message?.text ?? turnItem?.text;
+  const fallback =
+    run.status === "completed"
+      ? "Child task completed without an assistant result."
+      : `Child task ended with status ${run.status}.`;
   const text =
-    run.restartDeclined !== undefined
-      ? "Child task stopped by a T3 Code update; resend to continue."
-      : ((failure?.type === "error" ? failure.failure.message : undefined) ??
-        message?.text ??
-        turnItem?.text ??
-        (run.status === "completed"
-          ? "Child task completed without an assistant result."
-          : `Child task ended with status ${run.status}.`));
+    run.restartDeclined === undefined
+      ? (failureText ?? output ?? fallback)
+      : [failureText, output, "Child task stopped by a T3 Code update; resend to continue."]
+          .filter((text): text is string => text !== undefined && text.length > 0)
+          .join("\n\n");
   return {
     text,
     messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,
