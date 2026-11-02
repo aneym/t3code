@@ -184,7 +184,7 @@ export const make = Effect.gen(function* () {
       );
       const delegatedTaskNodeIds = new Set<string>([
         ...(projection.subagents ?? []).filter(isAppOwnedDelegation).map((subagent) => subagent.id),
-        ...projection.turnItems.flatMap((item) =>
+        ...(projection.turnItems ?? []).flatMap((item) =>
           item.type === "subagent" && isAppOwnedDelegation(item) ? [item.subagentId] : [],
         ),
       ]);
@@ -440,8 +440,8 @@ export const make = Effect.gen(function* () {
           payload: { ...task, completionWake: "always", updatedAt: now },
         });
       }
-      const cancelledStaleNodeIds = new Set<string>();
-      for (const item of projection.turnItems) {
+      const staleNodeIds = new Set<string>();
+      for (const item of projection.turnItems ?? []) {
         if (item.runId !== null && cutRunIds.has(item.runId)) {
           continue;
         }
@@ -468,8 +468,8 @@ export const make = Effect.gen(function* () {
             (candidate) =>
               candidate.id === item.nodeId && isNonterminalTurnItemStatus(candidate.status),
           );
-          if (staleItemNode !== undefined && !cancelledStaleNodeIds.has(staleItemNode.id)) {
-            cancelledStaleNodeIds.add(staleItemNode.id);
+          if (staleItemNode !== undefined && !staleNodeIds.has(staleItemNode.id)) {
+            staleNodeIds.add(staleItemNode.id);
             events.push({
               id: yield* allocateEventId(),
               type: "node.updated",
@@ -718,7 +718,7 @@ export const make = Effect.gen(function* () {
         handoff?.type === "provider-runtime.restart-handoff" ? handoff.handoff : undefined,
       );
       if (
-        projection.turnItems.some(
+        projection.turnItems?.some(
           (item) => item.type === "secret_request" && item.secretStatus === "pending",
         )
       )
