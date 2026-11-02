@@ -57,7 +57,7 @@ def receipt(run, job, probe, turn, status, cursor, error=None):
             acknowledgments = [row for row in probe.get("handoffSettlements", []) if matches(row) and row.get("outcome") == "Success"]
             sent = [row["atMs"] for row in probe.get("handoffReplies", []) if matches(row) and row.get("confirmation") is True]
             calls = [row["atMs"] for row in probe.get("handoffCalls", []) if matches(row) and row.get("confirmation") is True]
-            sent = sent or calls
+            sent = calls or sent
             if not sent or not any(row.get("confirmation") is False for row in acknowledgments):
                 continue
             resolved = any(row.get("confirmation") is True for row in acknowledgments)
