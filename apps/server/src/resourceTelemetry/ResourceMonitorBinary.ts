@@ -65,8 +65,11 @@ function binaryName(platform: NodeJS.Platform): string {
 export type ResourceMonitorLinuxLibc = "gnu" | "musl";
 
 function detectResourceMonitorLinuxLibc(): ResourceMonitorLinuxLibc {
+  const reportApi = process.report as typeof process.report & { excludeNetwork: boolean };
+  const previous = reportApi.excludeNetwork;
   try {
-    const report = process.report?.getReport() as
+    reportApi.excludeNetwork = true;
+    const report = process.report.getReport() as
       | {
           readonly header?: {
             readonly glibcVersionRuntime?: unknown;
@@ -76,6 +79,8 @@ function detectResourceMonitorLinuxLibc(): ResourceMonitorLinuxLibc {
     return typeof report?.header?.glibcVersionRuntime === "string" ? "gnu" : "musl";
   } catch {
     return "musl";
+  } finally {
+    reportApi.excludeNetwork = previous;
   }
 }
 
@@ -138,51 +143,46 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
   const environment = yield* HostProcess.Environment;
-  const linuxLibc = platform === "linux" ? yield* ResourceMonitorHostLinuxLibc : undefined;
-  const executableName = binaryName(platform);
-  const platformKey = resourceMonitorPlatformKey(platform, architecture);
-  const rustTarget = resourceMonitorRustTarget(platform, architecture, linuxLibc);
-  const overrideCandidates = [
-    environment.T3CODE_RESOURCE_MONITOR_PATH,
-    config.resourceMonitorPath,
-  ].filter((candidate): candidate is string => Boolean(candidate));
-  const cargoOutputDirectories =
-    rustTarget === undefined
-      ? []
-      : [
-          path.join("target", rustTarget, "release"),
-          path.join("target", "release"),
-          path.join("target", "debug"),
-        ];
-  const sourceCandidates = [
-    path.resolve(import.meta.dirname, "../../../../native/resource-monitor"),
-    path.resolve(import.meta.dirname, "../../../native/resource-monitor"),
-  ].flatMap((crateDirectory) =>
-    cargoOutputDirectories.map((directory) => path.join(crateDirectory, directory, executableName)),
-  );
-  const bundledCandidates =
-    platformKey === undefined || rustTarget === undefined
-      ? []
-      : [
-          path.resolve(import.meta.dirname, "resource-monitor", platformKey, executableName),
-          path.resolve(import.meta.dirname, "resource-monitor", executableName),
-          path.resolve(import.meta.dirname, "../resource-monitor", executableName),
-          ...sourceCandidates,
-        ];
-  if (overrideCandidates.length === 0 && bundledCandidates.length === 0) {
-    return ResourceMonitorBinary.of({
-      resolve: Effect.fail(
-        new ResourceMonitorBinaryUnsupported({
-          platform,
-          architecture,
-        }),
-      ),
-    });
-  }
-
-  const candidates = [...overrideCandidates, ...bundledCandidates];
-
   const resolve: ResourceMonitorBinary["Service"]["resolve"] = Effect.gen(function* () {
+    const linuxLibc = platform === "linux" ? yield* ResourceMonitorHostLinuxLibc : undefined;
+    const executableName = binaryName(platform);
+    const platformKey = resourceMonitorPlatformKey(platform, architecture);
+    const rustTarget = resourceMonitorRustTarget(platform, architecture, linuxLibc);
+    const overrideCandidates = [
+      environment.T3CODE_RESOURCE_MONITOR_PATH,
+      config.resourceMonitorPath,
+    ].filter((candidate): candidate is string => Boolean(candidate));
+    const cargoOutputDirectories =
+      rustTarget === undefined
+        ? []
+        : [
+            path.join("target", rustTarget, "release"),
+            path.join("target", "release"),
+            path.join("target", "debug"),
+          ];
+    const sourceCandidates = [
+      path.resolve(import.meta.dirname, "../../../../native/resource-monitor"),
+      path.resolve(import.meta.dirname, "../../../native/resource-monitor"),
+    ].flatMap((crateDirectory) =>
+      cargoOutputDirectories.map((directory) =>
+        path.join(crateDirectory, directory, executableName),
+      ),
+    );
+    const bundledCandidates =
+      platformKey === undefined || rustTarget === undefined
+        ? []
+        : [
+            path.resolve(import.meta.dirname, "resource-monitor", platformKey, executableName),
+            path.resolve(import.meta.dirname, "resource-monitor", executableName),
+            path.resolve(import.meta.dirname, "../resource-monitor", executableName),
+            ...sourceCandidates,
+          ];
+    if (overrideCandidates.length === 0 && bundledCandidates.length === 0) {
+      return yield* new ResourceMonitorBinaryUnsupported({ platform, architecture });
+    }
+
+    const candidates = [...overrideCandidates, ...bundledCandidates];
+
     for (const candidate of candidates) {
       const exists = yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
       if (!exists) continue;
