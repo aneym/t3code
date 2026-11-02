@@ -691,7 +691,7 @@ const make = Effect.gen(function* () {
             headSha: head.commitSha,
             matchContent: settings.worktreeContentIntegration,
           });
-          if (landed === null) return keep("default branch is unavailable");
+          if (typeof landed === "string") return keep(landed);
           if (!eligible && landed.integrated && settings.worktreeUnchanged) {
             eligible = true;
             removalReason = landed.byContent

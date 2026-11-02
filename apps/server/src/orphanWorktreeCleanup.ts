@@ -398,6 +398,7 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
               headSha: head,
               matchContent: rules.worktreeContentIntegration,
             });
+        if (typeof landed === "string") return keep(landed);
         if (!published && !landed?.integrated)
           return keep(
             remoteMissing
