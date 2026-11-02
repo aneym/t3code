@@ -11,7 +11,8 @@ from pathlib import Path
 
 from .identity_snapshot import finish as finish_identities
 from . import install_offbox
-from .install_restore_copy import RecoveryRequired, recovery_required
+from .install_restore_copy import RecoveryRequired
+from .install_db_rollback import recovery_required
 from .install_backup import capture
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_process import serving_process

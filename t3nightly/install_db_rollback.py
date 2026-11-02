@@ -1,15 +1,30 @@
 import os
+import shlex
 import shutil
 import sqlite3
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path, PurePosixPath
 
 from . import install_restore_copy as restore_copy
 from .db_publish import LOCAL_MARGIN, local_check, publish, wal_bytes
-from .install_offbox import rate, restore_space, schema_state, sync, target
+from .install_offbox import REMOTE_EXE, SSH, executable, rate, restore_space, schema_state, sync, target
 from .release_eligibility import binary_rollback
+
+
+def recovery_required(backup, db, service, receipt, error):
+    local = backup.get("local") if error.backup_path is None else None
+    if local:
+        path = local["path"]
+        command = [sys.executable, "-B", "-m", "t3nightly.install_restore_copy", "restore", "--receipt", str(receipt), "--db", str(db), "--service", service]
+    else:
+        path = error.backup_path or backup["remote"]
+        command = [executable(), path, str(db), "--exe", REMOTE_EXE, "--ssh", str(SSH)]
+    return {"recoveryRequired": True, "reason": error.reason, "backupPath": path,
+            "restoreCommand": f"cd {shlex.quote(str(Path(__file__).resolve().parent.parent))} && {shlex.join(command)}",
+            "detail": "Service intentionally remains stopped: the candidate-migrated database cannot run on the old runtime. Finish the restore with restoreCommand, verify the database, then restart the retained runtime.", "error": str(error)}
 
 
 def restore(run, backup, *, beside=None):

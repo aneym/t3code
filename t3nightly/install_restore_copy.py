@@ -2,7 +2,6 @@ import argparse
 import hashlib
 import json
 import os
-import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -30,20 +29,6 @@ class RecoveryRequired(ValueError):
         self.reason = reason
         self.backup_path = backup_path
 
-
-def recovery_required(backup, db, service, receipt, error):
-    local = backup.get("local") if error.backup_path is None else None
-    if local:
-        path = local["path"]
-        command = [sys.executable, "-B", "-m", "t3nightly.install_restore_copy", "restore", "--receipt", str(receipt), "--db", str(db), "--service", service]
-    else:
-        from .install_offbox import executable, REMOTE_EXE, SSH
-
-        path = error.backup_path or backup["remote"]
-        command = [executable(), path, str(db), "--exe", REMOTE_EXE, "--ssh", str(SSH)]
-    return {"recoveryRequired": True, "reason": error.reason, "backupPath": path,
-            "restoreCommand": f"cd {shlex.quote(str(Path(__file__).resolve().parent.parent))} && {shlex.join(command)}",
-            "detail": "Service intentionally remains stopped: the candidate-migrated database cannot run on the old runtime. Finish the restore with restoreCommand, verify the database, then restart the retained runtime.", "error": str(error)}
 
 
 def check_deadline(deadline):
