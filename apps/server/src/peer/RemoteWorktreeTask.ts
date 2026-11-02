@@ -131,6 +131,7 @@ const make = Effect.gen(function* () {
                 }),
             ),
           );
+    let failureMessage = "";
     const exported = yield* forwarding
       .call(scope, WorktreeToolkit.tools.t3_worktree_export, remote.environmentId, {
         threadId: remote.threadId,
@@ -144,11 +145,14 @@ const make = Effect.gen(function* () {
             error.code === "invalid_request" ||
             error.code === "thread_not_found" ||
             error.code === "capability_denied",
-          () => Effect.succeedNone,
+          (error) => {
+            failureMessage = ` ${error.message}`;
+            return Effect.succeedNone;
+          },
         ),
       );
     if (Option.isNone(exported))
-      return `Its work stays in its worktree in ${remote.label}; it could not be brought back.`;
+      return `Its work stays in its worktree in ${remote.label}; it could not be brought back.${failureMessage}`;
     const out = exported.value;
     const there = `branch ${out.branch} in ${out.worktreePath} in ${remote.label}`;
     const left = out.uncommitted ? ` Uncommitted changes stay in ${out.worktreePath} there.` : "";
@@ -166,11 +170,13 @@ const make = Effect.gen(function* () {
                       message: error.message,
                     }),
                   )
-                : Effect.void,
+                : Effect.sync(() => {
+                    failureMessage = ` ${error.message}`;
+                  }),
             ),
           );
     if (local === undefined)
-      return `Its ${out.commitCount} commit${out.commitCount === 1 ? "" : "s"} are on ${there}; they could not be brought back.${left}`;
+      return `Its ${out.commitCount} commit${out.commitCount === 1 ? "" : "s"} are on ${there}; they could not be brought back.${failureMessage}${left}`;
     return `Branch ${local} here has its ${out.commitCount} commit${out.commitCount === 1 ? "" : "s"} (head ${out.headCommit.slice(0, 12)}) on ${out.baseCommit.slice(0, 12)}, from ${there}.${left}\n${out.diffStat}`;
   });
 

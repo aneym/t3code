@@ -71,7 +71,11 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) => transferError(`${why}: ${cause.message}`)),
         Effect.filterOrFail(
           (result) => result.exitCode === 0,
-          (result) => transferError(`${why}: ${result.stderr.trim()}`, retryable),
+          (result) =>
+            transferError(
+              `${why}: ${result.stderr.trim() || `git exited with code ${result.exitCode}`}`,
+              retryable,
+            ),
         ),
         Effect.map((result) => result.stdout.trim()),
       );
@@ -122,13 +126,27 @@ const make = Effect.gen(function* () {
 
   const exportBranch: WorktreeTransfer["Service"]["exportBranch"] = Effect.fn(
     "WorktreeTransfer.exportBranch",
-  )(function* ({ worktreePath, branch: recordedBranch, bases, branches }) {
+  )(function* ({ worktreePath, bases, branches }) {
     const cwd = worktreePath;
-    const branch =
-      (yield* run("export.branch", cwd, ["symbolic-ref", "--quiet", "HEAD"]).pipe(
-        Effect.map((ref) => ref?.replace(/^refs\/heads\//, "")),
-        Effect.mapError((cause) => transferError(cause.message)),
-      )) ?? recordedBranch;
+    const symbolic = yield* git
+      .execute({
+        operation: "WorktreeTransfer.export.branch",
+        cwd,
+        args: ["symbolic-ref", "--quiet", "HEAD"],
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.mapError((cause) => transferError(cause.message)));
+    if (symbolic.exitCode === 1 && symbolic.stderr.trim() === "")
+      return yield* transferError(
+        "Cannot export a detached HEAD. Check out a branch containing the work, then try again.",
+        false,
+      );
+    if (symbolic.exitCode !== 0)
+      return yield* transferError(
+        `Unable to resolve the branch: ${symbolic.stderr.trim() || `git exited with code ${symbolic.exitCode}`}`,
+        false,
+      );
+    const branch = symbolic.stdout.trim().replace(/^refs\/heads\//, "");
     const headCommit = yield* required(
       "export.head",
       cwd,
@@ -193,6 +211,14 @@ const make = Effect.gen(function* () {
           ["bundle", "create", file, `refs/heads/${branch}`, ...exclude],
           "Unable to bundle the branch",
         );
+        const bundledHead = yield* required(
+          "export.verify",
+          cwd,
+          ["bundle", "list-heads", file, `refs/heads/${branch}`],
+          "Unable to verify the bundled branch",
+        );
+        if (bundledHead.split(" ")[0] !== headCommit)
+          return yield* transferError("The branch moved during export; export it again.");
         const stat = yield* fs.stat(file);
         if (Number(stat.size) > MAX_BUNDLE_BYTES) return null;
         return Buffer.from(yield* fs.readFile(file)).toString("base64");

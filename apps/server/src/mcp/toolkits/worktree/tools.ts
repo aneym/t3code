@@ -11,6 +11,7 @@ import {
   WorktreeMcpStatusResult,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
@@ -99,6 +100,7 @@ const WorktreeExportTool = Tool.make("t3_worktree_export", {
     ThreadManagementService.ThreadManagementService,
     GitVcsDriver.GitVcsDriver,
     FileSystem.FileSystem,
+    Crypto.Crypto,
   ],
 })
   .annotate(Tool.Readonly, true)
