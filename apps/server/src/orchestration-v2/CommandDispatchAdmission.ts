@@ -1,11 +1,20 @@
-import type { OrchestrationV2ServerCommand, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ServerCommand,
+  OrchestrationV2AppThread,
+  ThreadId,
+} from "@t3tools/contracts";
 import type * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Effect from "effect/Effect";
 import { withServerAdmission } from "../serverHandoffBarrier.ts";
 import type { EffectOutboxV2Shape } from "./EffectOutbox.ts";
 
 export function makeCommandDispatchAdmission<A, E, R, P>(options: {
-  readonly execute: (command: OrchestrationV2ServerCommand) => Effect.Effect<A, E, R>;
+  readonly execute: (
+    command: OrchestrationV2ServerCommand,
+    sideChatIds?: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<A, E, R>;
+  readonly findThread: (threadId: ThreadId) => Effect.Effect<OrchestrationV2AppThread | null, E, R>;
+  readonly liveSideChatIds: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<ThreadId>, E, R>;
   readonly commandThreadId: (command: OrchestrationV2ServerCommand) => ThreadId;
   readonly mayStartFollowup: (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
@@ -14,14 +23,42 @@ export function makeCommandDispatchAdmission<A, E, R, P>(options: {
   readonly outbox: Pick<EffectOutboxV2Shape, "withDispatch">;
   readonly locks: KeyedLock.KeyedLock<ThreadId>;
 }) {
-  const execute = (command: OrchestrationV2ServerCommand) =>
-    withServerAdmission(options.execute(command));
+  const execute = (command: OrchestrationV2ServerCommand, sideChatIds?: ReadonlyArray<ThreadId>) =>
+    withServerAdmission(options.execute(command, sideChatIds));
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
   const dispatch = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
     const execution = options.locks.withLock(
       options.commandThreadId(command),
       options.outbox.withDispatch(execute(command)),
     );
+    // A parent's lock comes before its side chats' locks, so a delete cascade and a side chat
+    // fork or command never interleave. A fork from a side chat or onto an existing thread would
+    // invert that order; dispatch rejects both, so they skip the source lock.
+    if (
+      command.type === "thread.fork" &&
+      command.sideChat === true &&
+      command.sourceThreadId !== command.targetThreadId
+    ) {
+      const source = yield* options.findThread(command.sourceThreadId);
+      const target = yield* options.findThread(command.targetThreadId);
+      return yield* source === null || source.lineage.sideChat === true || target !== null
+        ? execution
+        : options.locks.withLock(command.sourceThreadId, execution);
+    }
+    if (command.type === "thread.delete")
+      return yield* options.locks.withLock(
+        command.threadId,
+        options
+          .liveSideChatIds(command.threadId)
+          .pipe(
+            Effect.flatMap((sideChatIds) =>
+              sideChatIds.reduce(
+                (locked, sideChatId) => options.locks.withLock(sideChatId, locked),
+                options.outbox.withDispatch(execute(command, sideChatIds)),
+              ),
+            ),
+          ),
+      );
     // Answering a message-mode question can also start a follow-up.
     if (
       command.type !== "runtime-request.respond" &&

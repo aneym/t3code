@@ -8,5 +8,5 @@ export const OrchestratorMcpSchedule = Schema.Union([
   }),
 ]).annotate({
   description:
-    "One-time: {type:'once',at:ISO datetime}. Recurring: {type:'interval',everyMs} or {type:'fixed_time',timeOfDay,weekdays?}. Webhook: {type:'webhook'}.",
+    "One-time: {type:'once',runAt:ISO datetime}. Recurring: {type:'interval',everyMs} or {type:'fixed_time',timeOfDay,weekdays?}. Webhook: {type:'webhook'}.",
 });

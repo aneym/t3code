@@ -1,9 +1,13 @@
-import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  EnvironmentMachineKind,
+  ResolvedKeybindingsConfig,
+} from "@t3tools/contracts";
 import {
   pinnedProjectGroups,
   projectGroupPinOrder,
 } from "@t3tools/client-runtime/state/project-pins";
-import { FolderIcon, ListFilterIcon, PinIcon, SettingsIcon } from "lucide-react";
+import { CheckIcon, FolderIcon, ListFilterIcon, PinIcon, SettingsIcon } from "lucide-react";
 import { useReducer, useRef, type RefObject } from "react";
 import { useProjectPins } from "../../hooks/useProjectPins";
 import { readLocalApi } from "../../localApi";
@@ -18,6 +22,7 @@ import {
 import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
 import { AgentProjectIcon, useAgentProjectGroups } from "../agents/agentProjectPresentation";
 import { Button } from "../ui/button";
+import { isProjectPinShortcut } from "../ProjectPinButton";
 import {
   Combobox,
   ComboboxEmpty,
@@ -37,6 +42,8 @@ export function SidebarProjectScopePicker({
   allSelected,
   scopedProjects: scopedGroups,
   setScopeKey,
+  toggleScopeKey,
+  keybindings,
   openSettings,
   anchor,
   primaryEnvironmentId,
@@ -47,6 +54,8 @@ export function SidebarProjectScopePicker({
   allSelected: boolean;
   scopedProjects: readonly SidebarProjectSnapshot[];
   setScopeKey: (key: string | null) => void;
+  toggleScopeKey: (key: string) => void;
+  keybindings: ResolvedKeybindingsConfig;
   openSettings: (project: SidebarProjectSnapshot) => void;
   anchor: RefObject<HTMLDivElement | null>;
   primaryEnvironmentId: EnvironmentId | null;
@@ -138,7 +147,8 @@ export function SidebarProjectScopePicker({
         itemToStringLabel={(item) => item.label}
         isItemEqualToValue={(a, b) => a.value === b.value}
         open={menu.open}
-        onOpenChange={(open) => {
+        onOpenChange={(open, eventDetails) => {
+          if (eventDetails.isCanceled) return;
           if (open) suppressSelection.current = false;
           dispatch({ type: "open-changed", open });
         }}
@@ -146,12 +156,17 @@ export function SidebarProjectScopePicker({
           highlighted.current = item?.value ?? null;
         }}
         value={selected}
-        onValueChange={(item) => {
+        onValueChange={(item, eventDetails) => {
           if (suppressSelection.current) {
             suppressSelection.current = false;
             return;
           }
-          if (item) setScopeKey(item.value === "all" ? null : item.value);
+          if (!item) return;
+          if (item.value === "all") setScopeKey(null);
+          else if (eventDetails.event instanceof MouseEvent && eventDetails.event.shiftKey) {
+            eventDetails.cancel();
+            toggleScopeKey(item.value);
+          } else setScopeKey(item.value);
         }}
       >
         <ComboboxTrigger
@@ -177,6 +192,7 @@ export function SidebarProjectScopePicker({
           align="start"
           anchor={anchor}
           className="max-w-[min(18rem,var(--available-width))] overflow-hidden"
+          finalFocus={(closeType) => closeType === "keyboard"}
         >
           <ComboboxSearchInput
             aria-label="Search projects"
@@ -184,16 +200,23 @@ export function SidebarProjectScopePicker({
             value={menu.query}
             onChange={(event) => dispatch({ type: "query-changed", query: event.target.value })}
             onKeyDown={(event) => {
-              if (
-                event.defaultPrevented ||
-                event.nativeEvent.isComposing ||
-                event.ctrlKey ||
-                event.altKey ||
-                event.metaKey ||
-                (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10"))
-              )
+              if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229)
                 return;
               const project = highlighted.current ? byKey.get(highlighted.current) : null;
+              if (project && canPin(project) && isProjectPinShortcut(event, keybindings)) {
+                event.preventDefault();
+                event.stopPropagation();
+                void togglePin(project.projectKey);
+                return;
+              }
+              if (event.ctrlKey || event.altKey || event.metaKey) return;
+              if (event.shiftKey && event.key === "Enter") {
+                if (!project) return;
+                event.preventDefault();
+                toggleScopeKey(project.projectKey);
+                return;
+              }
+              if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
               if (project) {
                 event.preventDefault();
                 void contextMenu(project, {
@@ -204,10 +227,11 @@ export function SidebarProjectScopePicker({
             }}
           />
           <ComboboxEmpty>No matching projects.</ComboboxEmpty>
-          <ComboboxList>
+          <ComboboxList aria-multiselectable>
             {(item: (typeof items)[number]) => {
               const project = byKey.get(item.value) ?? null;
               const isPinned = project !== null && projectGroupPinOrder(project) !== null;
+              const isSelected = project ? scopeKeys.includes(item.value) : allSelected;
               return (
                 <div key={item.value}>
                   {item.value === firstPinned ? (
@@ -221,6 +245,8 @@ export function SidebarProjectScopePicker({
                   <ComboboxItem
                     hideIndicator
                     value={item}
+                    aria-selected={isSelected}
+                    data-selected={undefined}
                     onContextMenu={(event) => {
                       if (project) {
                         event.preventDefault();
@@ -229,11 +255,22 @@ export function SidebarProjectScopePicker({
                       }
                     }}
                   >
-                    {project ? (
-                      <AgentProjectIcon project={project} className="size-4 shrink-0" />
-                    ) : (
-                      <FolderIcon className="size-4 shrink-0" />
-                    )}
+                    <span className="relative flex shrink-0">
+                      {project ? (
+                        <AgentProjectIcon project={project} className="size-4 shrink-0" />
+                      ) : (
+                        <FolderIcon className="size-4 shrink-0" />
+                      )}
+                      {isSelected ? (
+                        <span className="pointer-events-none absolute -right-1 -bottom-1 grid size-3 place-items-center rounded-full bg-primary ring-2 ring-popover">
+                          <CheckIcon
+                            className="size-2 text-primary-foreground"
+                            strokeWidth={4}
+                            aria-hidden
+                          />
+                        </span>
+                      ) : null}
+                    </span>
                     <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
                     {project && showEnvironments ? (
                       <ProjectEnvironmentBadge

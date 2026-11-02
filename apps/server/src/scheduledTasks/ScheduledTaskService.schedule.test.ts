@@ -17,6 +17,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
 
@@ -25,6 +26,7 @@ it.effect("rejects a stale form save after deletion while preserving explicit-id
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       Scheduler.layer,
+      ManagedPolicy.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
@@ -72,6 +74,7 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       Scheduler.layer,
+      ManagedPolicy.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
@@ -126,6 +129,7 @@ it.effect("keeps the task list order when a toggle or edit rewrites updated_at",
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       Scheduler.layer,
+      ManagedPolicy.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
@@ -180,6 +184,7 @@ it.effect(
       const layerDependencies = Layer.mergeAll(
         NodeCrypto.layer,
         Scheduler.layer,
+        ManagedPolicy.layerTest(),
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({
           launch: (input) =>
             Deferred.succeed(launched, input.title).pipe(
@@ -239,6 +244,7 @@ it.effect.each([false, true])(
       const at = "2026-07-01T09:01:00.000Z";
       yield* TestClock.setTime(Date.parse(at) - 60_000);
       const dependencies = Layer.mergeAll(
+        ManagedPolicy.layerTest(),
         NodeCrypto.layer,
         Scheduler.layer,
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({
@@ -260,7 +266,7 @@ it.effect.each([false, true])(
           title: "One-time review",
           prompt: "Review the open pull requests.",
           enabled: true,
-          schedule: { type: "once", at },
+          schedule: { type: "once", runAt: at },
           projectId: "project-once",
           workspaceStrategy: { type: "root" },
           modelSelection: { instanceId: "codex", model: "gpt-5.4" },
@@ -282,13 +288,15 @@ it.effect.each([false, true])(
         expect(completed?.lastRunStatus).toBe(fail ? "failed" : "succeeded");
         yield* TestClock.adjust("5 minutes");
         expect((yield* service.list()).tasks[0]?.runCount).toBe(1);
-        const reenabled = yield* service.setEnabled({ id: created.task.id, enabled: true });
-        expect(reenabled.task.nextRunAt).toBe(at);
+        const reenabled = yield* service
+          .setEnabled({ id: created.task.id, enabled: true })
+          .pipe(Effect.flip);
+        expect(reenabled.message).toBe("The run time has passed. Pick a time in the future.");
         yield* service.setEnabled({ id: created.task.id, enabled: false });
         const rearmed = yield* service.upsert({
           ...input,
           id: created.task.id,
-          schedule: { type: "once", at: "2026-07-02T09:01:00.000Z" },
+          schedule: { type: "once", runAt: "2026-07-02T09:01:00.000Z" },
         });
         expect(rearmed.task.enabled).toBe(true);
         expect(rearmed.task.nextRunAt).toBe("2026-07-02T09:01:00.000Z");

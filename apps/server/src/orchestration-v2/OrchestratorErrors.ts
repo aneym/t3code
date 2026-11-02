@@ -4,6 +4,7 @@ import {
   RuntimeMode,
   ProviderInteractionMode,
   ThreadOrganizeRefusalReason,
+  managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import {
@@ -96,6 +97,23 @@ export class OrchestratorCommandIdConflictError extends Schema.TaggedError<Orche
   }
 }
 
+export class OrchestratorRuntimeModeAboveCeilingError extends Schema.TaggedError<OrchestratorRuntimeModeAboveCeilingError>()(
+  "OrchestratorRuntimeModeAboveCeilingError",
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+    refused: Schema.Literals(["mode", "turn"]),
+    runtimeMode: RuntimeMode,
+    maxRuntimeMode: RuntimeMode,
+    organization: Schema.String,
+  },
+) {
+  override get message(): string {
+    const limit = managedRuntimeModeCeilingMessage(this.organization, this.maxRuntimeMode);
+    return this.refused === "turn" ? `${limit} Switch this thread's mode to continue.` : limit;
+  }
+}
+
 export const OrchestratorV2Error = Schema.Union([
   OrchestratorDispatchError,
   OrchestratorThreadAlreadyExistsError,
@@ -107,5 +125,6 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
   OrchestratorThreadAboveModeLimitError,
+  OrchestratorRuntimeModeAboveCeilingError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;

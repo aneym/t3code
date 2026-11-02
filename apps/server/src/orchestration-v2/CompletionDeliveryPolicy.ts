@@ -33,7 +33,7 @@ function completionDeliveryOutcome(status: OrchestrationV2Run["status"], accepte
       : ("retryLater" as const);
 }
 
-export function completionBlockedBy(
+function completionBlockedBy(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
   ownership: OrchestrationV2ConversationMessage["delegatedCompletion"],
 ) {

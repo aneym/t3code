@@ -28,7 +28,7 @@ function display(ultracode: boolean) {
 
 describe("buildTraitsTriggerDisplay", () => {
   it("names Ultracode only while it is on", () => {
-    expect(display(false)).toEqual({ label: "Max" });
-    expect(display(true)).toEqual({ label: "Max · Ultracode" });
+    expect(display(false)).toEqual({ label: "Max", speedLabel: null });
+    expect(display(true)).toEqual({ label: "Max · Ultracode", speedLabel: null });
   });
 });

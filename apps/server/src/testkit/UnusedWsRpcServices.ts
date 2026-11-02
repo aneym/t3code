@@ -1,3 +1,5 @@
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as NpmRelease from "../cloud/npmRelease.ts";
 import * as Layer from "effect/Layer";
 
 import * as PairingGrantStore from "../auth/PairingGrantStore.ts";
@@ -76,6 +78,8 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as RelayClient from "@t3tools/shared/relayClient";
 
 export const layerUnusedConfigRpcServices = Layer.mergeAll(
+  Layer.mock(SecretResolver.SecretResolver)({}),
+  Layer.mock(NpmRelease.NpmRelease)({}),
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),

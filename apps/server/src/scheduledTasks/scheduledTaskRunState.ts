@@ -15,8 +15,8 @@ export const makeMarkScheduledTaskRunning = (sql: SqlClient.SqlClient) =>
           last_run_webhook_delivery_id = ${webhookDeliveryId ?? null},
           last_run_status = 'running',
           last_run_error = NULL,
-          enabled = CASE WHEN json_extract(schedule_json, '$.type') = 'once' THEN 0 ELSE enabled END,
-          next_run_at = CASE WHEN json_extract(schedule_json, '$.type') = 'once' THEN NULL ELSE next_run_at END
+          enabled = CASE WHEN json_extract(schedule_json, '$.type') = 'once' AND julianday(COALESCE(json_extract(schedule_json, '$.runAt'), json_extract(schedule_json, '$.at'))) <= julianday(${startedAtIso}) THEN 0 ELSE enabled END,
+          next_run_at = CASE WHEN json_extract(schedule_json, '$.type') = 'once' AND julianday(COALESCE(json_extract(schedule_json, '$.runAt'), json_extract(schedule_json, '$.at'))) <= julianday(${startedAtIso}) THEN NULL ELSE next_run_at END
       WHERE task_id = ${id}
       RETURNING task_id
     `.pipe(

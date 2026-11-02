@@ -62,6 +62,7 @@ export function makeSubagentChildThread(input: {
     creationSource: input.creationSource,
     id: input.childThreadId,
     title: input.title,
+    titleRegeneration: null,
     linkedPullRequest: null,
     pullRequests: [],
     historyOrigin: undefined,
@@ -86,6 +87,7 @@ export function makeSubagentChildThread(input: {
     snoozedAt: null,
     pinnedAt: null,
     pinOrderKey: null,
+    autoSettleDisabledAt: null,
     // A guest link belongs to the thread it was made for.
     guestShare: null,
     lastVisitedAt: null,

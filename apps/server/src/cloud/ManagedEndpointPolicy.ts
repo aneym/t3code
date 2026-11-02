@@ -48,12 +48,15 @@ export function needsPinnedRelayClient(executable: RelayClient.RelayClientStatus
   );
 }
 
-export function classifyRelayClientOutput(line: string): "connected" | "warning" | "debug" {
+export function classifyRelayClientOutput(
+  line: string,
+): "connected" | "unregistered" | "warning" | "debug" {
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
     return "connected";
   }
   // cloudflared uses zerolog FTL/PNC for fatal/panic; classify them above debug too.
-  return /\b(?:ERR|WRN|FTL|PNC)\b/u.test(line) ? "warning" : "debug";
+  if (/\b(?:ERR|WRN|FTL|PNC)\b/u.test(line)) return "warning";
+  return /\bINF\b.*\bUnregistered tunnel connection\b/u.test(line) ? "unregistered" : "debug";
 }
 
 /** Edge rejection wording varies; any Unauthorized registration error counts. */

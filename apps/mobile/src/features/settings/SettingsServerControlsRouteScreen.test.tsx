@@ -17,6 +17,8 @@ const { Children, mocks } = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("./RemovedLinkedRoutes", () => ({ RemovedLinkedRoutes: () => null }));
+vi.mock("./LoadBalancingSettings", () => ({ LoadBalancingSettings: () => null }));
 vi.mock("react-native", () => ({
   View: Children,
   Alert: { alert: mocks.alert },
@@ -64,7 +66,10 @@ vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environme
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => mocks.updateSettings,
 }));
-vi.mock("../threads/thread-settings-options", () => ({ RUNTIME_MODE_CHOICES: [] }));
+vi.mock("../threads/thread-settings-options", () => ({
+  RUNTIME_MODE_CHOICES: [],
+  withManagedRuntimeModeLimits: (choices: readonly unknown[]) => choices,
+}));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/Button", () => ({

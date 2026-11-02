@@ -69,7 +69,7 @@ export const DAYS = [
 ] as const;
 
 export function describeSchedule(task: ScheduledTask): string {
-  if (task.schedule.type === "once") return onceScheduleLabel(task.schedule.at);
+  if (task.schedule.type === "once") return onceScheduleLabel(task.schedule.runAt);
   if (task.schedule.type === "webhook") return "On webhook";
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
@@ -105,4 +105,12 @@ export function repeatLabel(weekdays: ReadonlyArray<number>): string {
       .map((day) => day.label)
       .join(", ") || "Choose days"
   );
+}
+
+export function formatRunAtDate(value: Date): string {
+  return value.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+}
+
+export function formatRunAtTime(value: Date): string {
+  return value.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }

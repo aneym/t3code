@@ -1,4 +1,3 @@
-import { onceScheduleFromInput } from "@t3tools/client-runtime/scheduled-task-once";
 import { isWebhookDedupeTemplate } from "@t3tools/contracts";
 import type {
   ModelSelection,
@@ -52,9 +51,10 @@ export function scheduledTaskDefaultModel(
 }
 
 export type ScheduleDraft = {
-  readonly mode: "once" | "fixed_time" | "interval" | "webhook";
+  readonly mode: "fixed_time" | "once" | "interval" | "webhook";
   readonly timeOfDay: string;
-  readonly onceAt: string;
+  /** ISO time for a one-time run. Empty until the user picks the "Once" mode. */
+  readonly runAt: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
   readonly signature: ScheduledTaskWebhookSignature | null;
@@ -70,7 +70,7 @@ export type ScheduleDraft = {
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
   mode: "fixed_time",
   timeOfDay: "09:00",
-  onceAt: "",
+  runAt: "",
   weekdays: [1, 2, 3, 4, 5],
   intervalMinutes: "15",
   signature: null,
@@ -84,8 +84,6 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
 
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
   switch (task.schedule.type) {
-    case "once":
-      return { ...DEFAULT_SCHEDULE, mode: "once", onceAt: task.schedule.at };
     case "fixed_time":
       return {
         ...DEFAULT_SCHEDULE,
@@ -94,6 +92,8 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
           ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
           : [0, 1, 2, 3, 4, 5, 6],
       };
+    case "once":
+      return { ...DEFAULT_SCHEDULE, mode: "once", runAt: task.schedule.runAt };
     case "interval":
       return {
         ...DEFAULT_SCHEDULE,
@@ -121,8 +121,11 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
   }
 }
 
+export function parseIntervalMinutes(value: string): number {
+  return Number(value.trim().replace(",", "."));
+}
+
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
-  if (draft.mode === "once") return onceScheduleFromInput(draft.onceAt);
   if (draft.mode === "webhook") {
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
     if (maxDeliveryAgeMinutes === undefined) return null;
@@ -168,8 +171,12 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
         : {}),
     };
   }
+  if (draft.mode === "once") {
+    const runAt = new Date(draft.runAt);
+    return Number.isNaN(runAt.getTime()) ? null : { type: "once", runAt: runAt.toISOString() };
+  }
   if (draft.mode === "interval") {
-    const minutes = Number(draft.intervalMinutes);
+    const minutes = parseIntervalMinutes(draft.intervalMinutes);
     const everyMs = Math.round(minutes * 60_000);
     return minutes >= 1 && Number.isSafeInteger(everyMs) ? { type: "interval", everyMs } : null;
   }
@@ -217,7 +224,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
       .map((option) => [option.id, option.value]),
     draft.schedule.mode,
     draft.schedule.timeOfDay,
-    draft.schedule.onceAt,
+    draft.schedule.runAt,
     [...draft.schedule.weekdays].sort((a, b) => a - b),
     draft.schedule.intervalMinutes,
     draft.schedule.maxDeliveryAgeMinutes,

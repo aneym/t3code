@@ -61,7 +61,8 @@ export const unavailable = () =>
 export const dispatchFailure = (
   error: OrchestratorV2Error | ThreadManagement.ThreadManagementProviderInstanceDisabledError,
 ) =>
-  error._tag === "ThreadManagementProviderInstanceDisabledError"
+  error._tag === "ThreadManagementProviderInstanceDisabledError" ||
+  error._tag === "OrchestratorRuntimeModeAboveCeilingError"
     ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
     : error._tag === "OrchestratorCommandPreviouslyRejectedError" && error.reason !== undefined
       ? new OrchestratorMcpFailure({ code: error.reason, message: error.message })

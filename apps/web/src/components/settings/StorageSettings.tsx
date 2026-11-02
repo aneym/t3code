@@ -1,3 +1,5 @@
+import { useDebouncedValue } from "../../state/queries";
+import { AnimatedHeight } from "../AnimatedHeight";
 import type {
   StorageCleanupReport,
   StorageCleanupSettings,
@@ -143,8 +145,8 @@ function RetentionControl({
             <NumberFieldDecrement aria-label={`Decrease ${label}`} />
             <NumberFieldInput
               aria-label={`${label} in days`}
-              size={new Intl.NumberFormat().format(draft ?? value).length}
-              className="field-sizing-content w-auto min-w-[1ch] grow-0 text-right"
+              size={5}
+              className="w-auto grow-0 text-right"
             />
             <span aria-hidden="true" className="self-center pr-2 text-xs">
               days
@@ -475,6 +477,9 @@ export function WorktreeCleanupSection() {
     )
       ? "Mixed across selected machines"
       : undefined;
+  // A policy locks these through worktreeCleanup, which also reaches each project's own rules.
+  const lockablePath = (key: keyof WorktreeCleanupRules) =>
+    isProjectScope ? ["worktreeCleanup"] : ["worktreeCleanup", `storageCleanup.${key}`];
   const update = (patch: Partial<StorageCleanupSettings>) =>
     updateSettings({ storageCleanup: patch });
   const updateWorktree = (patch: Partial<WorktreeCleanupRules>) =>
@@ -556,6 +561,7 @@ export function WorktreeCleanupSection() {
             <SettingsRow
               title="Delete worktrees with deleted threads"
               status={ruleStatus("worktreeOnDelete")}
+              managedPaths={lockablePath("worktreeOnDelete")}
               description="Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept."
               serverScoped={!isProjectScope}
               control={
@@ -569,6 +575,7 @@ export function WorktreeCleanupSection() {
             <SettingsRow
               title="Delete merged worktrees"
               status={ruleStatus("worktreeOnMerge")}
+              managedPaths={lockablePath("worktreeOnMerge")}
               description="Remove worktrees whose pull request is merged and whose commits are included in the default branch."
               serverScoped={!isProjectScope}
               control={
@@ -582,6 +589,7 @@ export function WorktreeCleanupSection() {
             <SettingsRow
               title="Delete inactive worktrees"
               status={ruleStatus("worktreeAfterDays")}
+              managedPaths={lockablePath("worktreeAfterDays")}
               description="Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept."
               serverScoped={!isProjectScope}
               control={
@@ -604,6 +612,7 @@ export function WorktreeCleanupSection() {
                 ) && (
                   <SettingsRow
                     title="Delete settled worktrees"
+                    managedPaths={lockablePath("worktreeSettledAfterDays")}
                     status={[
                       ruleStatus("worktreeSettledAfterDays"),
                       environments.length > connectedEnvironments.length
@@ -629,6 +638,7 @@ export function WorktreeCleanupSection() {
               <WorktreeIntegrationRows
                 settings={settings}
                 ruleStatus={ruleStatus}
+                lockablePath={lockablePath}
                 serverScoped={!isProjectScope}
                 updateWorktree={updateWorktree}
               />
@@ -639,6 +649,7 @@ export function WorktreeCleanupSection() {
                 <SettingsRow
                   {...searchableSetting("storage-worktree-keep-when")}
                   status={ruleStatus("worktreeKeepWhen")}
+                  managedPaths={lockablePath("worktreeKeepWhen")}
                   description={
                     settings.worktreeKeepWhen === "any-local-files"
                       ? "Includes ignored files, except node_modules."
@@ -708,8 +719,26 @@ export function StorageCleanupSections() {
   const { scope, connectedEnvironments, targets } = useSettingsScope();
   const scopedSettings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  if (scope.kind === "project" || scope.kind === "checkout") return null;
   const settings = scopedSettings.storageCleanup;
+  const targetIdsKey = environmentIdsKey(targets.map((target) => target.environmentId).sort());
+  const mixed = (key: (typeof RETENTION_ROWS)[number]["key"]) =>
+    targets.length > 1 &&
+    targets.some((target) => target.settings.storageCleanup[key] !== settings[key]);
+  const settledArtifactsStatus = useDebouncedValue(
+    `${targetIdsKey}:${mixed("browserArtifactsAfterDays")}`,
+    300,
+  );
+  const settledLogsStatus = useDebouncedValue(`${targetIdsKey}:${mixed("logsAfterDays")}`, 300);
+  const settledHistoryStatus = useDebouncedValue(
+    `${targetIdsKey}:${mixed("threadHistoryAfterDays")}`,
+    300,
+  );
+  const statuses = {
+    browserArtifactsAfterDays: settledArtifactsStatus,
+    logsAfterDays: settledLogsStatus,
+    threadHistoryAfterDays: settledHistoryStatus,
+  };
+  if (scope.kind === "project" || scope.kind === "checkout") return null;
   const update = (patch: Partial<StorageCleanupSettings>) =>
     updateSettings({ storageCleanup: patch });
   const databaseStorageNotice = (
@@ -736,24 +765,26 @@ export function StorageCleanupSections() {
       {databaseStorageNotice}
       <SettingsSection id="storage-artifacts" title="Artifacts and logs">
         {RETENTION_ROWS.map(({ key, title, description }) => (
-          <SettingsRow
-            key={key}
-            title={title}
-            status={
-              targets.some((target) => target.settings.storageCleanup[key] !== settings[key])
-                ? "Mixed across selected machines"
-                : undefined
-            }
-            description={description}
-            serverScoped
-            control={
-              <RetentionControl
-                label={title}
-                value={settings[key]}
-                onChange={(days) => update({ [key]: days })}
-              />
-            }
-          />
+          <AnimatedHeight key={key}>
+            <SettingsRow
+              title={title}
+              managedPaths={[`storageCleanup.${key}`]}
+              status={
+                targets.length > 1 && statuses[key] === `${targetIdsKey}:true`
+                  ? "Mixed across selected machines"
+                  : undefined
+              }
+              description={description}
+              serverScoped
+              control={
+                <RetentionControl
+                  label={title}
+                  value={settings[key]}
+                  onChange={(days) => update({ [key]: days })}
+                />
+              }
+            />
+          </AnimatedHeight>
         ))}
       </SettingsSection>
       <CleanupSection />

@@ -1,9 +1,10 @@
 import { scheduledTaskStateLabel } from "@t3tools/client-runtime/scheduled-task-once";
-import { OnceScheduleField } from "./components/OnceScheduleField";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
+  clampManagedRuntimeMode,
+  managedCapabilityDenial,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
@@ -74,6 +75,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   editDraft,
+  parseIntervalMinutes,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
   type ScheduledTaskDraft as Draft,
@@ -93,6 +95,8 @@ import {
   timePickerValue,
   repeatLabel,
   formatNextScheduledTaskRun,
+  formatRunAtDate,
+  formatRunAtTime,
 } from "./scheduledTaskPresentation";
 
 type ScheduledTaskRoutes = {
@@ -623,9 +627,20 @@ function TaskForm({
   const tasks = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
   );
-  const projects = useProjects().filter((project) => project.environmentId === environmentId);
+  // Pinned first. The chosen project stays listed after it is archived.
+  const projects = useProjects()
+    .filter(
+      (project) =>
+        project.environmentId === environmentId &&
+        (project.archivedAt == null ||
+          project.id === draft.projectId ||
+          project.id === draft.task?.projectId),
+    )
+    .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
   const config = useEnvironmentServerConfig(environmentId);
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
+  // Existing webhook tasks keep the option so they can still switch to a timer.
+  const webhookDenial = managedCapabilityDenial(config?.managedPolicy, "webhookTasks");
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );
@@ -635,6 +650,7 @@ function TaskForm({
   });
   const submissionPending = useRef(false);
   const [timePickerOpen, setTimePickerOpen] = useState(false);
+  const [runAtPicker, setRunAtPicker] = useState<"date" | "time" | null>(null);
   const taskMissing =
     draft.task !== null &&
     tasks.data !== null &&
@@ -649,6 +665,9 @@ function TaskForm({
     }
   };
 
+  const offersOnce =
+    config?.environment.capabilities.oneTimeSchedules === true ||
+    draft.task?.schedule.type === "once";
   const save = async () => {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
@@ -673,6 +692,13 @@ function TaskForm({
       Dialog.alert(
         "Invalid age limit",
         `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+      );
+      return;
+    }
+    if (draft.schedule.mode === "once" && !offersOnce) {
+      Dialog.alert(
+        "Once is not available here",
+        "This environment runs an older T3 Code. Update it to schedule a one-time task, or pick another schedule.",
       );
       return;
     }
@@ -725,7 +751,9 @@ function TaskForm({
                 baseRef: draft.baseRef.trim() || "main",
                 startFromOrigin: draft.startFromOrigin,
               },
-      runtimeMode: draft.runtimeMode,
+      // Tasks have no mode picker; a mode above the administrator's ceiling is refused.
+      runtimeMode:
+        clampManagedRuntimeMode(config?.managedPolicy, draft.runtimeMode) ?? draft.runtimeMode,
       interactionMode: draft.task?.interactionMode ?? "default",
       creationSource: draft.task?.creationSource ?? "mobile",
     };
@@ -911,31 +939,39 @@ function TaskForm({
             <SegmentedControl
               variant="card"
               options={[
-                { value: "once", label: "Once" },
-                { value: "fixed_time", label: "Daily / weekly" },
+                { value: "fixed_time", label: "At a time" },
+                // Older servers reject one-time schedules on save.
+                ...(offersOnce || draft.schedule.mode === "once"
+                  ? [{ value: "once" as const, label: "Once" }]
+                  : []),
                 { value: "interval", label: "Interval" },
-                { value: "webhook", label: "On webhook" },
+                ...(webhookDenial === undefined || draft.schedule.mode === "webhook"
+                  ? [{ value: "webhook" as const, label: "On webhook" }]
+                  : []),
               ]}
               selected={draft.schedule.mode}
               onSelect={(mode) => {
                 setTimePickerOpen(false);
+                setRunAtPicker(null);
                 setDraft({
                   ...draft,
                   prompt:
                     mode === "webhook" && !draft.prompt.trim()
                       ? DEFAULT_WEBHOOK_PROMPT
                       : draft.prompt,
-                  schedule: { ...draft.schedule, mode },
+                  schedule: {
+                    ...draft.schedule,
+                    mode,
+                    runAt:
+                      mode === "once" && !draft.schedule.runAt
+                        ? new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000).toISOString()
+                        : draft.schedule.runAt,
+                  },
                 });
               }}
             />
           </View>
-          {draft.schedule.mode === "once" ? (
-            <OnceScheduleField
-              value={draft.schedule.onceAt}
-              onChange={(onceAt) => setDraft({ ...draft, schedule: { ...draft.schedule, onceAt } })}
-            />
-          ) : draft.schedule.mode === "fixed_time" ? (
+          {draft.schedule.mode === "fixed_time" ? (
             <>
               <Pressable
                 accessibilityRole="button"
@@ -1012,6 +1048,57 @@ function TaskForm({
                 }}
               />
             </>
+          ) : draft.schedule.mode === "webhook" && webhookDenial !== undefined && draft.enabled ? (
+            <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
+              {`${webhookDenial} Switch the task to a timer, or turn it off, to save it.`}
+            </Text>
+          ) : draft.schedule.mode === "once" ? (
+            (["date", "time"] as const).map((field) => {
+              const runAt = new Date(draft.schedule.runAt);
+              const label = field === "date" ? formatRunAtDate(runAt) : formatRunAtTime(runAt);
+              return (
+                <View key={field}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${field === "date" ? "Date" : "Time"}, ${label}`}
+                    onPress={() => setRunAtPicker((open) => (open === field ? null : field))}
+                    className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
+                  >
+                    <Text textRole="body" className="text-foreground">
+                      {field === "date" ? "Date" : "Time"}
+                    </Text>
+                    <Text
+                      textRole="footnote"
+                      className="min-w-0 flex-1 text-right text-foreground-muted"
+                    >
+                      {label}
+                    </Text>
+                    <SymbolView
+                      name="chevron.right"
+                      size={14}
+                      tintColorClassName="accent-chevron"
+                      type="monochrome"
+                    />
+                  </Pressable>
+                  {runAtPicker === field ? (
+                    <DateTimePicker
+                      value={runAt}
+                      mode={field}
+                      display={Platform.OS === "ios" ? "spinner" : "default"}
+                      onDismiss={() => setRunAtPicker(null)}
+                      onValueChange={(_, selected) => {
+                        // Android shows a dialog that closes on pick; iOS stays inline.
+                        if (Platform.OS === "android") setRunAtPicker(null);
+                        setDraft({
+                          ...draft,
+                          schedule: { ...draft.schedule, runAt: selected.toISOString() },
+                        });
+                      }}
+                    />
+                  ) : null}
+                </View>
+              );
+            })
           ) : draft.schedule.mode === "webhook" ? (
             <>
               <WebhookScheduleDetails
@@ -1044,7 +1131,7 @@ function TaskForm({
                 }
               />
               <FormField
-                label="Replay key template"
+                label="Duplicate request key"
                 value={draft.schedule.replayKey}
                 placeholder="{{headers.delivery-id}}"
                 disabled={saving}
@@ -1053,6 +1140,9 @@ function TaskForm({
                   setDraft({ ...draft, schedule: { ...draft.schedule, replayKey } })
                 }
               />
+              <Text className="px-4 pb-3 text-sm text-foreground-muted">
+                Requests with the same key run only once within 7 days.
+              </Text>
               <FormField
                 label="Coalesce key template"
                 value={draft.schedule.coalesceKey}
@@ -1075,8 +1165,8 @@ function TaskForm({
                 }
               />
               <Text className="px-4 pb-3 text-sm text-foreground-muted">
-                Replay keys suppress repeats for 7 days. Coalescing runs the latest payload when the
-                window from the first delivery closes. Empty keys run normally.
+                Coalescing runs the latest payload when the window from the first delivery closes.
+                Empty keys run normally.
               </Text>
             </>
           ) : (
@@ -1091,7 +1181,7 @@ function TaskForm({
                   setDraft({ ...draft, schedule: { ...draft.schedule, intervalMinutes } })
                 }
               />
-              {Number(draft.schedule.intervalMinutes) < 1 ? (
+              {!(parseIntervalMinutes(draft.schedule.intervalMinutes) >= 1) ? (
                 <Text className="px-4 pb-3 text-sm text-danger-foreground">
                   Intervals must be at least 1 minute. Update this interval before saving.
                 </Text>
@@ -1125,7 +1215,14 @@ function TaskForm({
         tone="primary"
         fullWidth
         loading={saving}
-        disabled={!canOperate || dictationPending || taskMissing || environmentUnavailable}
+        disabled={
+          !canOperate ||
+          dictationPending ||
+          taskMissing ||
+          environmentUnavailable ||
+          // The server refuses an enabled webhook task under this policy.
+          (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined)
+        }
         onPress={() => void save()}
         label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
       />
@@ -1321,6 +1418,11 @@ function EnvironmentTasks({
                     ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
                     : ""}
               </Text>
+              {task.blockedByPolicy ? (
+                <Text className="text-sm text-foreground-muted" numberOfLines={2}>
+                  {task.blockedByPolicy}
+                </Text>
+              ) : null}
               {task.lastRunError ? (
                 <Text className="text-sm text-danger-foreground" numberOfLines={2}>
                   Last run failed: {task.lastRunError}

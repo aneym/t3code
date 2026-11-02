@@ -35,7 +35,7 @@ import {
   threadArgument,
   waitFlag,
 } from "./threadCommon.ts";
-import { finishRun, readFullText, readThreadOnly, readTimeline } from "./threadRun.ts";
+import { finishRun, readFullText, readLatestMessages } from "./threadRun.ts";
 import { threadSendCommand } from "./threadSend.ts";
 import { threadConfigureCommand } from "./threadConfigure.ts";
 import { threadUpdateCommand } from "./threadUpdate.ts";
@@ -474,14 +474,11 @@ const threadShowCommand = Command.make("show", {
         "thread",
         flags,
         Effect.fn("cli.thread.show")(function* (tools) {
-          const { thread, items } =
-            flags.messages > 0
-              ? yield* readTimeline(tools, threadId, "messages")
-              : yield* readThreadOnly(tools, threadId);
-          const conversation = items.filter(
-            (item) => item.type === "user_message" || item.type === "assistant_message",
+          const { thread, messages: latest } = yield* readLatestMessages(
+            tools,
+            threadId,
+            flags.messages,
           );
-          const latest = conversation.slice(Math.max(0, conversation.length - flags.messages));
           const messages = yield* Effect.forEach(latest, (item) =>
             readFullText(tools, threadId, item).pipe(
               Effect.map((text) => ({

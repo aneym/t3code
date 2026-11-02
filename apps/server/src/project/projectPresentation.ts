@@ -12,6 +12,8 @@ export const toProject = (row: ProjectRow, enrichment: ProjectEnrichment | null)
   defaultThreadEnvMode: row.defaultThreadEnvMode,
   autoPull: row.autoPull,
   pinOrder: row.pinOrder ?? null,
+  pinnedAt: row.pinnedAt,
+  archivedAt: row.archivedAt,
   projectIcon: row.projectIcon,
   scripts: row.scripts,
   createdAt: row.createdAt,

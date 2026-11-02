@@ -14,7 +14,7 @@ import { ThreadNeedsInputError, ThreadRunEndedError } from "./threadCommon.ts";
 
 const WAIT_SLICE_MS = 15_000;
 const READ_PAGE_LIMIT = 100;
-export const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
+const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
   tools: OwnerMcpTools,
   threadId: ThreadId,
   view: "messages" | "activity",
@@ -40,16 +40,61 @@ export const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
   return { thread: page.thread, items };
 });
 
-export const readThreadOnly = Effect.fn("cli.thread.readThreadOnly")(function* (
+/**
+ * The latest `count` user and assistant messages, oldest first. Positions
+ * count every timeline item, so the read starts near the end and widens
+ * backward only while tool and plan items leave too few messages.
+ */
+export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(function* (
   tools: OwnerMcpTools,
   threadId: ThreadId,
+  count: number,
 ) {
-  const page = yield* tools.call(
+  let { thread } = yield* tools.call(
     "t3_thread_read",
-    { threadId, view: "messages", limit: 1, runLimit: 1 },
+    { threadId, limit: 1, runLimit: 1 },
     OrchestratorMcpThreadReadResult,
   );
-  return { thread: page.thread, items: [] as Array<OrchestratorMcpThreadTimelineItem> };
+  let messages: Array<OrchestratorMcpThreadTimelineItem> = [];
+  // The newest window has no upper bound, so items added since the first
+  // read are still shown.
+  let before: number | undefined;
+  let start = thread.itemCount;
+  let span = Math.max(count, READ_PAGE_LIMIT);
+  do {
+    const end = before;
+    start = Math.max(0, start - span);
+    const window: Array<OrchestratorMcpThreadTimelineItem> = [];
+    let afterPosition = start - 1;
+    let page: OrchestratorMcpThreadReadResult;
+    do {
+      page = yield* tools.call(
+        "t3_thread_read",
+        {
+          threadId,
+          view: "messages",
+          limit: READ_PAGE_LIMIT,
+          runLimit: 1,
+          ...(afterPosition < 0 ? {} : { afterPosition }),
+        },
+        OrchestratorMcpThreadReadResult,
+      );
+      window.push(
+        ...page.items.filter(
+          (item) =>
+            (item.type === "user_message" || item.type === "assistant_message") &&
+            (end === undefined || item.position < end),
+        ),
+      );
+      afterPosition = page.nextPosition ?? Number.POSITIVE_INFINITY;
+    } while (page.hasMore && afterPosition < (end ?? Number.POSITIVE_INFINITY) - 1);
+    thread = page.thread;
+    // A window can hold the whole --messages count, too many to spread as arguments.
+    messages = window.concat(messages);
+    before = start;
+    span *= 2;
+  } while (messages.length < count && start > 0);
+  return { thread, messages: messages.slice(Math.max(0, messages.length - count)) };
 });
 
 export const readFullText = Effect.fn("cli.thread.readFullText")(function* (

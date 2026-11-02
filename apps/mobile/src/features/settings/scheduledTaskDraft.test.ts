@@ -15,11 +15,11 @@ import {
 
 describe("scheduleDraftForTask", () => {
   it("keeps a one-shot instant through local editor round trips", () => {
-    const schedule = { type: "once", at: "2026-11-01T06:15:00.123Z" } as const;
+    const schedule = { type: "once", runAt: "2026-11-01T06:15:00.123Z" } as const;
     const draft = scheduleDraftForTask({ schedule });
     expect(draft.mode).toBe("once");
     expect(scheduleFromDraft(draft)).toEqual(schedule);
-    expect(scheduleFromDraft({ ...draft, onceAt: "" })).toBeNull();
+    expect(scheduleFromDraft({ ...draft, runAt: "" })).toBeNull();
   });
 
   it("opens legacy sub-minute schedules at the writable minimum", () => {
@@ -97,6 +97,8 @@ describe("scheduleFromDraft", () => {
 
   it.each([
     ["1.5", 90_000],
+    ["2,5", 150_000],
+    [" 2,5 ", 150_000],
     [String(60_001 / 60_000), 60_001],
   ])("preserves a valid %s minute interval when saving", (intervalMinutes, everyMs) => {
     expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes })).toEqual({
@@ -104,6 +106,15 @@ describe("scheduleFromDraft", () => {
       everyMs,
     });
   });
+
+  it.each(["0,5", "2,5,0", "Infinity", "150119987580", ""])(
+    "rejects invalid interval minutes: %s",
+    (intervalMinutes) => {
+      expect(
+        scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes }),
+      ).toBeNull();
+    },
+  );
 });
 
 describe("scheduled task model defaults", () => {

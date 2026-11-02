@@ -16,6 +16,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
+import type * as ManagedPolicy from "../policy/managedLimits.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { buildPairingUrl } from "../startupAccess.ts";
@@ -31,7 +32,9 @@ export class PeerClientPairing extends Context.Service<
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<
       PeerClientPairingCredential,
-      PeerClientPairingRefused | EnvironmentAuth.ServerAuthInternalError
+      | PeerClientPairingRefused
+      | ManagedPolicy.ManagedPolicyRefusedError
+      | EnvironmentAuth.ServerAuthInternalError
     >;
   }
 >()("t3/peer/PeerClientPairing") {}
@@ -177,6 +180,7 @@ export const routeLayer = Layer.unwrap(
         });
       }).pipe(
         Effect.catchTags({
+          ManagedPolicyRefusedError: () => Effect.succeed(refused(403, "blocked_by_policy")),
           PeerClientPairingRefused: (refusal) =>
             Effect.succeed(refused(refusal.status, refusal.reason)),
         }),

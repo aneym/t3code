@@ -1,9 +1,8 @@
-import { localOnceInput, onceScheduleFromInput } from "@t3tools/client-runtime/scheduled-task-once";
 import type { Dispatch, SetStateAction } from "react";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
-import type { DraftState } from "./scheduledTasksSettings.logic";
+import { type DraftState } from "./scheduledTasksSettings.logic";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -25,10 +24,9 @@ export function ScheduledTaskTimeFields({
           type="datetime-local"
           nativeInput
           step="0.001"
-          value={draft.onceAt ? localOnceInput(draft.onceAt) : ""}
+          value={draft.runAt}
           onChange={(event) => {
-            const onceAt = onceScheduleFromInput(event.target.value)?.at ?? "";
-            setDraft((current) => ({ ...current, onceAt }));
+            setDraft((current) => ({ ...current, runAt: event.target.value }));
           }}
         />
         <p className="text-xs text-muted-foreground">

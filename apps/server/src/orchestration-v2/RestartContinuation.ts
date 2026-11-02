@@ -31,7 +31,8 @@ import {
 } from "./RestartBackgroundNote.ts";
 import { restartSourceSuperseded } from "./RestartDispatchPolicy.ts";
 
-const CONTINUE_PROMPT = "Continue where you left off.";
+const CONTINUE_PROMPT =
+  "Continue where you left off. Your last turn was cut short, so a command or other action it started may have finished or may still be running. Before you repeat one that changes state, confirm it did not take effect and is not still running; if you cannot tell, say so instead of repeating it.";
 
 const MAX_CONTINUATION_CHAIN = 3;
 const CONTINUATION_LOOP_WINDOW_MS = 5 * 60 * 1_000;
@@ -386,7 +387,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         restartContinuationOfRunId: input.sourceRunId,
       })
       .pipe(
-        // Disabled instances cannot resume; still run success cleanup so delegated children recover without futile retries.
+        // Disabled instances, and threads above a policy ceiling, cannot resume; still run success
+        // cleanup so delegated children recover without futile retries.
         Effect.catchTags({
           ThreadManagementProviderInstanceDisabledError: (error) =>
             Effect.logInfo("orchestration-v2.restart-continuation.instance-disabled", {
@@ -395,6 +397,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
               projectId: error.projectId,
               instanceId: error.instanceId,
             }).pipe(Effect.as("provider_disabled" as const)),
+          OrchestratorRuntimeModeAboveCeilingError: () =>
+            Effect.logInfo("orchestration-v2.restart-continuation.above-ceiling", {
+              threadId: input.threadId,
+              sourceRunId: input.sourceRunId,
+            }).pipe(Effect.as("above_ceiling" as const)),
         }),
         Effect.map((declined) => (declined === "provider_disabled" ? declined : undefined)),
       );

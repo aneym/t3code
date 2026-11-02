@@ -26,6 +26,7 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
     description:
       "Public URL for the sender. Absent: no T3 Connect tunnel. The user must enable T3 Connect remote access.",
   }),
+  blockedByPolicy: Schema.optional(Schema.String),
   webhookSignature: Schema.optional(Schema.Literals(["none", "set"])),
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;

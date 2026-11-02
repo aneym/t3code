@@ -27,29 +27,37 @@ describe("scheduled task schedule calculation", () => {
   });
 
   it.each(["2026-07-01T08:00:00.000Z", "2026-07-01T10:00:00.000Z"])(
-    "keeps a one-shot due time before or after %s",
+    "returns a one-shot due time only after %s",
     (from) => {
       const next = nextScheduledRunAt(
-        { type: "once", at: "2026-07-01T09:00:00.000Z" },
+        { type: "once", runAt: "2026-07-01T09:00:00.000Z" },
         DateTime.makeUnsafe(from),
       );
-      expect(next && DateTime.formatIso(next)).toBe("2026-07-01T09:00:00.000Z");
+      expect(next && DateTime.formatIso(next)).toBe(
+        from < "2026-07-01T09:00:00.000Z" ? "2026-07-01T09:00:00.000Z" : null,
+      );
     },
   );
 
   it("compares schedules structurally", () => {
     expect(
       isSameSchedule(
-        { type: "once", at: "2026-07-01T09:00:00.000Z" },
-        { type: "once", at: "2026-07-01T09:00:00.000Z" },
+        { type: "once", runAt: "2026-07-01T09:00:00.000Z" },
+        { type: "once", runAt: "2026-07-01T09:00:00.000Z" },
       ),
     ).toBe(true);
     expect(
       isSameSchedule(
-        { type: "once", at: "2026-07-01T09:00:00.000Z" },
-        { type: "once", at: "2026-07-02T09:00:00.000Z" },
+        { type: "once", runAt: "2026-07-01T09:00:00.000Z" },
+        { type: "once", runAt: "2026-07-02T09:00:00.000Z" },
       ),
     ).toBe(false);
+    expect(
+      isSameSchedule(
+        { type: "once", runAt: "2026-11-01T03:00:00-05:00" },
+        { type: "once", runAt: "2026-11-01T08:00:00.000Z" },
+      ),
+    ).toBe(true);
     expect(
       isSameSchedule({ type: "interval", everyMs: 60_000 }, { type: "interval", everyMs: 60_000 }),
     ).toBe(true);

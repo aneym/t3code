@@ -1,3 +1,4 @@
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { EnvironmentId, ProjectId, ScheduledTaskId, ThreadId } from "@t3tools/contracts";
@@ -40,6 +41,7 @@ it.effect("lists every project's saved tasks on request and reports the default 
   const dependencies = Layer.mergeAll(
     NodeServices.layer,
     Scheduler.layer,
+    ManagedPolicy.layerTest(),
     ServerSettings.layerTest(),
     Layer.mock(ThreadManagementService.ThreadManagementService)({
       getThreadShell: (id) => Effect.succeed(id === bound.id ? bound : caller),

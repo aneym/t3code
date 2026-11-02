@@ -8,11 +8,13 @@ import { useSettingsScope } from "./SettingsScopeContext";
 export function WorktreeIntegrationRows({
   settings,
   ruleStatus,
+  lockablePath,
   serverScoped,
   updateWorktree,
 }: {
   settings: WorktreeCleanupRules;
   ruleStatus: (key: keyof StorageCleanupSettings) => string | undefined;
+  lockablePath: (key: keyof WorktreeCleanupRules) => readonly string[];
   serverScoped: boolean;
   updateWorktree: (patch: Partial<WorktreeCleanupRules>) => void;
 }) {
@@ -22,6 +24,7 @@ export function WorktreeIntegrationRows({
       <SettingsRow
         title="Delete unchanged worktrees"
         status={ruleStatus("worktreeUnchanged")}
+        managedPaths={lockablePath("worktreeUnchanged")}
         description="Remove worktrees with no commits beyond the default branch."
         serverScoped={serverScoped}
         control={
