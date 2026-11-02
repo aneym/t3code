@@ -6,6 +6,7 @@ import ProjectionThreadAutomationPlacement from "./ForkMigrations/002_Projection
 import ProjectionProjectsPinOrder from "./ForkMigrations/003_ProjectionProjectsPinOrder.ts";
 
 import ChildSettlementIndexes from "./ForkMigrations/004_ChildSettlementIndexes.ts";
+import RemoveUnusedEventCorrelationIndex from "./ForkMigrations/005_RemoveUnusedEventCorrelationIndex.ts";
 
 const run = Migrator.make({});
 const loader = Migrator.fromRecord({
@@ -13,6 +14,7 @@ const loader = Migrator.fromRecord({
   "2_ProjectionThreadAutomationPlacement": ProjectionThreadAutomationPlacement,
   "3_ProjectionProjectsPinOrder": ProjectionProjectsPinOrder,
   "4_ChildSettlementIndexes": ChildSettlementIndexes,
+  "5_RemoveUnusedEventCorrelationIndex": RemoveUnusedEventCorrelationIndex,
 });
 
 export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {
