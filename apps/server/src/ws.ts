@@ -2486,8 +2486,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverListForkReleases]: () => forkReleases.list(),
         [WS_METHODS.serverGetRestartStatus]: (input) =>
           providerRuntimeRecovery.getRestartStatus(input.epoch),
-        [WS_METHODS.serverAbortRestart]: (input) =>
-          providerRuntimeRecovery.abortRestart(input.epoch),
+        [WS_METHODS.serverAbortRestart]: ({ epoch }) => providerRuntimeRecovery.abortRestart(epoch),
         [WS_METHODS.serverImportRestartHandoff]: (input) =>
           providerRuntimeRecovery.importRestartHandoff(input),
         [WS_METHODS.serverPrepareRestart]: (input) =>
