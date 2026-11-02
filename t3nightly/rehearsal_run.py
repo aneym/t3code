@@ -107,8 +107,9 @@ class Rehearsal:
             command.extend(["--verdict", str(self.args.verdict)])
         installer_home = Path.home() if (self.engine / "install_hard.py").is_file() else sandbox.os_home
         environment = dict(os.environ, HOME=str(installer_home), LOAD_GUARD_STATE=str(Path.home() / ".agent-rails/state/load-guard"))
+        drains = 2 if self.args.force_rollback and getattr(self.args, "hot_swap", False) else 1
         with (sandbox.evidence / "installer.log").open("w") as output:
-            result = subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=260 + getattr(self.args, "drain_s", 0), check=False)
+            result = subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=260 + drains * getattr(self.args, "drain_s", 0), check=False)
         report = json.loads((sandbox.evidence / "installer-state/last.json").read_text())
         if self.args.force_rollback or (getattr(self.args, "hot_swap", False) and self.args.inject != "none"):
             if report["outcome"] != "rolled-back":
