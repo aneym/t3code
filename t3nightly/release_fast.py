@@ -79,14 +79,13 @@ def finish_fast(args):
 
 def drive_fast(args):
     args.engine_verified = False
-    bind_remote_runs(args)
+    unavailable = bind_remote_runs(args)
     graph = fast_graph(args.linux_host, args.defer_host, args.defer_reason)
     manifest = args.run / "candidate.json"
     engine_checked = False
-    unavailable = {}
     if not args.dry_run and manifest.is_file():
         require_engine(manifest)
-        unavailable = remote_engine_failures(args)
+        unavailable = {**remote_engine_failures(args), **unavailable}
         engine_checked = True
         args.engine_verified = True
     args.run.mkdir(parents=True, exist_ok=True)
@@ -151,7 +150,7 @@ def drive_fast(args):
     while pending or running:
         if not args.dry_run and not engine_checked and "A" in done and manifest.is_file():
             require_engine(manifest)
-            unavailable.update(remote_engine_failures(args))
+            unavailable = {**remote_engine_failures(args), **unavailable}
             engine_checked = True
             args.engine_verified = True
         for key, node in list(pending.items()):
