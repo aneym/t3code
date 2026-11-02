@@ -23,7 +23,11 @@ with (root / ".coordinator.lock").open("a") as lock:
     elif any(path.name != ".coordinator.lock" and not path.name.startswith(".coordinator-identity-") for path in root.iterdir()):
         sys.exit("remote run already holds state without this coordinator identity")
     else:
-        fd, temporary = tempfile.mkstemp(dir=root, prefix=".coordinator-identity-")
+        try:
+            fd, temporary = tempfile.mkstemp(dir=root, prefix=".coordinator-identity-")
+        except OSError as error:
+            print(f"coordinator identity filesystem error creating a temp file in {root}: {error}", file=sys.stderr)
+            sys.exit(74)
         try:
             with os.fdopen(fd, "w") as handle:
                 json.dump(value, handle, sort_keys=True)
