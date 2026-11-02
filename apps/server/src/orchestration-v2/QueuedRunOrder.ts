@@ -30,6 +30,8 @@ export function queuedRunsInDeliveryOrder(
         Number(automaticCompletionMessageIds.has(right.userMessageId)) -
         Number(automaticCompletionMessageIds.has(left.userMessageId));
       return (
+        Number(right.restartContinuationOfRunId !== undefined) -
+          Number(left.restartContinuationOfRunId !== undefined) ||
         deliveryPriority ||
         (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
         left.ordinal - right.ordinal

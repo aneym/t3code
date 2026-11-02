@@ -1,10 +1,8 @@
 import { type ServerRestartHandoff, type ThreadId } from "@t3tools/contracts";
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as EventSink from "./EventSink.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import { recordRestartDeclined } from "./RestartDecline.ts";
 import { restartNoteOwed } from "./RestartBackgroundNote.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
@@ -28,30 +26,36 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
       const source = projection.runs.find((run) => run.id === sourceRunId);
       if (source === undefined)
         return yield* new RestartHandoffExecutionError({ threadId: input.threadId, sourceRunId });
-      if (
-        projection.runs.some((run) => run.restartContinuationOfRunId === sourceRunId) ||
-        source.restartDeclined !== undefined
-      )
+      if (projection.runs.some((run) => run.restartContinuationOfRunId === sourceRunId)) {
+        yield* threads.recoverDelegatedTask(input.threadId, sourceRunId);
         continue;
+      }
       if (
+        source.restartDeclined !== undefined ||
         (source.status === "completed" && !restartNoteOwed(source, projection.providerTurns)) ||
         source.status === "failed" ||
         source.status === "interrupted" ||
         source.status === "rolled_back"
-      )
+      ) {
+        yield* threads.recoverDelegatedTask(input.threadId, sourceRunId);
         continue;
+      }
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.thread.settledOverride === "settled"
-      )
+      ) {
+        yield* threads.recoverDelegatedTask(input.threadId, sourceRunId);
         continue;
+      }
       if (
         projection.turnItems.some(
           (item) => item.type === "run_interrupt_request" && item.runId === sourceRunId,
         )
-      )
+      ) {
+        yield* threads.recoverDelegatedTask(input.threadId, sourceRunId);
         continue;
+      }
       const awaitingReview = projection.runtimeRequests.some(
         (request) =>
           request.status === "pending" && request.restartContinuationRunIds?.includes(sourceRunId),
@@ -94,23 +98,8 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
       const current = after.runs.find((run) => run.id === sourceRunId);
       if (current === undefined)
         return yield* new RestartHandoffExecutionError({ threadId: input.threadId, sourceRunId });
-      yield* (yield* EventSink.EventSinkV2).writeWithEffects({
-        updateRestartDeclinedOnly: true,
-        effects: [],
-        events: [
-          {
-            id: yield* (yield* IdAllocator.IdAllocatorV2).allocate.event({
-              threadId: input.threadId,
-            }),
-            type: "run.updated",
-            threadId: input.threadId,
-            runId: current.id,
-            providerInstanceId: current.providerInstanceId,
-            occurredAt: yield* DateTime.now,
-            payload: { ...current, restartDeclined: declined ?? "dispatch_failed" },
-          },
-        ],
-      });
+      yield* recordRestartDeclined(input.threadId, current, declined ?? "dispatch_failed");
+      yield* threads.recoverDelegatedTask(input.threadId, sourceRunId);
     }
   },
 );

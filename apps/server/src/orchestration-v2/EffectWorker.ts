@@ -30,8 +30,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { executeRestartHandoff } from "./RestartHandoffExecution.ts";
-import { continueRestartedRun } from "./RestartContinuation.ts";
+import { executeRestartEffect, settleRestartEffect } from "./RestartEffectExecution.ts";
 import * as ThreadSessionRestarts from "./ThreadSessionRestarts.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
@@ -59,6 +58,7 @@ function isNonRetryableProviderTurnControlFailure(effectType: string, errorText:
 }
 
 export interface OrchestrationEffectExecutorV2Shape {
+  readonly settled?: (effect: EffectOutboxModel.OrchestrationEffectV2) => Effect.Effect<void>;
   readonly execute: (
     effect: EffectOutboxModel.OrchestrationEffectV2,
     options?: { readonly willRetry: boolean },
@@ -104,6 +104,9 @@ export const layerExecutor: Layer.Layer<
       | IdAllocator.IdAllocatorV2
     >();
     return OrchestrationEffectExecutorV2.of({
+      settled: Effect.fn("OrchestrationEffectExecutorV2.settled")((effect) =>
+        settleRestartEffect(effect).pipe(Effect.provideContext(restartContext), Effect.ignore),
+      ),
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
         const restartFailed = (cause: unknown) =>
@@ -114,38 +117,12 @@ export const layerExecutor: Layer.Layer<
           });
         switch (effect.request.type) {
           case "provider-runtime.restart-handoff":
-          case "provider-runtime.restart-reapproval": {
-            const request = effect.request;
-            return executeRestartHandoff({
-              threadId: effect.threadId,
-              epoch: request.epoch,
-              handoff:
-                request.type === "provider-runtime.restart-handoff"
-                  ? request.handoff
-                  : { runIds: request.sourceRunIds },
-              ...(request.type === "provider-runtime.restart-reapproval"
-                ? { humanReply: request.text }
-                : {}),
-              willRetry,
-              attempt: effect.attemptCount,
-            }).pipe(Effect.provideContext(restartContext), Effect.mapError(restartFailed));
-          }
-          case "provider-runtime.continue": {
-            const sourceRunId = effect.request.sourceRunId;
-            return continueRestartedRun({
-              threadId: effect.threadId,
-              sourceRunId,
-              attempt: effect.attemptCount,
-            }).pipe(
+          case "provider-runtime.restart-reapproval":
+          case "provider-runtime.continue":
+            return executeRestartEffect(effect, willRetry).pipe(
               Effect.provideContext(restartContext),
-              Effect.tapError(() =>
-                willRetry
-                  ? Effect.void
-                  : threads.recoverDelegatedTask(effect.threadId, sourceRunId),
-              ),
               Effect.mapError(restartFailed),
             );
-          }
           case "provider-session.detach":
             if (effect.request.detail === THREAD_SESSION_RESTART_REASON) {
               ThreadSessionRestarts.expectThreadSessionRestartReport(effect.threadId);
@@ -831,6 +808,7 @@ export const layerWithOptions = (
                   cause: "The worker no longer owns the effect lease.",
                 });
               }
+              yield* executor.settled?.(effect) ?? Effect.void;
               return true;
             }).pipe(Effect.onError((cause) => recoverPostSuccessSettlement(effect, cause)));
           }
@@ -868,6 +846,8 @@ export const layerWithOptions = (
               cause: "The worker no longer owns the effect lease.",
             });
           }
+          if (nonRetryable || effect.attemptCount >= maxAttempts)
+            yield* executor.settled?.(effect) ?? Effect.void;
           return true;
         },
         (effect, _excludeRestartContinuations?: boolean) =>

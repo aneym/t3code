@@ -210,7 +210,6 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
   }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
-    if (!enabled) return;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
     const projection = yield* threads.getThreadRecords(
@@ -220,6 +219,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     );
     if (
       !input.prepared &&
+      enabled !== null &&
       !resolveProjectSettings(enabled, projection.thread.projectId).settings
         .continueThreadsAfterServerUpdate
     )
@@ -266,7 +266,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     )
       return;
     if (!input.prepared && restartSourceSuperseded(projection.runs, source)) return;
-    if (projection.thread.providerInstanceId !== source.providerInstanceId) return;
+    if (projection.thread.providerInstanceId !== source.providerInstanceId)
+      return "dispatch_failed" as const;
     // A turn that keeps crashing the server would otherwise restart it forever.
     let chainLength = 0;
     const loopWindowStart =
@@ -406,14 +407,4 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         Effect.map((declined) => (declined === "provider_disabled" ? declined : undefined)),
       );
   },
-  // Declined child continuations still owe parent results; existing continuation runs settle them instead.
-  (effect, input) =>
-    effect.pipe(
-      Effect.tap(
-        Effect.gen(function* () {
-          const threads = yield* ThreadManagementService.ThreadManagementService;
-          yield* threads.recoverDelegatedTask(input.threadId, input.sourceRunId);
-        }),
-      ),
-    ),
 );

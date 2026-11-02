@@ -173,7 +173,7 @@ export function makeSubagentConversationArtifacts(input: {
 
 export function subagentResultForRun(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
-  run: OrchestrationV2Run,
+  run: Pick<OrchestrationV2Run, "id" | "status" | "restartDeclined" | "restartHandoffPending">,
 ): {
   readonly text: string;
   readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
@@ -211,13 +211,19 @@ export function subagentResultForRun(
           .filter((item) => item.runId === run.id && item.type === "error")
           .toSorted((left, right) => right.ordinal - left.ordinal)[0]
       : undefined;
-  const text =
-    (failure?.type === "error" ? failure.failure.message : undefined) ??
-    message?.text ??
-    turnItem?.text ??
-    (run.status === "completed"
+  const failureText = failure?.type === "error" ? failure.failure.message : undefined;
+  const output = message?.text ?? turnItem?.text;
+  const fallback =
+    run.status === "completed"
       ? "Child task completed without an assistant result."
-      : `Child task ended with status ${run.status}.`);
+      : `Child task ended with status ${run.status}.`;
+  const text =
+    run.status === "completed" ||
+    (run.restartDeclined === undefined && run.restartHandoffPending !== false)
+      ? (failureText ?? output ?? fallback)
+      : [failureText, output, "Child task stopped by a T3 Code update; resend to continue."]
+          .filter((text): text is string => text !== undefined && text.length > 0)
+          .join("\n\n");
   return {
     text,
     messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,

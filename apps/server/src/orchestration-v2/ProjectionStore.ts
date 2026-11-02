@@ -4004,7 +4004,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND json_extract(task.payload_json, '$.origin') = 'app_owned'
                       AND json_extract(task.payload_json, '$.result') IS NULL
                   ) OR (
-                    -- The original task still waits for the latest unheld work.
                     (SELECT status FROM orchestration_v2_projection_runs
                      WHERE thread_id = child.thread_id
                        AND NOT (status = 'queued' AND json_extract(payload_json, '$.queueHeld') IS 1)
@@ -4030,6 +4029,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
                 SELECT thread_id FROM orchestration_v2_projection_runs
                 WHERE status IN ('preparing', 'starting', 'running', 'waiting')
+                  OR json_extract(payload_json, '$.restartHandoffPending') IS 1
                 UNION
                 SELECT thread_id FROM orchestration_v2_projection_runs
                 WHERE status = 'queued'
@@ -4047,7 +4047,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ON bindings.provider_session_id = sessions.provider_session_id
                 WHERE sessions.status NOT IN ('stopped', 'error')
                 UNION
-                -- A detach drops the binding but keeps the session's status.
                 SELECT sessions.thread_id
                 FROM orchestration_v2_projection_provider_sessions AS sessions
                 WHERE sessions.status NOT IN ('stopped', 'error')
@@ -4422,13 +4421,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE run.thread_id = ${threadId}
                 AND (
                   run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                  OR json_extract(run.payload_json, '$.restartHandoffPending') IS 1
                   OR run.run_id = (
                     SELECT latest.run_id FROM orchestration_v2_projection_runs AS latest
                     WHERE latest.thread_id = ${threadId}
                     ORDER BY latest.ordinal DESC LIMIT 1
                   )
-                  -- Retain the latest run for each provider thread with lost
-                  -- background work, including owners used before a handoff.
                   OR run.run_id IN (
                     SELECT (
                       SELECT ended.run_id FROM orchestration_v2_projection_runs AS ended

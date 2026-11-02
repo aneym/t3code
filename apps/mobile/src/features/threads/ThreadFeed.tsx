@@ -16,7 +16,8 @@ import {
   enrichedSkillReference,
 } from "../../lib/enrichedLinkPresentation";
 import { ThreadContextDivider } from "./thread-context-divider";
-import { ThreadHandoffDivider, ThreadHandoffRow } from "./thread-handoff-row";
+import { ThreadRestartNotices } from "./ThreadRestartNotices";
+import { ThreadHandoffRow } from "./thread-handoff-row";
 import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { LinkRequestCard } from "./LinkRequestCard";
@@ -3707,15 +3708,13 @@ export const ThreadFeed = memo(function ThreadFeed({
               </>
             }
             ListFooterComponent={
-              props.pendingHandoff ? (
-                <ThreadHandoffDivider
-                  environmentId={props.environmentId}
-                  endpoints={props.pendingHandoff}
-                  iconColor={iconSubtleColor}
-                  surfaceColor={screenColor}
-                  label="Context handoff pending"
-                />
-              ) : null
+              <ThreadRestartNotices
+                detailRef={props.detailRef}
+                environmentId={props.environmentId}
+                endpoints={props.pendingHandoff}
+                iconColor={iconSubtleColor}
+                surfaceColor={screenColor}
+              />
             }
             contentContainerStyle={{
               paddingTop: FEED_PADDING_TOP,
