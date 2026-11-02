@@ -72,7 +72,6 @@ def fold_wal(destination):
     with closing(sqlite3.connect(destination, timeout=30, isolation_level=None)) as connection:
         if connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0] != 0:
             raise RuntimeError("snapshot WAL checkpoint is busy")
-        connection.execute("PRAGMA journal_mode=DELETE").fetchone()
         connection.execute("SELECT count(*) FROM sqlite_master").fetchone()
     for suffix in ("-wal", "-shm"):
         Path(str(destination) + suffix).unlink(missing_ok=True)
