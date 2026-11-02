@@ -71,8 +71,10 @@ def validate(receipt):
         if timestamp(receipt["expiresAt"]) != timestamp(receipt["finishedAt"]) + EXPIRY:
             raise ValueError("receipt.expiresAt must be two hours after finishedAt")
     elif schema == INSTALL_SCHEMA:
-        optional = {key: dict for key in ("installWindow", "hotSwap", "restartDrain", "migrationHistory", "databaseRollback") if key in receipt and receipt[key] is not None}
-        shape({key: value for key, value in receipt.items() if value is not None or key not in ("installWindow", "hotSwap", "restartDrain", "migrationHistory", "databaseRollback")}, {**INSTALL_FIELDS, **optional}, "receipt")
+        optional = {key: dict for key in ("installWindow", "hotSwap", "restartDrain", "migrationHistory", "databaseRollback", "backupRetention") if key in receipt and receipt[key] is not None}
+        if "serviceStops" in receipt:
+            optional["serviceStops"] = list
+        shape({key: value for key, value in receipt.items() if value is not None or key not in ("installWindow", "hotSwap", "restartDrain", "migrationHistory", "databaseRollback", "backupRetention")}, {**INSTALL_FIELDS, **optional}, "receipt")
         shape(receipt["chat"], CHAT_FIELDS, "receipt.chat")
         if receipt["outcome"] not in INSTALL_OUTCOMES:
             raise ValueError(f"receipt.outcome must be one of {INSTALL_OUTCOMES}")

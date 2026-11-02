@@ -353,6 +353,24 @@ def queue_drain(ctx, deadline, scenario):
     )
 
 
+def delegated_child_drain(ctx, deadline):
+    from types import SimpleNamespace
+    from .rehearsal_drain import configure_replay
+
+    configure_replay(SimpleNamespace(home=ctx.home, evidence=ctx.work, args=SimpleNamespace(rpc_tree=ctx.tree)))
+    script = ctx.home / "runtime/drain-replay/dev-replay-agent.ts"
+    text = script.read_text().replace('const turn = turns[session.promptCount % Math.max(turns.length, 1)];', 'const turn = JSON.stringify(params.prompt).includes("DRAIN_PARENT") ? { frames: Array.from({length: 60}, () => ({ afterMs: 2000, frame: { kind: "notification", method: "session/update", params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Waiting for child." } } } } })), stopReason: "end_turn" } : turns[session.promptCount % Math.max(turns.length, 1)];')
+    script.write_text(text)
+    receipt = ctx.work / "delegated-child-drain.json"
+    try:
+        result = client(ctx, "delegated-child-drain", deadline, "queue-drain", "--pairing-file", str(pairing(ctx, "delegated-child-drain", deadline)), "--cli", ctx.t3, "--home", str(ctx.home), "--project", str(ctx.project), "--scenario", "delegated-drain", "--timeout", "150")
+    except CheckFailed as error:
+        receipt.write_text(json.dumps({"check": "delegated-child-drain", "ok": False, "error": str(error)}, indent=2) + "\n")
+        raise
+    receipt.write_text(json.dumps(result, indent=2) + "\n")
+    return "delegated-child-drain: parent waiting and child running across restart drain"
+
+
 def queue_complete(ctx, deadline):
     return queue_drain(ctx, deadline, "complete")
 
@@ -437,6 +455,7 @@ CHECKS = [
     ("codex-turn", 240, codex_turn),
     ("background-wait", 300, background_wait),
     ("queue-drain", 300, queue_complete),
+    ("delegated-child-drain", 180, delegated_child_drain),
     ("queue-interrupt", 300, queue_interrupt),
     ("starting-send", 240, starting_send),
     ("queue-restart", 420, queue_restart),

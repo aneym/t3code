@@ -40,8 +40,15 @@ def service(run, action):
         command = commands[action]
     else:
         command = ["systemctl", "--user", action, run.service_label]
-    result = subprocess.run(command, env=environment, capture_output=True, timeout=120, check=False)
-    run.step("hard-service-" + action, service=run.service_label, code=result.returncode)
+    started = time.monotonic()
+    result = None
+    try:
+        result = subprocess.run(command, env=environment, capture_output=True, timeout=120, check=False)
+    finally:
+        seconds = round(time.monotonic() - started, 3)
+        if action == "stop":
+            run.report.setdefault("serviceStops", []).append({"service": run.service_label, "seconds": seconds})
+        run.step("hard-service-" + action, service=run.service_label, seconds=seconds, code=result.returncode if result else None)
     if result.returncode:
         raise ValueError(f"intended service {action} failed")
 
@@ -345,7 +352,7 @@ def install(run):
         "installWindow": run.report.get("installWindow"), "hotSwap": {**(run.report.get("hotSwap") or {}), "forwardRepairRequired": run.report.get("forwardRepairRequired", False)},
         **({"restartDrain": run.report["restartDrain"]} if "restartDrain" in run.report else {}),
         "migrationHistory": migration_evidence, "databaseRollback": database_rollback,
-        "backup": backup, "chat": post["proof"], "outcome": outcome, "reapedSshLaunch": run.reaped,
+        "serviceStops": run.report.get("serviceStops", []), "backup": backup, "chat": post["proof"], "outcome": outcome, "reapedSshLaunch": run.reaped,
         "startedAt": run.report["started_at"], "finishedAt": moment,
     }
     path = Path(args.install_receipt) if args.install_receipt else run.state / "receipts" / f"install-{host}.json"
@@ -361,8 +368,14 @@ def install(run):
             local["reship"] = start(run, local, backup)
         local["boot"] = ensure(run, Path(local["path"]).parent)
     receipt["eligibility"] = eligibility(manifest, host, args, local)
-    write(path, receipt)
-    run.step("hard-install-receipt", path=str(path), outcome=outcome)
     if outcome in ("installed", "current"):
         finish_identities(args.version, home=run.home)
+        from .install_backup_retention import retain
+
+        try:
+            receipt["backupRetention"] = retain(run.backups, backup.get("path"))
+        except (OSError, ValueError) as error:
+            receipt["backupRetention"] = {"error": str(error)}
+    write(path, receipt)
+    run.step("hard-install-receipt", path=str(path), outcome=outcome)
     return run.finish(outcome, f"hard install {outcome}: {previous} -> {args.version}")

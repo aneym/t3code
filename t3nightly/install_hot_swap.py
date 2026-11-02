@@ -1,5 +1,8 @@
 import json
 import math
+import os
+import platform
+import re
 import socket
 import sqlite3
 import statistics
@@ -26,20 +29,30 @@ from .release_receipts import INSTALL_SCHEMA, write
 
 
 def measure_candidate(sandbox, manifest):
+    baseline = [measure_startup_sample(sandbox, manifest, f"baseline-{index}", binary=sandbox.old / "t3", version=sandbox.old.name) for index in range(1, 4)]
     samples = [measure_startup_sample(sandbox, manifest, index) for index in range(1, 4)]
     measured = [sample["candidateMeasuredStartupMs"] for sample in samples]
     receipt = {**samples[-1], "candidateMeasuredStartupMs": int(statistics.median(measured)), "samplesMs": measured, "aggregation": "median", "samples": samples}
+    ready = [sample.get("acquireToReadyMs") for sample in samples]
+    old_ready = [sample.get("acquireToReadyMs") for sample in baseline]
+    receipt.update(host=platform.node(), measuredAt=time.time(), idle=all(sample["idle"] for sample in samples),
+                   acquireToReadyMs=int(statistics.median(ready)) if all(type(value) is int and value > 0 for value in ready) else None,
+                   hostBaseline={"host": platform.node(), "runtimeDigest": file_digest(sandbox.old / "t3"), "idle": all(sample["idle"] for sample in baseline),
+                                 "acquireToReadyMs": int(statistics.median(old_ready)) if all(type(value) is int and value > 0 for value in old_ready) else None, "samples": baseline})
     (sandbox.evidence / "candidate-startup.json").write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt
 
 
-def measure_startup_sample(sandbox, manifest, index):
+def measure_startup_sample(sandbox, manifest, index, *, binary=None, version=None):
     from .headless_env import pin_settings
     from .rehearsal_storage import seed_database
     from .rehearsal_waiter import identity
 
-    version = manifest["version"]
-    binary = stage_runtime(sandbox.home, version, sandbox.args.assets)
+    version = version or manifest["version"]
+    binary = binary or stage_runtime(sandbox.home, version, sandbox.args.assets)
+    def idle():
+        return os.getloadavg()[0] <= max(1, (os.cpu_count() or 1) * 0.5) and sandbox.query("SELECT count(*) FROM orchestration_v2_projection_runs WHERE status IN ('running','starting','preparing')") == [(0,)]
+    idle_before = idle()
     root = sandbox.home / "snapshots"
     root.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="candidate-startup-", dir=root) as raw:
@@ -89,6 +102,10 @@ def measure_startup_sample(sandbox, manifest, index):
                             process.wait(timeout=10)
                 finally:
                     receipt["exitCode"] = process.poll()
+                    receipt["idle"] = idle_before and idle()
+                    log.flush()
+                    matches = re.findall(r'acquireToReadyMs[\"\s:=]+(\d+)', (sandbox.evidence / f"candidate-startup-{index}.log").read_text())
+                    receipt["acquireToReadyMs"] = int(matches[-1]) if matches else None
                     evidence.write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt
 
@@ -115,21 +132,35 @@ def mark_candidate(run, manifest, rehearsal, compatibility, observed):
         if startup.get("candidateMeasuredStartupMs") != qualification.get("candidateMeasuredStartupMs"):
             run.step("hot-swap-fallback", reason="rehearsal-startup-measurement-mismatch")
             return False
-    measured = qualification.get("candidateMeasuredStartupMs")
+    startup = qualification.get("startupMeasurement") or qualification
+    baseline = startup.get("hostBaseline") or {}
+    host = platform.node()
+    measured = startup.get("acquireToReadyMs")
+    budget = baseline.get("acquireToReadyMs")
+    if startup.get("host") != host or baseline.get("host") != host or startup.get("idle") is not True or baseline.get("idle") is not True or time.time() - startup.get("measuredAt", 0) > 3600:
+        run.step("hot-swap-fallback", reason="fresh-idle-host-startup-baseline-required")
+        return False
+    if baseline.get("runtimeDigest") != observed["oldRuntime.digest"]:
+        run.step("hot-swap-fallback", reason="host-baseline-runtime-mismatch")
+        return False
+    if type(budget) is not int or budget <= 0:
+        run.step("hot-swap-fallback", reason="host-ready-baseline-missing")
+        return False
     if type(measured) is not int or measured <= 0:
         run.step("hot-swap-fallback", reason="candidate-startup-measurement-missing-or-invalid")
         return False
     config = json.loads((run.home / "runtime/launcher-config.json").read_text())
-    if measured > config["measuredStartupMs"]:
-        run.step("hot-swap-fallback", reason="candidate-startup-exceeds-launcher-budget", measured_ms=measured, budget_ms=config["measuredStartupMs"])
+    budget = min(budget, config["holdBudgetMs"])
+    if measured > budget:
+        run.step("hot-swap-fallback", reason="candidate-startup-exceeds-launcher-budget", measured_ms=measured, budget_ms=budget)
         return False
-    run.step("hot-swap-candidate-qualified", measured_ms=measured, budget_ms=config["measuredStartupMs"])
+    run.step("hot-swap-candidate-qualified", measured_ms=measured, budget_ms=budget)
     from .hot_swap_marker import write as write_marker
 
     write_marker(run, run.args.version, measured, manifest)
     previous_measured = qualification.get("previousMeasuredStartupMs")
     previous = run.report.get("previous")
-    if compatibility.get("binaryRollback") is True and previous and isinstance(previous_measured, int) and 0 < previous_measured <= config["measuredStartupMs"]:
+    if compatibility.get("binaryRollback") is True and previous and isinstance(previous_measured, int) and 0 < previous_measured <= budget:
         write_marker(run, previous, previous_measured, manifest)
     return True
 

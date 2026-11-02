@@ -10,7 +10,7 @@ from pathlib import Path
 
 from t3nightly.install_resources import copy_snapshot
 from t3nightly.install_storage import record_payload
-from t3nightly.install_payload_gc import discard_snapshot, prune_backups
+from t3nightly.install_payload_gc import discard_snapshot
 from t3nightly.live_snapshot import snapshot_root, take
 from t3nightly.snapshot_clone import clone_file
 from t3nightly.snapshot_space import clone_supported, require_install_space, require_space
@@ -102,7 +102,6 @@ def backup_database(run, version, *, preparing=False):
     home = str(run.home.resolve())
     marker.write_text(json.dumps({"version": version, "complete": True, "home": home, "method": method}))
     os.replace(marker, target / "payload.json")
-    prune_backups(root, run.args.backup_keep, target, home, run.state)
     record_payload(
         run.state,
         "rollback-backup",

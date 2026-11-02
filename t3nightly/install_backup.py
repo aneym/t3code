@@ -41,7 +41,7 @@ def quiescent(db):
 
 def capture(run, previous, stop, rollback_gate, *, keep_local=False):
     started = time.monotonic()
-    root = run.home / "runtime" / "rollback"
+    root = run.backups
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     destination = root / uuid.uuid4().hex
     destination.mkdir(mode=0o700)
@@ -82,12 +82,32 @@ def capture(run, previous, stop, rollback_gate, *, keep_local=False):
 
         deadline = run.stop_deadline
         expected = identity(source, deadline=deadline)
-        database_copy(source, target, min(deadline, time.monotonic() + 120 + size / copy_rate(source)))
+        method = "sqlite-backup"
+        reason = "APFS clone unavailable on this platform or volume"
+        if clone:
+            try:
+                with closing(sqlite3.connect(source)) as connection:
+                    if connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0] != 0:
+                        raise ValueError("stopped database checkpoint is busy")
+                subprocess.run(["/bin/cp", "-c", str(source), str(target)], check=True, capture_output=True, timeout=30)
+                wal = Path(str(source) + "-wal")
+                if wal.exists():
+                    subprocess.run(["/bin/cp", "-c", str(wal), str(target) + "-wal"], check=True, capture_output=True, timeout=30)
+                method, reason = "apfs-clone", "same-volume clone capability verified"
+            except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError):
+                for suffix in ("", "-wal", "-shm"):
+                    Path(str(target) + suffix).unlink(missing_ok=True)
+                reason = "APFS clone failed; verified full copy fallback"
+        if method == "sqlite-backup":
+            database_copy(source, target, min(deadline, time.monotonic() + 120 + size / copy_rate(source)))
         os.chmod(target, 0o600)
         fsync(target)
         fsync(destination)
         check = verify(target, expected, deadline)
-        local = {"sha256": checksum(target, deadline), "path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous}
+        local = {"sha256": checksum(target, deadline), "path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous, "method": method, "methodReason": reason}
+        from .install_backup_retention import mark
+
+        mark(target, local)
     elif clone:
         for suffix in ("", "-wal"):
             original = Path(str(source) + suffix)
@@ -95,37 +115,12 @@ def capture(run, previous, stop, rollback_gate, *, keep_local=False):
                 subprocess.run(["/bin/cp", "-c", str(original), str(target) + suffix], check=True, capture_output=True, timeout=30)
     else:
         database_copy(source, target, time.monotonic() + 120 + size / copy_rate(source))
-    metadata = {"path": str(target), "method": "apfs-clone" if clone and not keep_local else "sqlite-backup", "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
+    metadata = {"path": str(target), "method": method if keep_local else ("apfs-clone" if clone else "sqlite-backup"), "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
     if keep_local:
         metadata["local"] = local
     (destination / "payload.json").write_text(json.dumps(metadata))
     run.step("hard-backup", **metadata)
     return metadata
-
-
-def prune(run, backup):
-    from .install_payload_gc import backup_marker, contained, discard, discard_snapshot
-
-    root = run.home / "runtime" / "rollback"
-    if not root.exists():
-        return
-    if root.is_symlink():
-        raise ValueError("rollback retention root cannot be a symlink")
-    current = Path(backup["path"]).resolve() if backup.get("path") else None
-    for directory in root.iterdir():
-        if directory.is_symlink() or not directory.is_dir() or len(directory.name) != 32 or any(char not in "0123456789abcdef" for char in directory.name):
-            continue
-        db = contained(root, directory / "statev2.sqlite")
-        if db.resolve() == run.db.resolve():
-            raise ValueError("rollback retention refused the live database")
-        if db.resolve() == current:
-            continue
-        metadata = backup_marker(root, directory) or {}
-        if metadata.get("complete") is not True or metadata.get("method") not in ("sqlite-backup", "apfs-clone") or metadata.get("path") != str(db):
-            continue
-        discard_snapshot(root, db, run.state, "discard-local-rollback-backup")
-        discard(root, directory / "payload.json", run.state, "discard-local-rollback-backup")
-        directory.rmdir()
 
 
 def advisory(backup, output):

@@ -228,8 +228,6 @@ def in_place(copy, db, mode, record, deadline):
 def restore(record, db, note, deadline=None, *, verified=False):
     started = time.monotonic()
     copy = Path(record["path"])
-    if deadline is None:
-        deadline = started + max(120, estimate(copy.stat().st_size, rollback=True)["totalSeconds"])
     if not verified:
         verify(copy, record["identity"], deadline)
     if not record.get("sha256"):
@@ -268,7 +266,18 @@ def main():
         if name == "restore":
             command.add_argument("--db", type=Path, required=True, help="database to replace, e.g. ~/.t3/userdata/statev2.sqlite")
             command.add_argument("--service", required=True, help="launchd label or systemd user unit that must be stopped first")
+    offbox = commands.add_parser("restore-offbox", help="restore an off-box copy only with the service inactive")
+    offbox.add_argument("--source", required=True)
+    offbox.add_argument("--db", type=Path, required=True)
+    offbox.add_argument("--service", required=True)
     args = parser.parse_args()
+    if args.command == "restore-offbox":
+        from .install_offbox import sync
+
+        if service_active(args.service):
+            sys.exit(f"{args.service} is active; stop it before restoring")
+        sync(args.source, args.db.expanduser().resolve(), float("inf"), hang_guard=86400)
+        return 0
     record = json.loads(args.receipt.read_text())["backup"]["local"]
 
     def note(step, **fields):

@@ -25,6 +25,17 @@ def ensure_launcher(run, version):
                 raise ValueError("pinned launcher bytes drifted; explicit launcher artifact repair required")
         if not pin.exists():
             pin.write_text(json.dumps({"protocol": 3, "digest": file_digest(target / "t3"), "source": "adopted-existing", "lastKnownGood": str(target)}) + "\n")
+        config_path = runtime / "launcher-config.json"
+        if config_path.is_file():
+            from .install_restore_copy import service_active
+
+            config = json.loads(config_path.read_text())
+            desired = run.args.drain_s * 1000
+            if config.get("drainTimeoutMs") != desired:
+                if not 0 <= run.args.drain_s <= 300 or service_active(run.service_label):
+                    raise ValueError("drain pin update requires an inactive service and a supported deadline")
+                config_path.write_text(json.dumps({**config, "drainTimeoutMs": desired}) + "\n")
+                run.step("launcher-drain-pin-updated", drainTimeoutMs=desired)
         run.step("launcher-kept", digest=file_digest(target / "t3"))
         return target / "t3"
     if not raw:

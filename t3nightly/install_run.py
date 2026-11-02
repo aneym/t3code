@@ -66,14 +66,6 @@ class Run:
         print(json.dumps(row), flush=True)
 
     def finish(self, outcome, line):
-        backup = next((row for row in reversed(self.report["steps"]) if row["step"] == "hard-backup"), {})
-        if outcome == "installed":
-            from .install_backup import prune
-
-            try:
-                prune(self, backup)
-            except (OSError, ValueError) as error:
-                self.step("local-rollback-prune-failed", error=str(error))
         drain = self.report.get("restartDrain")
         if drain:
             line += f"; restart drain {drain['outcome']}, waited_ms={drain.get('waitedMs')}, active_run_ids={drain.get('activeRunIds', [])}"

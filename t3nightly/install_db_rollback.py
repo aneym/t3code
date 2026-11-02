@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 
 from . import install_restore_copy as restore_copy
 from .db_publish import LOCAL_MARGIN, local_check, publish, wal_bytes
-from .install_offbox import REMOTE_EXE, SSH, executable, rate, restore_space, schema_state, sync, target
+from .install_offbox import rate, restore_space, schema_state, sync, target
 from .release_eligibility import binary_rollback
 
 
@@ -21,10 +21,10 @@ def recovery_required(backup, db, service, receipt, error):
         command = [sys.executable, "-B", "-m", "t3nightly.install_restore_copy", "restore", "--receipt", str(receipt), "--db", str(db), "--service", service]
     else:
         path = error.backup_path or backup["remote"]
-        command = [executable(), path, str(db), "--exe", REMOTE_EXE, "--ssh", str(SSH)]
+        command = [sys.executable, "-B", "-m", "t3nightly.install_restore_copy", "restore-offbox", "--source", path, "--db", str(db), "--service", service]
     return {"recoveryRequired": True, "reason": error.reason, "backupPath": path,
             "restoreCommand": f"cd {shlex.quote(str(Path(__file__).resolve().parent.parent))} && {shlex.join(command)}",
-            "detail": "Service intentionally remains stopped: the candidate-migrated database cannot run on the old runtime. Finish the restore with restoreCommand, verify the database, then restart the retained runtime.", "error": str(error)}
+            "detail": "Service intentionally remains stopped because database recovery is incomplete. Run restoreCommand with the service inactive, verify the database and retained runtime compatibility, then restart.", "error": str(error)}
 
 
 def restore(run, backup, *, beside=None):
@@ -104,7 +104,9 @@ def rollback_database(run, backup, compatibility):
     try:
         restore(run, backup)
     except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as error:
+        if isinstance(error, restore_copy.RecoveryRequired):
+            raise
         intact = skippable and unchanged(run, backup)
         run.step("hard-restore-db-failed", error=str(error), databaseUnchanged=intact)
-        if not intact or isinstance(error, restore_copy.RecoveryRequired):
+        if not intact:
             raise

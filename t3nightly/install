@@ -11,8 +11,9 @@ from t3nightly.install_preflight import checked_assets
 from t3nightly.install_assets import serve_assets
 from t3nightly.install_payload_gc import payload_lifecycle
 
-FORK_BASE_URL = "https://github.com/aneym/t3code/releases/download"
+from t3nightly.install_policy import DEFAULT_DRAIN_S
 
+FORK_BASE_URL = "https://github.com/aneym/t3code/releases/download"
 
 def parse():
     parser = argparse.ArgumentParser(prog="t3nightly-install")
@@ -73,7 +74,7 @@ def parse():
     parser.add_argument("--chat-model", default="claude-sonnet-4-6")
     parser.add_argument("--chat-timeout", type=int, default=90)
     parser.add_argument("--rpc-tree", default="")
-    parser.add_argument("--drain-s", type=int, default=300)
+    parser.add_argument("--drain-s", type=int, default=DEFAULT_DRAIN_S)
     parser.add_argument("--node", default="node")
     parser.add_argument("--no-pin-launcher", action="store_true")
     parser.add_argument("--offbox", default="")

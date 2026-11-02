@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from t3nightly.rehearsal_run import Rehearsal
+from t3nightly.install_policy import DEFAULT_DRAIN_S
 
 
 def main():
@@ -29,7 +30,7 @@ def main():
     parser.add_argument("--launcher-artifact", default="")
     parser.add_argument("--old-launcher-artifact", default="")
     parser.add_argument("--connector-artifact", default="")
-    parser.add_argument("--rehearsal-drain-s", type=int, choices=range(30, 61), default=45)
+    parser.add_argument("--rehearsal-drain-s", type=int, choices=range(30, 301), default=DEFAULT_DRAIN_S)
     parser.add_argument("--inject", choices=("none", "warm-death", "post-flip"), default="none")
     parser.add_argument("--require-hot-swap", action="store_true")
     parser.add_argument("--strict-drain-proof", action="store_true", help="fallback proof with a Replay turn holding a strict drain refusal")
