@@ -1,4 +1,3 @@
-import { abortRestartAndResume } from "./orchestration-v2/RestartAbortResume.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- Relinquishing ownership exits the native service child.
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as Effect from "effect/Effect";
@@ -112,7 +111,7 @@ export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* 
     Effect.forkDetach,
   );
   const cleanup = yield* Fiber.interrupt(preparation).pipe(
-    Effect.andThen(abortRestartAndResume(updateId)),
+    Effect.andThen(recovery.abortRestart(updateId)),
     Effect.catchCause((cause) =>
       Effect.logWarning("Service restart abort cleanup failed", { updateId, cause }),
     ),

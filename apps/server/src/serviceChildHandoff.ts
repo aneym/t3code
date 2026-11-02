@@ -1,4 +1,3 @@
-import { abortRestartAndResume } from "./orchestration-v2/RestartAbortResume.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { freezeServiceChild } from "./serviceChildFreeze.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- Launcher handoff is a process lifecycle boundary.
@@ -45,10 +44,9 @@ export const runServiceHandoff = Effect.fn("serviceChildHandoff.run")(function* 
           ),
         );
       if (message?.type === "abort-drain")
-        return abortRestartAndResume(message.updateId).pipe(
-          Effect.ignore,
-          Effect.andThen(Effect.sync(reopenServerAdmissions)),
-        );
+        return recovery
+          .abortRestart(message.updateId)
+          .pipe(Effect.ignore, Effect.andThen(Effect.sync(reopenServerAdmissions)));
       if (message?.type === "relinquish") return freezeServiceChild(message.updateId);
       return Effect.void;
     }),

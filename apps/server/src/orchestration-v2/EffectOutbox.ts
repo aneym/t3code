@@ -13,6 +13,7 @@ import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { makeRestartGate } from "./RestartGate.ts";
 import { forkParked } from "../serverActivation.ts";
 import { claimableCandidatePredicate } from "./EffectOutboxClaims.ts";
 import { type EffectRow, encodeRequest, rowToEffect } from "./EffectOutboxRows.ts";
@@ -36,6 +37,7 @@ export interface EffectOutboxV2Shape {
   readonly withTransaction: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | EffectOutboxError, R>;
+  readonly awaitRestartReopen: Effect.Effect<void>;
   readonly abortRestart: (epoch: string) => Effect.Effect<void>;
   readonly runningEffects: Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
   readonly unsettledEffects: (
@@ -107,9 +109,6 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const available = yield* Queue.dropping<void>(64);
-    let restartEpoch: string | undefined;
-    let drain: { readonly epoch: string } | undefined;
-    const claimGate = yield* Semaphore.make(1);
     const prepareGate = yield* Semaphore.make(1);
     const cancellationSignals = new Map<string, Deferred.Deferred<void>>();
     const settledSignals = new Map<string, Deferred.Deferred<void>>();
@@ -129,6 +128,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
+    const gate = yield* makeRestartGate(notifyAvailable);
     const cancellationSignal = (effectId: string) => {
       const existing = cancellationSignals.get(effectId);
       if (existing !== undefined) return existing;
@@ -143,47 +143,14 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
       );
 
     const service: EffectOutboxV2Shape = {
-      withDispatch: (effect) => claimGate.withPermits(1)(effect),
+      ...gate,
       withTransaction: (effect) =>
         sql
           .withTransaction(effect)
           .pipe(
             Effect.mapError((cause) => new EffectOutboxError({ operation: "transaction", cause })),
           ),
-      restartPrepared: Effect.sync(() => restartEpoch),
-      restartDraining: Effect.sync(() => drain?.epoch),
-      drainForRestart: (epoch) => {
-        const owner = { epoch };
-        return Effect.acquireRelease(
-          claimGate.withPermits(1)(
-            Effect.sync(() => {
-              drain = owner;
-            }),
-          ),
-          () =>
-            claimGate.withPermits(1)(
-              Effect.suspend(() => {
-                if (drain !== owner) return Effect.void;
-                drain = undefined;
-                return notifyAvailable();
-              }),
-            ),
-        );
-      },
       serializeRestartPrepare: (effect) => prepareGate.withPermits(1)(effect),
-      prepareRestart: (epoch) =>
-        claimGate.withPermits(1)(
-          Effect.sync(() => {
-            restartEpoch = epoch;
-            drain = undefined;
-          }),
-        ),
-      abortRestart: (epoch) =>
-        claimGate.withPermits(1)(
-          Effect.sync(() => {
-            if (restartEpoch === epoch) restartEpoch = undefined;
-          }).pipe(Effect.andThen(notifyAvailable())),
-        ),
       runningEffects:
         sql<EffectRow>`SELECT * FROM orchestration_v2_effect_outbox WHERE status = 'running'`.pipe(
           Effect.flatMap((rows) => decodeRows("list", rows)),
@@ -362,7 +329,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
       // The worker polls for the next effect even when there is no work to claim.
       claimNext: Effect.fnUntraced(
         function* ({ workerId, excludeRestartContinuations = false }) {
-          if (restartEpoch !== undefined) return Option.none();
+          if ((yield* gate.restartPrepared) !== undefined) return Option.none();
           const now = yield* DateTime.now;
           const nowIso = DateTime.formatIso(now);
           // Idle claims return empty; tracing their full SQL on every poll overwhelms useful traces.
@@ -380,7 +347,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               WHERE ${claimableCandidatePredicate(sql, {
                 availableBefore: nowIso,
                 excludeRestartContinuations,
-                draining: drain !== undefined,
+                draining: (yield* gate.restartDraining) !== undefined,
               })}
                 AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
               ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
@@ -402,15 +369,15 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           cancellationSignals.set(row.effect_id, Deferred.makeUnsafe<void>());
           return Option.some(yield* rowToEffect(row));
         },
-        (effect) => claimGate.withPermits(1)(effect),
+        gate.withDispatch,
         Effect.mapError((cause) => new EffectOutboxError({ operation: "claim", cause })),
       ),
       nextClaimableAt: Effect.gen(function* () {
-        if (restartEpoch !== undefined) return Option.none();
+        if ((yield* gate.restartPrepared) !== undefined) return Option.none();
         const rows = yield* sql<{ readonly available_at: string | null }>`
           SELECT MIN(candidate.available_at) AS available_at
           FROM orchestration_v2_effect_outbox AS candidate
-          WHERE ${claimableCandidatePredicate(sql, { draining: drain !== undefined })}
+          WHERE ${claimableCandidatePredicate(sql, { draining: (yield* gate.restartDraining) !== undefined })}
         `.pipe(NodeSqliteClient.readOnly, Effect.withTracerEnabled(false));
         const availableAt = rows[0]?.available_at;
         if (availableAt === undefined || availableAt === null) return Option.none();

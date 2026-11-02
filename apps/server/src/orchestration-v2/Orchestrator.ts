@@ -1,3 +1,4 @@
+import { resumeOnReopen } from "./RestartQueuedRuns.ts";
 import { restartAdmission, admittedDispatchMode } from "./RestartAdmission.ts";
 import { makeAutoSettlementValidation } from "./SettlementValidation.ts";
 import {
@@ -864,7 +865,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
-  /** The driver when this provider runs `/goal` natively, else undefined. */
   const goalDriverFor = Effect.fn("Orchestrator.goalDriverFor")(function* (
     command: OrchestrationV2ServerCommand,
     providerInstanceId: ProviderInstanceId,
@@ -13672,6 +13672,6 @@ export const layer: Layer.Layer<
   | RuntimePolicyV2
   | ServerSettings.ServerSettingsService
   | ThreadForkServiceV2
-> = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
+> = Layer.effect(OrchestratorV2, resumeOnReopen(makeOrchestrator())).pipe(
   Layer.provide(ThreadCommandExecutor.layer),
 );
