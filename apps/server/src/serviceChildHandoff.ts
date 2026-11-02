@@ -14,9 +14,15 @@ export const runServiceHandoff = Effect.fn("serviceChildHandoff.run")(function* 
   const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
   const analytics = yield* AnalyticsService.AnalyticsService;
   const messages = yield* Queue.unbounded<unknown>();
+  let draining: { updateId: string; abort: Queue.Queue<void> } | undefined;
   yield* Effect.acquireRelease(
     Effect.sync(() => {
-      const receive = (message: unknown) => Queue.offerUnsafe(messages, message);
+      const receive = (value: unknown) => {
+        const message = decodeServiceLauncherParentMessage(value);
+        if (message?.type === "abort-drain" && message.updateId === draining?.updateId)
+          Queue.offerUnsafe(draining.abort, undefined);
+        Queue.offerUnsafe(messages, value);
+      };
       process.on("message", receive);
       return receive;
     }),
@@ -29,20 +35,35 @@ export const runServiceHandoff = Effect.fn("serviceChildHandoff.run")(function* 
     Stream.runForEach((value) => {
       const message = decodeServiceLauncherParentMessage(value);
       if (message?.type === "drain")
-        return Effect.all(
-          [
-            recovery.drainForHandoff(message.updateId, message.drainTimeoutMs),
-            analytics.flush.pipe(Effect.timeoutOption(message.drainTimeoutMs), Effect.ignore),
-          ],
-          { concurrency: 2, discard: true },
-        ).pipe(
-          Effect.andThen(sendServiceMessage({ type: "drained", updateId: message.updateId })),
-          Effect.catchCause(() =>
-            sendServiceMessage({ type: "drain-failed", updateId: message.updateId }).pipe(
-              Effect.ignore,
+        return Effect.gen(function* () {
+          const abort = yield* Queue.sliding<void>(1);
+          draining = { updateId: message.updateId, abort };
+          yield* Effect.all(
+            [
+              recovery.drainForHandoff(message.updateId, message.drainTimeoutMs),
+              analytics.flush.pipe(Effect.timeoutOption(message.drainTimeoutMs), Effect.ignore),
+            ],
+            { concurrency: 2, discard: true },
+          ).pipe(
+            Effect.as(true),
+            Effect.raceFirst(Queue.take(abort).pipe(Effect.as(false))),
+            Effect.flatMap((drained) =>
+              drained
+                ? sendServiceMessage({ type: "drained", updateId: message.updateId })
+                : Effect.void,
             ),
-          ),
-        );
+            Effect.catchCause(() =>
+              sendServiceMessage({ type: "drain-failed", updateId: message.updateId }).pipe(
+                Effect.ignore,
+              ),
+            ),
+            Effect.ensuring(
+              Effect.sync(() => {
+                draining = undefined;
+              }),
+            ),
+          );
+        });
       if (message?.type === "abort-drain")
         return recovery
           .abortRestart(message.updateId)
