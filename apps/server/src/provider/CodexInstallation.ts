@@ -19,6 +19,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as NodeCrypto from "node:crypto";
@@ -160,13 +161,7 @@ const isRunning = (state: ProviderInstallState) =>
 export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function* (
   options: CodexInstallationOptions,
 ) {
-  const probeContext = Context.pick(
-    FileSystem.FileSystem,
-    Path.Path,
-    ChildProcessSpawner.ChildProcessSpawner,
-    HostProcess.Platform,
-    HostProcess.Environment,
-  )(
+  const probeContext = Context.omit(Tracer.ParentSpan)(
     yield* Effect.context<
       FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
     >(),
