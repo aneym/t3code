@@ -31,7 +31,7 @@ def main():
     parser.add_argument("--start", default="now")
     parser.add_argument("--until")
     parser.add_argument("--duration-s", type=int, default=900)
-    parser.add_argument("--thread", default="")
+    parser.add_argument("--thread", default="", help="observer mode: read-only WS/HTTP client on this thread; holds no T3 turn or run")
     parser.add_argument("--turn", action="store_true", help="one Haiku turn in registered ~/.t3/scratch, held until swap or final minute")
     parser.add_argument("--provider", choices=("claude",), default="claude")
     parser.add_argument("--model", default="claude-haiku-4-5")
