@@ -1,4 +1,9 @@
-import type { OrchestrationV2TurnItem, SecretRequestAnswerInput } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import {
+  SecretRequestError,
+  type OrchestrationV2TurnItem,
+  type SecretRequestAnswerInput,
+} from "@t3tools/contracts";
 
 export type SecretRequestItem = Extract<
   OrchestrationV2TurnItem,
@@ -10,8 +15,6 @@ export const secretRequestPrivacyNote = (item: Pick<SecretRequestItem, "delivery
   item.delivery === "file"
     ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
     : "Stored securely, never shown to the agent";
-export const SECRET_REQUEST_RESTART_RETRY =
-  "T3 Code restarted before this was saved. Save it again.";
 export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
 
 export type SecretRequestDisplay =
@@ -76,6 +79,7 @@ export function secretRequestAnswerInput(
   return { threadId: item.threadId, turnItemId: item.id, answer: { type: "save", secret } };
 }
 
+const isSecretRequestError = Schema.is(SecretRequestError);
 const USER_FACING_FAILURE_TAGS = new Set(["SecretRequestError", "EnvironmentAuthorizationError"]);
 
 /**
@@ -83,6 +87,7 @@ const USER_FACING_FAILURE_TAGS = new Set(["SecretRequestError", "EnvironmentAuth
  * failures) gets the generic copy, so the typed value can never surface in the UI.
  */
 export function secretRequestFailureMessage(failure: unknown): string {
+  if (isSecretRequestError(failure) && failure.reason === "restarting") return failure.message;
   if (
     typeof failure === "object" &&
     failure !== null &&

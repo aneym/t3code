@@ -47,6 +47,7 @@ export function admitHttpRequest(response: NodeHttp.ServerResponse): boolean {
 
 export const withServerAdmission = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
+  onFrozen: Effect.Effect<never, E> = Effect.interrupt,
 ): Effect.Effect<A, E, R> =>
   hotSwapContext() === undefined
     ? effect
@@ -59,9 +60,7 @@ export const withServerAdmission = <A, E, R>(
             return { active: true };
           }),
           (accepted) =>
-            accepted
-              ? Effect.provideService(effect, admittedExecution, accepted)
-              : Effect.interrupt,
+            accepted ? Effect.provideService(effect, admittedExecution, accepted) : onFrozen,
           (accepted) =>
             accepted
               ? Effect.sync(() => {

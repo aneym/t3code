@@ -322,6 +322,7 @@ export const legacyRestartHandoffs = Effect.fn("RestartHandoffImport.legacyResta
           .filter((task) => ["pending", "running", "waiting"].includes(task.status))
           .map((task) => task.id),
         paused: excluded,
+        drained: old?.drained ?? false,
         pausedRunIds: reapproval.pausedRunIds,
       });
     }
@@ -332,4 +333,4 @@ export const legacyRestartHandoffs = Effect.fn("RestartHandoffImport.legacyResta
 
 export const survivesRestart = (item: OrchestrationV2TurnItem, handoff?: ServerRestartHandoff) =>
   item.type === "link_request" ||
-  (handoff !== undefined && item.type === "secret_request" && item.secretStatus === "pending");
+  (handoff?.drained === true && item.type === "secret_request" && item.secretStatus === "pending");

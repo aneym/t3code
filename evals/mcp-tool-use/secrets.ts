@@ -38,3 +38,35 @@ export const secretResult = (
     return { status: "cancelled" };
   return saved;
 };
+
+export const gradeSecretRetry = (
+  calls: ReadonlyArray<{
+    readonly tool: string;
+    readonly input: unknown;
+    readonly output?: string;
+    readonly step: number;
+  }>,
+) => {
+  const index = calls.findIndex(
+    (call) =>
+      call.tool === "request_secret" && /"status"\s*:\s*"restarting"/.test(call.output ?? ""),
+  );
+  const first = calls[index];
+  const next = calls[index + 1];
+  let key: unknown;
+  try {
+    key = JSON.parse(first?.output ?? "{}").clientRequestId;
+  } catch {}
+  return {
+    check: "secret restart retries same key immediately without ending turn",
+    pass:
+      index >= 0 &&
+      typeof key === "string" &&
+      next?.tool === "request_secret" &&
+      next.step === first!.step + 1 &&
+      typeof next.input === "object" &&
+      next.input !== null &&
+      "clientRequestId" in next.input &&
+      next.input.clientRequestId === key,
+  };
+};

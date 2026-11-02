@@ -59,7 +59,7 @@ import {
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
-import { secretResult, resolveSecretPrompt } from "./secrets.ts";
+import { secretResult, resolveSecretPrompt, gradeSecretRetry } from "./secrets.ts";
 import { DeviceExpect, gradeDevice } from "./device-grading.ts";
 import {
   AGENT_DEVICE_SHELL,
@@ -135,10 +135,6 @@ const PriorToolCall = Schema.Struct({
   result: Schema.Unknown,
 });
 
-/**
- * One expected call. `args` match partially: `~text` is a case-insensitive substring,
- * `"<=N"` / `">=N"` bound a number, and keys may be dotted paths.
- */
 const McpToolUseCall = Schema.Struct({
   tool: Schema.String,
   args: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
@@ -156,6 +152,7 @@ const McpToolUseExpect = Schema.Struct({
   order: Schema.optional(Schema.Array(Schema.String)),
   minCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
   maxCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
+  secretRetry: Schema.optional(Schema.Boolean),
   /** The last step with tool calls includes this tool, then the turn ends. */
   endsTurnAfter: Schema.optional(Schema.String),
   /** Regexes that no shell command may match. */
@@ -1348,6 +1345,7 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun) =>
   const checks: Array<{ readonly check: string; readonly pass: boolean }> = [];
   const add = (check: string, pass: boolean) => checks.push({ check, pass });
   const calls = run.calls.map((call) => ({ ...call, input: withOptionsObject(call.input) }));
+  if (expect.secretRetry) checks.push(gradeSecretRetry(calls));
   const count = (tool: string) => calls.filter((call) => call.tool === tool).length;
   // `tool` may list alternatives, as in "link_pull_request|watch_pull_request".
   const found = ({ tool, args = {} }: McpToolUseCall) =>
@@ -1588,7 +1586,6 @@ const recordedCall = (step: number, use: typeof ToolUse.Type): Call => {
   };
 };
 
-/** Records on a call what the agent saw, so graders can count failed attempts. */
 const settle = (call: Call | undefined, result: Block) => {
   if (call !== undefined) {
     call.failed = result.is_error === true;

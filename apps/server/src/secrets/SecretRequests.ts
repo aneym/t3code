@@ -1,3 +1,5 @@
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
+import { withServerAdmission } from "../serverHandoffBarrier.ts";
 import { secretOwnerChain } from "../orchestration-v2/SecretRequestRecord.ts";
 // Answers stay in the secret store behind one-use refs; orchestration records only request status.
 // Consuming tools keep values out of transcripts, projections, clients and model context.
@@ -71,6 +73,7 @@ export class SecretRequests extends Context.Service<
 >()("t3/secrets/SecretRequests") {}
 
 const make = Effect.gen(function* () {
+  const outbox = yield* EffectOutbox.EffectOutboxV2;
   const store = yield* ServerSecretStore.ServerSecretStore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -108,8 +111,16 @@ const make = Effect.gen(function* () {
         (candidate) => !ThreadManagementService.isTerminalRunStatus(candidate.status),
       );
       if (!live) {
-        const last = chainRuns.at(-1);
-        if (last?.restartContinuationOfRunId !== undefined || last?.status !== "cancelled") {
+        const handoffs = yield* outbox.restartHandoffs.pipe(
+          Effect.mapError((cause) => new SecretRequestError({ reason: "load_failed", cause })),
+        );
+        const awaitingRestart = handoffs.some(
+          ({ request }) =>
+            request.type === "provider-runtime.restart-handoff" &&
+            request.handoff.drained === true &&
+            request.handoff.runIds.some((runId) => chainRuns.some((run) => run.id === runId)),
+        );
+        if (!awaitingRestart) {
           yield* threadManagement
             .dispatch({
               type: "secret_request.record",
@@ -190,6 +201,8 @@ const make = Effect.gen(function* () {
         return yield* new SecretRequestError({ reason: "agent_stopped" });
       }
     },
+    (effect) =>
+      withServerAdmission(effect, Effect.fail(new SecretRequestError({ reason: "restarting" }))),
   );
 
   const savedRef: SecretRequests["Service"]["savedRef"] = Effect.fn("SecretRequests.savedRef")(

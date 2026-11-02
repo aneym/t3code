@@ -681,6 +681,13 @@ export const make = Effect.gen(function* () {
         resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
           .continueThreadsAfterServerUpdate;
       const handoff = handoffs.find((effect) => effect.threadId === threadId)?.request;
+      const result = yield* reconcileProjection(
+        projection,
+        trigger,
+        enabled,
+        stoppedThisPass,
+        handoff?.type === "provider-runtime.restart-handoff" ? handoff.handoff : undefined,
+      );
       if (
         trigger === "startup" &&
         handoff?.type === "provider-runtime.restart-handoff" &&
@@ -728,13 +735,6 @@ export const make = Effect.gen(function* () {
               ),
             );
       }
-      const result = yield* reconcileProjection(
-        projection,
-        trigger,
-        enabled,
-        stoppedThisPass,
-        handoff?.type === "provider-runtime.restart-handoff" ? handoff.handoff : undefined,
-      );
       for (const session of projection.providerSessions) {
         if (session.status !== "stopped" && session.status !== "error") {
           stoppedThisPass.set(session.id, session);

@@ -1,17 +1,13 @@
 import { pipe } from "effect/Function";
 import {
   SECRET_REQUEST_DEFAULT_PLACEHOLDER,
-  SECRET_REQUEST_RESTART_RETRY,
   secretRequestAnswerInput,
   secretRequestDisplay,
   secretRequestFailureMessage,
   secretRequestPrivacyNote,
   type SecretRequestItem,
 } from "@t3tools/client-runtime/secret-request";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import { CheckIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
@@ -87,11 +83,7 @@ function PendingSecretRequestForm(props: {
       setSecret("");
       return;
     }
-    if (isAtomCommandInterrupted(result)) {
-      setError(SECRET_REQUEST_RESTART_RETRY);
-    } else {
-      pipe(squashAtomCommandFailure(result), secretRequestFailureMessage, setError);
-    }
+    pipe(squashAtomCommandFailure(result), secretRequestFailureMessage, setError);
   };
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {

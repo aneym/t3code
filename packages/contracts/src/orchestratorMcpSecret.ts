@@ -27,7 +27,8 @@ export type OrchestratorMcpRequestSecretInput = typeof OrchestratorMcpRequestSec
 export const OrchestratorMcpRequestSecretResult = Schema.Union([
   Schema.Struct({
     status: Schema.Literal("restarting").annotate({
-      description: "T3 Code is restarting. The card stays open.",
+      description:
+        "T3 Code is restarting. Retry request_secret now with the same clientRequestId; keep this turn alive, do not end with chat text.",
     }),
     clientRequestId: OrchestratorMcpClientRequestId.annotate({
       description:

@@ -295,7 +295,9 @@ export const layer = (
       onAuthorized === undefined
         ? effect
         : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
-    return RpcSchema.isStreamSchema(rpc.successSchema) || rpc._tag === WS_METHODS.serverProbe
+    return RpcSchema.isStreamSchema(rpc.successSchema) ||
+      rpc._tag === WS_METHODS.serverProbe ||
+      rpc._tag === WS_METHODS.secretsAnswerRequest
       ? admitted
       : withServerAdmission(admitted);
   });

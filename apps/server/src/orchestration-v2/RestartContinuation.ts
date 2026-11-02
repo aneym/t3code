@@ -355,11 +355,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const secretNotes = projection.turnItems.flatMap((item) => {
       if (
         item.type !== "secret_request" ||
+        item.secretStatus === "cancelled" ||
         item.runId !== source.id ||
         !(
           item.secretStatus === "pending" ||
-          (item.secretStatus !== "cancelled" &&
-            item.completedAt !== null &&
+          (item.completedAt !== null &&
             source.completedAt !== null &&
             DateTime.toEpochMillis(item.completedAt) >= DateTime.toEpochMillis(source.completedAt))
         )
@@ -368,7 +368,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       const clientRequestId = secretRequestClientRequestId(item.id);
       return clientRequestId === undefined
         ? []
-        : [restartSecretNote({ label: item.label, clientRequestId })];
+        : [restartSecretNote({ label: item.label, clientRequestId, status: item.secretStatus })];
     });
     const text = [baseText, ...secretNotes].join("\n\n");
     return yield* threads

@@ -1,3 +1,5 @@
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -50,6 +52,7 @@ const withService = <A, E>(
     let failedRecords = options.failedRecords ?? 0;
     const requestThreadId = options.threadId ?? threadId;
     const layerDependencies = Layer.mergeAll(
+      EffectOutbox.layer.pipe(Layer.provide(Sqlite.layerMemory)),
       NodeCrypto.layer,
       NodeServices.layer,
       Layer.succeed(

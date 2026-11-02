@@ -88,7 +88,11 @@ const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
           const paused = new Set(restartPausedRunIds(projection));
           const secretRuns = new Set(
             projection.turnItems.flatMap((item) =>
-              item.type === "secret_request" && item.secretStatus === "pending" ? [item.runId] : [],
+              item.type === "secret_request" &&
+              item.secretStatus === "pending" &&
+              item.runId !== null
+                ? [item.runId]
+                : [],
             ),
           );
           const workInFlight = new Set(
@@ -105,14 +109,20 @@ const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
           for (const task of projection.subagents) {
             if (isOrchestrationV2WorkActive(task.status)) workInFlight.add(task.runId);
           }
+          for (const runId of secretRuns) {
+            if (workInFlight.has(runId) || effectsInFlight.has(runId)) secretRuns.delete(runId);
+          }
           const activeNodeIds = new Set(
             projection.providerTurns
               .filter((turn) => isOrchestrationV2WorkActive(turn.status))
               .map((turn) => turn.nodeId),
           );
           for (const thread of projection.providerThreads) {
-            if (thread.ownerNodeId !== null && (thread.pendingBackgroundTasks?.length ?? 0) > 0)
+            if (thread.ownerNodeId !== null && (thread.pendingBackgroundTasks?.length ?? 0) > 0) {
               activeNodeIds.add(thread.ownerNodeId);
+              const runId = projection.nodes.find((node) => node.id === thread.ownerNodeId)?.runId;
+              if (runId != null) secretRuns.delete(runId);
+            }
           }
           for (const node of projection.nodes) {
             if (activeNodeIds.has(node.id)) workInFlight.add(node.runId);
