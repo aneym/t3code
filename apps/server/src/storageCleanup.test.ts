@@ -2830,7 +2830,7 @@ it.live.each([
     directory: "embedded",
     repository: "embedded",
     gitlink: true,
-    reason: "Has a nested repository (embedded/)",
+    reason: "Submodule has commits not on a remote-tracking ref",
   },
 ] as const)("keeps $state local state in a settled, landed checkout", (row) =>
   runCleanupTest(
