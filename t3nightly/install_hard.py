@@ -380,6 +380,9 @@ def install(run):
         from .install_backup_retention import best_effort
         root = Path(backup["path"]).parent.parent if backup.get("path") else run.backups
         retention = best_effort(root, backup.get("path"), run.home)
-        (path.parent / "backup-retention.json").write_text(json.dumps(retention, indent=2) + "\n")
+        try:
+            (path.parent / "backup-retention.json").write_text(json.dumps(retention, indent=2) + "\n")
+        except OSError as error:
+            run.step("backup-retention-receipt-failed", error=str(error))
     run.step("hard-install-receipt", path=str(path), outcome=outcome)
     return run.finish(outcome, f"hard install {outcome}: {previous} -> {args.version}")

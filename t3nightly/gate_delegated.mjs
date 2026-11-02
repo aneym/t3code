@@ -49,7 +49,7 @@ export function delegatedDrain({ session, opts, Effect, Stream, applyEvent, cli 
       yield* wait("restart-projections", () => parent() && child());
       const task = parent().subagents.find(t => t.id === proof.task.id);
       mark("after-restart", open(task), { task, childRuns: child().runs, sameTaskId: task?.id === proof.task.id });
-      if (!open(task)) { proof.ok = false; persist(); return proof; }
+      if (!open(task)) { proof.ok = false; persist(); return { check: proof.check, evidence: path, passed: proof.ok ?? true }; }
       yield* wait("child-resumed", () => child().runs.some(r => r.status === "running"));
       mark("child-resumed", true, { sameTaskId: true, runs: child().runs });
       writeFileSync(`${agentPath}release`, "release\n");
@@ -61,6 +61,6 @@ export function delegatedDrain({ session, opts, Effect, Stream, applyEvent, cli 
       proof.ok = proof.checks.every(c => c.ok);
       persist();
     }
-    return proof;
+    return { check: proof.check, evidence: path, passed: proof.ok ?? true };
   });
 }
