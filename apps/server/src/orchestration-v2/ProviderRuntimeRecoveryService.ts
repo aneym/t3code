@@ -506,7 +506,6 @@ export const make = Effect.gen(function* () {
         }
         if (providerThread.ownerNodeId === null) {
           for (const task of providerThread.pendingBackgroundTasks ?? []) {
-            // A subagent already recorded covers the shells it started.
             if (
               cancelledBackgroundNativeIds.has(task.taskId) ||
               (task.parentTaskId !== undefined &&
@@ -685,6 +684,7 @@ export const make = Effect.gen(function* () {
       if (
         trigger === "startup" &&
         handoff?.type === "provider-runtime.restart-handoff" &&
+        handoff.handoff.runIds.length > 0 &&
         projection.thread.archivedAt === null &&
         projection.thread.deletedAt === null &&
         projection.thread.settledOverride !== "settled"
