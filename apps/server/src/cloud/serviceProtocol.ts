@@ -65,6 +65,7 @@ export type ServiceLauncherChildMessage =
       readonly updateId: string;
       readonly port: number;
       readonly recovering?: boolean;
+      readonly reportsCommandReady?: boolean;
     }
   | { readonly type: "listening"; readonly port: number }
   | { readonly type: "state-dir-owned" }
@@ -339,6 +340,7 @@ export function decodeServiceLauncherChildMessage(
       updateId: value.updateId,
       port: value.port,
       ...(value.recovering === true ? { recovering: true } : {}),
+      ...(value.reportsCommandReady === true ? { reportsCommandReady: true } : {}),
     };
   if (value.type === "listening" && typeof value.port === "number")
     return { type: value.type, port: value.port };

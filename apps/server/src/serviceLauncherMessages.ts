@@ -43,3 +43,12 @@ export const writeStopMarker = (baseDir: string) =>
   NodeFSP.writeFile(stopMarkerPath(baseDir), "", { mode: 0o600 }).catch(() => undefined);
 export const restartPendingPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
+
+export const rollbackPendingUpdate = (
+  update: ServiceUpdateRecord,
+  baseDir: string,
+): PendingServiceUpdate => ({
+  ...update,
+  status: "pending",
+  dbPath: NodePath.join(baseDir, "userdata", "statev2.sqlite"),
+});

@@ -1,6 +1,7 @@
 import { acceptServiceUpdate } from "./serviceLauncherUpdateRequest.ts";
 import {
   terminalUpdate,
+  rollbackPendingUpdate,
   sendMessage,
   stopMarkerPath,
   writeStopMarker,
@@ -40,13 +41,15 @@ import {
   clearOwnershipGrant,
   sweepGrantTemps,
 } from "./serviceLauncherOwnership.ts";
-import { ServiceLauncherExitDeadline } from "./serviceLauncherExitDeadline.ts";
+import {
+  ServiceLauncherExitDeadline,
+  servicePreparedDeadlineMs,
+} from "./serviceLauncherExitDeadline.ts";
 import { readServiceEnvironment } from "./serviceEnvironment.ts";
 
 import { decodeServiceLauncherChildMessage, SERVICE_STATE_FILE } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
-const PREPARED_TIMEOUT_MS = 30 * 60_000;
 
 import { runtimeExists, readServiceState, writeServiceState } from "./serviceLauncherState.ts";
 
@@ -287,7 +290,7 @@ export class Launcher {
     if (role === "trial") {
       this.#timer = setTimeout(
         () => this.#enqueue(() => this.#handlePreparedTimeout(managed)),
-        PREPARED_TIMEOUT_MS,
+        servicePreparedDeadlineMs(this.#environment),
       );
     }
   }
@@ -445,7 +448,7 @@ export class Launcher {
         return;
       }
       try {
-        child.recovering = !!message.recovering;
+        child.recovering = message.recovering === true && message.reportsCommandReady === true;
         await this.#handlePrepared(child, message.updateId);
       } catch {
         await this.#returnToPrevious(pending, "rolled-back", "commit-failed", child);
@@ -603,11 +606,7 @@ export class Launcher {
     if (pending.status === "committed" && child.recovering && this.#canRollbackCommitted) {
       this.#timer = undefined;
       await this.#returnToPrevious(
-        {
-          ...pending,
-          status: "pending",
-          dbPath: NodePath.join(this.#baseDir, "userdata", "statev2.sqlite"),
-        },
+        rollbackPendingUpdate(pending, this.#baseDir),
         "rolled-back",
         "prepared-timeout",
         child,
@@ -709,11 +708,7 @@ export class Launcher {
     }
     if (pending?.status === "committed" && this.#canRollbackCommitted) {
       await this.#returnToPrevious(
-        {
-          ...pending,
-          status: "pending",
-          dbPath: NodePath.join(this.#baseDir, "userdata", "statev2.sqlite"),
-        },
+        rollbackPendingUpdate(pending, this.#baseDir),
         "rolled-back",
         "activation-exited",
       );

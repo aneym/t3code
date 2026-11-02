@@ -1,3 +1,7 @@
+import {
+  armServiceRecoveryDeadline,
+  clearServiceRecoveryDeadline,
+} from "./serviceLauncherExitDeadline.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- Node HTTP and IPC handles are application boundaries.
 import { admitHttpRequest } from "./serverHandoffBarrier.ts";
 import * as NodeHttp from "node:http";
@@ -221,9 +225,11 @@ export const prepareServiceRouting = Effect.fn("serviceChildTransport.prepareRou
           updateId: pending.id,
           port: privatePort,
           recovering: context.hotSwap?.warm === true,
+          reportsCommandReady: true,
         },
         (reply) => reply.type === "committed" && reply.updateId === pending.id,
       );
+      if (context.hotSwap?.warm === true) yield* Effect.sync(armServiceRecoveryDeadline);
       return {
         id: pending.id,
         fromVersion: pending.fromVersion,
@@ -281,6 +287,7 @@ export const freezeServiceConnections = Effect.fn("serviceChildTransport.freezeC
 );
 
 export const serviceCommandReady = Effect.gen(function* () {
+  yield* Effect.sync(clearServiceRecoveryDeadline);
   const { prewarmMs, acquireAt, ownershipAt, layersAt, validatedAt } = serviceBootTimeline;
   if (acquireAt !== 0)
     yield* Effect.logInfo("Service handoff boot timeline", {
