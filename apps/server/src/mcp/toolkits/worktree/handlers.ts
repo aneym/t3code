@@ -1,4 +1,4 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { CommandId, OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as GitWorkflow from "../../../git/GitWorkflowService.ts";
 import * as Project from "../../../project/ProjectService.ts";
@@ -34,6 +34,7 @@ const handlers = {
           message: "Only a linked environment's delegate_task exports a worktree.",
         });
       const {
+        threads,
         projection: { thread },
       } = yield* readThread(input.threadId);
       if (thread.worktreePath === null || thread.branch === null)
@@ -42,7 +43,7 @@ const handlers = {
           message: "The thread has no worktree branch.",
         });
       const { worktreePath, branch } = thread;
-      return yield* WorktreeTransfer.WorktreeTransfer.pipe(
+      const exported = yield* WorktreeTransfer.WorktreeTransfer.pipe(
         Effect.flatMap((transfer) =>
           transfer.exportBranch({
             worktreePath,
@@ -60,6 +61,20 @@ const handlers = {
             }),
         ),
       );
+      if (exported.branch !== branch)
+        yield* threads
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(
+              `worktree-export:${thread.id}:${exported.headCommit}:${exported.branch}`,
+            ),
+            threadId: thread.id,
+            branch: exported.branch,
+            expectedBranch: branch,
+            expectedWorktreePath: worktreePath,
+          })
+          .pipe(Effect.mapError(unavailable));
+      return exported;
     }),
   ),
   t3_worktree_list: McpToolAccess.reads((input) =>

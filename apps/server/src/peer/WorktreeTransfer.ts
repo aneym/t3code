@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { GitCommandError, WorktreeMcpExportResult } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -71,7 +73,11 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) => transferError(`${why}: ${cause.message}`)),
         Effect.filterOrFail(
           (result) => result.exitCode === 0,
-          (result) => transferError(`${why}: ${result.stderr.trim()}`, retryable),
+          (result) =>
+            transferError(
+              `${why}: ${result.stderr.trim() || `git exited with code ${result.exitCode}`}`,
+              retryable,
+            ),
         ),
         Effect.map((result) => result.stdout.trim()),
       );
@@ -124,10 +130,19 @@ const make = Effect.gen(function* () {
     "WorktreeTransfer.exportBranch",
   )(function* ({ worktreePath, branch: recordedBranch, bases, branches }) {
     const cwd = worktreePath;
-    const branch =
-      (yield* run("export.branch", cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]).pipe(
-        Effect.mapError((cause) => transferError(cause.message)),
-      )) ?? recordedBranch;
+    const symbolic = yield* git
+      .execute({
+        operation: "WorktreeTransfer.export.branch",
+        cwd,
+        args: ["symbolic-ref", "--quiet", "HEAD"],
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.mapError((cause) => transferError(cause.message)));
+    if (symbolic.exitCode !== 0 && !(symbolic.exitCode === 1 && symbolic.stderr.trim() === ""))
+      return yield* transferError(
+        `Unable to resolve the branch: ${symbolic.stderr.trim() || `git exited with code ${symbolic.exitCode}`}`,
+        false,
+      );
     const headCommit = yield* required(
       "export.head",
       cwd,
@@ -135,6 +150,35 @@ const make = Effect.gen(function* () {
       "No commit",
       false,
     );
+    let branch = symbolic.stdout.trim().replace(/^refs\/heads\//, "");
+    if (symbolic.exitCode === 1) {
+      const recorded = yield* run("export.recorded", cwd, [
+        "rev-parse",
+        "--verify",
+        `refs/heads/${recordedBranch}^{commit}`,
+      ]).pipe(Effect.mapError((cause) => transferError(cause.message)));
+      branch =
+        recorded === headCommit
+          ? recordedBranch
+          : `t3/detached-${headCommit.slice(0, 12)}-${randomUUID()}`;
+      if (recorded !== headCommit)
+        yield* required(
+          "export.detached",
+          cwd,
+          ["update-ref", `refs/heads/${branch}`, headCommit, ""],
+          "Unable to name the detached commit",
+          false,
+        );
+    }
+    const branchCommit = yield* required(
+      "export.ref",
+      cwd,
+      ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`],
+      "Unable to resolve the export branch",
+      false,
+    );
+    if (branchCommit !== headCommit)
+      return yield* transferError("The branch moved during export; export it again.");
     const forksOf = (refs: ReadonlyArray<string>) =>
       Effect.forEach(refs, (ref) =>
         run("export.base", cwd, ["merge-base", ref, headCommit]).pipe(
@@ -192,6 +236,14 @@ const make = Effect.gen(function* () {
           ["bundle", "create", file, `refs/heads/${branch}`, ...exclude],
           "Unable to bundle the branch",
         );
+        const bundledHead = yield* required(
+          "export.verify",
+          cwd,
+          ["bundle", "list-heads", file, `refs/heads/${branch}`],
+          "Unable to verify the bundled branch",
+        );
+        if (bundledHead.split(" ")[0] !== headCommit)
+          return yield* transferError("The branch moved during export; export it again.");
         const stat = yield* fs.stat(file);
         if (Number(stat.size) > MAX_BUNDLE_BYTES) return null;
         return Buffer.from(yield* fs.readFile(file)).toString("base64");
