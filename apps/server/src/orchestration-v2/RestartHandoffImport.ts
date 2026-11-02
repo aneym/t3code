@@ -20,7 +20,10 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 
 export const restartReapprovalEvents = Effect.fn("RestartHandoffImport.restartReapprovalEvents")(
   function* (
-    projection: OrchestrationV2ThreadProjection,
+    projection: Pick<
+      OrchestrationV2ThreadProjection,
+      "thread" | "runs" | "runtimeRequests" | "nodes" | "turnItems" | "providerTurns" | "subagents"
+    >,
     epoch: string,
     sourceIds: ReadonlyArray<RunId>,
     legacyRequestIds?: ReadonlyArray<RuntimeRequestId>,

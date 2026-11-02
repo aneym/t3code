@@ -387,7 +387,6 @@ export const make = Effect.gen(function* () {
             candidate.runId === run.id &&
             (candidate.nodeId === null || !messageRequestNodeIds.has(candidate.nodeId)) &&
             !isAppOwnedDelegationItem(candidate) &&
-            // A link card waits on the user, not the run, and answers by message.
             candidate.type !== "link_request" &&
             (candidate.status === "pending" ||
               candidate.status === "running" ||
@@ -486,7 +485,6 @@ export const make = Effect.gen(function* () {
           })),
         );
       }
-      // Native subagent threads have no runs to settle their runless root turns.
       events.push(
         ...(yield* endRunlessRootTurns({
           threadId: projection.thread.id,
@@ -547,7 +545,6 @@ export const make = Effect.gen(function* () {
       for (const [providerThreadId, work] of cancelledBackgroundWork) {
         const noteRun = latestStartedRun(projection, providerThreadId);
         if (noteRun === undefined) continue;
-        // Use a separate event; stale run snapshots can overwrite intervening lifecycle changes.
         events.push({
           id: yield* allocateEventId(),
           type: "run.background-work-cancelled",
@@ -689,16 +686,25 @@ export const make = Effect.gen(function* () {
         projection.thread.deletedAt === null &&
         projection.thread.settledOverride !== "settled"
       ) {
-        const full = yield* projections.getThreadProjection(threadId).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderRuntimeRecoveryError({
-                operation: "read-projections",
-                threadId,
-                cause,
-              }),
-          ),
-        );
+        const full = yield* projections
+          .getThreadRecords(threadId, [
+            "runs",
+            "runtimeRequests",
+            "nodes",
+            "turnItems",
+            "providerTurns",
+            "subagents",
+          ])
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderRuntimeRecoveryError({
+                  operation: "read-projections",
+                  threadId,
+                  cause,
+                }),
+            ),
+          );
         const reapproval = yield* restartReapprovalEvents(
           full,
           handoff.epoch,
