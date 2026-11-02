@@ -66,21 +66,23 @@ export type ResourceMonitorLinuxLibc = "gnu" | "musl";
 
 function detectResourceMonitorLinuxLibc(): ResourceMonitorLinuxLibc {
   const reportApi = process.report as typeof process.report & { excludeNetwork: boolean };
-  const previous = reportApi.excludeNetwork;
   try {
-    reportApi.excludeNetwork = true;
-    const report = process.report.getReport() as
-      | {
-          readonly header?: {
-            readonly glibcVersionRuntime?: unknown;
-          };
-        }
-      | undefined;
-    return typeof report?.header?.glibcVersionRuntime === "string" ? "gnu" : "musl";
+    const previous = reportApi.excludeNetwork;
+    try {
+      reportApi.excludeNetwork = true;
+      const report = process.report.getReport() as
+        | {
+            readonly header?: {
+              readonly glibcVersionRuntime?: unknown;
+            };
+          }
+        | undefined;
+      return typeof report?.header?.glibcVersionRuntime === "string" ? "gnu" : "musl";
+    } finally {
+      reportApi.excludeNetwork = previous;
+    }
   } catch {
     return "musl";
-  } finally {
-    reportApi.excludeNetwork = previous;
   }
 }
 
