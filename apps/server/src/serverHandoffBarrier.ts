@@ -12,6 +12,10 @@ let frozen = false;
 let admitted = 0;
 let idle = Promise.withResolvers<void>();
 
+export function admittedRequestCount(): number {
+  return admitted;
+}
+
 const leave = () => {
   admitted -= 1;
   if (frozen && admitted === 0) idle.resolve();
