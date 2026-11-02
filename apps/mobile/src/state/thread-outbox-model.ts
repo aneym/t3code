@@ -12,6 +12,7 @@ import {
   MessageId,
   ModelSelection,
   OrchestrationMessageContext,
+  OrchestrationV2ComposerSubmit,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -59,6 +60,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
   creation: Schema.optional(QueuedThreadCreationSchema),
+  composerSubmit: Schema.optional(OrchestrationV2ComposerSubmit),
   createdAt: IsoDateTime,
 });
 
@@ -90,6 +92,7 @@ export interface QueuedThreadMessage {
   /** Captured at enqueue because draining may occur long after the tap. */
   readonly dispatchMode?: ComposerDispatchMode;
   readonly creation?: QueuedThreadCreation;
+  readonly composerSubmit?: OrchestrationV2ComposerSubmit;
   readonly createdAt: string;
 }
 

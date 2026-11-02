@@ -77,6 +77,7 @@ import {
   useComposerDraftSettings,
 } from "./use-composer-drafts";
 import {
+  composerSubmitStamp,
   resolveComposerDispatchMode,
   type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -511,10 +512,10 @@ export function useThreadComposerState() {
     if (!selectedThreadShell) {
       return null;
     }
-    // Before thread creation succeeds, follow-ups could become orphaned and be dropped by the drain.
     if (selectedThreadCreation !== null) {
       return null;
     }
+    const composerSubmit = composerSubmitStamp(selectedThreadVisibleTurnItems);
 
     const editKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
     if (getQueuedRunEdit(editKey) !== null) {
@@ -541,7 +542,6 @@ export function useThreadComposerState() {
     if (text.length === 0 && attachments.length === 0) {
       return null;
     }
-    // Recovery preserves over-cap attachments; require trimming or outbox delivery would reject indefinitely.
     if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       Dialog.alert(
         "Too many attachments",
@@ -677,6 +677,7 @@ export function useThreadComposerState() {
         draft.interactionMode ?? thread.interactionMode,
       ),
       ...(followUpDispatchMode === null ? {} : { dispatchMode: followUpDispatchMode }),
+      ...(text.length === 0 ? {} : { composerSubmit }),
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });

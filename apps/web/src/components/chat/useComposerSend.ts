@@ -99,7 +99,10 @@ import {
 } from "./composerSend.logic";
 import { usePlanFollowUpSend } from "./useProposedPlanSend";
 import { useMultipleModelSend } from "./useMultipleModelSend";
-import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
+import {
+  type ComposerDispatchMode,
+  composerSubmitStamp,
+} from "@t3tools/client-runtime/state/composer-dispatch";
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
@@ -177,6 +180,7 @@ interface ComposerSendInput {
   readonly activeProjectDefaultModelSelection: ModelSelection | null;
   readonly activeProposedPlan: LatestProposedPlanState | null;
   readonly activeMessageCount: number;
+  readonly displayedTurnItems: Parameters<typeof composerSubmitStamp>[0];
   readonly isServerThread: boolean;
   readonly isLocalDraftThread: boolean;
   readonly isGitRepo: boolean;
@@ -275,6 +279,7 @@ export function useComposerSend(input: ComposerSendInput) {
     activeProjectDefaultModelSelection,
     activeProposedPlan,
     activeMessageCount,
+    displayedTurnItems,
     isServerThread,
     isLocalDraftThread,
     isGitRepo,
@@ -412,9 +417,8 @@ export function useComposerSend(input: ComposerSendInput) {
     },
   ) => {
     e?.preventDefault();
-    // What the user pressed send on; uploads below can take a while, and a redirect must not
-    // decline approvals for a draft that changed meanwhile.
     const promptAtSend = promptRef.current;
+    const composerSubmit = composerSubmitStamp(displayedTurnItems);
     if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&
@@ -880,9 +884,6 @@ export function useComposerSend(input: ComposerSendInput) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }
-    // Records bind attachments by the id each side knows: the local id for the optimistic
-    // row, the upload id (or local id on the data-URL path) on the wire; the server
-    // rebinds them to the persisted id.
     const buildOutgoingMessageContext = (attachmentIds: ReadonlyArray<string>) =>
       buildMessageContext({
         terminalContexts: composerTerminalContextsSnapshot,
@@ -1352,6 +1353,7 @@ export function useComposerSend(input: ComposerSendInput) {
                 boundAttachmentIds(turnAttachmentsResult.value, composerAttachmentsSnapshot),
               ),
             }),
+            ...(directAnnotation || messageTextForSend === "" ? {} : { composerSubmit }),
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,

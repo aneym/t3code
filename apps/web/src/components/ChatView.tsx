@@ -942,7 +942,6 @@ export default function ChatView(props: ChatViewProps) {
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
-  // Turn items can lag projection hydration; keep the environment locked through that gap.
   const activeMessageCount = isServerThread
     ? Math.max(committedServerMessageIds.size, serverProjection?.messages.length ?? 0)
     : 0;
@@ -2897,6 +2896,7 @@ export default function ChatView(props: ChatViewProps) {
     activeProjectDefaultModelSelection,
     activeProposedPlan,
     activeMessageCount,
+    displayedTurnItems: serverVisibleTurnItems,
     isServerThread,
     isLocalDraftThread,
     isGitRepo,
