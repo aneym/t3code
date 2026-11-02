@@ -29,15 +29,57 @@ def turn_state(home, turn):
     return {"newUserPromptsAfterStart": max(0, len(ordinary) - 1), "runs": candidates, "completedRun": completed[-1] if completed else None, "userMessageIds": [row[0] for row in users]}
 
 
-def continuity(home, thread, probe):
+def coalescible_update_key(thread, event_type, payload, metadata):
+    if not isinstance(payload, dict) or not isinstance(payload.get("id"), str):
+        return None
+    prefix = f"{thread}\0{metadata.get('runId') or ''}\0{event_type}"
+    if event_type == "message.updated":
+        return f"{prefix}\0{payload['id']}" if payload.get("role") == "assistant" and payload.get("streaming") is True else None
+    if event_type != "turn-item.updated" or payload.get("status") != "running":
+        return None
+    item_type = payload.get("type")
+    if item_type in ("assistant_message", "reasoning"):
+        if payload.get("streaming") is not True:
+            return None
+    elif item_type not in ("command_execution", "file_change", "file_search", "web_search", "dynamic_tool"):
+        return None
+    return f"{prefix}\0{item_type}\0{payload['id']}"
+
+
+def continuity(home, thread, probe, *, through_sequence=None):
     snapshots = probe.get("snapshots", [])
     if not snapshots:
-        return {"verified": False, "reason": "no initial subscription snapshot", "missedEvents": []}
+        return {"verified": False, "reason": "no initial subscription snapshot", "missedEvents": [], "coalescedEvents": []}
     floor = snapshots[0]
-    expected = [row[0] for row in query(home, "SELECT sequence FROM orchestration_events WHERE aggregate_kind='thread' AND stream_id=? AND sequence>? ORDER BY sequence", (thread, floor))]
+    sql = "SELECT sequence,event_type,payload_json,metadata_json FROM orchestration_events WHERE aggregate_kind='thread' AND stream_id=? AND sequence>?"
+    parameters = (thread, floor)
+    if through_sequence is not None:
+        sql += " AND sequence<=?"
+        parameters += (through_sequence,)
+    rows = query(home, sql + " ORDER BY sequence", parameters)
+    expected = [row[0] for row in rows]
     observed = set(probe.get("sequences", []))
-    missing = [sequence for sequence in expected if sequence not in observed]
-    return {"verified": not missing and probe.get("resnapshots", 0) == 0, "afterSequence": floor, "persistedSequences": expected, "receivedSequences": sorted(observed), "missedEvents": missing, "resnapshots": probe.get("resnapshots", 0)}
+    latest_updates, pending_keys, superseded = {}, {}, {}
+    for sequence, event_type, raw_payload, raw_metadata in rows:
+        key = coalescible_update_key(thread, event_type, json.loads(raw_payload), json.loads(raw_metadata)) if event_type in ("message.updated", "turn-item.updated") else None
+        if key is None:
+            latest_updates.clear()
+            pending_keys.clear()
+            continue
+        if event_type in pending_keys and pending_keys[event_type] != key:
+            latest_updates.clear()
+        pending_keys[event_type] = key
+        if key in latest_updates:
+            superseded[latest_updates[key]] = sequence
+        latest_updates[key] = sequence
+    covered = {sequence: sequence for sequence in observed}
+    for sequence in reversed(expected):
+        survivor = covered.get(superseded.get(sequence))
+        if survivor is not None:
+            covered[sequence] = survivor
+    coalesced = [sequence for sequence in expected if sequence not in observed and sequence in covered]
+    missing = [sequence for sequence in expected if sequence not in covered]
+    return {"verified": not missing and probe.get("resnapshots", 0) == 0, "afterSequence": floor, "throughSequence": through_sequence, "persistedSequences": expected, "receivedSequences": sorted(observed), "missedEvents": missing, "coalescedEvents": coalesced, "coalescedBy": {sequence: covered[sequence] for sequence in coalesced}, "resnapshots": probe.get("resnapshots", 0)}
 
 
 def receipt(run, job, probe, turn, status, cursor, error=None):
@@ -95,8 +137,8 @@ def receipt(run, job, probe, turn, status, cursor, error=None):
     if job["turn"] and changed and not continued:
         failures.append("turn-not-automatically-completed-on-NEW")
     grade = "FAIL" if failures else "PASS" if changed else "NO-SWAP-OBSERVED"
-    value = {"schema": "t3nightly.live-swap-record/1", "grade": grade, "mode": "turn" if job["turn"] else "observer", "failures": failures, "host": job["host"], "start": job["start"], "until": job["until"], "finishedAt": datetime.now(timezone.utc).isoformat(), "versionChangeObserved": changed, "settledAfterSwapSeconds": job.get("settledAfterSwapSeconds", 0), "servedVersions": versions, "flipGapMs": probe.get("flipGapMs"), "refusedConnections": probe.get("refusedConnections", 0), "httpFailures": probe.get("httpFailures", 0), "clientDisconnects": len(violations), "missedEvents": cursor.get("missedEvents", []), "continuity": cursor, "probe": probe, "turn": {**turn, **status, "automaticCompletionOnNew": continued}, "error": error, "auth": auth, "unitCleanup": cleanup, "handoffProof": handoff, "teardownErrors": job.get("teardownErrors", []), "observationEndedAt": job.get("observationEndedAt"), "authPath": "installer restart_session: t3 auth session issue/revoke; private 0600 bearer file", "detached": True}
+    value = {"schema": "t3nightly.live-swap-record/1", "grade": grade, "mode": "turn" if job["turn"] else "observer", "failures": failures, "host": job["host"], "start": job["start"], "until": job["until"], "finishedAt": datetime.now(timezone.utc).isoformat(), "versionChangeObserved": changed, "settledAfterSwapSeconds": job.get("settledAfterSwapSeconds", 0), "servedVersions": versions, "flipGapMs": probe.get("flipGapMs"), "refusedConnections": probe.get("refusedConnections", 0), "httpFailures": probe.get("httpFailures", 0), "clientDisconnects": len(violations), "missedEvents": cursor.get("missedEvents", []), "coalescedEvents": cursor.get("coalescedEvents", []), "continuity": cursor, "probe": probe, "turn": {**turn, **status, "automaticCompletionOnNew": continued}, "error": error, "auth": auth, "unitCleanup": cleanup, "handoffProof": handoff, "teardownErrors": job.get("teardownErrors", []), "observationEndedAt": job.get("observationEndedAt"), "authPath": "installer restart_session: t3 auth session issue/revoke; private 0600 bearer file", "detached": True}
     (run / "receipt.json").write_text(json.dumps(value, indent=2) + "\n")
-    md = f"# Live swap recording: {grade}\n\nHost: {job['host']}; versions: " + " → ".join(row["version"] for row in versions) + f"\n\nClient disconnects: {len(violations)}; missed events: {len(value['missedEvents'])}; refused: {value['refusedConnections']}; HTTP failures: {value['httpFailures']}; gap: {value['flipGapMs']} ms.\n\n" + (f"Mode: turn. Turn completed: {bool(completed)}; automatic completion on NEW: {continued}." if job["turn"] else f"Mode: observer, read-only WS/HTTP client on thread {job['thread']}; no T3 turn or active run held.") + f"\n\nEvents: {len(cursor.get('persistedSequences', []))} persisted, {len(cursor.get('receivedSequences', []))} received after the initial snapshot.\n\nFailures: {', '.join(failures) or 'none'}. No swap means NO-SWAP-OBSERVED, never PASS.\n\nAuth: install acceptance CLI-issued session; credential never printed, bearer file 0600, revoke verified: {auth.get('revokeVerified', False)}; bearer removed: {auth.get('authFileRemoved', False)}. Unit absent: {cleanup.get('unitAbsent', False)}.\n\nRaw HTTP/WS/presentation/handoff observations: [probe.json](probe.json). Full cursor and turn proof: [receipt.json](receipt.json). Detached PID/PGID and deadline: [process.json](process.json).\n"
+    md = f"# Live swap recording: {grade}\n\nHost: {job['host']}; versions: " + " → ".join(row["version"] for row in versions) + f"\n\nClient disconnects: {len(violations)}; missed events: {len(value['missedEvents'])}; coalesced events: {len(value['coalescedEvents'])}; refused: {value['refusedConnections']}; HTTP failures: {value['httpFailures']}; gap: {value['flipGapMs']} ms.\n\n" + (f"Mode: turn. Turn completed: {bool(completed)}; automatic completion on NEW: {continued}." if job["turn"] else f"Mode: observer, read-only WS/HTTP client on thread {job['thread']}; no T3 turn or active run held.") + f"\n\nEvents: {len(cursor.get('persistedSequences', []))} persisted, {len(cursor.get('receivedSequences', []))} received after the initial snapshot.\n\nFailures: {', '.join(failures) or 'none'}. No swap means NO-SWAP-OBSERVED, never PASS.\n\nAuth: install acceptance CLI-issued session; credential never printed, bearer file 0600, revoke verified: {auth.get('revokeVerified', False)}; bearer removed: {auth.get('authFileRemoved', False)}. Unit absent: {cleanup.get('unitAbsent', False)}.\n\nRaw HTTP/WS/presentation/handoff observations: [probe.json](probe.json). Full cursor and turn proof: [receipt.json](receipt.json). Detached PID/PGID and deadline: [process.json](process.json).\n"
     (run / "receipt.md").write_text(md)
     return value

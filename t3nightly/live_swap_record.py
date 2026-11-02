@@ -69,7 +69,7 @@ def main():
     log = str(run / "job.log")
     environment = {"HOME": str(Path.home()), "PATH": os.pathsep.join(p for p in os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep) if not str(Path(p).resolve()).startswith("/Volumes/"))}
     if sys.platform == "darwin":
-        unit = {"Label": label, "ProgramArguments": command, "RunAtLoad": True, "WorkingDirectory": str(engine.parent), "StandardOutPath": log, "StandardErrorPath": log, "EnvironmentVariables": environment, "ExitTimeOut": 20, "ProcessType": "Background"}
+        unit = {"Label": label, "ProgramArguments": command, "RunAtLoad": True, "WorkingDirectory": str(engine.parent), "StandardOutPath": log, "StandardErrorPath": log, "EnvironmentVariables": environment, "ExitTimeOut": 20, "ProcessType": "Interactive"}
         plist = run / "recorder.plist"
         plist.write_bytes(plistlib.dumps(unit))
         invocation = ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)]
