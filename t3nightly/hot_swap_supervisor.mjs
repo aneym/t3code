@@ -1,8 +1,10 @@
+import { observeCommands } from "./hot_swap_commands.mjs";
+
 export async function supervise({ opts, Effect, Stream, Layer, load, src, effectRoot, layers, Model, Remote, Descriptor, Compatibility, RpcSession, data, save, elapsed, stopped }) {
-  const [Supervisor, Driver, Resolver, Connectivity, Wakeups, Presentation, Option, SubscriptionRef] = await Promise.all([
+  const [Supervisor, Driver, Resolver, Connectivity, Wakeups, Presentation, Option, SubscriptionRef, Fiber] = await Promise.all([
     load(`${src}/connection/supervisor.ts`), load(`${src}/connection/driver.ts`), load(`${src}/connection/resolver.ts`),
     load(`${src}/connection/connectivity.ts`), load(`${src}/connection/wakeups.ts`), load(`${src}/connection/presentation.ts`),
-    load(`${effectRoot}/dist/Option.js`), load(`${effectRoot}/dist/SubscriptionRef.js`),
+    load(`${effectRoot}/dist/Option.js`), load(`${effectRoot}/dist/SubscriptionRef.js`), load(`${effectRoot}/dist/Fiber.js`),
   ]);
   const { readFileSync, existsSync } = await import("node:fs");
   const token = readFileSync(opts["bearer-file"], "utf8").trim();
@@ -84,6 +86,10 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
       if (firstConnected && presentation.phase !== "connected") data.presentationViolations.push(row);
       save();
     })), Effect.forkScoped);
+    let commandFiber;
+    if (opts["command-probe"] !== "false") {
+      commandFiber = yield* observeCommands({ opts, Effect, SubscriptionRef, Option, supervisor, sessionIdentities, data, save, elapsed }).pipe(Effect.forkScoped);
+    }
     let cursor;
     yield* SubscriptionRef.changes(supervisor.session).pipe(Stream.switchMap((option) => {
       if (Option.isNone(option)) return Stream.empty;
@@ -113,6 +119,7 @@ export async function supervise({ opts, Effect, Stream, Layer, load, src, effect
       })), Stream.catchCause(() => { if (!existsSync(opts.stop)) { data.wsFailures++; data.streamFailures.push({ atMs: elapsed(), sessionId: identity?.id }); save(); } return Stream.empty; }));
     }), Stream.runDrain, Effect.forkScoped);
     yield* Effect.promise(stopped);
+    if (commandFiber) yield* Fiber.join(commandFiber);
   })).pipe(Effect.provide(layers));
   await Effect.runPromise(program);
 }

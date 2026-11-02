@@ -7,6 +7,7 @@ const HTTP_DEADLINE_MS = 8000;
 export async function monitor(context) {
   const { opts, Effect, Stream, layers } = context;
   const started = performance.now();
+  const cpuStarted = process.cpuUsage();
   const data = { httpSamples: 0, refusedConnections: 0, httpFailures: 0, maxHttpGapMs: 0, flipGapMs: null, servedVersions: [], httpObservations: [], keepAlive: { requests: 0, reused: 0, failures: 0, errors: [], versions: [], sockets: [] }, wsConnections: 0, wsFailures: 0, streamFailures: [], snapshots: [], sequences: [], resnapshots: 0, ready: false, presentations: [], presentationViolations: [], handoffCalls: [], handoffReplies: [], handoffSettlements: [], handoffEvents: [], sessions: [], subscriptions: [], receivedEvents: [] };
   const interval = Math.max(10, Number(opts["interval-ms"] ?? 100));
   let lastOk = started;
@@ -112,6 +113,7 @@ export async function monitor(context) {
   };
   await Promise.all([http(), keepAlive(), websocket()]);
   data.maxHttpGapMs = Math.max(data.maxHttpGapMs, Math.round(performance.now() - lastOk));
+  data.probeCpu = { ...process.cpuUsage(cpuStarted), elapsedMs: elapsed(), units: "microseconds" };
   save(true);
   return data;
 }
