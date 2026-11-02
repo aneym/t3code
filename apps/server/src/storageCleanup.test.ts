@@ -1016,8 +1016,8 @@ describe("deleted thread worktrees", () => {
       ...overrides,
     });
 
-  it.effect.each(["no subagents", "native subagent"] as const)(
-    "removes a deleted thread's worktree with %s",
+  it.effect.each(["no subagents", "native subagent", "no remote"] as const)(
+    "cleans up a deleted thread's worktree with %s",
     (scenario) =>
       Effect.gen(function* () {
         yield* TestClock.setTime(NOW_MS);
@@ -1025,17 +1025,32 @@ describe("deleted thread worktrees", () => {
           ...DEFAULT_SERVER_SETTINGS.storageCleanup,
           worktreeAfterDays: null,
           worktreeOnDelete: true,
+          worktreeRequireIntegrated: scenario === "no remote",
+          worktreeContentIntegration: true,
         });
+        if (scenario === "no remote") {
+          yield* fixture.fs.writeFileString(`${fixture.worktree}/tracked.txt`, "unpushed work\n");
+          yield* fixture.command(fixture.worktree, ["commit", "-am", "unpushed work"]);
+        }
         const owner = parent(fixture.worktree);
         fixture.setDeletedThreads([owner]);
         fixture.setThreads(scenario === "native subagent" ? [subagent(owner)] : []);
         const report = yield* fixture.service.runNow;
         expect(report.entries[0]).toMatchObject({
           threadId: owner.id,
-          outcome: "removed",
-          reason: "Thread was deleted",
+          outcome: scenario === "no remote" ? "kept" : "removed",
+          reason:
+            scenario === "no remote"
+              ? "Repository has no remote to check integration against"
+              : "Thread was deleted",
         });
-        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(scenario === "no remote");
+        if (scenario === "no remote") {
+          expect(report.counts).toEqual({ removed: 0, kept: 1, failed: 0 });
+          expect(yield* fixture.fs.readFileString(`${fixture.worktree}/tracked.txt`)).toBe(
+            "unpushed work\n",
+          );
+        }
       }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
   );
 

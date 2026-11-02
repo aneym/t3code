@@ -73,7 +73,16 @@ export function makeWorktreeIntegrationCheck(git: GitVcsDriver.GitVcsDriver["Ser
     readonly matchContent: boolean;
   }) {
     const { repositoryCwd, worktreePath } = input;
-    const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
+    const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd).pipe(
+      Effect.catchIf(
+        (error) =>
+          error._tag === "GitCommandError" &&
+          error.operation === "GitVcsDriver.resolvePrimaryRemoteName" &&
+          error.detail === "No git remote is configured for this repository.",
+        () => Effect.succeed(null),
+      ),
+    );
+    if (remote === null) return "repository has no remote to check integration against";
     const defaultBranchKey = `${repositoryCwd}\0${remote}`;
     let branch = defaultBranches.get(defaultBranchKey);
     if (branch === undefined) {
@@ -97,7 +106,7 @@ export function makeWorktreeIntegrationCheck(git: GitVcsDriver.GitVcsDriver["Ser
       }
       defaultBranches.set(defaultBranchKey, branch);
     }
-    if (branch === null) return null;
+    if (branch === null) return "default branch is unavailable";
     const defaultRef = `refs/remotes/${remote}/${branch}`;
     const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
     if (!refreshed.has(defaultRef)) {
