@@ -125,7 +125,8 @@ const make = Effect.gen(function* () {
   )(function* ({ worktreePath, branch: recordedBranch, bases, branches }) {
     const cwd = worktreePath;
     const branch =
-      (yield* run("export.branch", cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]).pipe(
+      (yield* run("export.branch", cwd, ["symbolic-ref", "--quiet", "HEAD"]).pipe(
+        Effect.map((ref) => ref?.replace(/^refs\/heads\//, "")),
         Effect.mapError((cause) => transferError(cause.message)),
       )) ?? recordedBranch;
     const headCommit = yield* required(
