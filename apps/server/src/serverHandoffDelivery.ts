@@ -28,16 +28,19 @@ export const registerHandoffClient = Effect.fn("ServerHandoffDelivery.register")
   );
 });
 
-export const acknowledgeHandoff = Effect.fn("ServerHandoffDelivery.acknowledge")(function* (input: {
-  readonly handoffClientId?: string;
-  readonly handoffSequence?: number;
-  readonly handoffReplyReceived?: boolean;
-}) {
+export const acknowledgeHandoff = Effect.fn("ServerHandoffDelivery.acknowledge")(function* (
+  input: {
+    readonly handoffClientId?: string;
+    readonly handoffSequence?: number;
+    readonly handoffReplyReceived?: boolean;
+  },
+  responseWritten = false,
+) {
   const client =
     input.handoffClientId === undefined ? undefined : clients.get(input.handoffClientId);
   if (client !== undefined && input.handoffSequence !== undefined) {
     if (input.handoffReplyReceived === true) {
-      if (client.offered === input.handoffSequence) {
+      if (responseWritten && client.offered === input.handoffSequence) {
         client.acknowledged = input.handoffSequence;
         yield* Deferred.succeed(client.signal, undefined);
       }

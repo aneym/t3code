@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import * as Clock from "effect/Clock";
 import * as Fiber from "effect/Fiber";
 import { awaitHandoffReceipts } from "./serverHandoffDelivery.ts";
+import { flushHandoffResponses } from "./serverHandoffProtocol.ts";
 import { freezeServerAdmissions, reopenServerAdmissions } from "./serverHandoffBarrier.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -22,6 +23,7 @@ export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* 
   const holdDeadline = now() + budget;
   const preparationDeadline = holdDeadline - budget / 2;
   let mayRelinquish = true;
+  let relinquishing = false;
   const preparation = yield* freezeServerAdmissions().pipe(
     Effect.andThen(recovery.prepareRestart(updateId, 0)),
     Effect.andThen(
@@ -30,11 +32,18 @@ export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* 
     Effect.tap((event) => awaitHandoffReceipts(event.sequence, budget)),
     Effect.andThen(sendServiceMessage({ type: "drained", updateId })),
     Effect.andThen(
-      Effect.sync(() => {
-        if (!mayRelinquish || now() >= preparationDeadline) return false;
-        relinquish();
+      Effect.gen(function* () {
+        const claimed = yield* Effect.sync(() => {
+          if (!mayRelinquish || now() >= preparationDeadline) return false;
+          relinquishing = true;
+          return true;
+        });
+        if (!claimed) return false;
+        yield* flushHandoffResponses(Math.min(250, (preparationDeadline - now()) / 4));
+        yield* freezeServiceConnections(Math.min(250, (preparationDeadline - now()) / 2));
+        process.kill(process.pid, "SIGTERM");
         return true;
-      }),
+      }).pipe(Effect.uninterruptible),
     ),
     Effect.catchCause(() => Effect.succeed(false)),
     Effect.forkDetach,
@@ -47,10 +56,16 @@ export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* 
     Option.isNone(frozen) || now() >= preparationDeadline
       ? ("freeze-timeout" as const)
       : ("freeze-failed" as const);
-  yield* Effect.sync(() => {
+  const committed = yield* Effect.sync(() => {
+    if (relinquishing) return true;
     mayRelinquish = false;
     reopenServerAdmissions();
+    return false;
   });
+  if (committed) {
+    yield* Fiber.join(preparation).pipe(Effect.ignore);
+    return;
+  }
   yield* sendServiceMessage({ type: "freeze-aborted", updateId, reason }).pipe(
     Effect.timeoutOption(Math.max(1, holdDeadline - now())),
     Effect.ignore,
@@ -79,8 +94,3 @@ export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* 
     Effect.forkDetach,
   );
 });
-
-function relinquish(): void {
-  freezeServiceConnections();
-  process.kill(process.pid, "SIGTERM");
-}

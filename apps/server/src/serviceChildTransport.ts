@@ -1,8 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Node HTTP and IPC handles are application boundaries.
 import { admitHttpRequest } from "./serverHandoffBarrier.ts";
-import type * as NodeHttp from "node:http";
+import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as Effect from "effect/Effect";
+import { HttpMiddleware, HttpServerRequest } from "effect/http";
+import * as Socket from "effect/socket/Socket";
 import {
   decodeServiceLauncherContext,
   unsupportedServiceHotSwap,
@@ -86,6 +88,32 @@ let privatePort = 0;
 let prepared = false;
 let frozen = false;
 const connections = new Set<NodeNet.Socket>();
+const webSockets = new Map<NodeNet.Socket, Effect.Effect<void, Socket.SocketError>>();
+
+export const handoff = HttpMiddleware.make((httpEffect) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    if (hotSwapContext() === undefined || !(request.source instanceof NodeHttp.IncomingMessage))
+      return yield* httpEffect;
+    const raw = request.source.socket;
+    const upgrade = request.upgrade.pipe(
+      Effect.tap((socket) =>
+        Effect.gen(function* () {
+          const writer = yield* socket.writer;
+          webSockets.set(raw, writer.write(new Socket.CloseEvent(1012, "service restart")));
+          raw.once("close", () => webSockets.delete(raw));
+        }),
+      ),
+    );
+    return yield* Effect.provideService(
+      httpEffect,
+      HttpServerRequest.HttpServerRequest,
+      new Proxy(request, {
+        get: (target, key) => (key === "upgrade" ? upgrade : Reflect.get(target, key, target)),
+      }),
+    );
+  }),
+);
 
 export function attachServiceIngress<T extends NodeHttp.Server>(server: T, publicPort: number): T {
   const context = hotSwapContext();
@@ -208,9 +236,25 @@ export const sendServiceMessage = Effect.fn("serviceChildTransport.send")(functi
   });
 });
 
-export function freezeServiceConnections(): void {
-  frozen = true;
-  prepared = false;
-  listener?.closeIdleConnections();
-  for (const socket of connections) socket.end();
-}
+export const freezeServiceConnections = Effect.fn("serviceChildTransport.freezeConnections")(
+  function* (flushMs: number) {
+    frozen = true;
+    prepared = false;
+    listener?.closeIdleConnections();
+    for (const socket of connections) {
+      if (!webSockets.has(socket)) socket.end();
+    }
+    yield* Effect.forEach(
+      [...webSockets],
+      ([socket, close]) =>
+        Effect.callback<void>((resume) => {
+          if (socket.destroyed) return resume(Effect.void);
+          const onClose = () => resume(Effect.void);
+          socket.once("close", onClose);
+          return Effect.sync(() => socket.off("close", onClose));
+        }).pipe(Effect.raceFirst(close.pipe(Effect.andThen(Effect.never))), Effect.ignore),
+      { concurrency: "unbounded", discard: true },
+    ).pipe(Effect.timeoutOption(flushMs), Effect.ignore);
+    for (const socket of connections) socket.end();
+  },
+);
