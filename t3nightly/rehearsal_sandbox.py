@@ -118,7 +118,7 @@ class Sandbox:
             return None
 
     def published(self):
-        if getattr(self.args, "hot_swap", False):
+        if getattr(self.args, "managed_service", self.args.hot_swap):
             try:
                 return bool(self.version() and self.serving_digest())
             except (OSError, ValueError, subprocess.SubprocessError):
@@ -179,7 +179,7 @@ class Sandbox:
         isolated_codex_home(self.home / "codex-home", inherit=sys.platform != "darwin")
         self.os_home.mkdir()
         old_version = self.old.name
-        if getattr(self.args, "hot_swap", False):
+        if getattr(self.args, "managed_service", self.args.hot_swap):
             from .rehearsal_storage import prepare
 
             prepare(self)
@@ -191,7 +191,7 @@ class Sandbox:
                     subprocess.run(["cp", "--reflink=auto", "-a", str(self.old), str(destination)], check=True, timeout=120)
             with closing(sqlite3.connect(f"file:{self.args.seed.resolve()}?mode=ro", uri=True)) as source, closing(sqlite3.connect(self.db)) as target:
                 source.backup(target)
-        if getattr(self.args, "hot_swap", False) and (self.args.launcher_artifact or self.args.old_launcher_artifact):
+        if getattr(self.args, "managed_service", self.args.hot_swap) and (self.args.launcher_artifact or self.args.old_launcher_artifact):
             from .rehearsal_service import pin_artifacts
 
             pin_artifacts(self)
@@ -222,12 +222,12 @@ class Sandbox:
 
     def boot(self):
         argv = [str(self.cli), "serve", "--base-dir", str(self.home), "--host", "127.0.0.1", "--port", str(self.port), "--no-browser"]
-        if getattr(self.args, "hot_swap", False):
+        if getattr(self.args, "managed_service", self.args.hot_swap):
             state = {"protocol": 3, "activeVersion": self.old.name}
             (self.home / "runtime/service-state.json").write_text(json.dumps(state) + "\n")
             argv = [str(self.cli), "__service-launcher"]
         log = self.home / "userdata/logs/service.log"
-        if getattr(self.args, "hot_swap", False):
+        if getattr(self.args, "managed_service", self.args.hot_swap):
             from .rehearsal_service import boot
 
             boot(self, argv, log)
@@ -251,7 +251,7 @@ class Sandbox:
             self.started = True
 
     def serving_digest(self):
-        if getattr(self.args, "hot_swap", False):
+        if getattr(self.args, "managed_service", self.args.hot_swap):
             from .rehearsal_service import serving_digest
 
             return serving_digest(self)

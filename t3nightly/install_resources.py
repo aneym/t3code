@@ -13,7 +13,7 @@ from .load_guard import root, signal_levels
 
 @contextmanager
 def exclusive(run, name):
-    directory = Path.home() / ".t3nightly"
+    directory = run.state if getattr(run.args, "rehearsal", False) else Path.home() / ".t3nightly"
     directory.mkdir(exist_ok=True, mode=0o700)
     path = directory / f"{name}.lock"
     if path.is_symlink():

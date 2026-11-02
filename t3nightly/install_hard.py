@@ -183,6 +183,8 @@ def install(run):
     stopped = False
     routed = False
     post = baseline
+    migration_evidence = {"before": migration_history(run)}
+    database_rollback = {}
 
     def stop():
         nonlocal stopped
@@ -228,6 +230,9 @@ def install(run):
             activate(run, args.version)
             serving(run, args.version, observed["candidateRuntime.digest"])
             routed = True
+            migration_evidence["candidate"] = migration_history(run)
+            if migration_evidence["candidate"] != compatibility["candidateMigrations"]["history"]:
+                raise ValueError("serving candidate migration history differs from manifest")
             if backup.get("method") == install_offbox.METHOD:
                 install_offbox.prune_backup(run, backup)
             retained(run, before)
@@ -284,7 +289,10 @@ def install(run):
                 if restore_class or backup.get("method") == install_offbox.METHOD:
                     from .install_db_rollback import rollback_database
 
-                    rollback_database(run, backup, compatibility)
+                    database_rollback = rollback_database(run, backup, compatibility) or {}
+                    migration_evidence["restored"] = migration_history(run)
+                    if restore_class and migration_evidence["restored"] != migration_evidence["before"]:
+                        raise ValueError("restored migration history differs from pre-install database")
                 if restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime"):
                     run.step("hard-restore-runtime", version=previous)
                 activate(run, previous)
@@ -328,6 +336,7 @@ def install(run):
         "servingRuntime": {"version": serving_version, "digest": serving_digest},
         "installWindow": run.report.get("installWindow"), "hotSwap": {**(run.report.get("hotSwap") or {}), "forwardRepairRequired": run.report.get("forwardRepairRequired", False)},
         **({"restartDrain": run.report["restartDrain"]} if "restartDrain" in run.report else {}),
+        "migrationHistory": migration_evidence, "databaseRollback": database_rollback,
         "backup": backup, "chat": post["proof"], "outcome": outcome, "reapedSshLaunch": run.reaped,
         "startedAt": run.report["started_at"], "finishedAt": moment,
     }

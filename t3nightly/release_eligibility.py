@@ -1,7 +1,7 @@
 BINARY_CLASSES = ("compatible", "fork-additive", "rollback-proven")
 RESTORE_CLASS = "restore-rollback"
 FORCED_ROLLBACK = "forced rehearsal rollback"
-RESTORE_HOSTS = ("ax42", "owl")
+RESTORE_HOSTS = ("studio", "ax42", "forge", "owl")
 RESTORE_WAIVABLE = {"migrations-changed", "persisted-state-changed", "upstream-rebase"}
 
 
@@ -12,7 +12,7 @@ def classify(compat, host):
     if reasons == ["persisted-state-changed"] and not compat["migrationFiles"]:
         name, changes, conditions = "rollback-proven", {"rollbackProof": "required", "binaryRollback": True}, ["forced-rollback-proof"]
     elif host in RESTORE_HOSTS and set(reasons) <= RESTORE_WAIVABLE:
-        name, changes, conditions = RESTORE_CLASS, {"rollbackProof": "not-required", "binaryRollback": False}, ["baseline-seed-rehearsal", *(["offbox"] if host == "ax42" else []), "local-restore-copy"]
+        name, changes, conditions = RESTORE_CLASS, {"rollbackProof": "not-required", "binaryRollback": False}, ["baseline-seed-rehearsal", *(["offbox"] if host == "ax42" else []), "local-restore-copy", "drain-then-hard"]
     else:
         return {**compat, "eligibility": None, "fastPath": {**compat["fastPath"], "waived": [], "conditions": []}}
     return {**compat, **changes, "eligibility": name, "fastPath": {"eligible": True, "reasons": [], "waived": list(reasons), "conditions": conditions}}

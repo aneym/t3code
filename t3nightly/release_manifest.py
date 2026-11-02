@@ -369,15 +369,13 @@ def freeze(tree, base, version, out, old_releases=None, engine=None, serving_hea
         if not old_releases[host] or not serving_heads[host]:
             raise ValueError(f"{host}: installed release and source head are missing")
         serving = git(tree, "rev-parse", f"{serving_heads[host]}^{{commit}}").strip()
-        if host != "owl":
-            serving = ancestor(tree, serving, head)
         if serving not in computed:
             computed[serving] = compatibility(tree, serving, head)
             if computed[serving]["upstreamTag"]["candidate"] != f"v{match.group(1)}":
                 computed[serving]["fastPath"]["reasons"].append("version-tag-mismatch")
                 computed[serving]["fastPath"]["eligible"] = False
         graded = classify(computed[serving], host)
-        if host == "owl" and graded.get("eligibility") != RESTORE_CLASS:
+        if graded.get("eligibility") != RESTORE_CLASS:
             ancestor(tree, serving, head)
         targets[host] = {"platform": platform, "arch": arch, "oldRelease": old_releases[host], "servingHead": serving, "compatibility": graded}
     manifest = {

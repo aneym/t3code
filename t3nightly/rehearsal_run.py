@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .release_eligibility import RESTORE_CLASS
 from .release_manifest import TARGETS, digest, engine_identity, load
 from .release_receipts import REHEARSAL_SCHEMA, provenance, seal, write
 from .release_signatures import cli_binary, verify_archive
@@ -34,6 +35,8 @@ class Rehearsal:
         self.phase = "preflight"
         self.manifest = load(args.candidate_manifest)
         self.engine = Path(__file__).resolve().parent
+        self.restore_class = self.manifest["targets"][args.target_host]["compatibility"].get("eligibility") == RESTORE_CLASS
+        args.managed_service = args.hot_swap or self.restore_class
 
     def mark(self, phase, start):
         self.timings[phase] = round(time.monotonic() - start, 3)
@@ -54,6 +57,8 @@ class Rehearsal:
             raise ValueError("candidate is not fast-path eligible; use --compatibility-probe for non-release evidence only")
         if sys.platform != "darwin" and not (self.engine / "install_hard.py").is_file():
             raise ValueError("Linux rehearsal requires P4 isolated hard installer; refusing before boot")
+        if self.restore_class and not self.args.rpc_tree:
+            raise ValueError("restore-rollback rehearsal requires --rpc-tree for the drained hard install")
         self.version = self.manifest["version"]
         self.archive = self.args.assets / f"t3-{self.version}-{platform}-{arch}.tar.gz"
         verify_archive(self.archive)
@@ -93,7 +98,7 @@ class Rehearsal:
                 command.append("--compatibility-probe")
             if self.args.force_rollback:
                 command.append("--force-rollback")
-        if getattr(self.args, "hot_swap", False):
+        if self.args.managed_service:
             command[command.index("--hard")] = "--seamless"
             command.extend(["--rpc-tree", str(self.args.rpc_tree.resolve()), "--rehearsal-inject", self.args.inject])
             if getattr(self.args, "rollback_fallback_proof", False):
@@ -151,6 +156,8 @@ class Rehearsal:
             tick = time.monotonic()
             before = workload.prepare()
             (self.sandbox.evidence / "before.json").write_text(json.dumps(before, indent=2) + "\n")
+            if self.restore_class:
+                (self.sandbox.home / "release-gate").touch()
             self.mark("workload", tick)
             self.phase = "install"
             tick = time.monotonic()
@@ -258,6 +265,10 @@ class Rehearsal:
         return 0 if result["result"] in ("PASS", "COMPATIBILITY-PROBE", "ROLLBACK-PROOF") else 1
 
     def rollback_proof(self, workload):
+        if self.restore_class:
+            from .rehearsal_restore import prove
+
+            return prove(self, workload)
         state = self.sandbox.evidence / "installer-state"
         writes = json.loads((state / "candidate-writes.json").read_text())
         receipt = json.loads((state / "receipts" / f"install-{self.args.target_host}.json").read_text())

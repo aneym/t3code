@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -19,6 +20,11 @@ from .install_storage import record_payload
 STEP_PAGES = 4096
 CHECK_MIB_S = 40
 COPY_MIB_S = 360
+
+
+def checksum(path):
+    with Path(path).open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
 def identity(path, *, copy=False):
@@ -123,7 +129,7 @@ def take(run, source, previous, window):
             forget(target)
             raise
     record = {"path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous, "seconds": round(time.monotonic() - started, 3),
-              "copySeconds": round(copied - started, 3), "checkSeconds": round(time.monotonic() - copied, 3)}
+              "sha256": checksum(target), "copySeconds": round(copied - started, 3), "checkSeconds": round(time.monotonic() - copied, 3)}
     record_payload(run.state, "restore-copy", target, bytes=record["bytes"])
     run.step("restore-copy", **record)
     return record
@@ -168,9 +174,10 @@ def in_place(copy, db, mode):
 def restore(record, db, note):
     started = time.monotonic()
     copy = Path(record["path"])
-    observed = identity(copy, copy=True) if copy.is_file() else None
-    if observed != record["identity"]:
-        raise ValueError(f"restore copy {copy} is missing or differs from the copy taken at install")
+    verify(copy, record["identity"])
+    expected_digest = record.get("sha256") or checksum(copy)
+    if checksum(copy) != expected_digest:
+        raise ValueError("restore copy checksum differs from the copy taken at install")
     mode = db.stat().st_mode & 0o777 if db.exists() else 0o600
     with foreground_io(note):
         try:
@@ -178,24 +185,35 @@ def restore(record, db, note):
         except (OSError, ValueError, sqlite3.Error) as error:
             note("hard-restore-local-beside-failed", copy=str(copy), error=str(error), next="delete the failed database and WAL, then copy in place")
             check, into = in_place(copy, db, mode), "in-place"
-    metadata = {"source": "local-restore-copy", "copy": str(copy), "into": into, "quickCheck": check, "seconds": round(time.monotonic() - started, 3)}
+    restored = checksum(db)
+    if restored != expected_digest or identity(db) != record["identity"]:
+        raise ValueError("restored database differs from the pre-install copy")
+    metadata = {"sha256": restored, "identity": record["identity"], "source": "local-restore-copy", "copy": str(copy), "into": into, "quickCheck": check, "seconds": round(time.monotonic() - started, 3)}
     note("hard-restore-db", **metadata)
     return metadata
 
 
 def service_active(service):
-    return subprocess.run(["systemctl", "--user", "is-active", "--quiet", service], capture_output=True, timeout=30, check=False).returncode == 0
+    if sys.platform == "darwin":
+        result = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{service}"], capture_output=True, text=True, timeout=30, check=False)
+        if result.returncode and "Could not find service" not in result.stderr:
+            raise ValueError("cannot establish that the launchd service is stopped")
+        return result.returncode == 0
+    result = subprocess.run(["systemctl", "--user", "show", "--property=ActiveState", "--value", service], capture_output=True, text=True, timeout=30, check=False)
+    if result.returncode or result.stdout.strip() not in ("active", "inactive", "failed", "activating", "deactivating", "reloading"):
+        raise ValueError("cannot establish that the systemd service is stopped")
+    return result.stdout.strip() not in ("inactive", "failed")
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="python -m t3nightly.install_restore_copy", description="Verify or restore the local rollback copy an off-box install recorded in its install receipt.")
+    parser = argparse.ArgumentParser(prog="python -m t3nightly.install_restore_copy", description="Verify or restore the local rollback copy an install recorded in its install receipt.")
     commands = parser.add_subparsers(dest="command", required=True)
     for name, text in (("verify", "quick_check the copy and compare its identity with the install record"), ("restore", "restore the copy over a stopped service's database")):
         command = commands.add_parser(name, help=text)
         command.add_argument("--receipt", type=Path, required=True, help="install receipt whose backup.local names the copy")
         if name == "restore":
             command.add_argument("--db", type=Path, required=True, help="database to replace, e.g. ~/.t3/userdata/statev2.sqlite")
-            command.add_argument("--service", required=True, help="systemd user unit that must be stopped first")
+            command.add_argument("--service", required=True, help="launchd label or systemd user unit that must be stopped first")
     args = parser.parse_args()
     record = json.loads(args.receipt.read_text())["backup"]["local"]
 

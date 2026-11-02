@@ -72,8 +72,7 @@ def rollback_database(run, backup, compatibility):
             if backup.get("replica") == "deferred" or not backup.get("remote"):
                 raise ValueError("restore copy unusable and no verified off-box replica is available; database preserved for forward repair") from error
         else:
-            restore_copy.restore(local, run.db.resolve(), run.step)
-            return
+            return restore_copy.restore(local, run.db.resolve(), run.step)
     if not backup.get("remote"):
         raise ValueError("restore copy missing and no off-box replica is available; database preserved for forward repair")
     try:

@@ -69,13 +69,15 @@ def capture(run, previous, stop, rollback_gate, *, keep_local=False):
         run.step("hard-backup", **metadata)
         return metadata
     if keep_local:
-        from .install_restore_copy import identity, verify
+        from .install_restore_copy import checksum, fsync, identity, verify
 
         expected = identity(source)
         database_copy(source, target, time.monotonic() + 120 + size / copy_rate(source))
         os.chmod(target, 0o600)
+        fsync(target)
+        fsync(destination)
         check = verify(target, expected)
-        local = {"path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous}
+        local = {"sha256": checksum(target), "path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous}
     elif clone:
         for suffix in ("", "-wal"):
             original = Path(str(source) + suffix)

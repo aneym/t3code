@@ -164,7 +164,9 @@ def condition_met(condition, compatibility, rehearsal, install):
         deferred = backup.get("replica") != "deferred" or (bool(seeded.get("clonedFrom") or seeded.get("existing")) and (seeded.get("verified") or {}).get("quickCheck") == "ok")
         return backup.get("method") == OFFBOX_METHOD and bool(backup.get("remote")) and deferred
     if condition == "local-restore-copy":
-        return copy.get("quickCheck") == "ok" and bool(copy.get("identity")) and bool(copy.get("path")) and (copy.get("path"), copy.get("identity")) == (local.get("path"), local.get("identity"))
+        return copy.get("quickCheck") == "ok" and bool(copy.get("identity")) and bool(copy.get("path")) and bool(copy.get("sha256")) and all(copy.get(key) == local.get(key) for key in ("path", "identity", "sha256", "quickCheck"))
+    if condition == "drain-then-hard":
+        return (install.get("hotSwap") or {}).get("method") == "maintenance" and (install.get("restartDrain") or {}).get("drained") is True and install.get("migrationHistory") == {"before": compatibility["baseMigrations"]["history"], "candidate": compatibility["candidateMigrations"]["history"]}
     return False
 
 
