@@ -33,6 +33,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -2838,7 +2839,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const eventSink = yield* EventSink.EventSinkV2;
-      const claim = outbox.claimNext({ workerId: "drain-worker" });
       yield* RestartPreparation.abortRestart("epoch:drain");
       const run = yield* seedRunningRun("restart-drain");
       const commandId = CommandId.make("command:restart-drain:queued");
@@ -2861,9 +2861,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       );
       yield* TestClock.adjust("1 second");
 
-      const cleanup = yield* claim;
+      const cleanup = yield* outbox.claimNext({ workerId: "drain-worker" });
       assert.equal(Option.getOrUndefined(cleanup)?.id, "effect:restart-drain:cleanup");
-      assert.isTrue(Option.isNone(yield* claim));
+      assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId: "drain-worker" })));
       assert.isTrue(Option.isNone(yield* outbox.nextClaimableAt));
       yield* outbox.succeed({ effectId: "effect:restart-drain:cleanup", workerId: "drain-worker" });
 
@@ -2884,10 +2884,10 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const receipt = yield* Fiber.join(prepare);
       assert.deepEqual(receipt.drain, { drained: true, waitedMs: 1_000, activeRunIds: [] });
       assert.deepEqual(receipt.threads, []);
-      assert.isTrue(Option.isNone(yield* claim));
+      assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId: "drain-worker" })));
 
       yield* RestartPreparation.abortRestart("epoch:drain");
-      const released = yield* claim;
+      const released = yield* outbox.claimNext({ workerId: "drain-worker" });
       assert.equal(Option.getOrUndefined(released)?.id, "effect:restart-drain:start");
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
@@ -3088,6 +3088,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           request: { type: "terminal.cleanup" },
         },
       ]);
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(RestartPreparation.abortRestart("epoch:stagger"))),
+      );
       const claimNow = Effect.gen(function* () {
         const claimed: Array<string> = [];
         while (true) {

@@ -129,12 +129,20 @@ export const abortRestart = Effect.fn("RestartPreparation.abortRestart")(
   function* (epoch: string) {
     const outbox = yield* EffectOutbox.EffectOutboxV2;
     const preparedEpoch = yield* outbox.restartPrepared;
-    if (preparedEpoch === undefined) return { epoch, aborted: true as const };
+    const handoffs = yield* outbox.restartHandoffs;
+    const untouched =
+      preparedEpoch === undefined &&
+      (yield* outbox.restartDraining) !== epoch &&
+      !handoffs.some(
+        (effect) =>
+          effect.request.type === "provider-runtime.restart-handoff" &&
+          effect.request.epoch === epoch,
+      );
+    if (untouched) return { epoch, aborted: true as const };
     if (preparedEpoch !== epoch)
       return yield* new ServerPrepareRestartError({
         cause: "Restart epoch is not prepared by this process.",
       });
-    const handoffs = yield* outbox.restartHandoffs;
     for (const effect of handoffs) {
       if (
         effect.request.type !== "provider-runtime.restart-handoff" ||
