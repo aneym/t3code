@@ -16,7 +16,13 @@ def delegated_install(ctx, deadline):
     from .rehearsal_sandbox import Sandbox
 
     seed = next(path / "userdata/statev2.sqlite" for path in cache_entries(CACHE_ROOT) if (path / "userdata/statev2.sqlite").is_file())
-    args = SimpleNamespace(home=ctx.work / "delegated-home", evidence=ctx.work / "delegated-evidence", old_runtime=Path(ctx.t3).parent,
+    from .rehearsal_storage import clone_tree
+
+    runtime = ctx.work / "delegated-runtime" / ctx.version
+    clone_tree(Path(ctx.t3).parent, runtime)
+    (runtime / ".install-complete").write_text(ctx.version + "\n")
+    (runtime / "delegated-gate-source").write_text(str(ctx.out) + "\n")
+    args = SimpleNamespace(home=ctx.work / "delegated-home", evidence=ctx.work / "delegated-evidence", old_runtime=runtime,
         seed=seed, label="t3-rehearsal-delegated-" + uuid4().hex[:12], port=free_port(), hot_swap=False, managed_service=True,
         rpc_tree=ctx.tree, provider="unused", provider_binary="/usr/bin/false", launcher_artifact="", old_launcher_artifact="",
         connector_artifact="", live_home=[], offbox_stop_s=600, rehearsal_drain_s=120)
