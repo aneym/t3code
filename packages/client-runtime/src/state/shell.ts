@@ -45,11 +45,6 @@ export interface EnvironmentShellState {
   readonly snapshot: Option.Option<OrchestrationV2ShellSnapshot>;
   readonly status: EnvironmentShellStatus;
   readonly error: Option.Option<string>;
-  /**
-   * Changes with each authoritative snapshot (not enrichment refreshes); 0 until the first one.
-   * Thread families read for an older generation may miss changes from before the latest snapshot,
-   * so they are read again.
-   */
   readonly generation: number;
   /** Sequences of the thread removals applied since the latest authoritative snapshot. */
   readonly removedAt: ReadonlyMap<ThreadId, number>;
@@ -218,7 +213,11 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       if (item.kind === "synchronized") {
         waiting = false;
         if (Option.isSome(next.snapshot)) {
-          next = { ...next, status: "live", error: Option.none() };
+          next = {
+            ...next,
+            status: next.snapshot.value.recoveryPhase === "recovering" ? "synchronizing" : "live",
+            error: Option.none(),
+          };
         }
         continue;
       }
@@ -251,7 +250,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           : null;
       next = {
         snapshot: Option.some(nextSnapshot),
-        status: waiting ? "synchronizing" : "live",
+        status: waiting || nextSnapshot.recoveryPhase === "recovering" ? "synchronizing" : "live",
         error: Option.none(),
         generation: authoritative ? ++lastShellGeneration : next.generation,
         removedAt: authoritative
@@ -363,20 +362,23 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
         yield* Ref.set(activeSubscriptionSession, session);
-        const { omitIdleSubagents, omitOlderSettled } = yield* session.initialConfig.pipe(
-          Effect.map((config) => ({
-            omitIdleSubagents: config.shellThreadFamilies === true,
-            omitOlderSettled:
-              config.shellOlderSettled === true && config.shellThreadFamilies === true,
-          })),
-          Effect.orElseSucceed(() => ({ omitIdleSubagents: false, omitOlderSettled: false })),
-        );
+        const { omitIdleSubagents, omitOlderSettled, recovering } =
+          yield* session.initialConfig.pipe(
+            Effect.map((config) => ({
+              recovering: config.recoveryPhase === "recovering",
+              omitIdleSubagents: config.shellThreadFamilies === true,
+              omitOlderSettled:
+                config.shellOlderSettled === true && config.shellThreadFamilies === true,
+            })),
+            Effect.orElseSucceed(() => ({
+              omitIdleSubagents: false,
+              omitOlderSettled: false,
+              recovering: false,
+            })),
+          );
         yield* Ref.set(awaitingCompletion, true);
         yield* setSynchronizing;
 
-        // Foreground resubscriptions on the same live session can resume from
-        // the in-memory cursor. A new session reloads the authoritative HTTP
-        // snapshot so a valid cursor cannot preserve incomplete cached data.
         const hasAuthoritativeSnapshot = (yield* Ref.get(lastAuthoritativeSession)) === session;
         let canResume = hasAuthoritativeSnapshot;
         let current = yield* SubscriptionRef.get(state);
@@ -396,10 +398,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
             ),
           );
           // HTTP and the socket must agree, or omitted children would return through the socket.
-          const httpSnapshot = yield* snapshotLoader.load(prepared, {
-            omitIdleSubagents,
-            omitOlderSettled,
-          });
+          const httpSnapshot = recovering
+            ? Option.none()
+            : yield* snapshotLoader.load(prepared, { omitIdleSubagents, omitOlderSettled });
           if (Option.isSome(httpSnapshot)) {
             yield* cancelActiveFill;
             const previous = yield* SubscriptionRef.get(state);

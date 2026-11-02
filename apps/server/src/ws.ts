@@ -1,3 +1,4 @@
+import { gateRecoveryHandlers } from "./wsRecoveryGate.ts";
 import { makeStorageCleanupRpcHandlers } from "./storageCleanupRpcHandlers.ts";
 import { subscribeServerLifecycle } from "./serverLifecycleSubscription.ts";
 import { acknowledgeHandoff } from "./serverHandoffDelivery.ts";
@@ -1840,7 +1841,6 @@ export const layerWsRpc = (
         ),
       );
 
-      // Rows the shell can omit, read with the same snapshot sequence the shell uses.
       const readOmittableShellRows = Effect.fn("ws.orchestrationV2.readOmittableShellRows")(
         function* (
           options: { readonly familyOf: ThreadId } | { readonly worktreePath: string },
@@ -3244,9 +3244,9 @@ export const layerWsRpc = (
             ),
           ),
       });
-      const splitHandlers: Pick<typeof handlers, SplitWsRpc["_tag"]> = handlers;
-      const otherHandlers: Pick<typeof handlers, Exclude<ServerWsRpc, SplitWsRpc>["_tag"]> =
-        handlers;
+      const gated = yield* gateRecoveryHandlers(handlers);
+      const splitHandlers: Pick<typeof handlers, SplitWsRpc["_tag"]> = gated;
+      const otherHandlers: Pick<typeof handlers, Exclude<ServerWsRpc, SplitWsRpc>["_tag"]> = gated;
       return Context.merge(
         yield* SplitWsRpcGroup.toHandlers(splitHandlers),
         yield* OtherWsRpcGroup.toHandlers(otherHandlers),
@@ -3254,7 +3254,6 @@ export const layerWsRpc = (
     }),
   );
 
-// Default socket-level Defect frames end every pending client request.
 export const WS_RPC_SERVER_OPTIONS = {
   disableTracing: true,
   disableFatalDefects: true,

@@ -1,3 +1,7 @@
+import { createRecoveryLabelAtom } from "@t3tools/client-runtime/state/recovery";
+import { useAtomValue } from "@effect/atom-react";
+import { environmentCatalog } from "../../connection/catalog";
+import { environmentShell } from "../../state/shell";
 import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
 import { createContext, use, useEffect, useState, type ReactNode } from "react";
 import { Animated, Platform, Pressable, View } from "react-native";
@@ -17,6 +21,11 @@ import {
   workspaceConnectionStatusPresentation,
   type WorkspaceConnectionStatusPresentation,
 } from "./workspace-connection-status";
+
+const recoveryLabelAtom = createRecoveryLabelAtom({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  shellStateValueAtom: environmentShell.stateValueAtom,
+});
 
 const STATUS_SHOW_DELAY_MS = 800;
 const FADE_IN_MS = 250;
@@ -106,9 +115,18 @@ export function WorkspaceConnectionTitle(props: {
   readonly statusOffset?: number;
   readonly maxWidth?: number;
 }) {
+  const recoveryLabel = useAtomValue(recoveryLabelAtom);
   const status = use(ConnectionStatusContext);
   const size = props.size ?? "navbar";
   const { scale } = useAndroidControlSizing();
+
+  if (recoveryLabel !== null) {
+    return (
+      <Text accessibilityRole="text" className="text-foreground-muted" numberOfLines={1}>
+        {recoveryLabel}
+      </Text>
+    );
+  }
 
   if (status === null) {
     return props.grow ? (

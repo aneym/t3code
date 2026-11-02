@@ -2163,11 +2163,6 @@ export const OrchestrationV2OlderSettledCount = Schema.Struct({
 });
 export type OrchestrationV2OlderSettledCount = typeof OrchestrationV2OlderSettledCount.Type;
 
-/**
- * Snapshots that leave out older settled threads (`omitOlderSettled`) name the cut and count, per
- * project, every thread `isOlderSettledThreadShell` matches, sent or not. `asOfSequence` is the
- * snapshot's own sequence: the counts are exact until a later change.
- */
 export const OrchestrationV2OlderSettledThreads = Schema.Struct({
   before: IsoDateTime,
   asOfSequence: NonNegativeInt,
@@ -2176,6 +2171,7 @@ export const OrchestrationV2OlderSettledThreads = Schema.Struct({
 export type OrchestrationV2OlderSettledThreads = typeof OrchestrationV2OlderSettledThreads.Type;
 
 export const OrchestrationV2ThreadShellSnapshot = Schema.Struct({
+  recoveryPhase: Schema.optionalKey(Schema.Literals(["recovering", "ready"])),
   schemaVersion: PositiveInt,
   snapshotSequence: NonNegativeInt,
   threads: Schema.Array(OrchestrationV2ThreadShell),

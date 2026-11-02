@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./state/recovery": {
+      "types": "./src/state/recovery.ts",
+      "default": "./src/state/recovery.ts"
+    },
     "./scheduled-task-once": {
       "types": "./src/scheduledTaskOnce.ts",
       "default": "./src/scheduledTaskOnce.ts"
