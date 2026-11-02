@@ -3,6 +3,7 @@ import math
 
 def command_gap(probe, changed):
     reasons = []
+    changed = changed or bool(probe.get("commandFlips"))
     samples = probe.get("commandSamples", 0)
     failures = probe.get("commandFailures", 0)
     flip = probe.get("commandFlipGapMs")

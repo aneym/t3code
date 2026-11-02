@@ -12,9 +12,16 @@ export function observeCommands({ opts, Effect, SubscriptionRef, Option, supervi
       if (Option.isSome(option)) {
         const session = option.value;
         const identity = sessionIdentities.get(session);
-        const config = yield* session.initialConfig;
+        const config = yield* session.initialConfig.pipe(Effect.orElseSucceed(() => undefined));
         const startedAtMs = elapsed();
-        const result = yield* Effect.exit(session.client["orchestration.getThreadFamily"]({ threadId }).pipe(Effect.timeout("8 seconds")));
+        const superseded = Effect.gen(function* () {
+          while (true) {
+            yield* Effect.sleep(50);
+            const current = yield* SubscriptionRef.get(supervisor.session);
+            if (Option.isNone(current) || current.value !== session) return yield* Effect.fail("superseded");
+          }
+        });
+        const result = yield* Effect.exit(Effect.raceFirst(session.client["orchestration.getThreadFamily"]({ threadId }).pipe(Effect.timeout("8 seconds")), superseded));
         const waitMs = performance.now() - tick;
         const atMs = elapsed();
         const row = { atMs, startedAtMs, waitMs, sessionId: identity?.id, outcome: result._tag };
@@ -22,7 +29,7 @@ export function observeCommands({ opts, Effect, SubscriptionRef, Option, supervi
         data.maxCommandWaitMs = Math.max(data.maxCommandWaitMs, waitMs);
         if (waitMs > 8000) data.commandOverBudget++;
         if (result._tag === "Success") {
-          row.serverVersion = config.environment?.serverVersion ?? identity?.serverVersion;
+          row.serverVersion = config?.environment?.serverVersion ?? identity?.serverVersion;
           row.snapshotSequence = result.value.snapshotSequence;
           if (lastAnswer) {
             const gapMs = atMs - lastAnswer.atMs;
