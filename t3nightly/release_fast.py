@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .release_engine import require_engine, require_remote_engine
 from .release_graph import FAST_DEADLINE, SUCCESS_OUTCOMES, critical_path, fast_graph
-from .release_job_runner import TERM_GRACE_S
+from .release_job_runner import RESOURCE_WAIT_CAP_S, TERM_GRACE_S
 from .release_jobs import HostJobs, TERMINAL, status, submit, write_status
 from .release_targets import LINUX_TARGETS, linux_target, stage_action
 from .release_timeline import Timeline, utc_now
@@ -30,7 +30,8 @@ def stage_spec(node, args):
     install = stage_action(node.id) == "install"
     return {"label": f"com.agent-rails.t3fast-{args.version}-{node.id}",
             "command": command, "host": node.host,
-            "budget": node.budget * HANG_GUARD, "resources": node.resources, "outcomes": node.outcomes,
+            "budget": node.budget * HANG_GUARD, "resourceWaitCapSeconds": RESOURCE_WAIT_CAP_S,
+            "resources": node.resources, "outcomes": node.outcomes,
             "lockRoot": str(Path.home() / ".t3nightly/resource-locks") if node.host == "studio"
             else "/home/jobs/t3nightly/resource-locks",
             "install": install, "result": f"{root}/install-{node.host}/outcome.json" if install else None}
@@ -199,7 +200,7 @@ def drive_fast(args):
                     latest = {"outcome": "status-unavailable"}
                 if latest.get("outcome") != "status-unavailable":
                     row = latest
-                if time.monotonic() > submitted_at + node.budget * HANG_GUARD + TERM_GRACE_S + 5:
+                if time.monotonic() > submitted_at + RESOURCE_WAIT_CAP_S + node.budget * HANG_GUARD + TERM_GRACE_S + 5:
                     row = dict(row, outcome="timed-out", seconds=time.monotonic() - submitted_at,
                                host=node.host, evidence=row.get("evidence", []),
                                error="coordinator deadline exceeded")
@@ -300,7 +301,8 @@ def main(argv):
                "--run", str(args.run), "--remote-run", args.remote_run, "--advisory-workers", str(args.advisory_workers), "--rehearsal-drain-s", str(args.rehearsal_drain_s),
                "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, "--coordinator", *(["--defer-host", args.defer_host, "--defer-reason", args.defer_reason] if args.defer_host else []), *(["--rehearse-only"] if args.rehearse_only else [])]
     spec = {"label": f"com.agent-rails.t3fast-{args.version}-coordinator-{coordinator.name}", "host": "studio",
-            "command": command, "budget": sum(node.budget for node in graph) * HANG_GUARD + 60,
+            "command": command, "budget": sum(node.budget * HANG_GUARD + RESOURCE_WAIT_CAP_S + TERM_GRACE_S + 5 for node in graph) + 60,
+            "resourceWaitCapSeconds": RESOURCE_WAIT_CAP_S,
             "resources": ["fast-release-run"], "lockRoot": str(Path.home() / ".t3nightly/resource-locks")}
     print(json.dumps(submit(coordinator, spec)))
     return 0

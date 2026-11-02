@@ -12,6 +12,7 @@ from .release_jobs import bootout, job_identity, status, write_status
 from .release_timeline import utc_now
 
 TERM_GRACE_S = 60
+RESOURCE_WAIT_CAP_S = 3600
 
 
 def group_alive(pgid):
@@ -50,10 +51,12 @@ def run(directory):
             bootout(directory)
             return 0
         start = float(previous["monotonicStart"])
-        deadline = start + float(spec["budget"])
+        wait_cap = float(spec.get("resourceWaitCapSeconds", RESOURCE_WAIT_CAP_S))
+        wait_deadline = start + wait_cap
         evidence = [str(directory / "command.log")]
         row: dict[str, object] = {"identity": job_identity(spec), "outcome": "running", "host": spec["host"],
                "start": utc_now(), "monotonicStart": start, "resourceWaitSeconds": 0,
+               "phase": "waiting-for-resources", "resourceWaitCapSeconds": wait_cap,
                "evidence": evidence, "pid": os.getpid()}
         write_status(directory / "status.json", row)
         with ExitStack() as locks, (directory / "command.log").open("a") as log:
@@ -61,27 +64,34 @@ def run(directory):
                 lock_root = Path(spec["lockRoot"])
                 lock_root.mkdir(parents=True, exist_ok=True)
                 for resource in sorted(spec["resources"]):
+                    row["waitingForResource"] = resource
+                    next_status = 0
                     name = hashlib.sha256(resource.encode()).hexdigest()
                     handle = locks.enter_context((lock_root / name).open("a"))
                     while True:
+                        clock = time.monotonic()
+                        row["resourceWaitSeconds"] = clock - start
+                        remaining = wait_deadline - clock
+                        if remaining <= 0:
+                            raise TimeoutError(f"resource hold cap exceeded ({wait_cap:g}s)")
                         try:
                             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
                             break
                         except BlockingIOError:
-                            remaining = deadline - time.monotonic()
-                            if remaining <= 0:
-                                raise TimeoutError("resource deadline exceeded")
+                            if clock >= next_status:
+                                write_status(directory / "status.json", row)
+                                next_status = clock + 1
                             time.sleep(min(0.05, remaining))
-                row["resourceWaitSeconds"] = time.monotonic() - start
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("stage deadline exceeded")
+                work_start = time.monotonic()
+                row.update(resourceWaitSeconds=work_start - start, phase="working",
+                           waitingForResource=None, workStart=utc_now(), monotonicWorkStart=work_start)
+                deadline = work_start + float(spec["budget"])
                 process = subprocess.Popen(spec["command"], stdout=log, stderr=subprocess.STDOUT,
                                            cwd=spec.get("cwd", str(directory)), start_new_session=True)
                 row["childPid"] = process.pid
                 write_status(directory / "status.json", row)
                 try:
-                    code = process.wait(timeout=remaining)
+                    code = process.wait(timeout=max(0, deadline - time.monotonic()))
                 except subprocess.TimeoutExpired:
                     stop_group(process)
                     raise TimeoutError("command deadline exceeded") from None
@@ -102,7 +112,11 @@ def run(directory):
             except (OSError, ValueError, KeyError, TypeError) as error:
                 row.update(outcome="failed", error=str(error))
         finished = time.monotonic()
-        row.update(end=utc_now(), monotonicEnd=finished)
+        row.update(end=utc_now(), monotonicEnd=finished, phase="finished")
+        if "monotonicWorkStart" in row:
+            row["workSeconds"] = finished - row["monotonicWorkStart"]
+        else:
+            row["resourceWaitSeconds"] = finished - start
         row["seconds"] = finished - start
         write_status(directory / "status.json", row)
         bootout(directory)
