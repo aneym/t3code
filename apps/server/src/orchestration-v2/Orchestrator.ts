@@ -9534,6 +9534,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(queuedMessage.idleCompaction === undefined
         ? {}
         : { idleCompaction: queuedMessage.idleCompaction }),
+      ...composerSubmitOf(queuedMessage),
       forceRestart: false,
     });
   });
