@@ -25,7 +25,7 @@ def stage_spec(node, args):
     tools = str(Path(__file__).resolve().parent) if node.host == "studio" else args.remote_tools
     python = sys.executable if node.host == "studio" else "python3"
     command = [python, f"{tools}/release-fast-stage", "--stage", node.id, "--host", node.host,
-               "--version", args.version, "--topic", args.topic, "--run", root, "--advisory-workers", str(args.advisory_workers),
+               "--version", args.version, "--topic", args.topic, "--run", root, "--advisory-workers", str(args.advisory_workers), "--rehearsal-drain-s", str(args.rehearsal_drain_s),
                "--remote-run", args.remote_run, "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason]
     install = stage_action(node.id) == "install"
     return {"label": f"com.agent-rails.t3fast-{args.version}-{node.id}",
@@ -90,6 +90,7 @@ def drive_fast(args):
               "rehearseOnly": args.rehearse_only, "overrideReason": args.override_reason,
               **({"deferredHosts": {args.defer_host: args.defer_reason}} if args.defer_host else {}),
               **({"advisoryWorkers": args.advisory_workers} if args.advisory_workers != 4 else {}),
+              **({"rehearsalDrainS": args.rehearsal_drain_s} if args.rehearsal_drain_s != 45 else {}),
               **({"linuxHost": args.linux_host} if args.linux_host != "ax42" else {})}
     binding = args.run / "fast-inputs.json"
     try:
@@ -245,6 +246,7 @@ def main(argv):
     parser.add_argument("--run", type=Path)
     parser.add_argument("--remote-run")
     parser.add_argument("--advisory-workers", type=int, default=4, help="maximum parallel advisory suite workers (default: 4)")
+    parser.add_argument("--rehearsal-drain-s", type=int, choices=range(30, 61), default=45)
     parser.add_argument("--remote-tools")
     parser.add_argument("--linux-host", default="ax42", choices=(*LINUX_TARGETS, "pc-wsl"), help="shared Linux artifact builder (default: ax42)")
     parser.add_argument("--defer-host", choices=tuple(LINUX_TARGETS), help="skip one Linux install; keep its sandbox proofs gating")
@@ -295,7 +297,7 @@ def main(argv):
         coordinator = args.run / f"coordinator-{attempt}"
     command = [sys.executable, str(Path(__file__).resolve().with_name("release")),
                "--fast", "--version", args.version, "--topic", args.topic,
-               "--run", str(args.run), "--remote-run", args.remote_run, "--advisory-workers", str(args.advisory_workers),
+               "--run", str(args.run), "--remote-run", args.remote_run, "--advisory-workers", str(args.advisory_workers), "--rehearsal-drain-s", str(args.rehearsal_drain_s),
                "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, "--coordinator", *(["--defer-host", args.defer_host, "--defer-reason", args.defer_reason] if args.defer_host else []), *(["--rehearse-only"] if args.rehearse_only else [])]
     spec = {"label": f"com.agent-rails.t3fast-{args.version}-coordinator-{coordinator.name}", "host": "studio",
             "command": command, "budget": sum(node.budget for node in graph) * HANG_GUARD + 60,

@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--launcher-artifact", default="")
     parser.add_argument("--old-launcher-artifact", default="")
     parser.add_argument("--connector-artifact", default="")
-    parser.add_argument("--drain-s", type=int, default=300)
+    parser.add_argument("--rehearsal-drain-s", type=int, choices=range(30, 61), default=45)
     parser.add_argument("--inject", choices=("none", "warm-death", "post-flip"), default="none")
     parser.add_argument("--require-hot-swap", action="store_true")
     parser.add_argument("--strict-drain-proof", action="store_true", help="fallback proof with a Replay turn holding a strict drain refusal")
@@ -39,8 +39,8 @@ def main():
     parser.add_argument("--queue-mode", choices=("none", "capacity", "budget"), default="none")
     parser.add_argument("--live-home", action="append", default=[])
     args = parser.parse_args()
-    if args.strict_drain_proof and (not args.rollback_fallback_proof or args.drain_s <= 0):
-        parser.error("--strict-drain-proof requires --rollback-fallback-proof and positive --drain-s")
+    if args.strict_drain_proof and not args.rollback_fallback_proof:
+        parser.error("--strict-drain-proof requires --rollback-fallback-proof")
     if args.rollback_fallback_proof:
         if not args.hot_swap or args.inject != "none" or args.force_rollback or args.focused or args.queue_mode != "none" or args.stock_client:
             parser.error("--rollback-fallback-proof requires --hot-swap without other proof modes")
@@ -49,8 +49,8 @@ def main():
             parser.error("--focused requires a normal --hot-swap without faults, pressure or forced rollback")
         args.require_hot_swap = True
     if args.hot_swap:
-        if not args.rpc_tree or not 0 <= args.drain_s <= 1200:
-            parser.error("--hot-swap requires --rpc-tree and --drain-s in 0..1200")
+        if not args.rpc_tree:
+            parser.error("--hot-swap requires --rpc-tree")
         if args.rollback_fallback_proof:
             from t3nightly.rehearsal_fallback import RollbackFallbackRehearsal
 

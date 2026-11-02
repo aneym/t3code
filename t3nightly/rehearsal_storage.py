@@ -4,11 +4,9 @@ import hashlib
 import json
 import os
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
-from contextlib import closing
 from pathlib import Path
 
 
@@ -140,14 +138,15 @@ def owns(home, binary):
 
 
 def seed_database(seed, destination):
+    from .live_snapshot import backup_database
+
     root = store_root() / "seeds"
     root.mkdir(exist_ok=True)
     with (store_root() / ".store.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         with tempfile.TemporaryDirectory(prefix=".snapshot-", dir=root) as raw:
             snapshot = Path(raw) / "statev2.sqlite"
-            with closing(sqlite3.connect(f"file:{seed.resolve()}?mode=ro", uri=True)) as source, closing(sqlite3.connect(snapshot)) as target:
-                source.backup(target)
+            backup_database(seed.resolve(), snapshot, 1200)
             with snapshot.open("rb") as stream:
                 key = hashlib.file_digest(stream, "sha256").hexdigest()
             cached = root / (key + ".sqlite")

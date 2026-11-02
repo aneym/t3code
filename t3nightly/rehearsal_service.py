@@ -118,6 +118,7 @@ def connector_run(sandbox, baseline=False):
     from .install_policy import window
 
     args = SimpleNamespace(**vars(sandbox.args))
+    args.drain_s = sandbox.args.rehearsal_drain_s
     args.version = sandbox.old.name
     if not getattr(sandbox, "artifact_admission", None):
         sandbox.artifact_admission = window(args.version, sandbox=True)

@@ -88,6 +88,11 @@ class FastConfig:
     linux_host: str = "ax42"
     override_reason: str = ""
     advisory_workers: int = 4
+    rehearsal_drain_s: int = 45
+
+    def __post_init__(self):
+        if not 30 <= self.rehearsal_drain_s <= 60:
+            raise ValueError("rehearsal_drain_s must be between 30 and 60")
 
     @property
     def number(self):
@@ -127,7 +132,7 @@ class FastConfig:
 
     def on(self, host):
         run = Path(self.remote_run) if host in LINUX_TARGETS and self.host == "studio" else self.run
-        return FastConfig(self.version, self.topic, run, host, self.remote_run, self.remote_tools, self.base, linux_host=self.linux_host, override_reason=self.override_reason, advisory_workers=self.advisory_workers)
+        return FastConfig(self.version, self.topic, run, host, self.remote_run, self.remote_tools, self.base, linux_host=self.linux_host, override_reason=self.override_reason, advisory_workers=self.advisory_workers, rehearsal_drain_s=self.rehearsal_drain_s)
 
     def tree(self, stage):
         return HOSTS[self.host]["trees"] / f"aneym-fast-{stage}"

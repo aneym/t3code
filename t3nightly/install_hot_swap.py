@@ -2,6 +2,7 @@ import json
 import math
 import socket
 import sqlite3
+import statistics
 import subprocess
 import tempfile
 import time
@@ -25,6 +26,14 @@ from .release_receipts import INSTALL_SCHEMA, write
 
 
 def measure_candidate(sandbox, manifest):
+    samples = [measure_startup_sample(sandbox, manifest, index) for index in range(1, 4)]
+    measured = [sample["candidateMeasuredStartupMs"] for sample in samples]
+    receipt = {**samples[-1], "candidateMeasuredStartupMs": int(statistics.median(measured)), "samplesMs": measured, "aggregation": "median", "samples": samples}
+    (sandbox.evidence / "candidate-startup.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    return receipt
+
+
+def measure_startup_sample(sandbox, manifest, index):
     from .headless_env import pin_settings
     from .rehearsal_storage import seed_database
     from .rehearsal_waiter import identity
@@ -48,8 +57,8 @@ def measure_candidate(sandbox, manifest):
         environment = {key: value.replace(str(sandbox.home), str(home)) for key, value in sandbox.service_environment().items()}
         environment["T3CODE_PORT"] = str(port)
         receipt = {"version": version, "candidateDigest": manifest["digest"], "runtimeDigest": file_digest(binary), "home": str(home), "port": port, "seed": seed, "candidateMeasuredStartupMs": None}
-        evidence = sandbox.evidence / "candidate-startup.json"
-        with (sandbox.evidence / "candidate-startup.log").open("w") as log:
+        evidence = sandbox.evidence / f"candidate-startup-{index}.json"
+        with (sandbox.evidence / f"candidate-startup-{index}.log").open("w") as log:
             started = time.monotonic()
             process = subprocess.Popen([str(binary), "serve", "--base-dir", str(home), "--host", "127.0.0.1", "--port", str(port), "--no-browser"], env=environment, cwd=home, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             try:

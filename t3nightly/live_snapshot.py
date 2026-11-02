@@ -72,14 +72,26 @@ def fold_wal(destination):
         Path(str(destination) + suffix).unlink(missing_ok=True)
 
 
-def backup_database(source, destination, timeout):
-    end = time.monotonic() + timeout
+def backup_database(source, destination, timeout, mib_s=32):
+    if timeout <= 0 or mib_s <= 0:
+        raise ValueError("snapshot rate and deadline must be positive")
+    started = time.monotonic()
+    end = started + timeout
+    rate = mib_s * 1024**2
 
     def progress(status, remaining, total):
+        current = time.monotonic()
+        if current >= end:
+            raise TimeoutError("stepwise snapshot backup exceeded its deadline")
+        if status in (sqlite3.SQLITE_OK, sqlite3.SQLITE_DONE):
+            delay = (total - remaining) * page_size / rate - (current - started)
+            if delay > 0:
+                time.sleep(min(delay, end - current))
         if time.monotonic() >= end:
             raise TimeoutError("stepwise snapshot backup exceeded its deadline")
 
     with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=30, isolation_level=None)) as reader:
+        page_size = reader.execute("PRAGMA page_size").fetchone()[0]
         reader.execute("BEGIN")
         reader.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
         try:
@@ -89,7 +101,7 @@ def backup_database(source, destination, timeout):
             reader.execute("ROLLBACK")
 
 
-def take(dest, *, home=None, timeout=1200):
+def take(dest, *, home=None, timeout=1200, mib_s=32):
     home = Path(home) if home is not None else Path.home() / ".t3"
     source = (home / "userdata/statev2.sqlite").resolve()
     destination = checked_path(dest, home)
@@ -100,26 +112,14 @@ def take(dest, *, home=None, timeout=1200):
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     started = time.monotonic()
     with ExitStack() as stack:
-        raw = stack.enter_context(tempfile.TemporaryDirectory(prefix=".snapshot-", dir=snapshot_root(home)))
+        raw = stack.enter_context(tempfile.TemporaryDirectory(prefix=".snapshot-", dir=destination.parent))
         staged = Path(raw) / "statev2.sqlite"
-        try:
-            clone_database(source, staged, timeout)
-            method = "apfs-clone" if sys.platform == "darwin" else "reflink"
-        except InterruptedError:
-            raise
-        except (OSError, subprocess.CalledProcessError) as error:
-            if sys.platform == "darwin":
-                raise RuntimeError("APFS snapshot clone failed; refusing a live database backup") from error
-            for path in Path(raw).iterdir():
-                path.unlink()
-            staged = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix=".snapshot-", dir=destination.parent))) / "statev2.sqlite"
-            command = background_command([sys.executable, "-m", "t3nightly.live_snapshot", str(source), str(staged), str(timeout)])
-            print("snapshot clone unavailable (%s); stepwise sqlite backup: %s" % (type(error).__name__, " ".join(command[:6])), file=sys.stderr, flush=True)
-            env = dict(os.environ)
-            root = str(Path(__file__).resolve().parent.parent)
-            env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
-            subprocess.run(command, cwd=root, env=env, check=True, timeout=timeout)
-            method = "background-stepwise-backup"
+        command = background_command([sys.executable, "-m", "t3nightly.live_snapshot", str(source), str(staged), str(timeout), str(mib_s)])
+        env = dict(os.environ)
+        root = str(Path(__file__).resolve().parent.parent)
+        env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
+        subprocess.run(command, cwd=root, env=env, check=True, timeout=timeout)
+        method = "background-stepwise-backup"
         fold_wal(staged)
         os.chmod(staged, 0o600)
         try:
@@ -183,5 +183,6 @@ if __name__ == "__main__":
     parser.add_argument("source", type=Path)
     parser.add_argument("destination", type=Path)
     parser.add_argument("timeout", type=float)
+    parser.add_argument("mib_s", type=float, nargs="?", default=32)
     args = parser.parse_args()
-    backup_database(args.source, args.destination, args.timeout)
+    backup_database(args.source, args.destination, args.timeout, args.mib_s)

@@ -77,7 +77,7 @@ class Rehearsal:
     def install(self):
         sandbox = self.sandbox
         service_label = sandbox.label if sys.platform == "darwin" else f"{sandbox.label}.service"
-        command = [sys.executable, str(self.engine / "install"), "--hard", "--version", self.version, "--home", str(sandbox.home), "--port", str(sandbox.port), "--service-label", service_label, "--service-plist", str(sandbox.unit), "--service-env", str(sandbox.home / "service.env"), "--systemd-dropin", str(sandbox.systemd_dropin), "--assets", str(self.args.assets.resolve()), "--state-dir", str(sandbox.evidence / "installer-state"), "--health-s", str(self.args.health_s), "--settle-s", "1", "--load-max", "24"]
+        command = [sys.executable, str(self.engine / "install"), "--hard", "--version", self.version, "--home", str(sandbox.home), "--port", str(sandbox.port), "--service-label", service_label, "--service-plist", str(sandbox.unit), "--service-env", str(sandbox.home / "service.env"), "--systemd-dropin", str(sandbox.systemd_dropin), "--assets", str(self.args.assets.resolve()), "--state-dir", str(sandbox.evidence / "installer-state"), "--health-s", str(self.args.health_s), "--settle-s", "1", "--load-max", "24", "--drain-s", str(self.args.rehearsal_drain_s)]
         if sys.platform != "darwin":
             command += ["--backups", str(sandbox.evidence / "backups")]
         if (self.engine / "install_hard.py").is_file():
@@ -95,7 +95,7 @@ class Rehearsal:
                 command.append("--force-rollback")
         if getattr(self.args, "hot_swap", False):
             command[command.index("--hard")] = "--seamless"
-            command.extend(["--rpc-tree", str(self.args.rpc_tree.resolve()), "--drain-s", str(self.args.drain_s), "--rehearsal-inject", self.args.inject])
+            command.extend(["--rpc-tree", str(self.args.rpc_tree.resolve()), "--rehearsal-inject", self.args.inject])
             if getattr(self.args, "rollback_fallback_proof", False):
                 command.append("--rollback-fallback-proof")
             if getattr(self.args, "strict_drain_proof", False):
@@ -107,8 +107,10 @@ class Rehearsal:
             command.extend(["--verdict", str(self.args.verdict)])
         installer_home = Path.home() if (self.engine / "install_hard.py").is_file() else sandbox.os_home
         environment = dict(os.environ, HOME=str(installer_home), LOAD_GUARD_STATE=str(Path.home() / ".agent-rails/state/load-guard"))
+        drains = 2 if self.args.force_rollback or getattr(self.args, "rollback_fallback_proof", False) else 1
+        timeout = 260 + drains * self.args.rehearsal_drain_s
         with (sandbox.evidence / "installer.log").open("w") as output:
-            result = subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=260 + getattr(self.args, "drain_s", 0), check=False)
+            result = subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=timeout, check=False)
         report = json.loads((sandbox.evidence / "installer-state/last.json").read_text())
         if self.args.force_rollback or (getattr(self.args, "hot_swap", False) and self.args.inject != "none"):
             if report["outcome"] != "rolled-back":

@@ -27,7 +27,7 @@ class HotSwapRehearsal(Rehearsal):
         if self.args.inject != "none" and not (sandbox.home / "runtime/launcher-config.json").is_file():
             self.hot["status"] = "hot-swap-unsupported"
             raise ValueError("hot-swap-unsupported: crash injection requires a capability-qualified sandbox launcher")
-        run = SimpleNamespace(args=SimpleNamespace(drain_s=self.args.drain_s), home=sandbox.home, state=sandbox.evidence, runtime=lambda version: sandbox.home / "runtime/versions" / version / "t3")
+        run = SimpleNamespace(args=SimpleNamespace(drain_s=self.args.rehearsal_drain_s), home=sandbox.home, state=sandbox.evidence, runtime=lambda version: sandbox.home / "runtime/versions" / version / "t3")
         with restart_session(run, sandbox.old.name) as bearer:
             command = ["node", str(self.engine / "client.mjs"), "hot-swap-probe", "--tree", str(self.args.rpc_tree.resolve()), "--origin", f"http://127.0.0.1:{sandbox.port}", "--bearer-file", str(bearer), "--thread", self.probe_thread, "--output", str(self.probe_path), "--stop", str(self.stop_path)]
             if self.args.stock_client:
