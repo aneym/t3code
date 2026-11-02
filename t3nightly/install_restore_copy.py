@@ -201,12 +201,14 @@ def in_place(copy, db, mode, record, deadline):
     if checksum(copy, deadline) != record["sha256"]:
         raise ValueError("restore copy checksum differs from the copy taken at install; database preserved")
     check_deadline(deadline)
+    seconds = estimate(copy.stat().st_size)["totalSeconds"]
+    if deadline is not None and deadline - time.monotonic() < seconds:
+        raise ValueError(f"in-place restore needs {seconds:.0f} s before its stopped-work deadline; database preserved")
     remove(db)
     fsync(db.parent)
-    check = copy_checked(copy, db, record, deadline)
+    check = copy_checked(copy, db, record, None)
     os.chmod(db, mode)
     fsync(db)
-    check_deadline(deadline)
     return check
 
 
@@ -227,7 +229,8 @@ def restore(record, db, note, deadline=None, *, verified=False):
             check_deadline(deadline)
             note("hard-restore-local-beside-failed", copy=str(copy), error=str(error), next="delete the failed database and WAL, then copy in place")
             check, into = in_place(copy, db, mode, record, deadline), "in-place"
-    check_deadline(deadline)
+    if into != "in-place":
+        check_deadline(deadline)
     metadata = {"sha256": record["sha256"], "identity": record["identity"], "source": "local-restore-copy", "copy": str(copy), "into": into, "quickCheck": check, "seconds": round(time.monotonic() - started, 3)}
     note("hard-restore-db", **metadata)
     return metadata
