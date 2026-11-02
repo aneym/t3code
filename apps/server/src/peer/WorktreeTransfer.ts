@@ -65,13 +65,16 @@ const make = Effect.gen(function* () {
     why: string,
     retryable = true,
   ) =>
-    run(operation, cwd, args).pipe(
-      Effect.mapError((cause) => transferError(`${why}: ${cause.message}`)),
-      Effect.filterOrFail(
-        (stdout): stdout is string => stdout !== null,
-        () => transferError(why, retryable),
-      ),
-    );
+    git
+      .execute({ operation: `WorktreeTransfer.${operation}`, cwd, args, allowNonZeroExit: true })
+      .pipe(
+        Effect.mapError((cause) => transferError(`${why}: ${cause.message}`)),
+        Effect.filterOrFail(
+          (result) => result.exitCode === 0,
+          (result) => transferError(`${why}: ${result.stderr.trim()}`, retryable),
+        ),
+        Effect.map((result) => result.stdout.trim()),
+      );
 
   const remoteBranchesContaining: WorktreeTransfer["Service"]["remoteBranchesContaining"] = (
     cwd,
@@ -119,8 +122,12 @@ const make = Effect.gen(function* () {
 
   const exportBranch: WorktreeTransfer["Service"]["exportBranch"] = Effect.fn(
     "WorktreeTransfer.exportBranch",
-  )(function* ({ worktreePath, branch, bases, branches }) {
+  )(function* ({ worktreePath, branch: recordedBranch, bases, branches }) {
     const cwd = worktreePath;
+    const branch =
+      (yield* run("export.branch", cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]).pipe(
+        Effect.mapError((cause) => transferError(cause.message)),
+      )) ?? recordedBranch;
     const headCommit = yield* required(
       "export.head",
       cwd,
