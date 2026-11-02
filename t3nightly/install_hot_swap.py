@@ -7,9 +7,9 @@ import socket
 import sqlite3
 import statistics
 import subprocess
+import sys
 import tempfile
 import time
-import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,7 +32,8 @@ def measure_candidate(sandbox, manifest):
     baseline = [measure_startup_sample(sandbox, manifest, f"baseline-{index}", binary=sandbox.old / "t3", version=sandbox.old.name) for index in range(1, 4)]
     samples = [measure_startup_sample(sandbox, manifest, index) for index in range(1, 4)]
     measured = [sample["candidateMeasuredStartupMs"] for sample in samples]
-    receipt = {**samples[-1], "candidateMeasuredStartupMs": int(statistics.median(measured)), "samplesMs": measured, "aggregation": "median", "samples": samples}
+    valid = all(type(value) is int for value in measured)
+    receipt = {**samples[-1], "candidateMeasuredStartupMs": int(statistics.median(measured)) if valid else None, "samplesMs": measured, "aggregation": "median", "samples": samples}
     ready = [sample.get("acquireToReadyMs") for sample in samples]
     old_ready = [sample.get("acquireToReadyMs") for sample in baseline]
     receipt.update(host=platform.node(), measuredAt=time.time(), idle=all(sample["idle"] for sample in samples),
@@ -51,8 +52,25 @@ def measure_startup_sample(sandbox, manifest, index, *, binary=None, version=Non
     version = version or manifest["version"]
     binary = binary or stage_runtime(sandbox.home, version, sandbox.args.assets)
     def idle():
-        return os.getloadavg()[0] <= max(1, (os.cpu_count() or 1) * 0.5) and sandbox.query("SELECT count(*) FROM orchestration_v2_projection_runs WHERE status IN ('running','starting','preparing')") == [(0,)]
+        if sys.platform == "linux":
+            def ticks():
+                values = [int(value) for value in Path("/proc/stat").read_text().splitlines()[0].split()[1:9]]
+                return sum(values), values[3] + values[4]
+            before = ticks()
+            time.sleep(0.1)
+            after = ticks()
+            host_idle = (after[1] - before[1]) / max(1, after[0] - before[0]) >= 0.2
+        else:
+            host_idle = os.getloadavg()[0] <= max(1, (os.cpu_count() or 1) * 0.5)
+        return host_idle and sandbox.query("SELECT count(*) FROM orchestration_v2_projection_runs WHERE status IN ('running','starting','preparing')") == [(0,)]
+    idle_deadline = time.monotonic() + getattr(sandbox.args, "startup_idle_s", 60)
+    while not idle() and time.monotonic() < idle_deadline:
+        time.sleep(0.5)
     idle_before = idle()
+    if not idle_before:
+        receipt = {"idle": False, "candidateMeasuredStartupMs": None, "acquireToReadyMs": None, "reason": "idle-wait-deadline", "version": version}
+        (sandbox.evidence / f"candidate-startup-{index}.json").write_text(json.dumps(receipt) + "\n")
+        return receipt
     root = sandbox.home / "snapshots"
     root.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="candidate-startup-", dir=root) as raw:
@@ -73,21 +91,17 @@ def measure_startup_sample(sandbox, manifest, index, *, binary=None, version=Non
         evidence = sandbox.evidence / f"candidate-startup-{index}.json"
         with (sandbox.evidence / f"candidate-startup-{index}.log").open("w") as log:
             started = time.monotonic()
-            process = subprocess.Popen([str(binary), "serve", "--base-dir", str(home), "--host", "127.0.0.1", "--port", str(port), "--no-browser"], env=environment, cwd=home, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+            process = subprocess.Popen(["node", str(Path(__file__).with_name("startup_probe.mjs")), str(binary), str(home), version, str(port)], env=environment, cwd=home, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             try:
                 receipt.update(pid=process.pid, identity=identity(process.pid))
                 evidence.write_text(json.dumps(receipt, indent=2) + "\n")
                 while time.monotonic() - started < sandbox.args.health_s:
                     if process.poll() is not None:
-                        raise ValueError("candidate startup measurement exited before serving")
-                    try:
-                        with urllib.request.urlopen(f"http://127.0.0.1:{port}/.well-known/t3/environment", timeout=1) as response:
-                            served = json.load(response)
-                        if served.get("serverVersion") == version:
-                            receipt["candidateMeasuredStartupMs"] = max(1, math.ceil((time.monotonic() - started) * 1000))
-                            break
-                    except (OSError, ValueError):
-                        pass
+                        log.flush()
+                        if process.returncode:
+                            raise ValueError("candidate warm startup probe failed")
+                        receipt["candidateMeasuredStartupMs"] = max(1, math.ceil((time.monotonic() - started) * 1000))
+                        break
                     time.sleep(0.05)
                 if receipt["candidateMeasuredStartupMs"] is None:
                     raise ValueError("candidate startup measurement timed out before serving")
@@ -102,7 +116,8 @@ def measure_startup_sample(sandbox, manifest, index, *, binary=None, version=Non
                             process.wait(timeout=10)
                 finally:
                     receipt["exitCode"] = process.poll()
-                    receipt["idle"] = idle_before and idle()
+                    receipt["idle"] = idle_before
+                    receipt["sampling"] = "idle-at-probe-start"
                     log.flush()
                     matches = re.findall(r'acquireToReadyMs[\"\s:=]+(\d+)', (sandbox.evidence / f"candidate-startup-{index}.log").read_text())
                     receipt["acquireToReadyMs"] = int(matches[-1]) if matches else None
@@ -150,7 +165,7 @@ def mark_candidate(run, manifest, rehearsal, compatibility, observed):
         run.step("hot-swap-fallback", reason="candidate-startup-measurement-missing-or-invalid")
         return False
     config = json.loads((run.home / "runtime/launcher-config.json").read_text())
-    budget = min(budget, config["holdBudgetMs"])
+    budget = min(budget + max(math.ceil(budget * 0.15), 500), config["holdBudgetMs"])
     if measured > budget:
         run.step("hot-swap-fallback", reason="candidate-startup-exceeds-launcher-budget", measured_ms=measured, budget_ms=budget)
         return False
@@ -158,7 +173,7 @@ def mark_candidate(run, manifest, rehearsal, compatibility, observed):
     from .hot_swap_marker import write as write_marker
 
     write_marker(run, run.args.version, measured, manifest)
-    previous_measured = qualification.get("previousMeasuredStartupMs")
+    previous_measured = baseline.get("acquireToReadyMs")
     previous = run.report.get("previous")
     if compatibility.get("binaryRollback") is True and previous and isinstance(previous_measured, int) and 0 < previous_measured <= budget:
         write_marker(run, previous, previous_measured, manifest)

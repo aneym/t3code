@@ -1,3 +1,4 @@
+import { delegatedDrain } from "./gate_delegated.mjs";
 import { execFile, execFileSync } from "node:child_process";
 import { closeSync, constants, mkdtempSync, openSync, rmSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -78,32 +79,7 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
       Effect.forkScoped,
     );
     if (opts.scenario === "delegated-drain") {
-      const parent = yield* cli("start", "--provider", "drainReplay", "--model", "showcase", opts.project, "DRAIN_PARENT");
-      yield* subscribe(parent.threadId);
-      yield* waitFor("parent running", (p) => p.runs.some((r) => r.id === parent.runId && r.status === "running"));
-      const parentRun = projection.runs.find((r) => r.id === parent.runId);
-      yield* session.client["orchestration.dispatchCommand"]({
-        type: "delegated_task.request", commandId: randomUUID(), parentThreadId: parent.threadId,
-        parentRunId: parent.runId, parentNodeId: parentRun.rootNodeId, task: "DRAIN_CHILD",
-        modelSelection: { instanceId: "drainReplay", model: "showcase" }, runtimeMode: "full-access",
-        interactionMode: "default", createdBy: "agent", creationSource: "mcp",
-      });
-      yield* waitFor("parent waiting for child", (p) => p.runs.some((r) => r.id === parent.runId && r.status === "waiting") && p.subagents.some((t) => t.childThreadId));
-      const task = projection.subagents.find((t) => t.childThreadId);
-      const childSnapshot = () => session.client["orchestration.subscribeThread"]({ threadId: task.childThreadId }).pipe(Stream.take(1), Stream.runCollect, Effect.map((items) => Array.from(items)[0].projection));
-      const before = yield* childSnapshot();
-      const child = before.runs.find((r) => r.status === "running");
-      if (!child) throw fail("delegated child was not running before drain");
-      const epoch = randomUUID();
-      try {
-        const receipt = yield* session.client["server.prepareRestart"]({ epoch, drainTimeoutMs: 1000 });
-        const after = yield* childSnapshot();
-        if (receipt.drain?.drained !== false || !receipt.drain.activeRunIds.includes(child.id)) throw fail("drain did not report the delegated child active");
-        if (projection.runs.find((r) => r.id === parent.runId)?.status !== "waiting" || after.runs.find((r) => r.id === child.id)?.status !== "running") throw fail("drain cut the child or released the waiting parent");
-        return { check: "delegated-child-drain", parentThreadId: parent.threadId, childThreadId: task.childThreadId, childRunId: child.id, parentWaiting: true, childNotCut: true, drain: receipt.drain };
-      } finally {
-        yield* session.client["server.abortRestart"]({ epoch });
-      }
+      return yield* delegatedDrain({ session, opts, Effect, Stream, applyEvent, cli });
     }
     if (recovering) {
       const threadId = opts.thread;

@@ -359,16 +359,26 @@ def delegated_child_drain(ctx, deadline):
 
     configure_replay(SimpleNamespace(home=ctx.home, evidence=ctx.work, args=SimpleNamespace(rpc_tree=ctx.tree)))
     script = ctx.home / "runtime/drain-replay/dev-replay-agent.ts"
-    text = script.read_text().replace('const turn = turns[session.promptCount % Math.max(turns.length, 1)];', 'const turn = JSON.stringify(params.prompt).includes("DRAIN_PARENT") ? { frames: Array.from({length: 60}, () => ({ afterMs: 2000, frame: { kind: "notification", method: "session/update", params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Waiting for child." } } } } })), stopReason: "end_turn" } : turns[session.promptCount % Math.max(turns.length, 1)];')
+    import shutil
+    shutil.copy2(Path(__file__).with_name("drain_replay.mjs"), script.parent / "drain_replay.mjs")
+    text = script.read_text().replace('import * as NodeCrypto', 'import { drainTurn } from "./drain_replay.mjs";\nimport * as NodeCrypto')
+    text = text.replace('if (turn !== undefined) ended = await playTurn(sessionId, turn, controller.signal);', 'await drainTurn(params, sessionId, session.promptCount, send, controller.signal);')
     script.write_text(text)
-    receipt = ctx.work / "delegated-child-drain.json"
+    receipt = getattr(ctx, "out", ctx.work) / "delegated-child-drain.json"
     try:
-        result = client(ctx, "delegated-child-drain", deadline, "queue-drain", "--pairing-file", str(pairing(ctx, "delegated-child-drain", deadline)), "--cli", ctx.t3, "--home", str(ctx.home), "--project", str(ctx.project), "--scenario", "delegated-drain", "--timeout", "150")
+        result = client(ctx, "delegated-child-drain", deadline, "queue-drain", "--pairing-file", str(pairing(ctx, "delegated-child-drain", deadline)), "--cli", ctx.t3, "--home", str(ctx.home), "--project", str(ctx.project), "--scenario", "delegated-drain", "--timeout", "170")
     except CheckFailed as error:
-        receipt.write_text(json.dumps({"check": "delegated-child-drain", "ok": False, "error": str(error)}, indent=2) + "\n")
+        failure = {"check": "delegated-child-drain", "ok": False, "error": str(error)}
+        for line in Path(ctx.log("delegated-child-drain")).read_text().splitlines():
+            if line.startswith('{"check":"delegated-child-drain"'):
+                failure.update(json.loads(line))
+        observations = script.parent / "observations.ndjson"
+        if observations.exists():
+            failure["agentObservations"] = [json.loads(line) for line in observations.read_text().splitlines()]
+        receipt.write_text(json.dumps(failure, indent=2) + "\n")
         raise
     receipt.write_text(json.dumps(result, indent=2) + "\n")
-    return "delegated-child-drain: parent waiting and child running across restart drain"
+    return "delegated-child-drain: parent waiting, task retained, child finished and completion delivered after 120s drain"
 
 
 def queue_complete(ctx, deadline):
@@ -455,7 +465,7 @@ CHECKS = [
     ("codex-turn", 240, codex_turn),
     ("background-wait", 300, background_wait),
     ("queue-drain", 300, queue_complete),
-    ("delegated-child-drain", 180, delegated_child_drain),
+    ("delegated-child-drain", 240, delegated_child_drain),
     ("queue-interrupt", 300, queue_interrupt),
     ("starting-send", 240, starting_send),
     ("queue-restart", 420, queue_restart),

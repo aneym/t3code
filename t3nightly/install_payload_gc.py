@@ -1,9 +1,7 @@
 import fcntl
 import json
 import os
-import shutil
 import sqlite3
-import subprocess
 import time
 from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
@@ -115,68 +113,6 @@ def idle(path):
         default=path.lstat().st_mtime,
     )
     return time.time() - max(newest, path.lstat().st_mtime) >= INCOMPLETE_IDLE_S
-
-
-def backup_version(path):
-    return path.name.partition("-")[2]
-
-
-def backup_candidates(root):
-    return sorted(
-        (path for path in root.iterdir() if path.is_dir() and backup_version(path)),
-        key=lambda path: path.name,
-    )
-
-
-def prune_backups(root, keep, current, home, state):
-    if keep < 1:
-        raise ValueError("backup keep must be at least one")
-    with payload_lock(root, root / "retention") as acquired:
-        if not acquired:
-            return
-        with ExitStack() as locks:
-            complete = []
-            for path in backup_candidates(root):
-                if path == current:
-                    continue
-                if not locks.enter_context(payload_lock(root, path)):
-                    continue
-                owner = (backup_marker(root, path) or {}).get("home")
-                if owner is not None and owner != str(home):
-                    continue
-                if complete_backup(root, path, backup_version(path)):
-                    complete.append(path)
-                elif path.name < current.name and idle(path):
-                    discard(root, path, state, "discard-incomplete-rollback-backup")
-            older = [path for path in complete if path.name < current.name]
-            for path in older[: max(len(older) - (keep - 1), 0)]:
-                retire(root, path, state)
-
-
-def allocated(path):
-    return sum(child.lstat().st_blocks * 512 for child in path.rglob("*") if child.is_file() and not child.is_symlink())
-
-
-def retire(root, path, state):
-    method = (backup_marker(root, path) or {}).get("method", "unknown")
-    db = contained(root, path / "statev2.sqlite")
-    packed = contained(root, path / "statev2.sqlite.zst")
-    zstd = shutil.which("zstd")
-    if method != "sqlite-backup" or not db.is_file():
-        record_payload(state, "keep-rollback-backup", path, bytes=allocated(path), method=method, compressed=packed.is_file())
-        return
-    if zstd is None:
-        record_payload(state, "keep-rollback-backup", path, bytes=allocated(path), method=method, reason="zstd unavailable")
-        return
-    size = db.stat().st_size
-    partial = contained(root, path / "statev2.sqlite.zst.partial")
-    subprocess.run(["nice", "-n", "19", zstd, "-q", "-f", "-3", "-T2", str(db), "-o", str(partial)], check=True, timeout=3600)
-    subprocess.run([zstd, "-q", "-t", str(partial)], check=True, timeout=3600)
-    os.replace(partial, packed)
-    db.unlink()
-    for suffix in ("-wal", "-shm"):
-        Path(str(db) + suffix).unlink(missing_ok=True)
-    record_payload(state, "compress-rollback-backup", path, bytes=size, compressedBytes=packed.stat().st_size, method=method, undo=f"zstd -d {packed} -o {db}")
 
 
 class Payloads:

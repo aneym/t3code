@@ -179,6 +179,8 @@ def install(run):
         live = migration_history(run)
         eligible = binary_rollback(compatibility) and live == base_history
         return {"liveMigrationHistory": live, "baseMigrationHistory": base_history} if eligible else None
+    from .launcher_artifact import validate_drain_pin
+    validate_drain_pin(run)
     precheck(run, previous, observed["oldRuntime.digest"])
     try:
         baseline = prove(run, previous)
@@ -370,12 +372,11 @@ def install(run):
     receipt["eligibility"] = eligibility(manifest, host, args, local)
     if outcome in ("installed", "current"):
         finish_identities(args.version, home=run.home)
-        from .install_backup_retention import retain
-
-        try:
-            receipt["backupRetention"] = retain(run.backups, backup.get("path"))
-        except (OSError, ValueError) as error:
-            receipt["backupRetention"] = {"error": str(error)}
+    write(path, receipt)
+    if outcome in ("installed", "current"):
+        from .install_backup_retention import best_effort
+        root = Path(backup["path"]).parent.parent if backup.get("path") else run.backups
+        receipt["backupRetention"] = best_effort(root, backup.get("path"), run.home)
     write(path, receipt)
     run.step("hard-install-receipt", path=str(path), outcome=outcome)
     return run.finish(outcome, f"hard install {outcome}: {previous} -> {args.version}")

@@ -235,6 +235,8 @@ class Run:
         return REACHABLE in out.stdout
 
     def update(self, from_version, to_version, downgrade):
+        from t3nightly.launcher_artifact import validate_drain_pin
+        validate_drain_pin(self)
         from t3nightly.install_policy import command_environment, recheck
 
         recheck(self)
@@ -292,7 +294,9 @@ class Run:
         return code == 0
 
     def pin_launcher(self, version):
-        from t3nightly.launcher_artifact import ensure_launcher
+        from t3nightly.launcher_artifact import ensure_launcher, validate_drain_pin
+
+        validate_drain_pin(self)
 
         launcher = ensure_launcher(self, version)
         with self.service_plist.open("rb") as handle:

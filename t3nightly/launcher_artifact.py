@@ -14,6 +14,7 @@ def ensure_launcher(run, version):
     runtime = run.home / "runtime"
     target = runtime / "launcher"
     pin = runtime / "launcher-pin.json"
+    validate_drain_pin(run)
     raw = getattr(run.args, "launcher_artifact", "")
     if raw and target.is_dir() and not changed(run):
         raw = ""
@@ -24,17 +25,16 @@ def ensure_launcher(run, version):
             if previous.get("sha256", previous.get("digest")) != file_digest(target / "t3"):
                 raise ValueError("pinned launcher bytes drifted; explicit launcher artifact repair required")
         if not pin.exists():
-            pin.write_text(json.dumps({"protocol": 3, "digest": file_digest(target / "t3"), "source": "adopted-existing", "lastKnownGood": str(target)}) + "\n")
+            atomic_text(pin, json.dumps({"protocol": 3, "digest": file_digest(target / "t3"), "source": "adopted-existing", "lastKnownGood": str(target)}) + "\n")
         config_path = runtime / "launcher-config.json"
         if config_path.is_file():
-            from .install_restore_copy import service_active
-
+            validate_drain_pin(run)
             config = json.loads(config_path.read_text())
             desired = run.args.drain_s * 1000
             if config.get("drainTimeoutMs") != desired:
-                if not 0 <= run.args.drain_s <= 300 or service_active(run.service_label):
-                    raise ValueError("drain pin update requires an inactive service and a supported deadline")
-                config_path.write_text(json.dumps({**config, "drainTimeoutMs": desired}) + "\n")
+                if not hasattr(run, "launcher_previous_config"):
+                    run.launcher_previous_config = config_path.read_text()
+                atomic_text(config_path, json.dumps({**config, "drainTimeoutMs": desired}) + "\n")
                 run.step("launcher-drain-pin-updated", drainTimeoutMs=desired)
         run.step("launcher-kept", digest=file_digest(target / "t3"))
         return target / "t3"
@@ -67,10 +67,10 @@ def ensure_launcher(run, version):
     run.launcher_applied = True
     run.launcher_lkg = backup
     value = {**manifest, "lastKnownGood": str(backup) if backup else None, "version": manifest.get("version", manifest["sha256"])}
-    pin.write_text(json.dumps(value) + "\n")
+    atomic_text(pin, json.dumps(value) + "\n")
     pin.chmod(0o600)
     if manifest.get("hotSwapProtocol") == 1:
-        config_path.write_text(json.dumps({**ingress, "measuredStartupMs": ingress["holdBudgetMs"] // 2, "drainTimeoutMs": run.args.drain_s * 1000}) + "\n")
+        atomic_text(config_path, json.dumps({**ingress, "measuredStartupMs": ingress["holdBudgetMs"] // 2, "drainTimeoutMs": run.args.drain_s * 1000}) + "\n")
         config_path.chmod(0o600)
     run.step("launcher-artifact-pinned", protocol=manifest["protocol"], digest=manifest["sha256"], last_known_good=str(backup) if backup else None)
     return target / "t3"
@@ -79,6 +79,9 @@ def ensure_launcher(run, version):
 def rollback_launcher(run):
     backup = getattr(run, "launcher_lkg", None)
     if backup is None:
+        previous = getattr(run, "launcher_previous_config", None)
+        if previous is not None:
+            atomic_text(run.home / "runtime/launcher-config.json", previous)
         return
     target = run.home / "runtime/launcher"
     failed = target.with_name(".launcher-watchdog-failed-" + uuid.uuid4().hex)
@@ -147,3 +150,27 @@ def watchdog(run, version):
             raise ValueError("new launcher failed health; last-known-good launcher restored with current database")
         time.sleep(0.25)
     raise ValueError("launcher watchdog could not recover; current database and last-known-good bytes preserved")
+
+
+def atomic_text(path, text):
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(text)
+        temporary.chmod(0o600)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def validate_drain_pin(run):
+    if not 0 <= run.args.drain_s <= 300:
+        raise ValueError("unsupported drain deadline")
+    path = run.home / "runtime/launcher-config.json"
+    if path.exists() and not isinstance(json.loads(path.read_text()), dict):
+        raise ValueError("launcher config must be an object")
+    pin = run.home / "runtime/launcher-pin.json"
+    binary = run.home / "runtime/launcher/t3"
+    if pin.exists() and not changed(run):
+        value = json.loads(pin.read_text())
+        if not isinstance(value, dict) or value.get("sha256", value.get("digest")) != file_digest(binary):
+            raise ValueError("pinned launcher bytes drifted before install")

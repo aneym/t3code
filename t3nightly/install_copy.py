@@ -112,4 +112,7 @@ def backup_database(run, version, *, preparing=False):
         method=method,
     )
     run.step("backup", path=str(dest), bytes=dest.stat().st_size, method=method, copy_s=round(copied - started, 3), quick_check_s=round(time.monotonic() - copied, 3))
+    from .install_backup_retention import mark, best_effort
+    mark(dest, {"method": method, "previous": version}, run.home)
+    run.step("backup-retention", **best_effort(root, dest, run.home))
     return dest

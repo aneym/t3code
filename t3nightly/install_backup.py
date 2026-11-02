@@ -39,18 +39,29 @@ def quiescent(db):
         raise ValueError("database users remain or lsof could not establish quiescence")
 
 
-def capture(run, previous, stop, rollback_gate, *, keep_local=False):
+def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
     started = time.monotonic()
+    source = run.db.resolve()
+    size = sum(path.stat().st_size for path in (source, Path(str(source) + "-wal")) if path.exists())
     root = run.backups
+    clone_root = run.home / "runtime/rollback-backups"
+    volume_reason = "APFS clone unavailable on this platform"
+    if sys.platform == "darwin" and keep_local:
+        clone_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if source.stat().st_dev == clone_root.stat().st_dev and shutil.disk_usage(clone_root).free >= size * 3:
+            root = clone_root
+            volume_reason = "same-volume clone with two database sizes reserved after clone"
+        else:
+            volume_reason = "same-volume space guard refused clone; configured-root full copy"
+
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     destination = root / uuid.uuid4().hex
     destination.mkdir(mode=0o700)
-    source = run.db.resolve()
-    size = sum(path.stat().st_size for path in (source, Path(str(source) + "-wal")) if path.exists())
+    run.backup_attempt_directories.append(destination)
     if shutil.disk_usage(root).free < max(size * 2, 512 * 1024 * 1024):
         raise ValueError("insufficient rollback backup disk space")
     target = destination / "statev2.sqlite"
-    clone = sys.platform == "darwin" and source.stat().st_dev == root.stat().st_dev
+    clone = sys.platform == "darwin" and root == clone_root and source.stat().st_dev == root.stat().st_dev
     if clone:
         probe = destination / ".clone-source"
         copied = destination / ".clone-target"
@@ -59,6 +70,15 @@ def capture(run, previous, stop, rollback_gate, *, keep_local=False):
         probe.unlink()
         copied.unlink(missing_ok=True)
         clone = result.returncode == 0
+        if not clone:
+            destination.rmdir()
+            root = run.backups
+            root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            destination = root / uuid.uuid4().hex
+            destination.mkdir(mode=0o700)
+            run.backup_attempt_directories.append(destination)
+            target = destination / "statev2.sqlite"
+            volume_reason = "APFS capability probe failed; configured-root full copy"
     binary = rollback_gate()
     if keep_local and not binary:
         from .install_restore_copy import estimate
@@ -83,7 +103,7 @@ def capture(run, previous, stop, rollback_gate, *, keep_local=False):
         deadline = run.stop_deadline
         expected = identity(source, deadline=deadline)
         method = "sqlite-backup"
-        reason = "APFS clone unavailable on this platform or volume"
+        reason = volume_reason
         if clone:
             try:
                 with closing(sqlite3.connect(source)) as connection:
@@ -93,21 +113,32 @@ def capture(run, previous, stop, rollback_gate, *, keep_local=False):
                 wal = Path(str(source) + "-wal")
                 if wal.exists():
                     subprocess.run(["/bin/cp", "-c", str(wal), str(target) + "-wal"], check=True, capture_output=True, timeout=30)
-                method, reason = "apfs-clone", "same-volume clone capability verified"
+                verify(target, expected, deadline)
+                if shutil.disk_usage(root).free < size * 2:
+                    raise ValueError("clone reserve below two database sizes")
+                method, reason = "apfs-clone", volume_reason
             except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError):
                 for suffix in ("", "-wal", "-shm"):
                     Path(str(target) + suffix).unlink(missing_ok=True)
-                reason = "APFS clone failed; verified full copy fallback"
+                reason = "APFS clone or verification failed; configured-root full copy fallback"
+                if root != run.backups:
+                    destination.rmdir()
+                    root = run.backups
+                    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    destination = root / uuid.uuid4().hex
+                    destination.mkdir(mode=0o700)
+                    run.backup_attempt_directories.append(destination)
+                    target = destination / "statev2.sqlite"
         if method == "sqlite-backup":
             database_copy(source, target, min(deadline, time.monotonic() + 120 + size / copy_rate(source)))
         os.chmod(target, 0o600)
         fsync(target)
         fsync(destination)
         check = verify(target, expected, deadline)
-        local = {"sha256": checksum(target, deadline), "path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous, "method": method, "methodReason": reason}
+        local = {"sha256": checksum(target, deadline), "path": str(target), "bytes": target.stat().st_size, "quickCheck": check, "identity": expected, "previous": previous, "method": method, "methodReason": reason, "volumeDevice": root.stat().st_dev, "backupRoot": str(root)}
         from .install_backup_retention import mark
 
-        mark(target, local)
+        mark(target, local, run.home)
     elif clone:
         for suffix in ("", "-wal"):
             original = Path(str(source) + suffix)
@@ -121,6 +152,17 @@ def capture(run, previous, stop, rollback_gate, *, keep_local=False):
     (destination / "payload.json").write_text(json.dumps(metadata))
     run.step("hard-backup", **metadata)
     return metadata
+
+
+def capture(run, previous, stop, rollback_gate, *, keep_local=False):
+    run.backup_attempt_directories = []
+    try:
+        return _capture(run, previous, stop, rollback_gate, keep_local=keep_local)
+    except BaseException:
+        for directory in run.backup_attempt_directories:
+            if directory.exists() and not (directory / "at-stop.json").exists():
+                shutil.rmtree(directory)
+        raise
 
 
 def advisory(backup, output):
