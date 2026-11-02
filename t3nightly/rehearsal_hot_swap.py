@@ -39,6 +39,10 @@ class HotSwapRehearsal(Rehearsal):
             except (ValueError, TimeoutError) as error:
                 self.hot["probeUnsupported"] = str(error)
                 self.stop_probe()
+                startup = sandbox.evidence / "candidate-startup.json"
+                measurement = json.loads(startup.read_text())
+                measurement.update(acquireToReadyMs=None, reason="old-runtime-probe-unsupported", probeError=str(error))
+                startup.write_text(json.dumps(measurement, indent=2) + "\n")
                 super().install()
                 return
             self.hot["walBefore"] = self.wal()
