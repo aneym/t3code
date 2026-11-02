@@ -1,4 +1,5 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as GitWorkflow from "../../../git/GitWorkflowService.ts";
 import * as Project from "../../../project/ProjectService.ts";
@@ -25,12 +26,14 @@ const requireWorktreeCapability = McpInvocationContext.McpInvocationContext.pipe
 );
 
 const handlers = {
-  t3_worktree_export: McpToolAccess.reads((input) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const service = yield* WorktreeExportService.WorktreeExportService;
-      return yield* service.exportBranch(scope, input);
-    }).pipe(Effect.provide(WorktreeExportService.layer)),
+  t3_worktree_export: McpToolAccess.writesThreads(
+    (input) => [input.threadId],
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* WorktreeExportService.WorktreeExportService;
+        return yield* service.exportBranch(scope, input);
+      }),
   ),
   t3_worktree_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
@@ -69,3 +72,5 @@ const handlers = {
 } satisfies McpToolAccess.Handlers<typeof WorktreeToolkit.tools>;
 
 export const layer = McpToolAccess.toLayer(WorktreeToolkit, handlers);
+
+export const layerServices = Layer.mergeAll(WorktreeMcpService.layer, WorktreeExportService.layer);

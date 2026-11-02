@@ -28,7 +28,6 @@ export class WorktreeTransfer extends Context.Service<
     >;
     readonly exportBranch: (input: {
       readonly worktreePath: string;
-      readonly branch: string;
       readonly bases: ReadonlyArray<string>;
       readonly branches: ReadonlyArray<string>;
     }) => Effect.Effect<WorktreeMcpExportResult, WorktreeTransferError>;
@@ -154,6 +153,14 @@ const make = Effect.gen(function* () {
       "No commit",
       false,
     );
+    const branchCommit = yield* required(
+      "export.branchHead",
+      cwd,
+      ["rev-parse", `refs/heads/${branch}`],
+      "Unable to resolve the branch commit",
+    );
+    if (branchCommit !== headCommit)
+      return yield* transferError("The branch moved during export; export it again.");
     const forksOf = (refs: ReadonlyArray<string>) =>
       Effect.forEach(refs, (ref) =>
         run("export.base", cwd, ["merge-base", ref, headCommit]).pipe(

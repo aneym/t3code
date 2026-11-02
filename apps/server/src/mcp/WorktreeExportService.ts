@@ -14,7 +14,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as WorktreeTransfer from "../peer/WorktreeTransfer.ts";
 import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import { readThread, unavailable } from "./threadAccess.ts";
+import { dispatchFailure, readThread } from "./threadAccess.ts";
 
 export class WorktreeExportService extends Context.Service<
   WorktreeExportService,
@@ -25,7 +25,9 @@ export class WorktreeExportService extends Context.Service<
     ) => Effect.Effect<
       WorktreeMcpExportResult,
       OrchestratorMcpFailure,
-      GitVcsDriver.GitVcsDriver | FileSystem.FileSystem
+      | GitVcsDriver.GitVcsDriver
+      | FileSystem.FileSystem
+      | ThreadManagementService.ThreadManagementService
     >;
   }
 >()("t3/mcp/WorktreeExportService") {}
@@ -36,7 +38,12 @@ const make = Effect.gen(function* () {
   const exportBranch: WorktreeExportService["Service"]["exportBranch"] = Effect.fn(
     "WorktreeExportService.exportBranch",
   )(function* (scope: McpInvocationContext.McpInvocationScope, input: WorktreeMcpExportInput) {
-    if (!scope.capabilities.has("worktree") || scope.client?.linked !== true)
+    if (!scope.capabilities.has("worktree"))
+      return yield* new OrchestratorMcpFailure({
+        code: "capability_denied",
+        message: "This credential cannot inspect worktrees.",
+      });
+    if (scope.client?.linked !== true)
       return yield* new OrchestratorMcpFailure({
         code: "capability_denied",
         message: "Only a linked environment's delegate_task exports a worktree.",
@@ -45,7 +52,6 @@ const make = Effect.gen(function* () {
       projection: { thread },
     } = yield* readThread(input.threadId).pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-      Effect.provideService(ThreadManagementService.ThreadManagementService, threadManagement),
     );
     if (thread.worktreePath === null || thread.branch === null)
       return yield* new OrchestratorMcpFailure({
@@ -57,7 +63,6 @@ const make = Effect.gen(function* () {
       Effect.flatMap((transfer) =>
         transfer.exportBranch({
           worktreePath,
-          branch,
           bases: input.bases,
           branches: input.branches,
         }),
@@ -71,8 +76,8 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (exported.branch !== thread.branch)
-      yield* threadManagement
+    if (exported.branch !== thread.branch) {
+      const note = yield* threadManagement
         .dispatch({
           type: "thread.metadata.update",
           commandId: CommandId.make(
@@ -83,7 +88,16 @@ const make = Effect.gen(function* () {
           expectedBranch: branch,
           expectedWorktreePath: worktreePath,
         })
-        .pipe(Effect.mapError(unavailable));
+        .pipe(
+          Effect.as(undefined),
+          Effect.catch((error) =>
+            Effect.succeed(
+              `The branch was exported, but thread metadata was not updated: ${dispatchFailure(error).message}`,
+            ),
+          ),
+        );
+      if (note !== undefined) return { ...exported, note };
+    }
     return exported;
   });
 

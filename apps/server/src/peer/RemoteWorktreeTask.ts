@@ -155,7 +155,7 @@ const make = Effect.gen(function* () {
       return `Its work stays in its worktree in ${remote.label}; it could not be brought back.${failureMessage}`;
     const out = exported.value;
     const there = `branch ${out.branch} in ${out.worktreePath} in ${remote.label}`;
-    const left = out.uncommitted ? ` Uncommitted changes stay in ${out.worktreePath} there.` : "";
+    const left = `${out.uncommitted ? ` Uncommitted changes stay in ${out.worktreePath} there.` : ""}${out.note === undefined ? "" : ` ${out.note}`}`;
     if (out.commitCount === 0) return `It made no commits on ${there}.${left}`;
     const bundle = out.bundle;
     const local =
