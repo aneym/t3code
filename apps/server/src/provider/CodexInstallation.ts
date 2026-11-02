@@ -160,9 +160,17 @@ const isRunning = (state: ProviderInstallState) =>
 export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function* (
   options: CodexInstallationOptions,
 ) {
-  const probeContext = yield* Effect.context<
-    FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
-  >();
+  const probeContext = Context.pick(
+    FileSystem.FileSystem,
+    Path.Path,
+    ChildProcessSpawner.ChildProcessSpawner,
+    HostProcess.Platform,
+    HostProcess.Environment,
+  )(
+    yield* Effect.context<
+      FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+    >(),
+  );
   const manifestService = yield* ModelManifest.ModelManifest;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -306,11 +314,8 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         }),
     );
   });
-  const runCommand = Effect.fn("CodexInstallation.command")(function (
-    command: string,
-    args: ReadonlyArray<string>,
-  ) {
-    return runCodexCommand(command, args).pipe(
+  const runCommand = (command: string, args: ReadonlyArray<string>) =>
+    runCodexCommand(command, args).pipe(
       Effect.provide(probeContext),
       Effect.mapError((cause) =>
         typeof cause === "number"
@@ -318,7 +323,6 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           : cause,
       ),
     );
-  });
   const resolveLocal = Effect.fn("CodexInstallation.resolveLocal")(
     function* () {
       const executable = yield* probeLocalCodex(managedDirectory).pipe(

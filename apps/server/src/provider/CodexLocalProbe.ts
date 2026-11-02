@@ -88,15 +88,13 @@ export const probeLocalCodex = Effect.fn("CodexInstallation.probeLocal")(
     );
     if (executablePath === null) return null;
     const realExecutablePath = yield* fs.realPath(executablePath);
-    if (managedDirectory !== undefined) {
-      const realManaged = yield* fs.realPath(managedDirectory).pipe(Effect.option);
-      if (
-        realExecutablePath.startsWith(
-          `${Option.getOrElse(realManaged, () => managedDirectory)}${path.sep}`,
-        )
+    const realManaged = yield* fs.realPath(managedDirectory).pipe(Effect.option);
+    if (
+      realExecutablePath.startsWith(
+        `${Option.getOrElse(realManaged, () => managedDirectory)}${path.sep}`,
       )
-        return null;
-    }
+    )
+      return null;
     if (!(yield* hasCodeModeHost(realExecutablePath))) return null;
     const info = yield* fs.stat(executablePath);
     const fingerprint = `${realExecutablePath}:${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}:${Option.getOrUndefined(info.ino)}`;
