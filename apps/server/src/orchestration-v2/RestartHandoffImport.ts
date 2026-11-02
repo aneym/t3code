@@ -19,7 +19,7 @@ import * as Stream from "effect/Stream";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-export const restartReapprovalEvents = Effect.fn("RestartHandoffImport.restartReapprovalEvents")(
+const restartReapprovalEvents = Effect.fn("RestartHandoffImport.restartReapprovalEvents")(
   function* (
     projection: OrchestrationV2ThreadProjection,
     epoch: string,
@@ -220,6 +220,42 @@ export const restartReapprovalEvents = Effect.fn("RestartHandoffImport.restartRe
     return { events, requestIds, pausedRunIds: [...pausedRunIds] };
   },
 );
+
+export const recoverRestartReapprovals = Effect.fn(
+  "RestartHandoffImport.recoverRestartReapprovals",
+)(function* (
+  threadId: ThreadId,
+  epoch: string,
+  handoff: ServerRestartHandoff,
+  secretsOnly: boolean,
+) {
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const store = yield* EventSink.EventSinkV2;
+  const full = yield* projections.getThreadProjection(threadId);
+  const reapproval = yield* restartReapprovalEvents(
+    secretsOnly
+      ? {
+          ...full,
+          runtimeRequests: full.runtimeRequests.filter(
+            (request) => request.id === `restart-reapproval:${epoch}:${threadId}`,
+          ),
+        }
+      : full,
+    epoch,
+    handoff.runIds,
+    secretsOnly
+      ? []
+      : [
+          ...new Set([
+            ...handoff.requestIds,
+            ...full.runtimeRequests
+              .filter((request) => request.status === "pending")
+              .map((request) => request.id),
+          ]),
+        ],
+  );
+  if (reapproval.events.length > 0) yield* store.write({ events: reapproval.events });
+});
 
 export const legacyRestartHandoffs = Effect.fn("RestartHandoffImport.legacyRestartHandoffs")(
   function* (input: ServerImportRestartHandoffInput) {

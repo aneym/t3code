@@ -13,7 +13,7 @@ import {
   latestStartedRun,
 } from "./RuntimeRecoveryPolicy.ts";
 import { restartStatus } from "./RestartStatus.ts";
-import { restartReapprovalEvents } from "./RestartHandoffImport.ts";
+import { recoverRestartReapprovals } from "./RestartHandoffImport.ts";
 import {
   prepareRestart,
   abortRestart,
@@ -681,6 +681,25 @@ export const make = Effect.gen(function* () {
         resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
           .continueThreadsAfterServerUpdate;
       const handoff = handoffs.find((effect) => effect.threadId === threadId)?.request;
+      const reapprove = (secretsOnly: boolean) =>
+        (trigger === "startup" &&
+        handoff?.type === "provider-runtime.restart-handoff" &&
+        handoff.handoff.runIds.length > 0 &&
+        projection.thread.archivedAt === null &&
+        projection.thread.deletedAt === null &&
+        projection.thread.settledOverride !== "settled"
+          ? recoverRestartReapprovals(threadId, handoff.epoch, handoff.handoff, secretsOnly)
+          : Effect.void
+        ).pipe(
+          Effect.provideService(ProjectionStore.ProjectionStoreV2, projections),
+          Effect.provideService(EventSink.EventSinkV2, eventSink),
+          Effect.provideService(IdAllocator.IdAllocatorV2, ids),
+          Effect.mapError(
+            (cause) =>
+              new ProviderRuntimeRecoveryError({ operation: "reconcile", threadId, cause }),
+          ),
+        );
+      yield* reapprove(false);
       const result = yield* reconcileProjection(
         projection,
         trigger,
@@ -688,53 +707,7 @@ export const make = Effect.gen(function* () {
         stoppedThisPass,
         handoff?.type === "provider-runtime.restart-handoff" ? handoff.handoff : undefined,
       );
-      if (
-        trigger === "startup" &&
-        handoff?.type === "provider-runtime.restart-handoff" &&
-        handoff.handoff.runIds.length > 0 &&
-        projection.thread.archivedAt === null &&
-        projection.thread.deletedAt === null &&
-        projection.thread.settledOverride !== "settled"
-      ) {
-        const full = yield* projections.getThreadProjection(threadId).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderRuntimeRecoveryError({
-                operation: "read-projections",
-                threadId,
-                cause,
-              }),
-          ),
-        );
-        const reapproval = yield* restartReapprovalEvents(
-          full,
-          handoff.epoch,
-          handoff.handoff.runIds,
-          [
-            ...new Set([
-              ...handoff.handoff.requestIds,
-              ...full.runtimeRequests
-                .filter((request) => request.status === "pending")
-                .map((request) => request.id),
-            ]),
-          ],
-        ).pipe(
-          Effect.provideService(IdAllocator.IdAllocatorV2, ids),
-          Effect.mapError(
-            (cause) =>
-              new ProviderRuntimeRecoveryError({ operation: "reconcile", threadId, cause }),
-          ),
-        );
-        if (reapproval.events.length > 0)
-          yield* eventSink
-            .write({ events: reapproval.events })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderRuntimeRecoveryError({ operation: "reconcile", threadId, cause }),
-              ),
-            );
-      }
+      yield* reapprove(true);
       for (const session of projection.providerSessions) {
         if (session.status !== "stopped" && session.status !== "error") {
           stoppedThisPass.set(session.id, session);
