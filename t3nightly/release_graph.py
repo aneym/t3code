@@ -103,7 +103,7 @@ def fast_graph(linux_host="ax42", defer_host=None, defer_reason=""):
         FastNode("LR", "land-receipts", "studio", (*installs, "F"), 60, (), gating=False),
         FastNode("H", "health-watch", "studio", ("F",), 600, (), gating=False),
         FastNode("AS", "advisory-suites", "studio", ("F",), 3600, (), gating=False),
-        FastNode("W", "desktop-windows", "studio", ("A",), 1500, ("build-host:pc",), gating=False),
+        FastNode("W", "desktop-windows", "studio", ("SL", *(f"T{TARGET_SUFFIXES[host]}" for host in LINUX_TARGETS if host != builder)), 1500, ("build-host:pc",), gating=False),
         FastNode("FW", "publish-windows", "studio", ("F", "W"), 30, ("feed",), gating=False),
     )
 
