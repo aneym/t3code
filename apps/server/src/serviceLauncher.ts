@@ -406,7 +406,13 @@ export class Launcher {
       return;
     }
     if (message.type === "drain-failed") {
-      if (child === this.#child) await this.#dropWarm("drain-failed");
+      if (
+        child === this.#child &&
+        this.#swap?.phase === "drain" &&
+        this.#state.update?.status === "pending" &&
+        this.#state.update.id === message.updateId
+      )
+        await this.#dropWarm("drain-failed");
       return;
     }
     if (message.type === "drained") {
