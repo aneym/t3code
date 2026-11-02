@@ -37,6 +37,7 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
       preparedEpoch === undefined && drainTimeoutMs > 0
         ? yield* drainBeforeRestart(epoch, Duration.millis(drainTimeoutMs), "cold")
         : undefined;
+    const drained = drain?.drained ?? (yield* outbox.restartDraining) === epoch;
     yield* outbox.prepareRestart(epoch);
     const receipt = yield* Effect.gen(function* () {
       yield* awaitRestartEffects();
@@ -54,6 +55,7 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
               .map((run) => run.id);
             handoffs.push({
               threadId,
+              drained,
               runIds,
               sourceRunIds: runIds,
               queuedRunIds: projection.runs

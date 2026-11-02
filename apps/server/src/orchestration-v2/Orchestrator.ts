@@ -2,6 +2,7 @@ import { delegatedTaskTerminalStatus } from "./DelegatedTaskStatus.ts";
 import { delegatedRestartPending } from "./DelegatedRestartPending.ts";
 import { resumeOnReopen } from "./RestartQueuedRuns.ts";
 import { restartAdmission, admittedDispatchMode } from "./RestartAdmission.ts";
+import { decideSecretRequestRecord } from "./SecretRequestRecord.ts";
 import { makeAutoSettlementValidation } from "./SettlementValidation.ts";
 import {
   OrchestratorCommandRejectedError,
@@ -8653,74 +8654,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
           ),
         );
-      const run = projection.runs.find((candidate) => candidate.id === command.runId);
-      if (run === undefined || run.rootNodeId !== command.nodeId) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Node ${command.nodeId} is not the root of run ${command.runId}.`,
-        });
-      }
       const existing = projection.turnItems.find((item) => item.id === command.turnItemId);
-      if (existing !== undefined && existing.type !== "secret_request") {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Turn item ${command.turnItemId} is not a secret request.`,
-        });
-      }
-      if (existing !== undefined && existing.runId !== command.runId) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Secret request ${command.turnItemId} belongs to another run.`,
-        });
-      }
-      const now = yield* DateTime.now;
-      const unchanged =
-        existing !== undefined &&
-        (existing.secretStatus !== "pending" || command.secretStatus === "pending");
-      const pending = command.secretStatus === "pending";
-      const turnItem: OrchestrationV2TurnItem = unchanged
-        ? existing
-        : {
-            id: command.turnItemId,
-            threadId: command.threadId,
-            runId: command.runId,
-            nodeId: command.nodeId,
-            providerThreadId: run.providerThreadId,
-            providerTurnId: providerTurnForRun(projection, run)?.id ?? null,
-            nativeItemRef: null,
-            parentItemId: null,
-            ordinal: existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),
-            status: pending
-              ? "waiting"
-              : command.secretStatus === "saved"
-                ? "completed"
-                : "cancelled",
-            title: command.label,
-            startedAt: existing?.startedAt ?? now,
-            completedAt: pending ? null : now,
-            updatedAt: now,
-            type: "secret_request",
-            label: command.label,
-            reason: command.reason,
-            ...(command.placeholder === undefined ? {} : { placeholder: command.placeholder }),
-            ...(command.delivery === undefined ? {} : { delivery: command.delivery }),
-            secretStatus: command.secretStatus,
-          };
-      yield* emit(
-        events,
+      const event = yield* decideSecretRequestRecord(
         command,
-      )({
-        type: "turn-item.updated",
-        threadId: command.threadId,
-        runId: command.runId,
-        nodeId: command.nodeId,
-        providerInstanceId: run.providerInstanceId,
-        occurredAt: now,
-        payload: turnItem,
-      });
+        projection,
+        existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),
+      );
+      yield* emit(events, command)(event);
     },
   );
 

@@ -1,4 +1,6 @@
 import * as NodeURL from "node:url";
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -58,14 +60,10 @@ const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
 
-/** A task delegated here always has a local child thread. */
 const localChild = (childThreadId: ThreadId | null): ThreadId => {
   if (childThreadId === null) throw new Error("expected a local delegated child");
   return childThreadId;
 };
-
-// Effect returns a declared tool failure as `isError` with its encoded payload
-// as JSON text, never as `structuredContent`.
 
 const parentThreadId = ThreadId.make("thread:mcp-orchestrator-parent");
 const projectId = ProjectId.make("project:mcp-orchestrator");
@@ -102,9 +100,6 @@ const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTran
   const transcript = yield* decodeProviderReplayNdjson(
     text.replaceAll(queuedFollowupResult, followupResult),
   );
-  // The recording ends when the recorder closes the app-server while the parent
-  // turn is still open. This test keeps acting as that parent afterwards, and
-  // replaying the exit would kill the shared process and fail the parent run.
   return {
     ...transcript,
     entries: transcript.entries.filter((entry) => entry.type !== "runtime_exit"),
@@ -246,6 +241,7 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provideMerge(
             SecretRequests.layer.pipe(
+              Layer.provide(EffectOutbox.layer.pipe(Layer.provide(Sqlite.layerMemory))),
               Layer.provide(layerMemorySecretStore),
               Layer.provide(layerOrchestration),
             ),

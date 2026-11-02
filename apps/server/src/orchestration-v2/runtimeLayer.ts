@@ -278,7 +278,7 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
   ),
 );
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
-  Layer.provide(layerThreadManagementProvided),
+  Layer.provide(Layer.merge(layerThreadManagementProvided, layerStores)),
 );
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
   Layer.provide(
