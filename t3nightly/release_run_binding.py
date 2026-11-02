@@ -63,8 +63,6 @@ def bind_remote_runs(args):
     value = {"coordinator": json.loads(path.read_text()), "version": args.version, "remoteRun": args.remote_run}
     unbound = {}
     for host, address in LINUX_TARGETS.items():
-        if host == getattr(args, "defer_host", None):
-            continue
         try:
             result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", address,
                                      shlex.join(["python3", "-c", REMOTE_BIND])],

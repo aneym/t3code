@@ -44,6 +44,11 @@ def remote_engine():
     return f"/home/jobs/t3nightly/engine-{commit[:12]}/t3nightly"
 
 
+def unavailable_host(node, unavailable):
+    targets = (node.host, *(resource.partition(":")[2] for resource in node.resources if resource.startswith("payload:")))
+    return next((host for host in targets if host in unavailable), None)
+
+
 def wait_cap(node):
     return LIVE_HOLD_WAIT_S if any(resource.startswith("live-install:") for resource in node.resources) else RESOURCE_WAIT_CAP_S
 
@@ -119,7 +124,7 @@ def drive_fast(args):
     completed_at = existing.get("releaseSeconds")
     if not args.dry_run:
         for key, node in list(pending.items()):
-            if node.defer_reason or node.host in unavailable:
+            if node.defer_reason or unavailable_host(node, unavailable):
                 continue
             try:
                 row = jobs.request(node, "status")
@@ -154,13 +159,14 @@ def drive_fast(args):
             engine_checked = True
             args.engine_verified = True
         for key, node in list(pending.items()):
-            if (node.host in unavailable and not node.defer_reason) or set(node.needs) & failed:
+            lost = None if node.defer_reason else unavailable_host(node, unavailable)
+            if lost or set(node.needs) & failed:
                 failed.add(key)
                 blocked.add(key)
                 del pending[key]
                 now = time.monotonic()
-                timeline.record_fast(node, {"outcome": "failed", "reason": "host-unavailable" if node.host in unavailable and not node.defer_reason else "dependency-failed",
-                                           "error": unavailable.get(node.host),
+                timeline.record_fast(node, {"outcome": "failed", "reason": "host-unavailable" if lost else "dependency-failed",
+                                           "error": unavailable.get(lost),
                                            "evidence": [], "resourceWaitSeconds": 0,
                                            "monotonicStart": now, "monotonicEnd": now,
                                            "seconds": 0, "start": utc_now(), "end": utc_now()})
