@@ -60,6 +60,9 @@ def supervise(root):
                         break
                     row = read(root / "state.json", {})
                     if code == 0 and row.get("watcher") == "exited":
+                        if pending(row):
+                            cleared = clear_quarantine(config, root, row)
+                            event(root, "keeper-clear-retry", cleared=cleared, warning=not cleared)
                         return 0
                     if time.monotonic() - started >= 5:
                         delay = 1

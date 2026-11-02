@@ -73,7 +73,7 @@ def run(directory):
                         row["resourceWaitSeconds"] = clock - start
                         remaining = wait_deadline - clock
                         if remaining <= 0:
-                            raise TimeoutError(f"resource hold cap exceeded ({wait_cap:g}s)")
+                            raise TimeoutError(f"resource hold cap exceeded ({wait_cap:g}s) waiting for {resource}")
                         try:
                             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
                             break

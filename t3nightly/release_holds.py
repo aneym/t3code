@@ -21,7 +21,10 @@ def remote(config, operation):
     argv = ["python3", "-B", config["tools"] + "/release-holds", "host", operation]
     result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", LINUX_TARGETS[config["host"]],
                              shlex.join(argv)], input=json.dumps(config), capture_output=True,
-                            text=True, timeout=40, check=True)
+                            text=True, timeout=40, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"{config['host']} release-holds {operation} exited {result.returncode}: "
+                           f"{result.stderr.strip()[-600:]}")
     return json.loads(result.stdout)
 
 
