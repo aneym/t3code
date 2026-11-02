@@ -5,6 +5,8 @@ import sys
 import re
 from pathlib import Path
 
+from .unit_resources import properties
+
 
 def render(tree, home, unit, program, log, environment, kind="server", connector_unit=None):
     request = home / ".service-render.json"
@@ -13,7 +15,10 @@ def render(tree, home, unit, program, log, environment, kind="server", connector
         result = subprocess.run(["node", str(Path(__file__).with_name("render_service.mjs")), str(request)], capture_output=True, text=True, timeout=60)
         if result.returncode:
             raise ValueError("production service renderer failed: " + result.stderr[-1500:])
-        return result.stdout
+        text = result.stdout
+        if sys.platform != "darwin" and re.fullmatch(r"(?:com\.)?t3-rehearsal[.-][A-Za-z0-9_.-]+\.service", Path(unit).name):
+            text += "\n[Service]\n" + "\n".join(f"{key}={value}" for key, value in properties().items()) + "\n"
+        return text
     finally:
         request.unlink(missing_ok=True)
 
