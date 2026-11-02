@@ -75,16 +75,23 @@ export const freezeServiceChild = Effect.fn("serviceChildFreeze.run")(function* 
     Effect.timeoutOption(Math.max(1, holdDeadline - now())),
     Effect.ignore,
   );
-  const runningEffects = yield* Fiber.join(snapshot).pipe(
+  yield* Fiber.join(snapshot).pipe(
     Effect.timeoutOption(Math.max(0, Math.min(1000, (holdDeadline - now()) / 10))),
+    Effect.tap((runningEffects) =>
+      Option.isNone(runningEffects)
+        ? Fiber.interrupt(snapshot).pipe(Effect.forkDetach)
+        : Effect.void,
+    ),
+    Effect.flatMap((runningEffects) =>
+      Effect.logWarning("Service handoff aborted before ownership release", {
+        updateId,
+        reason,
+        admittedRequests,
+        runningEffects: Option.getOrElse(runningEffects, () => ({ error: "snapshot-timeout" })),
+      }),
+    ),
+    Effect.forkDetach,
   );
-  if (Option.isNone(runningEffects)) yield* Fiber.interrupt(snapshot).pipe(Effect.forkDetach);
-  yield* Effect.logWarning("Service handoff aborted before ownership release", {
-    updateId,
-    reason,
-    admittedRequests,
-    runningEffects: Option.getOrElse(runningEffects, () => ({ error: "snapshot-timeout" })),
-  });
   const cleanup = yield* Fiber.interrupt(preparation).pipe(
     Effect.andThen(recovery.abortRestart(updateId)),
     Effect.catchCause((cause) =>
