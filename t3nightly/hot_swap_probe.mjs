@@ -2,6 +2,8 @@ import { appendFileSync, existsSync, renameSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import nodeHttp from "node:http";
 
+const HTTP_DEADLINE_MS = 30000;
+
 export async function monitor(context) {
   const { opts, Effect, Stream, layers } = context;
   const started = performance.now();
@@ -44,7 +46,7 @@ export async function monitor(context) {
       const requestStarted = performance.now();
       try {
         const environment = await new Promise((resolve, reject) => {
-          const request = nodeHttp.get(`${opts.origin}/.well-known/t3/environment`, { agent: false, timeout: 2000 }, (response) => {
+          const request = nodeHttp.get(`${opts.origin}/.well-known/t3/environment`, { agent: false, timeout: HTTP_DEADLINE_MS }, (response) => {
             let body = "";
             response.on("data", (chunk) => { body += chunk; });
             response.on("end", () => { try { if (response.statusCode !== 200) throw new Error("health status"); resolve(JSON.parse(body)); } catch (error) { reject(error); } });
@@ -76,7 +78,7 @@ export async function monitor(context) {
     try {
       while (!existsSync(opts.stop)) {
         await new Promise((resolve) => {
-          const request = nodeHttp.get(`${opts.origin}/.well-known/t3/environment`, { agent, timeout: 2000 }, (response) => {
+          const request = nodeHttp.get(`${opts.origin}/.well-known/t3/environment`, { agent, timeout: HTTP_DEADLINE_MS }, (response) => {
             let body = "";
             response.on("data", (chunk) => { body += chunk; });
             response.on("end", () => {
