@@ -46,7 +46,7 @@ def studio_first_graph():
 
 INSTALL_OUTCOMES = ("installed", "current", "rolled-back", "failed")
 SUCCESS_OUTCOMES = ("installed", "current")
-STAGE_OUTCOMES = ("passed", "failed", "environment-blocked", "timed-out")
+STAGE_OUTCOMES = ("passed", "failed", "environment-blocked", "timed-out", "cancelled")
 
 
 @dataclass(frozen=True)

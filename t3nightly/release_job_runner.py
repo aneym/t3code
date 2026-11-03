@@ -28,7 +28,10 @@ def group_alive(pgid):
 
 
 def stop_group(process):
-    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
     deadline = time.monotonic() + TERM_GRACE_S
     while time.monotonic() < deadline:
         process.poll()
@@ -43,7 +46,31 @@ def stop_group(process):
     process.wait()
 
 
+class JobCancelled(Exception):
+    pass
+
+
 def run(directory):
+    previous = signal.getsignal(signal.SIGTERM)
+
+    cancelled = False
+
+    def terminate(signum, frame):
+        nonlocal cancelled
+        cancelled = True
+
+    def check_cancelled():
+        if cancelled:
+            raise JobCancelled("cancel requested by SIGTERM")
+
+    signal.signal(signal.SIGTERM, terminate)
+    try:
+        return _run(directory, check_cancelled)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def _run(directory, check_cancelled):
     directory = Path(directory).resolve()
     spec = json.loads((directory / "job.json").read_text())
     with (directory / "runner.lock").open("a") as owner:
@@ -62,7 +89,9 @@ def run(directory):
                "evidence": evidence, "pid": os.getpid()}
         write_status(directory / "status.json", row)
         with ExitStack() as locks, (directory / "command.log").open("a") as log:
+            process = None
             try:
+                check_cancelled()
                 lock_root = Path(spec["lockRoot"])
                 lock_root.mkdir(parents=True, exist_ok=True)
                 for resource in sorted(spec["resources"]):
@@ -71,6 +100,7 @@ def run(directory):
                     name = hashlib.sha256(resource.encode()).hexdigest()
                     handle = locks.enter_context((lock_root / name).open("a"))
                     while True:
+                        check_cancelled()
                         clock = time.monotonic()
                         row["resourceWaitSeconds"] = clock - start
                         remaining = wait_deadline - clock
@@ -93,7 +123,18 @@ def run(directory):
                 row["childPid"] = process.pid
                 write_status(directory / "status.json", row)
                 try:
-                    code = process.wait(timeout=max(0, deadline - time.monotonic()))
+                    while True:
+                        check_cancelled()
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise subprocess.TimeoutExpired(spec["command"], spec["budget"])
+                        try:
+                            code = process.wait(timeout=min(0.2, remaining))
+                            check_cancelled()
+                            break
+                        except subprocess.TimeoutExpired:
+                            if time.monotonic() >= deadline:
+                                raise
                 except subprocess.TimeoutExpired:
                     stop_group(process)
                     raise TimeoutError("command deadline exceeded") from None
@@ -109,6 +150,10 @@ def run(directory):
                 if spec.get("install") and not spec.get("result"):
                     raise ValueError("install requires an explicit outcome receipt")
                 row["outcome"] = outcome
+            except JobCancelled as error:
+                if process is not None:
+                    stop_group(process)
+                row.update(outcome="cancelled", reason=str(error))
             except TimeoutError as error:
                 row.update(outcome="timed-out", error=str(error))
             except (OSError, ValueError, KeyError, TypeError) as error:

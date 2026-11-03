@@ -149,6 +149,12 @@ def drive_fast(args):
                 if key not in recorded:
                     timeline.record_fast(node, row)
                     recorded.add(key)
+            elif row.get("outcome") == "cancelled":
+                failed.add(key)
+                del pending[key]
+                if key not in recorded:
+                    timeline.record_fast(node, row)
+                    recorded.add(key)
             elif key in failed:
                 del pending[key]
     while pending or running:
@@ -302,7 +308,7 @@ def main(argv):
     bind_remote_runs(args)
     coordinator = args.run / "coordinator"
     previous = status(coordinator)
-    if previous.get("outcome") in {"failed", "timed-out", "environment-blocked"}:
+    if previous.get("outcome") in {"failed", "timed-out", "environment-blocked", "cancelled"}:
         attempt = 1
         while (args.run / f"coordinator-{attempt}").exists():
             attempt += 1

@@ -4,6 +4,7 @@ import os
 import plistlib
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -14,7 +15,7 @@ from .release_targets import LINUX_TARGETS, stage_action
 from .unit_resources import systemd_arguments
 
 
-TERMINAL = {"passed", "failed", "environment-blocked", "timed-out", "installed", "current", "rolled-back"}
+TERMINAL = {"cancelled", "passed", "failed", "environment-blocked", "timed-out", "installed", "current", "rolled-back"}
 
 
 def write_status(path, value):
@@ -103,6 +104,31 @@ def status(directory):
     return {"outcome": "absent"}
 
 
+def cancel(directory):
+    directory = Path(directory).resolve()
+    row = status(directory)
+    if row.get("outcome") in TERMINAL:
+        return row
+    pid = row.get("pid")
+    if not isinstance(pid, int) or pid <= 1:
+        raise ValueError("job has no recorded runner PID; retry once the runner starts")
+    import fcntl
+
+    with (directory / "runner.lock").open("a") as owner:
+        try:
+            fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            row = status(directory)
+            if row.get("outcome") in TERMINAL:
+                return row
+            if row.get("pid") != pid:
+                raise ValueError("runner PID changed; retry cancellation")
+            os.kill(pid, signal.SIGTERM)
+        else:
+            raise ValueError("recorded runner no longer holds its lock; refusing stale PID")
+    return status(directory)
+
+
 class HostJobs:
     def __init__(self, local_run, remote_run, remote_tools, dry_run=False, linux_host="ax42"):
         self.local_run = Path(local_run)
@@ -134,7 +160,7 @@ class HostJobs:
             return {"outcome": "passed", "resourceWaitSeconds": 0, "evidence": ["dry-run:no-execution"],
                     "monotonicStart": clock, "monotonicEnd": clock, "seconds": 0}
         if node.host == "studio":
-            return submit(directory, spec) if operation == "submit" else status(directory)
+            return submit(directory, spec) if operation == "submit" else (cancel(directory) if operation == "cancel" else status(directory))
         argv = [f"{self.remote_tools}/release-job", operation, directory]
         result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", LINUX_TARGETS[node.host],
                                  shlex.join(argv)], input=json.dumps(spec) if spec else None,

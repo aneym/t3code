@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from t3nightly.release_job_runner import run
-from t3nightly.release_jobs import status, submit
+from t3nightly.release_jobs import cancel, status, submit
 
 
 if __name__ == "__main__":
@@ -15,8 +15,10 @@ if __name__ == "__main__":
         raise SystemExit(run(directory))
     if operation == "submit":
         value = submit(directory, json.load(sys.stdin))
+    elif operation == "cancel":
+        value = cancel(directory)
     elif operation == "status":
         value = status(directory)
     else:
-        raise SystemExit("expected run, submit or status")
+        raise SystemExit("expected run, submit, status or cancel")
     print(json.dumps(value))

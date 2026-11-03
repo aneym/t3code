@@ -12,8 +12,9 @@ from pathlib import Path
 
 from .release_manifest import digest
 from .suite_plan import load, slug, write
-from .suite_provision import linux_exports, setup_script, studio_path
-from .suite_resources import CLEANUP, COW_GATE, COW_LIMIT, TMP, TMP_ROOT, WorkerTerminated, cache_exports, host_slot, job_tmp, worker_signals
+from .suite_provision import setup_script
+from .suite_environment import isolated, sanitized_tail, DISK
+from .suite_resources import CLEANUP, COW_GATE, COW_LIMIT, TMP, TMP_ROOT, WorkerTerminated, host_slot, job_tmp, worker_signals
 
 
 RESULT_SCHEMA = "t3nightly.advisory-result/1"
@@ -29,7 +30,7 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def execute(host, words, log, timeout, cwd=None, env=None):
+def execute(host, words, log, timeout, cwd=None, env=None, stderr=None):
     command = words
     wait = timeout
     pidfile = None
@@ -40,7 +41,7 @@ def execute(host, words, log, timeout, cwd=None, env=None):
         command = ["ssh", "-o", "BatchMode=yes", host, shlex.join(["bash", "-c", script])]
         wait += 5
     process = subprocess.Popen(
-        command, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT,
+        command, cwd=cwd, env=env, stdout=log, stderr=stderr if stderr is not None else subprocess.STDOUT,
         start_new_session=True,
     )
     try:
@@ -90,15 +91,10 @@ def prepare(host, repo, tree, source, log):
 
 
 def install_dependencies(host, tree, log):
-    if host == "studio":
-        env = os.environ.copy()
-        env["PATH"] = studio_path(tree)
-        env["CI"] = "true"
-        code = execute(host, ["vp", "install", "--frozen-lockfile"], log, 600, cwd=tree, env=env)
-    else:
-        store = "/srv/cow/t3-wt/.advisory-pnpm-store" if host == "ax42" else "$HOME/.local/share/t3nightly/pnpm-store"
-        command = f"cd {shlex.quote(tree)} && export PATH={path(tree)} CI=true && {linux_exports()} && {cache_exports(host, tree)} && PNPM_CONFIG_VIRTUAL_STORE_TYPE=global PNPM_CONFIG_GLOBAL_VIRTUAL_STORE_DIR=\"{store}/links\" vp install --frozen-lockfile -- --store-dir \"{store}\" --package-import-method clone-or-copy"
-        code = execute(host, ["bash", "-c", command], log, 600)
+    store = "/srv/cow/t3-wt/.advisory-pnpm-store" if host == "ax42" else "~/.local/share/t3nightly/pnpm-store"
+    words = isolated(tree, ["vp", "install", "--frozen-lockfile", "--", "--store-dir", store,
+                            "--virtual-store-dir", f"{tree}/node_modules/.pnpm", "--package-import-method", "hardlink"], host=host)
+    code = execute(host, words, log, 600)
     if code:
         raise RuntimeError(f"dependency install failed on {host}; vp exited {code}")
 
@@ -156,55 +152,15 @@ def interpolate(value, temp):
     return value.replace("${{ runner.temp }}", temp).replace("${{runner.temp}}", temp)
 
 
-def path(tree):
-    return f"{tree}/node_modules/.bin:$HOME/.vite-plus/bin:$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
-
-
-def environment(step, tree, temp):
-    env = {key: os.environ[key] for key in ("HOME", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
-    env.update({
-        "PATH": studio_path(tree),
-        "RUNNER_TEMP": temp,
-        "GITHUB_OUTPUT": f"{temp}/github-output",
-        "GITHUB_STEP_SUMMARY": f"{temp}/github-summary",
-        "CI": "true",
-    })
-    for key, value in step["environment"].items():
-        if key != "PATH":
-            env[key] = interpolate(str(value), temp)
-    return env
-
-
-def remote_environment(step, tree, temp, host):
-    values = {
-        "PATH": path(tree),
-        "RUNNER_TEMP": temp,
-        "GITHUB_OUTPUT": f"{temp}/github-output",
-        "GITHUB_STEP_SUMMARY": f"{temp}/github-summary",
-        "CI": "true",
-    }
-    for key, value in step["environment"].items():
-        values[key] = interpolate(str(value), temp)
-    exports = []
-    for key, value in values.items():
-        if key == "PATH":
-            encoded = shlex.quote(f"{tree}/node_modules/.bin") + ":$HOME/.vite-plus/bin:$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
-        else:
-            encoded = shlex.quote(value)
-        exports.append(f"{key}={encoded}")
-    return "export " + " ".join(exports) + " && " + linux_exports() + " && " + cache_exports(host, tree)
-
-
 def unavailable(host, tree, tools_required, log):
     missing = []
     for tool in tools_required:
-        search_path = shlex.quote(studio_path(tree)) if host == "studio" else path(tree)
-        command = f"export PATH={search_path}; command -v {shlex.quote(tool)} >/dev/null"
         if tool == "sudo":
             continue
+        command = f"command -v {shlex.quote(tool)} >/dev/null"
         if tool == "rustfmt":
             command += " && rustfmt --version >/dev/null 2>&1"
-        code = execute(host, ["bash", "-c", command], log, 10)
+        code = execute(host, isolated(tree, ["bash", "-c", command], host=host), log, 10)
         if code:
             missing.append(tool)
     return missing
@@ -227,12 +183,10 @@ def run_step(host, step, tree, log_path, deadline):
                 command = interpolate(step["command"], temp)
                 missing_file = f"{step_temp}/missing-packages"
                 command = f"export PATH={shlex.quote(step_temp + '/shims')}:$PATH T3NIGHTLY_MISSING_PACKAGES={shlex.quote(missing_file)}\n" + command
-                if host == "studio":
-                    words = ["bash", "-eo", "pipefail", "-c", command]
-                    code = execute(host, words, log, deadline - time.monotonic(), cwd=tree, env=environment(step, tree, temp))
-                else:
-                    remote = f"cd {shlex.quote(tree)} && {remote_environment(step, tree, temp, host)} && bash -eo pipefail -c {shlex.quote(command)}"
-                    code = execute(host, ["bash", "-c", remote], log, deadline - time.monotonic())
+                values = {key: interpolate(str(value), temp) for key, value in step["environment"].items()}
+                words = isolated(tree, ["bash", "-eo", "pipefail", "-c", command], values, host=host)
+                with log_path.with_suffix(".stderr.log").open("w") as errors:
+                    code = execute(host, words, log, deadline - time.monotonic(), stderr=errors)
                 packages = []
                 if code == 100:
                     with tempfile.TemporaryFile(mode="w+") as missing_log:
@@ -250,6 +204,8 @@ def run_step(host, step, tree, log_path, deadline):
                 row.update(result="unavailable" if packages else ("pass" if code == 0 else "fail"), exit=code)
                 if packages:
                     row["missingPackages"] = packages
+    if row["result"] != "pass":
+        row["stderrTail"] = sanitized_tail(log_path.with_suffix(".stderr.log") if log_path.with_suffix(".stderr.log").exists() else log_path)
     row["seconds"] = round(time.monotonic() - started, 3)
     row["finishedAt"] = now()
     row["log"] = str(log_path)
@@ -309,7 +265,7 @@ def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep
                 prepare(host, repo, tree, value["source"], log)
                 install_dependencies(host, tree, log)
             deadline = admitted + job["timeoutSeconds"]
-            rows = []
+            rows = result["steps"]
             stopped = False
             for index, step in enumerate(steps, 1):
                 if stopped and "always()" not in (step["condition"] or ""):
@@ -336,6 +292,19 @@ def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep
             result["result"] = "unavailable"
     finally:
         try:
+            if attempted:
+                try:
+                    with (logs / "disk.log").open("w+") as log:
+                        code = shielded(lambda: execute(host, ["python3", "-c", DISK, tree], log, 120))
+                        log.seek(0)
+                        if not code:
+                            result["diskUse"] = json.loads(log.read())
+                        else:
+                            result["diskMeasureError"] = f"disk measurement exited {code}"
+                except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
+                    result["diskMeasureError"] = str(error)
+                if result.get("result") != "pass":
+                    result["stderrTail"] = "\n".join(row.get("stderrTail", "") for row in result["steps"] if row["result"] != "pass") or sanitized_tail(logs / "worktree.log")
             if attempted and host == "ax42":
                 try:
                     with (logs / "tmp.log").open("a") as log:
