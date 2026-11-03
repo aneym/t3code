@@ -68,7 +68,13 @@ export function useSideChat(input: {
         environmentId: threadRef.environmentId,
         input: {
           threadId: targetThreadId,
-          message: { messageId: newMessageId(), role: "user", text, attachments: [] },
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text,
+            attachments: [],
+            composerSubmit: { displayedAssistantMessageId: null },
+          },
           titleSeed: deriveThreadTitleSeed({ text, attachments: [] }),
           runtimeMode: "approval-required",
           interactionMode: "default",
