@@ -2972,6 +2972,14 @@ it.live.each([
     reason: "Has a nested repository (vendor/)",
   },
   {
+    state: "tracked directory replaced by an external symlink",
+    policy: "tracked-changes",
+    directory: "vendor",
+    tracked: "vendor/README.md",
+    symlink: true,
+    reason: "Could not verify a nested path (vendor/)",
+  },
+  {
     state: "repository inside an untracked directory",
     policy: "tracked-changes",
     directory: "scratch/repo",
@@ -3064,6 +3072,19 @@ it.live.each([
         yield* fixture.command(fixture.worktree, ["commit", "-qm", "track bare HEAD"]);
       }
       yield* fixture.fs.writeFileString(ledger, "state\n");
+      if ("symlink" in row) {
+        const outside = yield* fixture.fs.makeTempDirectoryScoped({ prefix: "cleanup-external-" });
+        const directory = `${fixture.worktree}/${row.directory}`;
+        fixture.setBeforeGit((operation) =>
+          operation === "StorageCleanup.nestedRepositoryPaths"
+            ? Effect.gen(function* () {
+                fixture.setBeforeGit(() => Effect.void);
+                yield* fixture.fs.rename(directory, `${outside}/vendor`);
+                yield* fixture.fs.symlink(`${outside}/vendor`, directory);
+              }).pipe(Effect.orDie)
+            : Effect.void,
+        );
+      }
       if ("gitlink" in row) {
         const embedded = `${fixture.worktree}/${row.directory}`;
         yield* fixture.command(embedded, ["add", "ledger.md"]);
