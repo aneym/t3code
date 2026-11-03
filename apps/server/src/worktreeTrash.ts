@@ -1,3 +1,4 @@
+import { nestedRepositoryReason } from "./worktreeNestedRepositories.ts";
 import { inspectWorktreeSubmodules } from "./worktreeSubmodules.ts";
 import { GitCommandError, type ServerSettings } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -199,13 +200,6 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     return blocked;
   });
 
-  const isRepository = Effect.fnUntraced(function* (directory: string) {
-    if (yield* fs.exists(path.join(directory, ".git"))) return true;
-    for (const name of ["HEAD", "objects", "refs"])
-      if (!(yield* fs.exists(path.join(directory, name)))) return false;
-    return true;
-  });
-
   // Effect's stat follows links; readLink succeeds only on a link.
   const isLink = (target: string) =>
     fs.readLink(target).pipe(
@@ -217,31 +211,11 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       ),
     );
 
-  // Walks the files Git listings hide (ignored, gitlinked, partly tracked); node_modules is disposable.
-  const nestedRepository = Effect.fnUntraced(function* (
-    cwd: string,
-    submodules: ReadonlySet<string>,
-  ) {
-    const root = yield* fs.realPath(cwd);
-    const pending = [root];
-    while (pending.length > 0) {
-      const directory = pending.pop()!;
-      for (const name of yield* fs.readDirectory(directory)) {
-        if (name === ".git" || name === "node_modules") continue;
-        const child = path.join(directory, name);
-        if (submodules.has(child) || (yield* isLink(child))) continue;
-        if ((yield* fs.stat(child)).type !== "Directory") continue;
-        if (yield* isRepository(child)) return `${path.relative(root, child)}/`;
-        pending.push(child);
-      }
-    }
-    return null;
-  });
-
   const checkoutStateReason = Effect.fnUntraced(function* (
     cwd: string,
     submodules: ReadonlySet<string>,
     disposable: ReadonlyArray<string>,
+    unchecked: ReadonlyArray<string>,
   ) {
     if (yield* fs.exists(path.join(cwd, ".lane"))) return "has excluded local state (.lane/)";
     const git = yield* GitVcsDriver.GitVcsDriver;
@@ -343,8 +317,7 @@ export const makeWorktreeTrash = Effect.gen(function* () {
       const file = personal.stdout.split("\0").find((entry) => entry !== "");
       if (file !== undefined) return `has excluded local state (${file})`;
     }
-    const nested = yield* nestedRepository(cwd, submodules);
-    return nested === null ? null : `has a nested repository (${nested})`;
+    return yield* nestedRepositoryReason(cwd, submodules, index.stdout, unchecked);
   });
 
   const personalStateReason = Effect.fn("StorageCleanup.personalStateReason")(function* (
@@ -354,10 +327,15 @@ export const makeWorktreeTrash = Effect.gen(function* () {
     const discovered = yield* inspectWorktreeSubmodules(cwd);
     if (typeof discovered === "string") return discovered;
     const submodules = new Set(discovered.paths);
-    const own = yield* checkoutStateReason(cwd, submodules, disposable);
+    const own = yield* checkoutStateReason(cwd, submodules, disposable, discovered.unchecked);
     if (own !== null) return own;
     for (const submodule of submodules) {
-      const reason = yield* checkoutStateReason(submodule, submodules, disposable);
+      const reason = yield* checkoutStateReason(
+        submodule,
+        submodules,
+        disposable,
+        discovered.unchecked,
+      );
       if (reason !== null) return `submodule ${reason}`;
     }
     return null;
