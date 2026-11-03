@@ -42,7 +42,13 @@ def members(pgid, tree):
                 result.check_returncode()
             name = next((line[1:] for line in result.stdout.splitlines() if line.startswith("n")), None)
             if name is None:
-                continue
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    continue
+                except PermissionError:
+                    pass
+                raise OutsideGroup(f"recorded group {pgid} has member {pid} with an unreadable cwd")
             cwd = Path(name).resolve()
         if cwd != tree and tree not in cwd.parents:
             raise OutsideGroup(f"recorded group {pgid} no longer belongs to {tree}")
