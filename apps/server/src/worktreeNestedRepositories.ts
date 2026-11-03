@@ -74,7 +74,9 @@ export const nestedRepositoryReason = Effect.fn("StorageCleanup.nestedRepository
         () => Effect.succeed(null),
       ),
     );
-    if (canonical !== directory) return null;
+    if (canonical === null) return null;
+    if (canonical !== directory)
+      return `could not verify a nested path (${path.relative(root, directory)}/)`;
     const repository =
       (yield* fs.exists(path.join(directory, ".git"))) ||
       ((yield* fs.exists(path.join(directory, "HEAD"))) &&
@@ -92,7 +94,6 @@ export const nestedRepositoryReason = Effect.fn("StorageCleanup.nestedRepository
     const directory = pending.pop()!;
     if (submodules.has(directory) || path.basename(directory) === "node_modules") continue;
     if (++visited > 256) return "nested repository inspection exceeded the limit";
-    if ((yield* fs.realPath(directory)) !== directory) continue;
     const reason = yield* inspect(directory);
     if (reason !== null) return reason;
     const names = yield* fs.readDirectory(directory);
