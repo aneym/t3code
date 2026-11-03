@@ -29,7 +29,7 @@ def group_alive(pgid):
 
 def stop_group(process):
     try:
-        os.kill(process.pid, signal.SIGTERM)
+        os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
     deadline = time.monotonic() + TERM_GRACE_S

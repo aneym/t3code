@@ -120,6 +120,13 @@ def retain(root, active_run, *, dry_run=False):
         lock = os.open(".run-retention.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
         with os.fdopen(lock, "a") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
+            from t3nightly.suite_store import maintain
+            from t3nightly.suite_worker import HOSTS
+            import socket
+
+            host = "studio" if sys.platform == "darwin" else socket.gethostname().split(".")[0]
+            with (active / "advisory-maintenance.log").open("a") as log:
+                report["advisory"] = maintain(root, [host] if host in HOSTS else [], log, dry_run=dry_run)
             serving = serving_version()
             report["serving"] = serving
             dirs = [entry.name for entry in os.scandir(descriptor) if entry.is_dir(follow_symlinks=False)]

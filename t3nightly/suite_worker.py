@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .release_jobs import write_status
+from .suite_reaper import track_process, worker_record
 from .suite_process import REMOTE
 from .release_manifest import digest
 from .suite_plan import load, slug, write
@@ -44,6 +45,8 @@ def execute(host, words, log, timeout, cwd=None, env=None, stderr=None):
         command, cwd=cwd, env=env, stdout=log, stderr=stderr if stderr is not None else subprocess.STDOUT,
         stdin=subprocess.PIPE if remote else subprocess.DEVNULL, start_new_session=True,
     )
+    if not remote:
+        track_process(process.pid)
     try:
         return process.wait(timeout=max(1, timeout) + (30 if remote else 0))
     except (WorkerTerminated, KeyboardInterrupt, subprocess.TimeoutExpired) as error:
@@ -253,7 +256,7 @@ def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep
     resources = ExitStack()
     attempted = False
     pending = out.with_suffix(".cleanup.json")
-    write_status(pending, {"host": host, "repo": repo, "worktree": tree,
+    worker_record(pending, {"host": host, "repo": repo, "worktree": tree,
                                    "tmp": job_tmp(tree) if host == "ax42" else str(Path(tree) / ".advisory-home/tmp"),
                                    "state": "cleanup-required", "workerPid": os.getpid()})
     try:
