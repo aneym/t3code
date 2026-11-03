@@ -1,3 +1,4 @@
+import { comparePinnedProjects } from "@t3tools/client-runtime/state/project-pins";
 import {
   onceScheduleLabel,
   scheduledTaskStateLabel,
@@ -1255,7 +1256,13 @@ function ScheduledTaskEditorForm({
         project.id === draft.projectId ||
         project.id === task?.projectId,
     )
-    .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
+    .sort(
+      (left, right) =>
+        Number(right.pinnedAt != null) - Number(left.pinnedAt != null) ||
+        (left.pinnedAt != null && right.pinnedAt != null
+          ? comparePinnedProjects({ ...left, key: left.id }, { ...right, key: right.id })
+          : 0),
+    );
   const submissionPending = useRef(false);
   const editingTaskMissing =
     draft.editingId !== null &&

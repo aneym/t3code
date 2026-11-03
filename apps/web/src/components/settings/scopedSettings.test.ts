@@ -91,6 +91,8 @@ const group: SidebarProjectSnapshot = {
   allRemoteMembersAreDesktopLocal: false,
   allRemoteMembersAreWsl: false,
   remoteEnvironmentLabels: [server.label, laptop.label],
+  pinOrder: null,
+  pinnedAt: null,
   pinned: false,
   archived: false,
 };

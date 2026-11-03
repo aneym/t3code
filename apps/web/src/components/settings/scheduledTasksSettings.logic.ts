@@ -1,3 +1,4 @@
+import { comparePinnedProjects } from "@t3tools/client-runtime/state/project-pins";
 import { isWebhookDedupeTemplate } from "@t3tools/contracts";
 import {
   EnvironmentId,
@@ -333,6 +334,7 @@ export function scheduledTaskDefaultModel(
 export function defaultScheduledTaskProjectId<
   TProject extends {
     readonly id: ProjectId;
+    readonly pinOrder?: string | null | undefined;
     readonly pinnedAt?: string | null | undefined;
     readonly archivedAt?: string | null | undefined;
   },
@@ -341,7 +343,11 @@ export function defaultScheduledTaskProjectId<
   const scopedToProject = scope.kind === "project" || scope.kind === "checkout";
   return (
     (
-      open.find((project) => project.pinnedAt != null) ??
+      open
+        .filter((project) => project.pinnedAt != null)
+        .sort((left, right) =>
+          comparePinnedProjects({ ...left, key: left.id }, { ...right, key: right.id }),
+        )[0] ??
       open[0] ??
       (scopedToProject ? scopedProjects[0] : undefined)
     )?.id ?? ""

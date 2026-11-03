@@ -1,3 +1,4 @@
+import { comparePinnedProjects } from "@t3tools/client-runtime/state/project-pins";
 import { scheduledTaskStateLabel } from "@t3tools/client-runtime/scheduled-task-once";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -636,7 +637,13 @@ function TaskForm({
           project.id === draft.projectId ||
           project.id === draft.task?.projectId),
     )
-    .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
+    .sort(
+      (left, right) =>
+        Number(right.pinnedAt != null) - Number(left.pinnedAt != null) ||
+        (left.pinnedAt != null && right.pinnedAt != null
+          ? comparePinnedProjects({ ...left, key: left.id }, { ...right, key: right.id })
+          : 0),
+    );
   const config = useEnvironmentServerConfig(environmentId);
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
   // Existing webhook tasks keep the option so they can still switch to a timer.

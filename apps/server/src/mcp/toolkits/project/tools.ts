@@ -1,3 +1,4 @@
+import * as Struct from "effect/Struct";
 import { McpAttachmentInput } from "../attachment/input.ts";
 import {
   NonNegativeInt,
@@ -91,7 +92,7 @@ const ProjectUpdateTool = Tool.make("t3_project_update", {
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,
-    ...ProjectUpdatePayload.fields,
+    ...Struct.omit(ProjectUpdatePayload.fields, ["pinOrder"]),
   }),
 }).annotate(Tool.Destructive, true);
 const ProjectDeleteTool = Tool.make("t3_project_delete", {

@@ -1,6 +1,7 @@
 import { EnvironmentId, ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { projectPinReorderChanges, pinnedProjectGroups } from "./projectPins.ts";
 import type { EnvironmentProject } from "./models.ts";
 import { chooseLoadBalancedEnvironment } from "../load-balancing.ts";
 import {
@@ -396,12 +397,13 @@ describe("project pins and archives", () => {
 
   it("offers pinned projects first and leaves archived ones out", () => {
     const pickable = pickableProjectGroups([
-      { key: "a", pinned: false, archived: false },
-      { key: "b", pinned: true, archived: true },
-      { key: "c", pinned: true, archived: false },
-      { key: "d", pinned: false, archived: true },
+      { key: "a", pinned: false, archived: false, pinOrder: null, pinnedAt: null },
+      { key: "b", pinned: true, archived: true, pinOrder: null, pinnedAt: at },
+      { key: "c", pinned: true, archived: false, pinOrder: null, pinnedAt: "2026-01-01" },
+      { key: "e", pinned: true, archived: false, pinOrder: "a", pinnedAt: "2026-02-01" },
+      { key: "d", pinned: false, archived: true, pinOrder: null, pinnedAt: null },
     ]);
-    expect(pickable.map((entry) => entry.key)).toEqual(["c", "a"]);
+    expect(pickable.map((entry) => entry.key)).toEqual(["e", "c", "a"]);
   });
 });
 
@@ -420,4 +422,22 @@ describe("sortProjectsByGroupOrder", () => {
     );
     expect(sorted.map((entry) => entry.environmentId)).toEqual([remote, environmentId]);
   });
+});
+
+it("rekeys every pinned group when any order key is missing", () => {
+  const groups = [
+    { projectKey: "a", memberProjects: [{ pinOrder: "a", pinnedAt: "2026-01-01" }] },
+    { projectKey: "b", memberProjects: [{ pinOrder: "b", pinnedAt: "2026-01-02" }] },
+    { projectKey: "c", memberProjects: [{ pinOrder: null, pinnedAt: "2026-01-03" }] },
+  ];
+  const changes = projectPinReorderChanges(groups, "a", "b");
+  expect(changes).toHaveLength(3);
+  const reordered = groups.map((group) => ({
+    ...group,
+    memberProjects: group.memberProjects.map((project) => ({
+      ...project,
+      pinOrder: changes.find((change) => change.group.projectKey === group.projectKey)!.pinOrder,
+    })),
+  }));
+  expect(pinnedProjectGroups(reordered).map((group) => group.projectKey)).toEqual(["b", "a", "c"]);
 });

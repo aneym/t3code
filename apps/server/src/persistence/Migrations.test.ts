@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import ProjectPinOrderToPinnedAt from "./ForkMigrations/006_ProjectPinOrderToPinnedAt.ts";
 import { migrationManifest, runMigrations } from "./Migrations.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
@@ -29,6 +30,28 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
+  it.effect("006 preserves fork pin order and is idempotent", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, pin_order TEXT, pinned_at TEXT)`;
+      yield* sql`INSERT INTO projection_projects VALUES ('z', 'a', NULL), ('a', 'b', NULL), ('b', 'b', NULL), ('free', NULL, NULL), ('upstream', 'c', '2026-01-01T00:00:00.000Z')`;
+      yield* ProjectPinOrderToPinnedAt;
+      const rows = yield* sql`SELECT * FROM projection_projects ORDER BY pinned_at, project_id`;
+      assert.deepEqual(
+        rows.filter((row) => row.pinned_at !== null).map((row) => row.project_id),
+        ["z", "a", "b", "upstream"],
+      );
+      assert.equal(
+        rows.find((row) => row.project_id === "upstream")!.pinned_at,
+        "2026-01-01T00:00:00.000Z",
+      );
+      yield* ProjectPinOrderToPinnedAt;
+      assert.deepEqual(
+        yield* sql`SELECT * FROM projection_projects ORDER BY pinned_at, project_id`,
+        rows,
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
   it.effect("refuses to start when another migration took a V2 id", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
