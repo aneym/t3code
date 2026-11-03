@@ -59,7 +59,7 @@ step() {
 }
 
 import_method=auto
-[ "$platform" != mac ] || import_method=clone
+[ "$platform" != mac ] || import_method=clone-or-copy
 step vp-install python3 "$here/build_dependencies.py" --tree "$tree" --node-version "$node_version" --platform "$manifest_platform" --arch "$arch" -- vp i --frozen-lockfile -- --package-import-method="$import_method"
 step web-build env T3CODE_TELEMETRY_CHANNEL=dev vp run --filter t3 build
 step brand-assets node scripts/apply-web-brand-assets.ts nightly apps/server/dist/client
