@@ -762,6 +762,7 @@ export function useComposerSend(input: ComposerSendInput) {
           environmentContexts: composerEnvironmentContexts,
         }),
         interactionMode: followUp.interactionMode,
+        composerSubmit,
       });
       if (!followUpSent) {
         promptRef.current = followUpPromptSnapshot;

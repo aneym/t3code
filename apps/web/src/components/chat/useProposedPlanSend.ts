@@ -2,6 +2,7 @@ import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
   type ModelSelection,
+  type OrchestrationV2ComposerSubmit,
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
@@ -107,10 +108,12 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
     text,
     context,
     interactionMode: nextInteractionMode,
+    composerSubmit,
   }: {
     text: string;
     context?: ReturnType<typeof buildMessageContext>;
     interactionMode: "default" | "plan";
+    composerSubmit: OrchestrationV2ComposerSubmit;
   }) {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
@@ -192,6 +195,7 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
             text: outgoingMessageText,
             ...(context ? { context } : {}),
             attachments: [],
+            composerSubmit,
           },
           modelSelection: sendCtx.selectedModelSelection,
           titleSeed: activeThread.title,
