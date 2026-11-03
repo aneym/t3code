@@ -125,116 +125,137 @@ const make = Effect.gen(function* () {
 
   const exportBranch: WorktreeTransfer["Service"]["exportBranch"] = Effect.fn(
     "WorktreeTransfer.exportBranch",
-  )(function* ({ worktreePath, bases, branches }) {
-    const cwd = worktreePath;
-    const symbolic = yield* git
-      .execute({
-        operation: "WorktreeTransfer.export.branch",
+  )(
+    function* ({ worktreePath, bases, branches }) {
+      const cwd = worktreePath;
+      const symbolic = yield* git
+        .execute({
+          operation: "WorktreeTransfer.export.branch",
+          cwd,
+          args: ["symbolic-ref", "--quiet", "HEAD"],
+          allowNonZeroExit: true,
+        })
+        .pipe(Effect.mapError((cause) => transferError(cause.message)));
+      if (symbolic.exitCode === 1 && symbolic.stderr.trim() === "")
+        return yield* transferError(
+          "Cannot export a detached HEAD. Check out a branch containing the work, then try again.",
+          false,
+        );
+      if (symbolic.exitCode !== 0)
+        return yield* transferError(
+          `Unable to resolve the branch: ${symbolic.stderr.trim() || `git exited with code ${symbolic.exitCode}`}`,
+          false,
+        );
+      const branch = symbolic.stdout.trim().replace(/^refs\/heads\//, "");
+      const headCommit = yield* required(
+        "export.head",
         cwd,
-        args: ["symbolic-ref", "--quiet", "HEAD"],
-        allowNonZeroExit: true,
-      })
-      .pipe(Effect.mapError((cause) => transferError(cause.message)));
-    if (symbolic.exitCode === 1 && symbolic.stderr.trim() === "")
-      return yield* transferError(
-        "Cannot export a detached HEAD. Check out a branch containing the work, then try again.",
+        ["rev-parse", "HEAD"],
+        "No commit",
         false,
       );
-    if (symbolic.exitCode !== 0)
-      return yield* transferError(
-        `Unable to resolve the branch: ${symbolic.stderr.trim() || `git exited with code ${symbolic.exitCode}`}`,
-        false,
+      const branchCommit = yield* required(
+        "export.branchHead",
+        cwd,
+        ["rev-parse", `refs/heads/${branch}`],
+        "Unable to resolve the branch commit",
       );
-    const branch = symbolic.stdout.trim().replace(/^refs\/heads\//, "");
-    const headCommit = yield* required(
-      "export.head",
-      cwd,
-      ["rev-parse", "HEAD"],
-      "No commit",
-      false,
-    );
-    const branchCommit = yield* required(
-      "export.branchHead",
-      cwd,
-      ["rev-parse", `refs/heads/${branch}`],
-      "Unable to resolve the branch commit",
-    );
-    if (branchCommit !== headCommit)
-      return yield* transferError("The branch moved during export; export it again.");
-    const forksOf = (refs: ReadonlyArray<string>) =>
-      Effect.forEach(refs, (ref) =>
-        run("export.base", cwd, ["merge-base", ref, headCommit]).pipe(
-          Effect.mapError((cause) => transferError(cause.message)),
-        ),
-      ).pipe(Effect.map((forks) => forks.filter((fork): fork is string => fork !== null)));
-    const had = yield* forksOf(bases);
-    if (had.length === 0)
-      return yield* transferError(`None of ${bases.join(", ")} is in this repository`, false);
-    const counted = yield* Effect.forEach([...had, ...(yield* forksOf(branches))], (fork) =>
-      required(
-        "export.count",
-        cwd,
-        ["rev-list", "--count", `${fork}..${headCommit}`],
-        "Unable to count commits",
-      ).pipe(Effect.map((count) => ({ fork, count: Number(count) }))),
-    );
-    const { fork: baseCommit, count: commitCount } = counted
-      .filter(({ fork, count }) => count > 0 || had.includes(fork))
-      .reduce((best, next) => (next.count < best.count ? next : best));
-    const exclude = had.map((fork) => `^${fork}`);
-    const missing = Number(
-      yield* required(
-        "export.missing",
-        cwd,
-        ["rev-list", "--count", headCommit, ...exclude],
-        "Unable to count commits",
-      ),
-    );
-    const uncommitted =
-      ((yield* run("export.status", cwd, ["status", "--porcelain"]).pipe(
-        Effect.orElseSucceed(() => null),
-      )) ?? "") !== "";
-    const diffStat = (
-      (yield* run("export.stat", cwd, ["diff", "--stat", baseCommit, headCommit]).pipe(
-        Effect.orElseSucceed(() => null),
-      )) ?? ""
-    ).slice(-MAX_DIFF_STAT_BYTES);
-    const summary = {
-      worktreePath,
-      branch,
-      baseCommit,
-      headCommit,
-      commitCount,
-      uncommitted,
-      diffStat,
-    };
-    if (missing === 0) return { ...summary, bundle: null };
-    const bundle = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const file = yield* fs.makeTempFileScoped({ prefix: "t3-worktree-export-" });
+      if (branchCommit !== headCommit)
+        return yield* transferError("The branch moved during export; export it again.");
+      const forksOf = (refs: ReadonlyArray<string>) =>
+        Effect.forEach(refs, (ref) =>
+          run("export.base", cwd, ["merge-base", ref, headCommit]).pipe(
+            Effect.mapError((cause) => transferError(cause.message)),
+          ),
+        ).pipe(Effect.map((forks) => forks.filter((fork): fork is string => fork !== null)));
+      const had = yield* forksOf(bases);
+      if (had.length === 0)
+        return yield* transferError(`None of ${bases.join(", ")} is in this repository`, false);
+      const counted = yield* Effect.forEach([...had, ...(yield* forksOf(branches))], (fork) =>
+        required(
+          "export.count",
+          cwd,
+          ["rev-list", "--count", `${fork}..${headCommit}`],
+          "Unable to count commits",
+        ).pipe(Effect.map((count) => ({ fork, count: Number(count) }))),
+      );
+      const { fork: baseCommit, count: commitCount } = counted
+        .filter(({ fork, count }) => count > 0 || had.includes(fork))
+        .reduce((best, next) => (next.count < best.count ? next : best));
+      const exclude = had.map((fork) => `^${fork}`);
+      const missing = Number(
         yield* required(
-          "export.bundle",
+          "export.missing",
           cwd,
-          ["bundle", "create", file, `refs/heads/${branch}`, ...exclude],
-          "Unable to bundle the branch",
-        );
-        const bundledHead = yield* required(
-          "export.verify",
-          cwd,
-          ["bundle", "list-heads", file, `refs/heads/${branch}`],
-          "Unable to verify the bundled branch",
-        );
-        if (bundledHead.split(" ")[0] !== headCommit)
-          return yield* transferError("The branch moved during export; export it again.");
-        const stat = yield* fs.stat(file);
-        if (Number(stat.size) > MAX_BUNDLE_BYTES) return null;
-        return Buffer.from(yield* fs.readFile(file)).toString("base64");
-      }),
-    ).pipe(
-      Effect.mapError((cause) => (isTransferError(cause) ? cause : transferError(cause.message))),
-    );
-    return { ...summary, bundle };
-  });
+          ["rev-list", "--count", headCommit, ...exclude],
+          "Unable to count commits",
+        ),
+      );
+      const uncommitted =
+        ((yield* run("export.status", cwd, ["status", "--porcelain"]).pipe(
+          Effect.orElseSucceed(() => null),
+        )) ?? "") !== "";
+      const diffStat = (
+        (yield* run("export.stat", cwd, ["diff", "--stat", baseCommit, headCommit]).pipe(
+          Effect.orElseSucceed(() => null),
+        )) ?? ""
+      ).slice(-MAX_DIFF_STAT_BYTES);
+      const summary = {
+        worktreePath,
+        branch,
+        baseCommit,
+        headCommit,
+        commitCount,
+        uncommitted,
+        diffStat,
+      };
+      if (missing === 0) return { ...summary, bundle: null };
+      const bundle = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const file = yield* fs.makeTempFileScoped({ prefix: "t3-worktree-export-" });
+          yield* required(
+            "export.bundle",
+            cwd,
+            ["bundle", "create", file, `refs/heads/${branch}`, ...exclude],
+            "Unable to bundle the branch",
+          );
+          const bundledHead = yield* required(
+            "export.verify",
+            cwd,
+            ["bundle", "list-heads", file, `refs/heads/${branch}`],
+            "Unable to verify the bundled branch",
+          );
+          if (bundledHead.split(" ")[0] !== headCommit)
+            return yield* transferError("The branch moved during export; export it again.");
+          const stat = yield* fs.stat(file);
+          if (Number(stat.size) > MAX_BUNDLE_BYTES) return null;
+          return Buffer.from(yield* fs.readFile(file)).toString("base64");
+        }),
+      ).pipe(
+        Effect.mapError((cause) => (isTransferError(cause) ? cause : transferError(cause.message))),
+      );
+      return { ...summary, bundle };
+    },
+    (effect, { worktreePath }) =>
+      effect.pipe(
+        Effect.catchTags({
+          WorktreeTransferError: (error) =>
+            fs.exists(worktreePath).pipe(
+              Effect.orElseSucceed(() => true),
+              Effect.flatMap((exists) =>
+                Effect.fail(
+                  exists
+                    ? error
+                    : transferError(
+                        "The child worktree no longer exists; its branch could not be exported.",
+                        false,
+                      ),
+                ),
+              ),
+            ),
+        }),
+      ),
+  );
 
   const importBranch: WorktreeTransfer["Service"]["importBranch"] = Effect.fn(
     "WorktreeTransfer.importBranch",
