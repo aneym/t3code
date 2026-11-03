@@ -33,7 +33,7 @@ for relative in (".vite-plus", ".local/share/vite-plus"):
         link.symlink_to(source, target_is_directory=True)
     for directory in (source / "current/bin", source / "bin"):
         add(directory)
-    version = json.loads((root / "package.json").read_text()).get("engines", {}).get("node", "")
+    version = json.loads((pathlib.Path(sys.argv[5]) / "package.json").read_text()).get("engines", {}).get("node", "")
     add(source / "js_runtime/node" / version / "bin")
     for package in sorted((source / "package_manager/pnpm").glob("*/pnpm/bin"), reverse=True):
         add(package)
@@ -162,13 +162,13 @@ print(json.dumps({**counts, "virtualStore": str(root / "node_modules/.pnpm"), "a
 '''
 
 
-def isolated(tree, words, values=None, host=None):
+def isolated(tree, words, values=None, host=None, toolchain_root=None):
     import json
 
     values = {key: value for key, value in (values or {}).items()
               if not re.search(r"TOKEN|SECRET|PASSWORD|AUTH|CREDENTIAL|KEY|^GIT_|^PNPM_|^NPM_|^PATH$|^HOME$|^NODE_OPTIONS$|^BASH_ENV$|^ENV$|^LD_|^DYLD_", key, re.I)
               and not re.search(r"\$\{\{\s*(?:secrets|env)\.", str(value), re.I)}
-    return ["python3", "-c", CHILD, str(tree), json.dumps(values), json.dumps(words), host or "local"]
+    return ["python3", "-c", CHILD, str(tree), json.dumps(values), json.dumps(words), host or "local", str(toolchain_root or tree)]
 
 
 def sanitized_tail(path):

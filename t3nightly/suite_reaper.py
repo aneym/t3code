@@ -21,19 +21,33 @@ def alive(pid):
         return False
 
 
+class OutsideGroup(ValueError):
+    pass
+
+
 def members(pgid, tree):
     output = subprocess.check_output(["ps", "-axo", "pid=,pgid=,stat="], text=True)
     pids = [int(pid) for pid, group, state in (line.split() for line in output.splitlines())
             if int(group) == pgid and not state.startswith("Z")]
+    verified = []
     for pid in pids:
         if Path("/proc").is_dir():
-            cwd = Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
+            try:
+                cwd = Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
+            except (FileNotFoundError, ProcessLookupError):
+                continue
         else:
-            text = subprocess.check_output(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], text=True)
-            cwd = Path(next(line[1:] for line in text.splitlines() if line.startswith("n"))).resolve()
+            result = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], capture_output=True, text=True)
+            if result.returncode not in (0, 1):
+                result.check_returncode()
+            name = next((line[1:] for line in result.stdout.splitlines() if line.startswith("n")), None)
+            if name is None:
+                continue
+            cwd = Path(name).resolve()
         if cwd != tree and tree not in cwd.parents:
-            raise ValueError(f"recorded group {pgid} no longer belongs to {tree}")
-    return pids
+            raise OutsideGroup(f"recorded group {pgid} no longer belongs to {tree}")
+        verified.append(pid)
+    return verified
 
 
 def reap(root, log, *, dry_run=False):
@@ -51,6 +65,10 @@ def reap(root, log, *, dry_run=False):
                 record = json.load(handle)
                 if record.get("ownerHost", socket.gethostname()) != socket.gethostname():
                     continue
+                if record.get("state") == "kept":
+                    row["state"] = "kept-worktree"
+                    results.append(row)
+                    continue
                 if alive(record["workerPid"]):
                     row["state"] = "live"
                     results.append(row)
@@ -67,18 +85,23 @@ def reap(root, log, *, dry_run=False):
                     for pgid in record.get("processGroups", []):
                         if type(pgid) is not int or pgid <= 1:
                             raise ValueError("invalid recorded group")
-                        if members(pgid, tree.resolve()):
-                            os.killpg(pgid, signal.SIGTERM)
-                            deadline = time.monotonic() + 10
-                            while members(pgid, tree.resolve()) and time.monotonic() < deadline:
-                                time.sleep(0.1)
+                        try:
                             if members(pgid, tree.resolve()):
-                                os.killpg(pgid, signal.SIGKILL)
-                                deadline = time.monotonic() + 5
+                                os.killpg(pgid, signal.SIGTERM)
+                                deadline = time.monotonic() + 10
                                 while members(pgid, tree.resolve()) and time.monotonic() < deadline:
                                     time.sleep(0.1)
                                 if members(pgid, tree.resolve()):
-                                    raise RuntimeError("recorded step group still alive")
+                                    os.killpg(pgid, signal.SIGKILL)
+                                    deadline = time.monotonic() + 5
+                                    while members(pgid, tree.resolve()) and time.monotonic() < deadline:
+                                        time.sleep(0.1)
+                                    if members(pgid, tree.resolve()):
+                                        raise RuntimeError("recorded step group still alive")
+                        except OutsideGroup as error:
+                            row.setdefault("skippedGroups", []).append({"pgid": pgid, "reason": str(error)})
+                        except ProcessLookupError:
+                            pass
                     if host == "ax42":
                         report = tmp_report(host, "remove", str(tree), log)
                         if report["after"].get("exists") or report["after"].get("holders"):

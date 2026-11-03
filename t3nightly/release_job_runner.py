@@ -27,11 +27,15 @@ def group_alive(pgid):
     return True
 
 
-def stop_group(process):
+def stop_group(process, log):
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
+    except PermissionError as error:
+        log.write(f"cannot terminate group {process.pid}: {error}\n")
+        log.flush()
+        return
     deadline = time.monotonic() + TERM_GRACE_S
     while time.monotonic() < deadline:
         process.poll()
@@ -41,8 +45,12 @@ def stop_group(process):
     if group_alive(process.pid):
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError:
             pass
+        except PermissionError as error:
+            log.write(f"cannot kill group {process.pid}: {error}\n")
+            log.flush()
+            return
     process.wait()
 
 
@@ -136,7 +144,7 @@ def _run(directory, check_cancelled):
                             if time.monotonic() >= deadline:
                                 raise
                 except subprocess.TimeoutExpired:
-                    stop_group(process)
+                    stop_group(process, log)
                     raise TimeoutError("command deadline exceeded") from None
                 row["exit"] = code
                 outcome = "passed" if code == 0 else "failed"
@@ -152,7 +160,7 @@ def _run(directory, check_cancelled):
                 row["outcome"] = outcome
             except JobCancelled as error:
                 if process is not None:
-                    stop_group(process)
+                    stop_group(process, log)
                 row.update(outcome="cancelled", reason=str(error))
             except TimeoutError as error:
                 row.update(outcome="timed-out", error=str(error))

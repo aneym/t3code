@@ -5,6 +5,7 @@ from pathlib import Path
 from .suite_environment import isolated
 from .suite_reaper import reap
 from .suite_worker import HOSTS, execute
+from .suite_store_lock import locked
 
 SIZE = r'''
 import json
@@ -24,8 +25,12 @@ print(json.dumps({"bytes": size}))
 def prune_store(host, log):
     repo, root = HOSTS[host]
     store = str(Path(root) / ".advisory-pnpm-store")
-    words = isolated(repo, ["pnpm", f"--config.store-dir={store}", "store", "prune"], host=host)
-    code = execute(host, words, log, 120)
+    home = str(Path(root) / ".advisory-store-maintenance")
+    words = isolated(home, ["pnpm", f"--config.store-dir={store}", "store", "prune"],
+                     host=host, toolchain_root=repo)
+    code = execute(host, locked(store, words, exclusive=True), log, 120)
+    if code == 75:
+        return {"host": host, "path": store, "pruneExit": code, "state": "busy", "bytes": None}
     with tempfile.TemporaryFile(mode="w+") as output:
         measured = execute(host, ["python3", "-c", SIZE, store], output, 30)
         output.seek(0)

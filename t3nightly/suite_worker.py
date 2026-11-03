@@ -13,6 +13,7 @@ from pathlib import Path
 from .release_jobs import write_status
 from .suite_cleanup_record import track_process, worker_record
 from .suite_process import REMOTE
+from .suite_store_lock import locked
 from .release_manifest import digest
 from .suite_plan import load, slug, write
 from .suite_provision import setup_script
@@ -92,7 +93,7 @@ def install_dependencies(host, tree, log):
     store = str(Path(tree).parent / ".advisory-pnpm-store")
     words = isolated(tree, ["vp", "install", "--frozen-lockfile", "--", "--store-dir", store,
                             "--virtual-store-dir", f"{tree}/node_modules/.pnpm", "--package-import-method", "hardlink"], host=host)
-    code = execute(host, words, log, 600)
+    code = execute(host, locked(store, words, cwd=tree), log, 600)
     if code:
         raise RuntimeError(f"dependency install failed on {host}; vp exited {code}")
 
@@ -258,7 +259,7 @@ def _run(plan_path, job_id, host, out, selected=None, repo=None, tree=None, keep
     pending = out.with_suffix(".cleanup.json")
     worker_record(pending, {"host": host, "repo": repo, "worktree": tree,
                                    "tmp": job_tmp(tree) if host == "ax42" else str(Path(tree) / ".advisory-home/tmp"),
-                                   "state": "cleanup-required", "workerPid": os.getpid()})
+                                   "state": "kept" if keep else "cleanup-required", "workerPid": os.getpid()})
     try:
         try:
             result["hostSlot"] = admit(host, tree, logs, resources)
