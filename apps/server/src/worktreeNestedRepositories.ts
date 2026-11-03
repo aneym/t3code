@@ -16,7 +16,15 @@ export const nestedRepositoryReason = Effect.fn("StorageCleanup.nestedRepository
   const others = yield* git.execute({
     operation: "StorageCleanup.nestedRepositoryPaths",
     cwd,
-    args: ["ls-files", "--others", "--directory", "-z", "--exclude=node_modules/"],
+    args: [
+      "-c",
+      "core.fsmonitor=false",
+      "ls-files",
+      "--others",
+      "--directory",
+      "-z",
+      "--exclude=node_modules/",
+    ],
     maxOutputBytes: 16 * 1024 * 1024,
   });
   if (others.stdoutTruncated || others.stderr.trim() !== "")
@@ -54,14 +62,19 @@ export const nestedRepositoryReason = Effect.fn("StorageCleanup.nestedRepository
       directories.add(target);
     }
   }
-  if (directories.size > 4096) return "nested repository inspection exceeded the limit";
   const checked = new Set<string>();
   const inspect = Effect.fn("StorageCleanup.inspectNestedRepository")(function* (
     directory: string,
   ) {
     if (checked.has(directory) || submodules.has(directory)) return null;
     checked.add(directory);
-    if ((yield* fs.realPath(directory)) !== directory) return null;
+    const canonical = yield* fs.realPath(directory).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed(null),
+      ),
+    );
+    if (canonical !== directory) return null;
     const repository =
       (yield* fs.exists(path.join(directory, ".git"))) ||
       ((yield* fs.exists(path.join(directory, "HEAD"))) &&
@@ -88,7 +101,15 @@ export const nestedRepositoryReason = Effect.fn("StorageCleanup.nestedRepository
     for (const name of names) {
       if (name === ".git" || name === "node_modules") continue;
       const child = path.join(directory, name);
-      if ((yield* fs.stat(child)).type === "Directory") pending.push(child);
+      const linked = yield* fs.readLink(child).pipe(
+        Effect.as(true),
+        Effect.catchIf(
+          (error) =>
+            error.cause instanceof Error && "code" in error.cause && error.cause.code === "EINVAL",
+          () => Effect.succeed(false),
+        ),
+      );
+      if (!linked && (yield* fs.stat(child)).type === "Directory") pending.push(child);
     }
   }
   return null;
