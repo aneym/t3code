@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .release_jobs import write_status
-from .suite_reaper import track_process, worker_record
+from .suite_cleanup_record import track_process, worker_record
 from .suite_process import REMOTE
 from .release_manifest import digest
 from .suite_plan import load, slug, write

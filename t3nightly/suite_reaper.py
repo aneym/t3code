@@ -1,4 +1,3 @@
-import contextvars
 import fcntl
 import json
 import os
@@ -8,24 +7,8 @@ import subprocess
 import time
 from pathlib import Path
 
-from .release_jobs import write_status
-
-_RECORD = contextvars.ContextVar("advisory_cleanup", default=None)
-
-
-def worker_record(path, value):
-    value["ownerHost"] = socket.gethostname()
-    value["processGroups"] = []
-    write_status(path, value)
-    _RECORD.set((path, value))
-
-
-def track_process(pgid):
-    record = _RECORD.get()
-    if record:
-        path, value = record
-        value["processGroups"].append(pgid)
-        write_status(path, value)
+from .suite_resources import job_tmp
+from .suite_worker import HOSTS, cleanup, tmp_report
 
 
 def alive(pid):
@@ -54,9 +37,6 @@ def members(pgid, tree):
 
 
 def reap(root, log, *, dry_run=False):
-    from .suite_worker import HOSTS, cleanup, tmp_report
-    from .suite_resources import job_tmp
-
     results = []
     for path in sorted(Path(root).rglob("*.cleanup.json")):
         row = {"record": str(path)}

@@ -3,6 +3,8 @@ import tempfile
 from pathlib import Path
 
 from .suite_environment import isolated
+from .suite_reaper import reap
+from .suite_worker import HOSTS, execute
 
 SIZE = r'''
 import json
@@ -20,8 +22,6 @@ print(json.dumps({"bytes": size}))
 
 
 def prune_store(host, log):
-    from .suite_worker import HOSTS, execute
-
     repo, root = HOSTS[host]
     store = str(Path(root) / ".advisory-pnpm-store")
     words = isolated(repo, ["pnpm", f"--config.store-dir={store}", "store", "prune"], host=host)
@@ -34,7 +34,5 @@ def prune_store(host, log):
 
 
 def maintain(root, hosts, log, *, dry_run=False):
-    from .suite_reaper import reap
-
     return {"reaper": reap(root, log, dry_run=dry_run),
             "stores": [] if dry_run else [prune_store(host, log) for host in sorted(set(hosts))]}
