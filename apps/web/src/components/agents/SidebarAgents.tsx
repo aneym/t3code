@@ -319,7 +319,11 @@ function AgentRow(props: {
         {props.focus ? <AgentRowButton action={props.focus} /> : null}
         <AgentRowButton action={props.toggle} />
       </span>
-      {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
+      {props.jumpLabel ? (
+        <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center">
+          <JumpHintBadge label={props.jumpLabel} />
+        </span>
+      ) : null}
     </li>
   );
 }

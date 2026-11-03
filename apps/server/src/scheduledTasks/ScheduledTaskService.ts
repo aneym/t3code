@@ -1305,8 +1305,7 @@ export const layer = Layer.effect(
         existingTask !== null &&
         existingTask.enabled === enabled &&
         isSameSchedule(existingTask.schedule, schedule);
-      if (!scheduleUnchanged)
-        yield* requireFutureOnce({ enabled: input.enabled, schedule }, now, id);
+      if (!scheduleUnchanged) yield* requireFutureOnce({ enabled, schedule }, now, id);
       const task: ScheduledTask = {
         id,
         title: input.title,

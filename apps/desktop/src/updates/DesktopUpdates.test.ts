@@ -995,24 +995,47 @@ describe("DesktopUpdates under a managed policy", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("updates from the administrator's feed", () => {
-    const harness = makeHarness({
-      // Any user can set the mock flag; it must not redirect a managed feed.
-      env: { T3CODE_DESKTOP_MOCK_UPDATES: "true" },
-      policy: managed({ feedUrl: "https://updates.example.com/t3code" }),
-    });
-
-    return Effect.scoped(
+  it.effect.each([false, true])(
+    "updates from the administrator's feed, exact install %s",
+    (exact) =>
       Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        assert.equal((yield* updates.getState).status, "idle");
-        assert.deepEqual(harness.feedUrls(), [
-          { provider: "generic", url: "https://updates.example.com/t3code" },
-        ]);
+        const checking = yield* Deferred.make<void>();
+        const harness = makeHarness({
+          env: { T3CODE_DESKTOP_MOCK_UPDATES: "true" },
+          policy: managed({ feedUrl: "https://updates.example.com/t3code" }),
+          savedChannel: "nightly",
+          checkForUpdates: Deferred.succeed(checking, undefined).pipe(Effect.asVoid),
+        });
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            assert.equal((yield* updates.getState).status, "idle");
+            if (exact) {
+              const install = yield* updates
+                .installVersion("1.2.4-nightly.20261103.aneym.42")
+                .pipe(Effect.forkChild);
+              yield* Deferred.await(checking);
+              harness.emit("update-not-available");
+              assert.isFalse((yield* Fiber.join(install)).accepted);
+            }
+            assert.deepEqual(harness.feedUrls(), [
+              { provider: "generic" as const, url: "https://updates.example.com/t3code" },
+              ...(exact
+                ? [
+                    {
+                      provider: "generic" as const,
+                      url: "https://updates.example.com/t3code/desktop/1.2.4-nightly.20261103.aneym.42/",
+                    },
+                    { provider: "generic" as const, url: "https://updates.example.com/t3code/" },
+                  ]
+                : []),
+            ]);
+          }),
+        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
       }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
+  );
 
   it.effect("refuses the nightly channel without nightly", () => {
     const harness = makeHarness({ policy: managed({ allowNightly: false }) });

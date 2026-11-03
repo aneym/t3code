@@ -129,7 +129,6 @@ export function describeComposerEffort(
           ? "Ultrathink"
           : getProviderOptionCurrentLabel(reasoning, modelSelection, traits.reportedModelSelection);
   const fast = display.speedLabel === "Fast" || display.speedLabel === "Ultrafast";
-  // Agent options such as modes live in the picker; the trigger adds only the context window.
   const contextWindow =
     visibility.contextWindowDescriptor &&
     getProviderOptionCurrentLabel(
@@ -137,7 +136,14 @@ export function describeComposerEffort(
       modelSelection,
       traits.reportedModelSelection,
     );
-  if (!word && !glyph && !fast && !contextWindow) return { suffix: null, detail: display.label };
+  const ultracode = visibility.booleanDescriptors.find(
+    (descriptor) => descriptor.id === "ultracode" && descriptor.currentValue === true,
+  );
+  const otherLabels = [contextWindow, ultracode?.label].filter(
+    (label): label is string => typeof label === "string",
+  );
+  if (!word && !glyph && !fast && otherLabels.length === 0)
+    return { suffix: null, detail: display.label };
   return {
     detail: display.label,
     suffix: (
@@ -156,7 +162,7 @@ export function describeComposerEffort(
           <EffortGlyph count={glyph.count} filled={glyph.filled} size={size} />
         ) : null}
         {fast ? <FastBolt ultra={display.speedLabel === "Ultrafast"} /> : null}
-        {contextWindow ? (
+        {otherLabels.length > 0 ? (
           <span
             // A label, so icon-only footers drop it; compacted rows drop it before the model.
             data-composer-control-label
@@ -164,7 +170,7 @@ export function describeComposerEffort(
             className="max-w-24 truncate text-xs"
           >
             <SecondaryTraitWords
-              labels={[contextWindow]}
+              labels={otherLabels}
               descriptors={visibility.descriptors}
               rainbow={rainbow}
             />
