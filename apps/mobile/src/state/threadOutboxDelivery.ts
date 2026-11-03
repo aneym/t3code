@@ -14,6 +14,7 @@ import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   AuthOrchestrationOperateScope,
   CommandId,
+  composerSubmitOf,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   managedRuntimeModeDenial,
@@ -709,8 +710,6 @@ export function createThreadOutboxDelivery(): {
     retries.delete(messageId);
   };
 
-  // A delivery that throws backs off like any failure. Releasing the slot
-  // without a retry would re-run the drain straight into the same message.
   const settle = (messageId: MessageId, delivery: Promise<boolean>): void => {
     void delivery
       .then(
@@ -892,6 +891,7 @@ export function createThreadOutboxDelivery(): {
             ),
           ),
           attachments: prepared.attachments,
+          ...composerSubmitOf(queuedMessage),
         },
         modelSelection: sendSettings.modelSelection,
         titleSeed: deriveThreadTitleSeed({
@@ -1070,6 +1070,7 @@ export function createThreadOutboxDelivery(): {
         worktreePath: workspace.worktreePath,
         startFromOrigin: workspace.startFromOrigin ?? false,
         worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+        ...composerSubmitOf(queuedMessage),
       }),
     });
     if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;

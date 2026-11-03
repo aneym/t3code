@@ -832,7 +832,6 @@ export function NewTaskFlowProvider(
         ...(mode === "worktree" && workspaceSelection?.pullRequestReference
           ? { pullRequestReference: workspaceSelection.pullRequestReference }
           : {}),
-        // Queued local tasks use drain-time checkout; snapshot branches only for immediate sends or explicit choices.
         branch: resolveProjectThreadCreationBranch({
           workspaceMode: mode,
           selectedBranch: workspaceSelection?.branch ?? null,
@@ -843,6 +842,7 @@ export function NewTaskFlowProvider(
           ? { startFromOrigin: true }
           : {}),
       },
+      ...(text.length === 0 ? {} : { composerSubmit: { displayedAssistantMessageId: null } }),
       createdAt: metadata.createdAt,
     };
   };

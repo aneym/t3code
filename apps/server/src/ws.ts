@@ -2108,18 +2108,7 @@ export const layerWsRpc = (
                     workspaceStrategy: input.workspaceStrategy,
                     ...(input.initialMessage === undefined
                       ? {}
-                      : {
-                          initialMessage: {
-                            ...(input.initialMessage.messageId === undefined
-                              ? {}
-                              : { messageId: input.initialMessage.messageId }),
-                            text: input.initialMessage.text,
-                            attachments: input.initialMessage.attachments,
-                            ...(input.initialMessage.context === undefined
-                              ? {}
-                              : { context: input.initialMessage.context }),
-                          },
-                        }),
+                      : { initialMessage: input.initialMessage }),
                     createdBy: "user",
                     creationSource: input.creationSource ?? "web",
                   }).pipe(Effect.provide(intakeContext)),

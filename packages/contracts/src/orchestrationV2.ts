@@ -12,6 +12,7 @@ import { OrchestrationV2DelegatedCompletionCohort } from "./delegatedCompletionD
 import { RestartRunState } from "./restartRunState.ts";
 import { QueueHoldState, QueueHoldStateJson } from "./queueHoldReason.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import { OrchestrationV2ComposerSubmit } from "./composerSubmit.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -1276,7 +1277,6 @@ export const OrchestrationV2Notification = Schema.Struct({
 });
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
 
-/** Why T3 Code compacted a thread on its own, on the `/compact` it sent. */
 export const OrchestrationV2IdleCompaction = Schema.Literals(["beforeCacheExpires", "onReturn"]);
 export type OrchestrationV2IdleCompaction = typeof OrchestrationV2IdleCompaction.Type;
 
@@ -1286,10 +1286,7 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   scheduledTaskId: Schema.optional(ScheduledTaskId),
   ...MessageSender.fields,
   idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
-  /**
-   * The message is the script a provider-native workflow run executes, not prose. Clients show
-   * the workflow's opening instead and keep the script behind a disclosure.
-   */
+  composerSubmit: Schema.optional(OrchestrationV2ComposerSubmit),
   workflowScript: Schema.optional(Schema.Boolean),
   id: MessageId,
   threadId: ThreadId,
@@ -3109,12 +3106,12 @@ export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
     notification: Schema.optional(OrchestrationV2Notification),
-    /** Sends this pending guest message; the server uses the guest's text, not `text`. */
     guestMessageId: Schema.optional(GuestMessageId),
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     ...MessageSender.fields,
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
+    composerSubmit: Schema.optional(OrchestrationV2ComposerSubmit),
     commandId: CommandId,
     threadId: ThreadId,
     messageId: MessageId,
@@ -3607,6 +3604,7 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
       text: Schema.String,
       context: Schema.optional(OrchestrationMessageContext),
       attachments: Schema.Array(ChatAttachment),
+      composerSubmit: Schema.optional(OrchestrationV2ComposerSubmit),
     }),
   ),
 });

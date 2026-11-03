@@ -69,6 +69,8 @@ import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type ChatAttachment,
   CommandId,
+  composerSubmitOf,
+  withoutComposerSubmit,
   type GuestMessageId,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
@@ -4665,6 +4667,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly senderEnvironmentId?: OrchestrationV2ConversationMessage["senderEnvironmentId"];
     readonly senderEnvironmentLabel?: OrchestrationV2ConversationMessage["senderEnvironmentLabel"];
     readonly idleCompaction?: OrchestrationV2ConversationMessage["idleCompaction"];
+    readonly composerSubmit?: OrchestrationV2ConversationMessage["composerSubmit"];
     readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
     readonly forceRestart: boolean;
   }) {
@@ -4722,8 +4725,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Target run ${targetRun.id} is ${targetRun.status} and cannot be steered.`,
       });
     }
-    // The run reads as running until its provider stops, but a steer accepted
-    // after Stop never reaches the agent.
     if (yield* stopReachedRun(input.command, input.command.threadId, targetRun.id)) {
       return yield* new OrchestratorDispatchError({
         commandId: input.command.commandId,
@@ -4823,6 +4824,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : { scheduledTaskId: input.scheduledTaskId }),
           ...messageSender(input),
           ...(input.idleCompaction === undefined ? {} : { idleCompaction: input.idleCompaction }),
+          ...composerSubmitOf(input),
           id: input.messageId,
           threadId: input.command.threadId,
           runId: messageInput.runId,
@@ -4892,9 +4894,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     );
 
-    // A selection the provider applies on its next turn joins the running
-    // turn as a steer and waits for the next turn. Restarting the turn for it
-    // would end the turn's native subagents, which a steer must never do.
     const selectionMustApplyNow =
       selectionChanged &&
       (providerInstanceChanged || selectionTransition?.type !== "apply_on_next_turn");
@@ -5823,6 +5822,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { scheduledTaskId: command.scheduledTaskId }),
         ...messageSender(command),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
+        ...composerSubmitOf(command),
         forceRestart: dispatchMode.type === "restart_active",
       });
       return;
@@ -6071,6 +6071,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { scheduledTaskId: command.scheduledTaskId }),
         ...messageSender(command),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
+        ...composerSubmitOf(command),
         id: command.messageId,
         threadId: command.threadId,
         runId,
@@ -6424,6 +6425,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { scheduledTaskId: command.scheduledTaskId }),
         ...messageSender(command),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
+        ...composerSubmitOf(command),
         id: command.messageId,
         threadId: command.threadId,
         runId,
@@ -7178,6 +7180,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : { scheduledTaskId: command.scheduledTaskId }),
       ...messageSender(command),
       ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
+      ...composerSubmitOf(command),
       id: command.messageId,
       threadId: command.threadId,
       runId,
@@ -9514,6 +9517,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(queuedMessage.idleCompaction === undefined
         ? {}
         : { idleCompaction: queuedMessage.idleCompaction }),
+      ...composerSubmitOf(queuedMessage),
       forceRestart: false,
     });
   });
@@ -9785,7 +9789,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerInstanceId: queuedRun.providerInstanceId,
       occurredAt: now,
       payload: withoutGuestAttribution({
-        ...queuedMessage,
+        ...withoutComposerSubmit(queuedMessage),
         text: command.text,
         ...editedAttachments,
         ...(command.context ? { context: command.context } : {}),

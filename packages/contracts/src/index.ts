@@ -2,6 +2,7 @@ export * from "./baseSchemas.ts";
 export * from "./agentHome.ts";
 export * from "./assistantCitations.ts";
 export * from "./composerContext.ts";
+export * from "./composerSubmit.ts";
 export * from "./composerContextClipboard.ts";
 export * from "./background.ts";
 export * from "./acpRegistry.ts";

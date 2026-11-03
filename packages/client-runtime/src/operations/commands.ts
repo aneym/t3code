@@ -2,6 +2,7 @@ import { remapComposerContextAttachments } from "@t3tools/shared/composerContext
 import {
   type ThreadLinkedPullRequest,
   CommandId,
+  composerSubmitOf,
   CheckpointId,
   CheckpointScopeId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -167,6 +168,7 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
     readonly attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
     readonly context?: import("@t3tools/contracts").OrchestrationMessageContext;
     readonly idleCompaction?: import("@t3tools/contracts").OrchestrationV2IdleCompaction;
+    readonly composerSubmit?: import("@t3tools/contracts").OrchestrationV2ComposerSubmit;
   };
   readonly modelSelection?: ModelSelection;
   readonly titleSeed?: string;
@@ -687,6 +689,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         text: input.message.text,
         ...(context ? { context } : {}),
         attachments,
+        ...composerSubmitOf(input.message),
       },
     });
   }
@@ -708,6 +711,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       ...(input.message.idleCompaction === undefined
         ? {}
         : { idleCompaction: input.message.idleCompaction }),
+      ...composerSubmitOf(input.message),
       attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.sourceProposedPlan === undefined
@@ -733,6 +737,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     ...(input.message.idleCompaction === undefined
       ? {}
       : { idleCompaction: input.message.idleCompaction }),
+    ...composerSubmitOf(input.message),
     attachments,
     ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
     ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
@@ -750,8 +755,6 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
     const projection = yield* getProjection(input.threadId);
     const subagent = projection.subagents.find((agent) => agent.id === input.subagentId);
     if (subagent?.origin === "app_owned" && subagent.childThreadId !== null) {
-      // The parent ends the task even when its child lost track of it. Older
-      // servers reject this for app-owned tasks, so the child stop below still runs.
       if (subagent.runId !== null) {
         yield* dispatch({
           type: "subagent.stop",
@@ -779,7 +782,6 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
   if (runId === undefined) {
     const config = yield* getInitialServerConfig();
     if (config.environment.capabilities.threadStop === true) {
-      // A paginated projection can omit commands still running from earlier turns.
       return yield* dispatch({
         type: "thread.stop",
         commandId: yield* allocateCommandId(input),
