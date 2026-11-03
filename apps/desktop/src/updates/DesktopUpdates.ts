@@ -376,7 +376,7 @@ export const make = Effect.gen(function* () {
   // Any user can set the mock flag, so it never replaces an administrator's update source.
   const mockUpdates = config.mockUpdates && policy.message === null;
 
-  const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
+  const effectiveFeedConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
   const installRunningBackendsRef = yield* Ref.make<
     ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>
@@ -453,11 +453,8 @@ export const make = Effect.gen(function* () {
           )
       : false;
 
-  const hasUpdateFeedConfig = Ref.get(appUpdateYmlConfigRef).pipe(
-    Effect.map(
-      (appUpdateYmlConfig) =>
-        Option.isSome(appUpdateYmlConfig) || mockUpdates || policy.feedUrl !== undefined,
-    ),
+  const hasUpdateFeedConfig = Ref.get(effectiveFeedConfigRef).pipe(
+    Effect.map((feedConfig) => Option.isSome(feedConfig)),
   );
 
   const resolveDisabledReason = Effect.gen(function* () {
@@ -1130,7 +1127,15 @@ export const make = Effect.gen(function* () {
       };
 
       const appUpdateYmlConfig = yield* readAppUpdateYml;
-      yield* Ref.set(appUpdateYmlConfigRef, appUpdateYmlConfig);
+      const feedOverride = mockUpdates
+        ? { provider: "generic", url: `http://localhost:${config.mockUpdateServerPort}` }
+        : policy.feedUrl !== undefined
+          ? { provider: "generic", url: policy.feedUrl }
+          : undefined;
+      yield* Ref.set(
+        effectiveFeedConfigRef,
+        feedOverride === undefined ? appUpdateYmlConfig : Option.some(feedOverride),
+      );
 
       const notAppliedVersion = yield* readNotAppliedInstallVersion;
       yield* Ref.set(notAppliedVersionRef, notAppliedVersion);
@@ -1141,17 +1146,8 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      if (mockUpdates) {
-        yield* electronUpdater.setFeedURL({
-          provider: "generic",
-          url: `http://localhost:${config.mockUpdateServerPort}`,
-        } as ElectronUpdater.ElectronUpdaterFeedUrl);
-      } else if (policy.feedUrl !== undefined) {
-        // The administrator's mirror replaces the GitHub feed baked into app-update.yml.
-        yield* electronUpdater.setFeedURL({
-          provider: "generic",
-          url: policy.feedUrl,
-        } as ElectronUpdater.ElectronUpdaterFeedUrl);
+      if (feedOverride !== undefined) {
+        yield* electronUpdater.setFeedURL(feedOverride as ElectronUpdater.ElectronUpdaterFeedUrl);
       }
 
       const settings = yield* desktopSettings.get;
@@ -1319,7 +1315,7 @@ export const make = Effect.gen(function* () {
         return yield* tryStartUpdateAction("check");
       }),
       release: finishUpdateAction("check"),
-      feedRoot: Ref.get(appUpdateYmlConfigRef).pipe(
+      feedRoot: Ref.get(effectiveFeedConfigRef).pipe(
         Effect.map(
           Option.match({
             onNone: () => undefined,

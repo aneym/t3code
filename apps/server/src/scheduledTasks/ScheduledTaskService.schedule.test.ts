@@ -293,6 +293,16 @@ it.effect.each([false, true])(
           .pipe(Effect.flip);
         expect(reenabled.message).toBe("The run time has passed. Pick a time in the future.");
         yield* service.setEnabled({ id: created.task.id, enabled: false });
+        const pastEdit = yield* service
+          .upsert({
+            ...input,
+            id: created.task.id,
+            enabled: false,
+            schedule: { type: "once", runAt: "2026-07-01T09:02:00.000Z" },
+          })
+          .pipe(Effect.flip);
+        expect(pastEdit.message).toBe("The run time has passed. Pick a time in the future.");
+        expect((yield* service.list()).tasks[0]?.enabled).toBe(false);
         const rearmed = yield* service.upsert({
           ...input,
           id: created.task.id,
