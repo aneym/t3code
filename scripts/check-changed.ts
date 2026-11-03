@@ -449,8 +449,6 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   const graphql = ["apps/server", "packages/source-control-github"].filter((dir) =>
     files.some((file) => file.startsWith(`${dir}/`)),
   );
-  const filters = (names: ReadonlyArray<string>) => names.flatMap((name) => ["--filter", name]);
-  const typecheckWorkers = Math.min(concurrency, affected.length);
   const command = (name: string, args: ReadonlyArray<string>) => ({ name, run: vp(args) });
   const compilerFiles = compilerApps.reduce((count, app) => count + app.names.length, 0);
 
@@ -466,24 +464,9 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...graphql.map((dir) =>
       command(`graphql (${dir})`, ["run", "--filter", `./${dir}`, "generate", "--check"]),
     ),
-    ...(affected.length > 0
-      ? [
-          {
-            // `tsc --noEmit` writes nothing another package reads, so dependency order
-            // only made dependents wait: --parallel cut a contracts change from 13 s to 9 s.
-            ...command(`typecheck (${affected.length} packages)`, [
-              "run",
-              "--cache",
-              "--parallel",
-              "--concurrency-limit",
-              String(typecheckWorkers),
-              ...filters(affected),
-              "typecheck",
-            ]),
-            weight: typecheckWorkers,
-          },
-        ]
-      : []),
+    ...affected.map((name) =>
+      command(`typecheck (${name})`, ["run", "--cache", "--filter", name, "typecheck"]),
+    ),
     // From the repo root, the root vite.config.ts hands each file to its package's config.
     ...(tests.size > 0
       ? [
@@ -522,7 +505,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   }
   if (results.some((result) => result.outcome === "TIMEOUT")) {
     summary.push(
-      `  TIMEOUT: ran past ${timeoutSeconds}s and was killed; this is not a check failure. ` +
+      `  TIMEOUT: check failed after ${timeoutSeconds}s; the process group was killed. ` +
         "Raise --timeout or lower --concurrency.",
     );
   }
@@ -562,7 +545,7 @@ export const checkChangedCommand = Command.make(
     ),
     concurrency: Flag.Int("concurrency").pipe(
       Flag.withDescription(
-        "Budget of parallel steps and typecheck workers; also CHECK_CHANGED_CONCURRENCY. Defaults to one per two cores and per 6 GiB of available memory.",
+        "Budget of parallel steps; also CHECK_CHANGED_CONCURRENCY. Defaults to one per two cores and per 6 GiB of available memory.",
       ),
       Flag.optional,
     ),
