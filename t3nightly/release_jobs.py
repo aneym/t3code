@@ -109,9 +109,6 @@ def cancel(directory):
     row = status(directory)
     if row.get("outcome") in TERMINAL:
         return row
-    pid = row.get("pid")
-    if not isinstance(pid, int) or pid <= 1:
-        raise ValueError("job has no recorded runner PID; retry once the runner starts")
     import fcntl
 
     with (directory / "runner.lock").open("a") as owner:
@@ -121,11 +118,17 @@ def cancel(directory):
             row = status(directory)
             if row.get("outcome") in TERMINAL:
                 return row
-            if row.get("pid") != pid:
-                raise ValueError("runner PID changed; retry cancellation")
+            pid = row.get("pid")
+            if not isinstance(pid, int) or pid <= 1:
+                raise ValueError("runner has not recorded its PID; retry cancellation")
             os.kill(pid, signal.SIGTERM)
         else:
-            raise ValueError("recorded runner no longer holds its lock; refusing stale PID")
+            row = status(directory)
+            if row.get("outcome") == "submitted":
+                row.update(outcome="cancelled", reason="cancelled before runner start")
+                write_status(directory / "status.json", row)
+            elif row.get("outcome") not in TERMINAL:
+                raise ValueError("recorded runner no longer holds its lock; refusing stale PID")
     return status(directory)
 
 

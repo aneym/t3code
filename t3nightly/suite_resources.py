@@ -34,8 +34,7 @@ def holder():
             continue
         try:
             cwd = (proc / "cwd").resolve()
-            args = (proc / "cmdline").read_bytes().decode(errors="replace")
-            if cwd == tree or tree in cwd.parents or str(alias) in args or str(tree) in args:
+            if cwd == tree or tree in cwd.parents:
                 return proc.name
         except (FileNotFoundError, PermissionError, ProcessLookupError):
             continue
@@ -185,13 +184,6 @@ while True:
 
 def job_tmp(tree):
     return f"{TMP_ROOT}/advisory-{hashlib.sha256(os.path.normpath(tree).encode()).hexdigest()[:16]}"
-
-
-def cache_exports(host, tree):
-    if host != "ax42":
-        return "true"
-    tmp = job_tmp(tree)
-    return f"{{ mkdir -p /srv/cow/t3-wt/.advisory-cache/pnpm {tmp} && test \"$(realpath {tmp})\" = {tmp} && export TMPDIR={tmp} XDG_CACHE_HOME=/srv/cow/t3-wt/.advisory-cache PNPM_CONFIG_CACHE_DIR=/srv/cow/t3-wt/.advisory-cache/pnpm PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright electron_config_cache=$HOME/.cache/electron; }}"
 
 
 @contextmanager

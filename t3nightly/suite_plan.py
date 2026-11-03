@@ -79,11 +79,17 @@ def expressions(value, shard, shard_count):
 
 def tools(command):
     found = []
-    for tool in ("vp", "vpr", "node", "python3", "cargo", "brew", "git", "sudo"):
+    for tool in ("vp", "vpr", "vpx", "node", "npm", "npx", "pnpm", "uv", "python3", "cargo", "brew", "git", "sudo", "rustc", "rustdoc", "cargo-nextest"):
         if re.search(rf"(?<![A-Za-z0-9_-]){re.escape(tool)}(?![A-Za-z0-9_-])", command):
             found.append(tool)
     if "cargo fmt" in command:
-        found.append("rustfmt")
+        found.extend(("rustfmt", "cargo-fmt"))
+    if "cargo clippy" in command:
+        found.extend(("cargo-clippy", "clippy-driver"))
+    if "cargo nextest" in command:
+        found.append("cargo-nextest")
+    if "--doc" in command:
+        found.append("rustdoc")
     return found
 
 

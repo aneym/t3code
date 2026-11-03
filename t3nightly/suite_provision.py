@@ -1,7 +1,3 @@
-import os
-from pathlib import Path
-
-
 SHIM = r'''#!/usr/bin/env python3
 import json
 import os
@@ -112,19 +108,3 @@ def setup_script(temp):
     script = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.mkdir(parents=True,exist_ok=True); "
     script += "[(p.joinpath(n).write_text(sys.argv[2]),p.joinpath(n).chmod(0o755)) for n in ('sudo','apt','apt-get')]"
     return ["python3", "-c", script, folder, SHIM]
-
-
-def linux_exports():
-    prefix = '$HOME/.local/t3nightly-apt/root/usr'
-    values = {
-        "PKG_CONFIG_PATH": f"{prefix}/lib/x86_64-linux-gnu/pkgconfig:{prefix}/share/pkgconfig",
-        "LD_LIBRARY_PATH": f"{prefix}/lib/x86_64-linux-gnu:{prefix}/lib",
-        "LIBRARY_PATH": f"{prefix}/lib/x86_64-linux-gnu:{prefix}/lib",
-        "CPATH": f"{prefix}/include",
-    }
-    paths = " ".join(f'{key}="{value}${{{key}:+:${key}}}"' for key, value in values.items())
-    return '{ export CC=/usr/bin/gcc CXX=/usr/bin/g++ && if test -d "$HOME/.local/t3nightly-apt/root"; then export ' + paths + '; fi; }'
-
-
-def studio_path(tree):
-    return f"{tree}/node_modules/.bin:{Path.home()}/.vite-plus/bin:/opt/homebrew/bin:" + os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")

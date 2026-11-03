@@ -11,7 +11,7 @@ from pathlib import Path
 from .release_jobs import bootout, job_identity, status, write_status
 from .release_timeline import utc_now
 
-TERM_GRACE_S = 60
+TERM_GRACE_S = 900
 RESOURCE_WAIT_CAP_S = 3600
 HOLD_EXPIRY_S = 86400
 LIVE_HOLD_WAIT_S = HOLD_EXPIRY_S + 900
@@ -29,7 +29,7 @@ def group_alive(pgid):
 
 def stop_group(process):
     try:
-        os.killpg(process.pid, signal.SIGTERM)
+        os.kill(process.pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
     deadline = time.monotonic() + TERM_GRACE_S
