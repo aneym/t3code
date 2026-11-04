@@ -86,3 +86,5 @@ export * from "./settingsSecretValue.ts";
 export * from "./clientRpcPermissions.ts";
 export * from "./messageSender.ts";
 export * from "./orchestratorMcpTimeline.ts";
+export * from "./agentPlacement.ts";
+export { chooseLoadBalancedEnvironment } from "./loadBalancingSettings.ts";

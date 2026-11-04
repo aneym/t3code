@@ -1,5 +1,6 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { AgentLoadBalancingSettings } from "./AgentLoadBalancingSettings";
+import type { ServerSettings, ServerSettingsPatch, EnvironmentId } from "@t3tools/contracts";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -13,6 +14,9 @@ const WEIGHTS = [
 ];
 
 export function LoadBalancingSettings(props: {
+  readonly serverSettings?: ServerSettings;
+  readonly disabled?: boolean;
+  readonly updateServerSettings?: (patch: ServerSettingsPatch) => void;
   readonly environments: readonly {
     readonly environmentId: EnvironmentId;
     readonly environmentLabel: string;
@@ -25,6 +29,14 @@ export function LoadBalancingSettings(props: {
   const enabled = preferences?.loadBalancingEnabled === true;
   return (
     <>
+      {props.serverSettings && props.updateServerSettings ? (
+        <AgentLoadBalancingSettings
+          environments={props.environments}
+          settings={props.serverSettings}
+          disabled={props.disabled ?? false}
+          update={props.updateServerSettings}
+        />
+      ) : null}
       <SettingsSection
         title="Load balancing"
         footer="Shared-project new threads use free CPU and memory, weighted by each machine’s preference."

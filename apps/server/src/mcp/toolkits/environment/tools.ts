@@ -1,4 +1,7 @@
 import {
+  AgentPlacementProviders,
+  ProjectId,
+  HostResourcesSnapshot,
   BackgroundActivityProfile,
   BackgroundActivityProfileSelection,
   ExecutionEnvironmentDescriptor,
@@ -16,6 +19,8 @@ import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const PreferenceFields = {
+  agentLoadBalancingEnabled: ServerSettings.fields.agentLoadBalancingEnabled,
+  agentLoadBalancingWeights: ServerSettings.fields.agentLoadBalancingWeights,
   defaultThreadEnvMode: ServerSettings.fields.defaultThreadEnvMode,
   newWorktreesStartFromOrigin: ServerSettings.fields.newWorktreesStartFromOrigin,
   enableProviderUpdateChecks: ServerSettings.fields.enableProviderUpdateChecks,
@@ -42,13 +47,18 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
   ...shared,
   description:
     "Read this server's identity and preferences. Providers and models: `orchestrator_capabilities`.",
-  parameters: Schema.Struct({ environmentId: OrchestratorMcpEnvironmentTarget }),
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    projectId: Schema.optionalKey(ProjectId),
+  }),
   success: Schema.Struct({
     environmentId: ExecutionEnvironmentDescriptor.fields.environmentId,
     label: Schema.String,
     serverVersion: Schema.String,
     platform: ExecutionEnvironmentDescriptor.fields.platform,
     preferences: Schema.Struct(PreferenceFields),
+    hostResources: Schema.NullOr(HostResourcesSnapshot),
+    placementProviders: AgentPlacementProviders,
   }),
 })
   .annotate(Tool.Readonly, true)
@@ -59,6 +69,8 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
     "Update environment-wide preferences. Live full-access or default caller thread only. Omitted fields are unchanged; `customInstructions: ''` clears it.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
+    agentLoadBalancingEnabled: ServerSettingsPatch.fields.agentLoadBalancingEnabled,
+    agentLoadBalancingWeights: ServerSettingsPatch.fields.agentLoadBalancingWeights,
     defaultThreadEnvMode: ServerSettingsPatch.fields.defaultThreadEnvMode,
     newWorktreesStartFromOrigin: ServerSettingsPatch.fields.newWorktreesStartFromOrigin,
     enableProviderUpdateChecks: ServerSettingsPatch.fields.enableProviderUpdateChecks,

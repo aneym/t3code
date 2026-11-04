@@ -1,6 +1,7 @@
 import * as Struct from "effect/Struct";
 import { McpAttachmentInput } from "../attachment/input.ts";
 import {
+  AgentPlacementReceipt,
   NonNegativeInt,
   ModelSelection,
   TrimmedNonEmptyString,
@@ -156,6 +157,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
   }),
   success: Schema.Struct({
+    placement: Schema.optional(AgentPlacementReceipt),
     threadId: ThreadId,
     link: Schema.optional(Schema.String),
     projectId: ProjectId,
