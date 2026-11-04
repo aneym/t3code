@@ -16,25 +16,29 @@ const WEIGHTS = [
 export function LoadBalancingSettings(props: {
   readonly serverSettings?: ServerSettings;
   readonly disabled?: boolean;
-  readonly updateServerSettings?: (patch: ServerSettingsPatch) => void;
-  readonly environments: readonly {
+  readonly update?: (patch: ServerSettingsPatch) => void;
+  readonly targets: readonly {
     readonly environmentId: EnvironmentId;
-    readonly environmentLabel: string;
+    readonly label: string;
   }[];
 }) {
+  const environments = props.targets.map((target) => ({
+    environmentId: target.environmentId,
+    environmentLabel: target.label,
+  }));
   const result = useAtomValue(mobilePreferencesAtom);
   const update = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
   const preferences = result._tag === "Success" ? result.value : null;
-  if (props.environments.length === 0) return null;
+  if (environments.length === 0) return null;
   const enabled = preferences?.loadBalancingEnabled === true;
   return (
     <>
-      {props.serverSettings && props.updateServerSettings ? (
+      {props.serverSettings && props.update ? (
         <AgentLoadBalancingSettings
-          environments={props.environments}
+          environments={environments}
           settings={props.serverSettings}
           disabled={props.disabled ?? false}
-          update={props.updateServerSettings}
+          update={props.update}
         />
       ) : null}
       <SettingsSection
@@ -50,7 +54,7 @@ export function LoadBalancingSettings(props: {
           }}
         />
       </SettingsSection>
-      {props.environments.map((environment) => (
+      {environments.map((environment) => (
         <SettingsSection key={environment.environmentId} title={environment.environmentLabel}>
           {WEIGHTS.map((choice, index) => (
             <ListChoiceRow

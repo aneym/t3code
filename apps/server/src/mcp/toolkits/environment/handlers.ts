@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts"
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { isProviderAvailable, resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
@@ -55,7 +56,33 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
       const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
       const resources = yield* Effect.serviceOption(HostResources.HostResources);
       const providers = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+      let placementProjectId = input.projectId;
+      if (input.placementRepositoryKey !== undefined) {
+        placementProjectId = undefined;
+        const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
+        if (Option.isSome(projects)) {
+          const matches = [];
+          let cursor: number | null = 0;
+          let pages = 0;
+          while (cursor !== null && pages++ < 10) {
+            const page: Effect.Success<
+              ReturnType<ProjectService.ProjectService["Service"]["listPage"]>
+            > = yield* projects.value
+              .listPage({ cursor, limit: 100 })
+              .pipe(Effect.mapError(unavailable));
+            matches.push(
+              ...page.projects.filter(
+                (project) =>
+                  project.repositoryIdentity?.canonicalKey === input.placementRepositoryKey,
+              ),
+            );
+            cursor = page.nextCursor;
+          }
+          if (cursor === null && matches.length === 1) placementProjectId = matches[0]?.id;
+        }
+      }
       return {
+        ...(placementProjectId === undefined ? {} : { placementProjectId }),
         environmentId: descriptor.environmentId,
         label: descriptor.label,
         serverVersion: descriptor.serverVersion,
@@ -80,7 +107,7 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
                   provider.auth.status !== "unauthenticated" &&
                   resolveProjectProviderInstanceEnabled(
                     current,
-                    input.projectId ?? null,
+                    placementProjectId ?? null,
                     provider.instanceId,
                   ),
                 models: provider.models.map((model) => model.slug),

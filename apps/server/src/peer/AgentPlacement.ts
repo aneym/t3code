@@ -6,7 +6,6 @@ import {
   HostResourcesSnapshot,
   ModelSelection,
   OrchestratorMcpFailure,
-  Project,
   ProjectId,
   type ProviderDriverKind,
   isProviderAvailable,
@@ -50,12 +49,9 @@ const SavedSelection = Schema.Struct({ savedAt: Schema.Number, selection: Select
 const RECEIPT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const Snapshot = Schema.Struct({
   label: Schema.String,
-  hostResources: HostResourcesSnapshot,
-  placementProviders: AgentPlacementProviders,
-});
-const ProjectPage = Schema.Struct({
-  projects: Schema.Array(Project),
-  nextCursor: Schema.NullOr(Schema.Number),
+  hostResources: Schema.optionalKey(Schema.NullOr(HostResourcesSnapshot)),
+  placementProjectId: Schema.optionalKey(ProjectId),
+  placementProviders: Schema.optionalKey(AgentPlacementProviders),
 });
 
 export class AgentPlacement extends Context.Service<
@@ -93,6 +89,8 @@ const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const lock = yield* KeyedLock.make<string>();
   const encode = Schema.encodeEffect(Schema.fromJsonString(SavedSelection));
+  const encodeModel = Schema.encodeEffect(Schema.fromJsonString(ModelSelection));
+  const snapshots = new Map<string, { expiresAt: number; value: typeof Snapshot.Type }>();
   const encodeKey = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
   const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(SavedSelection));
   const receiptDir = path.join(config.stateDir, "agent-placement");
@@ -114,14 +112,25 @@ const make = Effect.gen(function* () {
     );
   });
   const enabled = settings.getSettings.pipe(
-    Effect.map((current) => current.agentLoadBalancingEnabled),
+    Effect.map(
+      (current) =>
+        current.agentLoadBalancingEnabled &&
+        current.linkedEnvironmentsEnabled &&
+        current.loadBalancingIncludeLinkedEnvironments,
+    ),
     Effect.orElseSucceed(() => false),
   );
 
   const select: AgentPlacement["Service"]["select"] = Effect.fn("AgentPlacement.select")(
     function* (scope, input) {
       const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
-      if (!current.agentLoadBalancingEnabled) return undefined;
+      if (
+        !current.agentLoadBalancingEnabled ||
+        !current.linkedEnvironmentsEnabled ||
+        !current.loadBalancingIncludeLinkedEnvironments ||
+        scope.linkedEnvironments === false
+      )
+        return undefined;
       const caller = yield* readCaller().pipe(
         Effect.provideService(Invocation.McpInvocationContext, scope),
         Effect.provideService(Threads.ThreadManagementService, threads),
@@ -161,6 +170,9 @@ const make = Effect.gen(function* () {
                       requestPrincipal(scope),
                       input.operation,
                       input.clientRequestId,
+                      projectId,
+                      yield* encodeModel(modelSelection).pipe(Effect.mapError(unavailable)),
+                      input.driverKind ?? "",
                     ]).pipe(Effect.mapError(unavailable)),
                   ),
                 )
@@ -247,36 +259,32 @@ const make = Effect.gen(function* () {
                 ),
                 (link) =>
                   Effect.gen(function* () {
-                    const matches: Array<Project> = [];
-                    let cursor: number | null = 0;
-                    let pages = 0;
-                    while (cursor !== null && pages++ < 10) {
-                      const page: typeof ProjectPage.Type = yield* peers.call({
-                        environmentId: link.environmentId,
-                        tool: "t3_project_list",
-                        arguments: { cursor, limit: 100 },
-                        limits: caller.limits,
-                        success: ProjectPage,
+                    const snapshotKey = `${link.environmentId}:${key}`;
+                    const cached = snapshots.get(snapshotKey);
+                    const snapshot =
+                      cached !== undefined && cached.expiresAt > now
+                        ? cached.value
+                        : yield* peers.call({
+                            environmentId: link.environmentId,
+                            tool: "t3_environment_read",
+                            arguments: {
+                              placementRepositoryKey: key,
+                              includePlacementProviders: true,
+                            },
+                            limits: caller.limits,
+                            success: Snapshot,
+                          });
+                    if (snapshot.hostResources == null || snapshot.placementProjectId === undefined)
+                      return;
+                    if (cached?.value !== snapshot) {
+                      if (snapshots.size >= 128) snapshots.clear();
+                      snapshots.set(snapshotKey, {
+                        expiresAt: DateTime.toEpochMillis(yield* DateTime.now) + 5000,
+                        value: snapshot,
                       });
-                      matches.push(
-                        ...page.projects.filter(
-                          (entry) => entry.repositoryIdentity?.canonicalKey === key,
-                        ),
-                      );
-                      cursor = page.nextCursor;
                     }
-                    const matched =
-                      cursor === null && matches.length === 1 ? matches[0] : undefined;
-                    if (matched === undefined) return;
-                    const snapshot = yield* peers.call({
-                      environmentId: link.environmentId,
-                      tool: "t3_environment_read",
-                      arguments: { projectId: matched.id, includePlacementProviders: true },
-                      limits: caller.limits,
-                      success: Snapshot,
-                    });
                     if (
-                      !snapshot.placementProviders.some(
+                      !snapshot.placementProviders?.some(
                         (entry) =>
                           entry.instanceId === modelSelection.instanceId &&
                           entry.driver === driver &&
@@ -288,15 +296,15 @@ const make = Effect.gen(function* () {
                     candidates.push({
                       environmentId: link.environmentId,
                       label: snapshot.label,
-                      projectId: matched.id,
+                      projectId: snapshot.placementProjectId,
                       resources: snapshot.hostResources,
                       weight: current.agentLoadBalancingWeights[link.environmentId] ?? 50,
                       receivedAt: now,
                     });
-                  }).pipe(Effect.timeout("1 second"), Effect.ignore),
+                  }).pipe(Effect.timeout("6 seconds"), Effect.ignore),
                 { concurrency: 4 },
               );
-            }).pipe(Effect.timeout("2 seconds"), Effect.ignore);
+            }).pipe(Effect.timeout("7 seconds"), Effect.ignore);
           }
           const chosen = chooseLoadBalancedEnvironment(
             candidates,
@@ -322,7 +330,7 @@ const make = Effect.gen(function* () {
           };
         });
         const result = yield* evaluate.pipe(
-          Effect.timeout("3 seconds"),
+          Effect.timeout("8 seconds"),
           Effect.orElseSucceed(() =>
             local("Placement data is unavailable; using the local launch path."),
           ),

@@ -11,7 +11,8 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
 ) {
   const scope = yield* Invocation.McpInvocationContext;
   const service = yield* Orchestrator.OrchestratorMcpService;
-  if (input.target?.environmentId !== undefined) return yield* service.delegateTask(scope, input);
+  if (input.target?.environmentId !== undefined || scope.linkedEnvironments === false)
+    return yield* service.delegateTask(scope, input);
   const placement = yield* Effect.serviceOption(AgentPlacement.AgentPlacement);
   if (Option.isNone(placement) || !(yield* placement.value.enabled))
     return yield* service.delegateTask(scope, input);

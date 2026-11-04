@@ -38,8 +38,8 @@ export const prepare = Effect.fn("AgentLaunchRouting.prepare")(function* (
       ? { localOnlyReason: "Scratch work has no shared project to match." }
       : (input.attachments?.length ?? 0) > 0
         ? { localOnlyReason: "Pending attachments belong to this environment." }
-        : input.workspaceStrategy?.type === "existing_worktree"
-          ? { localOnlyReason: "An existing worktree path belongs to this environment." }
+        : input.workspaceStrategy !== undefined && input.workspaceStrategy.type !== "root"
+          ? { localOnlyReason: "Worktree launches keep their local base references." }
           : {}),
   });
   if (selected === undefined)

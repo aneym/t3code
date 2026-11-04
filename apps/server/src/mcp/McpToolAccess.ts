@@ -403,6 +403,7 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
         const routed =
           name === "t3_thread_launch" &&
           environmentId === undefined &&
+          scope.linkedEnvironments !== false &&
           Option.isSome(placement) &&
           (yield* placement.value.enabled)
             ? yield* AgentLaunchRouting.prepare(placement.value, scope, params)

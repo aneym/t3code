@@ -135,6 +135,7 @@ const STREAMING_CHOICES: ReadonlyArray<{
   },
 ];
 
+// Only servers with thread auto-settlement store these, so other targets get the rest of a patch.
 const AUTO_SETTLE_SETTING_KEYS: ReadonlySet<string> = new Set([
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
@@ -189,6 +190,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   );
   const [pendingWrites, setPendingWrites] = useState(0);
   const writeInFlight = useRef(false);
+  // Closing views can save after controls disable; queue those patches behind the pending write.
   const queuedPatch = useRef<{ key: string; patch: ServerSettingsPatch } | null>(null);
   const targetsKey = targets
     .map((target) => `${target.environment.environmentId}:${target.projectId}`)
@@ -204,6 +206,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const reference = displayTargets[0] ?? null;
   const uniform = <K extends keyof ServerSettings>(key: K) =>
     uniformMobileSetting(displayTargets, key);
+  // `uniform` folds a real null into "mixed"; nullable keys need the distinction.
   const isMixed = (key: keyof ServerSettings) =>
     reference === null ||
     displayTargets.some((entry) => entry.settings[key] !== reference.settings[key]);
@@ -318,12 +321,9 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                 <>
                   <LoadBalancingSettings
                     serverSettings={reference.settings}
-                    updateServerSettings={write}
+                    update={write}
                     disabled={!canWriteSettings || projectSelected}
-                    environments={selectedTargets.map((target) => ({
-                      environmentId: target.environmentId,
-                      environmentLabel: target.label,
-                    }))}
+                    targets={selectedTargets}
                   />
                   <SettingsSection
                     title="Default workspace"
