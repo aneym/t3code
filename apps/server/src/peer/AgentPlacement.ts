@@ -205,7 +205,6 @@ const make = Effect.gen(function* () {
           )
             return saved.selection;
         }
-        let persist = false;
         const evaluate = Effect.gen(function* () {
           const project = yield* projects
             .getById(projectId)
@@ -344,7 +343,6 @@ const make = Effect.gen(function* () {
           const winner = candidates.find((candidate) => candidate.environmentId === chosen);
           if (winner === undefined)
             return local("No eligible placement data; using the local launch path.");
-          persist = true;
           const score =
             (winner.weight *
               winner.resources.cpuCount *
@@ -367,7 +365,7 @@ const make = Effect.gen(function* () {
             local("Placement data is unavailable; using the local launch path."),
           ),
         );
-        if (receiptPath === undefined || !persist) return result;
+        if (receiptPath === undefined) return result;
         return yield* writeFileStringAtomically({
           filePath: receiptPath,
           contents: yield* encode({ savedAt: now, selection: result }).pipe(
