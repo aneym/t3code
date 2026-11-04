@@ -344,7 +344,7 @@ const make = Effect.gen(function* () {
           const winner = candidates.find((candidate) => candidate.environmentId === chosen);
           if (winner === undefined)
             return local("No eligible placement data; using the local launch path.");
-          persist = winner.environmentId !== scope.environmentId || pending.size === 0;
+          persist = true;
           const score =
             (winner.weight *
               winner.resources.cpuCount *
