@@ -62,26 +62,30 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         platform: descriptor.platform,
         preferences: preferences(current),
         hostResources: Option.isSome(resources) ? yield* resources.value.read : null,
-        placementProviders: (Option.isSome(providers)
-          ? yield* providers.value.getProviders
-          : []
-        ).map((provider) => ({
-          instanceId: provider.instanceId,
-          driver: provider.driver,
-          enabled:
-            isProviderAvailable(provider) &&
-            provider.enabled &&
-            provider.installed &&
-            provider.status !== "error" &&
-            provider.status !== "disabled" &&
-            provider.auth.status !== "unauthenticated" &&
-            resolveProjectProviderInstanceEnabled(
-              current,
-              input.projectId ?? null,
-              provider.instanceId,
-            ),
-          models: provider.models.map((model) => model.slug),
-        })),
+        ...(input.includePlacementProviders !== true
+          ? {}
+          : {
+              placementProviders: (Option.isSome(providers)
+                ? yield* providers.value.getProviders
+                : []
+              ).map((provider) => ({
+                instanceId: provider.instanceId,
+                driver: provider.driver,
+                enabled:
+                  isProviderAvailable(provider) &&
+                  provider.enabled &&
+                  provider.installed &&
+                  provider.status !== "error" &&
+                  provider.status !== "disabled" &&
+                  provider.auth.status !== "unauthenticated" &&
+                  resolveProjectProviderInstanceEnabled(
+                    current,
+                    input.projectId ?? null,
+                    provider.instanceId,
+                  ),
+                models: provider.models.map((model) => model.slug),
+              })),
+            }),
       };
     }),
   ),

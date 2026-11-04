@@ -37,7 +37,7 @@ import * as Environment from "../environment/ServerEnvironment.ts";
 import * as Peers from "./PeerMcpClient.ts";
 import * as Links from "./PeerLinks.ts";
 import * as Invocation from "../mcp/McpInvocationContext.ts";
-import { readCaller, unavailable } from "../mcp/threadAccess.ts";
+import { assertLiveCaller, readCaller, unavailable } from "../mcp/threadAccess.ts";
 import { callerLinkOrigin } from "../mcp/linkOrigin.ts";
 import { requestPrincipal } from "../mcp/ownerCliSession.ts";
 
@@ -46,6 +46,8 @@ const Selection = Schema.Struct({
   projectId: Schema.optional(ProjectId),
   modelSelection: Schema.optional(ModelSelection),
 });
+const SavedSelection = Schema.Struct({ savedAt: Schema.Number, selection: Selection });
+const RECEIPT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const Snapshot = Schema.Struct({
   label: Schema.String,
   hostResources: HostResourcesSnapshot,
@@ -59,6 +61,7 @@ const ProjectPage = Schema.Struct({
 export class AgentPlacement extends Context.Service<
   AgentPlacement,
   {
+    readonly enabled: Effect.Effect<boolean>;
     readonly select: (
       scope: Invocation.McpInvocationScope,
       input: {
@@ -69,7 +72,7 @@ export class AgentPlacement extends Context.Service<
         readonly clientRequestId?: string | undefined;
         readonly localOnlyReason?: string | undefined;
       },
-    ) => Effect.Effect<typeof Selection.Type, OrchestratorMcpFailure>;
+    ) => Effect.Effect<typeof Selection.Type | undefined, OrchestratorMcpFailure>;
   }
 >()("t3/peer/AgentPlacement") {}
 
@@ -89,16 +92,63 @@ const make = Effect.gen(function* () {
   const threads = yield* Threads.ThreadManagementService;
   const platform = yield* HostProcess.Platform;
   const lock = yield* KeyedLock.make<string>();
-  const encode = Schema.encodeEffect(Schema.fromJsonString(Selection));
+  const encode = Schema.encodeEffect(Schema.fromJsonString(SavedSelection));
   const encodeKey = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
-  const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(Selection));
+  const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(SavedSelection));
+  const receiptDir = path.join(config.stateDir, "agent-placement");
+  let lastPrunedAt = 0;
+  const prune = Effect.fn("AgentPlacement.prune")(function* (now: number) {
+    if (now - lastPrunedAt < 5 * 60 * 1000) return;
+    lastPrunedAt = now;
+    const files = yield* fs.readDirectory(receiptDir);
+    yield* Effect.forEach(
+      files.filter((file) => /^[a-f0-9]+\.json$/.test(file)),
+      (file) =>
+        Effect.gen(function* () {
+          const filePath = path.join(receiptDir, file);
+          const stat = yield* fs.stat(filePath);
+          if (Option.isNone(stat.mtime) || now - stat.mtime.value.getTime() > RECEIPT_MAX_AGE_MS)
+            yield* fs.remove(filePath);
+        }).pipe(Effect.ignore),
+      { concurrency: 4 },
+    );
+  });
+  const enabled = settings.getSettings.pipe(
+    Effect.map((current) => current.agentLoadBalancingEnabled),
+    Effect.orElseSucceed(() => false),
+  );
 
   const select: AgentPlacement["Service"]["select"] = Effect.fn("AgentPlacement.select")(
     function* (scope, input) {
+      const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
+      if (!current.agentLoadBalancingEnabled) return undefined;
       const caller = yield* readCaller().pipe(
         Effect.provideService(Invocation.McpInvocationContext, scope),
         Effect.provideService(Threads.ThreadManagementService, threads),
       );
+      const descriptor = yield* environment.getDescriptor;
+      const projectId = input.projectId ?? caller.caller?.projectId;
+      const modelSelection = input.modelSelection ?? caller.caller?.modelSelection;
+      const local = (reason: string): typeof Selection.Type => ({
+        placement: { environmentId: scope.environmentId, label: descriptor.label, reason },
+        ...(projectId === undefined ? {} : { projectId }),
+        ...(modelSelection === undefined ? {} : { modelSelection }),
+      });
+      const origin = callerLinkOrigin(caller);
+      if ((origin !== undefined && linkOriginIsFenced(origin)) || scope.client?.linked === true)
+        return local("Placement was resolved by the originating environment.");
+      if (scope.client?.ownerCli === true)
+        return local("The CLI keeps its selected local workspace.");
+      if (input.localOnlyReason !== undefined) return local(input.localOnlyReason);
+      if (projectId === undefined || modelSelection === undefined)
+        return local("No project or model to match across environments.");
+      if (
+        scope.client?.access === "read-only" ||
+        caller.limits.runtimeMode !== "full-access" ||
+        caller.limits.interactionMode !== "default"
+      )
+        return local("The caller's permissions keep automatic placement local.");
+      yield* assertLiveCaller(caller);
       const digest =
         input.clientRequestId === undefined
           ? undefined
@@ -117,104 +167,47 @@ const make = Effect.gen(function* () {
                 .pipe(Effect.mapError(unavailable)),
             );
       const receiptPath =
-        digest === undefined
-          ? undefined
-          : path.join(config.stateDir, "agent-placement", `${digest}.json`);
+        digest === undefined ? undefined : path.join(receiptDir, `${digest}.json`);
       const choose = Effect.gen(function* () {
+        if (!(yield* enabled)) return undefined;
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        yield* prune(now).pipe(Effect.ignore);
         if (receiptPath !== undefined) {
           const saved = yield* fs.readFileString(receiptPath).pipe(
-            Effect.catchIf(
-              (error) => error.reason._tag === "NotFound",
-              () => Effect.void,
-            ),
-            Effect.mapError(unavailable),
+            Effect.flatMap(decode),
+            Effect.orElseSucceed(() => undefined),
           );
-          if (saved !== undefined) return yield* decode(saved).pipe(Effect.mapError(unavailable));
+          if (
+            saved !== undefined &&
+            saved.savedAt <= now &&
+            now - saved.savedAt <= RECEIPT_MAX_AGE_MS
+          )
+            return saved.selection;
         }
-        const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
-        const descriptor = yield* environment.getDescriptor;
-        const projectId = input.projectId ?? caller.caller?.projectId;
-        const modelSelection = input.modelSelection ?? caller.caller?.modelSelection;
-        const local = (reason: string): typeof Selection.Type => ({
-          placement: {
-            environmentId: scope.environmentId,
-            label: descriptor.label,
-            reason,
-            candidates: [],
-          },
-          ...(projectId === undefined ? {} : { projectId }),
-          ...(modelSelection === undefined ? {} : { modelSelection }),
-        });
-        let result: typeof Selection.Type;
-        const origin = callerLinkOrigin(caller);
-        if (!current.agentLoadBalancingEnabled) result = local("Agent load balancing is off.");
-        else if (
-          (origin !== undefined && linkOriginIsFenced(origin)) ||
-          scope.client?.linked === true
-        )
-          result = local("Placement was resolved by the originating environment.");
-        else if (scope.client?.ownerCli === true)
-          result = local("The CLI keeps its selected local workspace.");
-        else if (input.localOnlyReason !== undefined) result = local(input.localOnlyReason);
-        else if (projectId === undefined || modelSelection === undefined)
-          result = local("No project or model to match across environments.");
-        else {
+        const evaluate = Effect.gen(function* () {
           const project = yield* projects
             .getById(projectId)
-            .pipe(Effect.map(Option.getOrUndefined), Effect.mapError(unavailable));
+            .pipe(Effect.map(Option.getOrUndefined));
           const key =
             project === undefined
               ? undefined
               : (yield* identities.resolve(project.workspaceRoot))?.canonicalKey;
+          if (key === undefined)
+            return local("No repository identity to match across environments.");
           const localProviders = yield* providers.getProviders;
           const selectedProvider = localProviders.find(
             (provider) => provider.instanceId === modelSelection.instanceId,
           );
           const driver = input.driverKind ?? selectedProvider?.driver;
-          const localResources = yield* resources.read;
-          const candidates: Array<AgentPlacementReceipt["candidates"][number]> = [];
-          const append = (
-            id: EnvironmentId,
-            label: string,
-            matchedProjectId: ProjectId | null,
-            snapshot: HostResourcesSnapshot | null,
-            reason?: string,
-          ) => {
-            const weight = current.agentLoadBalancingWeights[id] ?? 50;
-            const eligible = reason === undefined && matchedProjectId !== null && snapshot !== null;
-            const fits =
-              eligible &&
-              chooseLoadBalancedEnvironment(
-                [{ environmentId: id, resources: snapshot, weight, receivedAt: now }],
-                now,
-              ) !== null;
-            const score =
-              fits && snapshot !== null
-                ? (weight *
-                    snapshot.cpuCount *
-                    (1 - (snapshot.cpuUtilization ?? 1)) *
-                    snapshot.availableMemoryBytes) /
-                  snapshot.totalMemoryBytes
-                : null;
-            candidates.push({
-              environmentId: id,
-              label,
-              projectId: matchedProjectId,
-              weight,
-              score,
-              resources: snapshot,
-              reason:
-                reason ??
-                (fits
-                  ? "Eligible."
-                  : weight <= 0
-                    ? "Manual only (weight zero)."
-                    : "Insufficient CPU or memory headroom."),
-            });
-          };
-          const now = DateTime.toEpochMillis(yield* DateTime.now);
+          const candidates: Array<{
+            environmentId: EnvironmentId;
+            label: string;
+            projectId: ProjectId;
+            resources: HostResourcesSnapshot;
+            weight: number;
+            receivedAt: number;
+          }> = [];
           const localReady =
-            project !== undefined &&
             selectedProvider !== undefined &&
             isProviderAvailable(selectedProvider) &&
             selectedProvider.enabled &&
@@ -228,156 +221,132 @@ const make = Effect.gen(function* () {
               selectedProvider.instanceId,
             ) &&
             selectedProvider.models.some((model) => model.slug === modelSelection.model);
-          append(
-            scope.environmentId,
-            descriptor.label,
-            projectId,
-            localResources,
-            localReady ? undefined : "Project or provider unavailable.",
-          );
-          const linked =
+          const localResources = yield* resources.read;
+          if (localReady && localResources !== null)
+            candidates.push({
+              environmentId: scope.environmentId,
+              label: descriptor.label,
+              projectId,
+              resources: localResources,
+              weight: current.agentLoadBalancingWeights[scope.environmentId] ?? 50,
+              receivedAt: now,
+            });
+          if (
             current.linkedEnvironmentsEnabled &&
             current.loadBalancingIncludeLinkedEnvironments &&
             scope.linkedEnvironments !== false
-              ? yield* links.list.pipe(Effect.mapError(unavailable))
-              : [];
-          yield* Effect.forEach(
-            linked,
-            (link) =>
-              Effect.gen(function* () {
-                if (
-                  link.access !== "full-access" ||
-                  link.status !== "reachable" ||
-                  (current.agentLoadBalancingWeights[link.environmentId] ?? 50) <= 0
-                ) {
-                  append(
-                    link.environmentId,
-                    link.label,
-                    null,
-                    null,
-                    link.status !== "reachable"
-                      ? "Environment is not reachable."
-                      : link.access !== "full-access"
-                        ? "Automatic placement requires a full-access link."
-                        : "Manual only (weight zero).",
-                  );
-                  return;
-                }
-                if (project === undefined) {
-                  append(
-                    link.environmentId,
-                    link.label,
-                    null,
-                    null,
-                    "Source project is unavailable.",
-                  );
-                  return;
-                }
-                yield* Effect.gen(function* () {
-                  const matches: Array<Project> = [];
-                  let cursor: number | null = 0;
-                  while (cursor !== null) {
-                    const page: typeof ProjectPage.Type = yield* peers.call({
+          ) {
+            yield* Effect.gen(function* () {
+              const linked = yield* links.list;
+              yield* Effect.forEach(
+                linked.filter(
+                  (link) =>
+                    link.access === "full-access" &&
+                    link.status === "reachable" &&
+                    (current.agentLoadBalancingWeights[link.environmentId] ?? 50) > 0,
+                ),
+                (link) =>
+                  Effect.gen(function* () {
+                    const matches: Array<Project> = [];
+                    let cursor: number | null = 0;
+                    let pages = 0;
+                    while (cursor !== null && pages++ < 10) {
+                      const page: typeof ProjectPage.Type = yield* peers.call({
+                        environmentId: link.environmentId,
+                        tool: "t3_project_list",
+                        arguments: { cursor, limit: 100 },
+                        limits: caller.limits,
+                        success: ProjectPage,
+                      });
+                      matches.push(
+                        ...page.projects.filter(
+                          (entry) => entry.repositoryIdentity?.canonicalKey === key,
+                        ),
+                      );
+                      cursor = page.nextCursor;
+                    }
+                    const matched =
+                      cursor === null && matches.length === 1 ? matches[0] : undefined;
+                    if (matched === undefined) return;
+                    const snapshot = yield* peers.call({
                       environmentId: link.environmentId,
-                      tool: "t3_project_list",
-                      arguments: { cursor, limit: 100 },
+                      tool: "t3_environment_read",
+                      arguments: { projectId: matched.id, includePlacementProviders: true },
                       limits: caller.limits,
-                      success: ProjectPage,
+                      success: Snapshot,
                     });
-                    matches.push(
-                      ...page.projects.filter((entry) =>
-                        key !== undefined
-                          ? entry.repositoryIdentity?.canonicalKey === key
-                          : entry.workspaceRoot.split(/[\\/]/).at(-1) ===
-                              project.workspaceRoot.split(/[\\/]/).at(-1) ||
-                            entry.title === project.title,
-                      ),
-                    );
-                    cursor = page.nextCursor;
-                  }
-                  const matched = matches.length === 1 ? matches[0] : undefined;
-                  const snapshot = yield* peers.call({
-                    environmentId: link.environmentId,
-                    tool: "t3_environment_read",
-                    arguments: matched === undefined ? {} : { projectId: matched.id },
-                    limits: caller.limits,
-                    success: Snapshot,
-                  });
-                  const provider = snapshot.placementProviders.find(
-                    (entry) =>
-                      entry.instanceId === modelSelection.instanceId &&
-                      entry.driver === driver &&
-                      entry.enabled &&
-                      entry.models.includes(modelSelection.model),
-                  );
-                  append(
-                    link.environmentId,
-                    snapshot.label,
-                    matched?.id ?? null,
-                    snapshot.hostResources,
-                    matched === undefined
-                      ? "No unique project matches this repository."
-                      : provider === undefined
-                        ? "Selected provider or model unavailable."
-                        : undefined,
-                  );
-                }).pipe(
-                  Effect.timeout("10 seconds"),
-                  Effect.catch(() =>
-                    Effect.sync(() =>
-                      append(
-                        link.environmentId,
-                        link.label,
-                        null,
-                        null,
-                        "Environment did not provide usable placement data.",
-                      ),
-                    ),
-                  ),
-                );
-              }),
-            { concurrency: 4 },
-          );
+                    if (
+                      !snapshot.placementProviders.some(
+                        (entry) =>
+                          entry.instanceId === modelSelection.instanceId &&
+                          entry.driver === driver &&
+                          entry.enabled &&
+                          entry.models.includes(modelSelection.model),
+                      )
+                    )
+                      return;
+                    candidates.push({
+                      environmentId: link.environmentId,
+                      label: snapshot.label,
+                      projectId: matched.id,
+                      resources: snapshot.hostResources,
+                      weight: current.agentLoadBalancingWeights[link.environmentId] ?? 50,
+                      receivedAt: now,
+                    });
+                  }).pipe(Effect.timeout("1 second"), Effect.ignore),
+                { concurrency: 4 },
+              );
+            }).pipe(Effect.timeout("2 seconds"), Effect.ignore);
+          }
           const chosen = chooseLoadBalancedEnvironment(
-            candidates
-              .filter((candidate) => candidate.score !== null)
-              .map((candidate) => ({ ...candidate, receivedAt: now })),
+            candidates,
             DateTime.toEpochMillis(yield* DateTime.now),
           );
           const winner = candidates.find((candidate) => candidate.environmentId === chosen);
-          if (winner === undefined || winner.projectId === null)
-            return yield* new OrchestratorMcpFailure({
-              code: "invalid_request",
-              message:
-                "No eligible environment has CPU and memory headroom for this project and provider. Pass environmentId to select a machine explicitly.",
-            });
-          result = {
+          if (winner === undefined)
+            return local("No eligible placement data; using the local launch path.");
+          const score =
+            (winner.weight *
+              winner.resources.cpuCount *
+              (1 - (winner.resources.cpuUtilization ?? 1)) *
+              winner.resources.availableMemoryBytes) /
+            winner.resources.totalMemoryBytes;
+          return {
             projectId: winner.projectId,
             modelSelection,
             placement: {
               environmentId: winner.environmentId,
               label: winner.label,
-              reason: `Highest weighted free CPU and memory score (${winner.score?.toFixed(2)}).`,
-              candidates,
+              reason: `Highest weighted free CPU and memory score (${score.toFixed(2)}).`,
             },
           };
-        }
-        if (receiptPath !== undefined)
-          yield* writeFileStringAtomically({
-            filePath: receiptPath,
-            contents: yield* encode(result).pipe(Effect.mapError(unavailable)),
-          }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fs),
-            Effect.provideService(Path.Path, path),
-            Effect.provideService(HostProcess.Platform, platform),
+        });
+        const result = yield* evaluate.pipe(
+          Effect.timeout("3 seconds"),
+          Effect.orElseSucceed(() =>
+            local("Placement data is unavailable; using the local launch path."),
+          ),
+        );
+        if (receiptPath === undefined) return result;
+        return yield* writeFileStringAtomically({
+          filePath: receiptPath,
+          contents: yield* encode({ savedAt: now, selection: result }).pipe(
             Effect.mapError(unavailable),
-          );
-        return result;
+          ),
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.as(result),
+          Effect.orElseSucceed(() =>
+            local("Placement receipt could not be saved; using the local launch path."),
+          ),
+        );
       });
       return yield* digest === undefined ? choose : lock.withLock(digest, choose);
     },
   );
-  return AgentPlacement.of({ select });
+  return AgentPlacement.of({ enabled, select });
 });
 
 export const layer = Layer.effect(AgentPlacement, make);

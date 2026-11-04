@@ -401,7 +401,10 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const routed =
-          name === "t3_thread_launch" && environmentId === undefined && Option.isSome(placement)
+          name === "t3_thread_launch" &&
+          environmentId === undefined &&
+          Option.isSome(placement) &&
+          (yield* placement.value.enabled)
             ? yield* AgentLaunchRouting.prepare(placement.value, scope, params)
             : { environmentId, params, placement: undefined };
         const target = PeerForwarding.remoteTarget(scope, routed.environmentId);

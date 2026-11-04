@@ -42,6 +42,8 @@ export const prepare = Effect.fn("AgentLaunchRouting.prepare")(function* (
           ? { localOnlyReason: "An existing worktree path belongs to this environment." }
           : {}),
   });
+  if (selected === undefined)
+    return { environmentId: undefined, params: params as object, placement: undefined };
   const remote = selected.placement.environmentId !== scope.environmentId;
   return {
     environmentId: selected.placement.environmentId,

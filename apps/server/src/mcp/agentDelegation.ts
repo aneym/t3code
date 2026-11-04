@@ -12,6 +12,9 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
   const scope = yield* Invocation.McpInvocationContext;
   const service = yield* Orchestrator.OrchestratorMcpService;
   if (input.target?.environmentId !== undefined) return yield* service.delegateTask(scope, input);
+  const placement = yield* Effect.serviceOption(AgentPlacement.AgentPlacement);
+  if (Option.isNone(placement) || !(yield* placement.value.enabled))
+    return yield* service.delegateTask(scope, input);
   const caller = yield* readCaller();
   const inherited = caller.caller?.modelSelection;
   const instanceId =
@@ -26,8 +29,6 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
     (instanceId === inherited?.instanceId && model === inherited?.model
       ? inherited?.options
       : undefined);
-  const placement = yield* Effect.serviceOption(AgentPlacement.AgentPlacement);
-  if (Option.isNone(placement)) return yield* service.delegateTask(scope, input);
   const selected = yield* placement.value.select(scope, {
     operation: "delegate",
     projectId: input.target?.projectId,
@@ -36,10 +37,11 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
       : { modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) } }),
     driverKind: input.target?.driverKind,
     clientRequestId: input.clientRequestId,
-    ...(input.isolation !== "worktree" && caller.caller?.worktreePath !== null
-      ? { localOnlyReason: "Shared isolation keeps the parent's existing worktree." }
+    ...(input.isolation !== "worktree"
+      ? { localOnlyReason: "Shared isolation keeps the parent's workspace." }
       : {}),
   });
+  if (selected === undefined) return yield* service.delegateTask(scope, input);
   const remote = selected.placement.environmentId !== scope.environmentId;
   const result = yield* service.delegateTask(
     scope,

@@ -50,6 +50,7 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: Schema.optionalKey(ProjectId),
+    includePlacementProviders: Schema.optionalKey(Schema.Boolean),
   }),
   success: Schema.Struct({
     environmentId: ExecutionEnvironmentDescriptor.fields.environmentId,
@@ -58,7 +59,7 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
     platform: ExecutionEnvironmentDescriptor.fields.platform,
     preferences: Schema.Struct(PreferenceFields),
     hostResources: Schema.NullOr(HostResourcesSnapshot),
-    placementProviders: AgentPlacementProviders,
+    placementProviders: Schema.optionalKey(AgentPlacementProviders),
   }),
 })
   .annotate(Tool.Readonly, true)
