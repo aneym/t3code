@@ -20,6 +20,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
+import * as Semaphore from "effect/Semaphore";
+import * as Scope from "effect/Scope";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -90,7 +93,13 @@ const make = Effect.gen(function* () {
   const lock = yield* KeyedLock.make<string>();
   const encode = Schema.encodeEffect(Schema.fromJsonString(SavedSelection));
   const encodeModel = Schema.encodeEffect(Schema.fromJsonString(ModelSelection));
-  const snapshots = new Map<string, { expiresAt: number; value: typeof Snapshot.Type }>();
+  const readGate = yield* Semaphore.make(4);
+  const snapshotScope = yield* Scope.Scope;
+  const pending = new Map<string, Fiber.Fiber<void>>();
+  const snapshots = new Map<
+    string,
+    { expiresAt: number; value: typeof Snapshot.Type | undefined }
+  >();
   const encodeKey = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
   const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(SavedSelection));
   const receiptDir = path.join(config.stateDir, "agent-placement");
@@ -196,6 +205,7 @@ const make = Effect.gen(function* () {
           )
             return saved.selection;
         }
+        let persist = false;
         const evaluate = Effect.gen(function* () {
           const project = yield* projects
             .getById(projectId)
@@ -249,62 +259,83 @@ const make = Effect.gen(function* () {
             scope.linkedEnvironments !== false
           ) {
             yield* Effect.gen(function* () {
-              const linked = yield* links.list;
-              yield* Effect.forEach(
-                linked.filter(
-                  (link) =>
-                    link.access === "full-access" &&
-                    link.status === "reachable" &&
-                    (current.agentLoadBalancingWeights[link.environmentId] ?? 50) > 0,
-                ),
+              const linked = (yield* links.stored).filter(
                 (link) =>
-                  Effect.gen(function* () {
-                    const snapshotKey = `${link.environmentId}:${key}`;
-                    const cached = snapshots.get(snapshotKey);
-                    const snapshot =
-                      cached !== undefined && cached.expiresAt > now
-                        ? cached.value
-                        : yield* peers.call({
-                            environmentId: link.environmentId,
-                            tool: "t3_environment_read",
-                            arguments: {
-                              placementRepositoryKey: key,
-                              includePlacementProviders: true,
-                            },
-                            limits: caller.limits,
-                            success: Snapshot,
-                          });
-                    if (snapshot.hostResources == null || snapshot.placementProjectId === undefined)
-                      return;
-                    if (cached?.value !== snapshot) {
-                      if (snapshots.size >= 128) snapshots.clear();
-                      snapshots.set(snapshotKey, {
-                        expiresAt: DateTime.toEpochMillis(yield* DateTime.now) + 5000,
-                        value: snapshot,
-                      });
-                    }
-                    if (
-                      !snapshot.placementProviders?.some(
-                        (entry) =>
-                          entry.instanceId === modelSelection.instanceId &&
-                          entry.driver === driver &&
-                          entry.enabled &&
-                          entry.models.includes(modelSelection.model),
-                      )
-                    )
-                      return;
-                    candidates.push({
-                      environmentId: link.environmentId,
-                      label: snapshot.label,
-                      projectId: snapshot.placementProjectId,
-                      resources: snapshot.hostResources,
-                      weight: current.agentLoadBalancingWeights[link.environmentId] ?? 50,
-                      receivedAt: now,
-                    });
-                  }).pipe(Effect.timeout("6 seconds"), Effect.ignore),
-                { concurrency: 4 },
+                  link.access === "full-access" &&
+                  DateTime.toEpochMillis(link.expiresAt) > now &&
+                  (current.agentLoadBalancingWeights[link.environmentId] ?? 50) > 0,
               );
-            }).pipe(Effect.timeout("7 seconds"), Effect.ignore);
+              const reads = yield* Effect.forEach(linked, (link) =>
+                Effect.gen(function* () {
+                  const snapshotKey = `${link.environmentId}:${key}`;
+                  const cached = snapshots.get(snapshotKey);
+                  if (cached !== undefined && cached.expiresAt > now) return undefined;
+                  const existing = pending.get(snapshotKey);
+                  if (existing !== undefined) return existing;
+                  const read = peers
+                    .call({
+                      environmentId: link.environmentId,
+                      tool: "t3_environment_read",
+                      arguments: { placementRepositoryKey: key, includePlacementProviders: true },
+                      limits: caller.limits,
+                      success: Snapshot,
+                    })
+                    .pipe(
+                      readGate.withPermits(1),
+                      Effect.timeout("6 seconds"),
+                      Effect.orElseSucceed(() => undefined),
+                      Effect.flatMap((value) =>
+                        DateTime.now.pipe(
+                          Effect.map((sampledAt) => {
+                            if (snapshots.size >= 128) snapshots.clear();
+                            snapshots.set(snapshotKey, {
+                              expiresAt: DateTime.toEpochMillis(sampledAt) + 5000,
+                              value,
+                            });
+                          }),
+                        ),
+                      ),
+                      Effect.ensuring(
+                        Effect.sync(() => {
+                          pending.delete(snapshotKey);
+                        }),
+                      ),
+                    );
+                  const fiber = yield* read.pipe(Effect.forkIn(snapshotScope));
+                  pending.set(snapshotKey, fiber);
+                  return fiber;
+                }),
+              );
+              yield* Fiber.joinAll(reads.filter((fiber) => fiber !== undefined)).pipe(
+                Effect.timeout("750 millis"),
+                Effect.ignore,
+              );
+              for (const link of linked) {
+                const cached = snapshots.get(`${link.environmentId}:${key}`);
+                const snapshot =
+                  cached !== undefined && cached.expiresAt > now ? cached.value : undefined;
+                if (
+                  snapshot?.hostResources == null ||
+                  snapshot.placementProjectId === undefined ||
+                  !snapshot.placementProviders?.some(
+                    (entry) =>
+                      entry.instanceId === modelSelection.instanceId &&
+                      entry.driver === driver &&
+                      entry.enabled &&
+                      entry.models.includes(modelSelection.model),
+                  )
+                )
+                  continue;
+                candidates.push({
+                  environmentId: link.environmentId,
+                  label: snapshot.label,
+                  projectId: snapshot.placementProjectId,
+                  resources: snapshot.hostResources,
+                  weight: current.agentLoadBalancingWeights[link.environmentId] ?? 50,
+                  receivedAt: now,
+                });
+              }
+            }).pipe(Effect.timeout("1 second"), Effect.ignore);
           }
           const chosen = chooseLoadBalancedEnvironment(
             candidates,
@@ -313,6 +344,7 @@ const make = Effect.gen(function* () {
           const winner = candidates.find((candidate) => candidate.environmentId === chosen);
           if (winner === undefined)
             return local("No eligible placement data; using the local launch path.");
+          persist = winner.environmentId !== scope.environmentId || pending.size === 0;
           const score =
             (winner.weight *
               winner.resources.cpuCount *
@@ -335,7 +367,7 @@ const make = Effect.gen(function* () {
             local("Placement data is unavailable; using the local launch path."),
           ),
         );
-        if (receiptPath === undefined) return result;
+        if (receiptPath === undefined || !persist) return result;
         return yield* writeFileStringAtomically({
           filePath: receiptPath,
           contents: yield* encode({ savedAt: now, selection: result }).pipe(
