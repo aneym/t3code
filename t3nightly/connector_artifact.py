@@ -83,11 +83,13 @@ def rollback_connector(run):
     saved = getattr(run, "connector_previous", None)
     if saved is None:
         return
-    from .install_policy import recheck
+    from .install_policy import command_environment, recheck
 
     recheck(run)
     label, path = identity(run)
     control(run, "stop")
+    if sys.platform != "darwin" and saved[path] is None:
+        subprocess.run(["systemctl", "--user", "disable", f"{label}.service"], env=command_environment(run), check=True, capture_output=True, timeout=30)
     for item, previous in saved.items():
         if previous is None:
             item.unlink(missing_ok=True)

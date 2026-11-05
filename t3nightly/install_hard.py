@@ -42,7 +42,11 @@ def activate(run, version, *, rollback=False):
     sandbox = run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal."))
     try:
         if rollback:
-            rollback_connector(run)
+            try:
+                rollback_connector(run)
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                run.report["connectorRestore"] = {"outcome": "failed", "error": str(error)}
+                run.step("connector-restore-failed", error=str(error))
         if rollback and not sandbox:
             launcher = restore_service_launch(run)
         else:
@@ -269,7 +273,11 @@ def install(run):
                     restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")
                     from .connector_artifact import rollback_connector
 
-                    rollback_connector(run)
+                    try:
+                        rollback_connector(run)
+                    except (OSError, ValueError, subprocess.SubprocessError) as error:
+                        run.report["connectorRestore"] = {"outcome": "failed", "error": str(error)}
+                        run.step("connector-restore-failed", error=str(error))
                     if not run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal.")):
                         restore_service_launch(run)
                     with restart_session(run, args.version) as bearer:
@@ -356,6 +364,7 @@ def install(run):
         "servingRuntime": {"version": serving_version, "digest": serving_digest},
         "installWindow": run.report.get("installWindow"), "hotSwap": {**(run.report.get("hotSwap") or {}), "forwardRepairRequired": run.report.get("forwardRepairRequired", False)},
         **({"restartDrain": run.report["restartDrain"]} if "restartDrain" in run.report else {}),
+        **({"connectorRestore": run.report["connectorRestore"]} if "connectorRestore" in run.report else {}),
         "migrationHistory": migration_evidence, "databaseRollback": database_rollback,
         **install_settings.receipt(run),
         "serviceStops": run.report.get("serviceStops", []), "backup": backup, "chat": post["proof"], "outcome": outcome, "reapedSshLaunch": run.reaped,
