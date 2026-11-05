@@ -4,6 +4,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from .install_provenance import file_digest
@@ -11,11 +12,38 @@ from .rehearsal_service import render
 from .release_signatures import verify_cli
 
 
+def sandbox_service(service_label):
+    return service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal."))
+
+
 def identity(run):
-    sandbox = run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal."))
+    sandbox = sandbox_service(run.service_label)
     label = run.service_label.removesuffix(".service") + "-connector" if sandbox else "com.t3tools.t3code-connector.service" if sys.platform == "darwin" else "t3code-connector"
     path = (run.home if sandbox else Path.home()) / "Library/LaunchAgents" / f"{label}.plist" if sys.platform == "darwin" else Path.home() / ".config/systemd/user" / f"{label}.service"
     return label, path
+
+
+def preflight_connector(run):
+    args = run.args
+    if sandbox_service(run.service_label) or not (getattr(args, "connector_artifact", "") or getattr(args, "launcher_artifact", "")):
+        return
+    if not args.rpc_tree:
+        raise ValueError("connector unit installation requires --rpc-tree for production renderers; nothing stopped")
+    try:
+        tree = Path(args.rpc_tree).expanduser().resolve(strict=True)
+        if not tree.is_dir():
+            raise ValueError("not a directory")
+        with tempfile.TemporaryDirectory(prefix="t3nightly-connector-render-") as raw:
+            home = Path(raw)
+            label, unit = identity(run)
+            text = render(tree, home, unit, [str(home / "t3"), "__service-connector"], home / "connector.log", {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "T3CODE_HOME": str(home)}, kind="connector")
+            if not text.strip():
+                raise ValueError("empty connector unit")
+            if sys.platform == "darwin" and plistlib.loads(text.encode())["Label"] != label:
+                raise ValueError("production renderer did not honor the connector unitPath")
+        return tree
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        raise ValueError(f"--rpc-tree is not a usable production connector renderer tree: {error}; nothing stopped") from error
 
 
 def ensure_connector(run):
@@ -27,6 +55,7 @@ def ensure_connector(run):
     if not raw and not launcher:
         run.step("connector-artifact-kept", independently_pinned=(run.home / "runtime/connector-pin.json").is_file())
         return
+    tree = preflight_connector(run)
     artifact = json.loads(Path(raw or launcher).read_text())
     if not raw:
         artifact = {**artifact, "schema": "t3nightly.connector-artifact/1", "protocol": 1}
@@ -46,7 +75,7 @@ def ensure_connector(run):
         else:
             shutil.copytree(source, destination, symlinks=True)
     label, path = identity(run)
-    sandbox = run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal."))
+    sandbox = sandbox_service(run.service_label)
     paths = os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep)
     if sandbox:
         paths = [entry for entry in paths if not str(Path(entry).resolve()).startswith("/Volumes/")]
@@ -55,7 +84,7 @@ def ensure_connector(run):
         environment["HOME"] = str(run.home)
     if not run.args.rpc_tree:
         raise ValueError("connector unit installation requires --rpc-tree for production renderers")
-    text = render(Path(run.args.rpc_tree).resolve(), run.home, path, [str(destination / "t3"), "__service-connector"], run.home / "userdata/logs/connector.log", environment, kind="connector")
+    text = render(tree or Path(run.args.rpc_tree).resolve(), run.home, path, [str(destination / "t3"), "__service-connector"], run.home / "userdata/logs/connector.log", environment, kind="connector")
     if sys.platform == "darwin":
         unit = plistlib.loads(text.encode())
         if unit["Label"] != label:
