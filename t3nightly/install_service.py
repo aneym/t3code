@@ -3,8 +3,11 @@ import plistlib
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
+
+from . import install_settings
 
 DEFAULT_LABEL = "com.t3tools.t3code.service"
 
@@ -120,3 +123,28 @@ def safe_launch_environment(unit, home, launcher):
     env["TMPDIR"] = str(tmp)
     unit["WorkingDirectory"] = str(home)
     return removed
+
+
+def service(run, action):
+    from .install_policy import command_environment
+
+    environment = command_environment(run)
+    if sys.platform == "darwin":
+        domain = f"gui/{os.getuid()}"
+        commands = {"stop": ["launchctl", "bootout", "--wait", f"{domain}/{run.service_label}"],
+                    "start": ["launchctl", "bootstrap", domain, str(run.service_plist)],
+                    "restart": ["launchctl", "kickstart", "-k", f"{domain}/{run.service_label}"]}
+        command = commands[action]
+    else:
+        command = ["systemctl", "--user", action, run.service_label]
+    started = time.monotonic()
+    result = None
+    try:
+        result = subprocess.run(command, env=environment, capture_output=True, timeout=120, check=False)
+    finally:
+        seconds = round(time.monotonic() - started, 3)
+        if action == "stop":
+            run.report.setdefault("serviceStops", []).append({"service": run.service_label, "seconds": seconds})
+        run.step("hard-service-" + action, service=run.service_label, seconds=seconds, code=result.returncode if result else None)
+    if result.returncode and not (action == "stop" and install_settings.service_absent(run)):
+        raise ValueError(f"intended service {action} failed")

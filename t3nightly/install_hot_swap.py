@@ -21,7 +21,7 @@ from .install_hard import connect_returns, install as hard_install
 from .install_provenance import eligibility, file_digest, validate
 from .install_rpc import restart_rpc, restart_session
 from .install_runtime import restore_runtime, retain_runtime, stage_runtime
-from .install_seamless import prepare_with_drain
+from .install_seamless import drain_then_hard
 from .install_trial_rollback import clean_rollback, launcher_identity, recover
 from .launcher_update import supported, swap
 from .release_eligibility import RESTORE_CLASS
@@ -190,24 +190,6 @@ def mark_candidate(run, manifest, rehearsal, compatibility, observed):
     return True
 
 
-def drain_then_hard(run, previous):
-    with restart_session(run, previous) as bearer:
-        epoch = f"t3nightly:{uuid.uuid4()}"
-        try:
-            run.drain_before_stop = lambda: prepare_with_drain(run, bearer, epoch)
-            return hard_install(run)
-        finally:
-            run.drain_before_stop = None
-            try:
-                restart_rpc(run, bearer, "abort", {"epoch": epoch}, timeout=30)
-            except (OSError, ValueError, subprocess.SubprocessError):
-                run.step("fallback-drain-abort-unavailable")
-                drain = run.report.get("restartDrain") or {}
-                if drain.get("stopRefused"):
-                    drain["abortFailed"] = True
-                    (run.state / "last.json").write_text(json.dumps(run.report, indent=1))
-
-
 def install(run):
     args = run.args
     fallback_enabled = not args.rehearsal or (not args.force_rollback and getattr(args, "inject", "none") == "none")
@@ -249,7 +231,9 @@ def install(run):
         run.report["hotSwap"]["fallbackReasons"] = [step for step in run.report["steps"] if step.get("step") in ("hot-swap-fallback", "hot-swap-unsupported")]
         return drain_then_hard(run, previous)
     from .connector_artifact import ensure_connector
+    from .install_settings import refuse
 
+    refuse("hot-swap")
     ensure_connector(run)
     baseline = prove(run, previous)
     before = identities(run)

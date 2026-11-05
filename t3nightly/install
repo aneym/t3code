@@ -147,8 +147,11 @@ if __name__ == "__main__":
             )["previous"]
             args.allow_downgrade = True
         from t3nightly.install_policy import admit, enforce
+        from t3nightly import install_settings
 
         policy = enforce(args)
+        if args.dry_run:
+            install_settings.dry_run()
         with checked_assets(args) as assets:
             args.assets = str(assets)
             args.base_url = serve_assets(assets, args.version)

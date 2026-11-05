@@ -21,6 +21,7 @@ from t3nightly.install_runtime import mark_update_restart, stage_runtime
 from t3nightly.install_diagnostics import persist_memory_diagnostics
 from t3nightly.install_feed import persist_release_feed, verify_release_feed
 from t3nightly.install_storage import payload_locations, snapshot_path
+from t3nightly.install_settings import refuse
 
 FORK_BASE_URL = "https://github.com/aneym/t3code/releases/download"
 STREAMING = ("queued", "preparing", "starting", "running")
@@ -392,6 +393,7 @@ class Run:
         self.step(f"service-{action}", code=code)
 
     def main(self):
+        refuse("launcher-managed restart")
         if self.args.version == "previous":
             last = json.loads((self.state / "last.json").read_text())
             self.args.version = last["previous"]

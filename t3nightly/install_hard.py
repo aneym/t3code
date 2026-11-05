@@ -9,12 +9,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .identity_snapshot import finish as finish_identities
-from . import install_offbox
+from . import install_offbox, install_settings
 from .install_restore_copy import RecoveryRequired
 from .install_db_rollback import recovery_required
-from .install_backup import capture
+from .install_backup import advisory, capture
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_process import serving_process
+from .install_service import service
 from .install_strays import managed_strays, reap_strays
 from .install_provenance import eligibility, file_digest, migration_history, validate
 from .install_runtime import restore_runtime, retain_runtime, stage_runtime
@@ -32,31 +33,6 @@ from .service_launch import (
 SERVICE_PROTOCOL = 3
 CONNECT_WAIT_S = 120
 CONNECT_POLL_S = 5
-
-
-def service(run, action):
-    from .install_policy import command_environment
-
-    environment = command_environment(run)
-    if sys.platform == "darwin":
-        domain = f"gui/{os.getuid()}"
-        commands = {"stop": ["launchctl", "bootout", "--wait", f"{domain}/{run.service_label}"],
-                    "start": ["launchctl", "bootstrap", domain, str(run.service_plist)],
-                    "restart": ["launchctl", "kickstart", "-k", f"{domain}/{run.service_label}"]}
-        command = commands[action]
-    else:
-        command = ["systemctl", "--user", action, run.service_label]
-    started = time.monotonic()
-    result = None
-    try:
-        result = subprocess.run(command, env=environment, capture_output=True, timeout=120, check=False)
-    finally:
-        seconds = round(time.monotonic() - started, 3)
-        if action == "stop":
-            run.report.setdefault("serviceStops", []).append({"service": run.service_label, "seconds": seconds})
-        run.step("hard-service-" + action, service=run.service_label, seconds=seconds, code=result.returncode if result else None)
-    if result.returncode:
-        raise ValueError(f"intended service {action} failed")
 
 
 def activate(run, version, *, rollback=False):
@@ -159,16 +135,9 @@ def serving(run, version, expected, reap=True):
     raise ValueError("candidate serving version did not become healthy")
 
 
-def advisory(run, backup):
-    output = run.state / "backup-quick-check.json"
-    log = run.state / "backup-quick-check.log"
-    with log.open("ab") as handle:
-        process = subprocess.Popen([sys.executable, "-B", "-m", "t3nightly.install_backup", str(Path(backup["path"]).resolve()), str(output.resolve())], cwd=Path(__file__).resolve().parent.parent, stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True)
-    run.step("advisory-backup-check", pid=process.pid, output=str(output), log=str(log))
-
-
 def install(run):
     args = run.args
+    install_settings.prepare(run)
     run.reaped = []
     previous = run.server_version()
     if not previous:
@@ -232,15 +201,18 @@ def install(run):
                     run.report["restartDrain"] = {**run.report.get("restartDrain", {}), "outcome": drain_outcome, "stopRefused": True, "activeRunIds": active_run_ids}
                     run.step("hard-stop-refused", active_run_ids=active_run_ids)
                     raise ValueError(f"restart drain did not report drained: true; nothing stopped; active_run_ids={active_run_ids}")
+        install_settings.capture(run)
         service(run, "stop")
         stopped = True
         run.stop_deadline = time.monotonic() + args.offbox_stop_s
         attempts = 0
         while reap_strays(run, attempts):
             attempts += 1
+        if getattr(run, "settings_rollback", False):
+            install_settings.restore(run)
 
     try:
-        if current:
+        if current and run.server_settings is None:
             precheck(run, previous, observed["candidateRuntime.digest"])
             outcome = "current"
         else:
@@ -251,6 +223,7 @@ def install(run):
             backup = install_offbox.capture(run, previous, stop, rollback_gate, keep_local=restore_class) if args.offbox else capture(run, previous, stop, rollback_gate, keep_local=restore_class)
             if restore_class and not backup.get("local") and not backup.get("stoppedShip"):
                 raise ValueError("restore-rollback requires a verified local restore copy")
+            install_settings.apply(run)
             stopped = False
             activate(run, args.version)
             serving(run, args.version, observed["candidateRuntime.digest"])
@@ -277,6 +250,9 @@ def install(run):
         from .install_policy import begin_recovery
 
         begin_recovery(run)
+        run.settings_rollback = True
+        if stopped:
+            install_settings.restore(run)
         if routed and not restore_class:
             try:
                 from .launcher_update import binary_compatible, supported, swap
@@ -284,7 +260,7 @@ def install(run):
 
                 if not binary_compatible(compatibility, migration_history(run)):
                     raise ValueError("post-routing rollback requires a compatible binary; database preserved for forward repair")
-                if supported(run.environment(), run):
+                if run.server_settings is None and supported(run.environment(), run):
                     restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")
                     if not run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal.")):
                         restore_service_launch(run)
@@ -372,6 +348,7 @@ def install(run):
         "installWindow": run.report.get("installWindow"), "hotSwap": {**(run.report.get("hotSwap") or {}), "forwardRepairRequired": run.report.get("forwardRepairRequired", False)},
         **({"restartDrain": run.report["restartDrain"]} if "restartDrain" in run.report else {}),
         "migrationHistory": migration_evidence, "databaseRollback": database_rollback,
+        **install_settings.receipt(run),
         "serviceStops": run.report.get("serviceStops", []), "backup": backup, "chat": post["proof"], "outcome": outcome, "reapedSshLaunch": run.reaped,
         "startedAt": run.report["started_at"], "finishedAt": moment,
     }

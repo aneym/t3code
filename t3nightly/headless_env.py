@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .codex_isolation import isolated_codex_home
 from .headless_lb import agent_lb_url
+from .install_settings import sandbox_settings
 
 LB_TOKEN = "t3nightly-headless"
 NOT_FOUND = 44
@@ -79,4 +80,4 @@ def pin_settings(settings_path, work, refusals, keep=()):
                 config["binaryPath"] = str(wrapper)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2) + "\n")
-    return settings
+    return sandbox_settings(path, settings)

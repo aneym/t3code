@@ -1,4 +1,9 @@
-from .install_rpc import restart_rpc
+import json
+import subprocess
+import uuid
+
+from .install_rpc import restart_rpc, restart_session
+from .install_hard import install as hard_install
 
 
 def prepare_with_drain(run, bearer, epoch):
@@ -27,3 +32,21 @@ def prepare_with_drain(run, bearer, epoch):
             active_run_ids=drain["activeRunIds"],
         )
     return receipt
+
+
+def drain_then_hard(run, previous):
+    with restart_session(run, previous) as bearer:
+        epoch = f"t3nightly:{uuid.uuid4()}"
+        try:
+            run.drain_before_stop = lambda: prepare_with_drain(run, bearer, epoch)
+            return hard_install(run)
+        finally:
+            run.drain_before_stop = None
+            try:
+                restart_rpc(run, bearer, "abort", {"epoch": epoch}, timeout=30)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                run.step("fallback-drain-abort-unavailable")
+                drain = run.report.get("restartDrain") or {}
+                if drain.get("stopRefused"):
+                    drain["abortFailed"] = True
+                    (run.state / "last.json").write_text(json.dumps(run.report, indent=1))
