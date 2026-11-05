@@ -158,7 +158,7 @@ def changed(run):
 
 def watchdog(run, version):
     import time
-    from .install_hard import service
+    from .install_service import service
 
     if getattr(run, "launcher_lkg", None) is None:
         return

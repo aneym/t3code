@@ -82,7 +82,7 @@ class Run:
         path.write_text(json.dumps(self.report, indent=1))
         (self.state / "last.json").write_text(json.dumps(self.report, indent=1))
         print(line, flush=True)
-        return 0 if outcome in ("installed", "current") else 1
+        return install_settings.exit_code(self, outcome)
 
     def environment(self):
         url = f"http://127.0.0.1:{self.args.port}/.well-known/t3/environment"
@@ -411,6 +411,7 @@ class Run:
             verify_cli(self.runtime(previous))
             if sys.platform == "darwin":
                 verify_cli(self.home / "runtime" / "launcher" / "t3")
+            install_settings.current(self)
             return self.finish(
                 "current", f"{self.report['host']}: already on {previous}"
             )
@@ -440,8 +441,8 @@ class Run:
                 problem = "t3 update failed"
             else:
                 problem = self.healthy(self.args.version, connect_before)
-            if problem is None and not install_settings.live_after_swap(self):
-                return self.finish("failed", "launcher update succeeded; settings step failed")
+            if problem is None:
+                install_settings.live_after_swap(self)
             if problem is None:
                 refresh_snapshot(self)
             if problem is None and self.thread_count() < threads_before:
@@ -471,12 +472,12 @@ class Run:
                 with restart_session(self, self.args.version) as bearer:
                     swap(self, bearer, previous, True)
                 again = self.healthy(previous, connect_before)
-                if again is None:
-                    self.link_cli(previous)
-                    return self.finish(
-                        "rolled-back-clean",
-                        f"{self.report['host']}: {self.args.version} failed ({problem}); back on {previous}",
-                    )
+            if again is None:
+                self.link_cli(previous)
+                return self.finish(
+                    "rolled-back-clean",
+                    f"{self.report['host']}: {self.args.version} failed ({problem}); back on {previous}",
+                )
         except errors as error:
             again = str(error)
             self.step("rollback-error", error=again)

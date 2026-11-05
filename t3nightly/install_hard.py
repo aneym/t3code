@@ -205,15 +205,18 @@ def install(run):
         service(run, "stop")
         stopped = True
         run.stop_deadline = time.monotonic() + args.offbox_stop_s
-        attempts = 0
-        while reap_strays(run, attempts):
-            attempts += 1
-        if getattr(run, "settings_rollback", False):
-            install_settings.restore(run)
+        try:
+            attempts = 0
+            while reap_strays(run, attempts):
+                attempts += 1
+        finally:
+            if getattr(run, "settings_rollback", False):
+                install_settings.restore(run)
 
     try:
-        if current and run.server_settings is None:
+        if current:
             precheck(run, previous, observed["candidateRuntime.digest"])
+            install_settings.current(run)
             outcome = "current"
         else:
             staged = run.runtime(previous) if previous == args.version else stage_runtime(run.home, args.version, args.assets)
@@ -289,6 +292,7 @@ def install(run):
                         if not stopped:
                             raise
                         run.step("hard-rollback-stop", error=str(reaping))
+                install_settings.restore(run)
                 from .launcher_artifact import rollback_launcher
 
                 rollback_launcher(run)

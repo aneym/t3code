@@ -259,7 +259,8 @@ def install(run):
             if connect and not connect_returns(run, args.version):
                 raise ValueError("managed T3 Connect link did not recover")
             post = prove(run, args.version, baseline)
-            outcome = "installed" if install_settings.live_after_swap(run) else "failed"
+            install_settings.live_after_swap(run)
+            outcome = "installed"
             if outcome == "installed" and args.force_rollback:
                 candidate_writes(run, args.version, post["proof"])
                 raise ValueError("forced isolated acceptance failure")
@@ -268,9 +269,8 @@ def install(run):
             if not requested:
                 restart_rpc(run, bearer, "abort", {"epoch": epoch})
                 raise
-            install_settings.restore(run)
-            restore_runtime(run.home, previous, store)
             try:
+                restore_runtime(run.home, previous, store)
                 fallback = clean_rollback(run, previous, observed["oldRuntime.digest"], original_launcher)
                 recover(run, bearer, previous, compatibility, before, connect, baseline)
                 outcome = "rolled-back"
@@ -278,6 +278,8 @@ def install(run):
                 run.step("hot-swap-rollback-failed", error_type=type(rollback).__name__)
                 outcome = "broken"
                 run.report["hotSwap"].pop("rollback", None)
+            finally:
+                install_settings.restore(run)
     if fallback is not None and outcome == "rolled-back" and fallback_enabled and run.report["hotSwap"].get("rollback") == "launcher-automatic":
         if run.server_version() != previous:
             fallback = None
