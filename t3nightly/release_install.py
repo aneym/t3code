@@ -26,7 +26,7 @@ def fast_install(config, log):
     if config.host != "studio":
         words.extend(["--service-label", "t3code.service"])
     if config.host == "ax42":
-        words.extend(["--backups", str(backups), "--offbox", f"ax102:{root('ax102')}/ax42", "--offbox-stopped-ship", "--offbox-mib-s", "90", "--offbox-stop-s", "2400", "--offbox-window-s", "3480"])
+        words.extend(["--backups", str(backups), "--offbox", f"ax102:{root('ax102')}/ax42", "--offbox-stopped-ship", "--offbox-mib-s", "90", "--offbox-stop-s", "2400", "--offbox-window-s", "4380"])
     words.extend(config.target_artifacts())
     config.receipt("install").unlink(missing_ok=True)
     code = command(words, log, env=env)
