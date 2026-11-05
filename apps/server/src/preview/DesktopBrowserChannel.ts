@@ -285,6 +285,8 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             const subscription = yield* PubSub.subscribe(changes);
             const id = keyOf(key);
+            if (deviceName === undefined && (inputFd === undefined || controlFd === undefined))
+              return false;
             if (
               deviceName === undefined
                 ? attachedTabs.has(id)

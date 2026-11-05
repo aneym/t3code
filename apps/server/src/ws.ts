@@ -3331,6 +3331,7 @@ export const layer = Layer.unwrap(
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
+    const desktopChannel = yield* Effect.serviceOption(DesktopBrowserChannel.DesktopBrowserChannel);
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3416,6 +3417,13 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
               Layer.provide(Layer.succeed(PeerClientPairing.PeerClientPairing, peerClientPairing)),
+              Layer.provide(
+                Option.match(desktopChannel, {
+                  onNone: () => Layer.empty,
+                  onSome: (channel) =>
+                    Layer.succeed(DesktopBrowserChannel.DesktopBrowserChannel, channel),
+                }),
+              ),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
