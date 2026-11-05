@@ -158,7 +158,7 @@ def capture(run, previous, stop, rollback_gate, *, keep_local=False):
         raise
 
 
-def advisory(backup, output):
+def quick_check_backup(backup, output):
     started = time.monotonic()
     try:
         with closing(sqlite3.connect(f"{Path(backup).as_uri()}?mode=ro", uri=True)) as connection:
@@ -170,4 +170,4 @@ def advisory(backup, output):
 
 
 if __name__ == "__main__":
-    advisory(sys.argv[1], sys.argv[2])
+    quick_check_backup(sys.argv[1], sys.argv[2])
