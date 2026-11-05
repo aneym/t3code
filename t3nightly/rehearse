@@ -39,6 +39,8 @@ def main():
     parser.add_argument("--stock-client", action="store_true", help="keep a legacy lifecycle subscriber connected without handoff identity or confirmation")
     parser.add_argument("--queue-mode", choices=("none", "capacity", "budget"), default="none")
     parser.add_argument("--live-home", action="append", default=[])
+    parser.add_argument("--offbox", default="", help="non-release proof: back the sandbox database up off-box to HOST:/path")
+    parser.add_argument("--offbox-stopped-ship", action="store_true", help="with --offbox, seed from a verified replica and sync only the stopped database")
     args = parser.parse_args()
     if args.strict_drain_proof and not args.rollback_fallback_proof:
         parser.error("--strict-drain-proof requires --rollback-fallback-proof")

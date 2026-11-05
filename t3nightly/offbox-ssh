@@ -1,5 +1,10 @@
 #!/bin/sh
 if [ "$(hostname -s)" = ax42 ]; then
-    set -- -o ProxyJump=forge "$@"
+    for word in "$@"; do
+        if [ "$word" = studio ]; then
+            set -- -o ProxyJump=forge "$@"
+            break
+        fi
+    done
 fi
 exec ssh -o Compression=no -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$@"

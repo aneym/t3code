@@ -20,9 +20,8 @@ from .install_storage import record_payload
 from .io_priority import background_command
 from .install_sqlite_sync import SSH, sync
 from .install_calibration import rates
+from . import offbox_hosts
 
-REMOTE_ROOT = PurePosixPath("/Volumes/StudioExt/t3nightly-install-data/remote")
-REMOTE_ZSTD = "/opt/homebrew/bin/zstd"
 CHUNK = 1024 * 1024
 ZSTD_THREADS = 4
 METHOD = "offbox-sqlite3-rsync"
@@ -38,9 +37,10 @@ def target(spec):
     path = PurePosixPath(raw)
     if not separator or not NAME.fullmatch(host):
         raise ValueError("--offbox must be HOST:/absolute/path")
-    if not path.is_absolute() or path == REMOTE_ROOT or not path.is_relative_to(REMOTE_ROOT):
-        raise ValueError(f"--offbox path must sit below {REMOTE_ROOT}")
-    if not all(NAME.fullmatch(part) and part not in (".", "..") for part in path.relative_to(REMOTE_ROOT).parts):
+    base = offbox_hosts.root(host)
+    if not path.is_absolute() or path == base or not path.is_relative_to(base):
+        raise ValueError(f"--offbox path must sit below {base}")
+    if not all(NAME.fullmatch(part) and part not in (".", "..") for part in path.relative_to(base).parts):
         raise ValueError("--offbox path components must be letters, digits, dot, dash or underscore")
     return host, path
 
@@ -53,9 +53,10 @@ def remote(host, script, deadline):
 
 
 def remote_directory(host, path, deadline):
-    parts = path.relative_to(REMOTE_ROOT).parts
-    chain = " ".join(shlex.quote(str(REMOTE_ROOT.joinpath(*parts[:index]))) for index in range(len(parts) + 1))
-    script = (f"set -e; umask 077; test -d {shlex.quote(str(REMOTE_ROOT.parent))}; for p in {chain}; do "
+    base = offbox_hosts.root(host)
+    parts = path.relative_to(base).parts
+    chain = " ".join(shlex.quote(str(base.joinpath(*parts[:index]))) for index in range(len(parts) + 1))
+    script = (f"set -e; umask 077; test -d {shlex.quote(str(base.parent))}; for p in {chain}; do "
               f"if [ -L \"$p\" ]; then echo \"payload directory is a symlink: $p\" >&2; exit 3; fi; [ -d \"$p\" ] || mkdir -m 700 \"$p\"; chmod 700 \"$p\"; done; "
               f"df -Pk {shlex.quote(str(path))} | tail -1")
     return int(remote(host, script, deadline).split()[3]) * 1024
@@ -64,13 +65,13 @@ def remote_directory(host, path, deadline):
 def seed(host, root, replica, deadline):
     path = shlex.quote(str(replica))
     script = (f"set -e; if test -e {path}; then echo existing; exit 0; fi; marker=$(ls -1t {shlex.quote(str(root))}/*/rollback/verified.json 2>/dev/null | head -1); "
-              f"[ -n \"$marker\" ] || exit 0; newest=\"${{marker%verified.json}}statev2.sqlite\"; [ -f \"$newest\" ] && [ ! -L \"$newest\" ] || exit 0; cp -c \"$newest\" {path}.seed && chmod 600 {path}.seed "
+              f"[ -n \"$marker\" ] || exit 0; newest=\"${{marker%verified.json}}statev2.sqlite\"; [ -f \"$newest\" ] && [ ! -L \"$newest\" ] || exit 0; {offbox_hosts.profile(host)['clone']} \"$newest\" {path}.seed && chmod 600 {path}.seed "
               f"&& mv {path}.seed {path} && echo \"$newest\"")
     return remote(host, script, deadline).strip() or None
 
 
 def remote_zstd(host):
-    script = f"z=$(command -v zstd || true); [ -n \"$z\" ] || z={REMOTE_ZSTD}; test -x \"$z\" && echo \"$z\""
+    script = f"z=$(command -v zstd || true); [ -n \"$z\" ] || z={offbox_hosts.profile(host)['zstd']}; test -x \"$z\" && echo \"$z\""
     found = remote(host, script, time.monotonic() + 60).strip()
     if not found or not shutil.which("zstd"):
         raise ValueError("zstd must exist locally and on the off-box host for a first ship; nothing stopped")
@@ -134,7 +135,7 @@ def ship(run, host, replica, source, size, deadline, *, first):
 
 def remote_check(host, replica, deadline):
     path = shlex.quote(str(replica))
-    return remote(host, f"set -e; chmod 600 {path}; sqlite3 {path} 'PRAGMA quick_check'", deadline).strip()
+    return remote(host, f"set -e; chmod 600 {path}; {offbox_hosts.quick_check_command(host, path)}", deadline).strip()
 
 
 def schema_state(db):
@@ -258,6 +259,30 @@ def catch_up(run, host, replica, source, size, deadline):
         raise ValueError(f"local space under the {needed >> 20} MiB an in-place restore could need; nothing stopped")
 
 
+def stopped_ship(run, host, root, replica, source, size, started):
+    deadline = time.monotonic() + run.args.offbox_seed_s
+    found = seed(host, root, replica, deadline)
+    if found is None:
+        raise ValueError("stopped ship needs a verified off-box replica to seed from; nothing stopped")
+    checked = time.monotonic()
+    check = remote_check(host, replica, deadline)
+    if check != "ok":
+        raise ValueError(f"seeded off-box replica quick_check {check}; nothing stopped")
+    checking = time.monotonic() - checked
+    estimate = size / rate(run) + checking
+    budget = run.args.offbox_stop_s
+    run.step("hard-backup-estimate", stoppedWork=["sqlite3-rsync-stopped", "quick_check"], syncSeconds=round(size / rate(run), 3), checkSeconds=round(checking, 3),
+             estimateSeconds=round(estimate, 3), budgetSeconds=budget)
+    if estimate > budget:
+        raise ValueError(f"stopped off-box sync estimated at {estimate:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
+    needed = restore_space(size, wal_bytes(source))
+    if shutil.disk_usage(source.parent).free < needed:
+        raise ValueError(f"local space under the {needed >> 20} MiB an in-place restore could need; nothing stopped")
+    seeded = {"clonedFrom": None if found == "existing" else found, "existing": found == "existing", "stage": None, "seconds": round(time.monotonic() - started, 3)}
+    run.step("hard-backup-seed", remote=f"{host}:{replica}", **seeded)
+    return seeded
+
+
 def capture(run, previous, stop, rollback_gate, keep_local=False):
     started = time.monotonic()
     binary = rollback_gate()
@@ -269,7 +294,11 @@ def capture(run, previous, stop, rollback_gate, keep_local=False):
     local = run.home / "runtime" / "rollback"
     local.mkdir(parents=True, exist_ok=True, mode=0o700)
     host, root, replica, source, size = placement(run, local)
-    if keep_local:
+    stopped_only = getattr(run.args, "offbox_stopped_ship", False)
+    keep_local = keep_local and not stopped_only
+    if stopped_only:
+        seeded = stopped_ship(run, host, root, replica, source, size, started)
+    elif keep_local:
         seeded, _ = preseed(run, host, root, replica, source, size, started, ship_now=False)
         seeded = {**seeded, "verified": stopped_work(run, host, replica, seeded, size)}
         restore_copy.precheck(run, source)
@@ -290,7 +319,7 @@ def capture(run, previous, stop, rollback_gate, keep_local=False):
     else:
         sync(source, f"{host}:{replica}", window)
         metadata = verified(run, host, root, replica, window, {"bytes": size, "schemaState": state, "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3),
-                                                               "seconds": round(time.monotonic() - started, 3), "previous": previous})
+                                                               "seconds": round(time.monotonic() - started, 3), "previous": previous, "stoppedShip": stopped_only})
     (destination / "payload.json").write_text(json.dumps(metadata))
     run.step("hard-backup", **metadata)
     return metadata

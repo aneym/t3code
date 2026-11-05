@@ -2,10 +2,9 @@ import json
 import os
 import sys
 
-from .install_offbox import REMOTE_ROOT
+from .offbox_hosts import root
 from .release_graph import SUCCESS_OUTCOMES
 from .release_linux import require_host_ready
-from .release_manifest import load
 from .release_transport import command
 
 
@@ -27,9 +26,7 @@ def fast_install(config, log):
     if config.host != "studio":
         words.extend(["--service-label", "t3code.service"])
     if config.host == "ax42":
-        words.extend(["--backups", str(backups), "--offbox", f"studio:{REMOTE_ROOT}/ax42", "--offbox-stage", "/srv/cow/t3nightly-offbox-stage"])
-    if config.host == "ax42" and load(config.manifest)["targets"][config.host]["compatibility"].get("eligibility") == "restore-rollback":
-        words.extend(["--offbox-stop-s", "900"])
+        words.extend(["--backups", str(backups), "--offbox", f"ax102:{root('ax102')}/ax42", "--offbox-stopped-ship", "--offbox-mib-s", "90", "--offbox-stop-s", "1200"])
     words.extend(config.target_artifacts())
     config.receipt("install").unlink(missing_ok=True)
     code = command(words, log, env=env)

@@ -4,8 +4,8 @@ import time
 from pathlib import Path
 
 from .io_priority import background_command
+from .offbox_hosts import remote_rsync
 
-REMOTE_EXE = "/Users/aneyman/.local/bin/sqlite3_rsync"
 SSH = Path(__file__).with_name("offbox-ssh")
 
 
@@ -17,7 +17,7 @@ def executable():
 
 
 def sync(origin, replica, deadline, *, background=False, hang_guard=None):
-    command = [executable(), str(origin), str(replica), "--exe", REMOTE_EXE, "--ssh", str(SSH)]
+    command = [executable(), str(origin), str(replica), "--exe", remote_rsync(origin, replica), "--ssh", str(SSH)]
     started = time.monotonic()
     result = subprocess.run(background_command(command) if background else command, capture_output=True, text=True, timeout=hang_guard if hang_guard is not None else max(1, deadline - time.monotonic()), check=False)
     if result.returncode:
