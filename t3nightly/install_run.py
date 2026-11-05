@@ -62,43 +62,6 @@ class Run:
             "steps": [],
         }
 
-    def capture_service_launch(self):
-        from t3nightly.install_process import service_binary
-
-        if sys.platform == "darwin":
-            path = self.service_plist
-            content = path.read_bytes()
-            launcher = plistlib.loads(content)["ProgramArguments"][0]
-        else:
-            launcher = str(service_binary(self))
-            path = Path(self.args.systemd_dropin).expanduser() / "20-hard-runtime.conf"
-            try:
-                content = path.read_bytes()
-            except FileNotFoundError:
-                content = None
-        self.service_launch = {"target": launcher, "path": str(path), "bytesHex": content.hex() if content is not None else None}
-        self.report["serviceLaunch"] = self.service_launch
-        self.step("service-launch-captured", target=launcher, path=str(path), present=content is not None)
-
-    def restore_service_launch(self):
-        saved = self.service_launch
-        path = Path(saved["path"])
-        content = saved["bytesHex"]
-        if content is None:
-            path.unlink(missing_ok=True)
-        else:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            staged = path.with_suffix(".next")
-            staged.write_bytes(bytes.fromhex(content))
-            if sys.platform == "darwin":
-                os.chmod(staged, 0o600)
-            os.replace(staged, path)
-        if sys.platform != "darwin":
-            from t3nightly.install_policy import command_environment
-
-            subprocess.run(["systemctl", "--user", "daemon-reload"], env=command_environment(self), check=True, capture_output=True, timeout=30)
-        return Path(saved["target"])
-
     def step(self, name, **fields):
         row = {"step": name, "at": now().isoformat(), **fields}
         self.report["steps"].append(row)

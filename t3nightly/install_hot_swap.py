@@ -220,9 +220,13 @@ def install(run):
     compatibility = manifest["targets"][host]["compatibility"]
     if previous == args.version:
         return hard_install(run)
-    from .launcher_artifact import changed
+    from .launcher_artifact import changed, preflight_launcher
     from .launcher_qualify import qualify
 
+    try:
+        preflight_launcher(run)
+    except ValueError as error:
+        return run.finish("failed", str(error))
     qualification = qualify(run)
     environment = run.environment()
     run.report["capabilities"] = (environment or {}).get("capabilities", {})

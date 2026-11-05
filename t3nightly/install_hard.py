@@ -1,6 +1,5 @@
 import json
 import os
-import plistlib
 import sqlite3
 import subprocess
 import sys
@@ -22,6 +21,13 @@ from .install_runtime import restore_runtime, retain_runtime, stage_runtime
 from .release_eligibility import FORCED_ROLLBACK, RESTORE_CLASS, binary_rollback, restore_refusal
 from .release_receipts import INSTALL_SCHEMA, write
 from .release_signatures import cli_binary
+from .service_launch import (
+    capture as capture_service_launch,
+    reload as reload_service,
+    restore as restore_service_launch,
+    verify_restored,
+    write_launcher,
+)
 
 SERVICE_PROTOCOL = 3
 CONNECT_WAIT_S = 120
@@ -57,45 +63,46 @@ def activate(run, version, *, rollback=False):
     from .launcher_artifact import ensure_launcher
 
     sandbox = run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal."))
-    if rollback and not sandbox:
-        launcher = run.restore_service_launch()
-    else:
-        launcher = run.home / "runtime/launcher/t3" if rollback else ensure_launcher(run, version)
-        if sandbox:
-            if launcher != run.home / "runtime/launcher/t3":
-                raise ValueError("sandbox renderer launcher path changed")
-        elif sys.platform == "darwin":
-            with run.service_plist.open("rb") as handle:
-                unit = plistlib.load(handle)
-            unit["ProgramArguments"][0] = str(launcher)
-            staged = run.service_plist.with_suffix(".next")
-            staged.write_bytes(plistlib.dumps(unit))
-            os.chmod(staged, 0o600)
-            os.replace(staged, run.service_plist)
+    try:
+        if rollback and not sandbox:
+            launcher = restore_service_launch(run)
         else:
-            dropin = Path(run.args.systemd_dropin).expanduser()
-            dropin.mkdir(parents=True, exist_ok=True)
-            override = dropin / "20-hard-runtime.conf"
-            override.write_text(f'[Service]\nExecStart=\nExecStart="{launcher}" __service-launcher\n')
-            from .install_policy import command_environment
+            launcher = run.home / "runtime/launcher/t3" if rollback else ensure_launcher(run, version)
+            if sandbox:
+                if launcher != run.home / "runtime/launcher/t3":
+                    raise ValueError("sandbox renderer launcher path changed")
+            else:
+                write_launcher(run, launcher)
+        state = run.home / "runtime/service-state.json"
+        selected = json.loads(state.read_text()) if state.exists() else {"protocol": SERVICE_PROTOCOL}
+        selected["activeVersion"] = version
+        selected.pop("update", None)
+        staged_state = state.with_suffix(".next")
+        staged_state.write_text(json.dumps(selected) + "\n")
+        os.chmod(staged_state, 0o600)
+        os.replace(staged_state, state)
+        from .connector_artifact import ensure_connector
 
-            subprocess.run(["systemctl", "--user", "daemon-reload"], env=command_environment(run), check=True, capture_output=True, timeout=30)
-    state = run.home / "runtime/service-state.json"
-    selected = json.loads(state.read_text()) if state.exists() else {"protocol": SERVICE_PROTOCOL}
-    selected["activeVersion"] = version
-    selected.pop("update", None)
-    staged_state = state.with_suffix(".next")
-    staged_state.write_text(json.dumps(selected) + "\n")
-    os.chmod(staged_state, 0o600)
-    os.replace(staged_state, state)
-    from .connector_artifact import ensure_connector
+        ensure_connector(run)
+        if rollback and not sandbox:
+            verify_restored(run)
+        service(run, "start")
+        from .launcher_artifact import watchdog
 
-    ensure_connector(run)
-    service(run, "start")
-    from .launcher_artifact import watchdog
-
-    watchdog(run, version)
-    return launcher
+        watchdog(run, version)
+        return launcher
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        if rollback and not sandbox and getattr(run, "service_launch_restored", False):
+            try:
+                try:
+                    reload_service(run)
+                except (OSError, subprocess.SubprocessError) as error:
+                    run.step("hard-restored-service-reload-failed", error=str(error))
+                verify_restored(run)
+                service(run, "start")
+            except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+                run.step("hard-restored-service-start-failed", error=str(error))
+        raise
 
 
 def stray_serving(run, version, expected):
@@ -185,9 +192,9 @@ def install(run):
     from .launcher_artifact import preflight_launcher
 
     try:
-        run.capture_service_launch()
-        preflight_launcher(run)
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        capture_service_launch(run)
+        current = preflight_launcher(run, current=previous == args.version) == "current"
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as error:
         return run.finish("failed", str(error) if str(error).endswith("nothing stopped") else f"{error}; nothing stopped")
     precheck(run, previous, observed["oldRuntime.digest"])
     try:
@@ -233,9 +240,7 @@ def install(run):
             attempts += 1
 
     try:
-        from .launcher_artifact import changed
-
-        if previous == args.version and not changed(run):
+        if current:
             precheck(run, previous, observed["candidateRuntime.digest"])
             outcome = "current"
         else:
@@ -282,7 +287,7 @@ def install(run):
                 if supported(run.environment(), run):
                     restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")
                     if not run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal.")):
-                        run.restore_service_launch()
+                        restore_service_launch(run)
                     with restart_session(run, args.version) as bearer:
                         swap(run, bearer, previous, True)
                 else:

@@ -156,7 +156,9 @@ if __name__ == "__main__":
                 from t3nightly.install_assets import check_served_assets
                 from t3nightly.launcher_artifact import preflight_launcher
 
-                preflight_launcher(Run(args))
+                if (args.hard or args.seamless) and not args.prepare_only and not args.no_pin_launcher:
+                    run = Run(args)
+                    preflight_launcher(run, current=run.server_version() == args.version)
                 check_served_assets(args.base_url, args.version)
                 print(
                     f"install: dry-run accepted {args.version}; served checksums and archive fetched and matched; no install writes"

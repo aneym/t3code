@@ -13,8 +13,23 @@ from .release_signatures import verify_cli
 def launcher_action(run):
     target = run.home / "runtime/launcher"
     pin = run.home / "runtime/launcher-pin.json"
-    validate_drain_pin(run)
     raw = getattr(run.args, "launcher_artifact", "")
+    if raw:
+        manifest = json.loads(Path(run.args.launcher_artifact).read_text())
+        source = Path(manifest["runtimeDir"]).expanduser().resolve()
+        if manifest.get("schema") != "t3nightly.launcher-artifact/1" or manifest.get("protocol") != 3:
+            raise ValueError("launcher artifact requires schema, supported protocol 3 and exact runtime digest")
+        verify_cli(source / "t3")
+        if file_digest(source / "t3") != manifest["sha256"]:
+            raise ValueError("launcher artifact bytes do not match its pin")
+        ingress = manifest.get("ingress")
+        if manifest.get("hotSwapProtocol") == 1:
+            if not isinstance(ingress, dict) or ingress.get("protocol") != 1 or ingress.get("port") != run.args.port or ingress.get("manager") != ("launchd" if sys.platform == "darwin" else "systemd") or not 0 < ingress.get("measuredStartupMs", 0) < ingress.get("holdBudgetMs", 0) <= 300000 or not 1 <= ingress.get("maxQueued", 0) <= 8192 or not 1 <= ingress.get("maxTransfers", 0) <= 256 or not 0 <= run.args.drain_s <= 300:
+                raise ValueError("launcher ingress requires matching endpoint/manager and measured bounded startup/queue budgets")
+        staged = run.home / "runtime/.launcher-artifact-next"
+        if staged.exists():
+            raise ValueError("unfinished launcher artifact staging exists")
+    validate_drain_pin(run)
     if raw and target.is_dir() and not changed(run):
         raw = ""
     if target.is_dir() and (not raw or getattr(run, "launcher_applied", False)):
@@ -29,10 +44,10 @@ def launcher_action(run):
     return "change" if target.is_dir() else "bootstrap"
 
 
-def preflight_launcher(run):
+def preflight_launcher(run, *, current=False):
     try:
-        action = launcher_action(run)
-    except (OSError, ValueError) as error:
+        action = "current" if current and not changed(run) else launcher_action(run)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         run.report["launcher"] = {"state": "drift"}
         run.step("launcher-preflight", state="drift")
         raise ValueError(f"{error}; nothing stopped") from error
@@ -69,18 +84,8 @@ def ensure_launcher(run, version, *, update_config=True):
         raise ValueError("launcher bootstrap/change requires a separate --launcher-artifact; server updates never replace launcher bytes")
     manifest = json.loads(Path(run.args.launcher_artifact).read_text())
     source = Path(manifest["runtimeDir"]).expanduser().resolve()
-    if manifest.get("schema") != "t3nightly.launcher-artifact/1" or manifest.get("protocol") != 3:
-        raise ValueError("launcher artifact requires schema, supported protocol 3 and exact runtime digest")
-    verify_cli(source / "t3")
-    if file_digest(source / "t3") != manifest["sha256"]:
-        raise ValueError("launcher artifact bytes do not match its pin")
     ingress = manifest.get("ingress")
-    if manifest.get("hotSwapProtocol") == 1:
-        if not isinstance(ingress, dict) or ingress.get("protocol") != 1 or ingress.get("port") != run.args.port or ingress.get("manager") != ("launchd" if sys.platform == "darwin" else "systemd") or not 0 < ingress.get("measuredStartupMs", 0) < ingress.get("holdBudgetMs", 0) <= 300000 or not 1 <= ingress.get("maxQueued", 0) <= 8192 or not 1 <= ingress.get("maxTransfers", 0) <= 256 or not 0 <= run.args.drain_s <= 300:
-            raise ValueError("launcher ingress requires matching endpoint/manager and measured bounded startup/queue budgets")
     staged = runtime / ".launcher-artifact-next"
-    if staged.exists():
-        raise ValueError("unfinished launcher artifact staging exists")
     from .rehearsal_storage import clone_tree, enabled, publish
 
     if enabled(run.home):
