@@ -173,6 +173,10 @@ if __name__ == "__main__":
 
             with installer_owner(run), payload_lifecycle(run):
                 if args.hard:
+                    if not args.rehearsal and not policy["isolated"]:
+                        from t3nightly.install_seamless import drain_then_hard
+
+                        sys.exit(drain_then_hard(run, run.server_version()))
                     from t3nightly.install_hard import install as hard_install
 
                     sys.exit(hard_install(run))
