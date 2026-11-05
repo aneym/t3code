@@ -122,7 +122,7 @@ def stopped(home):
             runtime = userdata / "server-runtime.json"
             try:
                 state = json_object(runtime.read_bytes(), "server-runtime.json")
-            except FileNotFoundError:
+            except (FileNotFoundError, ValueError):
                 state = {}
             pid = str(state.get("pid", ""))
             if pid.isdigit() and server_argv(process_argv(pid), home):
@@ -168,9 +168,11 @@ class SettingsChange:
             self.captured = True
 
     def published(self, before, mode, after):
-        self.before, self.mode = before, mode
+        if not self.applied:
+            self.before, self.mode = before, mode
+            self.evidence["beforeSha256"] = sha256(before)
         self.applied = True
-        self.evidence.update(beforeSha256=sha256(before), afterSha256=sha256(after))
+        self.evidence["afterSha256"] = sha256(after)
 
     def merge(self, data):
         current = json_object(data, "settings.json") if data is not None else {}
@@ -188,7 +190,7 @@ class SettingsChange:
         with stopped(self.home):
             data, mode = read(self.path)
             after = (json.dumps(self.merge(data), indent=2, allow_nan=False) + "\n").encode()
-            atomic_write(self.path, after, mode, after_replace=lambda: self.published(self.before, self.mode, after))
+            atomic_write(self.path, after, mode, after_replace=lambda: self.published(data, mode, after))
         return self.evidence
 
     def apply_live(self):
@@ -250,8 +252,7 @@ class SettingsChange:
             else:
                 restored = atomic_write(self.path, self.before, self.mode, before_replace=unchanged)
             self.evidence["restore"] = "restored" if restored else "restore-conflict"
-            if restored:
-                self.applied = False
+            self.applied = False
 
 
 def prepare(run, *, mode="stopped"):

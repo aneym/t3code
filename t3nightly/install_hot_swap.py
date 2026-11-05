@@ -271,13 +271,14 @@ def install(run):
                 raise
             try:
                 restore_runtime(run.home, previous, store)
-                fallback = clean_rollback(run, previous, observed["oldRuntime.digest"], original_launcher)
-                recover(run, bearer, previous, compatibility, before, connect, baseline)
-                outcome = "rolled-back"
-            except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
-                run.step("hot-swap-rollback-failed", error_type=type(rollback).__name__)
-                outcome = "broken"
-                run.report["hotSwap"].pop("rollback", None)
+                try:
+                    fallback = clean_rollback(run, previous, observed["oldRuntime.digest"], original_launcher)
+                    recover(run, bearer, previous, compatibility, before, connect, baseline)
+                    outcome = "rolled-back"
+                except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
+                    run.step("hot-swap-rollback-failed", error_type=type(rollback).__name__)
+                    outcome = "broken"
+                    run.report["hotSwap"].pop("rollback", None)
             finally:
                 install_settings.restore(run)
     if fallback is not None and outcome == "rolled-back" and fallback_enabled and run.report["hotSwap"].get("rollback") == "launcher-automatic":
