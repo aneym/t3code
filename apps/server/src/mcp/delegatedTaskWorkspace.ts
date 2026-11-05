@@ -91,7 +91,7 @@ export const resolveDelegatedTaskWorkspace = Effect.fn("DelegatedTaskWorkspace.r
         ? `Base ref "${input.baseRef}" does not resolve to a commit in project "${project.title}" (${cwd}). Pass a branch, tag, or commit that exists there.`
         : crossProject
           ? `Isolation "worktree" needs project "${project.title}" (${root}) to be a git repository with a commit. Use isolation "shared" to work in its folder.`
-          : "Unable to resolve the parent checkout commit.",
+          : `Isolation "worktree" needs this thread's checkout (${cwd}) to be a git repository with a commit, and it is not. Pass target.projectId (from t3_project_list) to run the child in a worktree of another project's repository, or use isolation "shared" to work in this folder.`,
     );
   }
   if (cwd !== root && (yield* firstCommit(git, root, [commit])) === undefined) {
