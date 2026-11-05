@@ -10,20 +10,17 @@ from .install_hard import install as hard_install
 
 def prepare_with_drain(run, bearer, epoch):
     drain_s = run.args.drain_s
-    if drain_s:
-        run.step("restart-drain-start", deadline_s=drain_s)
+    run.step("restart-drain-start", deadline_s=drain_s)
     try:
         receipt = restart_rpc(
             run,
             bearer,
             "prepare",
-            {"epoch": epoch, **({"drainTimeoutMs": drain_s * 1000} if drain_s else {})},
+            {"epoch": epoch, "drainTimeoutMs": drain_s * 1000},
             timeout=drain_s + 120,
         )
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         raise ValueError("restart drain RPC unavailable; nothing stopped") from error
-    if drain_s == 0:
-        return receipt
     drain = receipt.get("drain")
     if drain is None:
         run.report["restartDrain"] = {"outcome": "unreported", "deadlineS": drain_s}
@@ -41,6 +38,8 @@ def prepare_with_drain(run, bearer, epoch):
 
 
 def drain_then_hard(run, previous):
+    if run.args.drain_s < 1:
+        raise ValueError("live --hard requires --drain-s >= 1; nothing stopped")
     if not run.args.rpc_tree or not Path(run.args.rpc_tree).expanduser().is_dir():
         raise ValueError("restart drain requires --rpc-tree with the frozen RPC dependency tree; nothing stopped")
     if not previous:
@@ -48,19 +47,23 @@ def drain_then_hard(run, previous):
     with ExitStack() as stack:
         try:
             bearer = stack.enter_context(restart_session(run, previous))
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
+        except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
             raise ValueError("restart drain private installer session unavailable; nothing stopped") from error
         epoch = f"t3nightly:{uuid.uuid4()}"
+        succeeded = False
         try:
             run.drain_before_stop = lambda: prepare_with_drain(run, bearer, epoch)
-            return hard_install(run)
+            result = hard_install(run)
+            succeeded = run.report.get("outcome") in ("installed", "current")
+            return result
         finally:
             run.drain_before_stop = None
-            try:
-                restart_rpc(run, bearer, "abort", {"epoch": epoch}, timeout=30)
-            except (OSError, ValueError, subprocess.SubprocessError):
-                run.step("fallback-drain-abort-unavailable")
-                drain = run.report.get("restartDrain") or {}
-                if drain.get("stopRefused"):
-                    drain["abortFailed"] = True
-                    (run.state / "last.json").write_text(json.dumps(run.report, indent=1))
+            if not succeeded:
+                try:
+                    restart_rpc(run, bearer, "abort", {"epoch": epoch}, timeout=30)
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    run.step("fallback-drain-abort-unavailable")
+                    drain = run.report.get("restartDrain") or {}
+                    if drain.get("stopRefused"):
+                        drain["abortFailed"] = True
+                        (run.state / "last.json").write_text(json.dumps(run.report, indent=1))
