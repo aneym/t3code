@@ -14,14 +14,14 @@ import { type ComponentProps, useState } from "react";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 import { isElectron } from "~/env";
-import { useClientSettingsHydrated } from "~/hooks/useSettings";
+import { subscribeClientSettings, useClientSettingsHydrated } from "~/hooks/useSettings";
 import {
-  isRemoteDeviceThread,
   useDesktopHostedPreviewSessions,
   useRemoteDeviceTabSessions,
 } from "~/components/preview/usePreviewSession";
 import {
   readActivePreviewSessions,
+  subscribeActivePreviewSessions,
   type ThreadPreviewState,
   useActivePreviewSessions,
 } from "~/previewStateStore";
@@ -32,9 +32,14 @@ import { useEnvironmentScope } from "~/state/session";
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserDefaults } from "./browserDefaults";
 import { useBrowserPointerStore } from "./browserPointerStore";
+import { onDesktopTabCreated, withDesktopTab } from "./desktopTabLifetime";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
-import { rendersServerTabNatively, serverDrivesNativeTab } from "./previewRuntime";
+import {
+  isLocalPreviewEnvironment,
+  rendersServerTabNatively,
+  serverDrivesNativeTab,
+} from "./previewRuntime";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 import { startRemoteBrowserRelays } from "./remoteBrowserRelay";
 import {
@@ -44,6 +49,16 @@ import {
   useRemoteDeviceAccessFor,
 } from "./remoteDeviceAccess";
 import { resolveRemoteTabUrl } from "./remoteTabUrl";
+
+type HostedBrowserSession = ReturnType<typeof hostedBrowserSessions>[number];
+
+function remoteTabUrls({ threadRef, snapshot, remote, driven }: HostedBrowserSession) {
+  const serverUrl = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
+  const remoteUrl =
+    remote && serverUrl !== null ? resolveRemoteTabUrl(threadRef.environmentId, serverUrl) : null;
+  const mirrored = remote && !driven;
+  return { serverUrl, remoteUrl, mirrored, mirrorUrl: mirrored ? remoteUrl : null };
+}
 
 /** Every session this window renders as a hosted webview, in a fixed (non-display) order. */
 function hostedBrowserSessions(
@@ -57,9 +72,7 @@ function hostedBrowserSessions(
       ? Object.values(previewState.sessions)
           .map((snapshot) => ({
             snapshot,
-            remote:
-              threadRef.environmentId !== primaryEnvironmentId &&
-              (snapshot.device !== undefined || isRemoteDeviceThread(threadKey)),
+            remote: !isLocalPreviewEnvironment(threadRef.environmentId, primaryEnvironmentId),
           }))
           .filter(
             ({ snapshot, remote }) =>
@@ -144,6 +157,44 @@ function openLinkInPreview({ tabId, url, background }: DesktopPreviewOpenLinkEve
   });
 }
 
+function startRemoteTabMirror(): () => void {
+  const bridge = window.desktopBridge?.desktopBrowser;
+  if (!bridge) return () => {};
+  const created = new Set<string>();
+  const sent = new Map<string, string>();
+  const sync = () => {
+    const live = new Set<string>();
+    for (const session of hostedBrowserSessions(
+      readActivePreviewSessions(),
+      appAtomRegistry.get(primaryEnvironmentIdAtom),
+      remoteDeviceAccessFor(),
+    )) {
+      const { mirrorUrl } = remoteTabUrls(session);
+      const tabId = session.runtimeTabId;
+      if (mirrorUrl === null) continue;
+      live.add(tabId);
+      if (!created.has(tabId) || sent.get(tabId) === mirrorUrl) continue;
+      sent.set(tabId, mirrorUrl);
+      const command = JSON.stringify({ type: "mirror", tabId, url: mirrorUrl });
+      withDesktopTab(tabId, () => bridge.sendCommand(command));
+    }
+    for (const tabId of sent.keys()) if (!live.has(tabId)) sent.delete(tabId);
+  };
+  const disposers = [
+    onDesktopTabCreated((tabId) => {
+      created.add(tabId);
+      sent.delete(tabId);
+      sync();
+    }),
+    subscribeActivePreviewSessions(sync),
+    appAtomRegistry.subscribe(primaryEnvironmentIdAtom, sync),
+    subscribeClientSettings(sync),
+  ];
+  return () => {
+    for (const dispose of disposers) dispose();
+  };
+}
+
 /** App-lifetime listeners for the desktop preview bridge: annotation theme, agent pointer, links. */
 export function startElectronBrowserHost(): () => void {
   const preview = window.desktopBridge?.preview;
@@ -155,6 +206,7 @@ export function startElectronBrowserHost(): () => void {
     }),
     preview.onOpenLink(openLinkInPreview),
     startRemoteBrowserRelays(window.desktopBridge?.getDeviceName?.() ?? "unknown"),
+    startRemoteTabMirror(),
   ];
   return () => {
     for (const dispose of disposers) dispose();
@@ -175,43 +227,36 @@ export function ElectronBrowserHost() {
   if (!isElectron) return null;
   return (
     <div className="contents" data-electron-browser-host>
-      {sessions.map(
-        ({ threadRef, snapshot, remote, driven, runtimeTabId, pictureInPicture, zoomFactor }) => {
-          const serverUrl = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-          const mirrored = remote && !driven;
-          const remoteUrl =
-            remote && serverUrl !== null
-              ? resolveRemoteTabUrl(threadRef.environmentId, serverUrl)
-              : null;
-          const initialUrl = remote ? (mirrored ? null : remoteUrl) : serverUrl;
-          return (
-            <AuthorizedBrowserWebview
-              key={runtimeTabId}
-              threadRef={threadRef}
-              tabId={snapshot.tabId}
-              runtimeTabId={runtimeTabId}
-              initialUrl={initialUrl}
-              viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
-              pictureInPicture={pictureInPicture}
-              profileId={remote ? REMOTE_DEVICE_BROWSER_PROFILE_ID : snapshot.profileId}
-              zoomFactor={zoomFactor}
-              serverDriven={driven}
-              {...(driven && snapshot.device !== undefined
-                ? { remoteDevice: snapshot.device }
-                : {})}
-              {...(mirrored && remoteUrl !== null ? { mirrorUrl: remoteUrl } : {})}
-              {...(snapshot.runtime === "server"
-                ? {
-                    serverRendering: {
-                      colorScheme: snapshot.colorScheme ?? "system",
-                      zoomFactor: snapshot.zoomFactor ?? 1,
-                    },
-                  }
-                : {})}
-            />
-          );
-        },
-      )}
+      {sessions.map((session) => {
+        const { threadRef, snapshot, remote, driven, runtimeTabId, pictureInPicture, zoomFactor } =
+          session;
+        const { serverUrl, remoteUrl, mirrored } = remoteTabUrls(session);
+        const initialUrl = remote ? (mirrored ? null : remoteUrl) : serverUrl;
+        return (
+          <AuthorizedBrowserWebview
+            key={runtimeTabId}
+            threadRef={threadRef}
+            tabId={snapshot.tabId}
+            runtimeTabId={runtimeTabId}
+            initialUrl={initialUrl}
+            viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
+            pictureInPicture={pictureInPicture}
+            profileId={remote ? REMOTE_DEVICE_BROWSER_PROFILE_ID : snapshot.profileId}
+            zoomFactor={zoomFactor}
+            serverDriven={driven}
+            {...(driven && snapshot.device !== undefined ? { remoteDevice: snapshot.device } : {})}
+            mirrored={mirrored}
+            {...(snapshot.runtime === "server"
+              ? {
+                  serverRendering: {
+                    colorScheme: snapshot.colorScheme ?? "system",
+                    zoomFactor: snapshot.zoomFactor ?? 1,
+                  },
+                }
+              : {})}
+          />
+        );
+      })}
     </div>
   );
 }

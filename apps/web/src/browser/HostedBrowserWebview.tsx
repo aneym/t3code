@@ -59,7 +59,7 @@ export function HostedBrowserWebview(props: {
   readonly zoomFactor: number;
   readonly serverDriven?: boolean;
   readonly remoteDevice?: string;
-  readonly mirrorUrl?: string;
+  readonly mirrored?: boolean;
   readonly serverRendering?: {
     readonly colorScheme: DesktopPreviewColorScheme;
     readonly zoomFactor: number;
@@ -76,7 +76,7 @@ export function HostedBrowserWebview(props: {
     profileId,
     serverDriven = false,
     remoteDevice,
-    mirrorUrl,
+    mirrored = false,
     serverRendering,
   } = props;
   const clientSettingsHydrated = useClientSettingsHydrated();
@@ -109,18 +109,8 @@ export function HostedBrowserWebview(props: {
     threadRef,
     tabId,
     runtimeTabId,
-    serverDriven: serverDriven || mirrorUrl !== undefined,
+    serverDriven: serverDriven || mirrored,
   });
-
-  const mirroredUrl = useRef(initialSrc);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the server tab's new URL into this show-only desktop webview through the desktop bridge
-  useEffect(() => {
-    const bridge = window.desktopBridge?.desktopBrowser;
-    if (!bridge || mirrorUrl === undefined || mirrorUrl === mirroredUrl.current) return;
-    mirroredUrl.current = mirrorUrl;
-    const command = JSON.stringify({ type: "mirror", tabId: runtimeTabId, url: mirrorUrl });
-    withDesktopTab(runtimeTabId, () => bridge.sendCommand(command));
-  }, [mirrorUrl, runtimeTabId]);
 
   const serverColorScheme = serverRendering?.colorScheme;
   const serverZoomFactor = serverRendering?.zoomFactor;

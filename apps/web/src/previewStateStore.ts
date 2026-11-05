@@ -175,6 +175,10 @@ export function readActivePreviewSessions(): Record<string, ThreadPreviewState> 
   return appAtomRegistry.get(activePreviewSessionsAtom);
 }
 
+export function subscribeActivePreviewSessions(listener: () => void): () => void {
+  return appAtomRegistry.subscribe(activePreviewSessionsAtom, listener);
+}
+
 export function readThreadPreviewState(ref: ScopedThreadRef): ThreadPreviewState {
   return appAtomRegistry.get(previewStateAtom(scopedThreadKey(ref)));
 }

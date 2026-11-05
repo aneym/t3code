@@ -10,22 +10,27 @@ const readId = (message: string): unknown => {
 };
 
 export const make = () => {
-  const pending = new Map<string, Set<number>>();
+  const pending = new Map<object, Map<string, Set<number>>>();
   return {
-    sent: (key: string, message: string) => {
+    sent: (source: object, key: string, message: string) => {
       const id = readId(message);
       if (typeof id !== "number") return;
-      const ids = pending.get(key) ?? new Set<number>();
-      pending.set(key, ids);
+      const tabs = pending.get(source) ?? new Map<string, Set<number>>();
+      pending.set(source, tabs);
+      const ids = tabs.get(key) ?? new Set<number>();
+      tabs.set(key, ids);
       ids.add(id);
     },
-    admits: (key: string, message: string) => {
+    admits: (source: object, key: string, message: string) => {
       const id = readId(message);
       if (id === undefined) return true;
-      return typeof id === "number" && pending.get(key)?.delete(id) === true;
+      return typeof id === "number" && pending.get(source)?.get(key)?.delete(id) === true;
     },
     clear: (key: string) => {
-      pending.delete(key);
+      for (const tabs of pending.values()) tabs.delete(key);
+    },
+    drop: (source: object) => {
+      pending.delete(source);
     },
   };
 };

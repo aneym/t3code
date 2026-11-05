@@ -317,7 +317,9 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
     const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
     // Session creation installs UA and permission handlers before a guest can attach.
     const session = yield* manager.getBrowserSession(scope, persistent, namespace);
-    if (profileId === REMOTE_DEVICE_BROWSER_PROFILE_ID) RemoteDeviceSession.guard(session);
+    if (profileId === REMOTE_DEVICE_BROWSER_PROFILE_ID) {
+      yield* Effect.promise(() => RemoteDeviceSession.guard(session));
+    }
     return {
       partition: yield* manager.getBrowserPartition(scope, persistent, namespace),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,

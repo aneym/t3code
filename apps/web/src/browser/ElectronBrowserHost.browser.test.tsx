@@ -22,6 +22,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock(import("~/env"), async (original) => ({ ...(await original()), isElectron: true }));
 
+vi.mock(import("~/state/primaryEnvironment"), async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { primaryEnvironmentIdAtom: Atom.make(EnvironmentId.make("host-webview-order")) };
+});
+
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
   useEnvironmentScope: () => true,

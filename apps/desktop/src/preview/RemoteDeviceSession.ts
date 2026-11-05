@@ -1,56 +1,16 @@
-import { isLoopbackAddressHost } from "@t3tools/shared/hostClassification";
 import type { Event, Session, WebContents } from "electron";
 import { app } from "electron";
-import * as NodeNet from "node:net";
-import * as NodeOS from "node:os";
+
+import { isBlockedHost } from "./RemoteDeviceAddress.ts";
+import * as RemoteDeviceProxy from "./RemoteDeviceProxy.ts";
 
 const NETWORK_SCHEMES = new Set(["http:", "https:", "ws:", "wss:"]);
 const LOCAL_SCHEMES = new Set(["data:", "blob:", "devtools:"]);
 const BLANK_DOCUMENTS = new Set(["about:blank", "about:srcdoc"]);
 
 const guardedSessions = new WeakSet<Session>();
+const guarding = new WeakMap<Session, Promise<void>>();
 let listening = false;
-
-const canonicalAddress = (host: string) => {
-  const bare = host
-    .replace(/^\[|\]$/gu, "")
-    .replace(/%.*$/u, "")
-    .toLowerCase();
-  const family = NodeNet.isIP(bare);
-  if (family === 0) return undefined;
-  const parsed = URL.parse(`http://${family === 6 ? `[${bare}]` : bare}/`)?.hostname.replace(
-    /^\[|\]$/gu,
-    "",
-  );
-  if (!parsed) return undefined;
-  const mapped = /^::ffff:([\da-f]{1,4}):([\da-f]{1,4})$/u.exec(parsed);
-  if (!mapped) return parsed;
-  const high = Number.parseInt(mapped[1]!, 16);
-  const low = Number.parseInt(mapped[2]!, 16);
-  return [high >>> 8, high & 0xff, low >>> 8, low & 0xff].join(".");
-};
-
-const ownAddresses = () =>
-  new Set(
-    Object.values(NodeOS.networkInterfaces())
-      .flatMap((entries) => entries ?? [])
-      .flatMap((entry) => {
-        const address = canonicalAddress(entry.address);
-        return address === undefined ? [] : [address];
-      }),
-  );
-
-const isBlockedAddress = (address: string) =>
-  isLoopbackAddressHost(address) ||
-  address.startsWith("169.254.") ||
-  /^fe[89ab][\da-f]:/u.test(address) ||
-  ownAddresses().has(address);
-
-export const isBlockedHost = (hostname: string) => {
-  if (isLoopbackAddressHost(hostname)) return true;
-  const address = canonicalAddress(hostname);
-  return address !== undefined && isBlockedAddress(address);
-};
 
 export const isNavigableUrl = (raw: string) => {
   if (BLANK_DOCUMENTS.has(raw)) return true;
@@ -62,20 +22,11 @@ export const isNavigableUrl = (raw: string) => {
   );
 };
 
-const allowsRequest = async (session: Session, raw: string) => {
+const allowsRequest = (raw: string) => {
   const url = URL.parse(raw);
   if (url === null) return false;
   if (LOCAL_SCHEMES.has(url.protocol)) return true;
-  if (!NETWORK_SCHEMES.has(url.protocol) || isBlockedHost(url.hostname)) return false;
-  if (canonicalAddress(url.hostname) !== undefined) return true;
-  const resolved = await session.resolveHost(url.hostname);
-  return (
-    resolved.endpoints.length > 0 &&
-    resolved.endpoints.every((endpoint) => {
-      const address = canonicalAddress(endpoint.address);
-      return address !== undefined && !isBlockedAddress(address);
-    })
-  );
+  return NETWORK_SCHEMES.has(url.protocol) && !isBlockedHost(url.hostname);
 };
 
 const guardContents = (contents: WebContents) => {
@@ -85,20 +36,29 @@ const guardContents = (contents: WebContents) => {
   contents.on("will-navigate", refuse);
   contents.on("will-frame-navigate", refuse);
   contents.on("will-redirect", refuse);
+  contents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
 };
 
-export const guard = (session: Session) => {
-  if (guardedSessions.has(session)) return;
-  guardedSessions.add(session);
-  session.webRequest.onBeforeRequest((details, callback) => {
-    allowsRequest(session, details.url).then(
-      (allowed) => callback({ cancel: !allowed }),
-      () => callback({ cancel: true }),
-    );
+const install = async (session: Session) => {
+  const proxyPort = await RemoteDeviceProxy.port();
+  await session.setProxy({
+    proxyRules: `127.0.0.1:${proxyPort}`,
+    proxyBypassRules: "<-loopback>",
   });
+  session.webRequest.onBeforeRequest((details, callback) =>
+    callback({ cancel: !allowsRequest(details.url) }),
+  );
+  session.on("will-download", (event) => event.preventDefault());
+  guardedSessions.add(session);
   if (listening) return;
   listening = true;
   app.on("web-contents-created", (_event, contents) => {
     if (guardedSessions.has(contents.session)) guardContents(contents);
   });
+};
+
+export const guard = (session: Session) => {
+  const pending = guarding.get(session) ?? install(session);
+  guarding.set(session, pending);
+  return pending;
 };

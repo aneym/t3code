@@ -157,6 +157,7 @@ const make = Effect.gen(function* () {
     remoteSources.set(id, entry);
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
+        replies.drop(entry);
         if (remoteSources.get(id) !== entry) return;
         remoteSources.delete(id);
         for (const id of entry.attached) {
@@ -187,7 +188,8 @@ const make = Effect.gen(function* () {
       const key = { threadId: event.value.threadId, tabId: event.value.tabId };
       const id = keyOf(key);
       if (event.value.type === "cdp") {
-        if (!replies.admits(id, event.value.message)) continue;
+        if (sourceForKey(id) !== source || !replies.admits(source, id, event.value.message))
+          continue;
         const queue = inbound.get(id);
         if (queue) yield* Queue.offer(queue, event.value.message);
       } else if (event.value.type === "attached") {
@@ -303,7 +305,7 @@ const make = Effect.gen(function* () {
                   const message = typeof frame === "string" ? frame : decoder.decode(frame);
                   const source = sourceForKey(id);
                   if (!source) return command({ type: "cdp", ...key, message });
-                  replies.sent(id, message);
+                  replies.sent(source, id, message);
                   return sourceCommand(source, { type: "cdp", ...key, message });
                 },
                 { discard: true },
