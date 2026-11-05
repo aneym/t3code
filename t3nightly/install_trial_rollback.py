@@ -5,6 +5,7 @@ import time
 import urllib.request
 
 from .install_provenance import file_digest
+from .install_settings import rollback
 
 
 def launcher_identity(run, version, expected):
@@ -46,17 +47,18 @@ def recover(run, bearer, previous, compatibility, before, connect, baseline):
     from .launcher_update import binary_compatible, supported, swap, wait_version
     from .install_provenance import migration_history
 
-    if run.server_version() == previous:
-        wait_version(run, previous)
-        method = "launcher-automatic"
-    elif binary_compatible(compatibility, migration_history(run)) and supported(run.environment(), run):
-        swap(run, bearer, previous, True)
-        method = "launcher-ipc"
-    else:
-        run.report["hotSwap"]["forwardRepairRequired"] = True
-        raise ValueError("acceptance failed after routing; incompatible binary rollback refused; current database preserved for forward repair")
-    retained(run, before)
-    if connect and not connect_returns(run, previous):
-        raise ValueError("rollback managed tunnel acceptance failed")
-    prove(run, previous, baseline)
-    run.report["hotSwap"]["rollback"] = method
+    with rollback(run):
+        if run.server_version() == previous:
+            wait_version(run, previous)
+            method = "launcher-automatic"
+        elif binary_compatible(compatibility, migration_history(run)) and supported(run.environment(), run):
+            swap(run, bearer, previous, True)
+            method = "launcher-ipc"
+        else:
+            run.report["hotSwap"]["forwardRepairRequired"] = True
+            raise ValueError("acceptance failed after routing; incompatible binary rollback refused; current database preserved for forward repair")
+        retained(run, before)
+        if connect and not connect_returns(run, previous):
+            raise ValueError("rollback managed tunnel acceptance failed")
+        prove(run, previous, baseline)
+        run.report["hotSwap"]["rollback"] = method

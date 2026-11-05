@@ -6,7 +6,8 @@ import stat
 import subprocess
 import sys
 import tempfile
-from contextlib import contextmanager
+import time
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from .install_strays import SQLITE_SHARED_FIRST, SQLITE_SHARED_SIZE, process_argv, serves_home
@@ -38,11 +39,6 @@ def load():
     return json_object(data, "install-settings.json")
 
 
-def refuse(method):
-    if load() is not None:
-        raise ValueError(f"install-settings.json requires --hard: {method} has no installer-controlled server-free interval; nothing stopped")
-
-
 def dry_run():
     settings = load()
     if settings is not None:
@@ -61,7 +57,7 @@ def read(path):
         return None, 0o600
 
 
-def atomic_write(path, data, mode):
+def atomic_write(path, data, mode, *, before_replace=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, raw = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(raw)
@@ -71,8 +67,11 @@ def atomic_write(path, data, mode):
             handle.flush()
             os.fchmod(handle.fileno(), mode)
             os.fsync(handle.fileno())
+        if before_replace is not None and not before_replace():
+            return False
         os.replace(temporary, path)
         sync_directory(path.parent)
+        return True
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -125,11 +124,12 @@ def service_absent(run):
 
 
 class SettingsChange:
-    def __init__(self, home, settings, *, sandbox=False):
+    def __init__(self, home, settings, *, sandbox=False, mode="stopped"):
         self.home = Path(home)
         self.path = self.home / "userdata/settings.json"
         self.settings = settings
         self.sandbox = sandbox
+        self.apply_mode = mode
         self.captured = False
         self.before, self.mode = read(self.path)
         if self.before is not None:
@@ -151,12 +151,55 @@ class SettingsChange:
             merged = {**current, **self.settings, **pins}
             after = (json.dumps(merged, indent=2, allow_nan=False) + "\n").encode()
             atomic_write(self.path, after, mode)
-        return {"keys": sorted(self.settings), "beforeSha256": sha256(self.before), "afterSha256": sha256(after)}
+        return {"keys": sorted(self.settings), "beforeSha256": sha256(self.before), "afterSha256": sha256(after), "mode": "stopped"}
+
+    def apply_live(self):
+        self.capture()
+        evidence = {"keys": sorted(self.settings), "beforeSha256": sha256(self.before), "afterSha256": None,
+                    "mode": "live-after-swap", "state": "failed", "check": "file", "attempts": []}
+        for attempt in range(2):
+            row = {}
+            evidence["attempts"].append(row)
+            try:
+                data, mode = read(self.path)
+                row["readSha256"] = sha256(data)
+                current = json_object(data, "settings.json") if data is not None else {}
+                pins = security_pins(current) if self.sandbox else {}
+                merged = {**current, **self.settings, **pins}
+                after = (json.dumps(merged, indent=2, allow_nan=False) + "\n").encode()
+
+                def unchanged():
+                    live, _ = read(self.path)
+                    row["beforeRenameSha256"] = sha256(live)
+                    return row["readSha256"] == row["beforeRenameSha256"]
+
+                if not atomic_write(self.path, after, mode, before_replace=unchanged):
+                    row["result"] = "changed-before-rename"
+                    continue
+                time.sleep(0.3)
+                live, _ = read(self.path)
+                evidence["afterSha256"] = sha256(live)
+                observed = json_object(live, "settings.json") if live is not None else {}
+                expected = {key: merged[key] for key in self.settings}
+                actual = {key: observed[key] for key in self.settings if key in observed}
+                if json.dumps(actual, sort_keys=True) == json.dumps(expected, sort_keys=True):
+                    row["result"] = "confirmed"
+                    evidence["state"] = "applied"
+                    return evidence
+                row["result"] = "lost-after-rename"
+            except (OSError, ValueError) as error:
+                row["result"] = type(error).__name__
+        try:
+            evidence["afterSha256"] = sha256(read(self.path)[0])
+        except OSError:
+            pass
+        evidence["binaryRollback"] = False
+        return evidence
 
     def restore(self):
         if not self.captured:
             return
-        with stopped(self.home):
+        with stopped(self.home) if self.apply_mode == "stopped" else nullcontext():
             if self.before is None:
                 self.path.unlink(missing_ok=True)
                 sync_directory(self.path.parent)
@@ -164,10 +207,12 @@ class SettingsChange:
                 atomic_write(self.path, self.before, self.mode)
 
 
-def prepare(run):
+def prepare(run, *, mode="stopped"):
     settings = load()
     run.settings_rollback = False
-    run.server_settings = None if settings is None else SettingsChange(run.home, settings, sandbox=run.args.rehearsal)
+    run.server_settings = None if settings is None else SettingsChange(run.home, settings, sandbox=run.args.rehearsal, mode=mode)
+    if mode == "live-after-swap":
+        capture(run)
 
 
 def capture(run):
@@ -180,13 +225,39 @@ def apply(run):
         run.report["serverSettingsApplied"] = run.server_settings.apply()
 
 
+def live_after_swap(run):
+    if run.server_settings is None:
+        return True
+    evidence = run.report["serverSettingsApplied"] = run.server_settings.apply_live()
+    if evidence["state"] == "failed":
+        run.report["mcpEventsProof"] = "blocked-settings"
+        run.step("server-settings-failed", binaryRollback=False, mcpEventsProof="blocked-settings")
+        return False
+    return True
+
+
 def restore(run):
-    if run.server_settings is not None:
+    if getattr(run, "server_settings", None) is not None:
         run.server_settings.restore()
 
 
+@contextmanager
+def rollback(run):
+    try:
+        restore(run)
+        yield
+    finally:
+        restore(run)
+
+
+def result_line(run, line):
+    if run.report.get("mcpEventsProof") == "blocked-settings":
+        return line + "; settings failed; new binary kept, no binary rollback; MCP Events proof blocked-settings"
+    return line
+
+
 def receipt(run):
-    return {"serverSettingsApplied": run.report["serverSettingsApplied"]} if "serverSettingsApplied" in run.report else {}
+    return {key: run.report[key] for key in ("serverSettingsApplied", "mcpEventsProof") if key in run.report}
 
 
 def sandbox_settings(path, pinned):

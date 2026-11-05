@@ -21,7 +21,7 @@ from t3nightly.install_runtime import mark_update_restart, stage_runtime
 from t3nightly.install_diagnostics import persist_memory_diagnostics
 from t3nightly.install_feed import persist_release_feed, verify_release_feed
 from t3nightly.install_storage import payload_locations, snapshot_path
-from t3nightly.install_settings import refuse
+from t3nightly import install_settings
 
 FORK_BASE_URL = "https://github.com/aneym/t3code/releases/download"
 STREAMING = ("queued", "preparing", "starting", "running")
@@ -69,6 +69,7 @@ class Run:
         print(json.dumps(row), flush=True)
 
     def finish(self, outcome, line):
+        line = install_settings.result_line(self, line)
         drain = self.report.get("restartDrain")
         if drain:
             line += f"; restart drain {drain['outcome']}, waited_ms={drain.get('waitedMs')}, active_run_ids={drain.get('activeRunIds', [])}"
@@ -393,7 +394,7 @@ class Run:
         self.step(f"service-{action}", code=code)
 
     def main(self):
-        refuse("launcher-managed restart")
+        install_settings.prepare(self, mode="live-after-swap")
         if self.args.version == "previous":
             last = json.loads((self.state / "last.json").read_text())
             self.args.version = last["previous"]
@@ -439,6 +440,8 @@ class Run:
                 problem = "t3 update failed"
             else:
                 problem = self.healthy(self.args.version, connect_before)
+            if problem is None and not install_settings.live_after_swap(self):
+                return self.finish("failed", "launcher update succeeded; settings step failed")
             if problem is None:
                 refresh_snapshot(self)
             if problem is None and self.thread_count() < threads_before:
@@ -464,15 +467,16 @@ class Run:
             return self.finish("failed", f"{self.report['host']}: acceptance failed; current database preserved for forward repair")
         self.step("rollback", reason=problem)
         try:
-            with restart_session(self, self.args.version) as bearer:
-                swap(self, bearer, previous, True)
-            again = self.healthy(previous, connect_before)
-            if again is None:
-                self.link_cli(previous)
-                return self.finish(
-                    "rolled-back-clean",
-                    f"{self.report['host']}: {self.args.version} failed ({problem}); back on {previous}",
-                )
+            with install_settings.rollback(self):
+                with restart_session(self, self.args.version) as bearer:
+                    swap(self, bearer, previous, True)
+                again = self.healthy(previous, connect_before)
+                if again is None:
+                    self.link_cli(previous)
+                    return self.finish(
+                        "rolled-back-clean",
+                        f"{self.report['host']}: {self.args.version} failed ({problem}); back on {previous}",
+                    )
         except errors as error:
             again = str(error)
             self.step("rollback-error", error=again)

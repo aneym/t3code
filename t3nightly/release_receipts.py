@@ -74,6 +74,8 @@ def validate(receipt):
         optional = {key: dict for key in ("installWindow", "hotSwap", "restartDrain", "migrationHistory", "databaseRollback", "backupRetention", "serverSettingsApplied") if key in receipt and receipt[key] is not None}
         if "serviceStops" in receipt:
             optional["serviceStops"] = list
+        if "mcpEventsProof" in receipt:
+            optional["mcpEventsProof"] = str
         shape({key: value for key, value in receipt.items() if value is not None or key not in ("installWindow", "hotSwap", "restartDrain", "migrationHistory", "databaseRollback", "backupRetention")}, {**INSTALL_FIELDS, **optional}, "receipt")
         shape(receipt["chat"], CHAT_FIELDS, "receipt.chat")
         if receipt["outcome"] not in INSTALL_OUTCOMES:

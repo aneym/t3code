@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import install_offbox
+from . import install_offbox, install_settings
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_copy import backup_database
 from .install_hard import connect_returns, install as hard_install
@@ -192,6 +192,7 @@ def mark_candidate(run, manifest, rehearsal, compatibility, observed):
 
 def install(run):
     args = run.args
+    install_settings.prepare(run, mode="live-after-swap")
     fallback_enabled = not args.rehearsal or (not args.force_rollback and getattr(args, "inject", "none") == "none")
     previous = run.server_version()
     if not previous:
@@ -231,9 +232,7 @@ def install(run):
         run.report["hotSwap"]["fallbackReasons"] = [step for step in run.report["steps"] if step.get("step") in ("hot-swap-fallback", "hot-swap-unsupported")]
         return drain_then_hard(run, previous)
     from .connector_artifact import ensure_connector
-    from .install_settings import refuse
 
-    refuse("hot-swap")
     ensure_connector(run)
     baseline = prove(run, previous)
     before = identities(run)
@@ -260,15 +259,16 @@ def install(run):
             if connect and not connect_returns(run, args.version):
                 raise ValueError("managed T3 Connect link did not recover")
             post = prove(run, args.version, baseline)
-            if args.force_rollback:
+            outcome = "installed" if install_settings.live_after_swap(run) else "failed"
+            if outcome == "installed" and args.force_rollback:
                 candidate_writes(run, args.version, post["proof"])
                 raise ValueError("forced isolated acceptance failure")
-            outcome = "installed"
         except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as error:
             run.step("hot-swap-failure", error=str(error))
             if not requested:
                 restart_rpc(run, bearer, "abort", {"epoch": epoch})
                 raise
+            install_settings.restore(run)
             restore_runtime(run.home, previous, store)
             try:
                 fallback = clean_rollback(run, previous, observed["oldRuntime.digest"], original_launcher)
@@ -299,6 +299,7 @@ def install(run):
     serving_digest = file_digest(serving_binary) if serving_binary.is_file() else ""
     receipt = {"schema": INSTALL_SCHEMA, "release": args.version, "runId": uuid.uuid4().hex, "host": host, **{key: manifest["targets"][host][key] for key in ("platform", "arch")}, "candidateDigest": manifest["digest"], "rehearsalDigest": rehearsal["digest"] if rehearsal else "", "artifactManifestDigest": observed["artifactManifestDigest"], "service": run.service_label, "oldRuntime": {"version": previous, "digest": observed["oldRuntime.digest"]}, "servingRuntime": {"version": serving_version, "digest": serving_digest}, "backup": backup, "chat": post["proof"], "outcome": "failed" if outcome == "broken" else outcome, "reapedSshLaunch": [], "hotSwap": {**run.report["hotSwap"], "update": update or run.report["hotSwap"].get("update")}, "installWindow": run.report.get("installWindow"), "eligibility": eligibility(manifest, host, args), "startedAt": run.report["started_at"], "finishedAt": datetime.now(timezone.utc).isoformat()}
     destination = Path(args.install_receipt) if args.install_receipt else run.state / "receipts" / f"install-{host}.json"
+    receipt.update(install_settings.receipt(run))
     destination.parent.mkdir(parents=True, exist_ok=True)
     write(destination, receipt)
     if outcome == "installed" and backup.get("path"):
