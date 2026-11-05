@@ -82,7 +82,7 @@ export async function openTerminalLinkInPreview<E>(
     return;
   }
   recordVisitForThread(input.threadRef, input.url);
-  recordDesktopOpenedTab(input.threadRef, result.value);
+  recordDesktopOpenedTab(input.threadRef, result.value, input.url);
   applyPreviewServerSnapshot(input.threadRef, result.value);
   useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
 }

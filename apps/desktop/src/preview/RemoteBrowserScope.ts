@@ -1,5 +1,6 @@
 import {
   type ClientSettings,
+  DesktopBrowserAnnounce,
   DesktopBrowserRendererCommand,
   parseRemoteDesktopBrowserThreadId,
   remoteDesktopBrowserThreadId,
@@ -17,7 +18,17 @@ import * as RemoteDeviceSession from "./RemoteDeviceSession.ts";
 type AdmittedCommand =
   | { readonly type: "host"; readonly line: string }
   | { readonly type: "reply"; readonly line: string }
-  | { readonly type: "navigate"; readonly tabId: string; readonly url: string };
+  | { readonly type: "navigate"; readonly tabId: string; readonly url: string }
+  | { readonly type: "announce"; readonly tabs: ReadonlyArray<AttachedRemoteTab> };
+
+interface AttachedRemoteTab {
+  readonly environmentId: string;
+  readonly release: string;
+  readonly envelope: string;
+}
+
+const attachedRemoteTabs = new Map<string, AttachedRemoteTab>();
+const isAnnounce = Schema.is(DesktopBrowserAnnounce);
 
 const decodeRendererCommand = Schema.decodeUnknownOption(
   Schema.fromJsonString(DesktopBrowserRendererCommand),
@@ -121,9 +132,15 @@ export const admit = Effect.fn("desktop.remoteBrowserScope.admit")(function* (te
       : Option.none<AdmittedCommand>();
   }
   const inner = parseObject(command.value.line);
-  if (!allowed.control || !inner || typeof inner.threadId !== "string") {
-    return Option.none<AdmittedCommand>();
+  if (!allowed.control || !inner) return Option.none<AdmittedCommand>();
+  const { environmentId } = command.value;
+  if (isAnnounce(inner)) {
+    const tabs = [...attachedRemoteTabs.values()].filter(
+      (tab) => tab.environmentId === environmentId,
+    );
+    return Option.some<AdmittedCommand>({ type: "announce", tabs });
   }
+  if (typeof inner.threadId !== "string") return Option.none<AdmittedCommand>();
   return Option.fromUndefinedOr(
     scopeHostLine(inner, command.value.environmentId, command.value.loopbackHost),
   );
@@ -134,8 +151,14 @@ export const remoteEventEnvelope = (text: string) => {
   if (!event || typeof event.threadId !== "string") return undefined;
   const scope = parseRemoteDesktopBrowserThreadId(event.threadId);
   if (!scope) return undefined;
-  return encodeJson({
+  const envelope = encodeJson({
     environmentId: scope.environmentId,
     line: encodeJson({ ...event, threadId: scope.threadId }),
   });
+  const key = encodeJson([event.threadId, event.tabId]);
+  if (event.type === "attached") {
+    const release = encodeJson({ type: "release", threadId: event.threadId, tabId: event.tabId });
+    attachedRemoteTabs.set(key, { environmentId: scope.environmentId, release, envelope });
+  } else if (event.type === "detached") attachedRemoteTabs.delete(key);
+  return envelope;
 };

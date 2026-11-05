@@ -57,6 +57,8 @@ const install = async (session: Session) => {
   });
 };
 
+export const isGuarded = (session: Session) => guardedSessions.has(session);
+
 export const guard = (session: Session) => {
   const pending = guarding.get(session) ?? install(session);
   guarding.set(session, pending);

@@ -34,6 +34,9 @@ export const DesktopBrowserCommand = Schema.Union([
 ]);
 export type DesktopBrowserCommand = typeof DesktopBrowserCommand.Type;
 
+export const DesktopBrowserAnnounce = Schema.Struct({ type: Schema.Literal("announce") });
+export type DesktopBrowserAnnounce = typeof DesktopBrowserAnnounce.Type;
+
 export const DesktopBrowserRemoteSource = Schema.Struct({
   deviceName: TrimmedNonEmptyString,
   focused: Schema.Boolean,

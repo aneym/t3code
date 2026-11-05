@@ -3,6 +3,7 @@
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer";
 import {
+  DesktopBrowserAnnounce,
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   DesktopBrowserRemoteEvents,
@@ -35,6 +36,7 @@ const decodeEvent = Schema.decodeUnknownEffect(DesktopBrowserEvent);
 const decodeRemoteEvent = Schema.decodeUnknownEffect(Schema.fromJsonString(DesktopBrowserEvent));
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(DesktopBrowserCommand));
 const encodeRemoteCommand = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserCommand));
+const ANNOUNCE_LINE = `${Schema.encodeSync(Schema.fromJsonString(DesktopBrowserAnnounce))({ type: "announce" })}\n`;
 
 export interface DesktopTabKey {
   readonly threadId: string;
@@ -83,6 +85,7 @@ const make = Effect.gen(function* () {
   const controlFd = config.desktopBrowserControlFd;
   const changes = yield* PubSub.unbounded<{ key: DesktopTabKey; attached: boolean }>();
   const attachedTabs = new Set<string>();
+  const localTabs = new Set<string>();
   const inbound = new Map<string, Queue.Queue<string>>();
   const replies = RemoteCdpReplies.make();
   const writeLock = yield* Semaphore.make(1);
@@ -155,6 +158,7 @@ const make = Effect.gen(function* () {
       lastFocusedAt: yield* Clock.currentTimeMillis,
     };
     remoteSources.set(id, entry);
+    if (entry.control) yield* Queue.offer(entry.queue, ANNOUNCE_LINE);
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         replies.drop(entry);
@@ -187,6 +191,19 @@ const make = Effect.gen(function* () {
       if (Option.isNone(event)) continue;
       const key = { threadId: event.value.threadId, tabId: event.value.tabId };
       const id = keyOf(key);
+      const owner = sourceForKey(id);
+      const claimed = owner !== null || localTabs.has(id);
+      if (
+        event.value.type === "attached"
+          ? claimed && owner !== source
+          : event.value.type === "detached" && owner !== source
+      ) {
+        yield* Effect.logWarning("desktop browser tab claim refused", {
+          event: event.value.type,
+          device: source.name,
+        });
+        continue;
+      }
       if (event.value.type === "cdp") {
         if (sourceForKey(id) !== source || !replies.admits(source, id, event.value.message))
           continue;
@@ -243,9 +260,11 @@ const make = Effect.gen(function* () {
           }
           case "attached":
             attachedTabs.add(id);
+            localTabs.add(id);
             return PubSub.publish(changes, { key, attached: true });
           case "detached": {
             attachedTabs.delete(id);
+            localTabs.delete(id);
             const queue = inbound.get(id);
             return (queue ? Queue.shutdown(queue) : Effect.void).pipe(
               Effect.andThen(PubSub.publish(changes, { key, attached: false })),

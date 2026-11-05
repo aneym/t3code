@@ -53,7 +53,7 @@ export async function openPreviewSession<E>(
     return result;
   }
   const snapshot = result.value;
-  recordDesktopOpenedTab(input.threadRef, snapshot);
+  recordDesktopOpenedTab(input.threadRef, snapshot, input.url);
   applyPreviewServerSnapshot(input.threadRef, snapshot);
   if (input.url !== undefined) {
     rememberPreviewUrl(

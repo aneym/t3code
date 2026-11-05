@@ -481,6 +481,15 @@ export const desktopBrowserCommand = DesktopIpc.makeIpcMethod({
       yield* electronWindow.sendAll(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, command.value.line);
       return;
     }
+    if (command.value.type === "announce") {
+      const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      for (const tab of command.value.tabs) {
+        yield* host.handleCommandLine(tab.release);
+        yield* electronWindow.sendAll(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, tab.envelope);
+      }
+      return;
+    }
     if (command.value.type === "navigate") {
       const manager = yield* PreviewManager.PreviewManager;
       yield* manager.navigate(command.value.tabId, command.value.url).pipe(Effect.ignore);

@@ -88,7 +88,7 @@ export async function openUrlInPreview<E>(input: {
     },
   });
   return mapAtomCommandResult(result, (snapshot) => {
-    recordDesktopOpenedTab(threadRef, snapshot);
+    recordDesktopOpenedTab(threadRef, snapshot, input.url);
     rememberPreviewUrl(threadRef, input.url);
     if (input.background) {
       updatePreviewServerSnapshot(threadRef, snapshot);
