@@ -105,7 +105,7 @@ def rollback_database(run, backup, compatibility):
     if not backup.get("remote"):
         raise ValueError("restore copy missing and no off-box replica is available; database preserved for forward repair")
     try:
-        return restore(run, backup)
+        return restore(run, backup, beside=False if backup.get("stoppedShip") else None)
     except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as error:
         if isinstance(error, restore_copy.RecoveryRequired):
             raise
