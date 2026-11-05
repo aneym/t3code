@@ -5,6 +5,7 @@ import {
   type DesktopPreviewOpenLinkEvent,
   type EnvironmentId,
   FILL_PREVIEW_VIEWPORT,
+  REMOTE_DEVICE_BROWSER_PROFILE_ID,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
@@ -15,6 +16,7 @@ import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { isElectron } from "~/env";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
 import {
+  isRemoteDeviceThread,
   useDesktopHostedPreviewSessions,
   useRemoteDeviceTabSessions,
 } from "~/components/preview/usePreviewSession";
@@ -53,9 +55,15 @@ function hostedBrowserSessions(
     const threadRef = parseScopedThreadKey(threadKey);
     return threadRef
       ? Object.values(previewState.sessions)
+          .map((snapshot) => ({
+            snapshot,
+            remote:
+              threadRef.environmentId !== primaryEnvironmentId &&
+              (snapshot.device !== undefined || isRemoteDeviceThread(threadKey)),
+          }))
           .filter(
-            (snapshot) =>
-              snapshot.runtime !== "server" ||
+            ({ snapshot, remote }) =>
+              (!remote && snapshot.runtime !== "server") ||
               rendersServerTabNatively(
                 threadRef.environmentId,
                 primaryEnvironmentId,
@@ -63,9 +71,10 @@ function hostedBrowserSessions(
                 accessFor,
               ),
           )
-          .map((snapshot) => ({
+          .map(({ snapshot, remote }) => ({
             threadRef,
             snapshot,
+            remote,
             driven:
               snapshot.runtime === "server" &&
               serverDrivesNativeTab(
@@ -167,11 +176,9 @@ export function ElectronBrowserHost() {
   return (
     <div className="contents" data-electron-browser-host>
       {sessions.map(
-        ({ threadRef, snapshot, driven, runtimeTabId, pictureInPicture, zoomFactor }) => {
+        ({ threadRef, snapshot, remote, driven, runtimeTabId, pictureInPicture, zoomFactor }) => {
           const serverUrl = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-          const remote =
-            snapshot.runtime === "server" && threadRef.environmentId !== primaryEnvironmentId;
-          const mirrored = snapshot.runtime === "server" && !driven;
+          const mirrored = remote && !driven;
           const remoteUrl =
             remote && serverUrl !== null
               ? resolveRemoteTabUrl(threadRef.environmentId, serverUrl)
@@ -186,7 +193,7 @@ export function ElectronBrowserHost() {
               initialUrl={initialUrl}
               viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
               pictureInPicture={pictureInPicture}
-              profileId={snapshot.profileId}
+              profileId={remote ? REMOTE_DEVICE_BROWSER_PROFILE_ID : snapshot.profileId}
               zoomFactor={zoomFactor}
               serverDriven={driven}
               {...(driven && snapshot.device !== undefined

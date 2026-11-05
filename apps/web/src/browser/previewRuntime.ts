@@ -75,10 +75,11 @@ export function serverDrivesNativeTab(
 }
 
 export function useRendersServerTabNatively(
-  environmentId: EnvironmentId,
+  environmentId: EnvironmentId | null,
   snapshot: Pick<PreviewSessionSnapshot, "runtime" | "device" | "headless"> | null | undefined,
 ): boolean {
   const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
   const accessFor = useRemoteDeviceAccessFor();
+  if (environmentId === null) return false;
   return rendersServerTabNatively(environmentId, primaryEnvironmentId, snapshot, accessFor);
 }

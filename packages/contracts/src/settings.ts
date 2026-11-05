@@ -1,9 +1,5 @@
-import {
-  ForkPreviewClientSettingsFields,
-  ForkPreviewClientSettingsPatchFields,
-  ForkPreviewSettingsFields,
-  ForkPreviewSettingsPatchFields,
-} from "./forkPreviewSettings.ts";
+import * as ForkPreview from "./forkPreviewSettings.ts";
+import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
 import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
 import {
   StorageRetentionDays,
@@ -426,7 +422,7 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW)),
   ),
 
-  ...ForkPreviewClientSettingsFields,
+  ...ForkPreview.Client,
 
   browserProfiles: Schema.Array(BrowserProfile).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -515,11 +511,7 @@ export const ClientSettingsSchema = Schema.Struct({
   // the boring sidebar; the boring sidebar toggle clears it.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarWorkingShelfEnabled: DefaultTrue,
-  sidebarThreadShowMachine: DefaultTrue,
-  sidebarThreadShowAgent: DefaultTrue,
-  sidebarThreadShowStatusText: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(true)),
-  ),
+  ...ForkSidebarThread.Client,
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -1181,7 +1173,7 @@ export const ServerSettings = Schema.Struct({
   ...ForkThreadSettingsFields,
 
   enableAgentBrowserAccess: DefaultTrue,
-  ...ForkPreviewSettingsFields,
+  ...ForkPreview.Server,
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1562,7 +1554,7 @@ export const ServerSettingsPatch = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   ...ForkThreadSettingsPatchFields,
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
-  ...ForkPreviewSettingsPatchFields,
+  ...ForkPreview.ServerPatch,
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
@@ -1730,7 +1722,7 @@ export const ClientSettingsPatch = Schema.Struct({
   browserSearchEngine: Schema.optionalKey(BrowserSearchEngine),
   browserCustomSearchUrl: Schema.optionalKey(BrowserCustomSearchUrl),
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
-  ...ForkPreviewClientSettingsPatchFields,
+  ...ForkPreview.ClientPatch,
   browserProfiles: Schema.optionalKey(Schema.Array(BrowserProfile)),
   browserDefaultProfileId: Schema.optionalKey(BrowserProfileId),
   confirmQuit: Schema.optionalKey(QuitConfirmationMode),
@@ -1773,9 +1765,7 @@ export const ClientSettingsPatch = Schema.Struct({
   threadDetailsItems: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
-  sidebarThreadShowMachine: Schema.optionalKey(Schema.Boolean),
-  sidebarThreadShowAgent: Schema.optionalKey(Schema.Boolean),
-  sidebarThreadShowStatusText: Schema.optionalKey(Schema.Boolean),
+  ...ForkSidebarThread.ClientPatch,
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

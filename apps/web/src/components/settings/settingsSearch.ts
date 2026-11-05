@@ -1,4 +1,5 @@
 import { queueSettingsSearch } from "./queueSettingsSearch";
+import { browserAgentSettingsSearch, browserPanelSettingsSearch } from "./browserSettingsSearch";
 import { HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron, isSecretsFeatureEnabled } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
@@ -884,20 +885,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["refresh availability versions auth state models background probes seconds off"],
     providerSettingsOnly: true,
   },
-  {
-    id: "agent-browser-access",
-    title: "Agent browser access",
-    to: "/settings/browser",
-    scope: "project-defaults",
-    searchTerms: ["allow disable enable open drive preview tools sessions project override"],
-  },
-  {
-    id: "preview-open-on-user-device",
-    title: "Open agent tabs on your desktop",
-    to: "/settings/browser",
-    scope: "environment-defaults",
-    searchTerms: ["preview open remote device desktop local browser panel show user focused"],
-  },
+  ...browserAgentSettingsSearch,
   {
     id: "device-sources",
     title: "Device sources",
@@ -994,26 +982,7 @@ export const SETTINGS_SEARCH_ITEMS = [
       `pr commit links ${SOURCE_CONTROL_HOST_LABELS} browser external click default pull request view panel`,
     ],
   },
-  {
-    id: "browser-auto-show-floating-preview",
-    title: "Auto-show floating preview",
-    to: "/settings/browser",
-    searchTerms: ["agent opens browser device simulator pop into view hide"],
-  },
-  {
-    id: "remote-device-tabs",
-    title: "Show agent tabs from other machines",
-    to: "/settings/browser",
-    searchTerms: [
-      "remote device desktop agent tabs other machine environment show preview consent",
-    ],
-  },
-  {
-    id: "remote-device-control",
-    title: "Let other machines control agent tabs",
-    to: "/settings/browser",
-    searchTerms: ["remote device desktop agent control cdp drive click type script cookies"],
-  },
+  ...browserPanelSettingsSearch,
   {
     id: "automatic-pull",
     title: "Automatically pull",

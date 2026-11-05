@@ -1,5 +1,6 @@
 import type { PreviewAutomationOpenInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as DesktopBrowserChannel from "./DesktopBrowserChannel.ts";
@@ -26,11 +27,15 @@ const namedDevice = (devices: ReadonlyArray<ConnectedDevice>, wanted: string) =>
 
 export const make = Effect.gen(function* () {
   const channel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
-  const settings = yield* ServerSettings.ServerSettingsService;
-  const opensOnUserDevice = settings.getSettings.pipe(
-    Effect.map((current) => current.previewOpenOnUserDevice),
-    Effect.orElseSucceed(() => false),
-  );
+  const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  const opensOnUserDevice = Option.match(settings, {
+    onNone: () => Effect.succeed(false),
+    onSome: (service) =>
+      service.getSettings.pipe(
+        Effect.map((current) => current.previewOpenOnUserDevice),
+        Effect.orElseSucceed(() => false),
+      ),
+  });
   return Effect.fn("PreviewOpenDevice.resolve")(function* (open: PreviewAutomationOpenInput) {
     if (!channel.devices || !(yield* opensOnUserDevice)) return undefined;
     if (open.device === undefined) {

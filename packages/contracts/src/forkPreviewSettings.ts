@@ -1,15 +1,15 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-export const ForkPreviewSettingsFields = {
+export const Server = {
   previewOpenOnUserDevice: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 };
 
-export const ForkPreviewSettingsPatchFields = {
+export const ServerPatch = {
   previewOpenOnUserDevice: Schema.optionalKey(Schema.Boolean),
 };
 
-export const ForkPreviewClientSettingsFields = {
+export const Client = {
   browserAllowRemoteDeviceTabs: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -18,7 +18,7 @@ export const ForkPreviewClientSettingsFields = {
   ),
 };
 
-export const ForkPreviewClientSettingsPatchFields = {
+export const ClientPatch = {
   browserAllowRemoteDeviceTabs: Schema.optionalKey(Schema.Boolean),
   browserAllowRemoteDeviceControl: Schema.optionalKey(Schema.Boolean),
 };

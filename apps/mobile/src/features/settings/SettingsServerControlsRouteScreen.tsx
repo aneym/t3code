@@ -46,6 +46,7 @@ import {
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
+import { PreviewBrowserSettingsSection } from "./PreviewBrowserSettingsSection";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
@@ -395,30 +396,12 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       />
                     ))}
                   </SettingsSection>
-                  <SettingsSection title="Preview browser">
-                    <SettingsSwitchRow
-                      icon="globe"
-                      label="Agent browser access"
-                      subtitle={managedSubtitle(
-                        "enableAgentBrowserAccess",
-                        "Allow agents to use the in-app preview browser.",
-                      )}
-                      value={uniform("enableAgentBrowserAccess")}
-                      disabled={disabledFor("enableAgentBrowserAccess")}
-                      onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
-                    />
-                    <SettingsSwitchRow
-                      icon="desktopcomputer"
-                      label="Open agent tabs on your desktop"
-                      subtitle={managedSubtitle(
-                        "previewOpenOnUserDevice",
-                        "Show agent tabs on the connected desktop app you used last. Otherwise they open in this environment's browser.",
-                      )}
-                      value={uniform("previewOpenOnUserDevice")}
-                      disabled={disabledFor("previewOpenOnUserDevice")}
-                      onValueChange={(value) => write({ previewOpenOnUserDevice: value })}
-                    />
-                  </SettingsSection>
+                  <PreviewBrowserSettingsSection
+                    uniform={uniform}
+                    managedSubtitle={managedSubtitle}
+                    disabledFor={disabledFor}
+                    write={write}
+                  />
                   <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
                 </>
               ) : null}

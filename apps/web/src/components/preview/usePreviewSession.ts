@@ -103,6 +103,12 @@ const inactiveAtom = Atom.make(() => undefined);
 // Discover background tabs without listing every thread at startup. Keep each
 // sync while the thread has tabs so later events still arrive while chat is
 // absent, then release it so closed previews stop costing a list and a fan-out.
+const remoteDeviceThreadKeys = new Set<string>();
+
+export function isRemoteDeviceThread(threadKey: string): boolean {
+  return remoteDeviceThreadKeys.has(threadKey);
+}
+
 const desktopHostedPreviewSyncAtom = Atom.family((key: string) => {
   const [environmentId, device] = key.split("\u0000") as [EnvironmentId, string];
   const eventsAtom = previewEnvironment.events({ environmentId, input: {} });
@@ -123,6 +129,7 @@ const desktopHostedPreviewSyncAtom = Atom.family((key: string) => {
         const threadId = result.value.threadId;
         if (releaseByThreadId.has(threadId)) return;
         const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)));
+        if (device !== "") remoteDeviceThreadKeys.add(threadKey);
         const unmount = get.registry.mount(previewSessionSyncAtom(threadKey));
         // The opening event may not be applied yet, so wait until a tab has
         // been seen. A pending local close can still be cancelled and restored.
@@ -136,6 +143,7 @@ const desktopHostedPreviewSyncAtom = Atom.family((key: string) => {
           { immediate: true },
         );
         function release() {
+          if (device !== "") remoteDeviceThreadKeys.delete(threadKey);
           unwatch();
           unmount();
           releaseByThreadId.delete(threadId);

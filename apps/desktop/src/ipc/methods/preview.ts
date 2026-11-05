@@ -22,6 +22,7 @@ import {
   PreviewCaptureFailure,
   DEFAULT_BROWSER_PROFILE_ID,
   INCOGNITO_BROWSER_PROFILE_ID,
+  REMOTE_DEVICE_BROWSER_PROFILE_ID,
   PreviewForwardedShortcut,
   MAX_KEYBINDINGS_COUNT,
 } from "@t3tools/contracts";
@@ -41,6 +42,7 @@ import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as DesktopBrowserHost from "../../preview/DesktopBrowserHost.ts";
 import * as RemoteBrowserScope from "../../preview/RemoteBrowserScope.ts";
+import * as RemoteDeviceSession from "../../preview/RemoteDeviceSession.ts";
 
 export const installPreviewEventForwarding = Effect.fn(
   "desktop.ipc.preview.installEventForwarding",
@@ -287,7 +289,8 @@ export function resolvePartitionScope(
   // JSON framing preserves lone UTF-16 surrogates; URI encoding throws and replacement would collide.
   return {
     scope: JSON.stringify([environmentId, profileId]),
-    persistent: profileId !== INCOGNITO_BROWSER_PROFILE_ID,
+    persistent:
+      profileId !== INCOGNITO_BROWSER_PROFILE_ID && profileId !== REMOTE_DEVICE_BROWSER_PROFILE_ID,
     namespace: "profile" as const,
   };
 }
@@ -313,7 +316,8 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
     const manager = yield* PreviewManager.PreviewManager;
     const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
     // Session creation installs UA and permission handlers before a guest can attach.
-    yield* manager.getBrowserSession(scope, persistent, namespace);
+    const session = yield* manager.getBrowserSession(scope, persistent, namespace);
+    if (profileId === REMOTE_DEVICE_BROWSER_PROFILE_ID) RemoteDeviceSession.guard(session);
     return {
       partition: yield* manager.getBrowserPartition(scope, persistent, namespace),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
@@ -470,6 +474,11 @@ export const desktopBrowserCommand = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.browser.command")(function* (text) {
     const command = yield* RemoteBrowserScope.admit(text);
     if (Option.isNone(command)) return;
+    if (command.value.type === "reply") {
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      yield* electronWindow.sendAll(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, command.value.line);
+      return;
+    }
     if (command.value.type === "navigate") {
       const manager = yield* PreviewManager.PreviewManager;
       yield* manager.navigate(command.value.tabId, command.value.url).pipe(Effect.ignore);

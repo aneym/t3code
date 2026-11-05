@@ -11,6 +11,7 @@ import {
 } from "./preview.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
+import { PreviewAutomationDevice } from "./previewAutomationDevice.ts";
 
 const BoundedUrl = Schema.String.check(Schema.isTrimmed())
   .check(Schema.isNonEmpty())
@@ -126,16 +127,7 @@ export const PreviewAutomationStatus = Schema.Struct({
   ),
   profiles: Schema.optional(Schema.Array(PreviewAutomationProfile)),
   defaultProfileId: Schema.optional(BrowserProfileId),
-  devices: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        name: Schema.String,
-        focused: Schema.Boolean,
-        lastFocusedAt: Schema.Number,
-        control: Schema.optional(Schema.Boolean),
-      }),
-    ),
-  ),
+  devices: Schema.optional(Schema.Array(PreviewAutomationDevice)),
 });
 export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
 

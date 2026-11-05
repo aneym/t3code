@@ -53,6 +53,7 @@ export const DesktopBrowserRendererCommand = Schema.Union([
     type: Schema.Literal("remote"),
     environmentId: Schema.String,
     line: Schema.String,
+    loopbackHost: Schema.optional(Schema.String),
   }),
   Schema.Struct({ type: Schema.Literal("mirror"), tabId: Schema.String, url: Schema.String }),
 ]);
@@ -63,6 +64,8 @@ export const DesktopBrowserRemoteEnvelope = Schema.Struct({
   line: Schema.String,
 });
 export type DesktopBrowserRemoteEnvelope = typeof DesktopBrowserRemoteEnvelope.Type;
+
+export const REMOTE_DEVICE_BROWSER_PROFILE_ID = "t3:remote-device";
 
 const REMOTE_THREAD_PREFIX = "remote\u0000";
 
