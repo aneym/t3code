@@ -19,7 +19,7 @@ def prove(rehearsal, workload):
     if receipt["outcome"] != "rolled-back":
         raise ValueError("restore rollback did not roll back")
     if backup.get("stoppedShip") is True:
-        if backup.get("quickCheck") != "ok" or restored.get("source") != "offbox-replica" or restored.get("remote") != backup.get("remote") or restored.get("quickCheck") != "ok":
+        if backup.get("quickCheck") != "ok" or len(backup.get("sha256") or "") != 64 or restored.get("source") != "offbox-replica" or restored.get("remote") != backup.get("remote") or restored.get("quickCheck") != "ok":
             raise ValueError("stopped restored database did not come from the verified off-box replica")
     else:
         if not copy.get("sha256") or verify(copy["path"], copy["identity"]) != "ok" or checksum(copy["path"]) != copy["sha256"]:

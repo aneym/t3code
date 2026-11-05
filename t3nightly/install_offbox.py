@@ -21,6 +21,7 @@ from .io_priority import background_command
 from .install_sqlite_sync import SSH, sync
 from .install_calibration import rates
 from . import offbox_hosts
+from . import offbox_digest
 
 CHUNK = 1024 * 1024
 ZSTD_THREADS = 4
@@ -270,9 +271,10 @@ def stopped_ship(run, host, root, replica, source, size, started):
         raise ValueError(f"seeded off-box replica quick_check {check}; nothing stopped")
     checking = time.monotonic() - checked
     restoring = restore_copy.estimate(size, copy_bps=rate(run))["totalSeconds"]
-    estimate = size / rate(run) + checking + restoring
+    hashing = size / (restore_copy.HASH_MIB_S << 20)
+    estimate = size / rate(run) + checking + hashing + restoring
     budget = run.args.offbox_stop_s
-    run.step("hard-backup-estimate", stoppedWork=["sqlite3-rsync-stopped", "quick_check", "offbox-restore"], syncSeconds=round(size / rate(run), 3), checkSeconds=round(checking, 3),
+    run.step("hard-backup-estimate", stoppedWork=["sqlite3-rsync-stopped", "quick_check", "sha256", "offbox-restore"], syncSeconds=round(size / rate(run), 3), checkSeconds=round(checking, 3), sha256Seconds=round(hashing, 3),
              restoreSeconds=restoring, estimateSeconds=round(estimate, 3), budgetSeconds=budget)
     if estimate > budget:
         raise ValueError(f"stopped off-box sync plus off-box rollback restore estimated at {estimate:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
@@ -319,9 +321,12 @@ def capture(run, previous, stop, rollback_gate, keep_local=False):
         run.step("offbox-replica-deferred", remote=metadata["remote"], primary="local-restore-copy", next="sync and verify in the background from the restore copy after restart")
     else:
         with restore_copy.foreground_io(run.step):
+            if stopped_only:
+                offbox_digest.checkpoint(source)
             sync(source, f"{host}:{replica}", window)
+            digest = offbox_digest.compare(run, host, replica, source, window) if stopped_only else None
         metadata = verified(run, host, root, replica, window, {"bytes": size, "schemaState": state, "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3),
-                                                               "seconds": round(time.monotonic() - started, 3), "previous": previous, "stoppedShip": stopped_only})
+                                                               "seconds": round(time.monotonic() - started, 3), "previous": previous, "stoppedShip": stopped_only, "sha256": digest})
     (destination / "payload.json").write_text(json.dumps(metadata))
     run.step("hard-backup", **metadata)
     return metadata
