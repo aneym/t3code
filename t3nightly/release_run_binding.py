@@ -7,6 +7,7 @@ import tempfile
 import uuid
 
 from .release_targets import LINUX_TARGETS
+from .remote_shell import ssh_argv
 
 
 REMOTE_BIND = '''
@@ -64,7 +65,7 @@ def bind_remote_runs(args):
     unbound = {}
     for host, address in LINUX_TARGETS.items():
         try:
-            result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", address,
+            result = subprocess.run([*ssh_argv(address, '-oConnectTimeout=5'),
                                      shlex.join(["python3", "-c", REMOTE_BIND])],
                                     input=json.dumps(value), capture_output=True, text=True, timeout=20, check=False)
         except subprocess.TimeoutExpired:

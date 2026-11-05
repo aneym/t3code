@@ -14,13 +14,14 @@ from .release_hold_watch import worker
 from .release_job_runner import HOLD_EXPIRY_S
 from .release_jobs import write_status
 from .release_targets import LINUX_TARGETS
+from .remote_shell import ssh_argv
 
 HOSTS = ("studio", "forge", "owl", "ax42")
 
 
 def remote(config, operation):
     argv = ["python3", "-B", config["tools"] + "/release-holds", "host", operation]
-    result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", LINUX_TARGETS[config["host"]],
+    result = subprocess.run([*ssh_argv(LINUX_TARGETS[config["host"]], '-oConnectTimeout=5'),
                              shlex.join(argv)], input=json.dumps(config), capture_output=True,
                             text=True, timeout=40, check=False)
     if result.returncode != 0:

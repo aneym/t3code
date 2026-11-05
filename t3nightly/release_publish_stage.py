@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .build_artifacts import load
 from .release_transport import require, ssh
+from .remote_shell import ssh_argv
 
 
 def sha256(path):
@@ -41,7 +42,7 @@ def remote_verify(config, stage, hashes):
     root = config.on(config.build_host).run / 'publish-staged' / stage
     script = "import hashlib,pathlib,sys; p=pathlib.Path(sys.argv[1]); pairs=zip(sys.argv[2::2],sys.argv[3::2]); sys.exit(any(hashlib.file_digest((p/n).open('rb'),'sha256').hexdigest()!=h for n,h in pairs))"
     args = ['python3', '-c', script, str(root), *(item for pair in hashes.items() for item in pair)]
-    result = subprocess.run(['ssh', '-o', 'BatchMode=yes', config.linux_host, shlex.join(args)], capture_output=True, text=True, check=False)
+    result = subprocess.run([*ssh_argv(config.linux_host), shlex.join(args)], capture_output=True, text=True, check=False)
     if result.returncode:
         raise ValueError(f'{stage}: remote staged hash verification failed: {result.stderr[-300:]}')
 
@@ -65,13 +66,13 @@ def stage_payload(config, stage, log):
     if stage == 'SL':
         directory = config.run / config.build_host
         directory.mkdir(exist_ok=True)
-        require(['rsync', '-a', '--partial', '--', f'{config.linux_host}:{remote.build_out()}/', str(directory) + '/'], log)
+        require(['rsync', "-e", shlex.join(ssh_argv()), '-a', '--partial', '--', f'{config.linux_host}:{remote.build_out()}/', str(directory) + '/'], log)
     directory, manifest, hashes = verify_local(config, stage)
     if stage in ('SM', 'SD'):
         dest = remote.run / 'publish-staged' / stage
         if ssh(['mkdir', '-p', str(dest)], log, config.linux_host):
             raise RuntimeError(f'{stage}: cannot create remote staging directory')
-        require(['rsync', '-a', '--partial', '--', *(str(directory / name) for name in hashes), str(manifest), f'{config.linux_host}:{dest}/'], log)
+        require(['rsync', "-e", shlex.join(ssh_argv()), '-a', '--partial', '--', *(str(directory / name) for name in hashes), str(manifest), f'{config.linux_host}:{dest}/'], log)
         remote_verify(config, stage, {**hashes, manifest.name: sha256(manifest)})
     if stage in ('SM', 'SL'):
         publish = config.run / 'publish'

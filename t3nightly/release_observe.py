@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .release_manifest import digest
+from .remote_shell import ssh_argv
 
 
 SCHEMA = "t3nightly.health-watch/1"
@@ -85,7 +86,7 @@ def probe(host, service, port, database, linux_host="ax42") -> dict:
         words[0] = sys.executable
         command = words
     else:
-        command = ["ssh", "-o", "BatchMode=yes", linux_host, shlex.join(words)]
+        command = [*ssh_argv(linux_host), shlex.join(words)]
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=20)
         if result.returncode:

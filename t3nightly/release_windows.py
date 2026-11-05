@@ -11,6 +11,7 @@ import tarfile
 from pathlib import Path
 
 from .release_assemble import PACKAGE_FILES
+from .remote_shell import ssh_argv
 
 WINDOWS_STAGES = ("W", "FW")
 FEED = Path("/Volumes/StudioExt/t3nightly-feed")
@@ -22,7 +23,7 @@ SECRET_KEY = re.compile(r"TOKEN|SECRET|KEY|AUTH|HEADERS|PASSWORD", re.IGNORECASE
 
 
 def ssh_words(remote):
-    return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", HOST, remote]
+    return [*ssh_argv(HOST, '-o', 'ConnectTimeout=20'), remote]
 
 
 def secrets():
@@ -108,7 +109,7 @@ def windows_build(config, head, log):
     try:
         if stream(ssh_words(f"powershell -NoProfile -Command \"New-Item -ItemType Directory -Force '{remote}' | Out-Null\""), log):
             return 1
-        if stream(["scp", "-q", "-o", "BatchMode=yes", *[str(path) for path in sorted(stage.iterdir())], f"{HOST}:{remote}/"], log):
+        if stream(["scp", "-q", *ssh_argv()[1:], *[str(path) for path in sorted(stage.iterdir())], f"{HOST}:{remote}/"], log):
             return 1
     finally:
         target.unlink(missing_ok=True)
@@ -116,7 +117,7 @@ def windows_build(config, head, log):
     if stream(ssh_words(f"powershell -NoProfile -ExecutionPolicy Bypass -File {script} -Version {config.version} -Dir {remote.replace('/', chr(92))}"), log):
         return 1
     shutil.rmtree(stage, ignore_errors=True)
-    if stream(["scp", "-q", "-r", "-o", "BatchMode=yes", f"{HOST}:{remote}/publish", str(out) + "/"], log):
+    if stream(["scp", "-q", "-r", *ssh_argv()[1:], f"{HOST}:{remote}/publish", str(out) + "/"], log):
         return 1
     windows_assets(out / "publish", config.version)
     return 0

@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from .release_ownership import ownership, verify_tree
+from .remote_shell import ssh_argv
 
 
 def command(words, log, cwd=None, env=None):
@@ -25,7 +26,7 @@ def require(words, log, cwd=None):
 
 
 def ssh(words, log, linux_host):
-    return command(["ssh", "-o", "BatchMode=yes", linux_host, shlex.join([str(word) for word in words])], log)
+    return command([*ssh_argv(linux_host), shlex.join([str(word) for word in words])], log)
 
 
 def remote_worker(config, action, log):
@@ -40,7 +41,7 @@ def remote_worker(config, action, log):
 
 def transfer(source, destination, log, *, metadata_only=False):
     filters = ["--include=*.json", "--include=*.jsonl", "--include=*.log", "--exclude=*"] if metadata_only else []
-    require(["rsync", "-a", *filters, "--", str(source), str(destination)], log)
+    require(["rsync", "-e", shlex.join(ssh_argv()), "-a", *filters, "--", str(source), str(destination)], log)
 
 
 def prepare_remote(config, log):

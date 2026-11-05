@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .release_targets import LINUX_TARGETS, stage_action
 from .unit_resources import systemd_arguments
+from .remote_shell import ssh_argv
 
 
 TERMINAL = {"cancelled", "passed", "failed", "environment-blocked", "timed-out", "installed", "current", "rolled-back"}
@@ -148,7 +149,7 @@ class HostJobs:
         if self.dry_run or node.host == "studio" or (node.id != "L" and stage_action(node.id) != "prepare"):
             return
         names = ("candidate.json", "assembly.json", "candidate.bundle", "readiness.json")
-        subprocess.run(["rsync", "-a", "--partial", "--timeout=20", "-e", "ssh -oBatchMode=yes -oConnectTimeout=5",
+        subprocess.run(["rsync", "-a", "--partial", "--timeout=20", "-e", shlex.join(ssh_argv(None, "-oConnectTimeout=5")),
                         f"--rsync-path=mkdir -p {shlex.quote(self.remote_run)}/receipts && rsync", "--",
                         *(str(self.local_run / name) for name in names), f"{LINUX_TARGETS[node.host]}:{self.remote_run}/"],
                        capture_output=True, text=True, timeout=180, check=True)
@@ -165,7 +166,7 @@ class HostJobs:
         if node.host == "studio":
             return submit(directory, spec) if operation == "submit" else (cancel(directory) if operation == "cancel" else status(directory))
         argv = [f"{self.remote_tools}/release-job", operation, directory]
-        result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", LINUX_TARGETS[node.host],
+        result = subprocess.run([*ssh_argv(LINUX_TARGETS[node.host], '-oConnectTimeout=5'),
                                  shlex.join(argv)], input=json.dumps(spec) if spec else None,
                                 capture_output=True, text=True, timeout=20, check=False)
         if result.returncode:

@@ -1,6 +1,7 @@
 import shlex
 
 from .release_transport import require
+from .remote_shell import ssh_argv
 
 
 def commands(config):
@@ -20,9 +21,9 @@ def commands(config):
             f'mv "$staging" {runtime}',
         ))
         rows.extend((
-            ["ssh", "-o", "BatchMode=yes", host, 'mkdir -p "$HOME/.t3/runtime/versions"'],
-            ["rsync", "-a", "--", str(archive), f"{host}:{upload}"],
-            ["ssh", "-o", "BatchMode=yes", host, script],
+            [*ssh_argv(host), 'mkdir -p "$HOME/.t3/runtime/versions"'],
+            ["rsync", "-e", shlex.join(ssh_argv()), "-a", "--", str(archive), f"{host}:{upload}"],
+            [*ssh_argv(host), script],
         ))
     return rows
 

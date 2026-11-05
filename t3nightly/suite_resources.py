@@ -3,6 +3,8 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 
+from .remote_shell import ssh_argv
+
 
 CLEANUP = r'''
 import os
@@ -196,7 +198,7 @@ def host_slot(host, tree, log):
     if host != "ax42":
         yield None
         return
-    process = subprocess.Popen(["ssh", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4", host, shlex.join(["python3", "-c", LOCK])], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True)
+    process = subprocess.Popen([*ssh_argv(host, '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4', multiplex=False), shlex.join(["python3", "-c", LOCK])], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True)
     started = time.monotonic()
     try:
         for line in process.stdout:

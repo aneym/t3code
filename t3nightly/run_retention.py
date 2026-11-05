@@ -13,9 +13,11 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from t3nightly.rehearsal_retention import ancestors, held, ignorable, live_references
     from t3nightly.release_readiness import serving_version
+    from t3nightly.remote_shell import ssh_argv
 else:
     from .rehearsal_retention import ancestors, held, ignorable, live_references
     from .release_readiness import serving_version
+    from .remote_shell import ssh_argv
 
 VERSION = re.compile(r"(\d+\.\d+\.\d+-nightly\.\d+\.\d+\.aneym\.\d+)(?:-attempt\d+)?")
 RECEIPTS = {".json", ".md", ".log", ".jsonl"}
@@ -175,7 +177,7 @@ def finish_runs(run, remote_run, remote_tools, *, dry_run=False, linux_host="ax4
     command = ["env", f"PYTHONPATH={Path(remote_tools).parent}", *command]
     for host, address in (hosts or {"ax42": linux_host}).items():
         try:
-            result = subprocess.run(["ssh", "-o", "BatchMode=yes", address, shlex.join(command)], capture_output=True, text=True, check=True, timeout=180)
+            result = subprocess.run([*ssh_argv(address), shlex.join(command)], capture_output=True, text=True, check=True, timeout=180)
             results[host] = json.loads(result.stdout)
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             results[host] = {"error": str(error)}

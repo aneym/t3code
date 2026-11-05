@@ -4,6 +4,7 @@ import subprocess
 from .release_config import CHAT_PROJECT, SEEDS
 from .release_manifest import migration_identity
 from .release_targets import LINUX_TARGETS
+from .remote_shell import ssh_argv
 
 
 REMOTE_FLOOR = 25 * 1024**3
@@ -74,7 +75,7 @@ def serving_head(config, version):
         return None
 
 def remote_probe(config, log, host="ax42"):
-    words = ["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", LINUX_TARGETS[host], "python3", "-", config.remote_tools, SEEDS, config.version, CHAT_PROJECT, config.remote_run]
+    words = [*ssh_argv(LINUX_TARGETS[host], '-oConnectTimeout=5'), "python3", "-", config.remote_tools, SEEDS, config.version, CHAT_PROJECT, config.remote_run]
     try:
         result = subprocess.run(words, input=REMOTE_PROBE, capture_output=True, text=True, timeout=25, check=False)
         if result.returncode:

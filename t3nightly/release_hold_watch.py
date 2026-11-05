@@ -12,6 +12,7 @@ from pathlib import Path
 from .release_hold_quarantine import add_quarantine, clear_quarantine, pending
 from .release_hold_state import event, read, save, snapshot, terminal
 from .release_timeline import utc_now
+from .remote_shell import ssh_argv
 
 SUFFIX = {"studio": "M", "owl": "O", "forge": "F", "ax42": "L"}
 
@@ -21,7 +22,7 @@ def lead_snapshot(config, row):
         return snapshot(read(Path(config["sourceRun"]) / "release-holds/source.json"), config["host"], row)
     argv = [config["sourcePython"], "-B", config["sourceTools"] + "/release-holds",
             "snapshot", config["sourceRun"], config["host"]]
-    result = subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", config["leadHost"], shlex.join(argv)],
+    result = subprocess.run([*ssh_argv(config["leadHost"], '-oConnectTimeout=5'), shlex.join(argv)],
                             input=json.dumps(row), capture_output=True, text=True, timeout=30, check=True)
     return json.loads(result.stdout)
 

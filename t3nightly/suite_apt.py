@@ -82,5 +82,6 @@ def main():
     parser.add_argument("packages", nargs="+")
     args = parser.parse_args()
     import shlex
+    from .remote_shell import ssh_argv
     script = Path(__file__).read_text() + '\nprint(json.dumps(build(__import__("sys").argv[1:])))\n'
-    return subprocess.run(["ssh", "-o", "BatchMode=yes", args.host, shlex.join(["python3", "-", *args.packages])], input=script, text=True).returncode
+    return subprocess.run([*ssh_argv(args.host), shlex.join(["python3", "-", *args.packages])], input=script, text=True).returncode

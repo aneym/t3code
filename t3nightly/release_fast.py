@@ -121,11 +121,13 @@ def drive_fast(args):
     pending = {node.id: node for node in graph if not (args.rehearse_only and (node.id in LIVE_NODES or stage_action(node.id) == "install"))}
     recorded = set(existing.get("recorded", [])) - set(existing.get("failed", []))
     completed_at = existing.get("releaseSeconds")
+    last_status_poll = {}
     if not args.dry_run:
         for key, node in list(pending.items()):
             if node.defer_reason or unavailable_host(node, unavailable):
                 continue
             try:
+                last_status_poll[key] = time.monotonic()
                 row = jobs.request(node, "status")
             except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
                 if node.host == "studio":
@@ -210,12 +212,15 @@ def drive_fast(args):
                 running[key] = (node, row, time.monotonic())
         for key, (node, row, submitted_at) in list(running.items()):
             if row["outcome"] not in TERMINAL:
-                try:
-                    latest = jobs.request(node, "status")
-                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
-                    latest = {"outcome": "status-unavailable"}
-                if latest.get("outcome") != "status-unavailable":
-                    row = latest
+                now = time.monotonic()
+                if node.host == "studio" or key not in last_status_poll or now - last_status_poll[key] >= 5:
+                    last_status_poll[key] = now
+                    try:
+                        latest = jobs.request(node, "status")
+                    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+                        latest = {"outcome": "status-unavailable"}
+                    if latest.get("outcome") != "status-unavailable":
+                        row = latest
                 if time.monotonic() > submitted_at + wait_cap(node) + node.budget * HANG_GUARD + TERM_GRACE_S + 5:
                     row = dict(row, outcome="timed-out", seconds=time.monotonic() - submitted_at,
                                host=node.host, evidence=row.get("evidence", []),

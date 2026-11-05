@@ -19,6 +19,7 @@ from .suite_plan import load, slug, write
 from .suite_provision import setup_script
 from .suite_environment import isolated, sanitized_tail, DISK
 from .suite_resources import CLEANUP, COW_GATE, COW_LIMIT, TMP, TMP_ROOT, WorkerTerminated, host_slot, job_tmp, worker_signals
+from .remote_shell import ssh_argv
 
 
 RESULT_SCHEMA = "t3nightly.advisory-result/1"
@@ -39,8 +40,7 @@ def execute(host, words, log, timeout, cwd=None, env=None, stderr=None):
     remote = host != "studio"
     if remote:
         receipt = f"/tmp/t3nightly-advisory-{uuid.uuid4().hex}.json"
-        command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-                   "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", host,
+        command = [*ssh_argv(host, '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2'),
                    shlex.join(["python3", "-c", REMOTE, json.dumps([str(word) for word in words]), str(max(1, timeout)), receipt])]
     process = subprocess.Popen(
         command, cwd=cwd, env=env, stdout=log, stderr=stderr if stderr is not None else subprocess.STDOUT,

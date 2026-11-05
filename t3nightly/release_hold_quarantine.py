@@ -3,6 +3,7 @@ import subprocess
 import time
 
 from .release_hold_state import event, save
+from .remote_shell import ssh_argv
 
 
 def pending(row):
@@ -15,7 +16,7 @@ def quarantine(config, root, action):
         if command:
             subprocess.run([command, "forge", action, "quarantine"], capture_output=True, timeout=10, check=True)
     else:
-        subprocess.run(["ssh", "-oBatchMode=yes", "-oConnectTimeout=5", "ax42",
+        subprocess.run([*ssh_argv("ax42", '-oConnectTimeout=5'),
                         shlex.join(["fleet-drain", "forge", action, "quarantine"])],
                        capture_output=True, timeout=30, check=True)
     event(root, "quarantine-" + action, sandbox=config["sandbox"])

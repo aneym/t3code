@@ -5,6 +5,7 @@ import shutil
 from .release_ownership import ownership
 from .release_targets import LINUX_TARGETS
 from .release_transport import require
+from .remote_shell import ssh_argv
 
 
 def require_host_ready(config, *, install=False, build=False):
@@ -40,7 +41,7 @@ def prepare_dependencies(config, head, log, tree_factory):
 def stage_linux(config, host, log):
     source = config.run / config.build_host
     target = config.on(host)
-    require(["rsync", "-a", "--partial", f"--rsync-path=mkdir -p {shlex.quote(str(target.build_out()))} && rsync", "--",
+    require(["rsync", "-e", shlex.join(ssh_argv()), "-a", "--partial", f"--rsync-path=mkdir -p {shlex.quote(str(target.build_out()))} && rsync", "--",
              str(source) + "/", f"{LINUX_TARGETS[host]}:{target.build_out()}/"], log)
     artifact = json.loads((source / target.artifact().name).read_text())
     (config.run / f"payload-{host}.json").write_text(json.dumps({"archive": artifact["archive"]["sha256"]}) + "\n")

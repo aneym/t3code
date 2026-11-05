@@ -1,10 +1,12 @@
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from .remote_shell import ssh_argv
 
 DEFAULT_CACHE = Path("/Volumes/StudioExt/repos/t3code-rr-cache")
 SCRATCH_ROOT = Path("/Volumes/StudioExt/tmp")
@@ -51,13 +53,13 @@ def configure_rerere(worktree, cache):
 
 def sync_cache(cache, host):
     remote = f"{host}:/home/jobs/repos/t3code-rr-cache/"
-    subprocess.run(["ssh", host, "mkdir", "-p", "/home/jobs/repos/t3code-rr-cache"], check=True)
+    subprocess.run([*ssh_argv(host), "mkdir", "-p", "/home/jobs/repos/t3code-rr-cache"], check=True)
     subprocess.run(
-        ["rsync", "-a", "--update", f"{remote}", f"{cache.resolve()}/"],
+        ["rsync", "-e", shlex.join(ssh_argv()), "-a", "--update", f"{remote}", f"{cache.resolve()}/"],
         check=True,
     )
     subprocess.run(
-        ["rsync", "-a", "--update", f"{cache.resolve()}/", remote],
+        ["rsync", "-e", shlex.join(ssh_argv()), "-a", "--update", f"{cache.resolve()}/", remote],
         check=True,
     )
 
@@ -141,7 +143,7 @@ def main():
     args = parser().parse_args()
     repo = args.repo.resolve()
     if not args.no_fetch:
-        subprocess.run(["git", "-C", str(repo), "-c", "credential.helper=", "-c", "core.askPass=/usr/bin/false", "fetch", args.upstream, "--tags"], check=True, env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="/usr/bin/false", SSH_ASKPASS="/usr/bin/false", SSH_ASKPASS_REQUIRE="never", GIT_SSH_COMMAND="ssh -o BatchMode=yes"))
+        subprocess.run(["git", "-C", str(repo), "-c", "credential.helper=", "-c", "core.askPass=/usr/bin/false", "fetch", args.upstream, "--tags"], check=True, env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="/usr/bin/false", SSH_ASKPASS="/usr/bin/false", SSH_ASKPASS_REQUIRE="never", GIT_SSH_COMMAND=shlex.join(ssh_argv())))
     tag = newest_tag(repo, args.tag_pattern)
     if not tag:
         raise SystemExit("no upstream nightly tag found")
