@@ -15,10 +15,17 @@ def prove(rehearsal, workload):
     expected = {"before": compatibility["baseMigrations"]["history"], "candidate": compatibility["candidateMigrations"]["history"], "restored": compatibility["baseMigrations"]["history"]}
     if histories != expected or sandbox.history() != expected["before"]:
         raise ValueError("restore rollback did not apply the candidate migrations and restore the baseline history")
-    if receipt["outcome"] != "rolled-back" or not copy.get("sha256") or verify(copy["path"], copy["identity"]) != "ok" or checksum(copy["path"]) != copy["sha256"]:
-        raise ValueError("restore rollback has no verified pre-install copy")
-    if restored.get("source") != "local-restore-copy" or restored.get("sha256") != copy["sha256"] or restored.get("identity") != copy["identity"] or restored.get("quickCheck") != "ok":
-        raise ValueError("stopped restored database did not match the pre-install copy")
+    backup = receipt["backup"]
+    if receipt["outcome"] != "rolled-back":
+        raise ValueError("restore rollback did not roll back")
+    if backup.get("stoppedShip") is True:
+        if backup.get("quickCheck") != "ok" or restored.get("source") != "offbox-replica" or restored.get("remote") != backup.get("remote") or restored.get("quickCheck") != "ok":
+            raise ValueError("stopped restored database did not come from the verified off-box replica")
+    else:
+        if not copy.get("sha256") or verify(copy["path"], copy["identity"]) != "ok" or checksum(copy["path"]) != copy["sha256"]:
+            raise ValueError("restore rollback has no verified pre-install copy")
+        if restored.get("source") != "local-restore-copy" or restored.get("sha256") != copy["sha256"] or restored.get("identity") != copy["identity"] or restored.get("quickCheck") != "ok":
+            raise ValueError("stopped restored database did not match the pre-install copy")
     if (receipt.get("hotSwap") or {}).get("method") != "maintenance" or not (receipt.get("restartDrain") or {}).get("drained"):
         raise ValueError("restore rollback did not use a drained hard install")
     writes = json.loads((state / "candidate-writes.json").read_text())

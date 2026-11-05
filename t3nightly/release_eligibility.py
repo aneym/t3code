@@ -12,7 +12,7 @@ def classify(compat, host):
     if reasons == ["persisted-state-changed"] and not compat["migrationFiles"]:
         name, changes, conditions = "rollback-proven", {"rollbackProof": "required", "binaryRollback": True}, ["forced-rollback-proof"]
     elif host in RESTORE_HOSTS and set(reasons) <= RESTORE_WAIVABLE:
-        name, changes, conditions = RESTORE_CLASS, {"rollbackProof": "not-required", "binaryRollback": False}, ["baseline-seed-rehearsal", *(["offbox"] if host == "ax42" else []), "local-restore-copy", "drain-then-hard"]
+        name, changes, conditions = RESTORE_CLASS, {"rollbackProof": "not-required", "binaryRollback": False}, ["baseline-seed-rehearsal", *(["offbox", "offbox-stopped-ship"] if host == "ax42" else ["local-restore-copy"]), "drain-then-hard"]
     else:
         return {**compat, "eligibility": None, "fastPath": {**compat["fastPath"], "waived": [], "conditions": []}}
     return {**compat, **changes, "eligibility": name, "fastPath": {"eligible": True, "reasons": [], "waived": list(reasons), "conditions": conditions}}

@@ -163,6 +163,9 @@ def condition_met(condition, compatibility, rehearsal, install):
         seeded = backup.get("seed") or {}
         deferred = backup.get("replica") != "deferred" or (bool(seeded.get("clonedFrom") or seeded.get("existing")) and (seeded.get("verified") or {}).get("quickCheck") == "ok")
         return backup.get("method") == OFFBOX_METHOD and bool(backup.get("remote")) and deferred
+    if condition == "offbox-stopped-ship":
+        backup = install["backup"]
+        return backup.get("method") == OFFBOX_METHOD and backup.get("stoppedShip") is True and backup.get("quickCheck") == "ok" and bool(backup.get("remote")) and not backup.get("local")
     if condition == "local-restore-copy":
         return copy.get("quickCheck") == "ok" and bool(copy.get("identity")) and bool(copy.get("path")) and bool(copy.get("sha256")) and all(copy.get(key) == local.get(key) for key in ("path", "identity", "sha256", "quickCheck"))
     if condition == "drain-then-hard":

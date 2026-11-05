@@ -269,12 +269,13 @@ def stopped_ship(run, host, root, replica, source, size, started):
     if check != "ok":
         raise ValueError(f"seeded off-box replica quick_check {check}; nothing stopped")
     checking = time.monotonic() - checked
-    estimate = size / rate(run) + checking
+    restoring = restore_copy.estimate(size, copy_bps=rate(run))["totalSeconds"]
+    estimate = size / rate(run) + checking + restoring
     budget = run.args.offbox_stop_s
-    run.step("hard-backup-estimate", stoppedWork=["sqlite3-rsync-stopped", "quick_check"], syncSeconds=round(size / rate(run), 3), checkSeconds=round(checking, 3),
-             estimateSeconds=round(estimate, 3), budgetSeconds=budget)
+    run.step("hard-backup-estimate", stoppedWork=["sqlite3-rsync-stopped", "quick_check", "offbox-restore"], syncSeconds=round(size / rate(run), 3), checkSeconds=round(checking, 3),
+             restoreSeconds=restoring, estimateSeconds=round(estimate, 3), budgetSeconds=budget)
     if estimate > budget:
-        raise ValueError(f"stopped off-box sync estimated at {estimate:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
+        raise ValueError(f"stopped off-box sync plus off-box rollback restore estimated at {estimate:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
     needed = restore_space(size, wal_bytes(source))
     if shutil.disk_usage(source.parent).free < needed:
         raise ValueError(f"local space under the {needed >> 20} MiB an in-place restore could need; nothing stopped")
@@ -317,7 +318,8 @@ def capture(run, previous, stop, rollback_gate, keep_local=False):
                     "stoppedSeconds": round(time.monotonic() - stopped, 3), "seconds": round(time.monotonic() - started, 3), "previous": previous, "local": copy, "complete": True}
         run.step("offbox-replica-deferred", remote=metadata["remote"], primary="local-restore-copy", next="sync and verify in the background from the restore copy after restart")
     else:
-        sync(source, f"{host}:{replica}", window)
+        with restore_copy.foreground_io(run.step):
+            sync(source, f"{host}:{replica}", window)
         metadata = verified(run, host, root, replica, window, {"bytes": size, "schemaState": state, "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3),
                                                                "seconds": round(time.monotonic() - started, 3), "previous": previous, "stoppedShip": stopped_only})
     (destination / "payload.json").write_text(json.dumps(metadata))

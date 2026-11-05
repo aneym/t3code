@@ -227,7 +227,7 @@ def install(run):
     environment = run.environment()
     run.report["capabilities"] = (environment or {}).get("capabilities", {})
     run.report["environmentObserved"] = isinstance(environment, dict)
-    reasons = [name for name, required in (("service-artifact-change", changed(run)), ("migration-files", compatibility.get("migrationFiles")), ("compatibility-maintenance", compatibility.get("maintenance")), ("manifest-maintenance", manifest.get("maintenance")), ("restore-rollback-class", compatibility.get("eligibility") == RESTORE_CLASS)) if required]
+    reasons = [name for name, required in (("service-artifact-change", changed(run)), ("migration-files", compatibility.get("migrationFiles")), ("compatibility-maintenance", compatibility.get("maintenance")), ("manifest-maintenance", manifest.get("maintenance")), ("restore-rollback-class", compatibility.get("eligibility") == RESTORE_CLASS), ("offbox-stopped-ship", getattr(args, "offbox_stopped_ship", False))) if required]
     maintenance = bool(reasons)
     available = supported(environment, run) and qualification["qualified"] and not maintenance
     if available and not mark_candidate(run, manifest, rehearsal, compatibility, observed):

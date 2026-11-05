@@ -49,7 +49,8 @@ def restore(run, backup, *, beside=None):
     if beside:
         staged = db.with_name(f".{db.name}.restore-{uuid.uuid4().hex}")
         try:
-            sync(address, staged, deadline)
+            with restore_copy.foreground_io(run.step):
+                sync(address, staged, deadline)
             check = local_check(staged)
             if check != "ok":
                 raise ValueError(f"restored database quick_check {check}")
@@ -65,13 +66,14 @@ def restore(run, backup, *, beside=None):
         if deadline - time.monotonic() < seconds:
             raise restore_copy.RecoveryRequired(f"off-box in-place restore needs {seconds:.0f} s before its stopped-work deadline; database preserved", backup_path=address)
         try:
-            sync(address, db, None, hang_guard=max(3600, seconds * 4))
+            with restore_copy.foreground_io(run.step):
+                sync(address, db, None, hang_guard=max(3600, seconds * 4))
         except subprocess.TimeoutExpired as error:
             raise restore_copy.RecoveryRequired("off-box in-place restore hang guard fired; database may be partially restored", "offbox-in-place-hang-guard", backup_path=address) from error
         check = local_check(db)
         if check != "ok":
             raise ValueError(f"restored database quick_check {check}")
-    metadata = {"remote": address, "into": "beside" if beside else "in-place", "quickCheck": check, "seconds": round(time.monotonic() - started, 3)}
+    metadata = {"source": "offbox-replica", "remote": address, "into": "beside" if beside else "in-place", "quickCheck": check, "seconds": round(time.monotonic() - started, 3)}
     run.step("hard-restore-db", **metadata)
     return metadata
 
@@ -103,7 +105,7 @@ def rollback_database(run, backup, compatibility):
     if not backup.get("remote"):
         raise ValueError("restore copy missing and no off-box replica is available; database preserved for forward repair")
     try:
-        restore(run, backup)
+        return restore(run, backup)
     except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as error:
         if isinstance(error, restore_copy.RecoveryRequired):
             raise
