@@ -139,7 +139,7 @@ const make = Effect.gen(function* () {
       attachedTabs.delete(id);
       const [threadId, tabId] = id.split("\u0000");
       if (threadId !== undefined && tabId !== undefined)
-        void PubSub.publish(changes, { key: { threadId, tabId }, attached: false });
+        PubSub.publishUnsafe(changes, { key: { threadId, tabId }, attached: false });
     }
     source.attached.clear();
   };
