@@ -1,10 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import {
-  OrchestratorMcpDelegateTaskInput,
-  OrchestratorMcpDelegateTaskResult,
-} from "./orchestratorMcp.ts";
+import { OrchestratorMcpDelegateTaskInput } from "./delegateTaskInput.ts";
+import { OrchestratorMcpDelegateTaskResult } from "./orchestratorMcp.ts";
 
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);

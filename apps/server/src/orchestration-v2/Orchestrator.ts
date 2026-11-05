@@ -1,5 +1,6 @@
 import { delegatedTaskTerminalStatus } from "./DelegatedTaskStatus.ts";
 import { delegatedRestartPending } from "./DelegatedRestartPending.ts";
+import { delegatedChildWorkspace } from "./DelegatedChildWorkspace.ts";
 import { resumeOnReopen } from "./RestartQueuedRuns.ts";
 import { restartAdmission, admittedDispatchMode } from "./RestartAdmission.ts";
 import { decideSecretRequestRecord } from "./SecretRequestRecord.ts";
@@ -7617,7 +7618,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadRecords(
           command.parentThreadId,
           ["runs", "nodes", "providerThreads", "providerTurns", "attempts"],
-          // The parent node must belong to the active run, whose nodes this keeps.
           { omitSettledLeafNodes: true },
         )
         .pipe(
@@ -7706,7 +7706,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
-        ...(command.workspaceStrategy === undefined ? {} : { branch: null, worktreePath: null }),
+        ...delegatedChildWorkspace(command),
       };
       const task: OrchestrationV2Subagent = {
         id: taskNodeId,

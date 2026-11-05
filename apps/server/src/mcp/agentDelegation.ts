@@ -1,4 +1,8 @@
-import { type OrchestratorMcpDelegateTaskInput, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  type OrchestratorMcpDelegateTaskInput,
+  OrchestratorMcpFailure,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as AgentPlacement from "../peer/AgentPlacement.ts";
@@ -11,6 +15,11 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
 ) {
   const scope = yield* Invocation.McpInvocationContext;
   const service = yield* Orchestrator.OrchestratorMcpService;
+  if (input.baseRef !== undefined && input.target?.environmentId !== undefined)
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: "baseRef is for tasks on this environment. Omit it with target.environmentId.",
+    });
   if (input.target?.environmentId !== undefined || scope.linkedEnvironments === false)
     return yield* service.delegateTask(scope, input);
   const placement = yield* Effect.serviceOption(AgentPlacement.AgentPlacement);
@@ -40,7 +49,9 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
     clientRequestId: input.clientRequestId,
     ...(input.isolation !== "worktree"
       ? { localOnlyReason: "Shared isolation keeps the parent's workspace." }
-      : {}),
+      : input.target?.projectId !== undefined || input.baseRef !== undefined
+        ? { localOnlyReason: "The caller pinned the task's project." }
+        : {}),
   });
   if (selected === undefined) return yield* service.delegateTask(scope, input);
   const remote = selected.placement.environmentId !== scope.environmentId;

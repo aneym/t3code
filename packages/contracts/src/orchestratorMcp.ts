@@ -38,7 +38,7 @@ import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.t
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 export const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
-const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
+export const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
 export const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(256))
   .check(
     Schema.makeFilter((value) =>
@@ -99,7 +99,7 @@ export const OrchestratorMcpTarget = Schema.Struct({
   projectId: Schema.optional(
     ProjectId.annotate({
       description:
-        "With `environmentId`: its project to run in. Default: the one with this project's repository.",
+        "Project to run in, here or with `environmentId` there. Default: this thread's, or there the one with its repository.",
     }),
   ),
 });
@@ -113,16 +113,6 @@ export const OrchestratorMcpInteractionMode = Schema.Union([
   ProviderInteractionMode,
 ]);
 export type OrchestratorMcpInteractionMode = typeof OrchestratorMcpInteractionMode.Type;
-
-export const OrchestratorMcpTaskRole = Schema.Literals([
-  "implementation",
-  "research",
-  "review",
-  "design",
-  "test",
-  "general",
-]);
-export type OrchestratorMcpTaskRole = typeof OrchestratorMcpTaskRole.Type;
 
 export const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "queued",
@@ -143,37 +133,6 @@ export const OrchestratorMcpTerminalDelegatedTaskStatus = Schema.Literals([
 ]);
 export type OrchestratorMcpTerminalDelegatedTaskStatus =
   typeof OrchestratorMcpTerminalDelegatedTaskStatus.Type;
-
-export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
-  task: OrchestratorMcpPrompt,
-  target: Schema.optional(OrchestratorMcpTarget),
-  title: Schema.optional(OrchestratorMcpTitle),
-  role: Schema.optional(OrchestratorMcpTaskRole),
-  isolation: Schema.optional(
-    Schema.Literals(["shared", "worktree"]).annotate({
-      description:
-        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Uncommitted edits stay out.",
-    }),
-  ),
-  mode: Schema.optional(
-    Schema.Literals(["async", "wait"]).annotate({
-      description:
-        "Default 'async'. 'wait' only if this turn needs the result. A question or approval ends the wait.",
-    }),
-  ),
-  timeoutMs: Schema.optional(Schema.Finite).annotate({
-    description: "Mode 'wait' only. Default 10 min. A timeout does not cancel the child.",
-  }),
-  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-  runtimeMode: Schema.optional(
-    OrchestratorMcpRuntimeMode.annotate({
-      description:
-        "Omit unless the user asks for a supervised child. Narrow modes pause for human approval, not read-only. Above yours is rejected.",
-    }),
-  ),
-  interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
-});
-export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
 
 // Set only on results for still-running tasks whose completion will wake the parent.
 export const ORCHESTRATOR_MCP_RUNNING_TASK_NEXT =

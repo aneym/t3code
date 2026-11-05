@@ -14,7 +14,6 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
-  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type OrchestrationV2TurnItem,
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesInput,
@@ -129,6 +128,7 @@ import * as ThreadSend from "./threadSend.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+import { resolveDelegatedTaskWorkspace } from "./delegatedTaskWorkspace.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -2181,15 +2181,6 @@ const make = Effect.gen(function* () {
           : readTask(scope, taskId, false, true);
       }
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
-      if (
-        input.target?.projectId !== undefined &&
-        input.target.projectId !== parent.thread.projectId
-      ) {
-        return yield* failure(
-          "invalid_request",
-          "A local task runs in this thread's project. Omit target.projectId, or pass target.environmentId to run it in that environment's project.",
-        );
-      }
       const parentRun = parent.runs
         .filter(ThreadManagementService.isActiveRun)
         .toSorted((left, right) => right.ordinal - left.ordinal)[0];
@@ -2203,7 +2194,6 @@ const make = Effect.gen(function* () {
           "Delegated tasks require an active run owned by this MCP provider session.",
         );
       }
-      const providers = yield* loadProviders;
       const key = yield* requestKey(input.clientRequestId);
       const commandId = stableCommandId({
         scope,
@@ -2211,8 +2201,15 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
+      const workspace = yield* resolveDelegatedTaskWorkspace(
+        { projects, git: gitDriver },
+        parent.thread,
+        input,
+        isRetryOfAcceptedDelegation,
+      );
+      const providers = yield* loadProviders;
       const target = yield* resolveTargetRechecking({
-        parent,
+        parent: { thread: { ...parent.thread, projectId: workspace.projectId } },
         target: input.target,
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
@@ -2226,36 +2223,6 @@ const make = Effect.gen(function* () {
         parent.thread.interactionMode,
         input.interactionMode,
       );
-      let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
-      if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
-        const project = yield* requireProject(parent.thread.projectId);
-        const base = yield* gitDriver
-          .resolveCommit({
-            cwd: parent.thread.worktreePath ?? project.workspaceRoot,
-            revision: "HEAD",
-          })
-          .pipe(
-            Effect.mapError(() =>
-              failure("invalid_request", "Unable to resolve the parent checkout commit."),
-            ),
-          );
-        // Launch preparation creates the worktree from the project root, so a
-        // parent checkout in another repository (such as a Git folder inside
-        // Scratch) would hand it a commit it cannot find.
-        if (parent.thread.worktreePath !== null) {
-          yield* gitDriver
-            .resolveCommit({ cwd: project.workspaceRoot, revision: base.commitSha })
-            .pipe(
-              Effect.mapError(() =>
-                failure(
-                  "invalid_request",
-                  `Isolation "worktree" creates the child checkout in project "${project.title}" (${project.workspaceRoot}), which does not contain the parent checkout's commit. Use isolation "shared" to work in the parent's checkout.`,
-                ),
-              ),
-            );
-        }
-        workspaceStrategy = { type: "worktree", baseRef: base.commitSha, startFromOrigin: false };
-      }
       // ThreadManagementService.dispatch is the chokepoint for this command
       // type's own enablement check, using the same command id and its
       // receipt-replay exemption, so no separate assert runs here.
@@ -2273,7 +2240,7 @@ const make = Effect.gen(function* () {
           modelSelection: target.modelSelection,
           runtimeMode,
           interactionMode,
-          ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
+          ...workspace.command,
           // Async delegations wake the parent on every child terminal; wait
           // delegations deliver through the blocking tool call, so a wake is
           // only needed if the parent settled first (timeout, disconnect).
