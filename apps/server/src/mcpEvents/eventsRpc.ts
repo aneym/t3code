@@ -59,15 +59,21 @@ function rpcFailure(message: RpcMessage, method: string): McpEventsRpcError | un
   const error: unknown = message.error;
   if (error === undefined || error === null) return undefined;
   const fields = typeof error === "object" ? (error as Record<string, unknown>) : {};
-  const data = fields.data;
-  const rawReason =
-    typeof data === "object" && data !== null
-      ? (data as Record<string, unknown>).reason
-      : undefined;
-  const reason = typeof rawReason === "string" ? rawReason : undefined;
+  const data =
+    typeof fields.data === "object" && fields.data !== null
+      ? (fields.data as Record<string, unknown>)
+      : {};
+  const reason = typeof data.reason === "string" ? data.reason : undefined;
+  const detail = [
+    reason,
+    typeof data.status === "number" ? `HTTP ${data.status}` : undefined,
+    typeof data.body === "string" && data.body.trim() !== ""
+      ? `body ${JSON.stringify(data.body.trim().slice(0, 160))}`
+      : undefined,
+  ].filter((part) => part !== undefined);
   const text = typeof fields.message === "string" ? fields.message : "error";
   return new McpEventsRpcError({
-    message: `${method} failed: ${text}${reason ? ` (${reason})` : ""}`,
+    message: `${method} failed: ${text}${detail.length > 0 ? ` (${detail.join(", ")})` : ""}`,
     ...(typeof fields.code === "number" ? { code: fields.code } : {}),
     ...(reason === undefined ? {} : { reason }),
   });
