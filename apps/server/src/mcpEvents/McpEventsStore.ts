@@ -128,6 +128,14 @@ export const markStatus = Effect.fn("McpEventsStore.markStatus")(function* (
     WHERE id = ${id}`;
 });
 
+export const updateServer = Effect.fn("McpEventsStore.updateServer")(function* (
+  id: string,
+  serverJson: string,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`UPDATE aneym_mcp_events_subscriptions SET server_json = ${serverJson} WHERE id = ${id}`;
+});
+
 export const remove = Effect.fn("McpEventsStore.remove")(function* (id: string) {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`DELETE FROM aneym_mcp_events_deliveries WHERE subscription_id = ${id}`;

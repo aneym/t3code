@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import type * as HttpClient from "effect/http/HttpClient";
 import type * as SqlClient from "effect/sql/SqlClient";
 
@@ -47,7 +48,7 @@ export const HOOK_ID_PREFIX = "mcpev_";
 const MAX_BODY_BYTES = 256 * 1024;
 const RATE_LIMIT_PER_MINUTE = 120;
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
-const MIN_REFRESH_LEAD_MS = 60_000;
+const MIN_REFRESH_LEAD_MS = 120_000;
 
 export interface McpEventsReceipt {
   readonly status: number;
@@ -84,7 +85,13 @@ const failure = (
   message: string,
 ) => new OrchestratorMcpFailure({ code, message });
 const isMcpFailure = Schema.is(OrchestratorMcpFailure);
-const rpcMessage = (error: { readonly message: string }) => error.message;
+const rpcMessage = (error: { readonly message: string }, credential?: StoredCredential) => {
+  if (credential === undefined) return error.message;
+  const hidden = [credential.url, credential.secret, credential.secret.slice("whsec_".length)];
+  const token = credential.url.split("/").at(-1);
+  if (token) hidden.push(token);
+  return hidden.reduce((text, value) => text.split(value).join("<redacted>"), error.message);
+};
 const asFailure = (message: string) => (error: unknown) =>
   isMcpFailure(error) ? error : failure("orchestration_error", message);
 const reply = (status: number, body: Record<string, unknown>): McpEventsReceipt => ({
@@ -171,13 +178,15 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const lifecycle = yield* Semaphore.make(1);
   const readCredential = (id: string) =>
-    secrets.get(secretName(id)).pipe(
-      Effect.map((value) =>
-        Option.flatMap(value, (bytes) => decodeCredential(new TextDecoder().decode(bytes))),
-      ),
-      Effect.orElseSucceed(() => Option.none<StoredCredential>()),
-    );
+    secrets
+      .get(secretName(id))
+      .pipe(
+        Effect.map((value) =>
+          Option.flatMap(value, (bytes) => decodeCredential(new TextDecoder().decode(bytes))),
+        ),
+      );
 
   const subscribeRemote = Effect.fn("McpEventsService.subscribeRemote")(function* (
     row: Store.SubscriptionRow,
@@ -216,8 +225,12 @@ const make = Effect.gen(function* () {
         name: input.name,
         argumentsJson,
       };
+      const serverJson = yield* encodeServerJson(input.server);
       const existing = yield* Store.findByKey(key);
-      let row = existing;
+      if (existing !== undefined && existing.server_json !== serverJson) {
+        yield* Store.updateServer(existing.id, serverJson);
+      }
+      let row = existing === undefined ? undefined : yield* Store.findById(existing.id);
       let credential =
         existing === undefined
           ? Option.none<StoredCredential>()
@@ -232,7 +245,7 @@ const make = Effect.gen(function* () {
         yield* Store.insertPending({
           id,
           ...key,
-          serverJson: yield* encodeServerJson(input.server),
+          serverJson,
           tokenHash: tokenHash(token),
           createdAt: DateTime.formatIso(yield* DateTime.now),
         });
@@ -251,9 +264,16 @@ const make = Effect.gen(function* () {
           yield* Store.remove(row.id);
           yield* secrets.remove(secretName(row.id)).pipe(Effect.ignore);
         } else {
-          yield* Store.markStatus(row.id, "failing", rpcMessage(subscribed.failure));
+          yield* Store.markStatus(
+            row.id,
+            "failing",
+            rpcMessage(subscribed.failure, credential.value),
+          );
         }
-        return yield* failure("orchestration_error", rpcMessage(subscribed.failure));
+        return yield* failure(
+          "orchestration_error",
+          rpcMessage(subscribed.failure, credential.value),
+        );
       }
       const saved = yield* Store.findById(row.id);
       if (saved === undefined)
@@ -261,6 +281,7 @@ const make = Effect.gen(function* () {
       return Store.toSubscription(saved);
     },
     Effect.mapError(asFailure("Could not persist the subscription.")),
+    lifecycle.withPermits(1),
     Effect.provide(context),
   );
 
@@ -293,13 +314,16 @@ const make = Effect.gen(function* () {
             delivery: { mode: "webhook", url: credential.value.url },
           }).pipe(
             Effect.as("ok"),
-            Effect.catch((error) => Effect.succeed(`failed: ${rpcMessage(error)}`)),
+            Effect.catch((error) =>
+              Effect.succeed(`failed: ${rpcMessage(error, credential.value)}`),
+            ),
           );
       yield* Store.remove(row.id);
       yield* secrets.remove(secretName(row.id)).pipe(Effect.ignore);
       return { subscriptionId, removed: true, remote };
     },
     Effect.mapError(asFailure("Could not remove the subscription.")),
+    lifecycle.withPermits(1),
     Effect.provide(context),
   );
 
@@ -313,6 +337,9 @@ const make = Effect.gen(function* () {
     return window.count <= RATE_LIMIT_PER_MINUTE;
   };
 
+  const deliveryKey = (row: Store.SubscriptionRow, event: McpEventOccurrence) =>
+    `mcp-events:${row.id}:${NodeCrypto.createHash("sha256").update(event.eventId).digest("hex").slice(0, 32)}`;
+
   const dispatch = Effect.fn("McpEventsService.dispatch")(function* (
     row: Store.SubscriptionRow,
     event: McpEventOccurrence,
@@ -321,7 +348,7 @@ const make = Effect.gen(function* () {
       .getThreadShell(row.thread_id as ThreadId)
       .pipe(Effect.orElseSucceed(() => null));
     if (shell === null) return false;
-    const key = `mcp-events:${row.id}:${NodeCrypto.createHash("sha256").update(event.eventId).digest("hex").slice(0, 32)}`;
+    const key = deliveryKey(row, event);
     return yield* threads
       .sendToThread({
         projectId: shell.projectId,
@@ -354,7 +381,9 @@ const make = Effect.gen(function* () {
         return reply(404, { error: "hook_not_found" });
       const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
       if (!allowRate(row.id, nowMs)) return reply(429, { error: "rate_limited" });
-      const credential = yield* readCredential(row.id);
+      const stored = yield* readCredential(row.id).pipe(Effect.result);
+      if (stored._tag === "Failure") return reply(503, { error: "credential_unavailable" });
+      const credential = stored.success;
       if (Option.isNone(credential)) return reply(410, { error: "subscription_gone" });
       const relayMs =
         input.relayReceivedAt === undefined ? Number.NaN : Date.parse(input.relayReceivedAt);
@@ -388,13 +417,16 @@ const make = Effect.gen(function* () {
       if (event.eventId !== input.headers["webhook-id"] || event.name !== row.name) {
         return reply(400, { error: "event_mismatch" });
       }
-      if (!(yield* Store.claimDelivery(row.id, event.eventId, nowMs))) {
+      const claimed = yield* Store.claimDelivery(row.id, event.eventId, nowMs);
+      const commandId = CommandId.make(`command:${deliveryKey(row, event)}`);
+      if (!claimed && (yield* threads.hasReceipt(commandId))) {
         return reply(202, { status: "duplicate" });
       }
       if (!(yield* dispatch(row, event))) {
-        yield* Store.releaseDelivery(row.id, event.eventId);
+        if (claimed) yield* Store.releaseDelivery(row.id, event.eventId);
         return reply(503, { error: "thread_unavailable" });
       }
+      if (!claimed) return reply(202, { status: "duplicate" });
       yield* Store.recordDelivery(row.id, DateTime.formatIso(yield* DateTime.now));
       return reply(202, { status: "accepted" });
     },
@@ -423,10 +455,19 @@ const make = Effect.gen(function* () {
         row.status === "failing" ||
         (Number.isFinite(before) && now >= before - lead);
       if (!due) continue;
-      const credential = yield* readCredential(row.id);
-      if (Option.isNone(credential)) continue;
-      yield* subscribeRemote(row, credential.value, undefined).pipe(
-        Effect.catch((error) => Store.markStatus(row.id, "failing", rpcMessage(error))),
+      yield* Effect.gen(function* () {
+        const current = yield* Store.findById(row.id);
+        if (current === undefined || current.status === "terminated") return;
+        const credential = yield* readCredential(row.id);
+        if (Option.isNone(credential)) return;
+        yield* subscribeRemote(current, credential.value, undefined).pipe(
+          Effect.catch((error) =>
+            Store.markStatus(row.id, "failing", rpcMessage(error, credential.value)),
+          ),
+        );
+      }).pipe(
+        lifecycle.withPermits(1),
+        Effect.catchCause((cause) => Effect.logWarning("MCP Events refresh failed", { cause })),
       );
     }
   }).pipe(Effect.catchCause((cause) => Effect.logWarning("MCP Events refresh failed", { cause })));

@@ -3,6 +3,8 @@ import * as NodeChildProcess from "node:child_process";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Header files are read once per call.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The header dir check runs inside the same promise.
+import * as NodePath from "node:path";
 
 import type { McpEventsServer } from "@t3tools/contracts";
 import * as Data from "effect/Data";
@@ -13,6 +15,8 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 const PROTOCOL_VERSION = "2025-06-18";
+const HEADER_DIR = NodePath.join(NodeOS.homedir(), ".config", "t3-mcp-events");
+const MAX_ERROR_CHARS = 300;
 const CALL_TIMEOUT = Duration.seconds(45);
 
 export class McpEventsRpcError extends Data.TaggedError("McpEventsRpcError")<{
@@ -58,9 +62,9 @@ function rpcFailure(message: RpcMessage, method: string): McpEventsRpcError | un
       ? String((data as { reason: unknown }).reason)
       : undefined;
   return new McpEventsRpcError({
-    message: `${method} failed: ${message.error.message ?? "error"}${reason ? ` (${reason})` : ""}`,
+    message: `${method} failed: ${(message.error.message ?? "error").slice(0, MAX_ERROR_CHARS)}${reason ? ` (${reason.slice(0, 64)})` : ""}`,
     ...(message.error.code === undefined ? {} : { code: message.error.code }),
-    ...(reason === undefined ? {} : { reason }),
+    ...(reason === undefined ? {} : { reason: reason.slice(0, 64) }),
   });
 }
 
@@ -88,8 +92,16 @@ function parseMessages(text: string, contentType: string | undefined): ReadonlyA
 
 const readHeaderFile = (path: string) =>
   Effect.tryPromise({
-    try: () => NodeFSP.readFile(path.replace(/^~(?=\/)/, NodeOS.homedir()), "utf8"),
-    catch: () => new McpEventsRpcError({ message: "Could not read the server's headersFile." }),
+    try: async () => {
+      const real = await NodeFSP.realpath(path.replace(/^~(?=\/)/, NodeOS.homedir()));
+      const dir = await NodeFSP.realpath(HEADER_DIR);
+      if (NodePath.dirname(real) !== dir) throw new Error("outside header dir");
+      return NodeFSP.readFile(real, "utf8");
+    },
+    catch: () =>
+      new McpEventsRpcError({
+        message: "headersFile must be a readable file directly in ~/.config/t3-mcp-events/.",
+      }),
   }).pipe(
     Effect.map((text) => {
       const headers: Record<string, string> = {};
@@ -183,7 +195,14 @@ const callStdio = (
       child.kill();
       resume(effect);
     };
-    const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
+    const send = (message: unknown) => {
+      if (!done && child.stdin.writable) child.stdin.write(`${JSON.stringify(message)}\n`);
+    };
+    child.stdin.on("error", () =>
+      finish(
+        Effect.fail(new McpEventsRpcError({ message: `${serverLabel(server)} closed its input.` })),
+      ),
+    );
     child.on("error", () =>
       finish(
         Effect.fail(new McpEventsRpcError({ message: `Could not start ${serverLabel(server)}.` })),

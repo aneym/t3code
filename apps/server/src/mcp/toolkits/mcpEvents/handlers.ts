@@ -22,8 +22,14 @@ export const layer = McpToolAccess.toLayer(McpEventsToolkit, {
       );
     }),
   ),
-  t3_events_list: McpToolAccess.reads((input) =>
-    Effect.flatMap(McpEventsService, (service) => service.list(input)),
+  t3_events_list: McpToolAccess.either(
+    (input) => input.server === undefined,
+    McpToolAccess.reads((input) =>
+      Effect.flatMap(McpEventsService, (service) => service.list(input)),
+    ),
+    McpToolAccess.writesEnvironment((input) =>
+      Effect.flatMap(McpEventsService, (service) => service.list(input)),
+    ),
   ),
   t3_events_unsubscribe: McpToolAccess.writesEnvironment((input) =>
     Effect.flatMap(McpEventsService, (service) => service.unsubscribe(input.subscriptionId)),
