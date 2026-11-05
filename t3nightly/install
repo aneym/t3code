@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from t3nightly.install_run import Failure, Run
@@ -113,6 +114,13 @@ def parse():
         parser.error("--force-rollback requires isolated --rehearsal")
     if args.compatibility_probe and not args.rehearsal:
         parser.error("--compatibility-probe requires isolated --rehearsal")
+    if (args.hard or args.seamless) and not args.prepare_only:
+        from t3nightly.connector_artifact import preflight_connector
+
+        try:
+            preflight_connector(SimpleNamespace(args=args, service_label=args.service_label))
+        except ValueError as error:
+            parser.error(str(error))
     if args.seamless and not all((args.manifest, args.artifact_manifest, args.chat_project, args.rpc_tree, args.receipt or args.rehearsal)):
         parser.error("--seamless requires --manifest, --artifact-manifest, --chat-project, --rpc-tree and --receipt (or --rehearsal)")
     if args.offbox:
