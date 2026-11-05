@@ -410,15 +410,11 @@ function useSidebarThreads(input: {
     unreachableEnvironments.getSnapshot,
   );
   const offlineShelfEnabled = useClientSettings((s) => s.sidebarOfflineShelfEnabled);
-  const unreachableEnvironmentIds = unreachableEnvironments.observe(
-    offlineShelfEnabled
-      ? environmentConnections.map((environment) => ({
-          environmentId: environment.environmentId,
-          phase: environment.connectionState,
-          shellIsLive: liveShellEnvironmentIds.has(environment.environmentId),
-        }))
-      : [],
-  );
+  const environmentReachability = environmentConnections.map((environment) => ({
+    environmentId: environment.environmentId,
+    phase: environment.connectionState,
+    shellIsLive: liveShellEnvironmentIds.has(environment.environmentId),
+  }));
   const nowMinute = useNowMinute();
   // Minute-quantized clocks would delay second-precise snooze wakes by up to a minute.
   const snoozeWakeClock = useSnoozeWakeClock(threads);
@@ -466,7 +462,8 @@ function useSidebarThreads(input: {
     automationThreadKeys,
     sortActiveBySend: folderGroups !== null,
     disconnectedEnvironmentIds,
-    unreachableEnvironmentIds,
+    environmentReachability,
+    offlineShelfEnabled,
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}:${unreachableVersion}`,
   });
 

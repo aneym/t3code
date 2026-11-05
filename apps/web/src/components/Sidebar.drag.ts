@@ -192,7 +192,7 @@ export function createSidebarSortingStrategy(input: {
       marker("snoozed-header");
       projected.push(...groups.snoozed);
     }
-    if (groups.offline.length > 0) {
+    if (items.some((item) => item.kind === "marker" && item.marker === "offline-header")) {
       marker("offline-header");
       projected.push(...groups.offline);
     }

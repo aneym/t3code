@@ -8,7 +8,10 @@ import {
 } from "@t3tools/client-runtime/state/thread-inbox";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
-import { createUnreachableEnvironmentTracker } from "@t3tools/client-runtime/state/unreachable-environments";
+import {
+  createUnreachableEnvironmentTracker,
+  type EnvironmentReachabilityInput,
+} from "@t3tools/client-runtime/state/unreachable-environments";
 
 import {
   applySidebarThreadDrop,
@@ -24,6 +27,8 @@ import {
   sortWorkingThreadsBySend,
   type SidebarSection,
 } from "../Sidebar.logic";
+
+const NO_ENVIRONMENTS: ReadonlySet<EnvironmentId> = new Set();
 
 export const inboxReturns = createInboxReturnTracker();
 export const unreachableEnvironments = createUnreachableEnvironmentTracker();
@@ -52,10 +57,11 @@ export interface SidebarThreadPartitionInput {
   /** Boring mode: folders list active threads by the user's latest message. */
   readonly sortActiveBySend: boolean;
   readonly disconnectedEnvironmentIds: ReadonlySet<EnvironmentId>;
-  readonly unreachableEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly environmentReachability: ReadonlyArray<EnvironmentReachabilityInput>;
+  readonly offlineShelfEnabled: boolean;
   // Snooze wakes, the queued-turn grace and the Working shelf's exit grace depend
   // on the clock, so the minute tick, the precise snooze-wake tick and the inbox
-  // tracker's expiry version are inputs: a new key repartitions.
+  // tracker's and the offline grace's versions are inputs: a new key repartitions.
   readonly clockKey: string;
 }
 
@@ -69,8 +75,9 @@ export function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     workingShelfEnabled,
     sortActiveBySend,
     disconnectedEnvironmentIds,
-    unreachableEnvironmentIds,
   } = input;
+  const unreachable = unreachableEnvironments.observe(input.environmentReachability);
+  const unreachableEnvironmentIds = input.offlineShelfEnabled ? unreachable : NO_ENVIRONMENTS;
   const preciseNow = new Date().toISOString();
   const visible = filterSidebarV2VisibleThreads(
     threads,
