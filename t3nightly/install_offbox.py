@@ -322,7 +322,7 @@ def capture(run, previous, stop, rollback_gate, keep_local=False):
     else:
         with restore_copy.foreground_io(run.step):
             if stopped_only:
-                offbox_digest.checkpoint(source)
+                offbox_digest.checkpoint(source, window)
             sync(source, f"{host}:{replica}", window)
             digest = offbox_digest.compare(run, host, replica, source, window) if stopped_only else None
         metadata = verified(run, host, root, replica, window, {"bytes": size, "schemaState": state, "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3),

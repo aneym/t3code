@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .build_artifacts import load as load_artifact
 from .install_offbox import METHOD as OFFBOX_METHOD
+from . import offbox_digest
 from .release_approval import approved
 from .release_graph import SUCCESS_OUTCOMES
 from .release_manifest import digest, eligible, load
@@ -165,7 +166,7 @@ def condition_met(condition, compatibility, rehearsal, install):
         return backup.get("method") == OFFBOX_METHOD and bool(backup.get("remote")) and deferred
     if condition == "offbox-stopped-ship":
         backup = install["backup"]
-        return backup.get("method") == OFFBOX_METHOD and backup.get("stoppedShip") is True and backup.get("quickCheck") == "ok" and len(backup.get("sha256") or "") == 64 and bool(backup.get("remote")) and not backup.get("local")
+        return backup.get("method") == OFFBOX_METHOD and backup.get("stoppedShip") is True and backup.get("quickCheck") == "ok" and offbox_digest.valid(backup.get("sha256")) and bool(backup.get("remote")) and not backup.get("local")
     if condition == "local-restore-copy":
         return copy.get("quickCheck") == "ok" and bool(copy.get("identity")) and bool(copy.get("path")) and bool(copy.get("sha256")) and all(copy.get(key) == local.get(key) for key in ("path", "identity", "sha256", "quickCheck"))
     if condition == "drain-then-hard":
