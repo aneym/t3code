@@ -16,9 +16,12 @@ def launcher_action(run):
     raw = getattr(run.args, "launcher_artifact", "")
     if raw:
         manifest = json.loads(Path(run.args.launcher_artifact).read_text())
-        source = Path(manifest["runtimeDir"]).expanduser().resolve()
         if manifest.get("schema") != "t3nightly.launcher-artifact/1" or manifest.get("protocol") != 3:
             raise ValueError("launcher artifact requires schema, supported protocol 3 and exact runtime digest")
+        if target.is_dir() and not changed(run):
+            raw = ""
+    if raw:
+        source = Path(manifest["runtimeDir"]).expanduser().resolve()
         verify_cli(source / "t3")
         if file_digest(source / "t3") != manifest["sha256"]:
             raise ValueError("launcher artifact bytes do not match its pin")
@@ -30,8 +33,6 @@ def launcher_action(run):
         if staged.exists():
             raise ValueError("unfinished launcher artifact staging exists")
     validate_drain_pin(run)
-    if raw and target.is_dir() and not changed(run):
-        raw = ""
     if target.is_dir() and (not raw or getattr(run, "launcher_applied", False)):
         verify_cli(target / "t3")
         if pin.exists():

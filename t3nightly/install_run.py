@@ -72,6 +72,10 @@ class Run:
         if drain:
             line += f"; restart drain {drain['outcome']}, waited_ms={drain.get('waitedMs')}, active_run_ids={drain.get('activeRunIds', [])}"
         self.report.update(outcome=outcome, line=line, finished_at=now().isoformat())
+        launch = self.report.get("serviceLaunch")
+        if launch and outcome in ("installed", "current"):
+            Path(launch["path"]).unlink(missing_ok=True)
+            launch["pruned"] = True
         path = self.state / f"report-{stamp()}.json"
         path.write_text(json.dumps(self.report, indent=1))
         (self.state / "last.json").write_text(json.dumps(self.report, indent=1))
