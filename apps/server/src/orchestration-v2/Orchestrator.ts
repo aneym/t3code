@@ -7691,23 +7691,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.title === undefined ? {} : { title: command.title }),
         ordinal: (yield* subagentCount(command.parentThreadId)) + 1,
       });
-      const childThread: OrchestrationV2AppThread = {
-        ...makeSubagentChildThread({
-          parentThread: parentProjection.thread,
-          childThreadId,
-          parentNodeId: taskNodeId,
-          activeProviderThreadId: null,
-          providerInstanceId: command.modelSelection.instanceId,
-          modelSelection: command.modelSelection,
-          title: taskTitle,
-          now,
-          createdBy: command.createdBy,
-          creationSource: command.creationSource,
-        }),
-        runtimeMode: command.runtimeMode,
-        interactionMode: command.interactionMode,
-        ...delegatedChildWorkspace(command),
-      };
+      const childThread = delegatedChildWorkspace(
+        {
+          ...makeSubagentChildThread({
+            parentThread: parentProjection.thread,
+            childThreadId,
+            parentNodeId: taskNodeId,
+            activeProviderThreadId: null,
+            providerInstanceId: command.modelSelection.instanceId,
+            modelSelection: command.modelSelection,
+            title: taskTitle,
+            now,
+            createdBy: command.createdBy,
+            creationSource: command.creationSource,
+          }),
+          runtimeMode: command.runtimeMode,
+          interactionMode: command.interactionMode,
+        },
+        command,
+      );
       const task: OrchestrationV2Subagent = {
         id: taskNodeId,
         threadId: command.parentThreadId,

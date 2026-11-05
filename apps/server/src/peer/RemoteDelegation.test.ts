@@ -256,7 +256,6 @@ const boxToolkitLayer = (thread: BoxThread) => {
     waitForThread: (input) =>
       Effect.gen(function* () {
         yield* Ref.update(thread.waitedFor, (seen) => [...seen, input.runId]);
-        // A thread with no run has nothing to wait for.
         if (yield* Ref.get(thread.runless)) {
           return { threadId: input.threadId, run: null, timedOut: false };
         }
@@ -269,7 +268,6 @@ const boxToolkitLayer = (thread: BoxThread) => {
         const done = yield* Deferred.await(thread.finished).pipe(
           Effect.timeoutOption(input.timeoutMs),
         );
-        // Only a waiter that asks waits past the run for the thread's own task.
         if (
           Option.isSome(done) &&
           input.untilDelegatedWorkSettled === true &&
