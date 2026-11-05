@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import re
+import shlex
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from t3nightly.install_policy import DEFAULT_DRAIN_S
+from t3nightly.release_install import build_install_command
+from t3nightly.release_transport import command
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Install on this host using the release IL command builder; no SSH dispatch.")
+    parser.add_argument("--host", required=True, help="executing host name; need not be in the release graph")
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--reason", required=True, help="live restart reason, passed as T3_LIVE_RESTART_REASON")
+    parser.add_argument("--receipt-host", required=True, choices=("studio", "ax42", "forge", "owl"), help="target identity in the candidate manifest and rehearsal receipt")
+    for name in ("rpc-tree", "assets", "manifest", "artifact-manifest", "receipt", "smoke-verdict", "rollback-proof", "launcher-artifact", "chat-project"):
+        parser.add_argument(f"--{name}", type=Path, required=True)
+    parser.add_argument("--connector-artifact", type=Path)
+    parser.add_argument("--override-reason", default="", help="separate install-window override, when required")
+    parser.add_argument("--print", action="store_true", help="print the command only; no installer or filesystem mutations")
+    args = parser.parse_args()
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", args.host):
+        parser.error("--host must be a host name")
+    reason = args.reason.strip()
+    if not reason or any(char in reason for char in "\r\n\x00"):
+        parser.error("--reason must be a nonempty single line")
+    plan = build_install_command(
+        host=args.host, version=args.version, tools=Path(__file__).resolve().parent,
+        rpc_tree=args.rpc_tree, assets=args.assets, manifest=args.manifest,
+        artifact_manifest=args.artifact_manifest, receipt=args.receipt, receipt_host=args.receipt_host,
+        install_receipt=args.run / "receipts" / f"install-{args.host}.json",
+        state_dir=args.run / f"install-{args.host}", chat_project=args.chat_project,
+        smoke_verdict=args.smoke_verdict, rollback_proof=args.rollback_proof,
+        override_reason=args.override_reason, launcher_artifact=args.launcher_artifact,
+        connector_artifact=args.connector_artifact, drain_s=DEFAULT_DRAIN_S,
+    )
+    env = {**(os.environ if plan.env is None else plan.env), "T3_LIVE_RESTART_REASON": reason}
+    if args.print:
+        assignments = [f"{key}={env[key]}" for key in ("AGENT_LANE", "AGENT_THREAD_ID") if plan.env is not None]
+        print(shlex.join(["env", *assignments, f"T3_LIVE_RESTART_REASON={reason}", *plan.argv]))
+        return 0
+    plan.state.mkdir(parents=True, exist_ok=True)
+    (args.run / "receipts").mkdir(parents=True, exist_ok=True)
+    return command(plan.argv, sys.stdout, env=env)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
