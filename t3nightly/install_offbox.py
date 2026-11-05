@@ -292,6 +292,7 @@ def capture(run, previous, stop, rollback_gate, keep_local=False):
     started = time.monotonic()
     binary = rollback_gate()
     if binary:
+        offbox_window.admit(run, 0)
         stop()
         metadata = {"method": "binary-rollback", **binary, "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
         run.step("hard-backup", **metadata)

@@ -3,6 +3,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -131,7 +132,9 @@ def parse():
 
 
 if __name__ == "__main__":
+    started_monotonic = time.monotonic()
     args = parse()
+    args.started_monotonic = started_monotonic
     try:
         if args.calibrate:
             from t3nightly.install_calibration import calibrate

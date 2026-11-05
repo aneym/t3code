@@ -41,7 +41,7 @@ def stamp():
 class Run:
     def __init__(self, args):
         self.args = args
-        self.started_monotonic = time.monotonic()
+        self.started_monotonic = getattr(args, "started_monotonic", None) or time.monotonic()
         self.home = Path(args.home).expanduser()
         from t3nightly.install_service import service_identity
 
