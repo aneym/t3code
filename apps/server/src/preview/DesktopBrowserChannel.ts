@@ -133,6 +133,17 @@ const make = Effect.gen(function* () {
     return null;
   };
 
+  const retire = (source: typeof remoteSources extends Map<string, infer A> ? A : never) => {
+    replies.drop(source);
+    for (const id of source.attached) {
+      attachedTabs.delete(id);
+      const [threadId, tabId] = id.split("\u0000");
+      if (threadId !== undefined && tabId !== undefined)
+        void PubSub.publish(changes, { key: { threadId, tabId }, attached: false });
+    }
+    source.attached.clear();
+  };
+
   const sourceCommand = (
     source: typeof remoteSources extends Map<string, infer A> ? A : never,
     message: DesktopBrowserCommandType,
@@ -148,7 +159,10 @@ const make = Effect.gen(function* () {
     );
     const id = sourceId(sessionId, source.deviceName);
     const existing = remoteSources.get(id);
-    if (existing) yield* Queue.shutdown(existing.queue);
+    if (existing) {
+      yield* Queue.shutdown(existing.queue);
+      retire(existing);
+    }
     const entry = {
       name: source.deviceName,
       control: source.control === true,
@@ -161,16 +175,8 @@ const make = Effect.gen(function* () {
     if (entry.control) yield* Queue.offer(entry.queue, ANNOUNCE_LINE);
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        replies.drop(entry);
-        if (remoteSources.get(id) !== entry) return;
-        remoteSources.delete(id);
-        for (const id of entry.attached) {
-          attachedTabs.delete(id);
-          const [threadId, tabId] = id.split("\u0000");
-          if (threadId !== undefined && tabId !== undefined)
-            void PubSub.publish(changes, { key: { threadId, tabId }, attached: false });
-        }
-        entry.attached.clear();
+        if (remoteSources.get(id) === entry) remoteSources.delete(id);
+        retire(entry);
       }),
     );
     return Stream.fromQueue(entry.queue);
@@ -294,9 +300,11 @@ const make = Effect.gen(function* () {
     }
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
-        if (inbound.get(id) === queue) inbound.delete(id);
-        replies.clear(id);
+        const current = inbound.get(id) === queue;
+        if (current) inbound.delete(id);
         yield* Queue.shutdown(queue);
+        if (!current) return;
+        replies.clear(id);
         const source = sourceForKey(id);
         if (source) yield* sourceCommand(source, { type: "release", ...key });
         else yield* command({ type: "release", ...key });
