@@ -30,7 +30,7 @@ export const McpEventsToolkit = Toolkit.make(
   Tool.make("t3_events_list", {
     ...shared,
     description:
-      "List MCP Events subscriptions and their status. Pass `server` to also get its events/list catalog.",
+      "List MCP Events subscriptions in this environment and their status. Pass `threadId` for one thread, `server` to also get its events/list catalog.",
     parameters: McpEventsListInput,
     success: McpEventsListResult,
   })

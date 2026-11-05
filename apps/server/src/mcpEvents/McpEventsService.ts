@@ -144,7 +144,7 @@ const make = Effect.gen(function* () {
       : Effect.fail(
           failure(
             "invalid_request",
-            "MCP Events is off. Turn on Settings → Queue → MCP Events subscriptions.",
+            "MCP Events is off. Turn on Settings → Chat → Follow-ups → MCP Events subscriptions.",
           ),
         ),
   );
