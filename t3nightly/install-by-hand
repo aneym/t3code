@@ -19,7 +19,7 @@ def main():
     parser.add_argument("--version", required=True)
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--reason", required=True, help="live restart reason, passed as T3_LIVE_RESTART_REASON")
-    parser.add_argument("--receipt-host", required=True, choices=("studio", "ax42", "forge", "owl"), help="target identity in the candidate manifest and rehearsal receipt")
+    parser.add_argument("--receipt-host", required=True, choices=("studio", "ax42", "forge", "owl", "ax102"), help="target identity in the candidate manifest and rehearsal receipt")
     for name in ("rpc-tree", "assets", "manifest", "artifact-manifest", "receipt", "smoke-verdict", "rollback-proof", "launcher-artifact", "chat-project"):
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--connector-artifact", type=Path)

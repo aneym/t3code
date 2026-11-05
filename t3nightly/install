@@ -65,7 +65,7 @@ def parse():
     parser.add_argument("--manifest", default="")
     parser.add_argument("--artifact-manifest", default="")
     parser.add_argument("--install-receipt", default="")
-    parser.add_argument("--receipt-host", choices=("studio", "ax42", "forge", "owl"))
+    parser.add_argument("--receipt-host", choices=("studio", "ax42", "forge", "owl", "ax102"))
     parser.add_argument("--rehearsal", action="store_true")
     parser.add_argument("--strict-drain-proof", action="store_true")
     parser.add_argument("--rehearsal-inject", dest="inject", choices=("none", "warm-death", "post-flip"), default="none")

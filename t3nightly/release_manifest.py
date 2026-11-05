@@ -13,7 +13,7 @@ from .release_eligibility import RESTORE_CLASS, classify
 
 
 CANDIDATE_SCHEMA = "t3nightly.candidate/1"
-TARGETS = {"studio": ("darwin", "arm64"), **{host: ("linux", "x64") for host in ("ax42", "forge", "owl")}}
+TARGETS = {"studio": ("darwin", "arm64"), **{host: ("linux", "x64") for host in ("ax42", "forge", "owl", "ax102")}}
 MIGRATIONS_FILE = "apps/server/src/persistence/Migrations.ts"
 MIGRATION_PATHS = (MIGRATIONS_FILE, "apps/server/src/persistence/Migrations/")
 PERSISTED_STATE_PATHS = ("apps/server/src/persistence/",)

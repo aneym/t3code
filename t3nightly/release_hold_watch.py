@@ -14,7 +14,7 @@ from .release_hold_state import event, read, save, snapshot, terminal
 from .release_timeline import utc_now
 from .remote_shell import ssh_argv
 
-SUFFIX = {"studio": "M", "owl": "O", "forge": "F", "ax42": "L"}
+SUFFIX = {"studio": "M", "owl": "O", "forge": "F", "ax42": "L", "ax102": "B"}
 
 
 def lead_snapshot(config, row):

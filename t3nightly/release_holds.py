@@ -16,7 +16,7 @@ from .release_jobs import write_status
 from .release_targets import LINUX_TARGETS
 from .remote_shell import ssh_argv
 
-HOSTS = ("studio", "forge", "owl", "ax42")
+HOSTS = ("studio", "forge", "owl", "ax42", "ax102")
 
 
 def remote(config, operation):
