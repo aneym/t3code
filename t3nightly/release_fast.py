@@ -213,7 +213,7 @@ def drive_fast(args):
         for key, (node, row, submitted_at) in list(running.items()):
             if row["outcome"] not in TERMINAL:
                 now = time.monotonic()
-                if node.host == "studio" or key not in last_status_poll or now - last_status_poll[key] >= 5:
+                if node.host == "studio" or key not in last_status_poll or now - last_status_poll[key] >= 2:
                     last_status_poll[key] = now
                     try:
                         latest = jobs.request(node, "status")

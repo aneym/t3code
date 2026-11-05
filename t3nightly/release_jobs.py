@@ -12,8 +12,8 @@ import time
 from pathlib import Path
 
 from .release_targets import LINUX_TARGETS, stage_action
-from .unit_resources import systemd_arguments
 from .remote_shell import ssh_argv
+from .unit_resources import systemd_arguments
 
 
 TERMINAL = {"cancelled", "passed", "failed", "environment-blocked", "timed-out", "installed", "current", "rolled-back"}

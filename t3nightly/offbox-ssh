@@ -7,4 +7,4 @@ if [ "$(hostname -s)" = ax42 ]; then
         fi
     done
 fi
-exec python3 -B "$(dirname "$0")/remote_shell.py" -o Compression=no -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$@"
+exec ssh -o Compression=no -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$@"
