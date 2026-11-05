@@ -2,6 +2,8 @@
 import * as NodeChildProcess from "node:child_process";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Header files are read once per call.
 import * as NodeFSP from "node:fs/promises";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- O_NOFOLLOW lives on the fs constants.
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- The header dir check runs inside the same promise.
 import * as NodePath from "node:path";
@@ -16,7 +18,6 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 const PROTOCOL_VERSION = "2025-06-18";
 const HEADER_DIR = NodePath.join(NodeOS.homedir(), ".config", "t3-mcp-events");
-const MAX_ERROR_CHARS = 300;
 const CALL_TIMEOUT = Duration.seconds(45);
 
 export class McpEventsRpcError extends Data.TaggedError("McpEventsRpcError")<{
@@ -55,16 +56,20 @@ export function serverLabel(server: McpEventsServer): string {
 }
 
 function rpcFailure(message: RpcMessage, method: string): McpEventsRpcError | undefined {
-  if (message.error === undefined) return undefined;
-  const data = message.error.data;
-  const reason =
-    typeof data === "object" && data !== null && "reason" in data
-      ? String((data as { reason: unknown }).reason)
+  const error: unknown = message.error;
+  if (error === undefined || error === null) return undefined;
+  const fields = typeof error === "object" ? (error as Record<string, unknown>) : {};
+  const data = fields.data;
+  const rawReason =
+    typeof data === "object" && data !== null
+      ? (data as Record<string, unknown>).reason
       : undefined;
+  const reason = typeof rawReason === "string" ? rawReason : undefined;
+  const text = typeof fields.message === "string" ? fields.message : "error";
   return new McpEventsRpcError({
-    message: `${method} failed: ${(message.error.message ?? "error").slice(0, MAX_ERROR_CHARS)}${reason ? ` (${reason.slice(0, 64)})` : ""}`,
-    ...(message.error.code === undefined ? {} : { code: message.error.code }),
-    ...(reason === undefined ? {} : { reason: reason.slice(0, 64) }),
+    message: `${method} failed: ${text}${reason ? ` (${reason})` : ""}`,
+    ...(typeof fields.code === "number" ? { code: fields.code } : {}),
+    ...(reason === undefined ? {} : { reason }),
   });
 }
 
@@ -93,10 +98,21 @@ function parseMessages(text: string, contentType: string | undefined): ReadonlyA
 const readHeaderFile = (path: string) =>
   Effect.tryPromise({
     try: async () => {
-      const real = await NodeFSP.realpath(path.replace(/^~(?=\/)/, NodeOS.homedir()));
+      const expanded = path.replace(/^~(?=\/)/, NodeOS.homedir());
       const dir = await NodeFSP.realpath(HEADER_DIR);
-      if (NodePath.dirname(real) !== dir) throw new Error("outside header dir");
-      return NodeFSP.readFile(real, "utf8");
+      if ((await NodeFSP.realpath(NodePath.dirname(expanded))) !== dir) {
+        throw new Error("outside header dir");
+      }
+      const handle = await NodeFSP.open(
+        NodePath.join(dir, NodePath.basename(expanded)),
+        NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW,
+      );
+      try {
+        if (!(await handle.stat()).isFile()) throw new Error("not a file");
+        return await handle.readFile("utf8");
+      } finally {
+        await handle.close();
+      }
     },
     catch: () =>
       new McpEventsRpcError({
@@ -217,6 +233,17 @@ const callStdio = (
     );
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
+      try {
+        onData(chunk);
+      } catch {
+        finish(
+          Effect.fail(
+            new McpEventsRpcError({ message: `${serverLabel(server)} sent a bad reply.` }),
+          ),
+        );
+      }
+    });
+    const onData = (chunk: string) => {
       buffer += chunk;
       let newline = buffer.indexOf("\n");
       while (newline !== -1) {
@@ -235,7 +262,7 @@ const callStdio = (
           }
         }
       }
-    });
+    };
     send({ jsonrpc: "2.0", id: 1, method: "initialize", params: initializeParams });
     return Effect.sync(() => {
       done = true;

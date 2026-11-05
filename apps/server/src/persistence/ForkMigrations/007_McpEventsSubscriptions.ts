@@ -31,6 +31,7 @@ export default Effect.gen(function* () {
       subscription_id TEXT NOT NULL,
       event_id TEXT NOT NULL,
       received_at INTEGER NOT NULL,
+      dispatched INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (subscription_id, event_id)
     )
   `;

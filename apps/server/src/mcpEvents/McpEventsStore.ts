@@ -152,7 +152,19 @@ export const claimDelivery = Effect.fn("McpEventsStore.claimDelivery")(function*
   const claimed = yield* sql<{ event_id: string }>`INSERT INTO aneym_mcp_events_deliveries
     (subscription_id, event_id, received_at) VALUES (${subscriptionId}, ${eventId}, ${now})
     ON CONFLICT (subscription_id, event_id) DO NOTHING RETURNING event_id`;
-  return claimed.length > 0;
+  if (claimed.length > 0) return "claimed" as const;
+  const rows = yield* sql<{ dispatched: number }>`SELECT dispatched FROM aneym_mcp_events_deliveries
+    WHERE subscription_id = ${subscriptionId} AND event_id = ${eventId}`;
+  return rows[0]?.dispatched === 1 ? ("dispatched" as const) : ("pending" as const);
+});
+
+export const markDispatched = Effect.fn("McpEventsStore.markDispatched")(function* (
+  subscriptionId: string,
+  eventId: string,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`UPDATE aneym_mcp_events_deliveries SET dispatched = 1
+    WHERE subscription_id = ${subscriptionId} AND event_id = ${eventId}`;
 });
 
 export const releaseDelivery = Effect.fn("McpEventsStore.releaseDelivery")(function* (
