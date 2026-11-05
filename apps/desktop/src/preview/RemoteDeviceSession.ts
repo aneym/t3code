@@ -85,9 +85,6 @@ const guardContents = (contents: WebContents) => {
   contents.on("will-navigate", refuse);
   contents.on("will-frame-navigate", refuse);
   contents.on("will-redirect", refuse);
-  contents.on("did-start-navigation", (event) => {
-    if (!isNavigableUrl(event.url)) contents.stop();
-  });
 };
 
 export const guard = (session: Session) => {

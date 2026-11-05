@@ -29,6 +29,7 @@ import * as NodeNet from "node:net";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { writeAllToFileDescriptor } from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
+import * as RemoteCdpReplies from "./RemoteCdpReplies.ts";
 
 const decodeEvent = Schema.decodeUnknownEffect(DesktopBrowserEvent);
 const decodeRemoteEvent = Schema.decodeUnknownEffect(Schema.fromJsonString(DesktopBrowserEvent));
@@ -83,6 +84,7 @@ const make = Effect.gen(function* () {
   const changes = yield* PubSub.unbounded<{ key: DesktopTabKey; attached: boolean }>();
   const attachedTabs = new Set<string>();
   const inbound = new Map<string, Queue.Queue<string>>();
+  const replies = RemoteCdpReplies.make();
   const writeLock = yield* Semaphore.make(1);
   const remoteSources = new Map<
     string,
@@ -185,6 +187,7 @@ const make = Effect.gen(function* () {
       const key = { threadId: event.value.threadId, tabId: event.value.tabId };
       const id = keyOf(key);
       if (event.value.type === "cdp") {
+        if (!replies.admits(id, event.value.message)) continue;
         const queue = inbound.get(id);
         if (queue) yield* Queue.offer(queue, event.value.message);
       } else if (event.value.type === "attached") {
@@ -271,6 +274,7 @@ const make = Effect.gen(function* () {
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         if (inbound.get(id) === queue) inbound.delete(id);
+        replies.clear(id);
         yield* Queue.shutdown(queue);
         const source = sourceForKey(id);
         if (source) yield* sourceCommand(source, { type: "release", ...key });
@@ -295,18 +299,13 @@ const make = Effect.gen(function* () {
             Effect.flatMap((frames) =>
               Effect.forEach(
                 frames,
-                (frame) =>
-                  sourceForKey(id)
-                    ? sourceCommand(sourceForKey(id)!, {
-                        type: "cdp",
-                        ...key,
-                        message: typeof frame === "string" ? frame : decoder.decode(frame),
-                      })
-                    : command({
-                        type: "cdp",
-                        ...key,
-                        message: typeof frame === "string" ? frame : decoder.decode(frame),
-                      }),
+                (frame) => {
+                  const message = typeof frame === "string" ? frame : decoder.decode(frame);
+                  const source = sourceForKey(id);
+                  if (!source) return command({ type: "cdp", ...key, message });
+                  replies.sent(id, message);
+                  return sourceCommand(source, { type: "cdp", ...key, message });
+                },
                 { discard: true },
               ),
             ),
