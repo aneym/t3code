@@ -1,6 +1,7 @@
 import type { McpEventOccurrence, McpEventsSubscription } from "@t3tools/contracts";
 
 import { serverLabel } from "./eventsRpc.ts";
+import { credentialValues, redact } from "./secretText.ts";
 
 const MAX_ERROR_CHARS = 300;
 
@@ -9,15 +10,11 @@ export interface StoredCredential {
   readonly url: string;
 }
 
-export const rpcMessage = (error: { readonly message: string }, credential?: StoredCredential) => {
-  if (credential === undefined) return error.message.slice(0, MAX_ERROR_CHARS);
-  const hidden = [credential.url, credential.secret, credential.secret.slice("whsec_".length)];
-  const token = credential.url.split("/").at(-1);
-  if (token) hidden.push(token);
-  return hidden
-    .reduce((text, value) => text.split(value).join("<redacted>"), error.message)
-    .slice(0, MAX_ERROR_CHARS);
-};
+export const rpcMessage = (error: { readonly message: string }, credential?: StoredCredential) =>
+  (credential === undefined
+    ? error.message
+    : redact(error.message, credentialValues(credential.url, credential.secret))
+  ).slice(0, MAX_ERROR_CHARS);
 
 export function deliveryText(input: {
   readonly subscription: McpEventsSubscription;
