@@ -88,7 +88,7 @@ def rollback_connector(run):
     recheck(run)
     label, path = identity(run)
     control(run, "stop")
-    if sys.platform != "darwin" and saved[path] is None:
+    if sys.platform != "darwin" and saved[path] is None and path.exists():
         subprocess.run(["systemctl", "--user", "disable", f"{label}.service"], env=command_environment(run), check=True, capture_output=True, timeout=30)
     for item, previous in saved.items():
         if previous is None:
