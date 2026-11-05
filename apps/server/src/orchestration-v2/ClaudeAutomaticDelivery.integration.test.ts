@@ -27,6 +27,7 @@ import * as Stream from "effect/Stream";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ScheduledRunWorkspace from "../scheduledTasks/ScheduledRunWorkspace.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -340,6 +341,11 @@ it.effect.each(deliveries)(
                     }),
                   ),
                   Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+                  Layer.provide(
+                    Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
+                      resolve: (task) => Effect.succeed(task.workspaceStrategy),
+                    }),
+                  ),
                   Layer.provide(
                     CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
                   ),

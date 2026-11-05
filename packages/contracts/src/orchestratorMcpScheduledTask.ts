@@ -21,6 +21,7 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
+  lastRunError: Schema.optional(Schema.String),
   runCount: NonNegativeInt,
   webhookUrl: Schema.optional(Schema.String).annotate({
     description:

@@ -35,3 +35,36 @@ export const makeMarkScheduledTaskRunning = (sql: SqlClient.SqlClient) =>
         taskId: id,
       });
   });
+
+export const makeMarkScheduledTaskCompleted =
+  (sql: SqlClient.SqlClient) =>
+  (input: {
+    readonly id: ScheduledTaskId;
+    readonly completedAtIso: string;
+    readonly nextRunAtIso: string | null;
+    readonly status: "succeeded" | "failed";
+    readonly error: string | null;
+    readonly startedAtIso: string;
+  }) =>
+    sql`
+      UPDATE scheduled_tasks
+      SET updated_at = ${input.completedAtIso},
+          next_run_at = ${input.nextRunAtIso},
+          last_run_status = ${input.status},
+          last_run_error = ${input.error},
+          run_count = run_count + 1
+      WHERE task_id = ${input.id}
+        AND last_run_status = 'running'
+        AND last_run_at = ${input.startedAtIso}
+      RETURNING task_id
+    `.pipe(
+      Effect.map((rows) => rows.length > 0),
+      Effect.mapError(
+        (cause) =>
+          new ScheduledTaskError({
+            message: "Could not record schedule task run.",
+            taskId: input.id,
+            cause,
+          }),
+      ),
+    );

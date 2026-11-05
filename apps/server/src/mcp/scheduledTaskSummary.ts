@@ -15,6 +15,7 @@ export function scheduledTaskSummary(
     nextRunAt: task.nextRunAt,
     lastRunAt: task.lastRunAt,
     lastRunStatus: task.lastRunStatus,
+    ...(task.lastRunError === null ? {} : { lastRunError: task.lastRunError }),
     runCount: task.runCount,
     ...(task.blockedByPolicy === undefined ? {} : { blockedByPolicy: task.blockedByPolicy }),
     ...(task.webhook?.url == null || !mayRun || task.blockedByPolicy !== undefined
