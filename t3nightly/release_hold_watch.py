@@ -74,7 +74,7 @@ def policy(config, root, row, observed):
                 save(root, row, outcome="ready-manual", ready=True, readyAt=utc_now(),
                      next="Factory pause and disk-mover hold, then manual release")
                 event(root, "ready-manual")
-        elif config["host"] == "forge":
+        elif config["host"] in ("forge", "ax102"):
             add_quarantine(config, root, row)
             if row.get("quarantineFailed"):
                 release(config, root, row, "quarantine-failed")
@@ -136,7 +136,7 @@ def worker(root, lock_fd):
                             pass
                     if held and not finishing and not stop.exists():
                         policy(config, root, row, observed)
-                    clear_needed = finishing or "IF" in done | failed
+                    clear_needed = finishing or f"I{SUFFIX[config['host']]}" in done | failed
                 except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
                     save(root, row, watcher="retrying", error=type(error).__name__)
                     event(root, "retry", error=type(error).__name__)

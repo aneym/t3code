@@ -14,10 +14,10 @@ def quarantine(config, root, action):
     if config["sandbox"]:
         command = config.get("sandboxQuarantineCommand")
         if command:
-            subprocess.run([command, "forge", action, "quarantine"], capture_output=True, timeout=10, check=True)
+            subprocess.run([command, config["host"], action, "quarantine"], capture_output=True, timeout=10, check=True)
     else:
         subprocess.run([*ssh_argv("ax42", '-oConnectTimeout=5'),
-                        shlex.join(["fleet-drain", "forge", action, "quarantine"])],
+                        shlex.join(["fleet-drain", config["host"], action, "quarantine"])],
                        capture_output=True, timeout=30, check=True)
     event(root, "quarantine-" + action, sandbox=config["sandbox"])
 
