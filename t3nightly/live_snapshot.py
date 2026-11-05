@@ -41,7 +41,7 @@ def snapshot_root(home):
 
 def read_snapshot(source, destination, timeout, method):
     seconds = min(timeout, 2 if method == "clone" else backup_seconds(database_bytes(source)))
-    command = [sys.executable, "-m", "t3nightly.snapshot_reader", method, str(source), str(destination), *guard.guard_words(seconds)]
+    command = [sys.executable, "-m", "t3nightly.snapshot_reader", method, str(source), str(destination), *guard.guard_words(seconds, guard.headroom_limit(source))]
     command = background_command(command)
     root = str(Path(__file__).resolve().parent.parent)
     env = dict(os.environ, PYTHONPATH=root + os.pathsep + os.environ.get("PYTHONPATH", ""))
