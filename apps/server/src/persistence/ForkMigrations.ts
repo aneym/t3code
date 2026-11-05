@@ -9,6 +9,7 @@ import ChildSettlementIndexes from "./ForkMigrations/004_ChildSettlementIndexes.
 import RemoveUnusedEventCorrelationIndex from "./ForkMigrations/005_RemoveUnusedEventCorrelationIndex.ts";
 
 import ProjectPinOrderToPinnedAt from "./ForkMigrations/006_ProjectPinOrderToPinnedAt.ts";
+import McpEventsSubscriptions from "./ForkMigrations/007_McpEventsSubscriptions.ts";
 
 const run = Migrator.make({});
 const loader = Migrator.fromRecord({
@@ -18,6 +19,7 @@ const loader = Migrator.fromRecord({
   "4_ChildSettlementIndexes": ChildSettlementIndexes,
   "5_RemoveUnusedEventCorrelationIndex": RemoveUnusedEventCorrelationIndex,
   "6_ProjectPinOrderToPinnedAt": ProjectPinOrderToPinnedAt,
+  "7_McpEventsSubscriptions": McpEventsSubscriptions,
 });
 
 export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {
