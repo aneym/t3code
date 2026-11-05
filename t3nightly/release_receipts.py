@@ -71,7 +71,7 @@ def validate(receipt):
         if timestamp(receipt["expiresAt"]) != timestamp(receipt["finishedAt"]) + EXPIRY:
             raise ValueError("receipt.expiresAt must be two hours after finishedAt")
     elif schema == INSTALL_SCHEMA:
-        optional = {key: dict for key in ("installWindow", "hotSwap", "restartDrain", "migrationHistory", "databaseRollback", "backupRetention", "serverSettingsApplied") if key in receipt and receipt[key] is not None}
+        optional = {key: dict for key in ("installWindow", "hotSwap", "restartDrain", "connectorRestore", "migrationHistory", "databaseRollback", "backupRetention", "serverSettingsApplied") if key in receipt and receipt[key] is not None}
         if "serviceStops" in receipt:
             optional["serviceStops"] = list
         if "mcpEventsProof" in receipt:

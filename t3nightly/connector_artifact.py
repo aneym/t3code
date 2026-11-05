@@ -89,9 +89,9 @@ def ensure_connector(run):
         unit = plistlib.loads(text.encode())
         if unit["Label"] != label:
             raise ValueError("production renderer did not honor the connector unitPath")
-        data = text.encode()
-    else:
-        data = text.encode()
+    data = text.encode()
+    if not hasattr(run, "connector_previous"):
+        run.connector_previous = {item: (item.read_bytes(), item.stat().st_mode & 0o777) if item.exists() else None for item in (path, pin)}
     pin.write_text(json.dumps({**artifact, "unit": str(path), "label": label}) + "\n")
     pin.chmod(0o600)
     if path.exists() and path.read_bytes() == data:
@@ -106,6 +106,35 @@ def ensure_connector(run):
         os.replace(staged, path)
     control(run, "start")
     run.step("connector-artifact-pinned", service=label, digest=artifact["sha256"])
+
+
+def rollback_connector(run):
+    saved = getattr(run, "connector_previous", None)
+    if saved is None:
+        return
+    from .install_policy import command_environment, recheck
+
+    recheck(run)
+    label, path = identity(run)
+    control(run, "stop")
+    if sys.platform != "darwin" and saved[path] is None and path.exists():
+        subprocess.run(["systemctl", "--user", "disable", f"{label}.service"], env=command_environment(run), check=True, capture_output=True, timeout=30)
+    for item, previous in saved.items():
+        if previous is None:
+            item.unlink(missing_ok=True)
+        else:
+            content, mode = previous
+            staged = item.with_suffix(".next")
+            staged.write_bytes(content)
+            staged.chmod(mode)
+            os.replace(staged, item)
+    if saved[path] is not None:
+        control(run, "start")
+    else:
+        from .service_launch import reload
+
+        reload(run)
+    run.step("connector-artifact-restored", service=label, unit_existed=saved[path] is not None)
 
 
 def control(run, action):
