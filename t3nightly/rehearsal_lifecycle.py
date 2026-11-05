@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .rehearsal_waiter import identity, now
 
-MIN_FREE_GIB = 65
+MIN_FREE_GIB = 45
 
 
 def disk_gate(evidence=None):
