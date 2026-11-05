@@ -407,6 +407,17 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       disabled={disabledFor("enableAgentBrowserAccess")}
                       onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
                     />
+                    <SettingsSwitchRow
+                      icon="desktopcomputer"
+                      label="Open agent tabs on your desktop"
+                      subtitle={managedSubtitle(
+                        "previewOpenOnUserDevice",
+                        "Show agent tabs on the connected desktop app you used last. Otherwise they open in this environment's browser.",
+                      )}
+                      value={uniform("previewOpenOnUserDevice")}
+                      disabled={disabledFor("previewOpenOnUserDevice")}
+                      onValueChange={(value) => write({ previewOpenOnUserDevice: value })}
+                    />
                   </SettingsSection>
                   <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
                 </>

@@ -14,7 +14,10 @@ import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 import { isElectron } from "~/env";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
-import { useDesktopHostedPreviewSessions } from "~/components/preview/usePreviewSession";
+import {
+  useDesktopHostedPreviewSessions,
+  useRemoteDeviceTabSessions,
+} from "~/components/preview/usePreviewSession";
 import {
   readActivePreviewSessions,
   type ThreadPreviewState,
@@ -29,14 +32,21 @@ import { useBrowserDefaults } from "./browserDefaults";
 import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
-import { rendersServerTabNatively } from "./previewRuntime";
+import { resolveDiscoveredServerUrl } from "./browserTargetResolver";
+import { rendersServerTabNatively, serverDrivesNativeTab } from "./previewRuntime";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 import { startRemoteBrowserRelays } from "./remoteBrowserRelay";
+import {
+  type RemoteDeviceAccess,
+  remoteDeviceAccess,
+  useRemoteDeviceAccess,
+} from "./remoteDeviceAccess";
 
 /** Every session this window renders as a hosted webview, in a fixed (non-display) order. */
 function hostedBrowserSessions(
   previewByThreadKey: Record<string, ThreadPreviewState>,
   primaryEnvironmentId: EnvironmentId | null,
+  access: RemoteDeviceAccess,
 ) {
   const activeSessions = Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
     const threadRef = parseScopedThreadKey(threadKey);
@@ -45,11 +55,24 @@ function hostedBrowserSessions(
           .filter(
             (snapshot) =>
               snapshot.runtime !== "server" ||
-              rendersServerTabNatively(threadRef.environmentId, primaryEnvironmentId, snapshot),
+              rendersServerTabNatively(
+                threadRef.environmentId,
+                primaryEnvironmentId,
+                snapshot,
+                access,
+              ),
           )
           .map((snapshot) => ({
             threadRef,
             snapshot,
+            driven:
+              snapshot.runtime === "server" &&
+              serverDrivesNativeTab(
+                threadRef.environmentId,
+                primaryEnvironmentId,
+                snapshot,
+                access,
+              ),
             runtimeTabId: previewRuntimeTabId(threadRef, previewState.serverEpoch, snapshot.tabId),
             pictureInPicture:
               previewState.desktopByTabId[snapshot.tabId]?.pictureInPicture ?? false,
@@ -99,6 +122,7 @@ function openLinkInPreview({ tabId, url, background }: DesktopPreviewOpenLinkEve
   const source = hostedBrowserSessions(
     readActivePreviewSessions(),
     appAtomRegistry.get(primaryEnvironmentIdAtom),
+    remoteDeviceAccess(),
   ).find((session) => session.runtimeTabId === tabId);
   if (!source) return;
   void openUrlInPreview({
@@ -131,37 +155,51 @@ export function ElectronBrowserHost() {
   const previewByThreadKey = useActivePreviewSessions();
   const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
   useDesktopHostedPreviewSessions(primaryEnvironmentId);
-  const sessions = hostedBrowserSessions(previewByThreadKey, primaryEnvironmentId);
+  const access = useRemoteDeviceAccess();
+  useRemoteDeviceTabSessions(
+    access === "off" ? null : (window.desktopBridge?.getDeviceName?.() ?? null),
+  );
+  const sessions = hostedBrowserSessions(previewByThreadKey, primaryEnvironmentId, access);
 
   if (!isElectron) return null;
   return (
     <div className="contents" data-electron-browser-host>
-      {sessions.map(({ threadRef, snapshot, runtimeTabId, pictureInPicture, zoomFactor }) => {
-        const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-        return (
-          <AuthorizedBrowserWebview
-            key={runtimeTabId}
-            threadRef={threadRef}
-            tabId={snapshot.tabId}
-            runtimeTabId={runtimeTabId}
-            initialUrl={url}
-            viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
-            pictureInPicture={pictureInPicture}
-            profileId={snapshot.profileId}
-            zoomFactor={zoomFactor}
-            serverDriven={snapshot.runtime === "server"}
-            {...(snapshot.device === undefined ? {} : { remoteDevice: snapshot.device })}
-            {...(snapshot.runtime === "server"
-              ? {
-                  serverRendering: {
-                    colorScheme: snapshot.colorScheme ?? "system",
-                    zoomFactor: snapshot.zoomFactor ?? 1,
-                  },
-                }
-              : {})}
-          />
-        );
-      })}
+      {sessions.map(
+        ({ threadRef, snapshot, driven, runtimeTabId, pictureInPicture, zoomFactor }) => {
+          const serverUrl = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
+          const mirrored = snapshot.runtime === "server" && !driven;
+          const url =
+            mirrored && serverUrl !== null
+              ? resolveDiscoveredServerUrl(threadRef.environmentId, serverUrl)
+              : serverUrl;
+          return (
+            <AuthorizedBrowserWebview
+              key={runtimeTabId}
+              threadRef={threadRef}
+              tabId={snapshot.tabId}
+              runtimeTabId={runtimeTabId}
+              initialUrl={url}
+              viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
+              pictureInPicture={pictureInPicture}
+              profileId={snapshot.profileId}
+              zoomFactor={zoomFactor}
+              serverDriven={driven}
+              {...(driven && snapshot.device !== undefined
+                ? { remoteDevice: snapshot.device }
+                : {})}
+              {...(mirrored && url !== null ? { mirrorUrl: url } : {})}
+              {...(snapshot.runtime === "server"
+                ? {
+                    serverRendering: {
+                      colorScheme: snapshot.colorScheme ?? "system",
+                      zoomFactor: snapshot.zoomFactor ?? 1,
+                    },
+                  }
+                : {})}
+            />
+          );
+        },
+      )}
     </div>
   );
 }

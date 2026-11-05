@@ -21,11 +21,13 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Ndjson from "effect/encoding/Ndjson";
 import * as NodeCrypto from "node:crypto";
 import * as NodeNet from "node:net";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { writeAllToFileDescriptor } from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 
 const decodeEvent = Schema.decodeUnknownEffect(DesktopBrowserEvent);
@@ -61,10 +63,14 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly turn: (threadId: string, active: boolean) => Effect.Effect<void>;
     readonly remoteCommands?: (
       source: DesktopBrowserRemoteSource,
+      sessionId: string,
     ) => Effect.Effect<Stream.Stream<string>, never, Scope.Scope>;
-    readonly remoteEvents?: (input: DesktopBrowserRemoteEvents) => Effect.Effect<void>;
+    readonly remoteEvents?: (
+      input: DesktopBrowserRemoteEvents,
+      sessionId: string,
+    ) => Effect.Effect<void>;
     readonly devices?: Effect.Effect<
-      ReadonlyArray<{ name: string; focused: boolean; lastFocusedAt: number }>
+      ReadonlyArray<{ name: string; focused: boolean; lastFocusedAt: number; control: boolean }>
     >;
   }
 >()("t3/preview/DesktopBrowserChannel") {}
@@ -80,12 +86,41 @@ const make = Effect.gen(function* () {
   const remoteSources = new Map<
     string,
     {
+      readonly name: string;
+      readonly control: boolean;
       readonly queue: Queue.Queue<string>;
       readonly attached: Set<string>;
       focused: boolean;
       lastFocusedAt: number;
     }
   >();
+  const sourceId = (sessionId: string, deviceName: string) => `${sessionId}\u0000${deviceName}`;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const settingChanges = yield* settings.subscribeChanges;
+  const remoteEnabled = yield* SubscriptionRef.make(
+    yield* settings.getSettings.pipe(
+      Effect.map((current) => current.previewOpenOnUserDevice),
+      Effect.orElseSucceed(() => false),
+    ),
+  );
+  yield* settingChanges.pipe(
+    Stream.runForEach((current) =>
+      SubscriptionRef.set(remoteEnabled, current.previewOpenOnUserDevice).pipe(
+        Effect.andThen(
+          current.previewOpenOnUserDevice
+            ? Effect.void
+            : Effect.forEach(
+                [...remoteSources.values()],
+                (source) => Queue.shutdown(source.queue),
+                {
+                  discard: true,
+                },
+              ),
+        ),
+      ),
+    ),
+    Effect.forkScoped,
+  );
 
   const sourceForKey = (id: string) => {
     for (const source of remoteSources.values()) if (source.attached.has(id)) return source;
@@ -99,20 +134,28 @@ const make = Effect.gen(function* () {
 
   const remoteCommands = Effect.fn("DesktopBrowserChannel.remoteCommands")(function* (
     source: DesktopBrowserRemoteSource,
+    sessionId: string,
   ) {
-    const existing = remoteSources.get(source.deviceName);
+    yield* SubscriptionRef.changes(remoteEnabled).pipe(
+      Stream.filter((enabled) => enabled),
+      Stream.runHead,
+    );
+    const id = sourceId(sessionId, source.deviceName);
+    const existing = remoteSources.get(id);
     if (existing) yield* Queue.shutdown(existing.queue);
     const entry = {
+      name: source.deviceName,
+      control: source.control === true,
       queue: yield* Queue.unbounded<string>(),
       attached: new Set<string>(),
       focused: source.focused,
       lastFocusedAt: yield* Clock.currentTimeMillis,
     };
-    remoteSources.set(source.deviceName, entry);
+    remoteSources.set(id, entry);
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        if (remoteSources.get(source.deviceName) !== entry) return;
-        remoteSources.delete(source.deviceName);
+        if (remoteSources.get(id) !== entry) return;
+        remoteSources.delete(id);
         for (const id of entry.attached) {
           attachedTabs.delete(id);
           const [threadId, tabId] = id.split("\u0000");
@@ -127,14 +170,15 @@ const make = Effect.gen(function* () {
 
   const remoteEvents = Effect.fn("DesktopBrowserChannel.remoteEvents")(function* (
     input: DesktopBrowserRemoteEvents,
+    sessionId: string,
   ) {
-    const source = remoteSources.get(input.deviceName);
+    const source = remoteSources.get(sourceId(sessionId, input.deviceName));
     if (!source) return;
     if (input.focused !== undefined) {
       source.focused = input.focused;
       if (input.focused) source.lastFocusedAt = yield* Clock.currentTimeMillis;
     }
-    for (const line of input.events) {
+    for (const line of source.control ? input.events : []) {
       const event = yield* decodeEvent(line).pipe(Effect.option);
       if (Option.isNone(event)) continue;
       const key = { threadId: event.value.threadId, tabId: event.value.tabId };
@@ -287,19 +331,19 @@ const make = Effect.gen(function* () {
             const id = keyOf(key);
             if (deviceName === undefined && (inputFd === undefined || controlFd === undefined))
               return false;
-            if (
-              deviceName === undefined
-                ? attachedTabs.has(id)
-                : remoteSources.get(deviceName)?.attached.has(id) === true
-            )
-              return true;
+            const controlled = () =>
+              [...remoteSources.values()].filter(
+                (source) => source.control && source.name === deviceName,
+              );
+            if (deviceName !== undefined && controlled().length === 0) return false;
+            const attachedOnDevice = () => controlled().some((source) => source.attached.has(id));
+            if (deviceName === undefined ? attachedTabs.has(id) : attachedOnDevice()) return true;
             return yield* Stream.fromSubscription(subscription).pipe(
               Stream.filter(
                 (change) =>
                   change.attached &&
                   keyOf(change.key) === id &&
-                  (deviceName === undefined ||
-                    remoteSources.get(deviceName)?.attached.has(id) === true),
+                  (deviceName === undefined || attachedOnDevice()),
               ),
               Stream.runHead,
               Effect.map(Option.isSome),
@@ -339,10 +383,11 @@ const make = Effect.gen(function* () {
     remoteCommands,
     remoteEvents,
     devices: Effect.sync(() =>
-      [...remoteSources].map(([name, source]) => ({
-        name,
+      [...remoteSources.values()].map((source) => ({
+        name: source.name,
         focused: source.focused,
         lastFocusedAt: source.lastFocusedAt,
+        control: source.control,
       })),
     ),
   });

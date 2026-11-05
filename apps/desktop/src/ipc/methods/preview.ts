@@ -40,17 +40,7 @@ import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as DesktopBrowserHost from "../../preview/DesktopBrowserHost.ts";
-
-const remoteBrowserKeys = new Set<string>();
-const remoteBrowserClaim = Schema.decodeUnknownOption(
-  Schema.fromJsonString(
-    Schema.Struct({
-      type: Schema.Literals(["claim", "releaseClaim"]),
-      threadId: Schema.String,
-      tabId: Schema.String,
-    }),
-  ),
-);
+import * as RemoteBrowserClaims from "../../preview/RemoteBrowserClaims.ts";
 
 export const installPreviewEventForwarding = Effect.fn(
   "desktop.ipc.preview.installEventForwarding",
@@ -65,7 +55,7 @@ export const installPreviewEventForwarding = Effect.fn(
         try {
           const event = JSON.parse(text) as { threadId?: string; tabId?: string };
           if (event.threadId === undefined || event.tabId === undefined) return Effect.void;
-          if (!remoteBrowserKeys.has(`${event.threadId}\u0000${event.tabId}`)) return Effect.void;
+          if (!RemoteBrowserClaims.isClaimed(event.threadId, event.tabId)) return Effect.void;
         } catch {
           return Effect.void;
         }
@@ -484,15 +474,8 @@ export const desktopBrowserCommand = DesktopIpc.makeIpcMethod({
   payload: Schema.String,
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.browser.command")(function* (line) {
-    const claim = remoteBrowserClaim(line);
-    if (Option.isSome(claim)) {
-      {
-        const key = `${claim.value.threadId}\u0000${claim.value.tabId}`;
-        if (claim.value.type === "claim") remoteBrowserKeys.add(key);
-        else remoteBrowserKeys.delete(key);
-        return;
-      }
-    }
+    if (yield* RemoteBrowserClaims.handleClaimLine(line)) return;
+    if (!RemoteBrowserClaims.admitsRemoteCommand(line)) return;
     const host = yield* DesktopBrowserHost.DesktopBrowserHost;
     yield* host.handleCommandLine(line);
   }),

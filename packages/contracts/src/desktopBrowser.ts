@@ -37,6 +37,7 @@ export type DesktopBrowserCommand = typeof DesktopBrowserCommand.Type;
 export const DesktopBrowserRemoteSource = Schema.Struct({
   deviceName: TrimmedNonEmptyString,
   focused: Schema.Boolean,
+  control: Schema.optionalKey(Schema.Boolean),
 });
 export type DesktopBrowserRemoteSource = typeof DesktopBrowserRemoteSource.Type;
 

@@ -5,11 +5,16 @@ import { isElectron } from "~/env";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
-import { getClientSettings } from "~/hooks/useSettings";
 import {
   readEnvironmentSupportsServerBrowser,
   useEnvironmentSupportsServerBrowser,
 } from "~/state/entities";
+
+import {
+  type RemoteDeviceAccess,
+  remoteDeviceTabAccess,
+  useRemoteDeviceAccess,
+} from "./remoteDeviceAccess";
 
 export function previewRuntimeFor(environmentId: EnvironmentId): PreviewRuntime | undefined {
   if (!readEnvironmentSupportsServerBrowser(environmentId)) return undefined;
@@ -46,23 +51,33 @@ export function rendersServerTabNatively(
   environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
   snapshot: Pick<PreviewSessionSnapshot, "runtime" | "device" | "headless"> | null | undefined,
+  access: RemoteDeviceAccess,
 ): boolean {
-  const localDevice =
-    typeof window !== "undefined" ? window.desktopBridge?.getDeviceName?.() : undefined;
+  if (!isElectron || snapshot?.runtime !== "server") return false;
+  if (primaryEnvironmentId !== null && environmentId === primaryEnvironmentId)
+    return !snapshot.headless;
+  return remoteDeviceTabAccess(snapshot, access) !== "off";
+}
+
+export function serverDrivesNativeTab(
+  environmentId: EnvironmentId,
+  primaryEnvironmentId: EnvironmentId | null,
+  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "device" | "headless">,
+  access: RemoteDeviceAccess,
+): boolean {
+  if (!rendersServerTabNatively(environmentId, primaryEnvironmentId, snapshot, access))
+    return false;
+  if (snapshot.headless) return false;
   return (
-    isElectron &&
-    snapshot?.runtime === "server" &&
-    !snapshot.headless &&
-    ((primaryEnvironmentId !== null && environmentId === primaryEnvironmentId) ||
-      (snapshot.device !== undefined &&
-        snapshot.device === localDevice &&
-        getClientSettings().browserAllowRemoteDeviceTabs))
+    environmentId === primaryEnvironmentId || remoteDeviceTabAccess(snapshot, access) === "control"
   );
 }
 
 export function useRendersServerTabNatively(
   environmentId: EnvironmentId,
-  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "headless"> | null | undefined,
+  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "device" | "headless"> | null | undefined,
 ): boolean {
-  return rendersServerTabNatively(environmentId, useAtomValue(primaryEnvironmentIdAtom), snapshot);
+  const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
+  const access = useRemoteDeviceAccess();
+  return rendersServerTabNatively(environmentId, primaryEnvironmentId, snapshot, access);
 }

@@ -11,10 +11,10 @@ interface ConnectedDevice {
   readonly lastFocusedAt: number;
 }
 
-const focusedDevice = (devices: ReadonlyArray<ConnectedDevice>) =>
-  devices
-    .filter((device) => device.focused)
-    .toSorted((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]?.name;
+const recentDevice = (devices: ReadonlyArray<ConnectedDevice>) =>
+  devices.toSorted(
+    (a, b) => Number(b.focused) - Number(a.focused) || b.lastFocusedAt - a.lastFocusedAt,
+  )[0]?.name;
 
 const namedDevice = (devices: ReadonlyArray<ConnectedDevice>, wanted: string) => {
   const lower = wanted.toLowerCase();
@@ -32,18 +32,18 @@ export const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => false),
   );
   return Effect.fn("PreviewOpenDevice.resolve")(function* (open: PreviewAutomationOpenInput) {
-    if (!channel.devices) return undefined;
+    if (!channel.devices || !(yield* opensOnUserDevice)) return undefined;
     if (open.device === undefined) {
-      if ((open.open ?? open.show) === false || !(yield* opensOnUserDevice)) return undefined;
-      return focusedDevice(yield* channel.devices);
+      if ((open.open ?? open.show) === false) return undefined;
+      return recentDevice(yield* channel.devices);
     }
     const devices = yield* channel.devices;
     const wanted =
-      open.device === "user" ? focusedDevice(devices) : namedDevice(devices, open.device);
+      open.device === "user" ? recentDevice(devices) : namedDevice(devices, open.device);
     if (wanted) return wanted;
     return yield* Effect.fail(
       new ServerBrowserPage.ServerBrowserOperationError(
-        "PreviewAutomationNoAvailableHostError",
+        "PreviewAutomationExecutionError",
         `No connected device matches "${open.device}". Connected devices: ${devices.map((device) => device.name).join(", ") || "none"}.`,
       ),
     );

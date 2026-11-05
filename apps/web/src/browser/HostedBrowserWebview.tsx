@@ -21,6 +21,7 @@ import {
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab, withDesktopTab } from "./desktopTabLifetime";
+import { claimRemoteBrowserTab } from "./remoteBrowserRelay";
 import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserLayoutZoomFactor } from "./useBrowserLayoutZoomFactor";
@@ -58,6 +59,7 @@ export function HostedBrowserWebview(props: {
   readonly zoomFactor: number;
   readonly serverDriven?: boolean;
   readonly remoteDevice?: string;
+  readonly mirrorUrl?: string;
   readonly serverRendering?: {
     readonly colorScheme: DesktopPreviewColorScheme;
     readonly zoomFactor: number;
@@ -74,6 +76,7 @@ export function HostedBrowserWebview(props: {
     profileId,
     serverDriven = false,
     remoteDevice,
+    mirrorUrl,
     serverRendering,
   } = props;
   const clientSettingsHydrated = useClientSettingsHydrated();
@@ -102,19 +105,27 @@ export function HostedBrowserWebview(props: {
     (state) => (state.activityByTabId[runtimeTabId] ?? 0) > 0,
   );
   const recordingActive = useActiveBrowserRecordingTabIds().has(runtimeTabId);
-  usePreviewBridge({ threadRef, tabId, runtimeTabId, serverDriven });
+  usePreviewBridge({
+    threadRef,
+    tabId,
+    runtimeTabId,
+    serverDriven: serverDriven || mirrorUrl !== undefined,
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds this remote tab's CDP event claim in the desktop bridge while mounted and releases it on cleanup
   useEffect(() => {
-    const bridge = window.desktopBridge?.desktopBrowser;
-    if (!bridge || remoteDevice === undefined) return;
-    void bridge.sendCommand(JSON.stringify({ type: "claim", threadId: threadRef.threadId, tabId }));
-    return () => {
-      void bridge.sendCommand(
-        JSON.stringify({ type: "releaseClaim", threadId: threadRef.threadId, tabId }),
-      );
-    };
-  }, [remoteDevice, tabId, threadRef.threadId]);
+    if (remoteDevice === undefined) return;
+    return claimRemoteBrowserTab(threadRef.environmentId, threadRef.threadId, tabId);
+  }, [remoteDevice, tabId, threadRef.environmentId, threadRef.threadId]);
+
+  const mirroredUrl = useRef(initialSrc);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the server tab's new URL into this show-only desktop webview through the desktop bridge
+  useEffect(() => {
+    const bridge = previewBridge;
+    if (!bridge || mirrorUrl === undefined || mirrorUrl === mirroredUrl.current) return;
+    mirroredUrl.current = mirrorUrl;
+    withDesktopTab(runtimeTabId, () => bridge.navigate(runtimeTabId, mirrorUrl));
+  }, [mirrorUrl, runtimeTabId]);
 
   const serverColorScheme = serverRendering?.colorScheme;
   const serverZoomFactor = serverRendering?.zoomFactor;
