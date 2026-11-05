@@ -100,7 +100,7 @@ class Rehearsal:
             if self.args.force_rollback:
                 command.append("--force-rollback")
         if getattr(self.args, "offbox", ""):
-            command.extend(["--offbox", self.args.offbox, "--offbox-mib-s", "90", "--offbox-stop-s", "1200"])
+            command.extend(["--offbox", self.args.offbox, "--offbox-mib-s", "90", "--offbox-stop-s", "2400"])
             command.extend(["--offbox-stopped-ship"] if self.args.offbox_stopped_ship else ["--offbox-stage", str(self.sandbox.evidence / "offbox-stage"), "--offbox-stage-floor-gib", "5"])
         if self.args.managed_service:
             command[command.index("--hard")] = "--seamless"

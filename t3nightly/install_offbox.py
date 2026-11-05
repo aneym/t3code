@@ -278,9 +278,9 @@ def stopped_ship(run, host, root, replica, source, size, started):
              restoreSeconds=restoring, estimateSeconds=round(estimate, 3), budgetSeconds=budget)
     if estimate > budget:
         raise ValueError(f"stopped off-box sync plus off-box rollback restore estimated at {estimate:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
-    needed = restore_space(size, wal_bytes(source))
+    needed = max(restore_space(size, wal_bytes(source)), size + LOCAL_MARGIN)
     if shutil.disk_usage(source.parent).free < needed:
-        raise ValueError(f"local space under the {needed >> 20} MiB an in-place restore could need; nothing stopped")
+        raise ValueError(f"local space under the {needed >> 20} MiB an in-place restore could need for a full-size WAL; nothing stopped")
     seeded = {"clonedFrom": None if found == "existing" else found, "existing": found == "existing", "stage": None, "seconds": round(time.monotonic() - started, 3)}
     run.step("hard-backup-seed", remote=f"{host}:{replica}", **seeded)
     return seeded
