@@ -31,8 +31,19 @@ export function QueueSettings() {
           description:
             "Show Send all to release and send up to 20 compatible queued messages together, into the current turn or as one new turn.",
         },
+        {
+          key: "mcpEventsEnabled",
+          searchId: "mcp-events",
+          label: "MCP Events subscriptions",
+          description:
+            "Let agents subscribe threads to MCP servers' events. A verified event wakes the thread or queues into its turn.",
+        },
       ].map(({ key, searchId, label, description }) => {
-        const settingKey = key as "batchQueuedMessages" | "queueSendAll" | "settleIdleChildren";
+        const settingKey = key as
+          | "batchQueuedMessages"
+          | "queueSendAll"
+          | "settleIdleChildren"
+          | "mcpEventsEnabled";
         return (
           <SettingsRow
             key={key}

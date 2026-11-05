@@ -1,6 +1,8 @@
 import * as ThreadConfiguration from "./ThreadConfigurationService.ts";
 import { AgentToolkit } from "./toolkits/agent/tools.ts";
 import * as AgentHandlers from "./toolkits/agent/handlers.ts";
+import { McpEventsToolkit } from "./toolkits/mcpEvents/tools.ts";
+import * as McpEventsHandlers from "./toolkits/mcpEvents/handlers.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -787,13 +789,11 @@ const HANDOFF_TOOLS: ReadonlySet<string> = new Set([
   "run_scheduled_task_now",
 ]);
 
-/** Tool actions that hand work over with only a `{ sequence }` result; the input names the thread. */
 const INPUT_TARGET_ACTIONS = {
   t3_queue: new Set(["edit", "promote_to_steer", "send_all"]),
   t3_pending_request: new Set(["respond"]),
 };
 
-/** Tool actions that hand work over and name the receiving thread in their result. */
 const RESULT_TARGET_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
   t3_thread_transfer: new Set(["fork", "merge_back"]),
 };
@@ -811,7 +811,6 @@ const isInputTargetHandoff = (tool: string, args: unknown) =>
 
 const resultThreadKeys = ["childThreadId", "targetThreadId", "boundThreadId", "threadId"] as const;
 
-/** Thread ids a handoff tool result names: the thread that received the work. */
 const resultThreadIds = (content: unknown): ReadonlyArray<string> => {
   if (typeof content !== "object" || content === null) return [];
   const record = content as Readonly<Record<string, unknown>>;
@@ -1116,12 +1115,12 @@ export const layerMcpTransport = McpServer.layerHttp({
   allowSessionTermination: true,
 }).pipe(Layer.provide(layerMcpAuthMiddleware));
 
-/** Every tool the T3 MCP server advertises. AgentContextBudget.test.ts measures this set. */
 export const layerTools = Layer.mergeAll(
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit.pipe(Layer.provide(ThreadConfiguration.toolkitLayer)),
   toolkitRegistration(AgentToolkit, AgentHandlers.layer),
+  toolkitRegistration(McpEventsToolkit, McpEventsHandlers.layer),
   layerAttachmentToolkit,
   layerProjectRegistration,
   layerEnvironmentToolkit,

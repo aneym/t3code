@@ -86,3 +86,4 @@ export * from "./settingsSecretValue.ts";
 export * from "./clientRpcPermissions.ts";
 export * from "./messageSender.ts";
 export * from "./orchestratorMcpTimeline.ts";
+export * from "./mcpEvents.ts";

@@ -22,4 +22,11 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     scope: "environment-defaults",
     searchTerms: ["queue queued messages batch combine together one turn release drain follow up"],
   },
+  {
+    id: "mcp-events",
+    title: "MCP Events subscriptions",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["mcp events subscribe webhook trigger wake thread rails"],
+  },
 ];

@@ -30,6 +30,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as RelayDeliveryProof from "./RelayDeliveryProof.ts";
 import { WEBHOOK_MAX_BODY_BYTES } from "./webhookRoute.ts";
 import * as WebhookRoute from "./webhookRoute.ts";
+import * as McpEventsService from "../mcpEvents/McpEventsService.ts";
 
 class WebhookTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.webhooks) {}
 
@@ -79,6 +80,7 @@ const handlerFor = (
     HttpApiBuilder.layer(WebhookTestApi).pipe(
       Layer.provide(WebhookRoute.layer),
       Layer.provide(RelayDeliveryProof.layer),
+      Layer.provide(Layer.mock(McpEventsService.McpEventsService)({})),
       Layer.provide(Layer.mock(ScheduledTaskService)({ triggerWebhook: trigger })),
       Layer.provide(
         Layer.mock(ServerSecretStore.ServerSecretStore)({

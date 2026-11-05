@@ -10,6 +10,7 @@ import * as HttpTraceContext from "effect/http/HttpTraceContext";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
+import * as McpEventsService from "../mcpEvents/McpEventsService.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as RelayDeliveryProof from "./RelayDeliveryProof.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
@@ -37,6 +38,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
     const relayDeliveryProof = yield* RelayDeliveryProof.RelayDeliveryProof;
+    const mcpEvents = yield* McpEventsService.McpEventsService;
     /**
      * The endpoint is raw so the signature is checked over the exact body
      * bytes; the service checks the token and signature.
@@ -89,6 +91,24 @@ export const layer = HttpApiBuilder.group(
       const relay = yield* relayDeliveryProof.verify({ headers, hookId: params.hookId });
       const relayDeliveryId = Option.isSome(relay) ? relay.value.deliveryId : undefined;
       const relayReceivedAt = Option.isSome(relay) ? relay.value.receivedAt : undefined;
+      if (params.hookId.startsWith(McpEventsService.HOOK_ID_PREFIX)) {
+        if (request.method !== "POST") {
+          return json(405, { error: "method_not_allowed" }, "method_not_allowed", {
+            allow: "POST",
+          });
+        }
+        const receipt = yield* mcpEvents.receive({
+          hookId: params.hookId,
+          token: params.token,
+          headers,
+          body: body.value,
+          ...(relayReceivedAt ? { relayReceivedAt } : {}),
+        });
+        return HttpServerResponse.jsonUnsafe(receipt.body, {
+          status: receipt.status,
+          headers: { [WEBHOOK_OUTCOME_HEADER]: `mcp_events_${receipt.status}` },
+        });
+      }
 
       // A relay delivery joins the relay's trace, and goes to the T3 Connect
       // tracer with it. Anyone else's traceparent is never trusted.

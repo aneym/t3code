@@ -34,12 +34,23 @@ export function ForkThreadSettings() {
             "Settle idle children of settled parents. Keep running, waiting, pinned, snoozed, and explicitly active children open.",
           icon: "checkmark.circle",
         },
+        {
+          key: "mcpEventsEnabled",
+          title: "MCP Events",
+          label: "MCP Events subscriptions",
+          subtitle:
+            "Let agents subscribe threads to MCP servers' events. A verified event wakes the thread or queues into its turn.",
+          icon: "bell.badge",
+        },
       ].map(({ key, title, label, subtitle, icon }) => {
-        const settingKey = key as "queuedMessagesAnswerPendingInput" | "settleIdleChildren";
+        const settingKey = key as
+          | "queuedMessagesAnswerPendingInput"
+          | "settleIdleChildren"
+          | "mcpEventsEnabled";
         return (
           <SettingsSection key={key} title={title}>
             <SettingsSwitchRow
-              icon={icon as "bubble.left.and.bubble.right" | "checkmark.circle"}
+              icon={icon as "bubble.left.and.bubble.right" | "checkmark.circle" | "bell"}
               label={label}
               subtitle={subtitle}
               value={uniformMobileSetting(targets, settingKey)}
