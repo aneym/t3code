@@ -16,6 +16,8 @@ import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
+import { credentialValues, redact } from "./secretText.ts";
+
 const PROTOCOL_VERSION = "2025-06-18";
 const HEADER_DIR = NodePath.join(NodeOS.homedir(), ".config", "t3-mcp-events");
 const CALL_TIMEOUT = Duration.seconds(45);
@@ -55,23 +57,39 @@ export function serverLabel(server: McpEventsServer): string {
   return server.command.split("/").at(-1) ?? server.command;
 }
 
-function rpcFailure(message: RpcMessage, method: string): McpEventsRpcError | undefined {
+const asRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+
+function paramsCredentials(params: unknown): ReadonlyArray<string> {
+  const delivery = asRecord(asRecord(params).delivery);
+  if (typeof delivery.url !== "string") return [];
+  return credentialValues(
+    delivery.url,
+    typeof delivery.secret === "string" ? delivery.secret : undefined,
+  );
+}
+
+function rpcFailure(
+  message: RpcMessage,
+  method: string,
+  hidden: ReadonlyArray<string>,
+): McpEventsRpcError | undefined {
   const error: unknown = message.error;
   if (error === undefined || error === null) return undefined;
-  const fields = typeof error === "object" ? (error as Record<string, unknown>) : {};
-  const data =
-    typeof fields.data === "object" && fields.data !== null
-      ? (fields.data as Record<string, unknown>)
-      : {};
-  const reason = typeof data.reason === "string" ? data.reason : undefined;
+  const fields = asRecord(error);
+  const data = asRecord(fields.data);
+  const clean = (value: unknown, max: number) =>
+    typeof value === "string" && value.trim() !== ""
+      ? redact(value.trim(), hidden).slice(0, max)
+      : undefined;
+  const reason = clean(data.reason, 60);
+  const body = clean(data.body, 120);
   const detail = [
-    reason,
     typeof data.status === "number" ? `HTTP ${data.status}` : undefined,
-    typeof data.body === "string" && data.body.trim() !== ""
-      ? `body ${JSON.stringify(data.body.trim().slice(0, 160))}`
-      : undefined,
+    reason,
+    body === undefined ? undefined : `body ${JSON.stringify(body)}`,
   ].filter((part) => part !== undefined);
-  const text = typeof fields.message === "string" ? fields.message : "error";
+  const text = clean(fields.message, 80) ?? "error";
   return new McpEventsRpcError({
     message: `${method} failed: ${text}${detail.length > 0 ? ` (${detail.join(", ")})` : ""}`,
     ...(typeof fields.code === "number" ? { code: fields.code } : {}),
@@ -179,7 +197,8 @@ const callHttp = Effect.fn("McpEvents.callHttp")(function* (
       message: `${serverLabel(server)} refused initialize (HTTP ${init.status}).`,
     });
   }
-  const initFailure = init.messages[0] && rpcFailure(init.messages[0], "initialize");
+  const initFailure =
+    init.messages[0] && rpcFailure(init.messages[0], "initialize", paramsCredentials(params));
   if (initFailure) return yield* initFailure;
   const sessionId = init.headers["mcp-session-id"];
   const session: Record<string, string> = {
@@ -194,7 +213,7 @@ const callHttp = Effect.fn("McpEvents.callHttp")(function* (
       message: `${method} got no JSON-RPC answer (HTTP ${response.status}).`,
     });
   }
-  const failure = rpcFailure(message, method);
+  const failure = rpcFailure(message, method, paramsCredentials(params));
   if (failure) return yield* failure;
   return message.result;
 });
@@ -258,12 +277,12 @@ const callStdio = (
         newline = buffer.indexOf("\n");
         for (const message of parseMessages(line, undefined)) {
           if (message.id === 1) {
-            const failure = rpcFailure(message, "initialize");
+            const failure = rpcFailure(message, "initialize", paramsCredentials(params));
             if (failure) return finish(Effect.fail(failure));
             send({ jsonrpc: "2.0", method: "notifications/initialized" });
             send({ jsonrpc: "2.0", id: 2, method, params });
           } else if (message.id === 2) {
-            const failure = rpcFailure(message, method);
+            const failure = rpcFailure(message, method, paramsCredentials(params));
             return finish(failure ? Effect.fail(failure) : Effect.succeed(message.result));
           }
         }
