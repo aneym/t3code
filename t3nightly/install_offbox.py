@@ -22,6 +22,7 @@ from .install_sqlite_sync import SSH, sync
 from .install_calibration import rates
 from . import offbox_hosts
 from . import offbox_digest
+from . import offbox_window
 
 CHUNK = 1024 * 1024
 ZSTD_THREADS = 4
@@ -278,6 +279,7 @@ def stopped_ship(run, host, root, replica, source, size, started):
              restoreSeconds=restoring, estimateSeconds=round(estimate, 3), budgetSeconds=budget)
     if estimate > budget:
         raise ValueError(f"stopped off-box sync plus off-box rollback restore estimated at {estimate:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
+    offbox_window.admit(run, estimate)
     needed = max(restore_space(size, wal_bytes(source)), size + LOCAL_MARGIN)
     if shutil.disk_usage(source.parent).free < needed:
         raise ValueError(f"local space under the {needed >> 20} MiB an in-place restore could need for a full-size WAL; nothing stopped")

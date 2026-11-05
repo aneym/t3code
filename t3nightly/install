@@ -85,6 +85,7 @@ def parse():
     parser.add_argument("--offbox-stage", default="")
     parser.add_argument("--offbox-stage-floor-gib", type=int, default=60)
     parser.add_argument("--offbox-copy-s", type=int, default=600)
+    parser.add_argument("--offbox-window-s", type=int, default=0, help="whole window from installer start; stopped ship refuses before the stop unless the forward path plus a rollback fits")
     parser.add_argument("--offbox-stopped-ship", action="store_true", help="seed from a verified off-box replica and sync only the stopped database; no live stage copy or local restore copy")
     args = parser.parse_args()
     if not args.version and not args.calibrate:
