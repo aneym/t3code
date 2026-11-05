@@ -50,7 +50,7 @@ export function ForkThreadSettings() {
         return (
           <SettingsSection key={key} title={title}>
             <SettingsSwitchRow
-              icon={icon as "bubble.left.and.bubble.right" | "checkmark.circle" | "bell"}
+              icon={icon as "bubble.left.and.bubble.right" | "checkmark.circle" | "bell.badge"}
               label={label}
               subtitle={subtitle}
               value={uniformMobileSetting(targets, settingKey)}
