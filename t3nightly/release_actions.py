@@ -289,8 +289,9 @@ def fast_health(config, log):
             return command([sys.executable, str(config.tools / "release-observe"), "--host", host, "--expected-version", config.version,
                             "--linux-host", LINUX_TARGETS.get(host, "ax42"), "--out", str(config.run / "health" / host)], handle)
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        return max(pool.map(one, ("studio", *(host for host in LINUX_TARGETS if host not in deferred_hosts(config.run)))))
+    hosts = ("studio", *(host for host in LINUX_TARGETS if host not in deferred_hosts(config.run)))
+    with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
+        return max(pool.map(one, hosts))
 
 
 def run_fast_action(stage, config, log):

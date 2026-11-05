@@ -119,7 +119,7 @@ def worker(root, lock_fd):
                     done = set(observed["scheduler"].get("done", []))
                     failed = set(observed["scheduler"].get("failed", []))
                     coordinator = observed["coordinator"].get("outcome")
-                    finishing |= terminal(coordinator) or {"IM", "IO", "IF", "IL"} <= done | failed
+                    finishing |= terminal(coordinator) or {f"I{suffix}" for suffix in SUFFIX.values()} <= done | failed
                     save(root, row, coordinator=coordinator,
                          feed="install-failed" if "IL" in failed else "published" if "F" in done else "waiting")
                     if finishing:
