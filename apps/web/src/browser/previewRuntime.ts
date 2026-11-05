@@ -36,11 +36,9 @@ export function isLocalPreviewEnvironment(
 
 export function previewRuntimeFor(environmentId: EnvironmentId): PreviewRuntime | undefined {
   if (!readEnvironmentSupportsServerBrowser(environmentId)) return undefined;
-  const primaryEnvironmentId = appAtomRegistry.get(primaryEnvironmentIdAtom);
   if (
     isPreviewSupportedInRuntime() &&
-    environmentId !== primaryEnvironmentId &&
-    isLocalPreviewEnvironment(environmentId, primaryEnvironmentId)
+    environmentId !== appAtomRegistry.get(primaryEnvironmentIdAtom)
   ) {
     return undefined;
   }
@@ -55,25 +53,16 @@ export function alternatePreviewRuntime(
 ): PreviewRuntime | null {
   if (!snapshot || !serverBrowser || !isPreviewSupportedInRuntime()) return null;
   if (environmentId === primaryEnvironmentId) return null;
-  if (snapshot.runtime === "server") {
-    return isLocalPreviewEnvironment(environmentId, primaryEnvironmentId) ? "desktop" : null;
-  }
-  return "server";
+  return snapshot.runtime === "server" ? "desktop" : "server";
 }
 
 export function isPreviewAvailableFor(environmentId: EnvironmentId): boolean {
-  return (
-    readEnvironmentSupportsServerBrowser(environmentId) ||
-    (isPreviewSupportedInRuntime() &&
-      isLocalPreviewEnvironment(environmentId, appAtomRegistry.get(primaryEnvironmentIdAtom)))
-  );
+  return isPreviewSupportedInRuntime() || readEnvironmentSupportsServerBrowser(environmentId);
 }
 
 export function usePreviewAvailable(environmentId: EnvironmentId | null): boolean {
   const serverBrowser = useEnvironmentSupportsServerBrowser(environmentId);
-  const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
-  if (serverBrowser || !isPreviewSupportedInRuntime()) return serverBrowser;
-  return environmentId === null || isLocalPreviewEnvironment(environmentId, primaryEnvironmentId);
+  return isPreviewSupportedInRuntime() || serverBrowser;
 }
 
 export function rendersServerTabNatively(

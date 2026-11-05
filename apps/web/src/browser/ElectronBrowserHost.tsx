@@ -32,6 +32,7 @@ import { useEnvironmentScope } from "~/state/session";
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserDefaults } from "./browserDefaults";
 import { useBrowserPointerStore } from "./browserPointerStore";
+import { isDesktopOpenedTab } from "./desktopOpenedTabs";
 import { onDesktopTabCreated, withDesktopTab } from "./desktopTabLifetime";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
@@ -72,22 +73,22 @@ function hostedBrowserSessions(
       ? Object.values(previewState.sessions)
           .map((snapshot) => ({
             snapshot,
-            remote: !isLocalPreviewEnvironment(threadRef.environmentId, primaryEnvironmentId),
+            local: isLocalPreviewEnvironment(threadRef.environmentId, primaryEnvironmentId),
           }))
-          .filter(
-            ({ snapshot, remote }) =>
-              (!remote && snapshot.runtime !== "server") ||
-              rendersServerTabNatively(
-                threadRef.environmentId,
-                primaryEnvironmentId,
-                snapshot,
-                accessFor,
-              ),
+          .filter(({ snapshot, local }) =>
+            snapshot.runtime === "server"
+              ? rendersServerTabNatively(
+                  threadRef.environmentId,
+                  primaryEnvironmentId,
+                  snapshot,
+                  accessFor,
+                )
+              : local || isDesktopOpenedTab(threadRef, snapshot.tabId),
           )
-          .map(({ snapshot, remote }) => ({
+          .map(({ snapshot, local }) => ({
             threadRef,
             snapshot,
-            remote,
+            remote: !local && snapshot.runtime === "server",
             driven:
               snapshot.runtime === "server" &&
               serverDrivesNativeTab(
