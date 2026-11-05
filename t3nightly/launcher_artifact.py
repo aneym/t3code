@@ -10,14 +10,11 @@ from .install_runtime import activate
 from .release_signatures import verify_cli
 
 
-def ensure_launcher(run, version, *, update_config=True):
-    runtime = run.home / "runtime"
-    target = runtime / "launcher"
-    pin = runtime / "launcher-pin.json"
+def launcher_action(run):
+    target = run.home / "runtime/launcher"
+    pin = run.home / "runtime/launcher-pin.json"
     validate_drain_pin(run)
     raw = getattr(run.args, "launcher_artifact", "")
-    if not update_config and (not target.is_dir() or changed(run)):
-        raise ValueError("launcher change requires a stopped service window")
     if raw and target.is_dir() and not changed(run):
         raw = ""
     if target.is_dir() and (not raw or getattr(run, "launcher_applied", False)):
@@ -26,6 +23,34 @@ def ensure_launcher(run, version, *, update_config=True):
             previous = json.loads(pin.read_text())
             if previous.get("sha256", previous.get("digest")) != file_digest(target / "t3"):
                 raise ValueError("pinned launcher bytes drifted; explicit launcher artifact repair required")
+        return "keep"
+    if not raw:
+        return "bootstrap-needs-artifact"
+    return "change" if target.is_dir() else "bootstrap"
+
+
+def preflight_launcher(run):
+    try:
+        action = launcher_action(run)
+    except (OSError, ValueError) as error:
+        run.report["launcher"] = {"state": "drift"}
+        run.step("launcher-preflight", state="drift")
+        raise ValueError(f"{error}; nothing stopped") from error
+    run.report["launcher"] = {"state": action}
+    run.step("launcher-preflight", state=action)
+    if action == "bootstrap-needs-artifact":
+        raise ValueError("launcher bootstrap/change requires a separate --launcher-artifact; server updates never replace launcher bytes; nothing stopped")
+    return action
+
+
+def ensure_launcher(run, version, *, update_config=True):
+    runtime = run.home / "runtime"
+    target = runtime / "launcher"
+    pin = runtime / "launcher-pin.json"
+    action = launcher_action(run)
+    if not update_config and (not target.is_dir() or changed(run)):
+        raise ValueError("launcher change requires a stopped service window")
+    if action == "keep":
         if not pin.exists():
             atomic_text(pin, json.dumps({"protocol": 3, "digest": file_digest(target / "t3"), "source": "adopted-existing", "lastKnownGood": str(target)}) + "\n")
         config_path = runtime / "launcher-config.json"
@@ -40,9 +65,9 @@ def ensure_launcher(run, version, *, update_config=True):
                 run.step("launcher-drain-pin-updated", drainTimeoutMs=desired)
         run.step("launcher-kept", digest=file_digest(target / "t3"))
         return target / "t3"
-    if not raw:
+    if action == "bootstrap-needs-artifact":
         raise ValueError("launcher bootstrap/change requires a separate --launcher-artifact; server updates never replace launcher bytes")
-    manifest = json.loads(Path(raw).read_text())
+    manifest = json.loads(Path(run.args.launcher_artifact).read_text())
     source = Path(manifest["runtimeDir"]).expanduser().resolve()
     if manifest.get("schema") != "t3nightly.launcher-artifact/1" or manifest.get("protocol") != 3:
         raise ValueError("launcher artifact requires schema, supported protocol 3 and exact runtime digest")

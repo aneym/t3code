@@ -56,27 +56,30 @@ def service(run, action):
 def activate(run, version, *, rollback=False):
     from .launcher_artifact import ensure_launcher
 
-    launcher = run.home / "runtime/launcher/t3" if rollback else ensure_launcher(run, version)
     sandbox = run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal."))
-    if sandbox:
-        if launcher != run.home / "runtime/launcher/t3":
-            raise ValueError("sandbox renderer launcher path changed")
-    elif sys.platform == "darwin":
-        with run.service_plist.open("rb") as handle:
-            unit = plistlib.load(handle)
-        unit["ProgramArguments"][0] = str(launcher)
-        staged = run.service_plist.with_suffix(".next")
-        staged.write_bytes(plistlib.dumps(unit))
-        os.chmod(staged, 0o600)
-        os.replace(staged, run.service_plist)
+    if rollback and not sandbox:
+        launcher = run.restore_service_launch()
     else:
-        dropin = Path(run.args.systemd_dropin).expanduser()
-        dropin.mkdir(parents=True, exist_ok=True)
-        override = dropin / "20-hard-runtime.conf"
-        override.write_text(f'[Service]\nExecStart=\nExecStart="{launcher}" __service-launcher\n')
-        from .install_policy import command_environment
+        launcher = run.home / "runtime/launcher/t3" if rollback else ensure_launcher(run, version)
+        if sandbox:
+            if launcher != run.home / "runtime/launcher/t3":
+                raise ValueError("sandbox renderer launcher path changed")
+        elif sys.platform == "darwin":
+            with run.service_plist.open("rb") as handle:
+                unit = plistlib.load(handle)
+            unit["ProgramArguments"][0] = str(launcher)
+            staged = run.service_plist.with_suffix(".next")
+            staged.write_bytes(plistlib.dumps(unit))
+            os.chmod(staged, 0o600)
+            os.replace(staged, run.service_plist)
+        else:
+            dropin = Path(run.args.systemd_dropin).expanduser()
+            dropin.mkdir(parents=True, exist_ok=True)
+            override = dropin / "20-hard-runtime.conf"
+            override.write_text(f'[Service]\nExecStart=\nExecStart="{launcher}" __service-launcher\n')
+            from .install_policy import command_environment
 
-        subprocess.run(["systemctl", "--user", "daemon-reload"], env=command_environment(run), check=True, capture_output=True, timeout=30)
+            subprocess.run(["systemctl", "--user", "daemon-reload"], env=command_environment(run), check=True, capture_output=True, timeout=30)
     state = run.home / "runtime/service-state.json"
     selected = json.loads(state.read_text()) if state.exists() else {"protocol": SERVICE_PROTOCOL}
     selected["activeVersion"] = version
@@ -179,8 +182,13 @@ def install(run):
         live = migration_history(run)
         eligible = binary_rollback(compatibility) and live == base_history
         return {"liveMigrationHistory": live, "baseMigrationHistory": base_history} if eligible else None
-    from .launcher_artifact import validate_drain_pin
-    validate_drain_pin(run)
+    from .launcher_artifact import preflight_launcher
+
+    try:
+        run.capture_service_launch()
+        preflight_launcher(run)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        return run.finish("failed", str(error) if str(error).endswith("nothing stopped") else f"{error}; nothing stopped")
     precheck(run, previous, observed["oldRuntime.digest"])
     try:
         baseline = prove(run, previous)
@@ -273,6 +281,8 @@ def install(run):
                     raise ValueError("post-routing rollback requires a compatible binary; database preserved for forward repair")
                 if supported(run.environment(), run):
                     restore_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")
+                    if not run.service_label.startswith(("t3-rehearsal-", "com.t3-rehearsal.")):
+                        run.restore_service_launch()
                     with restart_session(run, args.version) as bearer:
                         swap(run, bearer, previous, True)
                 else:

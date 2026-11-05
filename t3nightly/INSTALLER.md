@@ -30,7 +30,7 @@ After public routing, a binary class swaps back with a qualified launcher and ke
 
 ## Independent service artifacts
 
-Server-only updates preserve `runtime/launcher` bytes. A launcher change requires `--launcher-artifact FILE`: schema `t3nightly.launcher-artifact/1`, `runtimeDir`, `sha256`, and `protocol: 3`. Hot-swap launchers additionally declare `hotSwapProtocol: 1` and `ingress` matching the production `LauncherIngressConfig` contract. The engine keeps last-known-good bytes/config and a bounded watchdog restores that launcher on failure without reverting the current database.
+Server-only updates preserve `runtime/launcher` bytes. Bootstrap/change requires `--launcher-artifact FILE`, checked with pin drift before stop and in dry-run: schema `t3nightly.launcher-artifact/1`, `runtimeDir`, `sha256`, and `protocol: 3`. Hot-swap launchers declare `hotSwapProtocol: 1` and `ingress` matching production `LauncherIngressConfig`. The watchdog restores last-known-good bytes/config; hard rollback restores captured service files.
 
 `--connector-artifact FILE` pins the separate `__service-connector` supervisor. Its schema is `t3nightly.connector-artifact/1`, with `runtimeDir`, `sha256` and `protocol: 1`. A launcher artifact can supply the same supervisor bytes; their pins and units remain independent. Production renderers create `t3code-connector.service` or `com.t3tools.t3code-connector.service`. Identical pinned bytes do not restart it. `service-artifacts install|uninstall` manages its owned unit and keeps runtime bytes on uninstall. Connector configuration is server-owned; the engine neither reads nor prints its credential.
 
