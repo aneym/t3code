@@ -92,7 +92,8 @@ export function rendersServerTabNatively(
   if (!isElectron || snapshot?.runtime !== "server") return false;
   if (primaryEnvironmentId !== null && environmentId === primaryEnvironmentId)
     return !snapshot.headless;
-  if (remoteDeviceTabAccess(snapshot, accessFor(environmentId)) === "off") return false;
+  const access = remoteDeviceTabAccess(snapshot, accessFor(environmentId));
+  if (access === "off" || (access === "control" && snapshot.headless)) return false;
   const status = snapshot.navStatus;
   return status._tag === "Idle" || resolveRemoteTabUrl(environmentId, status.url) !== null;
 }
