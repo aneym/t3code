@@ -1,6 +1,7 @@
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -31,6 +32,8 @@ def clone_supported(source_directory, destination_directory):
 
 
 def space_plan(directory, size, *, copies=1, clone=False, margin=MARGIN):
+    if sys.platform == "darwin" and Path(directory).resolve().is_relative_to((Path.home() / ".t3nightly").resolve()):
+        margin = max(margin, 40 * 1024**3 + MARGIN)
     free = shutil.disk_usage(directory).free
     written = 0 if clone else size * copies
     return {"directory": str(directory), "sourceBytes": size, "copies": copies, "clone": clone, "writeBytes": written, "marginBytes": margin, "requiredBytes": written + margin, "freeBytes": free, "passes": free >= written + margin}
@@ -57,7 +60,7 @@ def install_plan(source, staging, snapshots, backups):
         row = volumes[device]
         row["copies"] += int(written > 0)
         row["writeBytes"] += written
-        row["requiredBytes"] = row["writeBytes"] + MARGIN
+        row["requiredBytes"] = row["writeBytes"] + row["marginBytes"]
         row["passes"] = row["freeBytes"] >= row["requiredBytes"]
     return list(volumes.values())
 

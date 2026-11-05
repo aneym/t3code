@@ -32,7 +32,10 @@ def copy_rate(path):
 def require_space(root, size, *, clone=False):
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     required = size * 2 if clone else size + max(size // 10, 512 * 1024 * 1024)
-    if shutil.disk_usage(root).free < required:
-        raise ValueError(f"insufficient rollback backup space on {root}; requires {required} bytes")
+    if sys.platform == "darwin" and root.resolve().is_relative_to((Path.home() / ".t3nightly").resolve()):
+        required += 40 * 1024**3
+    free = shutil.disk_usage(root).free
+    if free < required:
+        raise ValueError(f"insufficient rollback backup space on {root}; free={free} required={required} bytes (source={size}, clone={clone}, includes 40 GiB floor on internal nightly storage)")
 
 

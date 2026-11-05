@@ -104,6 +104,10 @@ def cache_entries(root):
 
 
 def copy_seed(source, target, ctx, deadline):
+    if platform.system() == "Darwin":
+        from .snapshot_space import database_bytes, require_space
+
+        require_space(Path(target).parent, database_bytes(source), margin=41 * 1024**3)
     clone = "-c" if platform.system() == "Darwin" else "--reflink=auto"
     code, _ = run(["cp", clone, str(source), str(target)], ctx.log("boot"), deadline)
     if code:

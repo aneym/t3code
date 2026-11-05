@@ -7,17 +7,18 @@ from pathlib import Path
 
 from .rehearsal_waiter import identity, now
 
-MIN_FREE_GIB = 45
 
+def disk_gate(args, evidence=None):
+    from .rehearsal_space import rehearsal_bound
 
-def disk_gate(evidence=None):
+    parts = rehearsal_bound(args)
     result = subprocess.run(["df", "-k", "/"], capture_output=True, text=True, check=True, timeout=15)
     free = int(result.stdout.splitlines()[-1].split()[3]) * 1024
-    receipt = {"at": now(), "df": result.stdout, "freeGiB": round(free / 1024**3, 3), "minimumGiB": MIN_FREE_GIB}
+    receipt = {"at": now(), "df": result.stdout, "freeGiB": round(free / 1024**3, 3), "requiredGiB": round(parts["requiredBytes"] / 1024**3, 3), **parts}
     if evidence:
         Path(evidence).write_text(json.dumps(receipt, indent=2) + "\n")
-    if sys.platform == "darwin" and free < MIN_FREE_GIB * 1024**3:
-        raise ValueError(f"Studio rehearsal refused: root has {receipt['freeGiB']} GiB free; requires at least {MIN_FREE_GIB} GiB")
+    if sys.platform == "darwin" and free < parts["requiredBytes"]:
+        raise ValueError("Studio rehearsal refused: " + json.dumps(receipt))
     return receipt
 
 

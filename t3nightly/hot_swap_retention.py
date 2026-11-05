@@ -132,7 +132,6 @@ def create_home(sandbox):
     run = sandbox.home.parent
     if run.parent != root() or not run_key(run):
         raise ValueError("hot-swap home creation requires its timestamped private run root")
-    disk = disk_gate(run / "root-df-before.json")
     with (root() / "hot-swap-retention.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         before = len(homes())
@@ -146,6 +145,7 @@ def create_home(sandbox):
 
         staged.write_text(json.dumps(record(sandbox)) + "\n")
         os.replace(staged, target)
+        disk = disk_gate(sandbox.args, run / "root-df-before.json")
         sandbox.home.mkdir(mode=0o700)
         receipt = {"at": report["at"], "beforeHomes": before, "afterPruneHomes": after_prune, "afterCreationHomes": len(homes()), "retention": report, "disk": disk}
         (run / "home-creation.json").write_text(json.dumps(receipt, indent=2) + "\n")

@@ -166,6 +166,10 @@ class Sandbox:
 
             create_home(self)
         else:
+            if sys.platform == "darwin":
+                from .rehearsal_lifecycle import disk_gate
+
+                disk_gate(self.args, self.home.parent / "root-df-before.json" if self.home.parent.is_dir() else None)
             self.home.mkdir(parents=True, mode=0o700)
         self.home_created = True
         self.evidence.mkdir(parents=True, mode=0o700)

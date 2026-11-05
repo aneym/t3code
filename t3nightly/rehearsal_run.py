@@ -48,7 +48,7 @@ class Rehearsal:
             from .rehearsal_lifecycle import disk_gate
 
             parent = self.sandbox.home.parent
-            disk_gate(parent / "root-df-before.json" if parent.is_dir() and parent.name.startswith("rehearsal-") else None)
+            disk_gate(self.args, parent / "root-df-before.json" if parent.is_dir() and parent.name.startswith("rehearsal-") else None)
         platform, arch = TARGETS[self.args.target_host]
         if platform != sys.platform:
             raise ValueError("target host platform does not match this machine")
