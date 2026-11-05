@@ -9,6 +9,12 @@ export function credentialValues(url: string, secret?: string): ReadonlyArray<st
   ].filter((value) => value.length >= MIN_HIDDEN_CHARS);
 }
 
+const TOKEN_RUN = /[A-Za-z0-9+/=_%.~-]{16,}/g;
+
+export function redactTokens(text: string): string {
+  return text.replace(TOKEN_RUN, (run) => (/\d/.test(run) ? "<redacted>" : run));
+}
+
 export function redact(text: string, hidden: ReadonlyArray<string>): string {
   return [...hidden]
     .toSorted((a, b) => b.length - a.length)

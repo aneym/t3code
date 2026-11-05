@@ -16,7 +16,7 @@ import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
-import { credentialValues, redact } from "./secretText.ts";
+import { credentialValues, redact, redactTokens } from "./secretText.ts";
 
 const PROTOCOL_VERSION = "2025-06-18";
 const HEADER_DIR = NodePath.join(NodeOS.homedir(), ".config", "t3-mcp-events");
@@ -80,7 +80,7 @@ function rpcFailure(
   const data = asRecord(fields.data);
   const clean = (value: unknown, max: number) =>
     typeof value === "string" && value.trim() !== ""
-      ? redact(value.trim(), hidden).slice(0, max)
+      ? redactTokens(redact(value.trim(), hidden)).slice(0, max)
       : undefined;
   const reason = clean(data.reason, 60);
   const body = clean(data.body, 120);
