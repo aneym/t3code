@@ -10,7 +10,6 @@ from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .release_jobs import write_status
 from .suite_cleanup_record import track_process, worker_record
 from .suite_process import REMOTE
 from .suite_store_lock import locked

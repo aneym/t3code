@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 from urllib.parse import quote
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import expect, sync_playwright
 
 SHELVES = ["working", "snoozed", "settled", "automations"]

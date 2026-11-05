@@ -1,7 +1,6 @@
 import hashlib
 import os
 from contextlib import contextmanager
-from pathlib import Path
 
 from .remote_shell import ssh_argv
 

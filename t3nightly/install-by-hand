@@ -46,6 +46,10 @@ def main():
         assignments = [f"{key}={env[key]}" for key in ("AGENT_LANE", "AGENT_THREAD_ID") if plan.env is not None]
         print(shlex.join(["env", *assignments, f"T3_LIVE_RESTART_REASON={reason}", *plan.argv]))
         return 0
+    inputs = {"run": args.run, **{name: getattr(args, name.replace("-", "_")) for name in ("rpc-tree", "assets", "manifest", "artifact-manifest", "receipt", "smoke-verdict", "rollback-proof", "launcher-artifact", "chat-project", "connector-artifact")}}
+    missing = [f"--{name} {path}" for name, path in inputs.items() if path is not None and not path.exists()]
+    if missing:
+        parser.error(f"missing inputs, nothing created or installed: {', '.join(missing)}")
     plan.state.mkdir(parents=True, exist_ok=True)
     (args.run / "receipts").mkdir(parents=True, exist_ok=True)
     return command(plan.argv, sys.stdout, env=env)
