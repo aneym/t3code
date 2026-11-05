@@ -1,7 +1,8 @@
-import type {
-  DesktopPreviewColorScheme,
-  PreviewViewportSetting,
-  ScopedThreadRef,
+import {
+  type DesktopPreviewColorScheme,
+  type PreviewViewportSetting,
+  remoteDesktopBrowserThreadId,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -21,7 +22,6 @@ import {
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab, withDesktopTab } from "./desktopTabLifetime";
-import { claimRemoteBrowserTab } from "./remoteBrowserRelay";
 import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserLayoutZoomFactor } from "./useBrowserLayoutZoomFactor";
@@ -112,19 +112,14 @@ export function HostedBrowserWebview(props: {
     serverDriven: serverDriven || mirrorUrl !== undefined,
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds this remote tab's CDP event claim in the desktop bridge while mounted and releases it on cleanup
-  useEffect(() => {
-    if (remoteDevice === undefined) return;
-    return claimRemoteBrowserTab(threadRef.environmentId, threadRef.threadId, tabId);
-  }, [remoteDevice, tabId, threadRef.environmentId, threadRef.threadId]);
-
   const mirroredUrl = useRef(initialSrc);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the server tab's new URL into this show-only desktop webview through the desktop bridge
   useEffect(() => {
-    const bridge = previewBridge;
+    const bridge = window.desktopBridge?.desktopBrowser;
     if (!bridge || mirrorUrl === undefined || mirrorUrl === mirroredUrl.current) return;
     mirroredUrl.current = mirrorUrl;
-    withDesktopTab(runtimeTabId, () => bridge.navigate(runtimeTabId, mirrorUrl));
+    const command = JSON.stringify({ type: "mirror", tabId: runtimeTabId, url: mirrorUrl });
+    withDesktopTab(runtimeTabId, () => bridge.sendCommand(command));
   }, [mirrorUrl, runtimeTabId]);
 
   const serverColorScheme = serverRendering?.colorScheme;
@@ -136,14 +131,30 @@ export function HostedBrowserWebview(props: {
     crashRecoveryRef.current = INITIAL_WEBVIEW_CRASH_RECOVERY_STATE;
     const lease = acquireDesktopTab(
       runtimeTabId,
-      serverDriven ? { threadId: threadRef.threadId, tabId } : undefined,
+      serverDriven
+        ? {
+            threadId:
+              remoteDevice === undefined
+                ? threadRef.threadId
+                : remoteDesktopBrowserThreadId(threadRef.environmentId, threadRef.threadId),
+            tabId,
+          }
+        : undefined,
     );
     tabLeaseRef.current = lease;
     return () => {
       if (tabLeaseRef.current === lease) tabLeaseRef.current = null;
       lease.release();
     };
-  }, [clientSettingsHydrated, runtimeTabId, serverDriven, tabId, threadRef.threadId]);
+  }, [
+    clientSettingsHydrated,
+    remoteDevice,
+    runtimeTabId,
+    serverDriven,
+    tabId,
+    threadRef.environmentId,
+    threadRef.threadId,
+  ]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies the server color scheme to the desktop preview tab through the desktop bridge
   useEffect(() => {

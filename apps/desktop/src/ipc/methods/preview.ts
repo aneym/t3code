@@ -40,7 +40,7 @@ import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as DesktopBrowserHost from "../../preview/DesktopBrowserHost.ts";
-import * as RemoteBrowserClaims from "../../preview/RemoteBrowserClaims.ts";
+import * as RemoteBrowserScope from "../../preview/RemoteBrowserScope.ts";
 
 export const installPreviewEventForwarding = Effect.fn(
   "desktop.ipc.preview.installEventForwarding",
@@ -51,15 +51,9 @@ export const installPreviewEventForwarding = Effect.fn(
   yield* Effect.forkScoped(
     browserHost.events.pipe(
       Stream.runForEach((line) => {
-        const text = new TextDecoder().decode(line);
-        try {
-          const event = JSON.parse(text) as { threadId?: string; tabId?: string };
-          if (event.threadId === undefined || event.tabId === undefined) return Effect.void;
-          if (!RemoteBrowserClaims.isClaimed(event.threadId, event.tabId)) return Effect.void;
-        } catch {
-          return Effect.void;
-        }
-        return electronWindow.sendAll(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, text);
+        const envelope = RemoteBrowserScope.remoteEventEnvelope(new TextDecoder().decode(line));
+        if (envelope === undefined) return Effect.void;
+        return electronWindow.sendAll(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, envelope);
       }),
     ),
   );
@@ -473,10 +467,15 @@ export const desktopBrowserCommand = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.DESKTOP_BROWSER_COMMAND_CHANNEL,
   payload: Schema.String,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.browser.command")(function* (line) {
-    if (yield* RemoteBrowserClaims.handleClaimLine(line)) return;
-    if (!RemoteBrowserClaims.admitsRemoteCommand(line)) return;
+  handler: Effect.fn("desktop.ipc.browser.command")(function* (text) {
+    const command = yield* RemoteBrowserScope.admit(text);
+    if (Option.isNone(command)) return;
+    if (command.value.type === "navigate") {
+      const manager = yield* PreviewManager.PreviewManager;
+      yield* manager.navigate(command.value.tabId, command.value.url).pipe(Effect.ignore);
+      return;
+    }
     const host = yield* DesktopBrowserHost.DesktopBrowserHost;
-    yield* host.handleCommandLine(line);
+    yield* host.handleCommandLine(command.value.line);
   }),
 });

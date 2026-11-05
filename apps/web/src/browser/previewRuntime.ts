@@ -11,9 +11,9 @@ import {
 } from "~/state/entities";
 
 import {
-  type RemoteDeviceAccess,
+  type RemoteDeviceAccessFor,
   remoteDeviceTabAccess,
-  useRemoteDeviceAccess,
+  useRemoteDeviceAccessFor,
 } from "./remoteDeviceAccess";
 
 export function previewRuntimeFor(environmentId: EnvironmentId): PreviewRuntime | undefined {
@@ -51,25 +51,26 @@ export function rendersServerTabNatively(
   environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
   snapshot: Pick<PreviewSessionSnapshot, "runtime" | "device" | "headless"> | null | undefined,
-  access: RemoteDeviceAccess,
+  accessFor: RemoteDeviceAccessFor,
 ): boolean {
   if (!isElectron || snapshot?.runtime !== "server") return false;
   if (primaryEnvironmentId !== null && environmentId === primaryEnvironmentId)
     return !snapshot.headless;
-  return remoteDeviceTabAccess(snapshot, access) !== "off";
+  return remoteDeviceTabAccess(snapshot, accessFor(environmentId)) !== "off";
 }
 
 export function serverDrivesNativeTab(
   environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
   snapshot: Pick<PreviewSessionSnapshot, "runtime" | "device" | "headless">,
-  access: RemoteDeviceAccess,
+  accessFor: RemoteDeviceAccessFor,
 ): boolean {
-  if (!rendersServerTabNatively(environmentId, primaryEnvironmentId, snapshot, access))
+  if (!rendersServerTabNatively(environmentId, primaryEnvironmentId, snapshot, accessFor))
     return false;
   if (snapshot.headless) return false;
   return (
-    environmentId === primaryEnvironmentId || remoteDeviceTabAccess(snapshot, access) === "control"
+    environmentId === primaryEnvironmentId ||
+    remoteDeviceTabAccess(snapshot, accessFor(environmentId)) === "control"
   );
 }
 
@@ -78,6 +79,6 @@ export function useRendersServerTabNatively(
   snapshot: Pick<PreviewSessionSnapshot, "runtime" | "device" | "headless"> | null | undefined,
 ): boolean {
   const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
-  const access = useRemoteDeviceAccess();
-  return rendersServerTabNatively(environmentId, primaryEnvironmentId, snapshot, access);
+  const accessFor = useRemoteDeviceAccessFor();
+  return rendersServerTabNatively(environmentId, primaryEnvironmentId, snapshot, accessFor);
 }

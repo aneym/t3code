@@ -1,10 +1,17 @@
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { request, subscribe } from "@t3tools/client-runtime/rpc";
-import { AuthPreviewOperateScope, type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import {
+  AuthPreviewOperateScope,
+  DesktopBrowserRemoteEnvelope,
+  DesktopBrowserRendererCommand,
+  type EnvironmentId,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AsyncResult } from "effect/reactivity";
 import { subscribeClientSettings } from "~/hooks/useSettings";
@@ -24,24 +31,10 @@ interface Relay {
 }
 
 const RELAY_RETRY_MS = 5_000;
-const claims = new Map<string, EnvironmentId>();
-const tabKey = (threadId: string, tabId: string) => `${threadId}\u0000${tabId}`;
-
-export function claimRemoteBrowserTab(
-  environmentId: EnvironmentId,
-  threadId: string,
-  tabId: string,
-): () => void {
-  const bridge = window.desktopBridge?.desktopBrowser;
-  if (!bridge) return () => {};
-  const key = tabKey(threadId, tabId);
-  claims.set(key, environmentId);
-  void bridge.sendCommand(JSON.stringify({ type: "claim", threadId, tabId }));
-  return () => {
-    if (claims.get(key) === environmentId) claims.delete(key);
-    void bridge.sendCommand(JSON.stringify({ type: "releaseClaim", threadId, tabId }));
-  };
-}
+const decodeEnvelope = Schema.decodeUnknownOption(
+  Schema.fromJsonString(DesktopBrowserRemoteEnvelope),
+);
+const encodeCommand = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserRendererCommand));
 
 export function startRemoteBrowserRelays(deviceName: string): () => void {
   const bridge = window.desktopBridge?.desktopBrowser;
@@ -154,7 +147,9 @@ function runRemoteBrowserRelays(
           .pipe(
             Stream.runForEach((line) =>
               Effect.promise(() =>
-                control && typeof line === "string" ? bridge.sendCommand(line) : Promise.resolve(),
+                control && typeof line === "string"
+                  ? bridge.sendCommand(encodeCommand({ type: "remote", environmentId, line }))
+                  : Promise.resolve(),
               ),
             ),
             Effect.ignore,
@@ -169,13 +164,11 @@ function runRemoteBrowserRelays(
       );
     }
   };
-  const forwardEvent = (line: string) => {
-    try {
-      const event = JSON.parse(line) as { threadId?: string; tabId?: string };
-      if (!event.threadId || !event.tabId) return;
-      const environmentId = claims.get(tabKey(event.threadId, event.tabId));
-      if (environmentId && relays.get(environmentId)?.control) report(environmentId, [line]);
-    } catch {}
+  const forwardEvent = (text: string) => {
+    const envelope = decodeEnvelope(text);
+    if (Option.isNone(envelope)) return;
+    const environmentId = envelope.value.environmentId as EnvironmentId;
+    if (relays.get(environmentId)?.control) report(environmentId, [envelope.value.line]);
   };
   disposers.push(
     bridge.onEvent(forwardEvent),

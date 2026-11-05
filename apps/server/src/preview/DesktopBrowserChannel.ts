@@ -31,6 +31,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { writeAllToFileDescriptor } from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 
 const decodeEvent = Schema.decodeUnknownEffect(DesktopBrowserEvent);
+const decodeRemoteEvent = Schema.decodeUnknownEffect(Schema.fromJsonString(DesktopBrowserEvent));
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(DesktopBrowserCommand));
 const encodeRemoteCommand = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserCommand));
 
@@ -179,7 +180,7 @@ const make = Effect.gen(function* () {
       if (input.focused) source.lastFocusedAt = yield* Clock.currentTimeMillis;
     }
     for (const line of source.control ? input.events : []) {
-      const event = yield* decodeEvent(line).pipe(Effect.option);
+      const event = yield* decodeRemoteEvent(line).pipe(Effect.option);
       if (Option.isNone(event)) continue;
       const key = { threadId: event.value.threadId, tabId: event.value.tabId };
       const id = keyOf(key);

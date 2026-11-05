@@ -32,21 +32,22 @@ import { useBrowserDefaults } from "./browserDefaults";
 import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
-import { resolveDiscoveredServerUrl } from "./browserTargetResolver";
 import { rendersServerTabNatively, serverDrivesNativeTab } from "./previewRuntime";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 import { startRemoteBrowserRelays } from "./remoteBrowserRelay";
 import {
-  type RemoteDeviceAccess,
-  remoteDeviceAccess,
+  type RemoteDeviceAccessFor,
+  remoteDeviceAccessFor,
   useRemoteDeviceAccess,
+  useRemoteDeviceAccessFor,
 } from "./remoteDeviceAccess";
+import { resolveRemoteTabUrl } from "./remoteTabUrl";
 
 /** Every session this window renders as a hosted webview, in a fixed (non-display) order. */
 function hostedBrowserSessions(
   previewByThreadKey: Record<string, ThreadPreviewState>,
   primaryEnvironmentId: EnvironmentId | null,
-  access: RemoteDeviceAccess,
+  accessFor: RemoteDeviceAccessFor,
 ) {
   const activeSessions = Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
     const threadRef = parseScopedThreadKey(threadKey);
@@ -59,7 +60,7 @@ function hostedBrowserSessions(
                 threadRef.environmentId,
                 primaryEnvironmentId,
                 snapshot,
-                access,
+                accessFor,
               ),
           )
           .map((snapshot) => ({
@@ -71,7 +72,7 @@ function hostedBrowserSessions(
                 threadRef.environmentId,
                 primaryEnvironmentId,
                 snapshot,
-                access,
+                accessFor,
               ),
             runtimeTabId: previewRuntimeTabId(threadRef, previewState.serverEpoch, snapshot.tabId),
             pictureInPicture:
@@ -122,7 +123,7 @@ function openLinkInPreview({ tabId, url, background }: DesktopPreviewOpenLinkEve
   const source = hostedBrowserSessions(
     readActivePreviewSessions(),
     appAtomRegistry.get(primaryEnvironmentIdAtom),
-    remoteDeviceAccess(),
+    remoteDeviceAccessFor(),
   ).find((session) => session.runtimeTabId === tabId);
   if (!source) return;
   void openUrlInPreview({
@@ -159,7 +160,8 @@ export function ElectronBrowserHost() {
   useRemoteDeviceTabSessions(
     access === "off" ? null : (window.desktopBridge?.getDeviceName?.() ?? null),
   );
-  const sessions = hostedBrowserSessions(previewByThreadKey, primaryEnvironmentId, access);
+  const accessFor = useRemoteDeviceAccessFor();
+  const sessions = hostedBrowserSessions(previewByThreadKey, primaryEnvironmentId, accessFor);
 
   if (!isElectron) return null;
   return (
@@ -167,18 +169,21 @@ export function ElectronBrowserHost() {
       {sessions.map(
         ({ threadRef, snapshot, driven, runtimeTabId, pictureInPicture, zoomFactor }) => {
           const serverUrl = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
+          const remote =
+            snapshot.runtime === "server" && threadRef.environmentId !== primaryEnvironmentId;
           const mirrored = snapshot.runtime === "server" && !driven;
-          const url =
-            mirrored && serverUrl !== null
-              ? resolveDiscoveredServerUrl(threadRef.environmentId, serverUrl)
-              : serverUrl;
+          const remoteUrl =
+            remote && serverUrl !== null
+              ? resolveRemoteTabUrl(threadRef.environmentId, serverUrl)
+              : null;
+          const initialUrl = remote ? (mirrored ? null : remoteUrl) : serverUrl;
           return (
             <AuthorizedBrowserWebview
               key={runtimeTabId}
               threadRef={threadRef}
               tabId={snapshot.tabId}
               runtimeTabId={runtimeTabId}
-              initialUrl={url}
+              initialUrl={initialUrl}
               viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
               pictureInPicture={pictureInPicture}
               profileId={snapshot.profileId}
@@ -187,7 +192,7 @@ export function ElectronBrowserHost() {
               {...(driven && snapshot.device !== undefined
                 ? { remoteDevice: snapshot.device }
                 : {})}
-              {...(mirrored && url !== null ? { mirrorUrl: url } : {})}
+              {...(mirrored && remoteUrl !== null ? { mirrorUrl: remoteUrl } : {})}
               {...(snapshot.runtime === "server"
                 ? {
                     serverRendering: {
