@@ -511,6 +511,7 @@ export const ClientSettingsSchema = Schema.Struct({
   // the boring sidebar; the boring sidebar toggle clears it.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarWorkingShelfEnabled: DefaultTrue,
+  sidebarOfflineShelfEnabled: DefaultTrue,
   sidebarThreadShowMachine: DefaultTrue,
   sidebarThreadShowAgent: DefaultTrue,
   sidebarThreadShowStatusText: Schema.Boolean.pipe(
@@ -1766,6 +1767,7 @@ export const ClientSettingsPatch = Schema.Struct({
   threadDetailsItems: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
+  sidebarOfflineShelfEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarThreadShowMachine: Schema.optionalKey(Schema.Boolean),
   sidebarThreadShowAgent: Schema.optionalKey(Schema.Boolean),
   sidebarThreadShowStatusText: Schema.optionalKey(Schema.Boolean),

@@ -489,6 +489,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarOfflineShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarOfflineShelfEnabled
+      ? ["Offline section"]
+      : []),
     ...(settings.sidebarThreadShowMachine !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowMachine
       ? ["Machine in thread rows"]
       : []),
@@ -674,6 +677,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarOfflineShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarOfflineShelfEnabled,
       sidebarThreadShowMachine: DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowMachine,
       sidebarThreadShowAgent: DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowAgent,
       sidebarThreadShowStatusText: DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowStatusText,
@@ -930,6 +934,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label="Working section"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("offline-shelf")}
+          description="Fold threads of a machine that stops answering into an Offline section, since they can't be settled or archived until it is back. They return to their place when it reconnects."
+          resetAction={
+            settings.sidebarOfflineShelfEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarOfflineShelfEnabled ? (
+              <SettingResetButton
+                label="offline section"
+                onClick={() =>
+                  updateSettings({
+                    sidebarOfflineShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarOfflineShelfEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarOfflineShelfEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarOfflineShelfEnabled: Boolean(checked) })
+              }
+              aria-label="Offline section"
             />
           }
         />
