@@ -16,7 +16,6 @@ import * as Data from "effect/Data";
 import { AsyncResult } from "effect/reactivity";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
-import { recordDesktopOpenedTab } from "~/browser/desktopOpenedTabs";
 import { isPreviewAvailableFor, previewRuntimeFor } from "~/browser/previewRuntime";
 import {
   applyPreviewServerSnapshot,
@@ -88,7 +87,6 @@ export async function openUrlInPreview<E>(input: {
     },
   });
   return mapAtomCommandResult(result, (snapshot) => {
-    recordDesktopOpenedTab(threadRef, snapshot, input.url);
     rememberPreviewUrl(threadRef, input.url);
     if (input.background) {
       updatePreviewServerSnapshot(threadRef, snapshot);

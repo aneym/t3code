@@ -1,10 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentId,
-  PreviewRuntime,
-  PreviewSessionSnapshot,
-  ScopedThreadRef,
-} from "@t3tools/contracts";
+import type { EnvironmentId, PreviewRuntime, PreviewSessionSnapshot } from "@t3tools/contracts";
 
 import { isElectron } from "~/env";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
@@ -19,11 +14,11 @@ import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { readPreparedConnection } from "~/state/session";
 
 import {
+  type RemoteDeviceAccess,
   type RemoteDeviceAccessFor,
   remoteDeviceTabAccess,
   useRemoteDeviceAccessFor,
 } from "./remoteDeviceAccess";
-import { isDesktopOpenedTab } from "./desktopOpenedTabs";
 import { resolveRemoteTabUrl } from "./remoteTabUrl";
 
 type NativeTabSnapshot = Pick<
@@ -40,16 +35,12 @@ export function isLocalPreviewEnvironment(
   return target !== undefined && isDesktopLocalConnectionTarget(target);
 }
 
-export function admitsDesktopTab(
-  threadRef: ScopedThreadRef,
-  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "tabId" | "navStatus">,
+export function guardsPreviewTab(
+  environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
+  access: RemoteDeviceAccess,
 ): boolean {
-  if (snapshot.runtime === "server") return false;
-  return (
-    isLocalPreviewEnvironment(threadRef.environmentId, primaryEnvironmentId) ||
-    isDesktopOpenedTab(threadRef, snapshot)
-  );
+  return access !== "off" && !isLocalPreviewEnvironment(environmentId, primaryEnvironmentId);
 }
 
 export function previewRuntimeFor(environmentId: EnvironmentId): PreviewRuntime | undefined {

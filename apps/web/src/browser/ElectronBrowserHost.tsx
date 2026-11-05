@@ -36,7 +36,7 @@ import { onDesktopTabCreated, withDesktopTab } from "./desktopTabLifetime";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
 import {
-  admitsDesktopTab,
+  guardsPreviewTab,
   isLocalPreviewEnvironment,
   rendersServerTabNatively,
   serverDrivesNativeTab,
@@ -44,7 +44,9 @@ import {
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 import { startRemoteBrowserRelays } from "./remoteBrowserRelay";
 import {
+  type RemoteDeviceAccess,
   type RemoteDeviceAccessFor,
+  remoteDeviceAccess,
   remoteDeviceAccessFor,
   useRemoteDeviceAccess,
   useRemoteDeviceAccessFor,
@@ -65,6 +67,7 @@ function remoteTabUrls({ threadRef, snapshot, remote, driven }: HostedBrowserSes
 function hostedBrowserSessions(
   previewByThreadKey: Record<string, ThreadPreviewState>,
   primaryEnvironmentId: EnvironmentId | null,
+  access: RemoteDeviceAccess,
   accessFor: RemoteDeviceAccessFor,
 ) {
   const activeSessions = Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
@@ -83,12 +86,13 @@ function hostedBrowserSessions(
                   snapshot,
                   accessFor,
                 )
-              : admitsDesktopTab(threadRef, snapshot, primaryEnvironmentId),
+              : true,
           )
           .map(({ snapshot, local }) => ({
             threadRef,
             snapshot,
             remote: !local && snapshot.runtime === "server",
+            guarded: guardsPreviewTab(threadRef.environmentId, primaryEnvironmentId, access),
             driven:
               snapshot.runtime === "server" &&
               serverDrivesNativeTab(
@@ -146,6 +150,7 @@ function openLinkInPreview({ tabId, url, background }: DesktopPreviewOpenLinkEve
   const source = hostedBrowserSessions(
     readActivePreviewSessions(),
     appAtomRegistry.get(primaryEnvironmentIdAtom),
+    remoteDeviceAccess(),
     remoteDeviceAccessFor(),
   ).find((session) => session.runtimeTabId === tabId);
   if (!source) return;
@@ -168,6 +173,7 @@ function startRemoteTabMirror(): () => void {
     for (const session of hostedBrowserSessions(
       readActivePreviewSessions(),
       appAtomRegistry.get(primaryEnvironmentIdAtom),
+      remoteDeviceAccess(),
       remoteDeviceAccessFor(),
     )) {
       const { mirrorUrl } = remoteTabUrls(session);
@@ -223,29 +229,44 @@ export function ElectronBrowserHost() {
     access === "off" ? null : (window.desktopBridge?.getDeviceName?.() ?? null),
   );
   const accessFor = useRemoteDeviceAccessFor();
-  const sessions = hostedBrowserSessions(previewByThreadKey, primaryEnvironmentId, accessFor);
+  const sessions = hostedBrowserSessions(
+    previewByThreadKey,
+    primaryEnvironmentId,
+    access,
+    accessFor,
+  );
 
   if (!isElectron) return null;
   return (
     <div className="contents" data-electron-browser-host>
       {sessions.map((session) => {
-        const { threadRef, snapshot, remote, driven, runtimeTabId, pictureInPicture, zoomFactor } =
-          session;
+        const {
+          threadRef,
+          snapshot,
+          remote,
+          guarded,
+          driven,
+          runtimeTabId,
+          pictureInPicture,
+          zoomFactor,
+        } = session;
         const { serverUrl, remoteUrl, mirrored } = remoteTabUrls(session);
         const initialUrl = remote ? (mirrored ? null : remoteUrl) : serverUrl;
         return (
           <AuthorizedBrowserWebview
-            key={runtimeTabId}
+            key={guarded ? `${runtimeTabId}:guarded` : runtimeTabId}
             threadRef={threadRef}
             tabId={snapshot.tabId}
             runtimeTabId={runtimeTabId}
             initialUrl={initialUrl}
             viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
             pictureInPicture={pictureInPicture}
-            profileId={remote ? REMOTE_DEVICE_BROWSER_PROFILE_ID : snapshot.profileId}
+            profileId={guarded ? REMOTE_DEVICE_BROWSER_PROFILE_ID : snapshot.profileId}
             zoomFactor={zoomFactor}
             serverDriven={driven}
-            {...(driven && snapshot.device !== undefined ? { remoteDevice: snapshot.device } : {})}
+            {...(remote && driven && snapshot.device !== undefined
+              ? { remoteDevice: snapshot.device }
+              : {})}
             mirrored={mirrored}
             {...(snapshot.runtime === "server"
               ? {

@@ -12,7 +12,6 @@ import { AsyncResult } from "effect/reactivity";
 
 import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
-import { recordDesktopOpenedTab } from "~/browser/desktopOpenedTabs";
 import { previewRuntimeFor } from "~/browser/previewRuntime";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 
@@ -53,7 +52,6 @@ export async function openPreviewSession<E>(
     return result;
   }
   const snapshot = result.value;
-  recordDesktopOpenedTab(input.threadRef, snapshot, input.url);
   applyPreviewServerSnapshot(input.threadRef, snapshot);
   if (input.url !== undefined) {
     rememberPreviewUrl(

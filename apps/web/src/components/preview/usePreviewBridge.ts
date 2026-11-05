@@ -8,7 +8,6 @@ import { useEffect, useEffectEvent, useRef } from "react";
 
 import { recordFaviconForThread } from "~/browserFaviconStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
-import { recordDesktopNavigation } from "~/browser/desktopOpenedTabs";
 import { acquireBrowserSurfaceActivity } from "~/browser/browserSurfaceStore";
 import { applyPreviewDesktopState, type DesktopPreviewOverlay } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
@@ -79,7 +78,6 @@ export function usePreviewBridge(input: {
       if (!reported || serverDriven) return;
       lastReportedUrl.current = reported.lastReportedUrl;
       lastReportedKind.current = reported.lastReportedKind;
-      recordDesktopNavigation(stableThreadRef, tabId, reported.input.navStatus);
       void reportStatus({
         environmentId: stableThreadRef.environmentId,
         input: reported.input,

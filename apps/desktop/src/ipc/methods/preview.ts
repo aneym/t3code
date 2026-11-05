@@ -115,6 +115,7 @@ const registerWebview = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.registerWebview")(function* ({ tabId, webContentsId }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.registerWebview(tabId, webContentsId);
+    RemoteDeviceSession.registerTab(tabId, webContentsId);
   }),
 });
 
@@ -491,8 +492,10 @@ export const desktopBrowserCommand = DesktopIpc.makeIpcMethod({
       return;
     }
     if (command.value.type === "navigate") {
-      const manager = yield* PreviewManager.PreviewManager;
-      yield* manager.navigate(command.value.tabId, command.value.url).pipe(Effect.ignore);
+      const contents = RemoteDeviceSession.guardedTab(command.value.tabId);
+      if (!contents) return yield* Effect.logWarning("mirror into an unguarded tab refused");
+      const url = command.value.url;
+      yield* Effect.promise(() => contents.loadURL(url).catch(() => undefined));
       return;
     }
     const host = yield* DesktopBrowserHost.DesktopBrowserHost;

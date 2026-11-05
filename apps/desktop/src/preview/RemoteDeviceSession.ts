@@ -1,5 +1,5 @@
 import type { Event, Session, WebContents } from "electron";
-import { app } from "electron";
+import { app, webContents } from "electron";
 
 import { isBlockedHost } from "./RemoteDeviceAddress.ts";
 import * as RemoteDeviceProxy from "./RemoteDeviceProxy.ts";
@@ -9,6 +9,7 @@ const LOCAL_SCHEMES = new Set(["data:", "blob:", "devtools:"]);
 const BLANK_DOCUMENTS = new Set(["about:blank", "about:srcdoc"]);
 
 const guardedSessions = new WeakSet<Session>();
+const guardedTabs = new Map<string, number>();
 const guarding = new WeakMap<Session, Promise<void>>();
 let listening = false;
 
@@ -58,6 +59,19 @@ const install = async (session: Session) => {
 };
 
 export const isGuarded = (session: Session) => guardedSessions.has(session);
+
+export const registerTab = (tabId: string, webContentsId: number) => {
+  const contents = webContents.fromId(webContentsId);
+  if (contents && isGuarded(contents.session)) guardedTabs.set(tabId, webContentsId);
+  else guardedTabs.delete(tabId);
+};
+
+export const guardedTab = (tabId: string) => {
+  const id = guardedTabs.get(tabId);
+  const contents = id === undefined ? undefined : webContents.fromId(id);
+  if (!contents || contents.isDestroyed() || !isGuarded(contents.session)) return undefined;
+  return contents;
+};
 
 export const guard = (session: Session) => {
   const pending = guarding.get(session) ?? install(session);
