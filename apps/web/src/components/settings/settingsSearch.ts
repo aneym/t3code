@@ -484,6 +484,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "offline-shelf",
+    title: "Offline section",
+    to: "/settings/general",
+    searchTerms: ["hide fold unreachable disconnected machine environment threads sidebar shelf"],
+  },
+  {
     id: "boring-sidebar",
     title: "Boring sidebar (group by project)",
     to: "/settings/labs",
