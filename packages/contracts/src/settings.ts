@@ -1,3 +1,7 @@
+import {
+  ForkPreviewSettingsFields,
+  ForkPreviewSettingsPatchFields,
+} from "./forkPreviewSettings.ts";
 import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
 import {
   StorageRetentionDays,
@@ -1177,6 +1181,7 @@ export const ServerSettings = Schema.Struct({
   ...ForkThreadSettingsFields,
 
   enableAgentBrowserAccess: DefaultTrue,
+  ...ForkPreviewSettingsFields,
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1557,6 +1562,7 @@ export const ServerSettingsPatch = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   ...ForkThreadSettingsPatchFields,
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
+  ...ForkPreviewSettingsPatchFields,
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),

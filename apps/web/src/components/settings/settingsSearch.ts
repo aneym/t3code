@@ -892,6 +892,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow disable enable open drive preview tools sessions project override"],
   },
   {
+    id: "preview-open-on-user-device",
+    title: "Open agent tabs on your desktop",
+    to: "/settings/browser",
+    scope: "environment-defaults",
+    searchTerms: ["preview open remote device desktop local browser panel show user focused"],
+  },
+  {
     id: "device-sources",
     title: "Device sources",
     to: "/settings/devices",
