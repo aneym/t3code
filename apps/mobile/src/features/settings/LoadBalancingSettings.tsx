@@ -1,5 +1,6 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { AgentLoadBalancingSettings } from "./AgentLoadBalancingSettings";
+import type { ServerSettings, ServerSettingsPatch, EnvironmentId } from "@t3tools/contracts";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -13,18 +14,33 @@ const WEIGHTS = [
 ];
 
 export function LoadBalancingSettings(props: {
-  readonly environments: readonly {
+  readonly serverSettings?: ServerSettings;
+  readonly disabled?: boolean;
+  readonly update?: (patch: ServerSettingsPatch) => void;
+  readonly targets: readonly {
     readonly environmentId: EnvironmentId;
-    readonly environmentLabel: string;
+    readonly label: string;
   }[];
 }) {
+  const environments = props.targets.map((target) => ({
+    environmentId: target.environmentId,
+    environmentLabel: target.label,
+  }));
   const result = useAtomValue(mobilePreferencesAtom);
   const update = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
   const preferences = result._tag === "Success" ? result.value : null;
-  if (props.environments.length === 0) return null;
+  if (environments.length === 0) return null;
   const enabled = preferences?.loadBalancingEnabled === true;
   return (
     <>
+      {props.serverSettings && props.update ? (
+        <AgentLoadBalancingSettings
+          environments={environments}
+          settings={props.serverSettings}
+          disabled={props.disabled ?? false}
+          update={props.update}
+        />
+      ) : null}
       <SettingsSection
         title="Load balancing"
         footer="Shared-project new threads use free CPU and memory, weighted by each machine’s preference."
@@ -38,7 +54,7 @@ export function LoadBalancingSettings(props: {
           }}
         />
       </SettingsSection>
-      {props.environments.map((environment) => (
+      {environments.map((environment) => (
         <SettingsSection key={environment.environmentId} title={environment.environmentLabel}>
           {WEIGHTS.map((choice, index) => (
             <ListChoiceRow

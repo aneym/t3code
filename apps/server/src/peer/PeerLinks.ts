@@ -70,6 +70,7 @@ export class PeerLinks extends Context.Service<
       Option.Option<{ readonly environmentId: EnvironmentId; readonly label: string }>
     >;
     readonly list: Effect.Effect<ReadonlyArray<PeerLinkSummary>, PeerLinkError>;
+    readonly stored: Effect.Effect<ReadonlyArray<PeerLink>, PeerLinkError>;
     /** The stored link, without asking the peer whether it answers. */
     readonly get: (
       environmentId: EnvironmentId,
@@ -489,6 +490,7 @@ const make = Effect.gen(function* () {
     link,
     describe: describeUrl,
     list,
+    stored: Effect.flatMap(readRows, (rows) => Effect.forEach(rows, toLink)),
     get,
     unlink,
     resolve,

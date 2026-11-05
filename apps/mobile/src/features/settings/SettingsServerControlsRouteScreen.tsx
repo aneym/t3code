@@ -320,10 +320,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
               {props.page === "threads" ? (
                 <>
                   <LoadBalancingSettings
-                    environments={selectedTargets.map((target) => ({
-                      environmentId: target.environmentId,
-                      environmentLabel: target.label,
-                    }))}
+                    serverSettings={reference.settings}
+                    update={write}
+                    disabled={!canWriteSettings || projectSelected}
+                    targets={selectedTargets}
                   />
                   <SettingsSection
                     title="Default workspace"
