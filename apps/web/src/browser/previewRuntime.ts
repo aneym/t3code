@@ -16,6 +16,7 @@ import { readPreparedConnection } from "~/state/session";
 import {
   type RemoteDeviceAccess,
   type RemoteDeviceAccessFor,
+  remoteDeviceAccess,
   remoteDeviceTabAccess,
   useRemoteDeviceAccessFor,
 } from "./remoteDeviceAccess";
@@ -45,9 +46,11 @@ export function guardsPreviewTab(
 
 export function previewRuntimeFor(environmentId: EnvironmentId): PreviewRuntime | undefined {
   if (!readEnvironmentSupportsServerBrowser(environmentId)) return undefined;
+  const primaryEnvironmentId = appAtomRegistry.get(primaryEnvironmentIdAtom);
   if (
     isPreviewSupportedInRuntime() &&
-    environmentId !== appAtomRegistry.get(primaryEnvironmentIdAtom)
+    environmentId !== primaryEnvironmentId &&
+    !guardsPreviewTab(environmentId, primaryEnvironmentId, remoteDeviceAccess())
   ) {
     return undefined;
   }
