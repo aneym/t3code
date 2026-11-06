@@ -85,8 +85,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
-import * as ScheduledRunWorkspace from "../scheduledTasks/ScheduledRunWorkspace.ts";
-import * as ScheduledRunStart from "../scheduledTasks/ScheduledRunStart.ts";
+import * as ScheduledRunTesting from "../scheduledTasks/ScheduledRunTesting.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
@@ -105,6 +104,7 @@ const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-orchestration-v2-runtime-layer-",
 });
 
+const startNow = { type: "start_immediately" } as const;
 const modelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.4",
@@ -324,13 +324,7 @@ const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
       Layer.mock(ThreadManagementService.ThreadManagementService)({}),
       Layer.mock(SecretRequests.SecretRequests)({}),
-      Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
-        resolve: (task) => Effect.succeed(task.workspaceStrategy),
-      }),
-      Layer.mock(ScheduledRunStart.ScheduledRunStart)({
-        watch: () => Effect.void,
-        recover: () => Effect.void,
-      }),
+      ScheduledRunTesting.layerPassthrough,
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
@@ -908,7 +902,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         messageId: MessageId.make(`${name}-message`),
         text: "Create the provider thread and checkpoint scope.",
         attachments: [],
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
       });
       const scope = (yield* orchestrator.getThreadProjection(threadId)).checkpointScopes[0]!;
       const now = yield* DateTime.now;
@@ -1014,7 +1008,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         messageId: MessageId.make("runtime-rollback-readiness-message"),
         text: "Create the provider thread and checkpoint scope.",
         attachments: [],
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
       });
       const projection = yield* orchestrator.getThreadProjection(threadId);
       const scope = projection.checkpointScopes[0]!;
@@ -1176,7 +1170,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         messageId: MessageId.make("runtime-delivery-intent-first"),
         text: "Start work.",
         attachments: [],
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
       });
       const initial = yield* orchestrator.getThreadProjection(threadId);
       const run = initial.runs[0]!;
@@ -1251,7 +1245,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         messageId: steerMessageId,
         text: "Include this in the active work.",
         attachments: [],
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
         deliveryIntent: "auto",
       });
       const steered = yield* orchestrator.getThreadProjection(threadId);
@@ -1304,7 +1298,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         messageId: MessageId.make("runtime-delivery-intent-next"),
         text: "The previous run finished before this arrived.",
         attachments: [],
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
         deliveryIntent: "restart",
       });
       const restarted = yield* orchestrator.getThreadProjection(threadId);
@@ -1456,7 +1450,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             attachments: [],
             createdBy: "user",
             creationSource: "web",
-            dispatchMode: { type: "start_immediately" },
+            dispatchMode: startNow,
           });
         }
         const runId = (yield* orchestrator.getThreadProjection(threadId)).runs[0]?.id ?? null;
@@ -2123,7 +2117,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         messageId: MessageId.make("runtime-layer-merge-target-message"),
         text: "Keep working in the parent.",
         attachments: [],
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
       });
       const activeTarget = yield* orchestrator.getThreadProjection(targetThreadId);
       const targetRun = activeTarget.runs[0]!;
@@ -4192,7 +4186,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           text: "Original work",
           attachments: [],
           modelSelection,
-          dispatchMode: { type: "start_immediately" },
+          dispatchMode: startNow,
         });
         const original = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
         const now = yield* DateTime.now;
@@ -4314,7 +4308,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           text: "Original work",
           attachments: [],
           modelSelection,
-          dispatchMode: { type: "start_immediately" },
+          dispatchMode: startNow,
         });
         const original = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
         const now = yield* DateTime.now;
@@ -4364,7 +4358,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           text: "Note: the T3 server restarted.",
           attachments: [],
           modelSelection,
-          dispatchMode: { type: "start_immediately" },
+          dispatchMode: startNow,
           restartContinuationOfRunId: original.id,
         });
         const projection = yield* orchestrator.getThreadProjection(threadId);
@@ -4410,7 +4404,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         text: "Keep this run active.",
         attachments: [],
         modelSelection,
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
       });
 
       const nonEmptyClaim = yield* orchestrator
@@ -4474,7 +4468,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         text: "Fix it and then settle this thread.",
         attachments: [],
         modelSelection,
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
       });
       const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0];
       if (run === undefined) return yield* Effect.die(new Error("Run missing."));
@@ -4540,7 +4534,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         text: "Active",
         attachments: [],
         modelSelection,
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
       });
       const queueMessage = (id: string, automatic: boolean) =>
         orchestrator.dispatch({
@@ -4618,7 +4612,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         text: "Active again",
         attachments: [],
         modelSelection,
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
       });
       yield* queueMessage("settle-automatic-user-queued", false);
       yield* holdQueueAfterRestart("settle-automatic-restart-2");
@@ -4775,7 +4769,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           text: "Active",
           attachments: [],
           modelSelection,
-          dispatchMode: { type: "start_immediately" },
+          dispatchMode: startNow,
         });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -5775,7 +5769,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           text: "Delegate a task",
           attachments: [],
           modelSelection,
-          dispatchMode: { type: "start_immediately" },
+          dispatchMode: startNow,
           createdBy: "user",
           creationSource: "web",
         });
@@ -6068,7 +6062,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           text: "Work that the restart cut",
           attachments: [],
           modelSelection,
-          dispatchMode: { type: "start_immediately" },
+          dispatchMode: startNow,
         });
         const cut = (yield* runFor("cut"))!;
         yield* write("cut:cancelled", { ...cut, status: "cancelled" });
@@ -6082,7 +6076,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           text: "Continue where you left off.",
           attachments: [],
           modelSelection,
-          dispatchMode: { type: "start_immediately" },
+          dispatchMode: startNow,
           restartContinuationOfRunId: cut.id,
         });
         yield* orchestrator.dispatch({
@@ -6408,7 +6402,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         text: "Keep the provider occupied.",
         attachments: [],
         modelSelection,
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
       });
       yield* orchestrator.dispatch({
         type: "message.dispatch",
@@ -6575,7 +6569,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
         text: "Do not reach the provider.",
         attachments: [],
         modelSelection,
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
       });
 
       const starting = yield* orchestrator.getThreadProjection(threadId);
@@ -6640,7 +6634,7 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           text: "Active run",
           attachments: [],
           modelSelection,
-          dispatchMode: { type: "start_immediately" },
+          dispatchMode: startNow,
           createdBy: "user",
           creationSource: "web",
         });
@@ -6925,7 +6919,7 @@ it.layer(layerScratchPromotionTest)("turning a No project thread into a project"
         text: "Keep this run active.",
         attachments: [],
         modelSelection,
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
       });
 
       const error = yield* promotion.promote({ threadId }).pipe(Effect.flip);
@@ -7087,7 +7081,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         text: "Wake this thread.",
         attachments: [],
         modelSelection,
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
       });
 
       const awakened = yield* orchestrator.getThreadProjection(threadId);
@@ -7150,7 +7144,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         text: "Keep this run active.",
         attachments: [],
         modelSelection,
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
       });
 
       const otherFolder = yield* adopt(idleThreadId, otherProjectId, "other").pipe(Effect.flip);
@@ -8224,7 +8218,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         usageLimitContinuationOfRunId: run.id,
         text: "Continue where you left off.",
         attachments: [],
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: startNow,
         createdBy: "user",
         creationSource: "server",
       });

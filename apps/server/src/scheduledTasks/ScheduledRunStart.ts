@@ -36,17 +36,16 @@ export class ScheduledRunStart extends Context.Service<
   }
 >()("t3/scheduledTasks/ScheduledRunStart") {}
 
-type RunState = Pick<OrchestrationV2Run, "status" | "startedAt">;
+type RunStatus = OrchestrationV2Run["status"];
 
-const awaitingStart = (run: RunState) =>
-  run.startedAt === null && (run.status === "preparing" || run.status === "queued");
+const reachedWork = (status: RunStatus) =>
+  status === "running" || status === "waiting" || status === "completed";
 
-const endedBeforeStart = (run: RunState) =>
-  run.startedAt === null &&
-  (run.status === "failed" ||
-    run.status === "cancelled" ||
-    run.status === "interrupted" ||
-    run.status === "rolled_back");
+const endedEarly = (status: RunStatus) =>
+  status === "failed" ||
+  status === "cancelled" ||
+  status === "interrupted" ||
+  status === "rolled_back";
 
 const fireKeys = (row: {
   readonly task_id: string;
@@ -72,22 +71,23 @@ export const layer = Layer.effect(
       threadId: ThreadId,
       messageId: MessageId,
     ) {
-      const afterSequence = yield* threads.getThreadEventSequence(threadId);
       const { runs } = yield* threads.getThreadRecords(threadId, ["runs"]);
       const run = runs.find((candidate) => candidate.userMessageId === messageId);
-      if (run === undefined) return null;
-      const settled = !awaitingStart(run)
-        ? run
-        : yield* threads
-            .streamStoredEventsFrom({ threadId, afterSequence, eventType: "run.updated" })
-            .pipe(
-              Stream.map(({ event }) => (event.type === "run.updated" ? event.payload : null)),
-              Stream.filter((updated) => updated?.id === run.id && !awaitingStart(updated)),
-              Stream.runHead,
-              Effect.map(Option.getOrNull),
-            );
-      if (settled === null || !endedBeforeStart(settled)) return null;
-      if (settled.status !== "failed") return STOPPED_BEFORE_START;
+      if (run === undefined || reachedWork(run.status)) return null;
+      const outcome = yield* threads
+        .streamStoredEventsFrom({ threadId, eventType: "run.updated" })
+        .pipe(
+          Stream.map(({ event }) =>
+            event.type === "run.updated" && event.payload.id === run.id
+              ? event.payload.status
+              : null,
+          ),
+          Stream.filter((status) => status !== null && (reachedWork(status) || endedEarly(status))),
+          Stream.runHead,
+          Effect.map(Option.getOrNull),
+        );
+      if (outcome === null || !endedEarly(outcome)) return null;
+      if (outcome !== "failed") return STOPPED_BEFORE_START;
       const { turnItems } = yield* threads.getThreadRecords(threadId, ["turnItems"], {
         turnItemRunId: run.id,
         turnItemTypes: ["command_execution"],
@@ -96,9 +96,9 @@ export const layer = Layer.effect(
       const failure = turnItems.findLast(
         (item) => item.type === "command_execution" && item.title === PREPARATION_FAILED,
       );
-      return failure?.type === "command_execution"
-        ? (failure.output ?? PREPARATION_FAILED)
-        : FAILED_BEFORE_START;
+      if (failure?.type === "command_execution") return failure.output ?? PREPARATION_FAILED;
+      const shell = yield* threads.getThreadShell(threadId);
+      return shell?.lastError ?? FAILED_BEFORE_START;
     });
 
     const watch = Effect.fn("ScheduledRunStart.watch")(

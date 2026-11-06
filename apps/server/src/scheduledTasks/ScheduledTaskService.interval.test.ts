@@ -14,8 +14,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
-import * as ScheduledRunWorkspace from "./ScheduledRunWorkspace.ts";
-import * as ScheduledRunStart from "./ScheduledRunStart.ts";
+import * as ScheduledRunTesting from "./ScheduledRunTesting.ts";
 import { ServerActivation } from "../serverActivation.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -35,13 +34,7 @@ const dependencies = Layer.mergeAll(
   }),
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
-  Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
-    resolve: (task) => Effect.succeed(task.workspaceStrategy),
-  }),
-  Layer.mock(ScheduledRunStart.ScheduledRunStart)({
-    watch: () => Effect.void,
-    recover: () => Effect.void,
-  }),
+  ScheduledRunTesting.layerPassthrough,
 );
 const serviceLayer = ScheduledTaskService.layer.pipe(Layer.provide(dependencies));
 const decodeInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);

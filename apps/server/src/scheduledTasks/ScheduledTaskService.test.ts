@@ -27,14 +27,23 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
-import * as ScheduledRunWorkspace from "./ScheduledRunWorkspace.ts";
-import * as ScheduledRunStart from "./ScheduledRunStart.ts";
+import * as ScheduledRunTesting from "./ScheduledRunTesting.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
+
+const layerTaskStubs = Layer.mergeAll(
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+    namedProjectsRoot: "/projects",
+    isScratchProject: () => Effect.succeed(false),
+  }),
+  Layer.mock(SecretRequests.SecretRequests)({}),
+  ScheduledRunTesting.layerPassthrough,
+  NodeCrypto.layer,
+);
 
 const insertRow = (
   sql: SqlClient.SqlClient,
@@ -207,20 +216,8 @@ it.effect(
                       Effect.andThen(Effect.die(new Error("test launch failure"))),
                     ),
                 }),
-                Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-                  namedProjectsRoot: "/projects",
-                  isScratchProject: () => Effect.succeed(false),
-                }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-                Layer.mock(SecretRequests.SecretRequests)({}),
-                Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
-                  resolve: (task) => Effect.succeed(task.workspaceStrategy),
-                }),
-                Layer.mock(ScheduledRunStart.ScheduledRunStart)({
-                  watch: () => Effect.void,
-                  recover: () => Effect.void,
-                }),
-                NodeCrypto.layer,
+                layerTaskStubs,
                 Scheduler.layer,
               ),
             ),
@@ -312,20 +309,8 @@ it.effect(
                       Effect.andThen(Effect.die(new Error("test launch failure"))),
                     ),
                 }),
-                Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-                  namedProjectsRoot: "/projects",
-                  isScratchProject: () => Effect.succeed(false),
-                }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-                Layer.mock(SecretRequests.SecretRequests)({}),
-                Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
-                  resolve: (task) => Effect.succeed(task.workspaceStrategy),
-                }),
-                Layer.mock(ScheduledRunStart.ScheduledRunStart)({
-                  watch: () => Effect.void,
-                  recover: () => Effect.void,
-                }),
-                NodeCrypto.layer,
+                layerTaskStubs,
                 Scheduler.layer,
               ),
             ),
@@ -375,19 +360,7 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
                 Effect.andThen(Effect.die("test dispatch failure")),
               ),
           }),
-          Layer.mock(SecretRequests.SecretRequests)({}),
-          Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
-            resolve: (task) => Effect.succeed(task.workspaceStrategy),
-          }),
-          Layer.mock(ScheduledRunStart.ScheduledRunStart)({
-            watch: () => Effect.void,
-            recover: () => Effect.void,
-          }),
-          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-            namedProjectsRoot: "/projects",
-            isScratchProject: () => Effect.succeed(false),
-          }),
-          NodeCrypto.layer,
+          layerTaskStubs,
           Scheduler.layer,
         ),
       ),
@@ -466,19 +439,7 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
                 rest,
               ]),
           }),
-          Layer.mock(SecretRequests.SecretRequests)({}),
-          Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
-            resolve: (task) => Effect.succeed(task.workspaceStrategy),
-          }),
-          Layer.mock(ScheduledRunStart.ScheduledRunStart)({
-            watch: () => Effect.void,
-            recover: () => Effect.void,
-          }),
-          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-            namedProjectsRoot: "/projects",
-            isScratchProject: () => Effect.succeed(false),
-          }),
-          NodeCrypto.layer,
+          layerTaskStubs,
           Scheduler.layer,
         ),
       ),
@@ -525,19 +486,7 @@ it.effect("refuses saving an enabled task above the policy ceiling", () =>
           }),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-          Layer.mock(SecretRequests.SecretRequests)({}),
-          Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
-            resolve: (task) => Effect.succeed(task.workspaceStrategy),
-          }),
-          Layer.mock(ScheduledRunStart.ScheduledRunStart)({
-            watch: () => Effect.void,
-            recover: () => Effect.void,
-          }),
-          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-            namedProjectsRoot: "/projects",
-            isScratchProject: () => Effect.succeed(false),
-          }),
-          NodeCrypto.layer,
+          layerTaskStubs,
           Scheduler.layer,
         ),
       ),
@@ -600,19 +549,7 @@ it.effect("a run interrupted right after it reserves the task does not block the
               ),
           }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-          Layer.mock(SecretRequests.SecretRequests)({}),
-          Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
-            resolve: (task) => Effect.succeed(task.workspaceStrategy),
-          }),
-          Layer.mock(ScheduledRunStart.ScheduledRunStart)({
-            watch: () => Effect.void,
-            recover: () => Effect.void,
-          }),
-          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-            namedProjectsRoot: "/projects",
-            isScratchProject: () => Effect.succeed(false),
-          }),
-          NodeCrypto.layer,
+          layerTaskStubs,
           Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
         ),
       ),

@@ -36,17 +36,16 @@ export const makeMarkScheduledTaskRunning = (sql: SqlClient.SqlClient) =>
       });
   });
 
-export const makeMarkScheduledTaskCompleted =
-  (sql: SqlClient.SqlClient) =>
-  (input: {
+export const makeMarkScheduledTaskCompleted = (sql: SqlClient.SqlClient) =>
+  Effect.fn("ScheduledTaskService.markCompleted")(function* (input: {
     readonly id: ScheduledTaskId;
     readonly completedAtIso: string;
     readonly nextRunAtIso: string | null;
     readonly status: "succeeded" | "failed";
     readonly error: string | null;
     readonly startedAtIso: string;
-  }) =>
-    sql`
+  }) {
+    const rows = yield* sql<{ task_id: string }>`
       UPDATE scheduled_tasks
       SET updated_at = ${input.completedAtIso},
           next_run_at = ${input.nextRunAtIso},
@@ -58,7 +57,6 @@ export const makeMarkScheduledTaskCompleted =
         AND last_run_at = ${input.startedAtIso}
       RETURNING task_id
     `.pipe(
-      Effect.map((rows) => rows.length > 0),
       Effect.mapError(
         (cause) =>
           new ScheduledTaskError({
@@ -68,3 +66,5 @@ export const makeMarkScheduledTaskCompleted =
           }),
       ),
     );
+    return rows.length > 0;
+  });
