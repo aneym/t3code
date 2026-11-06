@@ -134,8 +134,7 @@ def stopped(home):
 
 
 def security_pins(settings):
-    keys = ("cursorKeychainUsageEnabled", "providerInstances") if sys.platform == "darwin" else ("cursorKeychainUsageEnabled",)
-    return {key: settings[key] for key in keys if key in settings}
+    return {key: settings[key] for key in ("cursorKeychainUsageEnabled", "providerInstances") if key in settings}
 
 
 def service_absent(run):

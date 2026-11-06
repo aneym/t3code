@@ -63,7 +63,7 @@ def pin_settings(settings_path, work, refusals, keep=()):
     path = Path(settings_path)
     settings = json.loads(path.read_text()) if path.is_file() else {}
     settings["cursorKeychainUsageEnabled"] = False
-    wrapper = headless_bin(Path(work) / "headless-bin", Path(refusals).resolve()) / "claude"
+    wrapper = None
     instances = settings.get("providerInstances")
     instances = settings["providerInstances"] = instances if isinstance(instances, dict) else {}
     if not isinstance(instances.get("claudeAgent"), dict):
@@ -75,6 +75,7 @@ def pin_settings(settings_path, work, refusals, keep=()):
             continue
         config = instance["config"] = instance["config"] if isinstance(instance.get("config"), dict) else {}
         if config.get("binaryPath") not in kept:
+            wrapper = wrapper or headless_bin(Path(work) / "headless-bin", Path(refusals).resolve()) / "claude"
             config["binaryPath"] = str(wrapper)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2) + "\n")
