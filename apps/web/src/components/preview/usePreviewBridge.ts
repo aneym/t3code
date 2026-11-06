@@ -10,7 +10,7 @@ import { useEffect, useEffectEvent, useRef } from "react";
 import { recordFaviconForThread } from "~/browserFaviconStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { acquireBrowserSurfaceActivity } from "~/browser/browserSurfaceStore";
-import { recordNativeTabFailure } from "~/browser/nativeTabFailures";
+import { isGuardRefusal, recordNativeTabFailure } from "~/browser/nativeTabFailures";
 import {
   applyPreviewDesktopState,
   type DesktopPreviewOverlay,
@@ -52,8 +52,16 @@ export function usePreviewBridge(input: {
   runtimeTabId: string;
   serverDriven?: boolean;
   mirrored?: boolean;
+  guarded?: boolean;
 }): void {
-  const { threadRef, tabId, runtimeTabId, serverDriven = false, mirrored = false } = input;
+  const {
+    threadRef,
+    tabId,
+    runtimeTabId,
+    serverDriven = false,
+    mirrored = false,
+    guarded = false,
+  } = input;
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
   const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
   const { environmentId, threadId } = threadRef;
@@ -73,7 +81,7 @@ export function usePreviewBridge(input: {
       captureActivity.current?.update(state.capturing);
       applyPreviewDesktopState(stableThreadRef, tabId, projectDesktopState(state, mirrored));
       const serverStatus =
-        mirrored && state.navStatus.kind === "LoadFailed"
+        guarded && state.navStatus.kind === "LoadFailed" && isGuardRefusal(state.navStatus.code)
           ? readThreadPreviewState(stableThreadRef).sessions[tabId]?.navStatus
           : undefined;
       if (serverStatus !== undefined && serverStatus._tag !== "Idle") {

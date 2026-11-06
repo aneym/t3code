@@ -66,10 +66,7 @@ export function alternatePreviewRuntime(
 ): PreviewRuntime | null {
   if (!snapshot || !serverBrowser || !isPreviewSupportedInRuntime()) return null;
   if (environmentId === primaryEnvironmentId) return null;
-  if (snapshot.runtime === "desktop") return "server";
-  return guardsPreviewTab(environmentId, primaryEnvironmentId, remoteDeviceAccess())
-    ? null
-    : "desktop";
+  return snapshot.runtime === "server" ? "desktop" : "server";
 }
 
 export function isPreviewAvailableFor(environmentId: EnvironmentId): boolean {

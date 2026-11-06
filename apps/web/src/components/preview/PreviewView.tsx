@@ -59,7 +59,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
-import { closePreviewSession } from "./closePreviewSession";
+import { finishPreviewTabMove } from "./finishPreviewTabMove";
 import { openPreviewSession } from "./openPreviewSession";
 import { showPreviewPopup } from "./showPreviewPopup";
 import { PreviewChromeRow } from "./PreviewChromeRow";
@@ -412,8 +412,7 @@ export function PreviewView({
       });
       return;
     }
-    useRightPanelStore.getState().openBrowser(threadRef, result.value.tabId);
-    await closePreviewSession({ closePreview, snapshot, tabId, threadRef });
+    await finishPreviewTabMove({ threadRef, from: snapshot, to: result.value, closePreview });
   };
 
   const handlePictureInPicture = () => {

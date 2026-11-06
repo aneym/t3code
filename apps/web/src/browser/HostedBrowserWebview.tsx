@@ -1,6 +1,7 @@
 import {
   type DesktopPreviewColorScheme,
   type PreviewViewportSetting,
+  REMOTE_DEVICE_BROWSER_PROFILE_ID,
   remoteDesktopBrowserThreadId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -112,6 +113,7 @@ export function HostedBrowserWebview(props: {
     runtimeTabId,
     serverDriven,
     mirrored,
+    guarded: profileId === REMOTE_DEVICE_BROWSER_PROFILE_ID,
   });
 
   const serverColorScheme = serverRendering?.colorScheme;

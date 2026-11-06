@@ -10,6 +10,7 @@ import { environmentSession } from "~/state/session";
 
 import { isLocalPreviewEnvironment } from "./previewRuntime";
 import { advancePreviewTrustEpoch } from "./previewTrustEpoch";
+import { remoteDeviceAccess } from "./remoteDeviceAccess";
 
 export function startPreviewTrustReset(): () => void {
   const reachedRemotely = new Set<EnvironmentId>();
@@ -30,7 +31,7 @@ export function startPreviewTrustReset(): () => void {
       }
       if (!isLocalPreviewEnvironment(environmentId, primaryEnvironmentId)) {
         reachedRemotely.add(environmentId);
-      } else if (reachedRemotely.delete(environmentId)) {
+      } else if (reachedRemotely.delete(environmentId) && remoteDeviceAccess() !== "off") {
         clearEnvironmentPreviews(environmentId);
       }
     }
@@ -54,16 +55,13 @@ function clearEnvironmentPreviews(environmentId: EnvironmentId): void {
   const lists = refs.map((ref) =>
     previewEnvironment.list({ environmentId, input: { threadId: ref.threadId } }),
   );
-  const cached: unknown[] = [];
   const latestEvent = appAtomRegistry.getNodes().get(events)?.valueOption();
-  if (latestEvent?._tag === "Some" && AsyncResult.isSuccess(latestEvent.value)) {
-    cached.push(latestEvent.value.value);
-  }
-  for (const list of lists) {
-    const node = appAtomRegistry.getNodes().get(list)?.valueOption();
-    if (node?._tag === "Some") cached.push(node.value);
-  }
-  advancePreviewTrustEpoch(environmentId, cached);
+  advancePreviewTrustEpoch(
+    environmentId,
+    latestEvent?._tag === "Some" && AsyncResult.isSuccess(latestEvent.value)
+      ? [latestEvent.value.value]
+      : [],
+  );
   for (const ref of refs) clearThreadPreviewState(ref);
   if (appAtomRegistry.getNodes().has(events)) appAtomRegistry.refresh(events);
   for (const list of lists) appAtomRegistry.refresh(list);

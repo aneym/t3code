@@ -1,12 +1,17 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useSyncExternalStore } from "react";
 
+const GUARD_REFUSAL_CODES = new Set([-20, -111, -324]);
 const failedServerUrls = new Map<string, string>();
 const listeners = new Set<() => void>();
 let version = 0;
 
 const keyOf = (environmentId: EnvironmentId, tabId: string) =>
   JSON.stringify([environmentId, tabId]);
+
+export function isGuardRefusal(code: number): boolean {
+  return GUARD_REFUSAL_CODES.has(code);
+}
 
 export function recordNativeTabFailure(
   environmentId: EnvironmentId,
