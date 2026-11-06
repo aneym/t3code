@@ -59,6 +59,7 @@ export function ConfirmDialogHost() {
 
   const copy = resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message);
   const confirmVariant = state.status === "idle" ? "default" : state.variant;
+  const choices = state.status === "idle" ? undefined : state.choices;
   const onCancel = () => respondToConfirmDialog(false);
   const onConfirm = () => respondToConfirmDialog(true);
 
@@ -83,9 +84,21 @@ export function ConfirmDialogHost() {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button variant={confirmVariant} onClick={onConfirm}>
-            Confirm
-          </Button>
+          {choices === undefined ? (
+            <Button variant={confirmVariant} onClick={onConfirm}>
+              Confirm
+            </Button>
+          ) : (
+            choices.map((choice) => (
+              <Button
+                key={choice.id}
+                variant={choice.variant ?? "default"}
+                onClick={() => respondToConfirmDialog(choice.id)}
+              >
+                {choice.label}
+              </Button>
+            ))
+          )}
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>

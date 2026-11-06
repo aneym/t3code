@@ -487,6 +487,10 @@
       "types": "./src/mcpApps/host.ts",
       "default": "./src/mcpApps/host.ts"
     },
+    "./mcp-apps/tool-consent": {
+      "types": "./src/mcpApps/toolConsent.ts",
+      "default": "./src/mcpApps/toolConsent.ts"
+    },
     "./state/mcp-apps": {
       "types": "./src/state/mcpApps.ts",
       "default": "./src/state/mcpApps.ts"

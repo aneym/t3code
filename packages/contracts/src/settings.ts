@@ -1,3 +1,4 @@
+import * as ForkMcpAppGrants from "./forkMcpAppGrantSettings.ts";
 import * as ForkPreview from "./forkPreviewSettings.ts";
 import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
 import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
@@ -1160,7 +1161,6 @@ export const ServerSettings = Schema.Struct({
   ),
 
   worktreesDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
-  /** Server-maintained history keeps old worktrees eligible for cleanup and review diffs. */
   previousWorktreesDirectories: Schema.Array(TrimmedString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -1168,10 +1168,9 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
   ),
   enableProviderUpdateChecks: DefaultTrue,
-  continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(true)),
-  ),
+  continueThreadsAfterServerUpdate: DefaultTrue,
   ...ForkThreadSettingsFields,
+  ...ForkMcpAppGrants.Server,
 
   enableAgentBrowserAccess: DefaultTrue,
   ...ForkPreview.Server,
@@ -1554,6 +1553,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   ...ForkThreadSettingsPatchFields,
+  ...ForkMcpAppGrants.ServerPatch,
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   ...ForkPreview.ServerPatch,
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
