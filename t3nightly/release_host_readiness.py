@@ -4,6 +4,7 @@ import subprocess
 from .release_config import CHAT_PROJECT, SEEDS
 from .release_manifest import migration_identity
 from .release_targets import LINUX_TARGETS
+from .serving_assembly import serving_assembly_head
 from .remote_shell import ssh_argv
 
 
@@ -30,14 +31,8 @@ row["head"] = None
 if row["serving"]:
     current = Path(remote_run)
     root = current.parent.parent if current.name.startswith("fast") else current.parent
-    roots = (root / row["serving"], home / ".t3nightly/runs" / row["serving"])
-    for path in (path for runs in roots for path in (runs / "fast/assembly.json", runs / "assembly.json")):
-        if path.is_file():
-            try:
-                row["head"] = json.loads(path.read_text()).get("head")
-            except (OSError, ValueError, AttributeError):
-                pass
-            break
+    from t3nightly.serving_assembly import serving_assembly_head
+    row["head"] = next((head for runs in (root / row["serving"], home / ".t3nightly/runs" / row["serving"]) if (head := serving_assembly_head(runs))), None)
 row["liveHistory"] = None
 try:
     with closing(sqlite3.connect(f"file:{home / '.t3/userdata/statev2.sqlite'}?mode=ro", uri=True)) as connection:
@@ -67,12 +62,7 @@ print(json.dumps(row))
 
 
 def serving_head(config, version):
-    runs = config.home / ".t3nightly/runs" / str(version)
-    assembly = next((path for path in (runs / "fast/assembly.json", runs / "assembly.json") if path.is_file()), None)
-    try:
-        return json.loads(assembly.read_text()).get("head") if version and assembly else None
-    except (OSError, ValueError, AttributeError):
-        return None
+    return serving_assembly_head(config.home / ".t3nightly/runs" / str(version)) if version else None
 
 def remote_probe(config, log, host="ax42"):
     words = [*ssh_argv(LINUX_TARGETS[host], '-oConnectTimeout=5'), "python3", "-", config.remote_tools, SEEDS, config.version, CHAT_PROJECT, config.remote_run]
