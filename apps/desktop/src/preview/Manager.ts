@@ -1850,7 +1850,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       return yield* new PreviewTabNotFoundError({ tabId });
     }
     const { state: registered, pendingUrl } = registration.value;
-    // Concurrent actions targeted the previous guest; reconcile this one with committed zoom and mute.
     yield* assertTabZoom(tabId);
     yield* assertTabAudioMuted(tabId).pipe(Effect.ignore);
     runFork(restoreControlSession(tabId, wc));
@@ -1864,6 +1863,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const latestNavStatus = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.navStatus;
     if (
       pendingUrl &&
+      !RemoteDeviceSession.isGuarded(wc.session) &&
       latestNavStatus?.kind === "Loading" &&
       latestNavStatus.url === pendingUrl &&
       wc.getURL() !== pendingUrl

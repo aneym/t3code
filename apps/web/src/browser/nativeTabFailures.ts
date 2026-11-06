@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useSyncExternalStore } from "react";
 
-const GUARD_REFUSAL_CODES = new Set([-20, -111, -324]);
+const ERR_BLOCKED_BY_CLIENT = -20;
 const failedUrls = new Map<string, ReadonlySet<string>>();
 const listeners = new Set<() => void>();
 let version = 0;
@@ -11,7 +11,7 @@ const keyOf = (environmentId: EnvironmentId, tabId: string) =>
 const normalized = (url: string) => URL.parse(url)?.href ?? url;
 
 export function isGuardRefusal(code: number): boolean {
-  return GUARD_REFUSAL_CODES.has(code);
+  return code === ERR_BLOCKED_BY_CLIENT;
 }
 
 export function recordNativeTabFailure(

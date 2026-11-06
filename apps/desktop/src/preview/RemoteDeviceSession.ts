@@ -1,17 +1,25 @@
 import type { Event, Session, WebContents } from "electron";
 import { app, webContents } from "electron";
 
+import * as RefusedLoads from "./RefusedLoads.ts";
 import { isBlockedHost } from "./RemoteDeviceAddress.ts";
 import * as RemoteDeviceProxy from "./RemoteDeviceProxy.ts";
 
 const NETWORK_SCHEMES = new Set(["http:", "https:", "ws:", "wss:"]);
 const LOCAL_SCHEMES = new Set(["data:", "blob:", "devtools:"]);
 const BLANK_DOCUMENTS = new Set(["about:blank", "about:srcdoc"]);
+const FRAME_REQUESTS = new Set(["mainFrame", "subFrame"]);
 
 const guardedSessions = new WeakSet<Session>();
 const guardedTabs = new Map<string, number>();
 const guarding = new WeakMap<Session, Promise<void>>();
 let listening = false;
+
+export const isWebUrl = (raw: string) => {
+  if (BLANK_DOCUMENTS.has(raw)) return true;
+  const protocol = URL.parse(raw)?.protocol;
+  return protocol === "http:" || protocol === "https:";
+};
 
 export const isNavigableUrl = (raw: string) => {
   if (BLANK_DOCUMENTS.has(raw)) return true;
@@ -39,6 +47,7 @@ const guardContents = (contents: WebContents) => {
   contents.on("will-redirect", refuse);
   contents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  RefusedLoads.track(contents);
 };
 
 const install = async (session: Session) => {
@@ -47,9 +56,20 @@ const install = async (session: Session) => {
     proxyRules: `127.0.0.1:${proxyPort}`,
     proxyBypassRules: "<-loopback>",
   });
-  session.webRequest.onBeforeRequest((details, callback) =>
-    callback({ cancel: !allowsRequest(details.url) }),
-  );
+  session.webRequest.onBeforeRequest((details, callback) => {
+    const load = RefusedLoads.pending(details);
+    const refuse = () => {
+      RefusedLoads.refused(load);
+      callback({ cancel: true });
+    };
+    if (!allowsRequest(details.url)) return refuse();
+    if (!FRAME_REQUESTS.has(details.resourceType)) return callback({});
+    const host = URL.parse(details.url)?.hostname ?? "";
+    RemoteDeviceProxy.pinnedAddress(host).then(
+      (address) => (address === undefined ? refuse() : callback({})),
+      () => callback({}),
+    );
+  });
   session.on("will-download", (event) => event.preventDefault());
   guardedSessions.add(session);
   if (listening) return;

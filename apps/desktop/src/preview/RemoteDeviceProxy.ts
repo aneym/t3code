@@ -7,7 +7,7 @@ import { canonicalAddress, isBlockedAddress, isBlockedHost } from "./RemoteDevic
 
 const REFUSED = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
 
-const pinnedAddress = async (host: string) => {
+export const pinnedAddress = async (host: string) => {
   const bare = host.replace(/^\[|\]$/gu, "");
   if (isBlockedHost(bare)) return undefined;
   const literal = canonicalAddress(bare);

@@ -113,7 +113,7 @@ export const admit = Effect.fn("desktop.remoteBrowserScope.admit")(function* (te
   const allowed = grants(yield* store.get.pipe(Effect.orElseSucceed(() => Option.none())));
   if (command.value.type === "mirror") {
     const { tabId, url } = command.value;
-    return allowed.show && RemoteDeviceSession.isNavigableUrl(url)
+    return allowed.show && RemoteDeviceSession.isWebUrl(url)
       ? Option.some<AdmittedCommand>({ type: "navigate", tabId, url })
       : Option.none<AdmittedCommand>();
   }
