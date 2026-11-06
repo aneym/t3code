@@ -43,6 +43,7 @@ export class HistoryRetention extends Context.Service<
 >()("t3/orchestration-v2/HistoryRetention") {}
 
 const TRIMMED_ITEM_TYPES = new Set(["command_execution", "dynamic_tool"]);
+const FILE_CHANGE_TEXT_FIELDS = ["diffStr", "oldStr", "newStr"] as const;
 
 const ESCAPE_SEQUENCE =
   /\u001b(?:\[[0-?]*[ -/]*[@-~]|[\]PX^_][^\u0007\u001b]*(?:\u0007|\u001b\\)|[ -/]*(?![[\]PX^_])[0-~])/y;
@@ -99,12 +100,34 @@ const trimOutput = (output: unknown) => {
     : output;
 };
 
-const trimItemPayload = (payloadJson: string) => {
+const trimFileChange = (payload: Record<string, unknown>) => {
+  const next = { ...payload };
+  for (const field of FILE_CHANGE_TEXT_FIELDS) {
+    const value = payload[field];
+    if (typeof value === "string") next[field] = trimText(value);
+  }
+  return FILE_CHANGE_TEXT_FIELDS.some((field) => next[field] !== payload[field]) ? next : payload;
+};
+
+const trimItem = (payload: Record<string, unknown>, archived: boolean) => {
+  if (typeof payload.type === "string" && TRIMMED_ITEM_TYPES.has(payload.type)) {
+    const output = trimOutput(payload.output);
+    return output === payload.output ? payload : { ...payload, output };
+  }
+  if (!archived) return payload;
+  if (payload.type === "reasoning") {
+    return typeof payload.text === "string" && payload.text !== ""
+      ? { ...payload, text: "" }
+      : payload;
+  }
+  return payload.type === "file_change" ? trimFileChange(payload) : payload;
+};
+
+const trimItemPayload = (payloadJson: string, archived: boolean) => {
   const payload = JSON.parse(payloadJson) as Record<string, unknown>;
-  if (typeof payload.type !== "string" || !TRIMMED_ITEM_TYPES.has(payload.type)) return undefined;
-  const output = trimOutput(payload.output);
-  if (output === payload.output) return undefined;
-  return { itemId: String(payload.id), payload: JSON.stringify({ ...payload, output }) };
+  const trimmed = trimItem(payload, archived);
+  if (trimmed === payload) return undefined;
+  return { itemId: String(payload.id), payload: JSON.stringify(trimmed) };
 };
 
 const withoutWorkflow = (payloadJson: string) => {
@@ -149,12 +172,16 @@ const make = Effect.gen(function* () {
     )
   `;
 
-  const commit = (threadId: string, cutoff: string, batch: Batch) =>
+  const archivedThread = (cutoff: string) =>
+    sql`COALESCE(thread.deleted_at, thread.archived_at) < ${cutoff}`;
+
+  const commit = (threadId: string, cutoff: string, archived: boolean, batch: Batch) =>
     sql.withTransaction(
       Effect.gen(function* () {
         const idle = yield* sql`
           SELECT 1 FROM orchestration_v2_projection_threads AS thread
           WHERE thread.thread_id = ${threadId} AND ${idleThread(cutoff)}
+            AND ${archived ? archivedThread(cutoff) : sql`1`}
         `;
         if (idle.length === 0) return yield* new ThreadNoLongerIdle();
         for (const rewrite of batch.events) {
@@ -188,7 +215,10 @@ const make = Effect.gen(function* () {
         Buffer.byteLength(after) +
         pageSize * (2 + Math.ceil(before / pageSize / FREED_PAGES_PER_MAP_PAGE));
 
-      const trimThread = Effect.fn("HistoryRetention.trimThread")(function* (threadId: string) {
+      const trimThread = Effect.fn("HistoryRetention.trimThread")(function* (
+        threadId: string,
+        archived: boolean,
+      ) {
         const workflowKept = new Set<string>();
         const pairedItems = new Set<string>();
         let batch: Batch = { events: [], turnItems: [], cost: 0 };
@@ -197,7 +227,7 @@ const make = Effect.gen(function* () {
           if (batch.events.length === 0) return true;
           const done = batch;
           batch = { events: [], turnItems: [], cost: 0 };
-          const idle = yield* commit(threadId, cutoff, done).pipe(
+          const idle = yield* commit(threadId, cutoff, archived, done).pipe(
             Effect.as(true),
             Effect.catchTags({ ThreadNoLongerIdle: () => Effect.succeed(false) }),
           );
@@ -244,14 +274,31 @@ const make = Effect.gen(function* () {
             Effect.map((rows) => rows[0]),
           );
 
+        const [pendingReasoning] = archived
+          ? yield* sql<{ readonly pending: number }>`
+              SELECT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_turn_items
+                WHERE thread_id = ${threadId}
+                  AND type = 'reasoning'
+                  AND json_extract(payload_json, '$.text') <> ''
+              ) AS pending
+            `.pipe(NodeSqliteClient.readOnly)
+          : [];
+        const reasoningColumn =
+          pendingReasoning?.pending === 1
+            ? sql`event_type = 'turn-item.updated' AND json_extract(payload_json, '$.type') = 'reasoning'`
+            : sql`0`;
+
         let beforeSequence = Number.MAX_SAFE_INTEGER;
         while (true) {
           const page = yield* sql<{
             readonly sequence: number;
             readonly event_type: string;
             readonly bytes: number;
+            readonly reasoning: number;
           }>`
-            SELECT sequence, event_type, octet_length(payload_json) AS bytes
+            SELECT sequence, event_type, octet_length(payload_json) AS bytes,
+              ${reasoningColumn} AS reasoning
             FROM orchestration_events
             INDEXED BY idx_orchestration_events_agent_stream_sequence
             WHERE stream_id = ${threadId}
@@ -262,7 +309,7 @@ const make = Effect.gen(function* () {
             LIMIT ${EVENT_PAGE_SIZE}
           `.pipe(NodeSqliteClient.readOnly);
           for (const row of page) {
-            if (row.bytes <= TRIM_ABOVE_CHARACTERS) continue;
+            if (row.reasoning !== 1 && row.bytes <= TRIM_ABOVE_CHARACTERS) continue;
             if (row.event_type !== "turn-item.updated" && row.event_type !== "subagent.updated") {
               continue;
             }
@@ -283,7 +330,7 @@ const make = Effect.gen(function* () {
               if (!(yield* queue([event], [], writeCost(row.bytes, event.payload)))) return;
               continue;
             }
-            const trimmed = trimItemPayload(payloadJson);
+            const trimmed = trimItemPayload(payloadJson, archived);
             if (trimmed === undefined) continue;
             const event = {
               key: row.sequence,
@@ -296,7 +343,9 @@ const make = Effect.gen(function* () {
               pairedItems.add(trimmed.itemId);
               const projected = yield* readTurnItem(trimmed.itemId);
               const projectedTrim =
-                projected === undefined ? undefined : trimItemPayload(projected.payload_json);
+                projected === undefined
+                  ? undefined
+                  : trimItemPayload(projected.payload_json, archived);
               if (projected !== undefined && projectedTrim !== undefined) {
                 const before = Buffer.byteLength(projected.payload_json);
                 turnItems.push({
@@ -320,14 +369,14 @@ const make = Effect.gen(function* () {
 
       let afterThreadId = "";
       while (true) {
-        const threads = yield* sql<{ readonly thread_id: string }>`
-          SELECT thread.thread_id
+        const threads = yield* sql<{ readonly thread_id: string; readonly archived: number }>`
+          SELECT thread.thread_id, ${archivedThread(cutoff)} AS archived
           FROM orchestration_v2_projection_threads AS thread
           WHERE thread.thread_id > ${afterThreadId} AND ${idleThread(cutoff)}
           ORDER BY thread.thread_id ASC
           LIMIT ${THREAD_PAGE_SIZE}
         `.pipe(NodeSqliteClient.readOnly);
-        for (const thread of threads) yield* trimThread(thread.thread_id);
+        for (const thread of threads) yield* trimThread(thread.thread_id, thread.archived === 1);
         if (threads.length < THREAD_PAGE_SIZE) break;
         afterThreadId = threads.at(-1)!.thread_id;
       }

@@ -16,6 +16,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { resolveHostCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
+import * as DeletedThreadPurge from "../orchestration-v2/DeletedThreadPurge.ts";
 import * as HistoryRetention from "../orchestration-v2/HistoryRetention.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -40,6 +41,7 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
   const retention = yield* HistoryRetention.HistoryRetention;
+  const purge = yield* DeletedThreadPurge.DeletedThreadPurge;
   const settings = yield* Effect.serviceOption(Settings.ServerSettingsService);
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
@@ -128,6 +130,11 @@ const make = Effect.gen(function* () {
     }
     const idleBefore = yield* historyIdleBefore;
     if (Option.isNone(idleBefore)) return;
+    const purged = yield* purge.purgeDeletedThreads({
+      deletedBefore: idleBefore.value,
+      betweenPages,
+    });
+    if (purged.threads > 0) yield* Effect.logInfo("Removed old deleted threads", purged);
     const trimmed = yield* retention.trimIdleThreads({
       idleBefore: idleBefore.value,
       betweenPages,
@@ -175,5 +182,5 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(DatabaseStorage, make).pipe(
-  Layer.provide(HistoryRetention.layer),
+  Layer.provide(Layer.mergeAll(HistoryRetention.layer, DeletedThreadPurge.layer)),
 );

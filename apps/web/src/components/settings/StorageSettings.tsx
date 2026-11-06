@@ -708,9 +708,9 @@ const RETENTION_ROWS = [
   },
   {
     key: "threadHistoryAfterDays",
-    title: "Shorten old tool output",
+    title: "Trim old thread history",
     description:
-      "Keep the start and end of long tool output after a thread is settled or archived this long.",
+      "Shorten tool output after a thread settles; archived lose reasoning, deleted are removed.",
   },
 ] as const;
 

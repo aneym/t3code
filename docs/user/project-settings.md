@@ -251,11 +251,13 @@ Results also list folders in the worktree folder that no thread uses, with their
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
 
-**Shorten old tool output** keeps the first and last 2,048 characters of long command and tool
+**Trim old thread history** keeps the first and last 2,048 characters of long command and tool
 output once a thread has been settled, archived or deleted for the chosen number of days, and notes
-how much was removed. Messages, workflow results and file changes are kept. The removed output
+how much was removed. Threads archived that long also lose their reasoning text and have long file
+diffs shortened the same way. Threads deleted that long are removed entirely, unless a kept thread
+was forked from them or runs under them. Messages and workflow results are kept. The removed history
 cannot be restored, so keep a backup if you need it. Devices that already showed a thread may keep
-showing its full output until they reload it. It is off by default and runs with the six-hourly
+showing its full history until they reload it. It is off by default and runs with the six-hourly
 database maintenance.
 
 ## Project icons
