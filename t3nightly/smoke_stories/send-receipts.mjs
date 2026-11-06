@@ -177,7 +177,6 @@ try {
     assert(children.threads.every((item) => item.relationshipToParent === 'subagent'));
     return { real, children };
   }));
-  for (const threadId of threads) await mcp((tools) => call(tools, 't3_thread_organize', { threadId, action: 'settle' }));
   evidence.pass = true;
 } catch (error) {
   evidence.error = String(error.stack ?? error);
@@ -188,5 +187,6 @@ try {
   await new Promise((resolve) => proxy.close(resolve));
   evidence.completedAt = new Date().toISOString();
   await writeFile(output, JSON.stringify(evidence, null, 2));
+  for (const threadId of threads) await cli('archive', threadId).catch(() => console.error(`proof-archive failed: ${threadId}`));
   console.log(JSON.stringify({ pass: evidence.pass ?? false, output, error: evidence.error, assertions: evidence.assertions }));
 }

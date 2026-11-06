@@ -31,6 +31,7 @@ from t3nightly.release_approval import file_sha256, smoke_record, verdict_path  
 from t3nightly.smoke_checks import AGENT_HANDLE, AGENT_NAME, CHECKS  # noqa: E402
 from t3nightly.smoke_extra import story_steps  # noqa: E402
 from t3nightly.smoke_ui import ui  # noqa: E402
+from t3nightly.proof_cleanup import cleanup_checks, threads
 from t3nightly.gate_checks import queue_complete, queue_interrupt, starting_send  # noqa: E402
 
 
@@ -108,6 +109,7 @@ def boot(ctx, deadline):
     if code != 0:
         raise CheckFailed("t3 project add exited %d" % code)
     ctx.ready = True
+    ctx.proof_baseline = threads(ctx.home)
     return "served %s on %s from %s home" % (ctx.version, ctx.origin, "a seeded" if ctx.seed else "an empty")
 
 
@@ -172,6 +174,7 @@ def main():
                 continue
             steps.append(timed(name, limit, body, ctx))
     finally:
+        cleanup_checks(ctx)
         steps.append(timed("teardown", 120, teardown, ctx))
         redact_tree(ctx.logs)
         for step in steps:

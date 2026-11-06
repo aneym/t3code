@@ -9,6 +9,7 @@ from contextlib import closing
 from pathlib import Path
 
 from .identity_snapshot import for_version, read, take
+from .proof_archive import archive
 from .release_manifest import digest
 
 
@@ -66,6 +67,8 @@ def prove(run, version, baseline=None):
             message, payload = matching[0]
             proof = {"threadId": thread, "messageId": message, "nonce": nonce, "evidenceDigest": digest({"thread": thread, "run": turn, "message": message, "payload": json.loads(payload)})}
             run.step("hard-chat", version=version, provider=provider, model=model, **proof)
+            if not (baseline and version == args.version and args.force_rollback):
+                archive(run.runtime(version), run.home, thread, run.step)
             return {"proof": proof, "provider": provider, "model": model}
         if states and states[0][0] in ("failed", "cancelled", "interrupted", "rolled_back"):
             raise ValueError("real chat turn ended without a completed persisted reply")

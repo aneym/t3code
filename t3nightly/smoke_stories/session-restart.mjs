@@ -167,8 +167,8 @@ try {
   evidence.error = String(error.stack ?? error);
   process.exitCode = 1;
 } finally {
-  if (threadId) await t3(['thread', 'archive', threadId]).catch(() => {});
   evidence.finishedAt = new Date().toISOString();
   await writeFile(output, `${JSON.stringify(evidence, null, 2)}\n`);
+  if (threadId) await t3(['thread', 'archive', threadId]).catch(() => console.error(`proof-archive failed: ${threadId}`));
 }
 console.log(evidence.pass ? `PASS: ${evidence.assertions.length} assertions, proof ${output}` : `FAIL: ${evidence.error?.split('\n')[0]}`);

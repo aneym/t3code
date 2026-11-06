@@ -12,6 +12,7 @@ from .release_eligibility import RESTORE_CLASS
 from .release_manifest import TARGETS, digest, engine_identity, load
 from .release_receipts import REHEARSAL_SCHEMA, provenance, seal, write
 from .release_signatures import cli_binary, verify_archive
+from .proof_cleanup import cleanup, threads
 from .rehearsal_retention import retain
 from .rehearsal_sandbox import Sandbox, sha256
 from .rehearsal_workload import Workload
@@ -147,6 +148,7 @@ class Rehearsal:
             self.phase = "prepare"
             tick = time.monotonic()
             self.sandbox.prepare(self.args.health_s)
+            self.proof_baseline = threads(self.sandbox.home)
             self.old_history = self.sandbox.history()
             if self.old_history != self.manifest["targets"][self.args.target_host]["compatibility"]["baseMigrations"]["history"]:
                 raise ValueError("seed migration history differs from candidate base")
@@ -218,6 +220,8 @@ class Rehearsal:
                         signal.signal(number, signal.SIG_IGN)
                 finally:
                     try:
+                        if result["result"] in ("PASS", "COMPATIBILITY-PROBE", "ROLLBACK-PROOF") and hasattr(self, "proof_baseline"):
+                            cleanup(self.sandbox.user_cli(), self.sandbox.home, self.proof_baseline, lambda step, **fields: print(json.dumps({"step": step, **fields}), flush=True))
                         self.sandbox.close()
                     except BaseException as error:
                         result.update(result="FAIL", releaseEligible=False, teardownError=f"{type(error).__name__}: {error}")
@@ -289,4 +293,7 @@ class Rehearsal:
                  "servingAfterRollback": {"version": self.sandbox.version(), "digest": self.sandbox.serving_digest()}, "oldRuntimeWrites": post, "workload": evidence}
         path = self.sandbox.evidence / "rollback-proof.json"
         path.write_text(json.dumps(proof, indent=2) + "\n")
+        from .proof_archive import archive
+
+        archive(self.sandbox.user_cli(), self.sandbox.home, writes["threadId"], lambda step, **fields: print(json.dumps({"step": step, **fields}), flush=True))
         return path

@@ -147,7 +147,6 @@ try {
   assert.equal(await git(repo, 'rev-parse', '--verify', '--quiet', 'refs/heads/story/squashed').then(Boolean, () => false), true);
   evidence.assertions.push('squash-landed worktree removed once content integration is on; branch ref kept');
   evidence.assertions.push('unlanded and squash-plus-local-commit worktrees still kept');
-  for (const { threadId } of Object.values(evidence.threads)) await t3(['thread', 'archive', threadId]).catch(() => {});
   evidence.pass = true;
 } catch (error) {
   evidence.error = String(error.stack ?? error);
@@ -165,5 +164,6 @@ try {
   }
   evidence.completedAt = new Date().toISOString();
   await writeFile(output, JSON.stringify(evidence, null, 2));
+  for (const { threadId } of Object.values(evidence.threads)) await t3(['thread', 'archive', threadId]).catch(() => console.error(`proof-archive failed: ${threadId}`));
   console.log(JSON.stringify({ pass: evidence.pass ?? false, output, error: evidence.error?.split('\n')[0], assertions: evidence.assertions }));
 }
