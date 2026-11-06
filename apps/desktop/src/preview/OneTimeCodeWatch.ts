@@ -21,8 +21,22 @@ const isOneTimeCodeField = (element: Element | null): element is HTMLInputElemen
   return FIELD_HINT.test(hints) && !NOT_A_CODE.test(hints);
 };
 
-export function installOneTimeCodeWatch(report: (focused: boolean) => void) {
+const fill = (field: HTMLInputElement, code: string) => {
+  field.select();
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", code);
+  const paste = new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true });
+  if (field.dispatchEvent(paste)) document.execCommand("insertText", false, code);
+};
+
+export function installOneTimeCodeWatch(
+  report: (focused: boolean) => void,
+  onFill: (fill: (code: string) => void) => void,
+) {
   let watched: HTMLInputElement | null = null;
+  onFill((code) => {
+    if (watched !== null && watched === document.activeElement) fill(watched, code);
+  });
   const update = () => {
     const active = document.activeElement;
     const next = isOneTimeCodeField(active) ? active : null;

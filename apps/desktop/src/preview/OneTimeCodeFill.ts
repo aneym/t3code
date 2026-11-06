@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
-import { ONE_TIME_CODE_FIELD_CHANNEL } from "./GuestProtocol.ts";
+import { ONE_TIME_CODE_FIELD_CHANNEL, ONE_TIME_CODE_FILL_CHANNEL } from "./GuestProtocol.ts";
 
 const CODE = /^(?:[A-Za-z]{1,3}-)?\d{4,10}$/u;
 const POLL_INTERVAL = "400 millis";
@@ -24,8 +24,7 @@ const fillWhenCopied = Effect.fn("PreviewOneTimeCode.fillWhenCopied")(function* 
     if (guest.isDestroyed()) return;
     const text = yield* readClipboard;
     if (text !== baseline && CODE.test(text)) {
-      guest.selectAll();
-      guest.paste();
+      guest.send(ONE_TIME_CODE_FILL_CHANNEL, text);
       return;
     }
   }

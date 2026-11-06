@@ -17,3 +17,4 @@ export const PASSKEY_BRIDGE_ARGUMENT = "--t3code-preview-passkey-bridge";
 export const PASSKEY_FALLBACK_ARGUMENT = "--t3code-preview-passkey-fallback";
 export const PASSKEY_FALLBACK_CHANNEL = "preview:passkey-fallback";
 export const ONE_TIME_CODE_FIELD_CHANNEL = "preview:one-time-code-field";
+export const ONE_TIME_CODE_FILL_CHANNEL = "preview:one-time-code-fill";

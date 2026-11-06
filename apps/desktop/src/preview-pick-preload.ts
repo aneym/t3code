@@ -2,6 +2,7 @@ import { ipcRenderer } from "electron";
 
 import {
   ONE_TIME_CODE_FIELD_CHANNEL,
+  ONE_TIME_CODE_FILL_CHANNEL,
   PASSKEY_BRIDGE_ARGUMENT,
   PASSKEY_FALLBACK_ARGUMENT,
 } from "./preview/GuestProtocol.ts";
@@ -16,4 +17,10 @@ if (process.argv.includes(PASSKEY_BRIDGE_ARGUMENT)) {
 } else if (process.argv.includes(PASSKEY_FALLBACK_ARGUMENT)) {
   installPasskeyFallback((channel, kind) => ipcRenderer.invoke(channel, kind));
 }
-installOneTimeCodeWatch((focused) => ipcRenderer.send(ONE_TIME_CODE_FIELD_CHANNEL, focused));
+installOneTimeCodeWatch(
+  (focused) => ipcRenderer.send(ONE_TIME_CODE_FIELD_CHANNEL, focused),
+  (fill) =>
+    ipcRenderer.on(ONE_TIME_CODE_FILL_CHANNEL, (_event, code: unknown) => {
+      if (typeof code === "string") fill(code);
+    }),
+);
