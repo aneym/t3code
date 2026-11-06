@@ -5,7 +5,7 @@ import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 export function RemoteDeviceTabsSettings({ disabled }: { readonly disabled: boolean }) {
-  const showTabs = useClientSettings((settings) => settings.browserAllowRemoteDeviceTabs);
+  const showTabs = useClientSettings((settings) => settings.browserShowRemoteDeviceTabs);
   const allowControl = useClientSettings((settings) => settings.browserAllowRemoteDeviceControl);
   return (
     <>
@@ -19,7 +19,7 @@ export function RemoteDeviceTabsSettings({ disabled }: { readonly disabled: bool
             onCheckedChange={(checked) =>
               void persistClientSettingsUpdate((settings) => ({
                 ...settings,
-                browserAllowRemoteDeviceTabs: Boolean(checked),
+                browserShowRemoteDeviceTabs: Boolean(checked),
               }))
             }
             aria-label="Show agent tabs from other machines"

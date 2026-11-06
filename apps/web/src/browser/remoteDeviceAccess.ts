@@ -14,7 +14,7 @@ export type RemoteDeviceAccess = "off" | "show" | "control";
 export type RemoteDeviceAccessFor = (environmentId: EnvironmentId) => RemoteDeviceAccess;
 
 const accessFrom = (settings: ClientSettings): RemoteDeviceAccess => {
-  if (!settings.browserAllowRemoteDeviceTabs) return "off";
+  if (!settings.browserShowRemoteDeviceTabs) return "off";
   return settings.browserAllowRemoteDeviceControl ? "control" : "show";
 };
 

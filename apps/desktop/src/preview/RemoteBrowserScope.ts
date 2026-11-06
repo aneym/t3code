@@ -101,8 +101,8 @@ const grants = (settings: Option.Option<ClientSettings>) =>
   Option.match(settings, {
     onNone: () => ({ show: false, control: false }),
     onSome: (value) => ({
-      show: value.browserAllowRemoteDeviceTabs,
-      control: value.browserAllowRemoteDeviceTabs && value.browserAllowRemoteDeviceControl,
+      show: value.browserShowRemoteDeviceTabs,
+      control: value.browserShowRemoteDeviceTabs && value.browserAllowRemoteDeviceControl,
     }),
   });
 
