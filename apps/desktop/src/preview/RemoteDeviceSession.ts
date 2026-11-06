@@ -1,12 +1,7 @@
-import type {
-  Event,
-  OnBeforeRequestListenerDetails,
-  Session,
-  WebContents,
-  WebContentsDidStartNavigationEventParams,
-} from "electron";
+import type { Event, Session, WebContents } from "electron";
 import { app, webContents } from "electron";
 
+import * as RefusedLoads from "./RefusedLoads.ts";
 import { isBlockedHost } from "./RemoteDeviceAddress.ts";
 import * as RemoteDeviceProxy from "./RemoteDeviceProxy.ts";
 
@@ -52,41 +47,7 @@ const guardContents = (contents: WebContents) => {
   contents.on("will-redirect", refuse);
   contents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
-};
-
-const refusedLoads = new Map<number, string>();
-
-const watchRefusal = (contents: WebContents) => {
-  const finish = (report: boolean) => {
-    contents.off("did-start-navigation", navigated);
-    contents.off("did-stop-loading", stopped);
-    contents.off("destroyed", destroyed);
-    const url = refusedLoads.get(contents.id);
-    refusedLoads.delete(contents.id);
-    if (!report || url === undefined || contents.isDestroyed()) return;
-    if (contents.isLoadingMainFrame()) return;
-    contents.emit("did-fail-load", {}, -20, "ERR_BLOCKED_BY_CLIENT", url, true);
-  };
-  const navigated = (event: Event<WebContentsDidStartNavigationEventParams>) => {
-    if (event.isMainFrame && !event.isSameDocument) finish(false);
-  };
-  const stopped = () => {
-    contents.off("did-start-navigation", navigated);
-    setImmediate(() => finish(refusedLoads.has(contents.id)));
-  };
-  const destroyed = () => finish(false);
-  contents.on("did-start-navigation", navigated);
-  contents.once("did-stop-loading", stopped);
-  contents.once("destroyed", destroyed);
-};
-
-const reportRefusal = (details: OnBeforeRequestListenerDetails) => {
-  if (details.resourceType !== "mainFrame" || details.webContentsId === undefined) return;
-  const contents = webContents.fromId(details.webContentsId);
-  if (!contents || contents.isDestroyed()) return;
-  const watching = refusedLoads.has(contents.id);
-  refusedLoads.set(contents.id, details.url);
-  if (!watching) watchRefusal(contents);
+  RefusedLoads.track(contents);
 };
 
 const install = async (session: Session) => {
@@ -96,8 +57,9 @@ const install = async (session: Session) => {
     proxyBypassRules: "<-loopback>",
   });
   session.webRequest.onBeforeRequest((details, callback) => {
+    const load = RefusedLoads.pending(details);
     const refuse = () => {
-      reportRefusal(details);
+      RefusedLoads.refused(load);
       callback({ cancel: true });
     };
     if (!allowsRequest(details.url)) return refuse();
