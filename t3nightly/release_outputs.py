@@ -231,12 +231,13 @@ def deferred_hosts(run):
             value = json.loads(path.read_text())
             if not isinstance(value, dict):
                 raise ValueError(f"{name} is not a JSON object")
-            records.append(value.get("deferredHosts", {}))
+            hosts = value.get("deferredHosts", {})
+            if not isinstance(hosts, dict) or any(host not in LINUX_TARGETS or not isinstance(reason, str) or not reason.strip() for host, reason in hosts.items()):
+                raise ValueError(f"invalid Linux host deferral in {name}")
+            records.append(hosts)
     if any(records) and (len(records) != 2 or records[0] != records[1]):
         raise ValueError("a host deferral needs fast-inputs.json and readiness.json present and agreeing")
     hosts = records[0] if any(records) else {}
-    if not isinstance(hosts, dict) or any(host not in LINUX_TARGETS or not isinstance(reason, str) or not reason.strip() for host, reason in hosts.items()):
-        raise ValueError("invalid Linux host deferral in fast run inputs")
     for host, reason in hosts.items():
         path = Path(run) / f"install-{host}/outcome.json"
         if not path.is_file():
