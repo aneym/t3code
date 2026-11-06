@@ -57,7 +57,7 @@ def collect_readiness(config, log, readiness_path):
     topics = [resolve_topic(config.repo, name) for name in config.topic.split(",")]
     checks["topic-resolves"] = all(topics)
     old = serving_version()
-    studio_head = serving_head(config, old)
+    studio_head = serving_head(config, old, "studio")
     studio_history = source_history(config.repo, studio_head)
     base_head = studio_head
     evidence["studioServing"] = old

@@ -13,7 +13,7 @@ REMOTE_PROBE = r'''
 import json, os, shutil, sqlite3, sys, urllib.request
 from contextlib import closing
 from pathlib import Path
-tools, seeds, version, chat, remote_run = sys.argv[1:6]
+tools, seeds, version, chat, remote_run, host = sys.argv[1:7]
 home = Path.home()
 row = {"disk": shutil.disk_usage("/").free, "load": os.getloadavg()[0], "cpus": os.cpu_count()}
 try:
@@ -31,8 +31,11 @@ row["head"] = None
 if row["serving"]:
     current = Path(remote_run)
     root = current.parent.parent if current.name.startswith("fast") else current.parent
-    from t3nightly.serving_assembly import serving_assembly_head
-    row["head"] = next((head for runs in (root / row["serving"], home / ".t3nightly/runs" / row["serving"]) if (head := serving_assembly_head(runs))), None)
+    try:
+        from t3nightly.serving_assembly import serving_assembly_head
+        row["head"] = next((head for runs in (root / row["serving"], home / ".t3nightly/runs" / row["serving"]) if (head := serving_assembly_head(runs, host, row["serving"]))), None)
+    except Exception:
+        row["head"] = None
 row["liveHistory"] = None
 try:
     with closing(sqlite3.connect(f"file:{home / '.t3/userdata/statev2.sqlite'}?mode=ro", uri=True)) as connection:
@@ -61,11 +64,12 @@ print(json.dumps(row))
 '''
 
 
-def serving_head(config, version):
-    return serving_assembly_head(config.home / ".t3nightly/runs" / str(version)) if version else None
+def serving_head(config, version, host):
+    return serving_assembly_head(config.home / ".t3nightly/runs" / str(version), host, version) if version else None
+
 
 def remote_probe(config, log, host="ax42"):
-    words = [*ssh_argv(LINUX_TARGETS[host], '-oConnectTimeout=5'), "python3", "-", config.remote_tools, SEEDS, config.version, CHAT_PROJECT, config.remote_run]
+    words = [*ssh_argv(LINUX_TARGETS[host], '-oConnectTimeout=5'), "python3", "-", config.remote_tools, SEEDS, config.version, CHAT_PROJECT, config.remote_run, host]
     try:
         result = subprocess.run(words, input=REMOTE_PROBE, capture_output=True, text=True, timeout=25, check=False)
         if result.returncode:
@@ -92,7 +96,7 @@ def probe_host(config, log, host, value, *, require_result=False):
     if require_result and not remote:
         raise ValueError(f"{host}: readiness probe failed; previous evidence preserved")
     old = remote.get("serving")
-    head = remote.get("head") or serving_head(config, old)
+    head = remote.get("head") or serving_head(config, old, host)
     if not head and old and old == value["oldReleases"]["studio"]:
         head = value["servingHead"]
     history = source_history(config.repo, head)
