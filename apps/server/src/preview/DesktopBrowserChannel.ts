@@ -3,6 +3,7 @@
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer";
 import {
+  DesktopBrowserAnnounce,
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   DesktopBrowserRemoteEvents,
@@ -21,16 +22,21 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Ndjson from "effect/encoding/Ndjson";
 import * as NodeCrypto from "node:crypto";
 import * as NodeNet from "node:net";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { writeAllToFileDescriptor } from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
+import * as RemoteCdpReplies from "./RemoteCdpReplies.ts";
 
 const decodeEvent = Schema.decodeUnknownEffect(DesktopBrowserEvent);
+const decodeRemoteEvent = Schema.decodeUnknownEffect(Schema.fromJsonString(DesktopBrowserEvent));
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(DesktopBrowserCommand));
 const encodeRemoteCommand = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserCommand));
+const ANNOUNCE_LINE = `${Schema.encodeSync(Schema.fromJsonString(DesktopBrowserAnnounce))({ type: "announce" })}\n`;
 
 export interface DesktopTabKey {
   readonly threadId: string;
@@ -61,10 +67,14 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly turn: (threadId: string, active: boolean) => Effect.Effect<void>;
     readonly remoteCommands?: (
       source: DesktopBrowserRemoteSource,
+      sessionId: string,
     ) => Effect.Effect<Stream.Stream<string>, never, Scope.Scope>;
-    readonly remoteEvents?: (input: DesktopBrowserRemoteEvents) => Effect.Effect<void>;
+    readonly remoteEvents?: (
+      input: DesktopBrowserRemoteEvents,
+      sessionId: string,
+    ) => Effect.Effect<void>;
     readonly devices?: Effect.Effect<
-      ReadonlyArray<{ name: string; focused: boolean; lastFocusedAt: number }>
+      ReadonlyArray<{ name: string; focused: boolean; lastFocusedAt: number; control: boolean }>
     >;
   }
 >()("t3/preview/DesktopBrowserChannel") {}
@@ -75,21 +85,63 @@ const make = Effect.gen(function* () {
   const controlFd = config.desktopBrowserControlFd;
   const changes = yield* PubSub.unbounded<{ key: DesktopTabKey; attached: boolean }>();
   const attachedTabs = new Set<string>();
+  const localTabs = new Set<string>();
   const inbound = new Map<string, Queue.Queue<string>>();
+  const replies = RemoteCdpReplies.make();
   const writeLock = yield* Semaphore.make(1);
   const remoteSources = new Map<
     string,
     {
+      readonly name: string;
+      readonly control: boolean;
       readonly queue: Queue.Queue<string>;
       readonly attached: Set<string>;
       focused: boolean;
       lastFocusedAt: number;
     }
   >();
+  const sourceId = (sessionId: string, deviceName: string) => `${sessionId}\u0000${deviceName}`;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const settingChanges = yield* settings.subscribeChanges;
+  const remoteEnabled = yield* SubscriptionRef.make(
+    yield* settings.getSettings.pipe(
+      Effect.map((current) => current.previewOpenOnUserDevice),
+      Effect.orElseSucceed(() => false),
+    ),
+  );
+  yield* settingChanges.pipe(
+    Stream.runForEach((current) =>
+      SubscriptionRef.set(remoteEnabled, current.previewOpenOnUserDevice).pipe(
+        Effect.andThen(
+          current.previewOpenOnUserDevice
+            ? Effect.void
+            : Effect.forEach(
+                [...remoteSources.values()],
+                (source) => Queue.shutdown(source.queue),
+                {
+                  discard: true,
+                },
+              ),
+        ),
+      ),
+    ),
+    Effect.forkScoped,
+  );
 
   const sourceForKey = (id: string) => {
     for (const source of remoteSources.values()) if (source.attached.has(id)) return source;
     return null;
+  };
+
+  const retire = (source: typeof remoteSources extends Map<string, infer A> ? A : never) => {
+    replies.drop(source);
+    for (const id of source.attached) {
+      attachedTabs.delete(id);
+      const [threadId, tabId] = id.split("\u0000");
+      if (threadId !== undefined && tabId !== undefined)
+        PubSub.publishUnsafe(changes, { key: { threadId, tabId }, attached: false });
+    }
+    source.attached.clear();
   };
 
   const sourceCommand = (
@@ -99,27 +151,32 @@ const make = Effect.gen(function* () {
 
   const remoteCommands = Effect.fn("DesktopBrowserChannel.remoteCommands")(function* (
     source: DesktopBrowserRemoteSource,
+    sessionId: string,
   ) {
-    const existing = remoteSources.get(source.deviceName);
-    if (existing) yield* Queue.shutdown(existing.queue);
+    yield* SubscriptionRef.changes(remoteEnabled).pipe(
+      Stream.filter((enabled) => enabled),
+      Stream.runHead,
+    );
+    const id = sourceId(sessionId, source.deviceName);
+    const existing = remoteSources.get(id);
+    if (existing) {
+      yield* Queue.shutdown(existing.queue);
+      retire(existing);
+    }
     const entry = {
+      name: source.deviceName,
+      control: source.control === true,
       queue: yield* Queue.unbounded<string>(),
       attached: new Set<string>(),
       focused: source.focused,
       lastFocusedAt: yield* Clock.currentTimeMillis,
     };
-    remoteSources.set(source.deviceName, entry);
+    remoteSources.set(id, entry);
+    if (entry.control) yield* Queue.offer(entry.queue, ANNOUNCE_LINE);
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        if (remoteSources.get(source.deviceName) !== entry) return;
-        remoteSources.delete(source.deviceName);
-        for (const id of entry.attached) {
-          attachedTabs.delete(id);
-          const [threadId, tabId] = id.split("\u0000");
-          if (threadId !== undefined && tabId !== undefined)
-            void PubSub.publish(changes, { key: { threadId, tabId }, attached: false });
-        }
-        entry.attached.clear();
+        if (remoteSources.get(id) === entry) remoteSources.delete(id);
+        retire(entry);
       }),
     );
     return Stream.fromQueue(entry.queue);
@@ -127,19 +184,35 @@ const make = Effect.gen(function* () {
 
   const remoteEvents = Effect.fn("DesktopBrowserChannel.remoteEvents")(function* (
     input: DesktopBrowserRemoteEvents,
+    sessionId: string,
   ) {
-    const source = remoteSources.get(input.deviceName);
+    const source = remoteSources.get(sourceId(sessionId, input.deviceName));
     if (!source) return;
     if (input.focused !== undefined) {
       source.focused = input.focused;
       if (input.focused) source.lastFocusedAt = yield* Clock.currentTimeMillis;
     }
-    for (const line of input.events) {
-      const event = yield* decodeEvent(line).pipe(Effect.option);
+    for (const line of source.control ? input.events : []) {
+      const event = yield* decodeRemoteEvent(line).pipe(Effect.option);
       if (Option.isNone(event)) continue;
       const key = { threadId: event.value.threadId, tabId: event.value.tabId };
       const id = keyOf(key);
+      const owner = sourceForKey(id);
+      const claimed = owner !== null || localTabs.has(id);
+      if (
+        event.value.type === "attached"
+          ? claimed && owner !== source
+          : event.value.type === "detached" && owner !== source
+      ) {
+        yield* Effect.logWarning("desktop browser tab claim refused", {
+          event: event.value.type,
+          device: source.name,
+        });
+        continue;
+      }
       if (event.value.type === "cdp") {
+        if (sourceForKey(id) !== source || !replies.admits(source, id, event.value.message))
+          continue;
         const queue = inbound.get(id);
         if (queue) yield* Queue.offer(queue, event.value.message);
       } else if (event.value.type === "attached") {
@@ -193,9 +266,11 @@ const make = Effect.gen(function* () {
           }
           case "attached":
             attachedTabs.add(id);
+            localTabs.add(id);
             return PubSub.publish(changes, { key, attached: true });
           case "detached": {
             attachedTabs.delete(id);
+            localTabs.delete(id);
             const queue = inbound.get(id);
             return (queue ? Queue.shutdown(queue) : Effect.void).pipe(
               Effect.andThen(PubSub.publish(changes, { key, attached: false })),
@@ -225,8 +300,11 @@ const make = Effect.gen(function* () {
     }
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
-        if (inbound.get(id) === queue) inbound.delete(id);
+        const current = inbound.get(id) === queue;
+        if (current) inbound.delete(id);
         yield* Queue.shutdown(queue);
+        if (!current) return;
+        replies.clear(id);
         const source = sourceForKey(id);
         if (source) yield* sourceCommand(source, { type: "release", ...key });
         else yield* command({ type: "release", ...key });
@@ -250,18 +328,13 @@ const make = Effect.gen(function* () {
             Effect.flatMap((frames) =>
               Effect.forEach(
                 frames,
-                (frame) =>
-                  sourceForKey(id)
-                    ? sourceCommand(sourceForKey(id)!, {
-                        type: "cdp",
-                        ...key,
-                        message: typeof frame === "string" ? frame : decoder.decode(frame),
-                      })
-                    : command({
-                        type: "cdp",
-                        ...key,
-                        message: typeof frame === "string" ? frame : decoder.decode(frame),
-                      }),
+                (frame) => {
+                  const message = typeof frame === "string" ? frame : decoder.decode(frame);
+                  const source = sourceForKey(id);
+                  if (!source) return command({ type: "cdp", ...key, message });
+                  replies.sent(source, id, message);
+                  return sourceCommand(source, { type: "cdp", ...key, message });
+                },
                 { discard: true },
               ),
             ),
@@ -285,19 +358,21 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             const subscription = yield* PubSub.subscribe(changes);
             const id = keyOf(key);
-            if (
-              deviceName === undefined
-                ? attachedTabs.has(id)
-                : remoteSources.get(deviceName)?.attached.has(id) === true
-            )
-              return true;
+            if (deviceName === undefined && (inputFd === undefined || controlFd === undefined))
+              return false;
+            const controlled = () =>
+              [...remoteSources.values()].filter(
+                (source) => source.control && source.name === deviceName,
+              );
+            if (deviceName !== undefined && controlled().length === 0) return false;
+            const attachedOnDevice = () => controlled().some((source) => source.attached.has(id));
+            if (deviceName === undefined ? attachedTabs.has(id) : attachedOnDevice()) return true;
             return yield* Stream.fromSubscription(subscription).pipe(
               Stream.filter(
                 (change) =>
                   change.attached &&
                   keyOf(change.key) === id &&
-                  (deviceName === undefined ||
-                    remoteSources.get(deviceName)?.attached.has(id) === true),
+                  (deviceName === undefined || attachedOnDevice()),
               ),
               Stream.runHead,
               Effect.map(Option.isSome),
@@ -337,10 +412,11 @@ const make = Effect.gen(function* () {
     remoteCommands,
     remoteEvents,
     devices: Effect.sync(() =>
-      [...remoteSources].map(([name, source]) => ({
-        name,
+      [...remoteSources.values()].map((source) => ({
+        name: source.name,
         focused: source.focused,
         lastFocusedAt: source.lastFocusedAt,
+        control: source.control,
       })),
     ),
   });

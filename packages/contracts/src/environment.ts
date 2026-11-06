@@ -171,8 +171,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
+const ScopableEnvironmentId = EnvironmentId.check(Schema.isPattern(/^[^:]+$/));
+
 export const ExecutionEnvironmentDescriptor = Schema.Struct({
-  environmentId: EnvironmentId,
+  environmentId: ScopableEnvironmentId,
   label: TrimmedNonEmptyString,
   platform: ExecutionEnvironmentPlatform,
   serverVersion: TrimmedNonEmptyString,

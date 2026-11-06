@@ -22,6 +22,7 @@ import {
   PreviewCaptureFailure,
   DEFAULT_BROWSER_PROFILE_ID,
   INCOGNITO_BROWSER_PROFILE_ID,
+  REMOTE_DEVICE_BROWSER_PROFILE_ID,
   PreviewForwardedShortcut,
   MAX_KEYBINDINGS_COUNT,
 } from "@t3tools/contracts";
@@ -40,17 +41,8 @@ import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as DesktopBrowserHost from "../../preview/DesktopBrowserHost.ts";
-
-const remoteBrowserKeys = new Set<string>();
-const remoteBrowserClaim = Schema.decodeUnknownOption(
-  Schema.fromJsonString(
-    Schema.Struct({
-      type: Schema.Literals(["claim", "releaseClaim"]),
-      threadId: Schema.String,
-      tabId: Schema.String,
-    }),
-  ),
-);
+import * as RemoteBrowserScope from "../../preview/RemoteBrowserScope.ts";
+import * as RemoteDeviceSession from "../../preview/RemoteDeviceSession.ts";
 
 export const installPreviewEventForwarding = Effect.fn(
   "desktop.ipc.preview.installEventForwarding",
@@ -61,15 +53,9 @@ export const installPreviewEventForwarding = Effect.fn(
   yield* Effect.forkScoped(
     browserHost.events.pipe(
       Stream.runForEach((line) => {
-        const text = new TextDecoder().decode(line);
-        try {
-          const event = JSON.parse(text) as { threadId?: string; tabId?: string };
-          if (event.threadId === undefined || event.tabId === undefined) return Effect.void;
-          if (!remoteBrowserKeys.has(`${event.threadId}\u0000${event.tabId}`)) return Effect.void;
-        } catch {
-          return Effect.void;
-        }
-        return electronWindow.sendAll(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, text);
+        const envelope = RemoteBrowserScope.remoteEventEnvelope(new TextDecoder().decode(line));
+        if (envelope === undefined) return Effect.void;
+        return electronWindow.sendAll(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, envelope);
       }),
     ),
   );
@@ -129,6 +115,7 @@ const registerWebview = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.registerWebview")(function* ({ tabId, webContentsId }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.registerWebview(tabId, webContentsId);
+    RemoteDeviceSession.registerTab(tabId, webContentsId);
   }),
 });
 
@@ -303,7 +290,8 @@ export function resolvePartitionScope(
   // JSON framing preserves lone UTF-16 surrogates; URI encoding throws and replacement would collide.
   return {
     scope: JSON.stringify([environmentId, profileId]),
-    persistent: profileId !== INCOGNITO_BROWSER_PROFILE_ID,
+    persistent:
+      profileId !== INCOGNITO_BROWSER_PROFILE_ID && profileId !== REMOTE_DEVICE_BROWSER_PROFILE_ID,
     namespace: "profile" as const,
   };
 }
@@ -329,7 +317,10 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
     const manager = yield* PreviewManager.PreviewManager;
     const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
     // Session creation installs UA and permission handlers before a guest can attach.
-    yield* manager.getBrowserSession(scope, persistent, namespace);
+    const session = yield* manager.getBrowserSession(scope, persistent, namespace);
+    if (profileId === REMOTE_DEVICE_BROWSER_PROFILE_ID) {
+      yield* Effect.promise(() => RemoteDeviceSession.guard(session));
+    }
     return {
       partition: yield* manager.getBrowserPartition(scope, persistent, namespace),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
@@ -483,17 +474,31 @@ export const desktopBrowserCommand = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.DESKTOP_BROWSER_COMMAND_CHANNEL,
   payload: Schema.String,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.browser.command")(function* (line) {
-    const claim = remoteBrowserClaim(line);
-    if (Option.isSome(claim)) {
-      {
-        const key = `${claim.value.threadId}\u0000${claim.value.tabId}`;
-        if (claim.value.type === "claim") remoteBrowserKeys.add(key);
-        else remoteBrowserKeys.delete(key);
-        return;
+  handler: Effect.fn("desktop.ipc.browser.command")(function* (text) {
+    const command = yield* RemoteBrowserScope.admit(text);
+    if (Option.isNone(command)) return;
+    if (command.value.type === "reply") {
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      yield* electronWindow.sendAll(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, command.value.line);
+      return;
+    }
+    if (command.value.type === "announce") {
+      const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      for (const tab of command.value.tabs) {
+        yield* host.handleCommandLine(tab.release);
+        yield* electronWindow.sendAll(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, tab.envelope);
       }
+      return;
+    }
+    if (command.value.type === "navigate") {
+      const contents = RemoteDeviceSession.guardedTab(command.value.tabId);
+      if (!contents) return yield* Effect.logWarning("mirror into an unguarded tab refused");
+      const url = command.value.url;
+      yield* Effect.promise(() => contents.loadURL(url).catch(() => undefined));
+      return;
     }
     const host = yield* DesktopBrowserHost.DesktopBrowserHost;
-    yield* host.handleCommandLine(line);
+    yield* host.handleCommandLine(command.value.line);
   }),
 });

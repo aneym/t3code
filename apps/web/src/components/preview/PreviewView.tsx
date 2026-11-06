@@ -59,7 +59,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
-import { closePreviewSession } from "./closePreviewSession";
+import { finishPreviewTabMove } from "./finishPreviewTabMove";
 import { openPreviewSession } from "./openPreviewSession";
 import { showPreviewPopup } from "./showPreviewPopup";
 import { PreviewChromeRow } from "./PreviewChromeRow";
@@ -139,6 +139,18 @@ function ServerTabFileNotShown(props: {
   );
 }
 
+function showAddressError(error: unknown) {
+  toastManager.add({
+    type: "error",
+    title: "Could not open this address",
+    description: isPreviewUrlNormalizationError(error)
+      ? "Enter an http or https URL."
+      : error instanceof Error
+        ? error.message
+        : "An error occurred.",
+  });
+}
+
 export function PreviewView({
   threadRef,
   tabId: requestedTabId,
@@ -208,14 +220,14 @@ export function PreviewView({
   const desktopOverlay =
     tabId && !isServerTab ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
-  const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
+  const navStatus = desktopOverlay?.navStatus ?? snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
   const loading = desktopOverlay?.loading ?? navStatus._tag === "Loading";
   const canGoBack = desktopOverlay?.canGoBack ?? snapshot?.canGoBack ?? false;
   const canGoForward = desktopOverlay?.canGoForward ?? snapshot?.canGoForward ?? false;
   const refreshDisabled = navStatus._tag === "Idle";
   const isUnreachable = navStatus._tag === "LoadFailed";
-  const showEmptyState = shouldShowPreviewEmptyState(snapshot);
+  const showEmptyState = shouldShowPreviewEmptyState(snapshot, navStatus);
   const serverStreamPending =
     isServerTab && !showEmptyState && !isUnreachable && serverFrameTabId !== runtimeTabId;
   const controller = desktopOverlay?.controller ?? "none";
@@ -261,15 +273,7 @@ export function PreviewView({
         recordVisitForThread(threadRef, resolved);
       }
     } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Could not open this address",
-        description: isPreviewUrlNormalizationError(error)
-          ? "Enter an http or https URL."
-          : error instanceof Error
-            ? error.message
-            : "An error occurred.",
-      });
+      showAddressError(error);
     }
   };
 
@@ -283,15 +287,7 @@ export function PreviewView({
         recordVisitForThread(threadRef, next);
       }
     } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Could not open this address",
-        description: isPreviewUrlNormalizationError(error)
-          ? "Enter an http or https URL."
-          : error instanceof Error
-            ? error.message
-            : "An error occurred.",
-      });
+      showAddressError(error);
     }
   };
 
@@ -416,8 +412,7 @@ export function PreviewView({
       });
       return;
     }
-    useRightPanelStore.getState().openBrowser(threadRef, result.value.tabId);
-    await closePreviewSession({ closePreview, snapshot, tabId, threadRef });
+    await finishPreviewTabMove({ threadRef, from: snapshot, to: result.value, closePreview, url });
   };
 
   const handlePictureInPicture = () => {

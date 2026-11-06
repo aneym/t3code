@@ -1,4 +1,5 @@
 import { queueSettingsSearch } from "./queueSettingsSearch";
+import { browserAgentSettingsSearch, browserPanelSettingsSearch } from "./browserSettingsSearch";
 import { HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron, isSecretsFeatureEnabled } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
@@ -890,13 +891,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["refresh availability versions auth state models background probes seconds off"],
     providerSettingsOnly: true,
   },
-  {
-    id: "agent-browser-access",
-    title: "Agent browser access",
-    to: "/settings/browser",
-    scope: "project-defaults",
-    searchTerms: ["allow disable enable open drive preview tools sessions project override"],
-  },
+  ...browserAgentSettingsSearch,
   {
     id: "device-sources",
     title: "Device sources",
@@ -993,12 +988,7 @@ export const SETTINGS_SEARCH_ITEMS = [
       `pr commit links ${SOURCE_CONTROL_HOST_LABELS} browser external click default pull request view panel`,
     ],
   },
-  {
-    id: "browser-auto-show-floating-preview",
-    title: "Auto-show floating preview",
-    to: "/settings/browser",
-    searchTerms: ["agent opens browser device simulator pop into view hide"],
-  },
+  ...browserPanelSettingsSearch,
   {
     id: "automatic-pull",
     title: "Automatically pull",
