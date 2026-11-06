@@ -2,7 +2,6 @@ import json
 import os
 import shlex
 import shutil
-import sys
 from pathlib import Path
 
 from .codex_isolation import isolated_codex_home
@@ -64,20 +63,19 @@ def pin_settings(settings_path, work, refusals, keep=()):
     path = Path(settings_path)
     settings = json.loads(path.read_text()) if path.is_file() else {}
     settings["cursorKeychainUsageEnabled"] = False
-    if sys.platform == "darwin":
-        wrapper = headless_bin(Path(work) / "headless-bin", Path(refusals).resolve()) / "claude"
-        instances = settings.get("providerInstances")
-        instances = settings["providerInstances"] = instances if isinstance(instances, dict) else {}
-        if not isinstance(instances.get("claudeAgent"), dict):
-            instances["claudeAgent"] = {"driver": "claudeAgent"}
-        kept = {str(Path(item)) for item in keep}
-        for instance_id, instance in instances.items():
-            default = "claudeAgent" if instance_id == "claudeAgent" else None
-            if not isinstance(instance, dict) or instance.get("driver", default) != "claudeAgent":
-                continue
-            config = instance["config"] = instance["config"] if isinstance(instance.get("config"), dict) else {}
-            if config.get("binaryPath") not in kept:
-                config["binaryPath"] = str(wrapper)
+    wrapper = headless_bin(Path(work) / "headless-bin", Path(refusals).resolve()) / "claude"
+    instances = settings.get("providerInstances")
+    instances = settings["providerInstances"] = instances if isinstance(instances, dict) else {}
+    if not isinstance(instances.get("claudeAgent"), dict):
+        instances["claudeAgent"] = {"driver": "claudeAgent"}
+    kept = {str(Path(item)) for item in keep}
+    for instance_id, instance in instances.items():
+        default = "claudeAgent" if instance_id == "claudeAgent" else None
+        if not isinstance(instance, dict) or instance.get("driver", default) != "claudeAgent":
+            continue
+        config = instance["config"] = instance["config"] if isinstance(instance.get("config"), dict) else {}
+        if config.get("binaryPath") not in kept:
+            config["binaryPath"] = str(wrapper)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2) + "\n")
     return sandbox_settings(path, settings)
