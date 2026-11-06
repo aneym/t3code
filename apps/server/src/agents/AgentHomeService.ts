@@ -1,10 +1,13 @@
 import {
   AgentHomeError,
+  CommandId,
+  type ThreadId,
   type AgentBindInput,
   type AgentBindResult,
   type AgentHomesSnapshot,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
@@ -16,6 +19,7 @@ import * as Equal from "effect/Equal";
 import * as DateTime from "effect/DateTime";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import {
   homeFromDocument,
@@ -47,6 +51,8 @@ export const layer = Layer.effect(
     const environment = yield* ServerEnvironment;
     const threads = yield* ThreadManagementService;
     const scheduledTasks = yield* ScheduledTaskService;
+    const settings = yield* ServerSettingsService;
+    const crypto = yield* Crypto.Crypto;
     const readLanes = createLaneReader(path.join(root, "..", "lanes"));
     const isLocalHost = localHostMatcher(NodeOS.hostname());
     const snapshots = yield* SubscriptionRef.make<AgentHomesSnapshot>({ homes: [] });
@@ -73,6 +79,33 @@ export const layer = Layer.effect(
       ),
       (close) => Effect.sync(close),
     );
+    const setPin = Effect.fn("AgentHomeService.setPin")(function* (
+      threadId: ThreadId,
+      pinned: boolean,
+    ) {
+      const shell = yield* threads.getThreadShell(threadId);
+      if (!shell || (shell.pinnedAt != null) === pinned) return;
+      if (pinned && shell.archivedAt !== null) return;
+      yield* threads.dispatch({
+        type: pinned ? "thread.pin" : "thread.unpin",
+        commandId: CommandId.make(`agent-bind:${yield* crypto.randomUUIDv4()}`),
+        threadId,
+      });
+    });
+    const reveal = Effect.fn("AgentHomeService.reveal")(function* (handle: string) {
+      const current = (yield* settings.getSettings).sidebarAgents;
+      if (!current?.hidden.includes(handle)) return;
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      yield* settings.updateSettings({
+        sidebarAgents: {
+          ...current,
+          hidden: current.hidden.filter((entry) => entry !== handle),
+          updatedAt: DateTime.formatIso(
+            DateTime.makeUnsafe(Math.max(now, Date.parse(current.updatedAt) + 1 || 0)),
+          ),
+        },
+      });
+    });
     const bind = Effect.fn("AgentHomeService.bind")(function* (input: AgentBindInput) {
       const readText = Effect.tryPromise({
         try: () => readDocumentText(root, input.handle),
@@ -214,6 +247,22 @@ export const layer = Layer.effect(
                 cause,
               }),
           });
+          if (bindThread && threadId !== null) {
+            const previous = home.binding;
+            const warn = Effect.catch((error: { readonly message: string }) =>
+              Effect.logWarning(error.message),
+            );
+            if (
+              previous !== null &&
+              previous.threadId !== threadId &&
+              (previous.environmentId === null ||
+                previous.environmentId === descriptor.environmentId)
+            )
+              yield* setPin(previous.threadId, false).pipe(warn);
+            if (environmentId === descriptor.environmentId)
+              yield* setPin(threadId, true).pipe(warn);
+            yield* reveal(input.handle).pipe(warn);
+          }
           const snapshot = yield* list;
           const updated = snapshot.homes.find((entry) => entry.handle === input.handle);
           if (!updated)
