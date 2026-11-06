@@ -11,8 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from t3nightly.release_actions import run_fast_action
 from t3nightly.release_config import FastConfig
 from t3nightly.release_engine import require_engine
+from t3nightly.release_graph import fast_graph
 from t3nightly.release_outputs import fast_output
-from t3nightly.release_targets import LINUX_TARGETS, linux_target, stage_action
+from t3nightly.release_targets import LINUX_TARGETS, stage_action
 
 
 def main():
@@ -36,8 +37,10 @@ def main():
     args.defer_reason = args.defer_reason.strip()
     if bool(args.defer_host) != bool(args.defer_reason):
         parser.error("--defer-host and a nonempty --defer-reason are required together")
-    if linux_target(args.linux_host) in args.defer_host:
-        parser.error("the Linux builder cannot be deferred")
+    try:
+        fast_graph(args.linux_host, args.defer_host, args.defer_reason)
+    except ValueError as error:
+        parser.error(str(error))
     if args.advisory_workers < 1:
         parser.error("--advisory-workers must be positive")
     home = Path.home()

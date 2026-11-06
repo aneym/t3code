@@ -56,7 +56,7 @@ def members(pgid, tree):
     return verified
 
 
-def reap(root, log, *, dry_run=False):
+def reap(root, log, *, dry_run=False, skip=()):
     results = []
     for path in sorted(Path(root).rglob("*.cleanup.json")):
         row = {"record": str(path)}
@@ -70,6 +70,11 @@ def reap(root, log, *, dry_run=False):
                     continue
                 record = json.load(handle)
                 if record.get("ownerHost", socket.gethostname()) != socket.gethostname():
+                    continue
+                if record.get("host") in skip:
+                    log.write(f"advisory reaper skip: {path} targets deferred host {record['host']}\n")
+                    row["state"] = "deferred"
+                    results.append(row)
                     continue
                 if record.get("state") == "kept":
                     row["state"] = "kept-worktree"

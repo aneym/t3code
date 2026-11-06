@@ -86,6 +86,8 @@ def fast_graph(linux_host="ax42", defer_hosts=(), defer_reason=""):
     builder = linux_target(linux_host)
     if builder in defer_hosts:
         raise ValueError(f"{builder} builds the Linux artifact and cannot be deferred")
+    if "ax102" in defer_hosts and "ax42" not in defer_hosts:
+        raise ValueError("ax42's off-box backup lives on ax102; defer ax42 too, or don't defer ax102.")
     installs = tuple(f"I{suffix}" for suffix in TARGET_SUFFIXES.values())
     return (
         FastNode("Q", "readiness", "studio", (), 30, ("release-coordinator",)),

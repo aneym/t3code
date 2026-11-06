@@ -8,8 +8,12 @@ from .release_transport import command
 from .suite_store import maintain
 
 
+def deferred_names(deferred):
+    return {*deferred, *(LINUX_TARGETS[host] for host in deferred)}
+
+
 def live_hosts(jobs, deferred):
-    skip = {*deferred, *(LINUX_TARGETS[host] for host in deferred)}
+    skip = deferred_names(deferred)
     return {job["id"]: [host for host in job["hosts"] if host not in skip] for job in jobs}
 
 
@@ -29,7 +33,7 @@ def fast_advisory(config, log):
     jobs = json.loads((out / "plan.json").read_text())["jobs"]
 
     hosts = live_hosts(jobs, config.defer_hosts)
-    maintenance = maintain(config.run.parent, [live[0] for live in hosts.values() if live], log)
+    maintenance = maintain(config.run.parent, [live[0] for live in hosts.values() if live], log, skip=deferred_names(config.defer_hosts))
 
     def one(job):
         if cancelled:

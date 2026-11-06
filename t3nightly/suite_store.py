@@ -38,6 +38,6 @@ def prune_store(host, log):
     return {"host": host, "path": store, "pruneExit": code, **size}
 
 
-def maintain(root, hosts, log, *, dry_run=False):
-    return {"reaper": reap(root, log, dry_run=dry_run),
+def maintain(root, hosts, log, *, dry_run=False, skip=()):
+    return {"reaper": reap(root, log, dry_run=dry_run, skip=skip),
             "stores": [] if dry_run else [prune_store(host, log) for host in sorted(set(hosts))]}
