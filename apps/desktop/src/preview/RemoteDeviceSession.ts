@@ -14,6 +14,12 @@ const guardedTabs = new Map<string, number>();
 const guarding = new WeakMap<Session, Promise<void>>();
 let listening = false;
 
+export const isWebUrl = (raw: string) => {
+  if (BLANK_DOCUMENTS.has(raw)) return true;
+  const protocol = URL.parse(raw)?.protocol;
+  return protocol === "http:" || protocol === "https:";
+};
+
 export const isNavigableUrl = (raw: string) => {
   if (BLANK_DOCUMENTS.has(raw)) return true;
   const url = URL.parse(raw);
