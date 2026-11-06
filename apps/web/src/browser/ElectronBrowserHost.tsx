@@ -32,7 +32,8 @@ import { useEnvironmentScope } from "~/state/session";
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserDefaults } from "./browserDefaults";
 import { useBrowserPointerStore } from "./browserPointerStore";
-import { onDesktopTabCreated, withDesktopTab } from "./desktopTabLifetime";
+import { withDesktopTab } from "./desktopTabLifetime";
+import { onDesktopTabRegistered } from "./desktopTabRegistration";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
 import {
@@ -42,6 +43,7 @@ import {
   serverDrivesNativeTab,
 } from "./previewRuntime";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
+import { startPreviewTrustReset } from "./previewTrustReset";
 import { startRemoteBrowserRelays } from "./remoteBrowserRelay";
 import {
   type RemoteDeviceAccess,
@@ -166,10 +168,11 @@ function openLinkInPreview({ tabId, url, background }: DesktopPreviewOpenLinkEve
 function startRemoteTabMirror(): () => void {
   const bridge = window.desktopBridge?.desktopBrowser;
   if (!bridge) return () => {};
-  const created = new Set<string>();
+  const guests = new Map<string, number>();
   const sent = new Map<string, string>();
   const sync = () => {
     const live = new Set<string>();
+    const present = new Set<string>();
     for (const session of hostedBrowserSessions(
       readActivePreviewSessions(),
       appAtomRegistry.get(primaryEnvironmentIdAtom),
@@ -178,18 +181,21 @@ function startRemoteTabMirror(): () => void {
     )) {
       const { mirrorUrl } = remoteTabUrls(session);
       const tabId = session.runtimeTabId;
+      present.add(tabId);
       if (mirrorUrl === null) continue;
       live.add(tabId);
-      if (!created.has(tabId) || sent.get(tabId) === mirrorUrl) continue;
+      if (!guests.has(tabId) || sent.get(tabId) === mirrorUrl) continue;
       sent.set(tabId, mirrorUrl);
       const command = JSON.stringify({ type: "mirror", tabId, url: mirrorUrl });
       withDesktopTab(tabId, () => bridge.sendCommand(command));
     }
     for (const tabId of sent.keys()) if (!live.has(tabId)) sent.delete(tabId);
+    for (const tabId of guests.keys()) if (!present.has(tabId)) guests.delete(tabId);
   };
   const disposers = [
-    onDesktopTabCreated((tabId) => {
-      created.add(tabId);
+    onDesktopTabRegistered((tabId, webContentsId) => {
+      if (guests.get(tabId) === webContentsId) return;
+      guests.set(tabId, webContentsId);
       sent.delete(tabId);
       sync();
     }),
@@ -214,6 +220,7 @@ export function startElectronBrowserHost(): () => void {
     preview.onOpenLink(openLinkInPreview),
     startRemoteBrowserRelays(window.desktopBridge?.getDeviceName?.() ?? "unknown"),
     startRemoteTabMirror(),
+    startPreviewTrustReset(),
   ];
   return () => {
     for (const dispose of disposers) dispose();

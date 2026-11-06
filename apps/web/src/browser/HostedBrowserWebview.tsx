@@ -22,6 +22,7 @@ import {
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab, withDesktopTab } from "./desktopTabLifetime";
+import { desktopTabRegistered } from "./desktopTabRegistration";
 import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserLayoutZoomFactor } from "./useBrowserLayoutZoomFactor";
@@ -188,6 +189,7 @@ export function HostedBrowserWebview(props: {
           const webContentsId = webview.getWebContentsId();
           if (Number.isInteger(webContentsId) && webContentsId > 0) {
             await bridge.registerWebview(runtimeTabId, webContentsId);
+            desktopTabRegistered(runtimeTabId, webContentsId);
           }
         } catch {}
       })();

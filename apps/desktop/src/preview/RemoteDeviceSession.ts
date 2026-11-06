@@ -38,6 +38,7 @@ const guardContents = (contents: WebContents) => {
   contents.on("will-frame-navigate", refuse);
   contents.on("will-redirect", refuse);
   contents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
 };
 
 const install = async (session: Session) => {

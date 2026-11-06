@@ -11,12 +11,6 @@ interface DesktopTabLease {
 
 const leases = new Map<string, DesktopTabLease>();
 const pendingTabOperations = new Map<string, Promise<void>>();
-const createdListeners = new Set<(tabId: string) => void>();
-
-export function onDesktopTabCreated(listener: (tabId: string) => void): () => void {
-  createdListeners.add(listener);
-  return () => createdListeners.delete(listener);
-}
 
 const enqueueDesktopTabOperation = (
   tabId: string,
@@ -64,13 +58,6 @@ export function acquireDesktopTab(
         }),
       ),
     } satisfies DesktopTabLease);
-  if (!leases.has(tabId)) {
-    void current.ready
-      .then(() => {
-        for (const listener of createdListeners) listener(tabId);
-      })
-      .catch(() => undefined);
-  }
   if (current.closeTimer !== null) window.clearTimeout(current.closeTimer);
   current.references += 1;
   current.closeTimer = null;
