@@ -83,7 +83,7 @@ const cli = async (...args) => {
   const executable = process.env.T3_SMOKE_CLI ?? process.execPath;
   const prefix = process.env.T3_SMOKE_CLI ? [] : [`${tree}/apps/server/src/bin.ts`];
   const result = await execute(executable, [...prefix, 'thread', ...args, '--base-dir', home, '--json'], {
-    cwd: tree, timeout: 90000, maxBuffer: 8 * 1024 * 1024,
+    cwd: tree, timeout: args[0] === 'archive' ? 15000 : 90000, killSignal: args[0] === 'archive' ? 'SIGKILL' : 'SIGTERM', maxBuffer: 8 * 1024 * 1024,
   });
   return JSON.parse(result.stdout);
 };
@@ -187,6 +187,6 @@ try {
   await new Promise((resolve) => proxy.close(resolve));
   evidence.completedAt = new Date().toISOString();
   await writeFile(output, JSON.stringify(evidence, null, 2));
-  for (const threadId of threads) await cli('archive', threadId).catch(() => console.error(`proof-archive failed: ${threadId}`));
+  await Promise.all(threads.map((threadId) => cli('archive', threadId).catch(() => console.error(`proof-archive failed: ${threadId}`))));
   console.log(JSON.stringify({ pass: evidence.pass ?? false, output, error: evidence.error, assertions: evidence.assertions }));
 }

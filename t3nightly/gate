@@ -17,7 +17,7 @@ from t3nightly.gate_checks import CHECKS  # noqa: E402
 from t3nightly.gate_tools import CHECKS as TOOL_CHECKS  # noqa: E402
 from t3nightly.gate_env import resolve_node, stop_server  # noqa: E402
 from t3nightly.gate_proc import CheckFailed, Deadline, redact_tree  # noqa: E402
-from t3nightly.proof_cleanup import cleanup_checks, threads
+from t3nightly.proof_cleanup import baseline_checks, cleanup_checks
 
 
 class Context:
@@ -91,7 +91,7 @@ def main():
                 continue
             checks.append(timed(name, limit, body, ctx))
             if name == 'boot' and ctx.ready:
-                ctx.proof_baseline = threads(ctx.home)
+                baseline_checks(ctx)
     finally:
         cleanup_checks(ctx)
         checks.append(timed('teardown', 120, teardown, ctx))

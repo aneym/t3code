@@ -186,7 +186,7 @@ def main():
         attempt("save-receipt-inputs", lambda: (run / "receipt-inputs.json").write_text(json.dumps(inputs) + "\n"))
         value = receipt(run, **inputs)
         if turn and status.get("completedRun"):
-            archive_idle(home / "runtime/versions" / version / "t3", home, turn["threadId"], lambda step, **fields: print(json.dumps({"step": step, **fields}), flush=True))
+            attempt("archive-proof", lambda: archive_idle(home / "runtime/versions" / version / "t3", home, turn["threadId"], lambda step, **fields: print(json.dumps({"step": step, **fields}), flush=True)))
         (run / "finished.json").write_text(json.dumps({"grade": value["grade"], "pid": os.getpid(), "finishedAt": time.time(), "authFileRemoved": auth["authFileRemoved"], "revokeVerified": auth.get("revokeVerified", False), "watcherFinalized": False}) + "\n")
         from .live_swap_cleanup import request_unload
 

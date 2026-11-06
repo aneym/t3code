@@ -32,7 +32,7 @@ const lastJson = (text) => JSON.parse(text.trim().split('\n').findLast((line) =>
 const t3 = async (args, cwd = tree) => {
   const executable = process.env.T3_SMOKE_CLI ?? process.execPath;
   const prefix = process.env.T3_SMOKE_CLI ? [] : [`${tree}/apps/server/src/bin.ts`];
-  const result = await execute(executable, [...prefix, ...args, '--base-dir', home], { cwd, timeout: 240000, maxBuffer: 8 * 1024 * 1024 })
+  const result = await execute(executable, [...prefix, ...args, '--base-dir', home], { cwd, timeout: args[1] === 'archive' ? 15000 : 240000, killSignal: args[1] === 'archive' ? 'SIGKILL' : 'SIGTERM', maxBuffer: 8 * 1024 * 1024 })
     .catch((error) => { throw new Error(`t3 ${args.slice(0, 2).join(' ')} failed: ${String(error.stderr ?? '').trim().split('\n').at(-1)}`); });
   return result.stdout;
 };
@@ -164,6 +164,6 @@ try {
   }
   evidence.completedAt = new Date().toISOString();
   await writeFile(output, JSON.stringify(evidence, null, 2));
-  for (const { threadId } of Object.values(evidence.threads)) await t3(['thread', 'archive', threadId]).catch(() => console.error(`proof-archive failed: ${threadId}`));
+  await Promise.all(Object.values(evidence.threads).map(({ threadId }) => t3(['thread', 'archive', threadId]).catch(() => console.error(`proof-archive failed: ${threadId}`))));
   console.log(JSON.stringify({ pass: evidence.pass ?? false, output, error: evidence.error?.split('\n')[0], assertions: evidence.assertions }));
 }

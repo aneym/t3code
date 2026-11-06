@@ -12,7 +12,7 @@ from .release_eligibility import RESTORE_CLASS
 from .release_manifest import TARGETS, digest, engine_identity, load
 from .release_receipts import REHEARSAL_SCHEMA, provenance, seal, write
 from .release_signatures import cli_binary, verify_archive
-from .proof_cleanup import cleanup, threads
+from .proof_cleanup import capture_baseline, cleanup_rehearsal, rehearsal_log
 from .rehearsal_retention import retain
 from .rehearsal_sandbox import Sandbox, sha256
 from .rehearsal_workload import Workload
@@ -148,7 +148,7 @@ class Rehearsal:
             self.phase = "prepare"
             tick = time.monotonic()
             self.sandbox.prepare(self.args.health_s)
-            self.proof_baseline = threads(self.sandbox.home)
+            self.proof_baseline = capture_baseline(self.sandbox.home, rehearsal_log)
             self.old_history = self.sandbox.history()
             if self.old_history != self.manifest["targets"][self.args.target_host]["compatibility"]["baseMigrations"]["history"]:
                 raise ValueError("seed migration history differs from candidate base")
@@ -220,8 +220,7 @@ class Rehearsal:
                         signal.signal(number, signal.SIG_IGN)
                 finally:
                     try:
-                        if result["result"] in ("PASS", "COMPATIBILITY-PROBE", "ROLLBACK-PROOF") and hasattr(self, "proof_baseline"):
-                            cleanup(self.sandbox.user_cli(), self.sandbox.home, self.proof_baseline, lambda step, **fields: print(json.dumps({"step": step, **fields}), flush=True))
+                        cleanup_rehearsal(self.sandbox, getattr(self, "proof_baseline", None))
                         self.sandbox.close()
                     except BaseException as error:
                         result.update(result="FAIL", releaseEligible=False, teardownError=f"{type(error).__name__}: {error}")

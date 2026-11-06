@@ -1,8 +1,9 @@
 import json
 import sqlite3
+import time
 from contextlib import closing
 
-from .proof_archive import archive_idle
+from .proof_archive import archive_idle, log_event
 
 
 def threads(home):
@@ -11,23 +12,51 @@ def threads(home):
         return {row[0] for row in connection.execute("SELECT thread_id FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL")}
 
 
+def capture_baseline(home, log):
+    try:
+        return threads(home)
+    except BaseException as error:
+        log_event(log, "proof-baseline-failed", errorType=type(error).__name__)
+        return None
+
+
 def cleanup(runtime, home, baseline, log):
     try:
+        if baseline is None:
+            return
+        deadline = time.monotonic() + 20
         created = threads(home) - baseline
         for thread_id in sorted(created):
-            archive_idle(runtime, home, thread_id, log)
-    except (OSError, sqlite3.Error) as error:
-        log("proof-archive-failed", errorType=type(error).__name__)
+            archive_idle(runtime, home, thread_id, log, deadline=deadline, interrupt=True)
+    except BaseException as error:
+        log_event(log, "proof-archive-failed", errorType=type(error).__name__)
+
+
+def check_log(ctx):
+    def log(step, **fields):
+        with open(ctx.log("proof-archive"), "a") as handle:
+            handle.write(json.dumps({"step": step, **fields}) + "\n")
+    return log
+
+
+def baseline_checks(ctx):
+    ctx.proof_baseline = capture_baseline(ctx.home, check_log(ctx))
 
 
 def cleanup_checks(ctx):
-    def log(step, **fields):
-        line = json.dumps({"step": step, **fields})
-        try:
-            with open(ctx.log("proof-archive"), "a") as handle:
-                handle.write(line + "\n")
-        except OSError:
-            print(line, flush=True)
+    try:
+        cleanup(ctx.t3, ctx.home, getattr(ctx, "proof_baseline", None), check_log(ctx))
+    except BaseException as error:
+        log_event(check_log(ctx), "proof-archive-failed", errorType=type(error).__name__)
 
-    if hasattr(ctx, "proof_baseline"):
-        cleanup(ctx.t3, ctx.home, ctx.proof_baseline, log)
+
+def rehearsal_log(step, **fields):
+    print(json.dumps({"step": step, **fields}), flush=True)
+
+
+def cleanup_rehearsal(sandbox, baseline):
+    try:
+        if baseline is not None:
+            cleanup(sandbox.user_cli(), sandbox.home, baseline, rehearsal_log)
+    except BaseException as error:
+        log_event(rehearsal_log, "proof-archive-failed", errorType=type(error).__name__)

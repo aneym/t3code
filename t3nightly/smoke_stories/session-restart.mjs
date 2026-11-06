@@ -31,7 +31,7 @@ const lastJson = (text) => JSON.parse(text.trim().split('\n').findLast((line) =>
 const t3 = async (args, cwd = tree) => {
   const executable = process.env.T3_SMOKE_CLI ?? process.execPath;
   const prefix = process.env.T3_SMOKE_CLI ? [] : [`${tree}/apps/server/src/bin.ts`];
-  const result = await execute(executable, [...prefix, ...args, '--base-dir', home], { cwd, timeout: 240000, maxBuffer: 8 * 1024 * 1024 })
+  const result = await execute(executable, [...prefix, ...args, '--base-dir', home], { cwd, timeout: args[1] === 'archive' ? 15000 : 240000, killSignal: args[1] === 'archive' ? 'SIGKILL' : 'SIGTERM', maxBuffer: 8 * 1024 * 1024 })
     .catch((error) => { throw new Error(`t3 ${args.slice(0, 2).join(' ')} failed: ${String(error.stderr ?? '').trim().split('\n').at(-1)}`); });
   return result.stdout;
 };

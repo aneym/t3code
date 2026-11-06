@@ -6,7 +6,7 @@ from .install_hot_swap import measure_candidate
 from .rehearsal_drain import hold_after_rollback, verify_refusal
 from .rehearsal_run import Rehearsal
 from .rehearsal_workload import Workload
-from .proof_cleanup import threads
+from .proof_cleanup import capture_baseline, rehearsal_log
 
 
 class RollbackFallbackRehearsal(Rehearsal):
@@ -15,7 +15,7 @@ class RollbackFallbackRehearsal(Rehearsal):
         self.preflight()
         self.phase = "prepare"
         self.sandbox.prepare(self.args.health_s)
-        self.proof_baseline = threads(self.sandbox.home)
+        self.proof_baseline = capture_baseline(self.sandbox.home, rehearsal_log)
         self.phase = "baseline"
         baseline = Workload(self.sandbox).baseline()
         measured = measure_candidate(self.sandbox, self.manifest)

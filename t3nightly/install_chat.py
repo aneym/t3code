@@ -9,7 +9,7 @@ from contextlib import closing
 from pathlib import Path
 
 from .identity_snapshot import for_version, read, take
-from .proof_archive import archive
+from .proof_archive import archive_chat
 from .release_manifest import digest
 
 
@@ -45,7 +45,7 @@ def candidate_writes(run, version, proof):
     return writes
 
 
-def prove(run, version, baseline=None):
+def prove(run, version, baseline=None, *, rollback=False):
     args = run.args
     provider = baseline["provider"] if baseline else args.chat_provider
     model = baseline["model"] if baseline else args.chat_model
@@ -56,21 +56,25 @@ def prove(run, version, baseline=None):
         raise ValueError("real chat submission failed")
     submitted = json.loads(result.stdout)
     thread, turn = submitted["threadId"], submitted["runId"]
-    deadline = time.monotonic() + args.chat_timeout
-    while time.monotonic() < deadline:
-        rows = query(run, "SELECT message_id, payload_json FROM orchestration_v2_projection_messages WHERE thread_id=? AND run_id=? AND role='assistant' ORDER BY created_at", (thread, turn))
-        states = query(run, "SELECT status FROM orchestration_v2_projection_runs WHERE run_id=?", (turn,))
-        if states and states[0][0] == "completed":
-            matching = [(message, payload) for message, payload in rows if json.loads(payload).get("text", "").strip() == nonce]
-            if len(matching) != 1:
-                raise ValueError("completed chat did not persist the exact nonce-bound reply")
-            message, payload = matching[0]
-            proof = {"threadId": thread, "messageId": message, "nonce": nonce, "evidenceDigest": digest({"thread": thread, "run": turn, "message": message, "payload": json.loads(payload)})}
-            run.step("hard-chat", version=version, provider=provider, model=model, **proof)
-            if not (baseline and version == args.version and args.force_rollback):
-                archive(run.runtime(version), run.home, thread, run.step)
-            return {"proof": proof, "provider": provider, "model": model}
-        if states and states[0][0] in ("failed", "cancelled", "interrupted", "rolled_back"):
-            raise ValueError("real chat turn ended without a completed persisted reply")
-        time.sleep(0.5)
-    raise TimeoutError("real chat proof deadline exceeded")
+    completed = False
+    try:
+        deadline = time.monotonic() + args.chat_timeout
+        while time.monotonic() < deadline:
+            rows = query(run, "SELECT message_id, payload_json FROM orchestration_v2_projection_messages WHERE thread_id=? AND run_id=? AND role='assistant' ORDER BY created_at", (thread, turn))
+            states = query(run, "SELECT status FROM orchestration_v2_projection_runs WHERE run_id=?", (turn,))
+            if states and states[0][0] == "completed":
+                matching = [(message, payload) for message, payload in rows if json.loads(payload).get("text", "").strip() == nonce]
+                if len(matching) != 1:
+                    raise ValueError("completed chat did not persist the exact nonce-bound reply")
+                message, payload = matching[0]
+                proof = {"threadId": thread, "messageId": message, "nonce": nonce, "evidenceDigest": digest({"thread": thread, "run": turn, "message": message, "payload": json.loads(payload)})}
+                run.step("hard-chat", version=version, provider=provider, model=model, **proof)
+                completed = True
+                return {"proof": proof, "provider": provider, "model": model}
+            if states and states[0][0] in ("failed", "cancelled", "interrupted", "rolled_back"):
+                raise ValueError("real chat turn ended without a completed persisted reply")
+            time.sleep(0.5)
+        raise TimeoutError("real chat proof deadline exceeded")
+    finally:
+        if not completed or rollback or not (baseline and version == args.version and args.force_rollback):
+            archive_chat(run, version, thread, interrupt=not completed)

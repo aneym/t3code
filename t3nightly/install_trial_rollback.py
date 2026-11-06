@@ -60,5 +60,5 @@ def recover(run, bearer, previous, compatibility, before, connect, baseline):
         retained(run, before)
         if connect and not connect_returns(run, previous):
             raise ValueError("rollback managed tunnel acceptance failed")
-        prove(run, previous, baseline)
+        prove(run, previous, baseline, rollback=True)
         run.report["hotSwap"]["rollback"] = method
