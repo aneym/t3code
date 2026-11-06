@@ -10,7 +10,7 @@ export const ServerPatch = {
 };
 
 export const Client = {
-  browserAllowRemoteDeviceTabs: Schema.Boolean.pipe(
+  browserShowRemoteDeviceTabs: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   browserAllowRemoteDeviceControl: Schema.Boolean.pipe(
@@ -19,6 +19,6 @@ export const Client = {
 };
 
 export const ClientPatch = {
-  browserAllowRemoteDeviceTabs: Schema.optionalKey(Schema.Boolean),
+  browserShowRemoteDeviceTabs: Schema.optionalKey(Schema.Boolean),
   browserAllowRemoteDeviceControl: Schema.optionalKey(Schema.Boolean),
 };
