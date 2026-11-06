@@ -335,6 +335,9 @@ def run_fast_action(stage, config, log):
     if stage == "LR":
         return publish_landings(config, log)
     if stage == "LM":
+        if config.defer_hosts:
+            log.write(f"link-mesh skip: deferred hosts {', '.join(config.defer_hosts)}\n")
+            return 0
         return command([str(config.home / ".local/bin/t3-link-mesh"), "--json"], log)
     if stage == "H":
         return fast_health(config, log)

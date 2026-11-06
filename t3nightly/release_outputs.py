@@ -224,10 +224,18 @@ def release_identity(manifest):
 
 
 def deferred_hosts(run):
-    records = [json.loads(path.read_text()).get("deferredHosts", {}) for path in (Path(run) / "fast-inputs.json", Path(run) / "readiness.json") if path.is_file()]
-    if any(record != records[0] for record in records):
+    records = []
+    for name in ("fast-inputs.json", "readiness.json"):
+        path = Path(run) / name
+        if not path.is_file():
+            raise ValueError(f"{name} is required to decide deferred hosts")
+        value = json.loads(path.read_text())
+        if not isinstance(value, dict):
+            raise ValueError(f"{name} is not a JSON object")
+        records.append(value.get("deferredHosts", {}))
+    if records[0] != records[1]:
         raise ValueError("fast-inputs.json and readiness.json disagree on deferred hosts")
-    hosts = records[0] if records else {}
+    hosts = records[0]
     if not isinstance(hosts, dict) or any(host not in LINUX_TARGETS or not isinstance(reason, str) or not reason.strip() for host, reason in hosts.items()):
         raise ValueError("invalid Linux host deferral in fast run inputs")
     for host, reason in hosts.items():
