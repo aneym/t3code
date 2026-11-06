@@ -20,7 +20,12 @@ export async function bindAgentFirstOpen(
   );
   if (!loaded || !home) return;
   const handle = home.handle;
-  if (loaded.some((entry) => entry.handle === handle && entry.binding !== null)) return;
+  if (
+    loaded.some(
+      (entry) => entry.handle === handle && entry.role === "orch" && entry.binding !== null,
+    )
+  )
+    return;
   const failed = await assignAgentHomes({
     handle,
     target: { environmentId, threadId },

@@ -98,8 +98,9 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
   }
   const agents: RailsAgent[] = [];
   for (const [handle, group] of groups) {
-    if (!group.some((home) => home.role === "orch")) continue;
-    const ordered = group.toSorted((a, b) => a.environmentId.localeCompare(b.environmentId));
+    const live = group.filter((home) => home.role === "orch");
+    if (live.length === 0) continue;
+    const ordered = live.toSorted((a, b) => a.environmentId.localeCompare(b.environmentId));
     const winner = ordered
       .filter((home) => home.binding !== null)
       .toSorted((a, b) => bindingTime(b) - bindingTime(a))[0];

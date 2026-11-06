@@ -87,7 +87,7 @@ export function SidebarAgents({
     active:
       agent.target !== null &&
       `${agent.target.environmentId}:${agent.target.threadId}` === activeThreadKey,
-    machines: agent.environmentIds
+    machines: (agent.target ? [agent.target.environmentId] : agent.environmentIds)
       .flatMap((id) => environmentLabelById.get(id) ?? [])
       .filter((label, index, all) => all.indexOf(label) === index)
       .join(" · "),

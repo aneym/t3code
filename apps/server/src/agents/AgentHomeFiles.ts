@@ -32,6 +32,7 @@ const readDocument = async (root: string, handle: string) =>
 const decodeBinding = Schema.decodeSync(AgentHomeBinding);
 const decodeHome = Schema.decodeSync(AgentHome);
 const text = (value: unknown) => (typeof value === "string" ? value : null);
+const isRetired = (doc: Record<string, unknown>) => Boolean(doc.retired) || doc.env === "retired";
 const FACE_URL_PATTERN =
   /^https:\/\/[a-z0-9.-]+\/api\/faces\/[a-z0-9]+\/[A-Za-z0-9_-]{22}\/(128|512)\.png$/;
 const faceUrl = (rails: unknown) => {
@@ -128,6 +129,7 @@ export const readHomes = async (
     if (!entry.isDirectory() || !AGENT_HOME_HANDLE_PATTERN.test(entry.name)) continue;
     try {
       const doc = await readDocument(root, entry.name);
+      if (isRetired(doc)) continue;
       homes.push(
         homeFromDocument(
           root,
