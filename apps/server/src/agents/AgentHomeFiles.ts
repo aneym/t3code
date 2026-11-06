@@ -34,7 +34,7 @@ const decodeHome = Schema.decodeSync(AgentHome);
 const text = (value: unknown) => (typeof value === "string" ? value : null);
 const isRetired = (doc: Record<string, unknown>) => Boolean(doc.retired) || doc.env === "retired";
 const FACE_URL_PATTERN =
-  /^https:\/\/[a-z0-9.-]+\/api\/faces\/[a-z0-9]+\/[A-Za-z0-9_-]{22}\/(128|512)\.png$/;
+  /^https:\/\/[a-z0-9.-]+\/api\/faces\/[a-z0-9]+\/[A-Za-z0-9_-]{22}\/(?:(?:im_[0-9a-f]{16}|lv_[0-9a-f]{12}|seed)\/)?(128|512)\.png$/;
 const faceUrl = (rails: unknown) => {
   const value =
     typeof rails === "object" && rails !== null
