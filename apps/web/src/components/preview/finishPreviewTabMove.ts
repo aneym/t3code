@@ -49,12 +49,13 @@ export async function finishPreviewTabMove<E>(input: {
   readonly from: PreviewSessionSnapshot;
   readonly to: PreviewSessionSnapshot;
   readonly closePreview: ClosePreviewSessionInput<E>["closePreview"];
+  readonly url: string;
 }): Promise<void> {
-  const { threadRef, from, to, closePreview } = input;
+  const { threadRef, from, to, closePreview, url } = input;
   useRightPanelStore.getState().openBrowser(threadRef, to.tabId);
   const guarded =
     to.runtime !== "server" &&
-    from.navStatus._tag !== "Idle" &&
+    url !== "" &&
     guardsPreviewTab(
       threadRef.environmentId,
       appAtomRegistry.get(primaryEnvironmentIdAtom),

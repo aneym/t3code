@@ -227,7 +227,7 @@ export function PreviewView({
   const canGoForward = desktopOverlay?.canGoForward ?? snapshot?.canGoForward ?? false;
   const refreshDisabled = navStatus._tag === "Idle";
   const isUnreachable = navStatus._tag === "LoadFailed";
-  const showEmptyState = shouldShowPreviewEmptyState(snapshot);
+  const showEmptyState = shouldShowPreviewEmptyState(snapshot, navStatus);
   const serverStreamPending =
     isServerTab && !showEmptyState && !isUnreachable && serverFrameTabId !== runtimeTabId;
   const controller = desktopOverlay?.controller ?? "none";
@@ -412,7 +412,7 @@ export function PreviewView({
       });
       return;
     }
-    await finishPreviewTabMove({ threadRef, from: snapshot, to: result.value, closePreview });
+    await finishPreviewTabMove({ threadRef, from: snapshot, to: result.value, closePreview, url });
   };
 
   const handlePictureInPicture = () => {

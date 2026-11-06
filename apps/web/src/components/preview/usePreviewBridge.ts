@@ -52,16 +52,8 @@ export function usePreviewBridge(input: {
   runtimeTabId: string;
   serverDriven?: boolean;
   mirrored?: boolean;
-  guarded?: boolean;
 }): void {
-  const {
-    threadRef,
-    tabId,
-    runtimeTabId,
-    serverDriven = false,
-    mirrored = false,
-    guarded = false,
-  } = input;
+  const { threadRef, tabId, runtimeTabId, serverDriven = false, mirrored = false } = input;
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
   const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
   const { environmentId, threadId } = threadRef;
@@ -78,7 +70,7 @@ export function usePreviewBridge(input: {
       if (shouldClearBrowserPointer(lastDesktopNavStatus.current, state.navStatus)) {
         clearBrowserPointer(runtimeTabId);
       }
-      if (guarded && state.navStatus.kind === "Loading") {
+      if (mirrored && state.navStatus.kind === "Loading") {
         if (lastDesktopNavStatus.current?.kind !== "Loading") {
           const serverStatus = readThreadPreviewState(stableThreadRef).sessions[tabId]?.navStatus;
           attemptedServerUrl.current =
@@ -90,7 +82,7 @@ export function usePreviewBridge(input: {
       applyPreviewDesktopState(stableThreadRef, tabId, projectDesktopState(state, mirrored));
       const attempted = attemptedServerUrl.current;
       if (
-        guarded &&
+        mirrored &&
         state.navStatus.kind === "LoadFailed" &&
         isGuardRefusal(state.navStatus.code)
       ) {
