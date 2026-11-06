@@ -93,8 +93,10 @@ def main():
             if name == 'boot' and ctx.ready:
                 baseline_checks(ctx)
     finally:
-        cleanup_checks(ctx)
-        checks.append(timed('teardown', 120, teardown, ctx))
+        try:
+            cleanup_checks(ctx)
+        finally:
+            checks.append(timed('teardown', 120, teardown, ctx))
         redact_tree(ctx.logs)
         verdict = {
             'version': args.version,

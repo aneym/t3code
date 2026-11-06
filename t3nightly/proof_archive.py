@@ -6,10 +6,10 @@ import time
 def log_event(log, step, **fields):
     try:
         log(step, **fields)
-    except BaseException:
+    except Exception:
         try:
             print(json.dumps({"step": step, **fields}), flush=True)
-        except BaseException:
+        except Exception:
             pass
 
 
@@ -30,11 +30,11 @@ def archive(runtime, home, thread_id, log, *, interrupt=False, deadline=None):
         if interrupt:
             try:
                 command(runtime, home, thread_id, "interrupt", min(deadline, time.monotonic() + 5))
-            except BaseException:
+            except Exception:
                 pass
         result = command(runtime, home, thread_id, "archive", deadline)
         fields.update(ok=result.returncode == 0, exitCode=result.returncode)
-    except BaseException as error:
+    except Exception as error:
         fields.update(ok=False, errorType=type(error).__name__)
     log_event(log, "proof-archive", **fields)
     return fields["ok"]
@@ -56,7 +56,7 @@ def archive_idle(runtime, home, thread_id, log, *, deadline=None, interrupt=Fals
             log_event(log, "proof-archive-skipped", threadId=thread_id, reason="not-idle")
             return False
         return archive(runtime, home, thread_id, log, deadline=deadline)
-    except BaseException as error:
+    except Exception as error:
         log_event(log, "proof-archive-skipped", threadId=thread_id, errorType=type(error).__name__)
         return False
 
@@ -64,6 +64,6 @@ def archive_idle(runtime, home, thread_id, log, *, deadline=None, interrupt=Fals
 def archive_chat(run, version, thread_id, *, interrupt=False):
     try:
         return archive(run.runtime(version), run.home, thread_id, run.step, interrupt=interrupt)
-    except BaseException as error:
+    except Exception as error:
         log_event(run.step, "proof-archive", threadId=thread_id, ok=False, errorType=type(error).__name__)
         return False

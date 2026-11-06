@@ -174,8 +174,10 @@ def main():
                 continue
             steps.append(timed(name, limit, body, ctx))
     finally:
-        cleanup_checks(ctx)
-        steps.append(timed("teardown", 120, teardown, ctx))
+        try:
+            cleanup_checks(ctx)
+        finally:
+            steps.append(timed("teardown", 120, teardown, ctx))
         redact_tree(ctx.logs)
         for step in steps:
             step["detail"] = SECRET.sub(r"\1REDACTED", str(step["detail"]))
