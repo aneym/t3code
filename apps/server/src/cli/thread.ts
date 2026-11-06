@@ -1,4 +1,3 @@
-import { titleFromMessage } from "./threadTitle.ts";
 import { threadSendAllCommand } from "./threadSendAll.ts";
 import {
   OrchestratorMcpThreadInterruptResult,
@@ -206,7 +205,7 @@ const threadStartCommand = Command.make("start", {
   ),
   message: messageArgument,
   title: Flag.String("title").pipe(
-    Flag.withDescription("Thread title. Defaults to the message's first line."),
+    Flag.withDescription("Thread title. Defaults to a generated one."),
     Flag.optional,
   ),
   provider: Flag.String("provider").pipe(
@@ -238,9 +237,9 @@ const threadStartCommand = Command.make("start", {
       if (Option.isSome(flags.provider) !== Option.isSome(flags.model)) {
         return yield* new ThreadUsageError({ detail: "--provider and --model go together." });
       }
-      const title = yield* decodeTitle(
-        Option.getOrElse(flags.title, () => titleFromMessage(message)),
-      ).pipe(Effect.mapError(() => new ThreadUsageError({ detail: "The title is empty." })));
+      const title = yield* Effect.transposeOption(Option.map(flags.title, decodeTitle)).pipe(
+        Effect.mapError(() => new ThreadUsageError({ detail: "The title is empty." })),
+      );
       yield* withOwnerMcpTools(
         "thread",
         flags,
@@ -250,7 +249,7 @@ const threadStartCommand = Command.make("start", {
             "t3_thread_launch",
             {
               projectId: project.id,
-              title,
+              ...(Option.isSome(title) ? { title: title.value } : {}),
               message,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
               ...(Option.isSome(flags.provider) && Option.isSome(flags.model)

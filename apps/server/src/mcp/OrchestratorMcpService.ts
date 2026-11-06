@@ -67,6 +67,7 @@ import { withLegacyUltracodeEffort, getProviderOptionCurrentValue } from "@t3too
 import { invalidOptionSelections, knownOptions } from "./optionSelections.ts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
+import { plainTitleLine } from "@t3tools/shared/threadTitleText";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -628,14 +629,9 @@ function stableMessageId(input: {
   );
 }
 
-function threadTitle(input: {
-  readonly parentTitle: string;
-  readonly prompt: string | undefined;
-  readonly title: string | undefined;
-  readonly index: number;
-}): string {
-  const detail = input.title?.trim() || input.prompt?.trim();
-  if (!detail) return `${input.parentTitle} thread ${input.index + 1}`;
+function threadTitle(parentTitle: string, index: number, title?: string, prompt = ""): string {
+  const detail = title?.trim() || plainTitleLine(prompt);
+  if (!detail) return `${parentTitle} thread ${index + 1}`;
   return detail.length > 80 ? `${detail.slice(0, 77)}...` : detail;
 }
 
@@ -2609,12 +2605,7 @@ const make = Effect.gen(function* () {
                 request.interactionMode,
               );
               yield* assertTargetEnabledForProject(parent, commandId, target);
-              const title = threadTitle({
-                parentTitle: parent.thread.title,
-                prompt: request.prompt,
-                title: request.title,
-                index,
-              });
+              const title = threadTitle(parent.thread.title, index, request.title, request.prompt);
               yield* threadManagement
                 .dispatch({
                   type: "thread.create",
@@ -2666,6 +2657,7 @@ const make = Effect.gen(function* () {
                     }),
                     text: request.prompt,
                     attachments: [],
+                    ...(request.title === undefined ? { titleSeed: title } : {}),
                     modelSelection: resolvedModelSelection,
                     dispatchMode: { type: "start_immediately" },
                   })

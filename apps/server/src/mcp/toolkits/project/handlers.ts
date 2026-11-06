@@ -27,6 +27,8 @@ import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { truncate } from "@t3tools/shared/String";
+import { plainTitleLine } from "@t3tools/shared/threadTitleText";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -228,7 +230,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           commandId,
           threadId,
           projectId,
-          title: input.title,
+          title: input.title ?? (truncate(plainTitleLine(input.message ?? ""), 80) || "New thread"),
+          generateTitle: input.title === undefined,
           modelSelection,
           runtimeMode: startedRuntimeMode,
           interactionMode,

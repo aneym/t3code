@@ -19,6 +19,7 @@ import type {
   TurnItemId,
 } from "@t3tools/contracts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { plainTitleLine } from "@t3tools/shared/threadTitleText";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
@@ -30,11 +31,11 @@ function trimmed(value: string | null | undefined): string | undefined {
 
 export function subagentThreadTitle(input: {
   readonly parentTitle: string;
-  readonly title?: string | null;
+  readonly title?: string | null | undefined;
   readonly prompt: string;
   readonly ordinal: number;
 }): string {
-  const detail = trimmed(input.title) ?? trimmed(input.prompt);
+  const detail = trimmed(input.title) ?? trimmed(plainTitleLine(input.prompt));
   if (detail === undefined) {
     return `${input.parentTitle} subagent ${input.ordinal}`;
   }
