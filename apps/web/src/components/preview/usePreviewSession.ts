@@ -14,6 +14,7 @@ import {
   readThreadPreviewState,
   reconcilePreviewServerSessions,
 } from "~/previewStateStore";
+import { admitsPreviewValue } from "~/browser/previewTrustEpoch";
 import { environmentCatalog } from "~/connection/catalog";
 import { isElectron } from "~/env";
 import { previewEnvironment } from "~/state/preview";
@@ -49,6 +50,7 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
 
     const reconcileSessions = (result: Atom.Type<typeof sessionsAtom>) => {
       if (result.waiting || !AsyncResult.isSuccess(result)) return;
+      if (!admitsPreviewValue(threadRef.environmentId, result.value)) return;
       reconcilePreviewServerSessions(threadRef, result.value);
       if (!readThreadPreviewState(threadRef).listLoaded) {
         // An event overtook the initial list; retry before using the partial index for surface cleanup.
@@ -60,6 +62,7 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
 
     const applyLatestEvent = (result: Atom.Type<typeof eventsAtom>) => {
       if (!AsyncResult.isSuccess(result) || result.value.threadId !== threadRef.threadId) return;
+      if (!admitsPreviewValue(threadRef.environmentId, result.value)) return;
       const currentEpoch = readThreadPreviewState(threadRef).serverEpoch;
       if (currentEpoch !== null && currentEpoch !== result.value.serverEpoch) {
         get.refresh(sessionsAtom);

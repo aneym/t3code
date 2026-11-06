@@ -23,7 +23,6 @@ import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { environmentSession, readEnvironmentScope } from "~/state/session";
 
 import { remoteDeviceAccess } from "./remoteDeviceAccess";
-import { remoteLoopbackHost } from "./remoteTabUrl";
 
 type Registry = EnvironmentRegistry.EnvironmentRegistry["Service"];
 interface Relay {
@@ -149,14 +148,7 @@ function runRemoteBrowserRelays(
             Stream.runForEach((line) =>
               Effect.promise(() =>
                 control && typeof line === "string"
-                  ? bridge.sendCommand(
-                      encodeCommand({
-                        type: "remote",
-                        environmentId,
-                        line,
-                        loopbackHost: remoteLoopbackHost(environmentId),
-                      }),
-                    )
+                  ? bridge.sendCommand(encodeCommand({ type: "remote", environmentId, line }))
                   : Promise.resolve(),
               ),
             ),

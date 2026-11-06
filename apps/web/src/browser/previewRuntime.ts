@@ -19,7 +19,7 @@ import {
   remoteDeviceTabAccess,
   useRemoteDeviceAccessFor,
 } from "./remoteDeviceAccess";
-import { resolveRemoteTabUrl } from "./remoteTabUrl";
+import { publicTabUrl } from "./remoteTabUrl";
 
 type NativeTabSnapshot = Pick<
   PreviewSessionSnapshot,
@@ -86,7 +86,7 @@ export function rendersServerTabNatively(
   const access = remoteDeviceTabAccess(snapshot, accessFor(environmentId));
   if (access === "off" || (access === "control" && snapshot.headless)) return false;
   const status = snapshot.navStatus;
-  return status._tag === "Idle" || resolveRemoteTabUrl(environmentId, status.url) !== null;
+  return status._tag === "Idle" || publicTabUrl(status.url) !== null;
 }
 
 export function serverDrivesNativeTab(

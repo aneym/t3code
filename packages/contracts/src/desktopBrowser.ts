@@ -56,7 +56,6 @@ export const DesktopBrowserRendererCommand = Schema.Union([
     type: Schema.Literal("remote"),
     environmentId: Schema.String,
     line: Schema.String,
-    loopbackHost: Schema.optional(Schema.String),
   }),
   Schema.Struct({ type: Schema.Literal("mirror"), tabId: Schema.String, url: Schema.String }),
 ]);

@@ -53,14 +53,13 @@ import {
   useRemoteDeviceAccess,
   useRemoteDeviceAccessFor,
 } from "./remoteDeviceAccess";
-import { resolveRemoteTabUrl } from "./remoteTabUrl";
+import { publicTabUrl } from "./remoteTabUrl";
 
 type HostedBrowserSession = ReturnType<typeof hostedBrowserSessions>[number];
 
-function remoteTabUrls({ threadRef, snapshot, remote, driven }: HostedBrowserSession) {
+function remoteTabUrls({ snapshot, remote, driven }: HostedBrowserSession) {
   const serverUrl = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-  const remoteUrl =
-    remote && serverUrl !== null ? resolveRemoteTabUrl(threadRef.environmentId, serverUrl) : null;
+  const remoteUrl = remote && serverUrl !== null ? publicTabUrl(serverUrl) : null;
   const mirrored = remote && !driven;
   return { serverUrl, remoteUrl, mirrored, mirrorUrl: mirrored ? remoteUrl : null };
 }

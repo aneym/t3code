@@ -1,4 +1,4 @@
-import { isLoopbackAddressHost } from "@t3tools/shared/hostClassification";
+import { isLoopbackAddressHost, isPublicFaviconHost } from "@t3tools/shared/hostClassification";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
@@ -32,10 +32,7 @@ const ownAddresses = () =>
   );
 
 export const isBlockedAddress = (address: string) =>
-  isLoopbackAddressHost(address) ||
-  address.startsWith("169.254.") ||
-  /^fe[89ab][\da-f]:/u.test(address) ||
-  ownAddresses().has(address);
+  !isPublicFaviconHost(address) || ownAddresses().has(address);
 
 export const isBlockedHost = (hostname: string) => {
   if (isLoopbackAddressHost(hostname)) return true;

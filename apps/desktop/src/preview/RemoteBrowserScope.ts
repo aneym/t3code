@@ -5,13 +5,11 @@ import {
   parseRemoteDesktopBrowserThreadId,
   remoteDesktopBrowserThreadId,
 } from "@t3tools/contracts";
-import { isLoopbackAddressHost } from "@t3tools/shared/hostClassification";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
-import { isBlockedHost } from "./RemoteDeviceAddress.ts";
 import * as RemoteCdpMethods from "./RemoteCdpMethods.ts";
 import * as RemoteDeviceSession from "./RemoteDeviceSession.ts";
 
@@ -48,15 +46,6 @@ const parseObject = (text: string): Record<string, unknown> | undefined => {
 
 const HOST_COMMANDS = new Set(["cdp", "release", "pointer", "turn"]);
 
-const remoteTargetUrl = (raw: string, loopbackHost: string | undefined) => {
-  if (RemoteDeviceSession.isNavigableUrl(raw)) return raw;
-  const url = URL.parse(raw);
-  if (url === null || !isLoopbackAddressHost(url.hostname)) return undefined;
-  if (loopbackHost === undefined || isBlockedHost(loopbackHost)) return undefined;
-  url.hostname = loopbackHost;
-  return RemoteDeviceSession.isNavigableUrl(url.href) ? url.href : undefined;
-};
-
 const refusal = (
   inner: Record<string, unknown>,
   environmentId: string,
@@ -81,7 +70,6 @@ const refusal = (
 const scopeHostLine = (
   inner: Record<string, unknown>,
   environmentId: string,
-  loopbackHost: string | undefined,
 ): AdmittedCommand | undefined => {
   if (typeof inner.type !== "string" || !HOST_COMMANDS.has(inner.type)) return undefined;
   const scoped = (fields: Record<string, unknown>): AdmittedCommand => ({
@@ -103,12 +91,10 @@ const scopeHostLine = (
   const given = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
   const params = RemoteCdpMethods.remoteParams(method, given);
   const target = (params as Record<string, unknown>).url;
-  if (typeof target !== "string") {
-    return scoped({ message: encodeJson({ ...message, params }) });
+  if (typeof target === "string" && !RemoteDeviceSession.isNavigableUrl(target)) {
+    return refusal(inner, environmentId, message, `open ${target}`);
   }
-  const url = remoteTargetUrl(target, loopbackHost);
-  if (url === undefined) return refusal(inner, environmentId, message, `open ${target}`);
-  return scoped({ message: encodeJson({ ...message, params: { ...params, url } }) });
+  return scoped({ message: encodeJson({ ...message, params }) });
 };
 
 const grants = (settings: Option.Option<ClientSettings>) =>
@@ -141,9 +127,7 @@ export const admit = Effect.fn("desktop.remoteBrowserScope.admit")(function* (te
     return Option.some<AdmittedCommand>({ type: "announce", tabs });
   }
   if (typeof inner.threadId !== "string") return Option.none<AdmittedCommand>();
-  return Option.fromUndefinedOr(
-    scopeHostLine(inner, command.value.environmentId, command.value.loopbackHost),
-  );
+  return Option.fromUndefinedOr(scopeHostLine(inner, command.value.environmentId));
 });
 
 export const remoteEventEnvelope = (text: string) => {
