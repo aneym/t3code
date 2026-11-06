@@ -1,5 +1,6 @@
 import type {
   DesktopPreviewTabState,
+  PreviewNavStatus,
   PreviewReportStatusInput,
   ScopedThreadRef,
   ThreadId,
@@ -9,7 +10,12 @@ import { useEffect, useEffectEvent, useRef } from "react";
 import { recordFaviconForThread } from "~/browserFaviconStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { acquireBrowserSurfaceActivity } from "~/browser/browserSurfaceStore";
-import { applyPreviewDesktopState, type DesktopPreviewOverlay } from "~/previewStateStore";
+import { isGuardRefusal, recordNativeTabFailure } from "~/browser/nativeTabFailures";
+import {
+  applyPreviewDesktopState,
+  type DesktopPreviewOverlay,
+  readThreadPreviewState,
+} from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -45,8 +51,9 @@ export function usePreviewBridge(input: {
   tabId: string;
   runtimeTabId: string;
   serverDriven?: boolean;
+  mirrored?: boolean;
 }): void {
-  const { threadRef, tabId, runtimeTabId, serverDriven = false } = input;
+  const { threadRef, tabId, runtimeTabId, serverDriven = false, mirrored = false } = input;
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
   const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
   const { environmentId, threadId } = threadRef;
@@ -56,15 +63,36 @@ export function usePreviewBridge(input: {
   const lastReportedKind = useRef<DesktopPreviewTabState["navStatus"]["kind"] | null>(null);
   const lastDesktopNavStatus = useRef<DesktopPreviewTabState["navStatus"] | null>(null);
   const captureActivity = useRef<ReturnType<typeof createCaptureActivity> | null>(null);
+  const attemptedServerUrl = useRef<string | null>(null);
   const handleStateChange = useEffectEvent(
     (changedTabId: string, state: DesktopPreviewTabState): void => {
       if (changedTabId !== runtimeTabId) return;
       if (shouldClearBrowserPointer(lastDesktopNavStatus.current, state.navStatus)) {
         clearBrowserPointer(runtimeTabId);
       }
+      if (mirrored && state.navStatus.kind === "Loading") {
+        if (lastDesktopNavStatus.current?.kind !== "Loading") {
+          const serverStatus = readThreadPreviewState(stableThreadRef).sessions[tabId]?.navStatus;
+          attemptedServerUrl.current =
+            serverStatus?._tag === "Idle" ? null : (serverStatus?.url ?? null);
+        }
+      }
       lastDesktopNavStatus.current = state.navStatus;
       captureActivity.current?.update(state.capturing);
-      applyPreviewDesktopState(stableThreadRef, tabId, projectDesktopState(state));
+      applyPreviewDesktopState(stableThreadRef, tabId, projectDesktopState(state, mirrored));
+      const attempted = attemptedServerUrl.current;
+      if (
+        mirrored &&
+        state.navStatus.kind === "LoadFailed" &&
+        isGuardRefusal(state.navStatus.code)
+      ) {
+        const failedUrl = state.navStatus.url;
+        recordNativeTabFailure(
+          environmentId,
+          tabId,
+          attempted === null ? [failedUrl] : [failedUrl, attempted],
+        );
+      }
       if (state.favicon) {
         recordFaviconForThread(stableThreadRef, state.favicon);
       }
@@ -75,7 +103,7 @@ export function usePreviewBridge(input: {
         lastReportedUrl: lastReportedUrl.current,
         lastReportedKind: lastReportedKind.current,
       });
-      if (!reported || serverDriven) return;
+      if (!reported || serverDriven || mirrored) return;
       lastReportedUrl.current = reported.lastReportedUrl;
       lastReportedKind.current = reported.lastReportedKind;
       void reportStatus({
@@ -90,6 +118,7 @@ export function usePreviewBridge(input: {
     lastReportedUrl.current = null;
     lastReportedKind.current = null;
     lastDesktopNavStatus.current = null;
+    attemptedServerUrl.current = null;
     const activity = createCaptureActivity(runtimeTabId);
     captureActivity.current = activity;
     const unsubscribe = previewBridge.onStateChange(handleStateChange);
@@ -117,9 +146,22 @@ function shouldClearBrowserPointer(
   return current.url !== previous.url;
 }
 
-export function projectDesktopState(state: DesktopPreviewTabState): DesktopPreviewOverlay {
+function toNavStatus(status: DesktopPreviewTabState["navStatus"]): PreviewNavStatus {
+  if (status.kind === "Idle") return { _tag: "Idle" };
+  if (status.kind !== "LoadFailed") {
+    return { _tag: status.kind, url: status.url, title: status.title };
+  }
+  const { url, title, code, description } = status;
+  return { _tag: "LoadFailed", url, title, code, description };
+}
+
+export function projectDesktopState(
+  state: DesktopPreviewTabState,
+  mirrored = false,
+): DesktopPreviewOverlay {
   const navOrigin = state.navStatus.kind === "Idle" ? null : originOf(state.navStatus.url);
   return {
+    ...(mirrored ? { navStatus: toNavStatus(state.navStatus) } : {}),
     hasWebContents: state.webContentsId !== null,
     canGoBack: state.canGoBack,
     canGoForward: state.canGoForward,
@@ -155,32 +197,13 @@ function buildReportInput(args: {
     status.url === lastReportedUrl;
   if (sameAsLast) return null;
 
-  const base = {
-    threadId,
-    tabId,
-    canGoBack: state.canGoBack,
-    canGoForward: state.canGoForward,
-  };
-  if (status.kind === "LoadFailed") {
-    return {
-      input: {
-        ...base,
-        navStatus: {
-          _tag: "LoadFailed",
-          url: status.url,
-          title: status.title,
-          code: status.code,
-          description: status.description,
-        },
-      },
-      lastReportedUrl: status.url,
-      lastReportedKind: "LoadFailed",
-    };
-  }
   return {
     input: {
-      ...base,
-      navStatus: { _tag: status.kind, url: status.url, title: status.title },
+      threadId,
+      tabId,
+      canGoBack: state.canGoBack,
+      canGoForward: state.canGoForward,
+      navStatus: toNavStatus(status),
     },
     lastReportedUrl: status.url,
     lastReportedKind: status.kind,

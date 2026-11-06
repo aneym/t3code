@@ -46,6 +46,7 @@ import {
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
+import { PreviewBrowserSettingsSection } from "./PreviewBrowserSettingsSection";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
@@ -320,10 +321,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
               {props.page === "threads" ? (
                 <>
                   <LoadBalancingSettings
-                    environments={selectedTargets.map((target) => ({
-                      environmentId: target.environmentId,
-                      environmentLabel: target.label,
-                    }))}
+                    serverSettings={reference.settings}
+                    update={write}
+                    disabled={!canWriteSettings || projectSelected}
+                    targets={selectedTargets}
                   />
                   <SettingsSection
                     title="Default workspace"
@@ -395,19 +396,12 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       />
                     ))}
                   </SettingsSection>
-                  <SettingsSection title="Preview browser">
-                    <SettingsSwitchRow
-                      icon="globe"
-                      label="Agent browser access"
-                      subtitle={managedSubtitle(
-                        "enableAgentBrowserAccess",
-                        "Allow agents to use the in-app preview browser.",
-                      )}
-                      value={uniform("enableAgentBrowserAccess")}
-                      disabled={disabledFor("enableAgentBrowserAccess")}
-                      onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
-                    />
-                  </SettingsSection>
+                  <PreviewBrowserSettingsSection
+                    uniform={uniform}
+                    managedSubtitle={managedSubtitle}
+                    disabledFor={disabledFor}
+                    write={write}
+                  />
                   <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
                 </>
               ) : null}

@@ -66,6 +66,7 @@ const taskView = (task: OrchestratorMcpScheduledTask) => ({
   boundThreadId: task.boundThreadId,
   lastRunAt: task.lastRunAt,
   lastRunStatus: task.lastRunStatus,
+  ...(task.lastRunError === undefined ? {} : { lastRunError: task.lastRunError }),
   runCount: task.runCount,
   nextRunAt: task.nextRunAt,
 });

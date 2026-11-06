@@ -54,7 +54,12 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
-import { makeMarkScheduledTaskRunning } from "./scheduledTaskRunState.ts";
+import {
+  makeMarkScheduledTaskCompleted,
+  makeMarkScheduledTaskRunning,
+} from "./scheduledTaskRunState.ts";
+import * as ScheduledRunWorkspace from "./ScheduledRunWorkspace.ts";
+import * as ScheduledRunStart from "./ScheduledRunStart.ts";
 import {
   isMissedFixedTimeRun,
   isOnceScheduleRearmed,
@@ -445,6 +450,8 @@ export const layer = Layer.effect(
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+    const runWorkspace = yield* ScheduledRunWorkspace.ScheduledRunWorkspace;
+    const runStart = yield* ScheduledRunStart.ScheduledRunStart;
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
@@ -718,31 +725,7 @@ export const layer = Layer.effect(
 
     const markRunning = makeMarkScheduledTaskRunning(sql);
 
-    const markCompleted = (input: {
-      readonly id: ScheduledTaskId;
-      readonly completedAtIso: string;
-      readonly nextRunAtIso: string | null;
-      readonly status: "succeeded" | "failed";
-      readonly error: string | null;
-      readonly startedAtIso: string;
-    }) =>
-      sql`
-        UPDATE scheduled_tasks
-        SET updated_at = ${input.completedAtIso},
-            next_run_at = ${input.nextRunAtIso},
-            last_run_status = ${input.status},
-            last_run_error = ${input.error},
-            run_count = run_count + 1
-        WHERE task_id = ${input.id}
-          AND last_run_status = 'running'
-          AND last_run_at = ${input.startedAtIso}
-        RETURNING task_id
-      `.pipe(
-        Effect.map((rows) => rows.length > 0),
-        Effect.mapError((cause) =>
-          taskError("Could not record schedule task run.", { taskId: input.id, cause }),
-        ),
-      );
+    const markCompleted = makeMarkScheduledTaskCompleted(sql);
 
     // A failure between markRunning and markCompleted must still write a terminal record:
     // runDueTasks skips 'running' rows forever, and the dispatch may already have gone out,
@@ -920,7 +903,7 @@ export const layer = Layer.effect(
                     modelSelection: active.modelSelection,
                     runtimeMode: active.runtimeMode,
                     interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
+                    workspaceStrategy: yield* runWorkspace.resolve(active),
                     initialMessage: {
                       messageId,
                       scheduledTaskId: active.id,
@@ -1010,6 +993,17 @@ export const layer = Layer.effect(
             ),
           );
         if (written) yield* notifyChanged;
+        if (written && threadId !== null && active.threadId === null) {
+          yield* runStart
+            .watch({
+              taskId: task.id,
+              startedAtIso,
+              threadId,
+              messageId,
+              onChanged: notifyChanged,
+            })
+            .pipe(Effect.forkIn(serviceScope));
+        }
         // The stored row can belong to a replacement, so report this dispatch separately.
         return { task: recorded, threadId, dispatchFailed: !runSucceeded };
       }).pipe(
@@ -1774,6 +1768,7 @@ export const layer = Layer.effect(
     });
 
     const serviceScope = yield* Effect.scope;
+    yield* runStart.recover(notifyChanged).pipe(Effect.forkIn(serviceScope));
 
     const releaseFailedDelivery = Effect.fn("ScheduledTaskService.releaseFailedDelivery")(
       function* (deliveryId: string) {

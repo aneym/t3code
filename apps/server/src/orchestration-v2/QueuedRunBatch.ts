@@ -58,9 +58,10 @@ export function foldedQueuedTurnItems(
   turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
   run: Pick<OrchestrationV2Run, "id" | "userMessageId">,
 ): ReadonlyArray<UserTurnItem> {
-  const firstItem = turnItems.find(
-    (item) => item.type === "user_message" && item.messageId === run.userMessageId,
-  );
+  const firstItem =
+    turnItems.find(
+      (item) => item.type === "user_message" && item.messageId === run.userMessageId,
+    ) ?? turnItems.find((item) => item.type === "notification" && item.runId === run.id);
   return turnItems
     .filter(
       (item): item is UserTurnItem =>

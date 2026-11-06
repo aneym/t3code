@@ -27,6 +27,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ScheduledRunTesting from "./ScheduledRunTesting.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -115,6 +116,8 @@ const waitForSpan = <A, E, R>(work: Effect.Effect<A, E, R>, name: string) =>
     yield* Deferred.await(done);
     return result;
   });
+
+const workerMap = () => new Map<string, Effect.Effect<void>>();
 
 const drainPendingDispatch = (workers: Map<string, Effect.Effect<void>>) =>
   waitForSpan(workers.get("webhook-coalescing")!, "ScheduledTaskService.dispatchPendingWebhook");
@@ -239,6 +242,7 @@ const withService = <A, E>(
         isScratchProject: () => Effect.succeed(false),
       }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      ScheduledRunTesting.layerPassthrough,
       Layer.mock(SecretRequests.SecretRequests)({
         consume: ({ ref }) => {
           const value = secretsByRef.get(ref);
@@ -956,7 +960,7 @@ it.effect("dedupes replay keys per task, persists them, and expires them after s
 it.effect.each([1, 3])(
   "coalesces %i deliveries into one run with the latest body, headers and query",
   (count) => {
-    const workers = new Map<string, Effect.Effect<void>>();
+    const workers = workerMap();
     return withService(
       ({ service, launches }) =>
         Effect.gen(function* () {
@@ -1032,7 +1036,7 @@ it.effect.each([1, 3])(
 );
 
 it.effect("recovers a persisted coalescing window after restarting the service", () => {
-  const workers = new Map<string, Effect.Effect<void>>();
+  const workers = workerMap();
   return withService(
     ({ service, sql }) =>
       Effect.gen(function* () {
@@ -1046,7 +1050,7 @@ it.effect("recovers a persisted coalescing window after restarting the service",
         );
         yield* service.triggerWebhook(requestFor(task));
         yield* TestClock.adjust("4 seconds");
-        const restartedWorkers = new Map<string, Effect.Effect<void>>();
+        const restartedWorkers = workerMap();
         yield* withService(
           ({ launches }) =>
             Effect.gen(function* () {
@@ -1067,7 +1071,7 @@ it.effect("recovers a persisted coalescing window after restarting the service",
 });
 
 it.effect("a pending dispatch interrupted at its permit does not block later polls", () => {
-  const workers = new Map<string, Effect.Effect<void>>();
+  const workers = workerMap();
   // One shared dispatcher lets the test run the retry's forked worker to completion.
   const mixed = new EffectScheduler.MixedScheduler("sync");
   const dispatcher = mixed.makeDispatcher();
@@ -1118,7 +1122,7 @@ it.effect("a pending dispatch interrupted at its permit does not block later pol
 });
 
 it.effect("rolls back replay and pending state when recording a delivery fails", () => {
-  const workers = new Map<string, Effect.Effect<void>>();
+  const workers = workerMap();
   return withService(
     ({ service, sql, launches }) =>
       Effect.gen(function* () {
@@ -1180,7 +1184,7 @@ it.effect("queue-full deliveries release replay keys so a later retry runs", () 
 it.effect.each(["task_json", "request_json"] as const)(
   "removes corrupt pending %s instead of retrying forever",
   (column) => {
-    const workers = new Map<string, Effect.Effect<void>>();
+    const workers = workerMap();
     return withService(
       ({ service, sql }) =>
         Effect.gen(function* () {
@@ -1216,7 +1220,7 @@ it.effect.each(["task_json", "request_json"] as const)(
 it.effect(
   "restarting after a coalesced launch before pending deletion does not launch or count it twice",
   () => {
-    const workers = new Map<string, Effect.Effect<void>>();
+    const workers = workerMap();
     return withService(
       ({ service, sql, launches }) =>
         Effect.gen(function* () {
@@ -1244,7 +1248,7 @@ it.effect(
             1,
           );
           yield* sql`DROP TRIGGER fail_pending_delete`;
-          const restartedWorkers = new Map<string, Effect.Effect<void>>();
+          const restartedWorkers = workerMap();
           yield* withService(
             ({ service: restarted, launches: secondLaunches }) =>
               Effect.gen(function* () {
@@ -1444,7 +1448,7 @@ it.effect("keeps replay keys when dispatch succeeds but completion bookkeeping f
 it.effect.each([119_000, 120_000])(
   "bounds coalesced prompt logs and checks trimmed length for %i body characters",
   (length) => {
-    const workers = new Map<string, Effect.Effect<void>>();
+    const workers = workerMap();
     return withService(
       ({ service, launches }) =>
         Effect.gen(function* () {
@@ -1486,7 +1490,7 @@ it.effect.each([119_000, 120_000])(
 );
 
 it.effect("oversized coalesced windows stay within the suppression bucket's limit", () => {
-  const workers = new Map<string, Effect.Effect<void>>();
+  const workers = workerMap();
   return withService(
     ({ service, sql, launches }) =>
       Effect.gen(function* () {
@@ -1522,7 +1526,7 @@ it.effect("oversized coalesced windows stay within the suppression bucket's limi
 it.effect.each([1, 11])(
   "keeps relay claims for %i coalesced updates after their window closes",
   (count) => {
-    const workers = new Map<string, Effect.Effect<void>>();
+    const workers = workerMap();
     return withService(
       ({ service, sql, launches }) =>
         Effect.gen(function* () {
@@ -1567,7 +1571,7 @@ it.effect.each([1, 11])(
 );
 
 it.effect("failed windows release every member's replay key and relay claim", () => {
-  const workers = new Map<string, Effect.Effect<void>>();
+  const workers = workerMap();
   return withService(
     ({ service, sql, launches }) =>
       Effect.gen(function* () {
@@ -1618,7 +1622,7 @@ it.effect("failed windows release every member's replay key and relay claim", ()
 it.effect(
   "recovery finishes failed-window claim cleanup without counting the attempt twice",
   () => {
-    const workers = new Map<string, Effect.Effect<void>>();
+    const workers = workerMap();
     return withService(
       ({ service, sql, launches }) =>
         Effect.gen(function* () {
@@ -1650,7 +1654,7 @@ it.effect(
             "failed",
           );
           yield* sql`DROP TRIGGER fail_claim_cleanup`;
-          const restartedWorkers = new Map<string, Effect.Effect<void>>();
+          const restartedWorkers = workerMap();
           yield* withService(
             ({ service: restarted, launches: restartedLaunches }) =>
               Effect.gen(function* () {
@@ -1703,7 +1707,7 @@ it.effect("dispatches an overdue window exactly once after its deadline passed w
     );
     // The first service scope is closed before the deadline advances.
     yield* TestClock.adjust("30 seconds");
-    const restartedWorkers = new Map<string, Effect.Effect<void>>();
+    const restartedWorkers = workerMap();
     yield* withService(
       ({ service, launches }) =>
         Effect.gen(function* () {
@@ -1716,7 +1720,7 @@ it.effect("dispatches an overdue window exactly once after its deadline passed w
         }),
       { sql, workers: restartedWorkers },
     );
-    const secondRestartWorkers = new Map<string, Effect.Effect<void>>();
+    const secondRestartWorkers = workerMap();
     yield* withService(
       ({ service, launches }) =>
         Effect.gen(function* () {
@@ -1733,7 +1737,7 @@ it.effect("dispatches an overdue window exactly once after its deadline passed w
 );
 
 it.effect("removes a window with a render defect and dispatches the task's next window", () => {
-  const workers = new Map<string, Effect.Effect<void>>();
+  const workers = workerMap();
   return withService(
     ({ service, sql, launches }) =>
       Effect.gen(function* () {
@@ -1797,7 +1801,7 @@ it.effect("removes a window with a render defect and dispatches the task's next 
 it.effect.each([false, true])(
   "counts an interrupted immediate run beside an unrelated running window (corrupt task: %s)",
   (corrupt) => {
-    const workers = new Map<string, Effect.Effect<void>>();
+    const workers = workerMap();
     const completedLaunches = new Set<string>();
     return Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();
@@ -1847,7 +1851,7 @@ it.effect.each([false, true])(
             assert.equal(before!.run_count, 0);
             if (corrupt)
               yield* sql`UPDATE scheduled_tasks SET model_selection_json = 'broken' WHERE task_id = ${task.id}`;
-            const restartedWorkers = new Map<string, Effect.Effect<void>>();
+            const restartedWorkers = workerMap();
             yield* withService(
               ({ service: restarted, launches: recoveredLaunches }) =>
                 Effect.gen(function* () {
@@ -2025,7 +2029,7 @@ it.effect("leaves filtered rows out of the list for clients that only decode old
 );
 
 it.effect("filters run before replay and coalescing without claiming ignored deliveries", () => {
-  const workers = new Map<string, Effect.Effect<void>>();
+  const workers = workerMap();
   return withService(
     ({ service, launches, sql }) =>
       Effect.gen(function* () {

@@ -16,6 +16,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ScheduledRunTesting from "../scheduledTasks/ScheduledRunTesting.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
@@ -59,6 +60,7 @@ it.effect("lists every project's saved tasks on request and reports the default 
       isScratchProject: () => Effect.succeed(false),
     }),
     Layer.mock(SecretRequests.SecretRequests)({}),
+    ScheduledRunTesting.layerPassthrough,
     Layer.mock(RemoteDelegation.RemoteDelegation)({}),
   );
   return Effect.gen(function* () {

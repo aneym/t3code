@@ -1,7 +1,8 @@
-import type {
-  DesktopPreviewColorScheme,
-  PreviewViewportSetting,
-  ScopedThreadRef,
+import {
+  type DesktopPreviewColorScheme,
+  type PreviewViewportSetting,
+  remoteDesktopBrowserThreadId,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -21,6 +22,7 @@ import {
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab, withDesktopTab } from "./desktopTabLifetime";
+import { desktopTabRegistered } from "./desktopTabRegistration";
 import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserLayoutZoomFactor } from "./useBrowserLayoutZoomFactor";
@@ -58,6 +60,7 @@ export function HostedBrowserWebview(props: {
   readonly zoomFactor: number;
   readonly serverDriven?: boolean;
   readonly remoteDevice?: string;
+  readonly mirrored?: boolean;
   readonly serverRendering?: {
     readonly colorScheme: DesktopPreviewColorScheme;
     readonly zoomFactor: number;
@@ -74,6 +77,7 @@ export function HostedBrowserWebview(props: {
     profileId,
     serverDriven = false,
     remoteDevice,
+    mirrored = false,
     serverRendering,
   } = props;
   const clientSettingsHydrated = useClientSettingsHydrated();
@@ -102,19 +106,13 @@ export function HostedBrowserWebview(props: {
     (state) => (state.activityByTabId[runtimeTabId] ?? 0) > 0,
   );
   const recordingActive = useActiveBrowserRecordingTabIds().has(runtimeTabId);
-  usePreviewBridge({ threadRef, tabId, runtimeTabId, serverDriven });
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds this remote tab's CDP event claim in the desktop bridge while mounted and releases it on cleanup
-  useEffect(() => {
-    const bridge = window.desktopBridge?.desktopBrowser;
-    if (!bridge || remoteDevice === undefined) return;
-    void bridge.sendCommand(JSON.stringify({ type: "claim", threadId: threadRef.threadId, tabId }));
-    return () => {
-      void bridge.sendCommand(
-        JSON.stringify({ type: "releaseClaim", threadId: threadRef.threadId, tabId }),
-      );
-    };
-  }, [remoteDevice, tabId, threadRef.threadId]);
+  usePreviewBridge({
+    threadRef,
+    tabId,
+    runtimeTabId,
+    serverDriven,
+    mirrored,
+  });
 
   const serverColorScheme = serverRendering?.colorScheme;
   const serverZoomFactor = serverRendering?.zoomFactor;
@@ -125,14 +123,30 @@ export function HostedBrowserWebview(props: {
     crashRecoveryRef.current = INITIAL_WEBVIEW_CRASH_RECOVERY_STATE;
     const lease = acquireDesktopTab(
       runtimeTabId,
-      serverDriven ? { threadId: threadRef.threadId, tabId } : undefined,
+      serverDriven
+        ? {
+            threadId:
+              remoteDevice === undefined
+                ? threadRef.threadId
+                : remoteDesktopBrowserThreadId(threadRef.environmentId, threadRef.threadId),
+            tabId,
+          }
+        : undefined,
     );
     tabLeaseRef.current = lease;
     return () => {
       if (tabLeaseRef.current === lease) tabLeaseRef.current = null;
       lease.release();
     };
-  }, [clientSettingsHydrated, runtimeTabId, serverDriven, tabId, threadRef.threadId]);
+  }, [
+    clientSettingsHydrated,
+    remoteDevice,
+    runtimeTabId,
+    serverDriven,
+    tabId,
+    threadRef.environmentId,
+    threadRef.threadId,
+  ]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies the server color scheme to the desktop preview tab through the desktop bridge
   useEffect(() => {
@@ -176,6 +190,7 @@ export function HostedBrowserWebview(props: {
           const webContentsId = webview.getWebContentsId();
           if (Number.isInteger(webContentsId) && webContentsId > 0) {
             await bridge.registerWebview(runtimeTabId, webContentsId);
+            desktopTabRegistered(runtimeTabId, webContentsId);
           }
         } catch {}
       })();

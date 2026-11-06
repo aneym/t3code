@@ -199,6 +199,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { terminalOutputStream } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DesktopBrowserChannel from "./preview/DesktopBrowserChannel.ts";
+import * as DesktopBrowserRemoteRpc from "./preview/DesktopBrowserRemoteRpc.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -3089,14 +3090,7 @@ export const layerWsRpc = (
         [WS_METHODS.previewReportProfiles]: (input) => reportProfiles(input),
         [WS_METHODS.previewReportStatus]: (input) => previewManager.reportStatus(input),
         [WS_METHODS.subscribePreviewEvents]: (_input) => previewManager.events,
-        [WS_METHODS.desktopBrowserCommands]: (input) =>
-          Stream.unwrap(
-            (desktopChannel?.remoteCommands?.(input) ?? Effect.succeed(Stream.empty)).pipe(
-              Effect.map((stream) => stream.pipe(Stream.map((line) => line.trimEnd()))),
-            ),
-          ),
-        [WS_METHODS.desktopBrowserEvents]: (input) =>
-          desktopChannel?.remoteEvents?.(input) ?? Effect.void,
+        ...DesktopBrowserRemoteRpc.handlers(desktopChannel, currentSessionId),
         [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),
@@ -3331,6 +3325,7 @@ export const layer = Layer.unwrap(
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
+    const desktopChannel = yield* Effect.serviceOption(DesktopBrowserChannel.DesktopBrowserChannel);
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3416,6 +3411,7 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
               Layer.provide(Layer.succeed(PeerClientPairing.PeerClientPairing, peerClientPairing)),
+              Layer.provide(DesktopBrowserRemoteRpc.provideChannel(desktopChannel)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

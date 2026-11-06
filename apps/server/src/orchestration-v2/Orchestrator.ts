@@ -1,5 +1,6 @@
 import { delegatedTaskTerminalStatus } from "./DelegatedTaskStatus.ts";
 import { delegatedRestartPending } from "./DelegatedRestartPending.ts";
+import { delegatedChildWorkspace } from "./DelegatedChildWorkspace.ts";
 import { resumeOnReopen } from "./RestartQueuedRuns.ts";
 import { restartAdmission, admittedDispatchMode } from "./RestartAdmission.ts";
 import { decideSecretRequestRecord } from "./SecretRequestRecord.ts";
@@ -7617,7 +7618,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadRecords(
           command.parentThreadId,
           ["runs", "nodes", "providerThreads", "providerTurns", "attempts"],
-          // The parent node must belong to the active run, whose nodes this keeps.
           { omitSettledLeafNodes: true },
         )
         .pipe(
@@ -7691,23 +7691,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.title === undefined ? {} : { title: command.title }),
         ordinal: (yield* subagentCount(command.parentThreadId)) + 1,
       });
-      const childThread: OrchestrationV2AppThread = {
-        ...makeSubagentChildThread({
-          parentThread: parentProjection.thread,
-          childThreadId,
-          parentNodeId: taskNodeId,
-          activeProviderThreadId: null,
-          providerInstanceId: command.modelSelection.instanceId,
-          modelSelection: command.modelSelection,
-          title: taskTitle,
-          now,
-          createdBy: command.createdBy,
-          creationSource: command.creationSource,
-        }),
-        runtimeMode: command.runtimeMode,
-        interactionMode: command.interactionMode,
-        ...(command.workspaceStrategy === undefined ? {} : { branch: null, worktreePath: null }),
-      };
+      const childThread = delegatedChildWorkspace(
+        {
+          ...makeSubagentChildThread({
+            parentThread: parentProjection.thread,
+            childThreadId,
+            parentNodeId: taskNodeId,
+            activeProviderThreadId: null,
+            providerInstanceId: command.modelSelection.instanceId,
+            modelSelection: command.modelSelection,
+            title: taskTitle,
+            now,
+            createdBy: command.createdBy,
+            creationSource: command.creationSource,
+          }),
+          runtimeMode: command.runtimeMode,
+          interactionMode: command.interactionMode,
+        },
+        command,
+      );
       const task: OrchestrationV2Subagent = {
         id: taskNodeId,
         threadId: command.parentThreadId,

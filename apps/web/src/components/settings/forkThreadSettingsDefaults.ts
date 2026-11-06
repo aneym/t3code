@@ -4,6 +4,7 @@ export const forkThreadSettingsDefaults = {
   batchQueuedMessages: DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages,
   queueSendAll: DEFAULT_UNIFIED_SETTINGS.queueSendAll,
   settleIdleChildren: DEFAULT_UNIFIED_SETTINGS.settleIdleChildren,
+  mcpEventsEnabled: DEFAULT_UNIFIED_SETTINGS.mcpEventsEnabled,
 };
 
 export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyArray<string> {
@@ -16,6 +17,9 @@ export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyAr
       : null,
     settings.settleIdleChildren !== forkThreadSettingsDefaults.settleIdleChildren
       ? "Settle idle child threads"
+      : null,
+    settings.mcpEventsEnabled !== forkThreadSettingsDefaults.mcpEventsEnabled
+      ? "MCP Events subscriptions"
       : null,
   ].filter((label) => label !== null);
 }

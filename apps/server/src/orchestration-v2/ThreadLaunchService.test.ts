@@ -52,6 +52,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ScheduledRunTesting from "../scheduledTasks/ScheduledRunTesting.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -66,6 +67,14 @@ import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+
+const layerLaunchStubs = Layer.mergeAll(
+  NodeCrypto.layer,
+  Scheduler.layer,
+  Layer.mock(SecretRequests.SecretRequests)({}),
+  ScheduledRunTesting.layerPassthrough,
+  ManagedPolicy.layerTest(),
+);
 
 const projectId = ProjectId.make("project:launch-test");
 const otherProjectId = ProjectId.make("project:launch-other");
@@ -325,10 +334,7 @@ it.effect.each(
       Layer.provide(
         Layer.mergeAll(
           harness.layer,
-          NodeCrypto.layer,
-          Scheduler.layer,
-          Layer.mock(SecretRequests.SecretRequests)({}),
-          ManagedPolicy.layerTest(),
+          layerLaunchStubs,
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         ),
       ),
@@ -390,15 +396,7 @@ it.effect(
   () => {
     const harness = makeHarness();
     const layerScheduledTasks = ScheduledTasks.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          harness.layer,
-          NodeCrypto.layer,
-          Scheduler.layer,
-          Layer.mock(SecretRequests.SecretRequests)({}),
-          ManagedPolicy.layerTest(),
-        ),
-      ),
+      Layer.provide(Layer.mergeAll(harness.layer, layerLaunchStubs)),
     );
     return Effect.gen(function* () {
       const tasks = yield* ScheduledTasks.ScheduledTaskService;
@@ -428,15 +426,7 @@ it.effect(
 it.effect("runs a thread-bound automation on the provider the thread uses now", () => {
   const harness = makeHarness({ adapters: [adapter, claudeAdapter] });
   const layerScheduledTasks = ScheduledTasks.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        harness.layer,
-        NodeCrypto.layer,
-        Scheduler.layer,
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        ManagedPolicy.layerTest(),
-      ),
-    ),
+    Layer.provide(Layer.mergeAll(harness.layer, layerLaunchStubs)),
   );
   return Effect.gen(function* () {
     const tasks = yield* ScheduledTasks.ScheduledTaskService;
@@ -892,15 +882,7 @@ function scratchHarness() {
           } as never),
   });
   const layerScheduledTasks = ScheduledTasks.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        harness.layer,
-        NodeCrypto.layer,
-        Scheduler.layer,
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        ManagedPolicy.layerTest(),
-      ),
-    ),
+    Layer.provide(Layer.mergeAll(harness.layer, layerLaunchStubs)),
   );
   return {
     ...harness,

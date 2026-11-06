@@ -78,6 +78,7 @@ import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PreviewAutomationBroker from "../mcp/PreviewAutomationBroker.ts";
 import * as DesktopBrowserChannel from "./DesktopBrowserChannel.ts";
+import * as PreviewOpenDevice from "./PreviewOpenDevice.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as PreviewManager from "./Manager.ts";
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
@@ -465,6 +466,7 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
+  const resolveOpenDevice = yield* PreviewOpenDevice.make;
   const agentTurns = yield* (yield* PreviewAgentActivity.PreviewAgentActivity).changes;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
@@ -1945,27 +1947,7 @@ const make = Effect.gen(function* () {
             "The agent session is missing. Reconnect the provider.",
           );
         const open = input as PreviewAutomationOpenInput;
-        let resolvedDevice: string | undefined;
-        if (open.device !== undefined && desktopChannel.devices) {
-          const devices = await runPromise(desktopChannel.devices);
-          const wanted =
-            open.device === "user"
-              ? devices
-                  .filter((device) => device.focused)
-                  .toSorted((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]?.name
-              : (devices.find((device) => device.name.toLowerCase() === open.device!.toLowerCase())
-                  ?.name ??
-                devices.find((device) =>
-                  device.name.toLowerCase().includes(open.device!.toLowerCase()),
-                )?.name);
-          if (!wanted) {
-            throw new ServerBrowserPage.ServerBrowserOperationError(
-              "PreviewAutomationNoAvailableHostError",
-              `No connected device matches "${open.device}". Connected devices: ${devices.map((device) => device.name).join(", ") || "none"}.`,
-            );
-          }
-          resolvedDevice = wanted;
-        }
+        const resolvedDevice = await runPromise(resolveOpenDevice(open));
         const url = open.url === undefined ? undefined : normalizePreviewUrl(open.url);
         const reuse = open.reuseExistingTab ?? true;
         if (
