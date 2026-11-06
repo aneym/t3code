@@ -49,7 +49,7 @@ const forward = async (request: NodeHttp.IncomingMessage, response: NodeHttp.Ser
   const address =
     url === null || url.protocol !== "http:" ? undefined : await pinnedAddress(url.hostname);
   if (url === null || address === undefined) {
-    response.writeHead(403).end();
+    response.destroy();
     return;
   }
   const headers = { ...request.headers };

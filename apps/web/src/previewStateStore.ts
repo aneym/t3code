@@ -14,6 +14,7 @@ import { PREVIEW_RECENT_URL_LIMIT } from "./components/preview/previewConstants"
 import { appAtomRegistry } from "./rpc/atomRegistry";
 
 export interface DesktopPreviewOverlay {
+  navStatus?: PreviewSessionSnapshot["navStatus"];
   hasWebContents: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
@@ -387,6 +388,7 @@ function isPreviewStateEqual(
     previous === next ||
     (previous !== null &&
       next !== null &&
+      JSON.stringify(previous.navStatus) === JSON.stringify(next.navStatus) &&
       previous.hasWebContents === next.hasWebContents &&
       previous.canGoBack === next.canGoBack &&
       previous.canGoForward === next.canGoForward &&

@@ -20,11 +20,12 @@ import {
   remoteDeviceTabAccess,
   useRemoteDeviceAccessFor,
 } from "./remoteDeviceAccess";
+import { nativeTabFailed, useNativeTabFailures } from "./nativeTabFailures";
 import { publicTabUrl } from "./remoteTabUrl";
 
 type NativeTabSnapshot = Pick<
   PreviewSessionSnapshot,
-  "runtime" | "device" | "headless" | "navStatus"
+  "tabId" | "runtime" | "device" | "headless" | "navStatus"
 >;
 
 export function isLocalPreviewEnvironment(
@@ -65,7 +66,10 @@ export function alternatePreviewRuntime(
 ): PreviewRuntime | null {
   if (!snapshot || !serverBrowser || !isPreviewSupportedInRuntime()) return null;
   if (environmentId === primaryEnvironmentId) return null;
-  return snapshot.runtime === "server" ? "desktop" : "server";
+  if (snapshot.runtime === "desktop") return "server";
+  return guardsPreviewTab(environmentId, primaryEnvironmentId, remoteDeviceAccess())
+    ? null
+    : "desktop";
 }
 
 export function isPreviewAvailableFor(environmentId: EnvironmentId): boolean {
@@ -89,7 +93,10 @@ export function rendersServerTabNatively(
   const access = remoteDeviceTabAccess(snapshot, accessFor(environmentId));
   if (access === "off" || (access === "control" && snapshot.headless)) return false;
   const status = snapshot.navStatus;
-  return status._tag === "Idle" || publicTabUrl(status.url) !== null;
+  if (status._tag === "Idle") return true;
+  return (
+    publicTabUrl(status.url) !== null && !nativeTabFailed(environmentId, snapshot.tabId, status.url)
+  );
 }
 
 export function serverDrivesNativeTab(
@@ -113,6 +120,7 @@ export function useRendersServerTabNatively(
 ): boolean {
   const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
   const accessFor = useRemoteDeviceAccessFor();
+  useNativeTabFailures();
   if (environmentId === null) return false;
   return rendersServerTabNatively(environmentId, primaryEnvironmentId, snapshot, accessFor);
 }

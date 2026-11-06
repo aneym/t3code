@@ -110,7 +110,8 @@ export function HostedBrowserWebview(props: {
     threadRef,
     tabId,
     runtimeTabId,
-    serverDriven: serverDriven || mirrored,
+    serverDriven,
+    mirrored,
   });
 
   const serverColorScheme = serverRendering?.colorScheme;

@@ -1,5 +1,6 @@
 import type {
   DesktopPreviewTabState,
+  PreviewNavStatus,
   PreviewReportStatusInput,
   ScopedThreadRef,
   ThreadId,
@@ -9,7 +10,12 @@ import { useEffect, useEffectEvent, useRef } from "react";
 import { recordFaviconForThread } from "~/browserFaviconStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { acquireBrowserSurfaceActivity } from "~/browser/browserSurfaceStore";
-import { applyPreviewDesktopState, type DesktopPreviewOverlay } from "~/previewStateStore";
+import { recordNativeTabFailure } from "~/browser/nativeTabFailures";
+import {
+  applyPreviewDesktopState,
+  type DesktopPreviewOverlay,
+  readThreadPreviewState,
+} from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -45,8 +51,9 @@ export function usePreviewBridge(input: {
   tabId: string;
   runtimeTabId: string;
   serverDriven?: boolean;
+  mirrored?: boolean;
 }): void {
-  const { threadRef, tabId, runtimeTabId, serverDriven = false } = input;
+  const { threadRef, tabId, runtimeTabId, serverDriven = false, mirrored = false } = input;
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
   const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
   const { environmentId, threadId } = threadRef;
@@ -64,7 +71,14 @@ export function usePreviewBridge(input: {
       }
       lastDesktopNavStatus.current = state.navStatus;
       captureActivity.current?.update(state.capturing);
-      applyPreviewDesktopState(stableThreadRef, tabId, projectDesktopState(state));
+      applyPreviewDesktopState(stableThreadRef, tabId, projectDesktopState(state, mirrored));
+      const serverStatus =
+        mirrored && state.navStatus.kind === "LoadFailed"
+          ? readThreadPreviewState(stableThreadRef).sessions[tabId]?.navStatus
+          : undefined;
+      if (serverStatus !== undefined && serverStatus._tag !== "Idle") {
+        recordNativeTabFailure(environmentId, tabId, serverStatus.url);
+      }
       if (state.favicon) {
         recordFaviconForThread(stableThreadRef, state.favicon);
       }
@@ -75,7 +89,7 @@ export function usePreviewBridge(input: {
         lastReportedUrl: lastReportedUrl.current,
         lastReportedKind: lastReportedKind.current,
       });
-      if (!reported || serverDriven) return;
+      if (!reported || serverDriven || mirrored) return;
       lastReportedUrl.current = reported.lastReportedUrl;
       lastReportedKind.current = reported.lastReportedKind;
       void reportStatus({
@@ -117,9 +131,22 @@ function shouldClearBrowserPointer(
   return current.url !== previous.url;
 }
 
-export function projectDesktopState(state: DesktopPreviewTabState): DesktopPreviewOverlay {
+function toNavStatus(status: DesktopPreviewTabState["navStatus"]): PreviewNavStatus {
+  if (status.kind === "Idle") return { _tag: "Idle" };
+  if (status.kind !== "LoadFailed") {
+    return { _tag: status.kind, url: status.url, title: status.title };
+  }
+  const { url, title, code, description } = status;
+  return { _tag: "LoadFailed", url, title, code, description };
+}
+
+export function projectDesktopState(
+  state: DesktopPreviewTabState,
+  mirrored = false,
+): DesktopPreviewOverlay {
   const navOrigin = state.navStatus.kind === "Idle" ? null : originOf(state.navStatus.url);
   return {
+    ...(mirrored ? { navStatus: toNavStatus(state.navStatus) } : {}),
     hasWebContents: state.webContentsId !== null,
     canGoBack: state.canGoBack,
     canGoForward: state.canGoForward,
@@ -155,32 +182,13 @@ function buildReportInput(args: {
     status.url === lastReportedUrl;
   if (sameAsLast) return null;
 
-  const base = {
-    threadId,
-    tabId,
-    canGoBack: state.canGoBack,
-    canGoForward: state.canGoForward,
-  };
-  if (status.kind === "LoadFailed") {
-    return {
-      input: {
-        ...base,
-        navStatus: {
-          _tag: "LoadFailed",
-          url: status.url,
-          title: status.title,
-          code: status.code,
-          description: status.description,
-        },
-      },
-      lastReportedUrl: status.url,
-      lastReportedKind: "LoadFailed",
-    };
-  }
   return {
     input: {
-      ...base,
-      navStatus: { _tag: status.kind, url: status.url, title: status.title },
+      threadId,
+      tabId,
+      canGoBack: state.canGoBack,
+      canGoForward: state.canGoForward,
+      navStatus: toNavStatus(status),
     },
     lastReportedUrl: status.url,
     lastReportedKind: status.kind,

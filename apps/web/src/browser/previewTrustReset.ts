@@ -55,9 +55,13 @@ function clearEnvironmentPreviews(environmentId: EnvironmentId): void {
     previewEnvironment.list({ environmentId, input: { threadId: ref.threadId } }),
   );
   const cached: unknown[] = [];
-  for (const atom of [events, ...lists]) {
-    const node = appAtomRegistry.getNodes().get(atom)?.valueOption();
-    if (node?._tag === "Some" && AsyncResult.isSuccess(node.value)) cached.push(node.value.value);
+  const latestEvent = appAtomRegistry.getNodes().get(events)?.valueOption();
+  if (latestEvent?._tag === "Some" && AsyncResult.isSuccess(latestEvent.value)) {
+    cached.push(latestEvent.value.value);
+  }
+  for (const list of lists) {
+    const node = appAtomRegistry.getNodes().get(list)?.valueOption();
+    if (node?._tag === "Some") cached.push(node.value);
   }
   advancePreviewTrustEpoch(environmentId, cached);
   for (const ref of refs) clearThreadPreviewState(ref);

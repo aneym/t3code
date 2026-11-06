@@ -35,6 +35,7 @@ import { useBrowserPointerStore } from "./browserPointerStore";
 import { withDesktopTab } from "./desktopTabLifetime";
 import { onDesktopTabRegistered } from "./desktopTabRegistration";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
+import { subscribeNativeTabFailures, useNativeTabFailures } from "./nativeTabFailures";
 import { openUrlInPreview } from "./openFileInPreview";
 import {
   guardsPreviewTab,
@@ -201,6 +202,7 @@ function startRemoteTabMirror(): () => void {
     subscribeActivePreviewSessions(sync),
     appAtomRegistry.subscribe(primaryEnvironmentIdAtom, sync),
     subscribeClientSettings(sync),
+    subscribeNativeTabFailures(sync),
   ];
   return () => {
     for (const dispose of disposers) dispose();
@@ -235,6 +237,7 @@ export function ElectronBrowserHost() {
     access === "off" ? null : (window.desktopBridge?.getDeviceName?.() ?? null),
   );
   const accessFor = useRemoteDeviceAccessFor();
+  useNativeTabFailures();
   const sessions = hostedBrowserSessions(
     previewByThreadKey,
     primaryEnvironmentId,
