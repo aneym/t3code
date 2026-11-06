@@ -224,9 +224,10 @@ def release_identity(manifest):
 
 
 def deferred_hosts(run):
-    binding = Path(run) / "fast-inputs.json"
-    source = binding if binding.is_file() else Path(run) / "readiness.json"
-    hosts = json.loads(source.read_text()).get("deferredHosts", {}) if source.is_file() else {}
+    records = [json.loads(path.read_text()).get("deferredHosts", {}) for path in (Path(run) / "fast-inputs.json", Path(run) / "readiness.json") if path.is_file()]
+    if any(record != records[0] for record in records):
+        raise ValueError("fast-inputs.json and readiness.json disagree on deferred hosts")
+    hosts = records[0] if records else {}
     if not isinstance(hosts, dict) or any(host not in LINUX_TARGETS or not isinstance(reason, str) or not reason.strip() for host, reason in hosts.items()):
         raise ValueError("invalid Linux host deferral in fast run inputs")
     for host, reason in hosts.items():
@@ -244,6 +245,9 @@ def fast_evidence(run, version):
     rows = {}
     release = load(run / "candidate.json")
     deferred = deferred_hosts(run)
+    missing = sorted({"studio", *LINUX_TARGETS} - deferred.keys() - release["targets"].keys())
+    if missing:
+        raise ValueError(f"candidate omits non-deferred targets: {missing}")
     for host in release["targets"]:
         if host in deferred:
             continue

@@ -64,6 +64,9 @@ def bind_remote_runs(args):
     value = {"coordinator": json.loads(path.read_text()), "version": args.version, "remoteRun": args.remote_run}
     unbound = {}
     for host, address in LINUX_TARGETS.items():
+        if host in args.defer_host:
+            print(f"release: {host} deferred; remote run binding skipped", file=sys.stderr)
+            continue
         try:
             result = subprocess.run([*ssh_argv(address, '-oConnectTimeout=5'),
                                      shlex.join(["python3", "-c", REMOTE_BIND])],

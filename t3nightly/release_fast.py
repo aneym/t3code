@@ -59,6 +59,8 @@ def wait_cap(node):
 def remote_engine_failures(args):
     failures = {}
     for host, address in LINUX_TARGETS.items():
+        if host in args.defer_host:
+            continue
         try:
             require_remote_engine(args.run / "candidate.json", args.remote_tools, address)
         except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
@@ -80,7 +82,7 @@ def finish_fast(args):
         except Exception as error:
             print(f"release: warning: final remote engine verification failed: {error}", file=sys.stderr)
     try:
-        finish_runs(args.run, args.remote_run, args.remote_tools, dry_run=args.dry_run, linux_host=args.linux_host, hosts=LINUX_TARGETS)
+        finish_runs(args.run, args.remote_run, args.remote_tools, dry_run=args.dry_run, linux_host=args.linux_host, hosts={host: address for host, address in LINUX_TARGETS.items() if host not in args.defer_host})
     except Exception as error:
         print(f"release: warning: run retention failed: {error}", file=sys.stderr)
 
