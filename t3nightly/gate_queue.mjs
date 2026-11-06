@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 
 const execute = promisify(execFile);
 const terminal = new Set(["completed", "failed", "cancelled", "interrupted", "rolled_back"]);
+const lastNonEmptyLine = (text) => text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1);
 
 export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }) {
   return Effect.gen(function* () {
@@ -159,14 +160,23 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
         restartObservation = { openBefore, turnEndedTick: order.turnEnded, sentTick: order.sent, missed, delivery: sent.delivery };
         if (!missed && !distinct) throw fail("send into a starting run did not return a distinct run");
         if (!missed && sent.delivery !== "queued") throw fail(`auto send into a starting run was delivered ${sent.delivery} instead of queued behind it`);
-        const expected = distinct ? [[first.runId, markers[0]], [sent.runId, markers[1]]] : [[first.runId, markers[1]]];
         const final = yield* waitFor("runs to settle", (p) =>
-          expected.every(([id]) => p.runs.some((run) => run.id === id && terminal.has(run.status))) && p.runs.every((run) => terminal.has(run.status)),
+          [first.runId, sent.runId].every((id) => p.runs.some((run) => run.id === id && terminal.has(run.status))) && p.runs.every((run) => terminal.has(run.status)),
         );
+        let expected = [[first.runId, markers[0]], [sent.runId, markers[1]]];
+        if (sent.delivery === "steered") {
+          const replies = final.messages.filter((message) => message.role === "assistant" && lastNonEmptyLine(message.text) === markers[1]);
+          if (replies.length !== 1) throw fail("steered send did not persist exactly one marker1 reply");
+          const replyRun = replies[0].runId;
+          expected = final.runs.length === 1
+            ? [[first.runId, markers[1]]]
+            : [[first.runId, replyRun === first.runId ? markers[1] : markers[0]],
+              [final.runs.find((run) => run.id !== first.runId)?.id, replyRun === first.runId ? markers[0] : markers[1]]];
+        }
         for (const [id, marker] of expected) {
           const status = final.runs.find((run) => run.id === id)?.status;
           const replies = final.messages.filter((message) => message.runId === id && message.role === "assistant" && message.text.trim());
-          if (status !== "completed" || (replies.length !== 1 || replies[0].text.trim() !== marker)) throw fail(`run ${id} ended ${status} with ${replies.length} replies instead of one ${marker}`);
+          if (status !== "completed" || (replies.length !== 1 || lastNonEmptyLine(replies[0].text) !== marker)) throw fail(`run ${id} ended ${status} with ${replies.length} replies instead of one ${marker}`);
         }
         if (final.runs.length !== expected.length || final.runs.some((run) => run.queueHeld)) throw fail("unexpected runs or held work remain");
         if (sent.delivery === "steered") {
@@ -178,7 +188,7 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
           restartObservation.steerAnswered = final.messages.some((message) => message.runId === first.runId && message.role === "assistant" && message.text.includes(markers[1]));
         }
         const inconclusive = missed ? `the send landed after the first run left its startup window (delivered ${sent.delivery}${sent.delivery === "steered" ? `, server had the turn active, steer ${restartObservation.steerAnswered ? "answered" : "unanswered"} in the first run` : ""})` : undefined;
-        return { ...evidence(), threadId: first.threadId, firstRun: first.runId, sentDelivery: sent.delivery, exactlyOnceReplies: distinct ? 2 : 1, inconclusive };
+        return { ...evidence(), threadId: first.threadId, firstRun: first.runId, sentDelivery: sent.delivery, exactlyOnceReplies: expected.length, inconclusive };
       } finally {
         writeSync(gate, "x");
         closeSync(gate);
@@ -187,7 +197,7 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
     }
     const started = yield* cli(
       "start", "--provider", "claudeAgent", "--model", opts.model, opts.project,
-      `Run this exact bounded CPU checksum command with the Bash tool in the foreground, not as a background task: python3 -c "import hashlib; print(hashlib.pbkdf2_hmac('sha256', b'gate', b'gate', 120000000).hex()); print('${markers[0]}')". After it finishes reply with only ${markers[0]}. Do not run any other tools.`,
+      `Run this exact bounded CPU checksum command with the Bash tool in the foreground, not as a background task: python3 -c "import hashlib; print(hashlib.pbkdf2_hmac('sha256', b'gate', b'gate', 120000000).hex()); print('${markers[0]}')". After it finishes reply with ${markers[0]} alone on one line, no other text. Do not repeat the command output. Do not run any other tools.`,
     );
     const threadId = started.threadId;
     const firstRun = started.runId;
@@ -232,7 +242,7 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
     if (original?.status !== (interrupted ? "interrupted" : "completed")) throw fail(`original run ended ${original?.status}`);
     if (final.runs.length !== 3 || final.runs.some((run) => run.queueHeld || !terminal.has(run.status))) throw fail("unexpected runs or pending work remain");
     const originalReplies = final.messages.filter((message) => message.runId === firstRun && message.role === "assistant" && message.text.trim());
-    if (interrupted ? originalReplies.length !== 0 : originalReplies.length !== 1 || (!interrupted && originalReplies[0].text.trim() !== markers[0])) {
+    if (interrupted ? originalReplies.length !== 0 : originalReplies.length !== 1 || (!interrupted && lastNonEmptyLine(originalReplies[0].text) !== markers[0])) {
       throw fail(`original run did not persist the expected reply count and marker`);
     }
     const queuedTarget = queuedIds[0];
@@ -250,7 +260,7 @@ export function queueDrain({ session, config, opts, Effect, Stream, applyEvent }
       for (const id of queuedIds) {
         const marker = markers[[firstRun, ...queuedIds].indexOf(id)];
         const replies = final.messages.filter((message) => message.runId === id && message.role === "assistant" && message.text.trim());
-        if (replies.length !== 1 || replies[0].text.trim() !== marker) throw fail(`run ${id} did not persist exactly one expected reply`);
+        if (replies.length !== 1 || lastNonEmptyLine(replies[0].text) !== marker) throw fail(`run ${id} did not persist exactly one expected reply`);
       }
     }
     const expectedReplies = (interrupted ? 0 : 1) + (batched ? 1 : 2);
