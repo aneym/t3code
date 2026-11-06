@@ -87,13 +87,13 @@ export function rendersServerTabNatively(
   if (!isElectron || snapshot?.runtime !== "server") return false;
   if (primaryEnvironmentId !== null && environmentId === primaryEnvironmentId)
     return !snapshot.headless;
+  const status = snapshot.navStatus;
+  const failed =
+    status._tag !== "Idle" && nativeTabFailed(environmentId, snapshot.tabId, status.url);
   const access = remoteDeviceTabAccess(snapshot, accessFor(environmentId));
   if (access === "off" || (access === "control" && snapshot.headless)) return false;
-  const status = snapshot.navStatus;
   if (status._tag === "Idle") return true;
-  return (
-    publicTabUrl(status.url) !== null && !nativeTabFailed(environmentId, snapshot.tabId, status.url)
-  );
+  return publicTabUrl(status.url) !== null && !failed;
 }
 
 export function serverDrivesNativeTab(

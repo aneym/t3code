@@ -90,11 +90,16 @@ export function usePreviewBridge(input: {
       applyPreviewDesktopState(stableThreadRef, tabId, projectDesktopState(state, mirrored));
       const attempted = attemptedServerUrl.current;
       if (
-        attempted !== null &&
+        guarded &&
         state.navStatus.kind === "LoadFailed" &&
         isGuardRefusal(state.navStatus.code)
       ) {
-        recordNativeTabFailure(environmentId, tabId, attempted);
+        const failedUrl = state.navStatus.url;
+        recordNativeTabFailure(
+          environmentId,
+          tabId,
+          attempted === null ? [failedUrl] : [failedUrl, attempted],
+        );
       }
       if (state.favicon) {
         recordFaviconForThread(stableThreadRef, state.favicon);

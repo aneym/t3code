@@ -53,7 +53,7 @@ export async function finishPreviewTabMove<E>(input: {
   const { threadRef, from, to, closePreview } = input;
   useRightPanelStore.getState().openBrowser(threadRef, to.tabId);
   const guarded =
-    to.runtime === "desktop" &&
+    to.runtime !== "server" &&
     from.navStatus._tag !== "Idle" &&
     guardsPreviewTab(
       threadRef.environmentId,
