@@ -14,3 +14,6 @@ export const RECORDING_CONTROLLER_CHANNEL = "preview:recording-controller";
 export const PASSKEY_CREATE_CHANNEL = "preview:passkey-create";
 export const PASSKEY_GET_CHANNEL = "preview:passkey-get";
 export const PASSKEY_BRIDGE_ARGUMENT = "--t3code-preview-passkey-bridge";
+export const PASSKEY_FALLBACK_ARGUMENT = "--t3code-preview-passkey-fallback";
+export const PASSKEY_FALLBACK_CHANNEL = "preview:passkey-fallback";
+export const ONE_TIME_CODE_FIELD_CHANNEL = "preview:one-time-code-field";

@@ -8,9 +8,15 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
+import {
+  PASSKEY_BRIDGE_ARGUMENT,
+  PASSKEY_CREATE_CHANNEL,
+  PASSKEY_FALLBACK_ARGUMENT,
+  PASSKEY_GET_CHANNEL,
+} from "./GuestProtocol.ts";
 import type { PasskeyBackend, PasskeyCeremonyContext } from "./PasskeyBackend.ts";
 import { macPasskeyBackend } from "./PasskeyBackendMac.ts";
+import { attachPasskeyFallback } from "./PasskeyFallback.ts";
 import type { PasskeyCeremonyResult } from "./PasskeyBridge.ts";
 
 const PasskeyPackageMetadata = Schema.Struct({
@@ -40,7 +46,7 @@ export class PreviewPasskeysConfigureError extends Schema.TaggedError<PreviewPas
 export class PreviewPasskeys extends Context.Service<
   PreviewPasskeys,
   {
-    readonly bridgeEnabled: boolean;
+    readonly guestFlag: string | undefined;
     /** Runs after app ready. */
     readonly configure: Effect.Effect<void>;
     readonly installSessionHandlers: (session: Session) => void;
@@ -129,11 +135,18 @@ const make = Effect.gen(function* () {
       : undefined;
   const keychainAccessGroup = metadata?.touchIdKeychainAccessGroup;
   const backend = metadata?.browserPasskeys === true ? backendFor(environment.platform) : undefined;
-  const bridgeEnabled = backend !== undefined;
+  const fallback =
+    backend === undefined && keychainAccessGroup === undefined && environment.platform === "darwin";
+  const guestFlag =
+    backend !== undefined
+      ? PASSKEY_BRIDGE_ARGUMENT
+      : fallback
+        ? PASSKEY_FALLBACK_ARGUMENT
+        : undefined;
   const sessionsWithHandlers = new WeakSet<Session>();
 
   return PreviewPasskeys.of({
-    bridgeEnabled,
+    guestFlag,
     configure: Effect.gen(function* () {
       if (keychainAccessGroup === undefined) return;
       yield* Effect.try({
@@ -153,7 +166,9 @@ const make = Effect.gen(function* () {
       });
     },
     attachGuest: (guest) => {
-      if (backend === undefined) return () => {};
+      if (backend === undefined) {
+        return fallback ? attachPasskeyFallback(guest) : () => {};
+      }
       let ceremonyPending = false;
       const serve = async (
         event: IpcMainInvokeEvent,

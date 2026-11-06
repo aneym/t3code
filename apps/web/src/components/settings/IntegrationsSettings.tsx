@@ -4,7 +4,7 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceSourcesSettings } from "./DeviceSourcesSettings";
 import { PreviewOpenOnUserDeviceSetting } from "./PreviewOpenOnUserDeviceSetting";
-import { RemoteDeviceTabsSettings } from "./RemoteDeviceTabsSettings";
+import { BrowserForkSettings } from "./BrowserForkSettings";
 import {
   AuthSettingsWriteScope,
   BrowserImportFailureReason,
@@ -1587,7 +1587,7 @@ export function BrowserSettingsPanel() {
           <BrowserProfilesSetting disabled={desktopOnly} />
           <BrowserLinkTargetSetting disabled={desktopOnly} />
           <BrowserAutoShowFloatingPreviewSetting disabled={desktopOnly} />
-          <RemoteDeviceTabsSettings disabled={desktopOnly} />
+          <BrowserForkSettings disabled={desktopOnly} />
         </SettingsUnavailableGroup>
         {/* Not desktop-only: web clients search from server-run browser tabs too. */}
         <BrowserSearchEngineSetting />

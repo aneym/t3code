@@ -331,7 +331,7 @@ function layerTest(input: {
         layerElectronTheme,
         layerElectronWindow,
         Layer.mock(PreviewPasskeys.PreviewPasskeys)({
-          bridgeEnabled: false,
+          guestFlag: undefined,
           installSessionHandlers: () => {},
           attachGuest: () => () => {},
         }),
@@ -441,7 +441,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           layerElectronTheme,
           Layer.succeed(ElectronWindow.ElectronWindow, electronWindowShape),
           Layer.mock(PreviewPasskeys.PreviewPasskeys)({
-            bridgeEnabled: false,
+            guestFlag: undefined,
             installSessionHandlers: () => {},
             attachGuest: () => () => {},
           }),

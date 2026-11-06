@@ -16,9 +16,11 @@ export const Client = {
   browserAllowRemoteDeviceControl: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  browserFillOneTimeCodes: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 };
 
 export const ClientPatch = {
   browserShowRemoteDeviceTabs: Schema.optionalKey(Schema.Boolean),
   browserAllowRemoteDeviceControl: Schema.optionalKey(Schema.Boolean),
+  browserFillOneTimeCodes: Schema.optionalKey(Schema.Boolean),
 };

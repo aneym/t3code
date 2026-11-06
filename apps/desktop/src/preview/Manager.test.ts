@@ -240,7 +240,7 @@ const managerLayer = (platform: NodeJS.Platform = "darwin") =>
     Layer.provideMerge(layerBrowserSession),
     Layer.provideMerge(
       Layer.mock(PreviewPasskeys.PreviewPasskeys)({
-        bridgeEnabled: false,
+        guestFlag: undefined,
         installSessionHandlers: () => {},
         attachGuest: () => () => {},
       }),

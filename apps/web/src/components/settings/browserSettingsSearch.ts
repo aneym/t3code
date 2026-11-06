@@ -25,6 +25,12 @@ export const browserPanelSettingsSearch = [
     searchTerms: ["agent opens browser device simulator pop into view hide"],
   },
   {
+    id: "browser-fill-one-time-codes",
+    title: "Fill copied verification codes",
+    to: "/settings/browser",
+    searchTerms: ["otp one time code sms messages 2fa verification autofill paste clipboard"],
+  },
+  {
     id: "remote-device-tabs",
     title: "Show agent tabs from other machines",
     to: "/settings/browser",

@@ -21,7 +21,11 @@ vi.mock("electron", () => ({
 vi.mock("electron-webauthn", () => webauthn);
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
+import {
+  PASSKEY_CREATE_CHANNEL,
+  PASSKEY_FALLBACK_ARGUMENT,
+  PASSKEY_GET_CHANNEL,
+} from "./GuestProtocol.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 
 const layerFor = (packageJson: object, isPackaged = true) =>
@@ -285,7 +289,7 @@ describe("PreviewPasskeys", () => {
       assert.deepStrictEqual(electron.configureWebAuthn.mock.calls, [
         [{ touchID: { keychainAccessGroup: "ABC1234567.com.t3tools.t3code.webauthn" } }],
       ]);
-      assert.isFalse(entitled.bridgeEnabled);
+      assert.isUndefined(entitled.guestFlag);
       const { guest, handlers } = makeGuest();
       entitled.attachGuest(guest);
       assert.strictEqual(handlers.size, 0);
@@ -300,7 +304,7 @@ describe("PreviewPasskeys", () => {
       );
       yield* unpackaged.configure;
       assert.strictEqual(electron.configureWebAuthn.mock.calls.length, 1);
-      assert.isFalse(unpackaged.bridgeEnabled);
+      assert.strictEqual(unpackaged.guestFlag, PASSKEY_FALLBACK_ARGUMENT);
     }),
   );
 
