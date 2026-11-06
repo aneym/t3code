@@ -227,15 +227,14 @@ def deferred_hosts(run):
     records = []
     for name in ("fast-inputs.json", "readiness.json"):
         path = Path(run) / name
-        if not path.is_file():
-            raise ValueError(f"{name} is required to decide deferred hosts")
-        value = json.loads(path.read_text())
-        if not isinstance(value, dict):
-            raise ValueError(f"{name} is not a JSON object")
-        records.append(value.get("deferredHosts", {}))
-    if records[0] != records[1]:
-        raise ValueError("fast-inputs.json and readiness.json disagree on deferred hosts")
-    hosts = records[0]
+        if path.is_file():
+            value = json.loads(path.read_text())
+            if not isinstance(value, dict):
+                raise ValueError(f"{name} is not a JSON object")
+            records.append(value.get("deferredHosts", {}))
+    if any(records) and (len(records) != 2 or records[0] != records[1]):
+        raise ValueError("a host deferral needs fast-inputs.json and readiness.json present and agreeing")
+    hosts = records[0] if any(records) else {}
     if not isinstance(hosts, dict) or any(host not in LINUX_TARGETS or not isinstance(reason, str) or not reason.strip() for host, reason in hosts.items()):
         raise ValueError("invalid Linux host deferral in fast run inputs")
     for host, reason in hosts.items():
