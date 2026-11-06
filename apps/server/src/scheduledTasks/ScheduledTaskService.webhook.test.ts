@@ -28,6 +28,7 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ScheduledRunWorkspace from "./ScheduledRunWorkspace.ts";
+import * as ScheduledRunStart from "./ScheduledRunStart.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -242,6 +243,10 @@ const withService = <A, E>(
       Layer.mock(ThreadManagementService.ThreadManagementService)({}),
       Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
         resolve: (task) => Effect.succeed(task.workspaceStrategy),
+      }),
+      Layer.mock(ScheduledRunStart.ScheduledRunStart)({
+        watch: () => Effect.void,
+        recover: () => Effect.void,
       }),
       Layer.mock(SecretRequests.SecretRequests)({
         consume: ({ ref }) => {

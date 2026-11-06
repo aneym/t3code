@@ -36,11 +36,11 @@ export const layer = Layer.effect(
           task.projectId,
           project,
         );
-        const projectMode =
-          resolved.sources.defaultThreadEnvMode === "project"
-            ? resolved.settings.defaultThreadEnvMode
-            : project.defaultThreadEnvMode;
-        if (projectMode === "local") return true;
+        if (
+          resolved.sources.defaultThreadEnvMode === "project" &&
+          resolved.settings.defaultThreadEnvMode === "local"
+        )
+          return true;
       }
       const isGitRepo = yield* git.isRepository(project.workspaceRoot);
       return resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo }) === "local";

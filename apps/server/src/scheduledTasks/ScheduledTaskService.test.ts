@@ -28,6 +28,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ScheduledRunWorkspace from "./ScheduledRunWorkspace.ts";
+import * as ScheduledRunStart from "./ScheduledRunStart.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
@@ -215,6 +216,10 @@ it.effect(
                 Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
                   resolve: (task) => Effect.succeed(task.workspaceStrategy),
                 }),
+                Layer.mock(ScheduledRunStart.ScheduledRunStart)({
+                  watch: () => Effect.void,
+                  recover: () => Effect.void,
+                }),
                 NodeCrypto.layer,
                 Scheduler.layer,
               ),
@@ -316,6 +321,10 @@ it.effect(
                 Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
                   resolve: (task) => Effect.succeed(task.workspaceStrategy),
                 }),
+                Layer.mock(ScheduledRunStart.ScheduledRunStart)({
+                  watch: () => Effect.void,
+                  recover: () => Effect.void,
+                }),
                 NodeCrypto.layer,
                 Scheduler.layer,
               ),
@@ -369,6 +378,10 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
             resolve: (task) => Effect.succeed(task.workspaceStrategy),
+          }),
+          Layer.mock(ScheduledRunStart.ScheduledRunStart)({
+            watch: () => Effect.void,
+            recover: () => Effect.void,
           }),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
@@ -457,6 +470,10 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
           Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
             resolve: (task) => Effect.succeed(task.workspaceStrategy),
           }),
+          Layer.mock(ScheduledRunStart.ScheduledRunStart)({
+            watch: () => Effect.void,
+            recover: () => Effect.void,
+          }),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
             isScratchProject: () => Effect.succeed(false),
@@ -511,6 +528,10 @@ it.effect("refuses saving an enabled task above the policy ceiling", () =>
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
             resolve: (task) => Effect.succeed(task.workspaceStrategy),
+          }),
+          Layer.mock(ScheduledRunStart.ScheduledRunStart)({
+            watch: () => Effect.void,
+            recover: () => Effect.void,
           }),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
@@ -582,6 +603,10 @@ it.effect("a run interrupted right after it reserves the task does not block the
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
             resolve: (task) => Effect.succeed(task.workspaceStrategy),
+          }),
+          Layer.mock(ScheduledRunStart.ScheduledRunStart)({
+            watch: () => Effect.void,
+            recover: () => Effect.void,
           }),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",

@@ -59,7 +59,7 @@ import {
   makeMarkScheduledTaskRunning,
 } from "./scheduledTaskRunState.ts";
 import * as ScheduledRunWorkspace from "./ScheduledRunWorkspace.ts";
-import { watchScheduledRunStart } from "./scheduledRunStart.ts";
+import * as ScheduledRunStart from "./ScheduledRunStart.ts";
 import {
   isMissedFixedTimeRun,
   isOnceScheduleRearmed,
@@ -451,6 +451,7 @@ export const layer = Layer.effect(
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
     const runWorkspace = yield* ScheduledRunWorkspace.ScheduledRunWorkspace;
+    const runStart = yield* ScheduledRunStart.ScheduledRunStart;
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
@@ -993,15 +994,15 @@ export const layer = Layer.effect(
           );
         if (written) yield* notifyChanged;
         if (written && threadId !== null && active.threadId === null) {
-          yield* watchScheduledRunStart({
-            sql,
-            threads: threadManagement,
-            taskId: task.id,
-            startedAtIso,
-            threadId,
-            messageId,
-            onChanged: notifyChanged,
-          }).pipe(Effect.forkIn(serviceScope));
+          yield* runStart
+            .watch({
+              taskId: task.id,
+              startedAtIso,
+              threadId,
+              messageId,
+              onChanged: notifyChanged,
+            })
+            .pipe(Effect.forkIn(serviceScope));
         }
         // The stored row can belong to a replacement, so report this dispatch separately.
         return { task: recorded, threadId, dispatchFailed: !runSucceeded };
@@ -1767,6 +1768,7 @@ export const layer = Layer.effect(
     });
 
     const serviceScope = yield* Effect.scope;
+    yield* runStart.recover(notifyChanged).pipe(Effect.forkIn(serviceScope));
 
     const releaseFailedDelivery = Effect.fn("ScheduledTaskService.releaseFailedDelivery")(
       function* (deliveryId: string) {

@@ -53,6 +53,7 @@ import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ScheduledRunWorkspace from "../scheduledTasks/ScheduledRunWorkspace.ts";
+import * as ScheduledRunStart from "../scheduledTasks/ScheduledRunStart.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -332,6 +333,10 @@ it.effect.each(
           Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
             resolve: (task) => Effect.succeed(task.workspaceStrategy),
           }),
+          Layer.mock(ScheduledRunStart.ScheduledRunStart)({
+            watch: () => Effect.void,
+            recover: () => Effect.void,
+          }),
           ManagedPolicy.layerTest(),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         ),
@@ -403,6 +408,10 @@ it.effect(
           Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
             resolve: (task) => Effect.succeed(task.workspaceStrategy),
           }),
+          Layer.mock(ScheduledRunStart.ScheduledRunStart)({
+            watch: () => Effect.void,
+            recover: () => Effect.void,
+          }),
           ManagedPolicy.layerTest(),
         ),
       ),
@@ -443,6 +452,10 @@ it.effect("runs a thread-bound automation on the provider the thread uses now", 
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
           resolve: (task) => Effect.succeed(task.workspaceStrategy),
+        }),
+        Layer.mock(ScheduledRunStart.ScheduledRunStart)({
+          watch: () => Effect.void,
+          recover: () => Effect.void,
         }),
         ManagedPolicy.layerTest(),
       ),
@@ -910,6 +923,10 @@ function scratchHarness() {
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
           resolve: (task) => Effect.succeed(task.workspaceStrategy),
+        }),
+        Layer.mock(ScheduledRunStart.ScheduledRunStart)({
+          watch: () => Effect.void,
+          recover: () => Effect.void,
         }),
         ManagedPolicy.layerTest(),
       ),

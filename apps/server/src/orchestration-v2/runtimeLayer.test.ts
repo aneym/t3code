@@ -86,6 +86,7 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ScheduledRunWorkspace from "../scheduledTasks/ScheduledRunWorkspace.ts";
+import * as ScheduledRunStart from "../scheduledTasks/ScheduledRunStart.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
@@ -325,6 +326,10 @@ const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
       Layer.mock(SecretRequests.SecretRequests)({}),
       Layer.mock(ScheduledRunWorkspace.ScheduledRunWorkspace)({
         resolve: (task) => Effect.succeed(task.workspaceStrategy),
+      }),
+      Layer.mock(ScheduledRunStart.ScheduledRunStart)({
+        watch: () => Effect.void,
+        recover: () => Effect.void,
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
