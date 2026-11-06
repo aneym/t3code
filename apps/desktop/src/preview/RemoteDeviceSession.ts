@@ -1,4 +1,10 @@
-import type { Event, Session, WebContents } from "electron";
+import type {
+  Event,
+  OnBeforeRequestListenerDetails,
+  Session,
+  WebContents,
+  WebContentsDidStartNavigationEventParams,
+} from "electron";
 import { app, webContents } from "electron";
 
 import { isBlockedHost } from "./RemoteDeviceAddress.ts";
@@ -48,6 +54,41 @@ const guardContents = (contents: WebContents) => {
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
 };
 
+const refusedLoads = new Map<number, string>();
+
+const watchRefusal = (contents: WebContents) => {
+  const finish = (report: boolean) => {
+    contents.off("did-start-navigation", navigated);
+    contents.off("did-stop-loading", stopped);
+    contents.off("destroyed", destroyed);
+    const url = refusedLoads.get(contents.id);
+    refusedLoads.delete(contents.id);
+    if (!report || url === undefined || contents.isDestroyed()) return;
+    if (contents.isLoadingMainFrame()) return;
+    contents.emit("did-fail-load", {}, -20, "ERR_BLOCKED_BY_CLIENT", url, true);
+  };
+  const navigated = (event: Event<WebContentsDidStartNavigationEventParams>) => {
+    if (event.isMainFrame && !event.isSameDocument) finish(false);
+  };
+  const stopped = () => {
+    contents.off("did-start-navigation", navigated);
+    setImmediate(() => finish(refusedLoads.has(contents.id)));
+  };
+  const destroyed = () => finish(false);
+  contents.on("did-start-navigation", navigated);
+  contents.once("did-stop-loading", stopped);
+  contents.once("destroyed", destroyed);
+};
+
+const reportRefusal = (details: OnBeforeRequestListenerDetails) => {
+  if (details.resourceType !== "mainFrame" || details.webContentsId === undefined) return;
+  const contents = webContents.fromId(details.webContentsId);
+  if (!contents || contents.isDestroyed()) return;
+  const watching = refusedLoads.has(contents.id);
+  refusedLoads.set(contents.id, details.url);
+  if (!watching) watchRefusal(contents);
+};
+
 const install = async (session: Session) => {
   const proxyPort = await RemoteDeviceProxy.port();
   await session.setProxy({
@@ -55,11 +96,15 @@ const install = async (session: Session) => {
     proxyBypassRules: "<-loopback>",
   });
   session.webRequest.onBeforeRequest((details, callback) => {
-    if (!allowsRequest(details.url)) return callback({ cancel: true });
+    const refuse = () => {
+      reportRefusal(details);
+      callback({ cancel: true });
+    };
+    if (!allowsRequest(details.url)) return refuse();
     if (!FRAME_REQUESTS.has(details.resourceType)) return callback({});
     const host = URL.parse(details.url)?.hostname ?? "";
     RemoteDeviceProxy.pinnedAddress(host).then(
-      (address) => callback({ cancel: address === undefined }),
+      (address) => (address === undefined ? refuse() : callback({})),
       () => callback({}),
     );
   });
