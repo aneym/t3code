@@ -7,6 +7,7 @@ import * as RemoteDeviceProxy from "./RemoteDeviceProxy.ts";
 const NETWORK_SCHEMES = new Set(["http:", "https:", "ws:", "wss:"]);
 const LOCAL_SCHEMES = new Set(["data:", "blob:", "devtools:"]);
 const BLANK_DOCUMENTS = new Set(["about:blank", "about:srcdoc"]);
+const FRAME_REQUESTS = new Set(["mainFrame", "subFrame"]);
 
 const guardedSessions = new WeakSet<Session>();
 const guardedTabs = new Map<string, number>();
@@ -47,9 +48,15 @@ const install = async (session: Session) => {
     proxyRules: `127.0.0.1:${proxyPort}`,
     proxyBypassRules: "<-loopback>",
   });
-  session.webRequest.onBeforeRequest((details, callback) =>
-    callback({ cancel: !allowsRequest(details.url) }),
-  );
+  session.webRequest.onBeforeRequest((details, callback) => {
+    if (!allowsRequest(details.url)) return callback({ cancel: true });
+    if (!FRAME_REQUESTS.has(details.resourceType)) return callback({});
+    const host = URL.parse(details.url)?.hostname ?? "";
+    RemoteDeviceProxy.pinnedAddress(host).then(
+      (address) => callback({ cancel: address === undefined }),
+      () => callback({}),
+    );
+  });
   session.on("will-download", (event) => event.preventDefault());
   guardedSessions.add(session);
   if (listening) return;

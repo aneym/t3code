@@ -58,11 +58,13 @@ import { publicTabUrl } from "./remoteTabUrl";
 
 type HostedBrowserSession = ReturnType<typeof hostedBrowserSessions>[number];
 
-function remoteTabUrls({ snapshot, remote, driven }: HostedBrowserSession) {
+function remoteTabUrls({ snapshot, remote, driven, guarded }: HostedBrowserSession) {
   const serverUrl = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
   const remoteUrl = remote && serverUrl !== null ? publicTabUrl(serverUrl) : null;
   const mirrored = remote && !driven;
-  return { serverUrl, remoteUrl, mirrored, mirrorUrl: mirrored ? remoteUrl : null };
+  const seeded = guarded && !remote;
+  const mirrorUrl = mirrored ? remoteUrl : seeded ? serverUrl : null;
+  return { serverUrl, remoteUrl, mirrored, seeded, mirrorUrl };
 }
 
 /** Every session this window renders as a hosted webview, in a fixed (non-display) order. */
@@ -179,12 +181,13 @@ function startRemoteTabMirror(): () => void {
       remoteDeviceAccess(),
       remoteDeviceAccessFor(),
     )) {
-      const { mirrorUrl } = remoteTabUrls(session);
+      const { mirrorUrl, seeded } = remoteTabUrls(session);
       const tabId = session.runtimeTabId;
       present.add(tabId);
       if (mirrorUrl === null) continue;
       live.add(tabId);
       if (!guests.has(tabId) || sent.get(tabId) === mirrorUrl) continue;
+      if (seeded && sent.has(tabId)) continue;
       sent.set(tabId, mirrorUrl);
       const command = JSON.stringify({ type: "mirror", tabId, url: mirrorUrl });
       withDesktopTab(tabId, () => bridge.sendCommand(command));
@@ -259,8 +262,8 @@ export function ElectronBrowserHost() {
           pictureInPicture,
           zoomFactor,
         } = session;
-        const { serverUrl, remoteUrl, mirrored } = remoteTabUrls(session);
-        const initialUrl = remote ? (mirrored ? null : remoteUrl) : serverUrl;
+        const { serverUrl, remoteUrl, mirrored, seeded } = remoteTabUrls(session);
+        const initialUrl = remote ? (mirrored ? null : remoteUrl) : seeded ? null : serverUrl;
         return (
           <AuthorizedBrowserWebview
             key={guarded ? `${runtimeTabId}:guarded` : runtimeTabId}
