@@ -45,6 +45,8 @@ export * from "./orchestrationDispatch.ts";
 export * from "./orchestrationProject.ts";
 export * from "./orchestrationDispatchResult.ts";
 export * from "./orchestrationV2.ts";
+export * from "./providerFailureClass.ts";
+export * from "./queueHoldReason.ts";
 export * from "./delegatedCompletionDelivery.ts";
 export * from "./guestShare.ts";
 export * from "./guestStream.ts";

@@ -11,6 +11,7 @@ import {
 import { OrchestrationV2DelegatedCompletionCohort } from "./delegatedCompletionDelivery.ts";
 import { RestartRunState } from "./restartRunState.ts";
 import { QueueHoldState, QueueHoldStateJson } from "./queueHoldReason.ts";
+import { OrchestrationV2ProviderFailureClass } from "./providerFailureClass.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { OrchestrationV2ComposerSubmit } from "./composerSubmit.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
@@ -1435,16 +1436,6 @@ export const OrchestrationV2FileChangeDetail = Schema.Struct({
   mimeType: Schema.optional(TrimmedNonEmptyString),
 });
 export type OrchestrationV2FileChangeDetail = typeof OrchestrationV2FileChangeDetail.Type;
-
-export const OrchestrationV2ProviderFailureClass = Schema.Literals([
-  "usage_limit",
-  "provider_error",
-  "transport_error",
-  "permission_error",
-  "validation_error",
-  "unknown",
-]);
-export type OrchestrationV2ProviderFailureClass = typeof OrchestrationV2ProviderFailureClass.Type;
 
 const OrchestrationV2ProviderFailureMessage = TrimmedNonEmptyString.check(
   Schema.isMaxLength(4_096),
