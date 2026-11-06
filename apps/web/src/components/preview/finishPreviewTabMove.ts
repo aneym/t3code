@@ -4,6 +4,7 @@ import type { PreviewNavStatus, PreviewSessionSnapshot, ScopedThreadRef } from "
 import { isGuardRefusal } from "~/browser/nativeTabFailures";
 import { guardsPreviewTab } from "~/browser/previewRuntime";
 import { remoteDeviceAccess } from "~/browser/remoteDeviceAccess";
+import { publicTabUrl } from "~/browser/remoteTabUrl";
 import { toastManager } from "~/components/ui/toast";
 import { previewStateAtom, type ThreadPreviewState } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -61,17 +62,19 @@ export async function finishPreviewTabMove<E>(input: {
       appAtomRegistry.get(primaryEnvironmentIdAtom),
       remoteDeviceAccess(),
     );
-  const status = guarded ? await settledNavStatus(threadRef, to.tabId) : null;
+  const reachable = !guarded || publicTabUrl(url) !== null;
+  const status = guarded && reachable ? await settledNavStatus(threadRef, to.tabId) : null;
   if (guarded && status?._tag !== "Success") {
-    if (status === null) return;
+    if (reachable && status === null) return;
     useRightPanelStore.getState().openBrowser(threadRef, from.tabId);
     await closePreviewSession({ closePreview, snapshot: null, tabId: to.tabId, threadRef });
     toastManager.add({
       type: "error",
       title: "Kept the remote browser tab",
-      description: isGuardRefusal(status.code)
-        ? `Remote tabs on this computer open only public addresses, so it can't reach ${URL.parse(status.url)?.host ?? status.url}.`
-        : status.description,
+      description:
+        status === null || isGuardRefusal(status.code)
+          ? `Remote tabs on this computer open only public addresses, so it can't reach ${URL.parse(status?.url ?? url)?.host ?? url}.`
+          : status.description,
     });
     return;
   }
