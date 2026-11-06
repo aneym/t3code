@@ -71,21 +71,30 @@ export function usePreviewBridge(input: {
   const lastReportedKind = useRef<DesktopPreviewTabState["navStatus"]["kind"] | null>(null);
   const lastDesktopNavStatus = useRef<DesktopPreviewTabState["navStatus"] | null>(null);
   const captureActivity = useRef<ReturnType<typeof createCaptureActivity> | null>(null);
+  const attemptedServerUrl = useRef<string | null>(null);
   const handleStateChange = useEffectEvent(
     (changedTabId: string, state: DesktopPreviewTabState): void => {
       if (changedTabId !== runtimeTabId) return;
       if (shouldClearBrowserPointer(lastDesktopNavStatus.current, state.navStatus)) {
         clearBrowserPointer(runtimeTabId);
       }
+      if (guarded && state.navStatus.kind === "Loading") {
+        if (lastDesktopNavStatus.current?.kind !== "Loading") {
+          const serverStatus = readThreadPreviewState(stableThreadRef).sessions[tabId]?.navStatus;
+          attemptedServerUrl.current =
+            serverStatus?._tag === "Idle" ? null : (serverStatus?.url ?? null);
+        }
+      }
       lastDesktopNavStatus.current = state.navStatus;
       captureActivity.current?.update(state.capturing);
       applyPreviewDesktopState(stableThreadRef, tabId, projectDesktopState(state, mirrored));
-      const serverStatus =
-        guarded && state.navStatus.kind === "LoadFailed" && isGuardRefusal(state.navStatus.code)
-          ? readThreadPreviewState(stableThreadRef).sessions[tabId]?.navStatus
-          : undefined;
-      if (serverStatus !== undefined && serverStatus._tag !== "Idle") {
-        recordNativeTabFailure(environmentId, tabId, serverStatus.url);
+      const attempted = attemptedServerUrl.current;
+      if (
+        attempted !== null &&
+        state.navStatus.kind === "LoadFailed" &&
+        isGuardRefusal(state.navStatus.code)
+      ) {
+        recordNativeTabFailure(environmentId, tabId, attempted);
       }
       if (state.favicon) {
         recordFaviconForThread(stableThreadRef, state.favicon);
@@ -112,6 +121,7 @@ export function usePreviewBridge(input: {
     lastReportedUrl.current = null;
     lastReportedKind.current = null;
     lastDesktopNavStatus.current = null;
+    attemptedServerUrl.current = null;
     const activity = createCaptureActivity(runtimeTabId);
     captureActivity.current = activity;
     const unsubscribe = previewBridge.onStateChange(handleStateChange);

@@ -8,6 +8,7 @@ import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { previewEnvironment } from "~/state/preview";
 import { environmentSession } from "~/state/session";
 
+import { forgetNativeTabFailures } from "./nativeTabFailures";
 import { isLocalPreviewEnvironment } from "./previewRuntime";
 import { advancePreviewTrustEpoch } from "./previewTrustEpoch";
 import { remoteDeviceAccess } from "./remoteDeviceAccess";
@@ -62,6 +63,7 @@ function clearEnvironmentPreviews(environmentId: EnvironmentId): void {
       ? [latestEvent.value.value]
       : [],
   );
+  forgetNativeTabFailures(environmentId);
   for (const ref of refs) clearThreadPreviewState(ref);
   if (appAtomRegistry.getNodes().has(events)) appAtomRegistry.refresh(events);
   for (const list of lists) appAtomRegistry.refresh(list);

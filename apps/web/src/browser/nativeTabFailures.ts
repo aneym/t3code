@@ -30,7 +30,18 @@ export function nativeTabFailed(
   tabId: string,
   serverUrl: string,
 ): boolean {
-  return failedServerUrls.get(keyOf(environmentId, tabId)) === serverUrl;
+  const key = keyOf(environmentId, tabId);
+  const failed = failedServerUrls.get(key);
+  if (failed === undefined) return false;
+  if (failed === serverUrl) return true;
+  failedServerUrls.delete(key);
+  return false;
+}
+
+export function forgetNativeTabFailures(environmentId: EnvironmentId): void {
+  for (const key of failedServerUrls.keys()) {
+    if ((JSON.parse(key) as [string, string])[0] === environmentId) failedServerUrls.delete(key);
+  }
 }
 
 export function subscribeNativeTabFailures(listener: () => void): () => void {
