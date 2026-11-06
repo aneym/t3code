@@ -11,7 +11,7 @@ export const ServerPatch = {
 
 export const Client = {
   browserAllowRemoteDeviceTabs: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(true)),
+    Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   browserAllowRemoteDeviceControl: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
