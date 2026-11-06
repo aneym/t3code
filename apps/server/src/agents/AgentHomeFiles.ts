@@ -32,6 +32,15 @@ const readDocument = async (root: string, handle: string) =>
 const decodeBinding = Schema.decodeSync(AgentHomeBinding);
 const decodeHome = Schema.decodeSync(AgentHome);
 const text = (value: unknown) => (typeof value === "string" ? value : null);
+const FACE_URL_PATTERN =
+  /^https:\/\/[a-z0-9.-]+\/api\/faces\/[a-z0-9]+\/[A-Za-z0-9_-]{22}\/(128|512)\.png$/;
+const faceUrl = (rails: unknown) => {
+  const value =
+    typeof rails === "object" && rails !== null
+      ? text((rails as Record<string, unknown>).face_url)
+      : null;
+  return value !== null && FACE_URL_PATTERN.test(value) ? value : null;
+};
 const decodeMainBinding = (value: unknown): AgentHomeBinding | null => {
   if (value === undefined || value === null) return null;
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid agent binding");
@@ -66,6 +75,7 @@ export const homeFromDocument = (
     workspaceRoot: NodePath.join(root, handle),
     displayName: text(doc.display_name),
     role: text(doc.role),
+    faceUrl: faceUrl(doc.rails),
     projects: Array.isArray(doc.projects)
       ? doc.projects.filter((name): name is string => typeof name === "string")
       : [],

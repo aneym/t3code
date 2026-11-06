@@ -28,6 +28,7 @@ export const AgentHome = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   displayName: Schema.NullOr(Schema.String),
   role: Schema.NullOr(Schema.String),
+  faceUrl: Schema.optionalKey(Schema.NullOr(Schema.String)),
   projects: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   lanes: Schema.Array(AgentLane).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   binding: Schema.NullOr(AgentHomeBinding),

@@ -44,6 +44,7 @@ export function useSidebarAgentLists(projectKeys: ReadonlySet<string> | null) {
       {
         handle,
         name: project.title,
+        faceUrl: null,
         projectRef,
         homeProjectRefs: [projectRef],
         environmentIds: [project.environmentId],

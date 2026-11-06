@@ -15,6 +15,7 @@ const AGENT_HOME_PATTERN = /\/\.agent-rails\/agents\/([a-z0-9][a-z0-9-]*)\/?$/;
 export interface RailsAgent {
   readonly handle: string;
   readonly name: string;
+  readonly faceUrl: string | null;
   readonly projectRef: ScopedProjectRef | null;
   readonly homeProjectRefs: ReadonlyArray<ScopedProjectRef>;
   readonly environmentIds: ReadonlyArray<EnvironmentId>;
@@ -27,10 +28,6 @@ export interface RailsAgent {
 
 export function railsAgentHandle(workspaceRoot: string): string | null {
   return AGENT_HOME_PATTERN.exec(workspaceRoot)?.[1] ?? null;
-}
-
-export function railsAgentFaceUrl(handle: string): string {
-  return `https://rails.so/api/mobile/v1/agent-faces/${handle}.png`;
 }
 
 const folderName = (workspaceRoot: string) =>
@@ -149,6 +146,7 @@ export function useRailsAgents(): ReadonlyArray<RailsAgent> {
           /(^|-)([a-z])/g,
           (_, dash: string, letter: string) => `${dash ? " " : ""}${letter.toUpperCase()}`,
         ),
+      faceUrl: preferred?.faceUrl ?? ordered.find((home) => home.faceUrl)?.faceUrl ?? null,
       projectRef,
       homeProjectRefs,
       environmentIds: ordered.map((home) => home.environmentId),
