@@ -95,12 +95,17 @@ def collect_readiness(config, log, readiness_path):
     evidence["pressure"] = pressure
     value = {"checks": checks, "hostChecks": host_checks, "evidence": evidence, "engine": engine,
              "oldReleases": old_releases, "servingHeads": heads, "servingHistories": histories, "servingHead": studio_head}
+    deferred = {host: config.defer_reason for host in config.defer_hosts}
     for host in LINUX_TARGETS:
+        if host in deferred:
+            log.write(f"readiness skip: {host} deferred ({config.defer_reason})\n")
+            continue
         probe_host(config, log, host, value)
     failed = sorted(name for name, ok in checks.items() if not ok)
     value = {"ok": not failed, "failed": failed, "checks": checks, "hostChecks": host_checks, "evidence": evidence, "engine": engine,
              "topicShas": topics, "baseHead": base_head, "servingHead": studio_head, "baseHistory": history,
              "oldReleases": old_releases, "servingHeads": heads, "servingHistories": histories,
+             **({"deferredHosts": deferred} if deferred else {}),
              "seconds": round(time.monotonic() - started, 3)}
     atomic_write(readiness_path, (json.dumps(value, indent=2) + "\n").encode())
     log.write(json.dumps({"ok": value["ok"], "failed": failed}) + "\n")

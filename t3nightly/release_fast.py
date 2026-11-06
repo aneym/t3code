@@ -27,7 +27,7 @@ def stage_spec(node, args):
     python = sys.executable if node.host == "studio" else "python3"
     command = [python, f"{tools}/release-fast-stage", "--stage", node.id, "--host", node.host,
                "--version", args.version, "--topic", args.topic, "--run", root, "--advisory-workers", str(args.advisory_workers), "--rehearsal-drain-s", str(args.rehearsal_drain_s),
-               "--remote-run", args.remote_run, "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason]
+               "--remote-run", args.remote_run, "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, *defer_argv(args)]
     install = stage_action(node.id) == "install"
     return {"label": f"com.agent-rails.t3fast-{args.version}-{node.id}",
             "command": command, "host": node.host,
@@ -36,6 +36,10 @@ def stage_spec(node, args):
             "lockRoot": str(Path.home() / ".t3nightly/resource-locks") if node.host == "studio"
             else "/home/jobs/t3nightly/resource-locks",
             "install": install, "result": f"{root}/install-{node.host}/outcome.json" if install else None}
+
+
+def defer_argv(args):
+    return [*(word for host in args.defer_host for word in ("--defer-host", host)), "--defer-reason", args.defer_reason] if args.defer_host else []
 
 
 def remote_engine():
@@ -98,7 +102,7 @@ def drive_fast(args):
     inputs = {"version": args.version, "topic": args.topic,
               "remoteRun": args.remote_run, "remoteTools": args.remote_tools, "dryRun": args.dry_run,
               "rehearseOnly": args.rehearse_only, "overrideReason": args.override_reason,
-              **({"deferredHosts": {args.defer_host: args.defer_reason}} if args.defer_host else {}),
+              **({"deferredHosts": {host: args.defer_reason for host in args.defer_host}} if args.defer_host else {}),
               **({"advisoryWorkers": args.advisory_workers} if args.advisory_workers != 4 else {}),
               **({"rehearsalDrainS": args.rehearsal_drain_s} if args.rehearsal_drain_s != 45 else {}),
               **({"linuxHost": args.linux_host} if args.linux_host != "ax42" else {})}
@@ -271,10 +275,11 @@ def main(argv):
     parser.add_argument("--rehearsal-drain-s", type=int, choices=range(30, 61), default=45)
     parser.add_argument("--remote-tools")
     parser.add_argument("--linux-host", default="ax42", choices=(*LINUX_TARGETS, "pc-wsl"), help="shared Linux artifact builder (default: ax42)")
-    parser.add_argument("--defer-host", choices=tuple(LINUX_TARGETS), help="skip one Linux install; keep its sandbox proofs gating")
+    parser.add_argument("--defer-host", action="append", default=[], choices=tuple(LINUX_TARGETS), help="skip a Linux host for this release (repeatable): no readiness probe, sandbox proofs or install")
     parser.add_argument("--defer-reason", default="", help="operator decision authorizing the deferral")
     parser.add_argument("--base", default="", help="base ref to build on instead of the serving release head; must contain it")
     args = parser.parse_args(argv)
+    args.defer_host = list(dict.fromkeys(args.defer_host))
     args.defer_reason = args.defer_reason.strip()
     if bool(args.defer_host) != bool(args.defer_reason):
         parser.error("--defer-host and a nonempty --defer-reason are required together")
@@ -285,7 +290,10 @@ def main(argv):
     if not re.fullmatch(r"\d+\.\d+\.\d+-nightly\.\d+\.\d+\.aneym\.\d+", args.version):
         parser.error("version must be an upstream nightly plus .aneym.N")
     args.linux_host = LINUX_TARGETS[linux_target(args.linux_host)]
-    graph = fast_graph(args.linux_host, args.defer_host, args.defer_reason)
+    try:
+        graph = fast_graph(args.linux_host, args.defer_host, args.defer_reason)
+    except ValueError as error:
+        parser.error(str(error))
     args.run = (args.run or Path.home() / ".t3nightly/runs" / args.version / "fast").resolve()
     args.remote_run = args.remote_run or f"/home/jobs/t3nightly/runs/{args.version}/fast"
     args.remote_tools = args.remote_tools or remote_engine()
@@ -321,7 +329,7 @@ def main(argv):
     command = [sys.executable, str(Path(__file__).resolve().with_name("release")),
                "--fast", "--version", args.version, "--topic", args.topic,
                "--run", str(args.run), "--remote-run", args.remote_run, "--advisory-workers", str(args.advisory_workers), "--rehearsal-drain-s", str(args.rehearsal_drain_s),
-               "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, "--coordinator", *(["--defer-host", args.defer_host, "--defer-reason", args.defer_reason] if args.defer_host else []), *(["--rehearse-only"] if args.rehearse_only else [])]
+               "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, "--coordinator", *defer_argv(args), *(["--rehearse-only"] if args.rehearse_only else [])]
     spec = {"label": f"com.agent-rails.t3fast-{args.version}-coordinator-{coordinator.name}", "host": "studio",
             "command": command, "budget": sum(node.budget * HANG_GUARD + wait_cap(node) + TERM_GRACE_S + 5 for node in graph) + 60,
             "resourceWaitCapSeconds": RESOURCE_WAIT_CAP_S,

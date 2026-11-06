@@ -161,7 +161,7 @@ def fast_assemble(config, log):
             require(["git", "-C", str(tree), "merge", "--no-ff", "-m", message, sha], log)
         head = subprocess.run(["git", "-C", str(tree), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
         stamp(tree, config.version)
-        manifest = freeze(tree, ready.get("servingHead") or base, config.version, config.run, ready["oldReleases"], config.tools, ready.get("servingHeads"))
+        manifest = freeze(tree, ready.get("servingHead") or base, config.version, config.run, ready["oldReleases"], config.tools, ready.get("servingHeads"), ready.get("deferredHosts", {}))
         if not eligible(manifest):
             log.write(f"fast path refused: { {host: target['compatibility']['fastPath']['reasons'] for host, target in manifest['targets'].items()} }\n")
             return 3
@@ -250,16 +250,13 @@ def fast_publish(config, log):
     source = config.run / config.build_host
     deferred = deferred_hosts(config.run)
     for host, address in LINUX_TARGETS.items():
+        if host in deferred:
+            continue
         own, local = config.on(host), config.run / host
         local.mkdir(exist_ok=True)
         proof = (own.receipt("rollback-proof"),) if required(load(config.manifest), host) else ()
-        install = () if host in deferred else (own.receipt("install"),)
-        for path in (own.manifest, own.receipt("rehearsal"), *install, *proof):
+        for path in (own.manifest, own.receipt("rehearsal"), own.receipt("install"), *proof):
             transfer(f"{address}:{path}", str(local) + "/", log)
-        if host in deferred:
-            evidence = local / f"e2e-{host}"
-            evidence.mkdir(exist_ok=True)
-            transfer(f"{address}:{own.run}/e2e-{host}/smoke-verdict.json", str(evidence) + "/", log)
         if host != config.build_host:
             shutil.copy2(source / remote.artifact().name, local / remote.artifact().name)
             archive = local / remote.archive()

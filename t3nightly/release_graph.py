@@ -63,9 +63,10 @@ class FastNode:
     writes: tuple[str, ...] = ()
 
 
-def linux_nodes(host, builder, defer_host=None, defer_reason=""):
-    reason = defer_reason if host == defer_host else ""
+def linux_nodes(host, builder, defer_hosts=(), defer_reason=""):
     suffix = TARGET_SUFFIXES[host]
+    if host in defer_hosts:
+        return (FastNode(f"I{suffix}", f"install-{host}", host, (), 0, (), outcomes=("deferred",), defer_reason=defer_reason),)
     payload = "L" if host == builder else f"T{suffix}"
     transfer = () if host == builder else (FastNode(payload, f"stage-linux-{host}", "studio", ("SL",), 900, (f"payload:{host}",), writes=(host,)),)
     return (*transfer,
@@ -73,15 +74,18 @@ def linux_nodes(host, builder, defer_host=None, defer_reason=""):
             FastNode(f"R{suffix}", f"rehearse-{host}", host, (payload, f"P{suffix}"), 150, (f"sandbox:{host}",)),
             FastNode(f"X{suffix}", f"rollback-proof-{host}", host, (payload, f"P{suffix}", f"R{suffix}"), 150, (f"rollback-sandbox:{host}",)),
             FastNode(f"E{suffix}", f"e2e-{host}", host, (payload, f"P{suffix}"), 360, (f"e2e:{host}",)),
-            FastNode(f"I{suffix}", f"install-{host}", host, (f"R{suffix}", f"E{suffix}", f"X{suffix}"), 0 if reason else 1200, () if reason else (f"live-install:{host}",), outcomes=("deferred",) if reason else INSTALL_OUTCOMES, defer_reason=reason))
+            FastNode(f"I{suffix}", f"install-{host}", host, (f"R{suffix}", f"E{suffix}", f"X{suffix}"), 1200, (f"live-install:{host}",), outcomes=INSTALL_OUTCOMES))
 
 
-def fast_graph(linux_host="ax42", defer_host=None, defer_reason=""):
-    if bool(defer_host) != bool(defer_reason.strip()):
+def fast_graph(linux_host="ax42", defer_hosts=(), defer_reason=""):
+    defer_hosts = tuple(defer_hosts or ())
+    if bool(defer_hosts) != bool(defer_reason.strip()):
         raise ValueError("deferral requires a Linux host and a nonempty reason")
-    if defer_host is not None and defer_host not in LINUX_TARGETS:
+    if set(defer_hosts) - set(LINUX_TARGETS):
         raise ValueError("only Linux targets can be deferred")
     builder = linux_target(linux_host)
+    if builder in defer_hosts:
+        raise ValueError(f"{builder} builds the Linux artifact and cannot be deferred")
     installs = tuple(f"I{suffix}" for suffix in TARGET_SUFFIXES.values())
     return (
         FastNode("Q", "readiness", "studio", (), 30, ("release-coordinator",)),
@@ -95,7 +99,7 @@ def fast_graph(linux_host="ax42", defer_host=None, defer_reason=""):
         FastNode("SM", "prestage-mac", "studio", ("M",), 900, ("prestage:mac",), writes=(builder,)),
         FastNode("SL", "prestage-linux", "studio", ("L",), 900, ("prestage:linux",)),
         FastNode("SD", "prestage-desktop", "studio", ("D",), 900, ("prestage:desktop",), writes=(builder,)),
-        *(node for host in LINUX_TARGETS for node in linux_nodes(host, builder, defer_host, defer_reason)),
+        *(node for host in LINUX_TARGETS for node in linux_nodes(host, builder, defer_hosts, defer_reason)),
         FastNode("EM", "e2e-studio", "studio", ("M",), 300, ("e2e:studio",)),
         FastNode("IM", "install-studio", "studio", ("RM", "EM", "XM"), 180, ("live-install:studio",), outcomes=INSTALL_OUTCOMES),
         FastNode("S", "desktop-swap", "studio", ("D", "IM"), 5, ("desktop-app:studio",)),
@@ -104,7 +108,7 @@ def fast_graph(linux_host="ax42", defer_host=None, defer_reason=""):
         FastNode("LR", "land-receipts", "studio", (*installs, "F"), 60, (), gating=False),
         FastNode("H", "health-watch", "studio", ("F",), 600, (), gating=False),
         FastNode("AS", "advisory-suites", "studio", ("F",), 3600, (), gating=False),
-        FastNode("W", "desktop-windows", "studio", ("SL", *(f"T{TARGET_SUFFIXES[host]}" for host in LINUX_TARGETS if host != builder)), 1500, ("build-host:pc",), gating=False),
+        FastNode("W", "desktop-windows", "studio", ("SL", *(f"T{TARGET_SUFFIXES[host]}" for host in LINUX_TARGETS if host != builder and host not in defer_hosts)), 1500, ("build-host:pc",), gating=False),
         FastNode("FW", "publish-windows", "studio", ("F", "W"), 30, ("feed",), gating=False),
     )
 

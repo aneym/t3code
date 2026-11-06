@@ -350,7 +350,7 @@ def eligible(manifest):
     return all(target["compatibility"]["fastPath"]["eligible"] for target in manifest["targets"].values())
 
 
-def freeze(tree, base, version, out, old_releases=None, engine=None, serving_heads=None):
+def freeze(tree, base, version, out, old_releases=None, engine=None, serving_heads=None, deferred=()):
     tree = Path(tree).resolve()
     match = VERSION.fullmatch(version)
     if not match:
@@ -361,11 +361,12 @@ def freeze(tree, base, version, out, old_releases=None, engine=None, serving_hea
     unknown = sorted((set(old_releases) | set(serving_heads)) - set(TARGETS))
     if unknown:
         raise ValueError(f"unknown target hosts: {', '.join(unknown)}")
-    missing = sorted(set(TARGETS) - (set(old_releases) & set(serving_heads)))
+    hosts = {host: target for host, target in TARGETS.items() if host == "studio" or host not in deferred}
+    missing = sorted(set(hosts) - (set(old_releases) & set(serving_heads)))
     if missing:
         raise ValueError(f"installed release and source head required for every target: {missing}")
     targets, computed = {}, {}
-    for host, (platform, arch) in TARGETS.items():
+    for host, (platform, arch) in hosts.items():
         if not old_releases[host] or not serving_heads[host]:
             raise ValueError(f"{host}: installed release and source head are missing")
         serving = git(tree, "rev-parse", f"{serving_heads[host]}^{{commit}}").strip()
