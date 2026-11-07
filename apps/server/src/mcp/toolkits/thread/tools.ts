@@ -18,6 +18,8 @@ import {
   RunId,
   NonNegativeInt,
   ProjectId,
+  QueueHoldReason,
+  OrchestrationV2ProviderFailureClass,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
@@ -78,6 +80,13 @@ const queueEntry = Schema.Struct({
   queuedRunId: RunId,
   text: Schema.String,
   truncated: Schema.Boolean,
+  hold: Schema.optional(
+    Schema.Struct({
+      reason: Schema.NullOr(QueueHoldReason),
+      heldAt: Schema.NullOr(Schema.String),
+      failureClass: Schema.NullOr(OrchestrationV2ProviderFailureClass),
+    }),
+  ),
 });
 const QUEUE_READ_ACTIONS = ["list", "read"] as const;
 const QueueTool = Tool.make("t3_queue", {

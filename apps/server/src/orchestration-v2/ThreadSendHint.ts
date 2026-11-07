@@ -12,7 +12,9 @@ export function threadSendHint(
     case "restart":
       return "Waits for server restart recovery; mode auto starts now.";
     case "blocked":
-      return "Waits for the blocking condition to clear and a run to complete; mode auto starts now.";
+      return thread.createdBy === "agent"
+        ? "Waits for the blocking condition to clear and a run to complete; a transient provider failure also releases when the provider recovers; mode auto starts now."
+        : "Waits for the blocking condition to clear and a run to complete; mode auto starts now.";
     case undefined:
       return thread.createdBy === "agent"
         ? "Releases when a run ends on this thread; mode auto starts now."

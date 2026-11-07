@@ -37,8 +37,10 @@ import {
   OrchestratorProviderAdapterError,
 } from "./ThreadSessionTransitions.ts";
 import {
+  blockedQueueHold,
   canReleaseQueueHold,
   clearQueueHold,
+  queueBlock,
   queueReleaseEvents,
   inheritedQueueHold,
   releasesQueueHoldAtRunEnd,
@@ -1471,7 +1473,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // Failed worktree creation would run queued work in the project checkout; wait for the user.
       const failedRun = latestExecutedRun(projection.runs);
       const failureClass =
-        failedRun?.id === options?.failedRunId
+        failedRun?.id === options?.failedRunId &&
+        failedRun?.providerInstanceId === queuedRun.providerInstanceId
           ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
           : undefined;
       const worktreeMissing =
@@ -1484,13 +1487,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.projectId,
         queuedRun.providerInstanceId,
       );
-      if (
-        worktreeMissing ||
-        instanceDisabledForProject ||
-        (failureClass !== undefined &&
-          failureClass !== "validation_error" &&
-          failedRun?.providerInstanceId === queuedRun.providerInstanceId)
-      ) {
+      const block = queueBlock(worktreeMissing || instanceDisabledForProject, failureClass);
+      if (block !== undefined) {
         const now = yield* DateTime.now;
         yield* writeSystemEvents(
           projection.runs
@@ -1501,7 +1499,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               runId: run.id,
               providerInstanceId: run.providerInstanceId,
               occurredAt: now,
-              payload: { ...run, queueHeld: true, queueHoldReason: "blocked" },
+              payload: blockedQueueHold(run, now, block.failureClass),
             })),
         );
         return;

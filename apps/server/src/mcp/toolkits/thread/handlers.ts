@@ -7,6 +7,7 @@ import {
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as ThreadConfigurationService from "../../ThreadConfigurationService.ts";
 
@@ -38,6 +39,15 @@ function queueEntry(
     queuedRunId: run.id,
     text: characters.slice(0, limit).join(""),
     truncated: characters.length > limit,
+    ...(run.queueHeld === true
+      ? {
+          hold: {
+            reason: run.queueHoldReason ?? null,
+            heldAt: run.queueHeldAt === undefined ? null : DateTime.formatIso(run.queueHeldAt),
+            failureClass: run.queueHoldFailureClass ?? null,
+          },
+        }
+      : {}),
   };
 }
 const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (

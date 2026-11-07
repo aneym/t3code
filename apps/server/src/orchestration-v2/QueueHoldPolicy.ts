@@ -1,5 +1,6 @@
 import {
   resolveProviderInstanceEnabled,
+  type OrchestrationV2ProviderFailureClass,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type ServerSettings,
@@ -10,12 +11,69 @@ import {
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 
-type Hold = Pick<OrchestrationV2Run, "queueHeld" | "queueHoldReason" | "queueHeldAt">;
+type Hold = Pick<
+  OrchestrationV2Run,
+  "queueHeld" | "queueHoldReason" | "queueHeldAt" | "queueHoldFailureClass"
+>;
 type Release = "restart" | "client" | "preparation";
 
+const WAKEABLE_FAILURES: ReadonlySet<OrchestrationV2ProviderFailureClass> = new Set([
+  "provider_error",
+  "transport_error",
+]);
+
 export function clearQueueHold(run: OrchestrationV2Run): OrchestrationV2Run {
-  const { queueHoldReason: _reason, queueHeldAt: _heldAt, ...rest } = run;
+  const {
+    queueHoldReason: _reason,
+    queueHeldAt: _heldAt,
+    queueHoldFailureClass: _failureClass,
+    ...rest
+  } = run;
   return { ...rest, queueHeld: false };
+}
+
+export function queueBlock(
+  heldForUser: boolean,
+  failureClass: OrchestrationV2ProviderFailureClass | undefined,
+): { readonly failureClass?: OrchestrationV2ProviderFailureClass } | undefined {
+  if (heldForUser) return {};
+  return failureClass === undefined || failureClass === "validation_error"
+    ? undefined
+    : { failureClass };
+}
+
+export function blockedQueueHold(
+  run: OrchestrationV2Run,
+  now: DateTime.Utc,
+  failureClass: OrchestrationV2ProviderFailureClass | undefined,
+): OrchestrationV2Run {
+  const { queueHoldFailureClass: _previous, ...rest } = run;
+  return {
+    ...rest,
+    queueHeld: true,
+    queueHoldReason: "blocked",
+    queueHeldAt: now,
+    ...(failureClass === undefined ? {} : { queueHoldFailureClass: failureClass }),
+  };
+}
+
+export function wakesBlockedQueue(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  providerInstanceId: OrchestrationV2Run["providerInstanceId"],
+): boolean {
+  const { thread } = projection;
+  if (thread.createdBy !== "agent" || thread.archivedAt !== null || thread.deletedAt !== null)
+    return false;
+  const held = projection.runs.filter((run) => run.status === "queued" && run.queueHeld === true);
+  return (
+    held.some((run) => run.providerInstanceId === providerInstanceId) &&
+    held.every(
+      (run) =>
+        run.queueHoldReason === "blocked" &&
+        run.queueHoldFailureClass !== undefined &&
+        WAKEABLE_FAILURES.has(run.queueHoldFailureClass),
+    )
+  );
 }
 
 export function canReleaseQueueHold(run: OrchestrationV2Run, release: Release): boolean {
@@ -120,8 +178,17 @@ export function inheritedQueueHold(
       ...(queueHeldAt === undefined ? {} : { queueHeldAt }),
     };
   }
-  if (blocked || remaining.some((run) => run.queueHoldReason === "blocked"))
-    return { queueHeld: true, queueHoldReason: "blocked" };
+  if (blocked) return { queueHeld: true, queueHoldReason: "blocked" };
+  const blockedRun = remaining.find((run) => run.queueHoldReason === "blocked");
+  if (blockedRun !== undefined) {
+    const { queueHeldAt, queueHoldFailureClass } = blockedRun;
+    return {
+      queueHeld: true,
+      queueHoldReason: "blocked",
+      ...(queueHeldAt === undefined ? {} : { queueHeldAt }),
+      ...(queueHoldFailureClass === undefined ? {} : { queueHoldFailureClass }),
+    };
+  }
   return remaining.length > 0 ? { queueHeld: true, queueHoldReason: "restart" } : {};
 }
 
