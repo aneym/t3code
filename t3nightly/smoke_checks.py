@@ -57,7 +57,7 @@ def thread_item(ctx, name, deadline, thread_id):
 
 def start_thread(ctx, name, deadline, project, word):
     started = cli_json(
-        ctx, name, deadline, "thread start", "--provider", "claudeAgent", "--model", CLAUDE_MODEL, str(project), ask(word)
+        ctx, name, deadline, "thread start", "--provider", "claudeAgent", "--model", CLAUDE_MODEL, "--title", word, str(project), ask(word)
     )
     thread_id = started.get("threadId")
     if not thread_id:
