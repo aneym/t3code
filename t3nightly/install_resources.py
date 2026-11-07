@@ -3,6 +3,7 @@ import json
 import os
 import signal
 import sqlite3
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -37,6 +38,37 @@ def exclusive(run, name):
         yield
 
 
+THREAD_MEMORY_LOCK = Path.home() / ".agent-rails/thread-memory/lock"
+
+
+def thread_memory_settled(run, path=THREAD_MEMORY_LOCK, timeout_s=600):
+    if not path.is_file():
+        run.step("thread-memory-wait", outcome="absent", lock=str(path))
+        return
+    started = time.monotonic()
+    run.step(
+        "thread-memory-wait", outcome="waiting", lock=str(path), timeout_s=timeout_s
+    )
+    with path.open("r") as handle:
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(handle, fcntl.LOCK_UN)
+                outcome = "settled"
+                break
+            except BlockingIOError:
+                if time.monotonic() - started >= timeout_s:
+                    outcome = "timed-out"
+                    break
+                time.sleep(1)
+    run.step(
+        "thread-memory-wait",
+        outcome=outcome,
+        lock=str(path),
+        waited_s=round(time.monotonic() - started, 3),
+    )
+
+
 @contextmanager
 def installer_owner(run):
     def cancel(signum, frame):
@@ -46,6 +78,8 @@ def installer_owner(run):
 
     prior = signal.signal(signal.SIGTERM, cancel)
     try:
+        if sys.platform == "darwin" and not getattr(run.args, "rehearsal", False):
+            thread_memory_settled(run)
         with exclusive(run, "installer"):
             yield
     finally:

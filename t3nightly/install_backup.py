@@ -15,11 +15,21 @@ from .install_restore_copy import checksum, estimate, fsync, identity, verify
 from .install_backup_retention import mark
 
 
-def quiescent(db):
+def quiescent(run, db):
     paths = [str(path) for path in (db, Path(str(db) + "-wal"), Path(str(db) + "-shm")) if path.exists()]
-    result = subprocess.run(["/usr/sbin/lsof", "-t", *paths], capture_output=True, text=True, timeout=15, check=False)
-    if result.returncode not in (0, 1) or result.stdout.strip() or result.stderr.strip():
-        raise ValueError("database users remain or lsof could not establish quiescence")
+    result = subprocess.run(["/usr/sbin/lsof", "-F", "pc", *paths], capture_output=True, text=True, timeout=15, check=False)
+    holders = []
+    for line in result.stdout.splitlines():
+        if line.startswith("p"):
+            holders.append({"pid": int(line[1:]), "command": ""})
+        elif line.startswith("c") and holders:
+            holders[-1]["command"] = line[1:]
+    if result.returncode not in (0, 1) or holders or result.stderr.strip():
+        record = {"outcome": "busy", "holders": holders, "lsofExit": result.returncode, "lsofError": result.stderr.strip()[:500], "retryable": True}
+        run.report["databaseQuiescence"] = record
+        run.step("hard-quiescence-refused", **record)
+        named = ", ".join(f"{holder['pid']} {holder['command']}" for holder in holders) or "none named"
+        raise ValueError(f"database users remain or lsof could not establish quiescence; holders: {named}")
 
 
 def advisory(run, backup):
@@ -83,7 +93,7 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
     require_space(root, size, clone=clone)
     stop()
     if sys.platform == "darwin":
-        quiescent(source)
+        quiescent(run, source)
     if binary:
         metadata = {"method": "binary-rollback", **binary, "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
         destination.rmdir()

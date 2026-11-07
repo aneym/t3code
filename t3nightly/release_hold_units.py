@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 
+from .launch_path import launch_path
 from .release_hold_state import read
 from .release_jobs import write_status
 
@@ -35,7 +36,7 @@ def submit_unit(directory, spec):
             plistlib.dump({"Label": spec["label"], "ProgramArguments": argv, "RunAtLoad": True,
                           "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 1, "AbandonProcessGroup": False,
                           "StandardOutPath": output, "StandardErrorPath": output,
-                          "EnvironmentVariables": {"HOME": str(Path.home()), "PATH": os.environ.get("PATH", "/usr/bin:/bin")}}, handle)
+                          "EnvironmentVariables": {"HOME": str(Path.home()), "PATH": launch_path("/usr/bin:/bin")}}, handle)
         command = ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)]
     else:
         linger = subprocess.run(["loginctl", "show-user", str(os.getuid()), "--property=Linger", "--value"],

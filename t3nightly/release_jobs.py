@@ -11,6 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from .launch_path import launch_path
 from .release_targets import LINUX_TARGETS, stage_action
 from .remote_shell import ssh_argv
 from .unit_resources import systemd_arguments
@@ -67,7 +68,7 @@ def submit(directory, spec):
             plistlib.dump({"Label": label, "ProgramArguments": argv, "RunAtLoad": True,
                           "WorkingDirectory": str(launch_root), "StandardOutPath": output,
                           "StandardErrorPath": output, "ProcessType": "Interactive",
-                          "EnvironmentVariables": {"HOME": str(Path.home()), "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")}}, handle)
+                          "EnvironmentVariables": {"HOME": str(Path.home()), "PATH": launch_path("/usr/bin:/bin:/usr/sbin:/sbin")}}, handle)
         command = ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)]
     else:
         command = ["systemd-run", "--user", f"--unit={label}", "--collect",

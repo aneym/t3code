@@ -204,7 +204,7 @@ def install(run):
                     run.report["restartDrain"] = {**run.report.get("restartDrain", {}), "outcome": drain_outcome, "stopForcedInRehearsal": True, "activeRunIds": active_run_ids}
                     run.step("rehearsal-stop-after-drain", active_run_ids=active_run_ids)
                 else:
-                    run.report["restartDrain"] = {**run.report.get("restartDrain", {}), "outcome": drain_outcome, "stopRefused": True, "activeRunIds": active_run_ids}
+                    run.report["restartDrain"] = {**run.report.get("restartDrain", {}), "outcome": drain_outcome, "stopRefused": True, "activeRunIds": active_run_ids, "retryable": True}
                     run.step("hard-stop-refused", active_run_ids=active_run_ids)
                     raise ValueError(f"restart drain did not report drained: true; nothing stopped; active_run_ids={active_run_ids}")
         install_settings.capture(run)
@@ -363,8 +363,8 @@ def install(run):
         "oldRuntime": {"version": previous, "digest": observed["oldRuntime.digest"]},
         "servingRuntime": {"version": serving_version, "digest": serving_digest},
         "installWindow": run.report.get("installWindow"), "hotSwap": {**(run.report.get("hotSwap") or {}), "forwardRepairRequired": run.report.get("forwardRepairRequired", False)},
-        **({"restartDrain": run.report["restartDrain"]} if "restartDrain" in run.report else {}),
-        **({"connectorRestore": run.report["connectorRestore"]} if "connectorRestore" in run.report else {}),
+        **{key: run.report[key] for key in ("restartDrain", "connectorRestore", "databaseQuiescence") if key in run.report},
+        "retryable": any((run.report.get(key) or {}).get("retryable") is True for key in ("restartDrain", "databaseQuiescence")),
         "migrationHistory": migration_evidence, "databaseRollback": database_rollback,
         **install_settings.receipt(run),
         "serviceStops": run.report.get("serviceStops", []), "backup": backup, "chat": post["proof"], "outcome": outcome, "reapedSshLaunch": run.reaped,

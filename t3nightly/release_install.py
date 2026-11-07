@@ -66,9 +66,11 @@ def fast_install(config, log):
     config.receipt("install").unlink(missing_ok=True)
     code = command(plan.argv, log, env=plan.env)
     outcome = "failed"
+    receipt = {}
     if config.receipt("install").is_file():
-        outcome = json.loads(config.receipt("install").read_text())["outcome"]
+        receipt = json.loads(config.receipt("install").read_text())
+        outcome = receipt["outcome"]
     if code and outcome in SUCCESS_OUTCOMES:
         outcome = "failed"
-    (config.outcome()).write_text(json.dumps({"outcome": outcome, "installerExit": code}) + "\n")
+    (config.outcome()).write_text(json.dumps({"outcome": outcome, "installerExit": code, "retryable": receipt.get("retryable") is True}) + "\n")
     return 0

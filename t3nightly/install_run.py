@@ -73,6 +73,9 @@ class Run:
         drain = self.report.get("restartDrain")
         if drain:
             line += f"; restart drain {drain['outcome']}, waited_ms={drain.get('waitedMs')}, active_run_ids={drain.get('activeRunIds', [])}"
+        quiescence = self.report.get("databaseQuiescence")
+        if quiescence:
+            line += f"; database quiescence {quiescence['outcome']}, retryable, holders={quiescence['holders']}"
         self.report.update(outcome=outcome, line=line, finished_at=now().isoformat())
         launch = self.report.get("serviceLaunch")
         if launch and outcome in ("installed", "current"):
