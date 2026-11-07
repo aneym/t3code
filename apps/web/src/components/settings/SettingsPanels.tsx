@@ -3,6 +3,7 @@ import {
   forkThreadSettingsDefaults,
 } from "./forkThreadSettingsDefaults";
 import { useAtomValue } from "@effect/atom-react";
+import { McpAppToolGrantSettings } from "./McpAppToolGrantSettings";
 import { QueueSettings } from "./QueueSettings";
 import { AutomationPlacementSetting } from "./AutomationPlacementSetting";
 import { NotificationSettings } from "./NotificationSettings";
@@ -1320,6 +1321,7 @@ export function ChatSettingsPanel() {
         <AutomationPlacementSetting />
         <QueueSettings />
       </SettingsSection>
+      <McpAppToolGrantSettings />
     </SettingsPageContainer>
   );
 }
@@ -1545,7 +1547,6 @@ export function DiffsSettingsPanel() {
   );
 }
 
-/** The Providers panel can render without a settings scope, as its tests do; this row needs one. */
 export function CompactIdleThreadsRow() {
   return useOptionalSettingsScope() === null ? null : <ScopedCompactIdleThreadsRow />;
 }
@@ -1596,7 +1597,6 @@ function ScopedCompactIdleThreadsRow() {
                 hideIndicator
                 key={mode.value}
                 value={mode.value}
-                // A server from before modes has only the on/off switch, so it cannot store "Never".
                 disabled={mode.value === "off" && !idleCompaction.neverAvailable}
               >
                 {mode.label}

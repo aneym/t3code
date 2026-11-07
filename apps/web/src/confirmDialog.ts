@@ -1,23 +1,30 @@
 import type { ConfirmDialogOptions, ConfirmDialogVariant } from "@t3tools/contracts";
 
-export type ConfirmDialogState =
-  | { readonly status: "idle" }
-  | {
-      readonly status: "confirming";
-      readonly message: string;
-      readonly variant: ConfirmDialogVariant;
-    }
-  | {
-      readonly status: "closing";
-      readonly message: string;
-      readonly variant: ConfirmDialogVariant;
-    };
+export interface ConfirmDialogChoice {
+  readonly id: string;
+  readonly label: string;
+  readonly variant?: "default" | "destructive" | "outline";
+}
 
-type PendingConfirmation = {
+type ConfirmDialogContent = {
   readonly message: string;
   readonly variant: ConfirmDialogVariant;
-  readonly resolve: (confirmed: boolean) => void;
+  readonly choices?: ReadonlyArray<ConfirmDialogChoice>;
 };
+
+export type ConfirmDialogState =
+  | { readonly status: "idle" }
+  | ({ readonly status: "confirming" } & ConfirmDialogContent)
+  | ({ readonly status: "closing" } & ConfirmDialogContent);
+
+type PendingConfirmation = ConfirmDialogContent & {
+  readonly resolve: (choice: string | null) => void;
+};
+
+const CONFIRM_CHOICE = "confirm";
+
+const contentOf = ({ message, variant, choices }: ConfirmDialogContent): ConfirmDialogContent =>
+  choices === undefined ? { message, variant } : { message, variant, choices };
 
 const idleState: ConfirmDialogState = { status: "idle" };
 let state: ConfirmDialogState = idleState;
@@ -32,10 +39,10 @@ function publish(next: ConfirmDialogState): void {
   }
 }
 
-function resolvePendingConfirmations(confirmed: boolean): void {
-  activeConfirmation?.resolve(confirmed);
+function resolvePendingConfirmations(): void {
+  activeConfirmation?.resolve(null);
   for (const confirmation of queuedConfirmations) {
-    confirmation.resolve(confirmed);
+    confirmation.resolve(null);
   }
   activeConfirmation = null;
   queuedConfirmations = [];
@@ -53,9 +60,22 @@ export function subscribeConfirmDialogHost(listener: () => void): () => void {
   listeners.add(listener);
   return () => {
     if (!listeners.delete(listener) || listeners.size > 0) return;
-    resolvePendingConfirmations(false);
+    resolvePendingConfirmations();
     publish(idleState);
   };
+}
+
+function enqueue(content: ConfirmDialogContent): Promise<string | null> {
+  return new Promise((resolve) => {
+    const pending: PendingConfirmation = { ...content, resolve };
+    if (activeConfirmation || state.status === "closing") {
+      queuedConfirmations.push(pending);
+      return;
+    }
+
+    activeConfirmation = pending;
+    publish({ status: "confirming", ...contentOf(pending) });
+  });
 }
 
 /** Undefined means no themed host is available. */
@@ -64,36 +84,30 @@ export function requestConfirmDialog(
   options?: ConfirmDialogOptions,
 ): Promise<boolean> | undefined {
   if (listeners.size === 0) return undefined;
+  return enqueue({ message, variant: options?.variant ?? "default" }).then(
+    (choice) => choice === CONFIRM_CHOICE,
+  );
+}
 
-  const confirmation = new Promise<boolean>((resolve) => {
-    const pending = {
-      message,
-      variant: options?.variant ?? "default",
-      resolve,
-    } satisfies PendingConfirmation;
-    if (activeConfirmation || state.status === "closing") {
-      queuedConfirmations.push(pending);
-      return;
-    }
-
-    activeConfirmation = pending;
-    publish({ status: "confirming", message, variant: pending.variant });
-  });
-
-  return confirmation;
+export function requestChoiceDialog(
+  message: string,
+  choices: ReadonlyArray<ConfirmDialogChoice>,
+): Promise<string | null> | undefined {
+  if (listeners.size === 0) return undefined;
+  return enqueue({ message, variant: "default", choices });
 }
 
 export function isConfirmDialogActive(): boolean {
   return state.status !== "idle" || activeConfirmation !== null || queuedConfirmations.length > 0;
 }
 
-export function respondToConfirmDialog(confirmed: boolean): void {
+export function respondToConfirmDialog(response: boolean | string): void {
   if (state.status !== "confirming" || !activeConfirmation) return;
 
   const confirmation = activeConfirmation;
   activeConfirmation = null;
-  confirmation.resolve(confirmed);
-  publish({ status: "closing", message: state.message, variant: state.variant });
+  confirmation.resolve(response === true ? CONFIRM_CHOICE : response === false ? null : response);
+  publish({ status: "closing", ...contentOf(state) });
 }
 
 export function completeConfirmDialogClose(): void {
@@ -106,11 +120,11 @@ export function completeConfirmDialogClose(): void {
   }
 
   activeConfirmation = next;
-  publish({ status: "confirming", message: next.message, variant: next.variant });
+  publish({ status: "confirming", ...contentOf(next) });
 }
 
 export function resetConfirmDialogForTests(): void {
   listeners.clear();
-  resolvePendingConfirmations(false);
+  resolvePendingConfirmations();
   publish(idleState);
 }

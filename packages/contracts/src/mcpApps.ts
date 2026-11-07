@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
+import { ProjectId, ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 
 // The producing tool call restricts each app to its source server.
 const McpAppTarget = {
@@ -92,3 +92,27 @@ export class McpAppRequestError extends Schema.TaggedError<McpAppRequestError>()
     }
   }
 }
+
+export const McpAppToolGrant = Schema.Struct({
+  server: Schema.String,
+  tool: Schema.String,
+  projectId: ProjectId,
+  grantedAt: Schema.String,
+});
+export type McpAppToolGrant = typeof McpAppToolGrant.Type;
+
+export const sameMcpAppToolGrant = (
+  grant: Pick<McpAppToolGrant, "server" | "tool" | "projectId">,
+  target: Pick<McpAppToolGrant, "server" | "tool" | "projectId">,
+) =>
+  grant.server === target.server &&
+  grant.tool === target.tool &&
+  grant.projectId === target.projectId;
+
+export const withMcpAppToolGrant = (
+  grants: ReadonlyArray<McpAppToolGrant>,
+  grant: McpAppToolGrant,
+): ReadonlyArray<McpAppToolGrant> => [
+  ...grants.filter((existing) => !sameMcpAppToolGrant(existing, grant)),
+  grant,
+];

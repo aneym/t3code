@@ -1,6 +1,5 @@
 import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import * as Dialog from "../../components/ui/Dialog";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import {
   makeMcpAppHost,
@@ -44,6 +43,7 @@ import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { MCP_APP_INLINE_MAX_HEIGHT, mcpAppInlineHeight } from "./mcpAppSizing";
+import { confirmMcpAppAction as confirm, useMcpAppToolConsent } from "./useMcpAppToolConsent";
 
 const ROW_BOTTOM_MARGIN = 8;
 
@@ -73,20 +73,6 @@ const commandFailure = (result: {
     error instanceof Error && error.message.trim() !== "" ? error.message : "Request failed.",
   );
 };
-
-const confirm = (title: string, message: string, action: string) =>
-  new Promise<boolean>((resolve) => {
-    Dialog.alert(
-      title,
-      message,
-      [
-        { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-        { text: action, onPress: () => resolve(true) },
-      ],
-      // Android dismisses earlier alerts when showing another; decline dismissed requests to release their slots.
-      { cancelable: true, onDismiss: () => resolve(false) },
-    );
-  });
 
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -202,6 +188,11 @@ export function ThreadMcpApp(props: {
   const toolDefinition = toolInfo.data?.tool;
 
   const callTool = useAtomCommand(mcpAppEnvironment.callTool, { reportFailure: false });
+  const consent = useMcpAppToolConsent({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    server: app.server,
+  });
   const toolInfoCommand = useAtomCommand(mcpAppEnvironment.toolInfo, { reportFailure: false });
   const readResource = useAtomCommand(mcpAppEnvironment.readResource, { reportFailure: false });
   const updateModelContext = useAtomCommand(mcpAppEnvironment.updateModelContext, {
@@ -321,15 +312,8 @@ export function ThreadMcpApp(props: {
         const info = await latest.current.toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
         if (!info.value.callable) throw new McpAppHostRefusal("This app cannot call that tool.");
-        if (
-          !info.value.readOnly &&
-          !(await confirm(
-            `Allow ${app.server} to run ${info.value.title ?? name}?`,
-            JSON.stringify(args, null, 2),
-            "Allow",
-          ))
-        ) {
-          throw new McpAppHostRefusal("Declined by the user.");
+        if (!info.value.readOnly) {
+          await consent.approve({ name, title: info.value.title ?? name, arguments: args });
         }
         const result = await latest.current.callTool({
           environmentId,
@@ -349,17 +333,17 @@ export function ThreadMcpApp(props: {
       },
       openLink: async (url) => {
         // WebViews cannot prove user activation; confirm links to prevent timer-driven navigation out of T3.
-        if (!(await confirm(`Open a link from ${app.server}?`, url, "Open"))) {
-          throw new McpAppHostRefusal("Declined by the user.");
-        }
+        await consent.confirm("a link", () =>
+          confirm(`Open a link from ${app.server}?`, url, "Open"),
+        );
         if (!(await tryOpenExternalUrl(url, "mcp-app"))) {
           throw new McpAppHostRefusal("The link could not be opened.");
         }
       },
       sendMessage: async (text) => {
-        if (!(await confirm(`Send this message from ${app.server}?`, text, "Send"))) {
-          throw new McpAppHostRefusal("Declined by the user.");
-        }
+        await consent.confirm("a message", () =>
+          confirm(`Send this message from ${app.server}?`, text, "Send"),
+        );
         await enqueueThreadOutboxMessage({
           environmentId: latest.current.props.environmentId,
           threadId: latest.current.props.conversationThreadId,
@@ -421,9 +405,9 @@ export function ThreadMcpApp(props: {
       },
       downloadFile: async (files) => {
         const names = files.map((file) => file.name).join(", ");
-        if (!(await confirm(`Save a file from ${app.server}?`, names, "Save"))) {
-          throw new McpAppHostRefusal("Declined by the user.");
-        }
+        await consent.confirm("a download", () =>
+          confirm(`Save a file from ${app.server}?`, names, "Save"),
+        );
         for (const file of files) {
           let bytes: Uint8Array | undefined;
           let mimeType = file.mimeType ?? "application/octet-stream";
@@ -515,63 +499,68 @@ export function ThreadMcpApp(props: {
   }
 
   return (
-    <View style={fullscreen ? { flex: 1 } : { height, marginBottom: ROW_BOTTOM_MARGIN }}>
-      {navigatedAway ? (
-        <View className="flex-1 items-center justify-center">
-          <Text className="text-sm text-foreground-muted">
-            The {app.server} app left its page and was stopped
-          </Text>
-        </View>
-      ) : uri !== null && !crashed ? (
-        <WebView<object>
-          key={`${documentKey}:${generation}:${uri}`}
-          ref={attachWebView}
-          onContentProcessDidTerminate={restart}
-          onRenderProcessGone={restart}
-          source={source!}
-          accessibilityLabel={`${app.server} app`}
-          style={{ flex: 1, backgroundColor: "transparent" }}
-          nestedScrollEnabled
-          originWhitelist={["*"]}
-          // Android misreports nested frames as top-level; rely on iframe sandboxing there and gate navigation elsewhere.
-          onShouldStartLoadWithRequest={(request) =>
-            Platform.OS === "android" ||
-            request.isTopFrame === false ||
-            request.url === "about:blank"
-          }
-          setSupportMultipleWindows={false}
-          onLoadEnd={() => setLoaded(true)}
-          onError={() => setCrashed(true)}
-          onHttpError={() => setCrashed(true)}
-          onMessage={(event: WebViewMessageEvent) => {
-            let envelope: unknown;
-            try {
-              envelope = JSON.parse(event.nativeEvent.data);
-            } catch {
-              return;
+    <>
+      <View style={fullscreen ? { flex: 1 } : { height, marginBottom: ROW_BOTTOM_MARGIN }}>
+        {navigatedAway ? (
+          <View className="flex-1 items-center justify-center">
+            <Text className="text-sm text-foreground-muted">
+              The {app.server} app left its page and was stopped
+            </Text>
+          </View>
+        ) : uri !== null && !crashed ? (
+          <WebView<object>
+            key={`${documentKey}:${generation}:${uri}`}
+            ref={attachWebView}
+            onContentProcessDidTerminate={restart}
+            onRenderProcessGone={restart}
+            source={source!}
+            accessibilityLabel={`${app.server} app`}
+            style={{ flex: 1, backgroundColor: "transparent" }}
+            nestedScrollEnabled
+            originWhitelist={["*"]}
+            // Android misreports nested frames as top-level; rely on iframe sandboxing there and gate navigation elsewhere.
+            onShouldStartLoadWithRequest={(request) =>
+              Platform.OS === "android" ||
+              request.isTopFrame === false ||
+              request.url === "about:blank"
             }
-            if (!Predicate.isObject(envelope) || envelope.secret !== secret) return;
-            const message = envelope.message;
-            if (Predicate.isObject(message) && message.t3 === "navigated") {
-              host?.dispose();
-              setNavigatedAway(true);
-              return;
-            }
-            userActive.current = envelope.active === true;
-            host?.receive(message);
-            userActive.current = false;
-          }}
-        />
-      ) : asset._tag === "Failure" || crashed ? (
-        <View className="flex-1 items-center justify-center">
-          <Text className="text-sm text-foreground-muted">Unable to load the {app.server} app</Text>
-        </View>
-      ) : null}
-      {uri !== null && !loaded && !crashed && !navigatedAway ? (
-        <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
-          <AppActivityIndicator />
-        </View>
-      ) : null}
-    </View>
+            setSupportMultipleWindows={false}
+            onLoadEnd={() => setLoaded(true)}
+            onError={() => setCrashed(true)}
+            onHttpError={() => setCrashed(true)}
+            onMessage={(event: WebViewMessageEvent) => {
+              let envelope: unknown;
+              try {
+                envelope = JSON.parse(event.nativeEvent.data);
+              } catch {
+                return;
+              }
+              if (!Predicate.isObject(envelope) || envelope.secret !== secret) return;
+              const message = envelope.message;
+              if (Predicate.isObject(message) && message.t3 === "navigated") {
+                host?.dispose();
+                setNavigatedAway(true);
+                return;
+              }
+              userActive.current = envelope.active === true;
+              host?.receive(message);
+              userActive.current = false;
+            }}
+          />
+        ) : asset._tag === "Failure" || crashed ? (
+          <View className="flex-1 items-center justify-center">
+            <Text className="text-sm text-foreground-muted">
+              Unable to load the {app.server} app
+            </Text>
+          </View>
+        ) : null}
+        {uri !== null && !loaded && !crashed && !navigatedAway ? (
+          <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
+            <AppActivityIndicator />
+          </View>
+        ) : null}
+      </View>
+      {consent.noticeView}
+    </>
   );
 }

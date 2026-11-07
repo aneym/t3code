@@ -29,4 +29,18 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     scope: "environment-defaults",
     searchTerms: ["mcp events subscribe webhook trigger wake thread rails"],
   },
+  {
+    id: "mcp-app-remember-tool-grants",
+    title: "Remember MCP app approvals",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["mcp app widget tool always allow approval prompt confirm"],
+  },
+  {
+    id: "mcp-app-tool-grants",
+    title: "Always allowed MCP app tools",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["mcp app widget tool always allow revoke approval grant"],
+  },
 ];
