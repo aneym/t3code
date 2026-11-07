@@ -159,6 +159,10 @@
       "types": "./src/String.ts",
       "import": "./src/String.ts"
     },
+    "./threadTitleText": {
+      "types": "./src/threadTitleText.ts",
+      "import": "./src/threadTitleText.ts"
+    },
     "./projectScripts": {
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"

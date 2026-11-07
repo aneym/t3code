@@ -7688,7 +7688,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const taskTitle = subagentThreadTitle({
         parentTitle: parentProjection.thread.title,
         prompt: command.task,
-        ...(command.title === undefined ? {} : { title: command.title }),
+        title: command.title,
         ordinal: (yield* subagentCount(command.parentThreadId)) + 1,
       });
       const childThread = delegatedChildWorkspace(
@@ -7825,6 +7825,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         messageId: childMessageId,
         text: command.task,
         attachments: [],
+        ...(command.title === undefined ? { titleSeed: taskTitle } : {}),
         modelSelection: command.modelSelection,
         dispatchMode:
           command.workspaceStrategy === undefined
@@ -8087,7 +8088,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const taskTitle = subagentThreadTitle({
       parentTitle: parentProjection.thread.title,
       prompt: command.task,
-      ...(command.title === undefined ? {} : { title: command.title }),
+      title: command.title,
       ordinal: (yield* subagentCount(command.parentThreadId)) + 1,
     });
     const common = {

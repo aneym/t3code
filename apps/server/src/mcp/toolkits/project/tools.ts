@@ -136,7 +136,9 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
           "No project: a new Scratch folder. Not with `projectId` or `workspaceStrategy`.",
       }),
     ),
-    title: TrimmedNonEmptyString,
+    title: Schema.optional(
+      TrimmedNonEmptyString.annotate({ description: "Omit to generate one from `message`." }),
+    ),
     modelSelection: Schema.optional(ModelSelection),
     runtimeMode: Schema.optional(RuntimeMode),
     interactionMode: Schema.optional(ProviderInteractionMode),
