@@ -1,4 +1,5 @@
 import * as ForkAgentToolProfiles from "./forkAgentToolProfileSettings.ts";
+import { CodexFields as ForkCodexFields } from "./forkCodexSettings.ts";
 import * as ForkMcpAppGrants from "./forkMcpAppGrantSettings.ts";
 import * as ForkPreview from "./forkPreviewSettings.ts";
 import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
@@ -698,9 +699,10 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    ...ForkCodexFields,
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
+    order: ["binaryPath", "homePath", "shadowHomePath", "baseUrl", "launchArgs"],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;

@@ -97,6 +97,7 @@ const makeCodexConfig = (overrides: Partial<CodexSettings>): CodexSettings => ({
   homePath: "",
   shadowHomePath: "",
   launchArgs: "",
+  baseUrl: "",
   customModels: [],
   ...overrides,
 });

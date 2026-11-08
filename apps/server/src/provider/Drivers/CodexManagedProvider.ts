@@ -14,6 +14,7 @@ import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneratio
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { chatGptModels } from "../CodexChatGptModels.ts";
 import { makeCodexManagedRuntime } from "../CodexManagedRuntime.ts";
+import { codexBaseUrl } from "../codexBaseUrl.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { createCodexAdapterV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import {
@@ -145,9 +146,11 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
               operation: "models",
               detail: "The ChatGPT connection changed while checking Codex. Retry.",
             });
-          const models = yield* chatGptModels(credentials.accessToken, draft.models).pipe(
-            Effect.provideService(HttpClient.HttpClient, http),
-          );
+          const models = yield* chatGptModels(
+            credentials.accessToken,
+            draft.models,
+            codexBaseUrl(config.baseUrl),
+          ).pipe(Effect.provideService(HttpClient.HttpClient, http));
           return { ...draft, models };
         }),
       ),

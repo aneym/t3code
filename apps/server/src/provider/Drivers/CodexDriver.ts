@@ -282,7 +282,7 @@ export const CodexDriver: ProviderDriver<
             probeCodexSkillsForCwd({
               binaryPath: effectiveConfig.binaryPath,
               homePath: effectiveConfig.homePath,
-              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+              launchArgs: resolveCodexLaunchArgs(effectiveConfig, processEnv),
               cwd,
               environment: processEnv,
             }).pipe(
@@ -314,7 +314,7 @@ export const CodexDriver: ProviderDriver<
             const { client } = yield* withCodexAppServerClient({
               binaryPath: effectiveConfig.binaryPath,
               homePath: effectiveConfig.homePath,
-              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+              launchArgs: resolveCodexLaunchArgs(effectiveConfig, processEnv),
               cwd: process.cwd(),
               environment: processEnv,
             });
