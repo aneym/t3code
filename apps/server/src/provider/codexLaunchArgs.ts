@@ -1,11 +1,18 @@
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
+import { configuredCodexBaseUrl } from "./codexBaseUrl.ts";
 
 const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
 
 export const resolveCodexLaunchArgs = (
-  launchArgs?: string,
+  settings: { readonly launchArgs?: string; readonly baseUrl?: string },
   environment: NodeJS.ProcessEnv = process.env,
-) => environment[T3CODE_CODEX_LAUNCH_ARGS_ENV]?.trim() || launchArgs?.trim() || "";
+) => {
+  const launchArgs =
+    environment[T3CODE_CODEX_LAUNCH_ARGS_ENV]?.trim() || settings.launchArgs?.trim() || "";
+  const baseUrl = configuredCodexBaseUrl(settings.baseUrl);
+  if (!baseUrl) return launchArgs;
+  return `${launchArgs} -c ${JSON.stringify(`openai_base_url=${JSON.stringify(baseUrl)}`)}`.trim();
+};
 
 const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
 
