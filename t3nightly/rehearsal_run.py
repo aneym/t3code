@@ -243,7 +243,7 @@ class Rehearsal:
                 signal.signal(number, handler)
 
     def report(self, result):
-        result = {**result, "engineDigest": self.engine_identity["digest"], "engineHead": self.engine_identity["commit"], "timings": self.timings, "elapsedSeconds": round(time.monotonic() - self.clock, 3), "startedAt": self.started, "finishedAt": now()}
+        result = {**result, "targetHost": self.args.target_host, "engineDigest": self.engine_identity["digest"], "engineHead": self.engine_identity["commit"], "timings": self.timings, "elapsedSeconds": round(time.monotonic() - self.clock, 3), "startedAt": self.started, "finishedAt": now()}
         path = self.sandbox.evidence / "result.json"
         try:
             if self.sandbox.home.parent.name.startswith("rehearsal-hot-swap-"):
@@ -251,7 +251,7 @@ class Rehearsal:
 
                 retention = hot_retain(self.sandbox.home.parent)
             else:
-                retention = retain(self.sandbox.home.parent)
+                retention = retain(self.sandbox.home.parent, result)
         except Exception as error:
             retention = {"error": f"{type(error).__name__}: {error}"}
         if self.sandbox.home.parent.name.startswith("rehearsal-hot-swap-"):

@@ -220,8 +220,10 @@ def fast_rehearse(config, log):
                     "--target-host", config.host, "--provider-binary", str(config.home / ".local/bin/claude"), "--health-s", "300",
                     "--hot-swap", "--rehearsal-drain-s", str(config.rehearsal_drain_s), *(["--startup-busy-ok"] if config.startup_busy_ok else []), "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")),
                     *config.service_artifacts(), *config.target_artifacts()], log)
+    config.receipt("rehearsal").parent.mkdir(parents=True, exist_ok=True)
+    if (Path(plan["evidence"]) / "retention.json").is_file():
+        shutil.copyfile(Path(plan["evidence"]) / "retention.json", config.receipt("rehearsal-retention"))
     if not code:
-        config.receipt("rehearsal").parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(Path(plan["evidence"]) / "rehearsal-receipt.json", config.receipt("rehearsal"))
     return code
 

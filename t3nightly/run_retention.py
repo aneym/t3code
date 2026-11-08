@@ -21,6 +21,8 @@ else:
 
 VERSION = re.compile(r"(\d+\.\d+\.\d+-nightly\.\d+\.\d+\.aneym\.\d+)(?:-attempt\d+)?")
 RECEIPTS = {".json", ".md", ".log", ".jsonl"}
+PACKAGES = (".tar.gz", ".bundle", ".zip", ".exe", ".dmg", ".msi", ".appimage", ".deb", ".blockmap")
+APPROVAL = "alex-studio-disk-cleanup-2026-10-25"
 DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
@@ -83,7 +85,7 @@ EVIDENCE = (".png", ".jpg", ".jpeg", ".webm", ".mp4", ".yml", ".yaml", ".txt", "
 
 def bulk(parts):
     return (
-        parts[-1].endswith((".tar.gz", ".bundle"))
+        parts[-1].lower().endswith(PACKAGES)
         or any(name.startswith("rehearsal-") and parts[index + 1:index + 2] == ("home",) for index, name in enumerate(parts[:-1]))
         or any(parts[index:index + 3] == ("evidence", "installer-state", "rollback-runtime") for index in range(len(parts)))
         or (any(name == "e2e" or name.startswith("e2e-") for name in parts[:-1]) and not parts[-1].endswith(EVIDENCE))
@@ -116,7 +118,7 @@ def retain(root, active_run, *, dry_run=False):
     if not active.is_relative_to(root) or active == root:
         raise ValueError("active run must be inside run root")
     active_name = active.relative_to(root).parts[0]
-    report = {"dryRun": dry_run, "root": str(root), "activeRun": active_name, "kept": [], "held": [], "removed": [], "bytes": 0}
+    report = {"approval": APPROVAL, "dryRun": dry_run, "root": str(root), "activeRun": active_name, "kept": [], "held": [], "removed": [], "bytes": 0}
     descriptor = open_directory(root)
     try:
         lock = os.open(".run-retention.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
@@ -136,14 +138,14 @@ def retain(root, active_run, *, dry_run=False):
             if not isinstance(serving, str) or VERSION.fullmatch(serving) is None or serving not in versions.values():
                 report["skipped"] = "serving version unavailable or absent from runs"
             else:
-                previous = sorted({value for value in versions.values() if version_key(value) < version_key(serving)}, key=version_key)[-2:]
-                keep = {serving, *previous}
+                newest = sorted(set(versions.values()), key=version_key)[-2:]
+                keep = {serving, *newest}
                 report["protectedVersions"] = sorted(keep, key=version_key)
                 values, uncertain = references()
                 report["uncertainProcesses"] = len(uncertain)
                 for name in sorted(dirs):
                     version = versions.get(name)
-                    if name == active_name or version is None or version in keep or version_key(version) >= version_key(serving):
+                    if name == active_name or version is None or version in keep:
                         report["kept"].append(name)
                     elif uncertain or held({str(root / name), str(Path.home() / ".t3nightly/runs" / name)}, values):
                         report["held"].append(name)
@@ -181,7 +183,8 @@ def finish_runs(run, remote_run, remote_tools, *, dry_run=False, linux_host="ax4
             results[host] = json.loads(result.stdout)
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             results[host] = {"error": str(error)}
-    descriptor = open_directory(run)
+    (run / "receipts").mkdir(parents=True, exist_ok=True)
+    descriptor = open_directory(run / "receipts")
     try:
         fd = os.open("run-retention.json", os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
         with os.fdopen(fd, "w") as output:

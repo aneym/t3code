@@ -1,13 +1,18 @@
 import fcntl
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
-PREFIX = "rehearsal-fast-"
+from .hot_swap_retention import kib
+
+SUCCESS = ("PASS", "COMPATIBILITY-PROBE", "ROLLBACK-PROOF")
+APPROVAL = "alex-studio-disk-cleanup-2026-10-25"
+FAST_HOST = re.compile(r"rehearsal-fast-\d+-([a-z0-9]+)-[0-9a-f]{12}(?:-rollback)?")
 
 
 def nightly_root():
@@ -20,34 +25,6 @@ def finished(path):
     except (OSError, ValueError):
         return None
     return result if isinstance(result, dict) else None
-
-
-def rollback_root(path):
-    plan = path / "sandbox-plan.json"
-    if not plan.is_file():
-        return None, "sandbox plan missing"
-    try:
-        value = json.loads(plan.read_text())
-        rollback = Path(value["rollbackRoot"]) if "rollbackRoot" in value else path.parent / f"{Path(value['home']).parent.name}-rollback"
-        if rollback.parent != path.parent or rollback.resolve().parent != path.parent or not rollback.name.startswith(PREFIX) or rollback.is_symlink():
-            return None, "recorded rollback sandbox escaped the nightly root"
-        return rollback, None
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        return None, f"invalid sandbox plan: {error}"
-
-
-def legacy_sandbox(path):
-    value = {"path": str(path)}
-    try:
-        stat = path.stat()
-        value["ageSeconds"] = max(0, round(datetime.now(timezone.utc).timestamp() - getattr(stat, "st_birthtime", stat.st_mtime)))
-        result = subprocess.run(["du", "-sk", str(path)], capture_output=True, text=True, timeout=60, check=False)
-        value["sizeBytes"] = int(result.stdout.split()[0]) * 1024
-        if result.returncode:
-            value["error"] = result.stderr.strip() or f"du exited {result.returncode}"
-    except (OSError, ValueError, IndexError, subprocess.SubprocessError) as error:
-        value["error"] = str(error)
-    return value
 
 
 def installer_target(root):
@@ -93,13 +70,6 @@ def ignorable(proc, lineage):
         return False
 
 
-def rehearsal_start(path):
-    try:
-        return datetime.fromisoformat(str((finished(path) or {}).get("startedAt"))).timestamp()
-    except ValueError:
-        return None
-
-
 def live_references():
     own = os.getpid()
     if sys.platform == "darwin":
@@ -142,100 +112,117 @@ def held(spellings, references):
     return any(text + "/" in reference or reference.endswith(text) or f"{text} " in reference for text in spellings for reference in references)
 
 
-def listed(root):
-    return sorted(path for path in root.iterdir() if path.name.startswith(PREFIX) and path.is_dir() and not path.is_symlink())
+
+def family(path):
+    parts = path.name.split("-")
+    return parts[1] if len(parts) > 2 and parts[0] == "rehearsal" and parts[1] != "hot" else None
 
 
-def newest_passing(dirs):
-    passing = [(str(result.get("finishedAt") or ""), path) for path in dirs if (result := finished(path)) and result.get("result") == "PASS"]
-    return max(passing)[1] if passing else None
+def listed(root, name):
+    return sorted(path for path in root.iterdir() if family(path) == name and path.is_dir() and not path.is_symlink())
 
 
-def run_holds(dirs):
-    holds, reasons = {}, {}
-    now = datetime.now(timezone.utc).timestamp()
-    coordinator_runs = nightly_root() / "runs"
-    for runs in (coordinator_runs, Path.home() / "t3nightly/runs"):
-        for run in sorted(runs.glob("*/fast")):
-            if not run.is_dir():
-                continue
-            plans = sorted(run.glob("sandbox-*.json"))
-            timeline = run / "timeline.jsonl"
-            released = False
-            try:
-                if runs == coordinator_runs:
-                    released = (run / "final-receipt.json").is_file() and now - timeline.stat().st_mtime > 24 * 60 * 60
-                elif plans:
-                    activity = plans + ([timeline] if timeline.exists() else [])
-                    released = now - max(path.stat().st_mtime for path in activity) > 24 * 60 * 60
-            except OSError:
-                pass
-            for plan in plans:
-                names = set()
-                try:
-                    value = json.loads(plan.read_text())
-                    if isinstance(value, dict) and isinstance(value.get("rollbackRoot"), str):
-                        names.add(Path(value["rollbackRoot"]).name)
-                    name = Path(value["home"]).parent.name
-                    names.update((name, f"{name}-rollback"))
-                    if released:
-                        continue
-                    reason = f"resumable run: {run}"
-                except (OSError, ValueError, KeyError, TypeError) as error:
-                    reason = f"unreadable or malformed run plan {plan}: {error}"
-                    reasons[str(plan)] = reason
-                    try:
-                        recent = now - plan.stat().st_mtime < 24 * 60 * 60
-                    except OSError:
-                        recent = True
-                    if recent:
-                        names.update(path.name for path in dirs)
-                for name in names:
-                    holds.setdefault(name, []).append(reason)
-    return holds, reasons
+def target_host(path, result):
+    host = (result or {}).get("targetHost")
+    if isinstance(host, str) and host:
+        return host
+    match = FAST_HOST.fullmatch(path.name)
+    return match[1] if match else None
 
 
-def retain(sandbox_dir):
+def started(path, result):
+    try:
+        return datetime.fromisoformat(str((result or {}).get("startedAt"))).timestamp()
+    except ValueError:
+        stat = path.stat()
+        return getattr(stat, "st_birthtime", stat.st_mtime)
+
+
+def pin(path):
+    receipt = path / "pin.json"
+    if not receipt.exists() and not receipt.is_symlink():
+        return None
+    try:
+        value = json.loads(receipt.read_text())
+        return str(value.get("reason") or "pinned") if isinstance(value, dict) else "pinned"
+    except (OSError, ValueError):
+        return "unreadable pin receipt"
+
+
+def active(path):
+    lock = path / ".rehearsal-active.lock"
+    if not lock.is_file():
+        return False
+    with lock.open("a") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+    return False
+
+
+def due(path, result, own, own_host, own_start):
+    if result is not None:
+        if result.get("result") in SUCCESS:
+            return "passed"
+        if own and own_host and target_host(path, result) == own_host and started(path, result) < own_start:
+            return "failed before a passing rehearsal for its host"
+        return None
+    if own and own_host and target_host(path, None) == own_host and started(path, None) < own_start:
+        return "unfinished before a passing rehearsal for its host"
+    return None
+
+
+def retain(sandbox_dir, result):
+    from .rehearsal_store_gc import home_references, release
+    from .rehearsal_storage import store_root
+
     root = nightly_root()
     sandbox_dir = Path(sandbox_dir).resolve()
-    if sandbox_dir.parent != root or not sandbox_dir.name.startswith(PREFIX):
+    name = family(sandbox_dir)
+    if sandbox_dir.parent != root or name is None:
         return {"skipped": "sandbox is outside the nightly root"}
     alias = Path(os.path.abspath(Path.home() / ".t3nightly"))
+    own = result.get("result") in SUCCESS
+    own_host, own_start = target_host(sandbox_dir, result), started(sandbox_dir, result)
+    report = {"approval": APPROVAL, "family": name, "dropped": {}, "pinned": {}, "held": {}, "kept": [], "deleted": [], "bytes": 0}
     with (root / "rehearsal-retention.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        dirs = listed(root)
-        holds, reasons = run_holds(dirs)
         target = installer_target(root)
         references, protected = live_references()
-        report = {"kept": [], "dropped": [], "held": [], "holdReasons": reasons, "legacySandboxes": []}
-        legacy = [path for path in dirs if not (path / "sandbox-plan.json").is_file()]
-        plans = {path: rollback_root(path) for path in dirs}
-        newest = newest_passing(dirs)
-        keep = {newest, plans[newest][0]} if newest else set()
-        for path in dirs:
-            home = path / "home"
-            _, reason = plans[path]
-            if path.name in holds:
-                report["held"].append(path.name)
-                report["holdReasons"][path.name] = "; ".join(holds[path.name])
-                continue
-            if reason:
-                report["held"].append(path.name)
-                report["holdReasons"][path.name] = reason
-                continue
-            if path in keep:
+        store, candidates = store_root(), set()
+        for path in listed(root, name):
+            reason = due(path, result if path == sandbox_dir else finished(path), own, own_host, own_start)
+            trees = [tree for tree in (path / "home", path / "evidence/installer-state/rollback-runtime") if tree.is_dir() and not tree.is_symlink() and tree.resolve() == tree and tree.is_relative_to(root)]
+            if reason is None or not trees:
                 report["kept"].append(path.name)
                 continue
-            removable = [tree for tree in (home, path / "evidence/installer-state/rollback-runtime") if tree.is_dir() and tree.resolve() == tree and tree.is_relative_to(root)]
-            if not removable:
+            if (pinned := pin(path)) is not None:
+                report["pinned"][path.name] = pinned
                 continue
-            began = rehearsal_start(path)
-            shielded = protected and (began is None or max(protected) >= began - 5)
-            if (target and target.is_relative_to(path)) or shielded or held({str(path), str(alias / path.name)}, references):
-                report["held"].append(path.name)
+            began = started(path, result if path == sandbox_dir else finished(path))
+            if target and target.is_relative_to(path):
+                report["held"][path.name] = "installer state is inside the sandbox"
+            elif protected and max(protected) >= began - 5:
+                report["held"][path.name] = "an unreadable process may hold the sandbox"
+            elif held({str(path), str(alias / path.name)}, references):
+                report["held"][path.name] = "a running process references the sandbox"
+            elif path != sandbox_dir and active(path):
+                report["held"][path.name] = "rehearsal reservation is held"
             else:
-                for tree in removable:
+                try:
+                    candidates |= home_references(path, store)
+                except (OSError, ValueError) as error:
+                    report["held"][path.name] = f"store references unreadable: {error}"
+                    continue
+                for tree in trees:
+                    size = kib(tree) * 1024
                     shutil.rmtree(tree)
-                report["dropped"].append(path.name)
-    report["legacySandboxes"] = [legacy_sandbox(path) for path in legacy]
+                    report["deleted"].append({"path": str(tree), "bytes": size})
+                    report["bytes"] += size
+                report["dropped"][path.name] = reason
+    shared = release(candidates)
+    report["sharedStore"] = shared
+    report["deleted"].extend(shared["deleted"])
+    report["bytes"] += shared["bytes"]
     return report
