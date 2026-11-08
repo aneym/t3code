@@ -3,6 +3,7 @@ import { CodexFields as ForkCodexFields } from "./forkCodexSettings.ts";
 import * as ForkMcpAppGrants from "./forkMcpAppGrantSettings.ts";
 import * as ForkPreview from "./forkPreviewSettings.ts";
 import * as ForkEmbed from "./forkEmbedSettings.ts";
+import * as ForkFollowUp from "./forkFollowUpSettings.ts";
 import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
 import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
 import {
@@ -495,9 +496,7 @@ export const ClientSettingsSchema = Schema.Struct({
   sendShortcut: Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("enter")),
   ),
-  followUpBehavior: Schema.Literals(["queue", "steer"]).pipe(
-    Schema.withDecodingDefault(Effect.succeed("steer")),
-  ),
+  ...ForkFollowUp.Client,
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: DefaultTrue,
   boringSidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -1761,7 +1760,7 @@ export const ClientSettingsPatch = Schema.Struct({
   contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),
-  followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
+  ...ForkFollowUp.ClientPatch,
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   boringSidebarEnabled: Schema.optionalKey(Schema.Boolean),

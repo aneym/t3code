@@ -4,6 +4,7 @@ import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
 import { openThroughEmbedHost } from "./embed/embedHost";
+import { withFollowUpDefault } from "./followUpDefault";
 
 let cachedApi: LocalApi | undefined;
 
@@ -60,10 +61,10 @@ export function createLocalApi(): LocalApi {
     },
     persistence: {
       getClientSettings: async () => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.getClientSettings();
-        }
-        return readBrowserClientSettings();
+        const settings = window.desktopBridge
+          ? await window.desktopBridge.getClientSettings()
+          : readBrowserClientSettings();
+        return settings && withFollowUpDefault(settings);
       },
       setClientSettings: async (settings) => {
         if (window.desktopBridge) {
