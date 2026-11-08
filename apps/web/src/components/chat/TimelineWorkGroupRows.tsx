@@ -54,6 +54,7 @@ import {
   workEntryIconName,
 } from "./TimelineWorkEntryRow.logic";
 import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
+import { useEmbedHostConnected } from "../../embed/embedHost";
 
 export const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
@@ -494,6 +495,7 @@ export function LiveWorkEntryTimelineRow({
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
   const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const threadLabel = threadReadLabel(label, threadTarget);
+  const folded = useEmbedHostConnected();
 
   const item = row.entry.projectedItem?.item;
   const pendingApproval =
@@ -501,7 +503,8 @@ export function LiveWorkEntryTimelineRow({
   if (pendingApproval) return <TimelinePendingApprovalRow approval={pendingApproval} />;
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
-  const thoughtLine = row.thought && !row.expanded ? liveThoughtLine(row.thought.detail ?? "") : "";
+  const thoughtLine =
+    row.thought && !row.expanded && !folded ? liveThoughtLine(row.thought.detail ?? "") : "";
   const thoughtIsStatus = thoughtLine !== "" && row.entry === row.thought;
 
   return (
@@ -547,7 +550,19 @@ export function LiveWorkEntryTimelineRow({
       ) : null}
       <LiveActivityRow
         label={
-          thoughtIsStatus ? (
+          folded ? (
+            row.entry.itemType === "reasoning" ? (
+              row.active ? (
+                "Thinking"
+              ) : (
+                "Thought"
+              )
+            ) : row.active ? (
+              "Working"
+            ) : (
+              "Worked"
+            )
+          ) : thoughtIsStatus ? (
             row.active ? (
               "Thinking"
             ) : (
