@@ -2,6 +2,7 @@ import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import { ProviderDriverKind, type ThreadId } from "@t3tools/contracts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { readMcpAppResourceUri } from "@t3tools/shared/mcpApp";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { field } from "../unknownField.ts";
@@ -9,6 +10,22 @@ import { field } from "../unknownField.ts";
 type Prefetch = { server: string; uri: string; response: unknown } | undefined;
 type Entry = { uri?: string; server: string; promise: Promise<Prefetch>; abort: AbortController };
 const pending = new WeakMap<object, Map<string, Entry>>();
+type Live = {
+  inflight: Map<string, string>;
+  appCalls: Map<string, number>;
+  refreshes: Map<string, { at: number; done: Promise<unknown> }>;
+};
+const live = new WeakMap<object, Live>();
+const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+
+function toolResultIds(message: unknown) {
+  if (field(message, "type") !== "user") return [];
+  const content = field(field(message, "message"), "content");
+  return (Array.isArray(content) ? content : []).flatMap((block) => {
+    const id = field(block, "tool_use_id");
+    return field(block, "type") === "tool_result" && typeof id === "string" ? [id] : [];
+  });
+}
 
 function toolParts(name: string) {
   if (!name.startsWith("mcp__")) return undefined;
@@ -29,16 +46,22 @@ export function claudeMcpQueryMessages<T>(
           const result = await iterator.next();
           const message = result.value;
           const calls = pending.get(query);
+          const state = live.get(query);
           if (result.done) {
             calls?.forEach((entry) => entry.abort.abort());
             calls?.clear();
+            state?.inflight.clear();
           }
+          if (!result.done) toolResultIds(message).forEach((id) => state?.inflight.delete(id));
           if (!result.done && field(message, "type") === "assistant") {
             const content = field(field(message, "message"), "content");
             for (const block of Array.isArray(content) ? content : []) {
               const id = field(block, "id");
               const name = field(block, "name");
               const parts = typeof name === "string" ? toolParts(name) : undefined;
+              if (field(block, "type") === "tool_use" && typeof id === "string" && parts) {
+                state?.inflight.set(id, parts.server);
+              }
               if (
                 field(block, "type") !== "tool_use" ||
                 typeof id !== "string" ||
@@ -87,6 +110,7 @@ export function claudeMcpQueryMessages<T>(
                 const calls = pending.get(query);
                 calls?.forEach((entry) => entry.abort.abort());
                 calls?.clear();
+                live.get(query)?.inflight.clear();
                 return iterator.return!(...args);
               },
             }
@@ -97,6 +121,7 @@ export function claudeMcpQueryMessages<T>(
                 const calls = pending.get(query);
                 calls?.forEach((entry) => entry.abort.abort());
                 calls?.clear();
+                live.get(query)?.inflight.clear();
                 return iterator.throw!(...args);
               },
             }
@@ -110,6 +135,7 @@ export interface ClaudeMcpQuery<E> {
   readonly mcpServerStatus?: Effect.Effect<ReadonlyArray<unknown>, E>;
   readonly readMcpResource?: (server: string, uri: string) => Effect.Effect<unknown, E>;
   readonly callMcpTool?: (tool: string, args: Record<string, unknown>) => Effect.Effect<unknown, E>;
+  readonly refreshMcpServer?: (server: string) => Effect.Effect<void>;
 }
 
 export function claudeMcpQuerySession<E>(
@@ -118,6 +144,11 @@ export function claudeMcpQuerySession<E>(
 ): ClaudeMcpQuery<E> {
   const calls = new Map<string, Entry>();
   pending.set(query, calls);
+  const state: Live = { inflight: new Map(), appCalls: new Map(), refreshes: new Map() };
+  live.set(query, state);
+  const busy = (server: string) =>
+    (state.appCalls.get(server) ?? 0) > 0 ||
+    [...state.inflight.values()].some((name) => name === server);
   const session: ClaudeMcpQuery<E> = {
     mcpServerStatus: Effect.tryPromise({
       try: () => query.mcpServerStatus(),
@@ -128,27 +159,57 @@ export function claudeMcpQuerySession<E>(
         try: () => query.readMcpResource(server, uri),
         catch: (cause) => makeError(cause, "readMcpResource"),
       }),
-    callMcpTool: (tool, args) =>
-      Effect.tryPromise({
-        try: async () => {
-          const control = query as unknown as {
-            request: (request: {
-              subtype: "mcp_call";
-              tool: string;
-              arguments: Record<string, unknown>;
-              result_not_for_model: true;
-            }) => Promise<{ response: unknown }>;
-          };
-          const result = await control.request({
-            subtype: "mcp_call",
-            tool,
-            arguments: args,
-            result_not_for_model: true,
-          });
-          return result.response;
-        },
-        catch: (cause) => makeError(cause, "mcpCall"),
-      }),
+    callMcpTool: (tool, args) => {
+      const server = toolParts(tool)?.server ?? tool;
+      const count = (delta: number) =>
+        Effect.sync(() => state.appCalls.set(server, (state.appCalls.get(server) ?? 0) + delta));
+      return count(1).pipe(
+        Effect.andThen(
+          Effect.tryPromise({
+            try: async () => {
+              const control = query as unknown as {
+                request: (request: {
+                  subtype: "mcp_call";
+                  tool: string;
+                  arguments: Record<string, unknown>;
+                  result_not_for_model: true;
+                }) => Promise<{ response: unknown }>;
+              };
+              const result = await control.request({
+                subtype: "mcp_call",
+                tool,
+                arguments: args,
+                result_not_for_model: true,
+              });
+              return result.response;
+            },
+            catch: (cause) => makeError(cause, "mcpCall"),
+          }),
+        ),
+        Effect.ensuring(count(-1)),
+      );
+    },
+    refreshMcpServer: Effect.fn("ClaudeMcpApps.refreshMcpServer")(function* (server: string) {
+      const now = yield* Clock.currentTimeMillis;
+      const last = state.refreshes.get(server);
+      if (last !== undefined && now - last.at < REFRESH_INTERVAL_MS) {
+        yield* Effect.promise(() => last.done);
+        return;
+      }
+      if (busy(server)) return;
+      const done = query.reconnectMcpServer(server).then(
+        () => undefined,
+        (cause: unknown) => cause ?? "reconnect failed",
+      );
+      state.refreshes.set(server, { at: now, done });
+      const failed = yield* Effect.promise(() => done).pipe(
+        Effect.timeoutOption("15 seconds"),
+        Effect.map((outcome) => (outcome._tag === "None" ? "timed out" : outcome.value)),
+      );
+      if (failed !== undefined) {
+        yield* Effect.logWarning("Claude MCP tool refresh failed.", { server, cause: failed });
+      }
+    }),
   };
   pending.set(session.readMcpResource!, calls);
   return session;
@@ -274,6 +335,12 @@ export function makeClaudeMcpApps<E>(
       },
       Effect.mapError(failure("Failed to list Claude MCP tools.")),
     ),
+    refreshTools: Effect.fn("ClaudeAdapterV2.refreshTools")(function* (
+      input: Parameters<NonNullable<ProviderAdapter.ProviderAdapterV2McpApps["refreshTools"]>>[0],
+    ) {
+      const query = yield* getQuery;
+      if (query?.refreshMcpServer !== undefined) yield* query.refreshMcpServer(input.server);
+    }),
     callTool: Effect.fn("ClaudeAdapterV2.callTool")(
       function* (input: Parameters<ProviderAdapter.ProviderAdapterV2McpApps["callTool"]>[0]) {
         const query = yield* getQuery;

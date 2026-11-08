@@ -551,6 +551,10 @@ export interface ProviderAdapterV2McpApps {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly server: string;
   }) => Effect.Effect<ReadonlyArray<ProviderAdapterV2McpTool>, ProviderAdapterV2Error>;
+  readonly refreshTools?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly server: string;
+  }) => Effect.Effect<void>;
   readonly callTool: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly server: string;

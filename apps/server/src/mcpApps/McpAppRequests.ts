@@ -109,16 +109,29 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     resolved: Effect.Success<ReturnType<typeof resolve>>,
     name: string,
+    current: (tool: ProviderAdapter.ProviderAdapterV2McpTool) => boolean,
   ) {
-    const tools = yield* resolved.mcpApps
-      .listTools({ providerThread: resolved.providerThread, server: resolved.app.server })
-      .pipe(Effect.mapError((cause) => fail(threadId, "request-failed", cause)));
-    return tools.find((tool) => tool.name === name);
+    const target = { providerThread: resolved.providerThread, server: resolved.app.server };
+    const lookup = resolved.mcpApps.listTools(target).pipe(
+      Effect.map((tools) => tools.find((tool) => tool.name === name)),
+      Effect.mapError((cause) => fail(threadId, "request-failed", cause)),
+    );
+    const tool = yield* lookup;
+    if ((tool !== undefined && current(tool)) || resolved.mcpApps.refreshTools === undefined) {
+      return tool;
+    }
+    yield* resolved.mcpApps.refreshTools(target);
+    return yield* lookup;
   });
 
   const toolInfo = Effect.fn("McpAppRequests.toolInfo")(function* (input: McpAppToolInfoInput) {
     const resolved = yield* resolve(input);
-    const tool = yield* findTool(input.threadId, resolved, input.name);
+    const tool = yield* findTool(
+      input.threadId,
+      resolved,
+      input.name,
+      (candidate) => mcpAppToolCallableByApp(candidate._meta) && readOnlyHint(candidate),
+    );
     const title = tool === undefined ? undefined : toolTitle(tool);
     return {
       callable: tool !== undefined && mcpAppToolCallableByApp(tool._meta),
@@ -131,7 +144,9 @@ const make = Effect.gen(function* () {
   const callTool = Effect.fn("McpAppRequests.callTool")(function* (input: McpAppCallToolInput) {
     const resolved = yield* resolve(input);
     // Enforce hidden-tool restrictions server-side; client checks cannot enforce the spec.
-    const tool = yield* findTool(input.threadId, resolved, input.name);
+    const tool = yield* findTool(input.threadId, resolved, input.name, (candidate) =>
+      mcpAppToolCallableByApp(candidate._meta),
+    );
     if (tool === undefined || !mcpAppToolCallableByApp(tool._meta)) {
       return yield* fail(input.threadId, "tool-not-callable");
     }
