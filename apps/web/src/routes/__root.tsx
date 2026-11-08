@@ -52,6 +52,7 @@ import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { GUEST_PAGE_PATH } from "../guestPage";
 import { isEmbedPath } from "../embed/embedProtocol";
+import { signInEmbedFromUrl } from "../embed/embedSignIn";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { useHostedPromptLinkLanding } from "../components/promptLinks/HostedPromptLinkLanding";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
@@ -90,6 +91,7 @@ export const Route = createRootRoute({
       };
     }
 
+    if (isEmbedPath(location.pathname)) await signInEmbedFromUrl();
     const authGateState = await resolveInitialServerAuthGateState();
     if (authGateState.status === "authenticated") {
       // Idempotent, so every navigation can ask for it.

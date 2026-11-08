@@ -43,7 +43,7 @@ import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/http";
 
 import { APP_VERSION } from "../branding";
-import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
+import { readPrimaryBearerToken } from "../environments/primary/primaryBearer";
 import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import {
   readPrimaryEnvironmentTarget,
@@ -362,7 +362,7 @@ const layerCapabilities = Layer.effectContext(
     });
     const primaryAuth = ClientCapabilities.PrimaryEnvironmentAuth.of({
       bearerToken: Effect.tryPromise({
-        try: readDesktopPrimaryBearerToken,
+        try: readPrimaryBearerToken,
         catch: (cause) =>
           new ConnectionTransientError({
             reason: "remote-unavailable",

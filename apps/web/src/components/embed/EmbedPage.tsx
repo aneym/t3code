@@ -4,6 +4,7 @@ import { useState, type CSSProperties } from "react";
 
 import { placeEmbedHost, type EmbedHostSpot } from "../../embed/embedHost";
 import { isEmbedPath, normalizeEmbedOrigins, readEmbedScheme } from "../../embed/embedProtocol";
+import { readEmbedSignIn } from "../../embed/embedSignIn";
 import { applyEmbedTheme, themeFromEmbedMessage } from "../../embed/embedTheme";
 import { useEmbedHostBridge } from "../../embed/useEmbedHostBridge";
 import { primaryServerConfigAtom } from "../../state/server";
@@ -61,7 +62,13 @@ export function EmbedPage({
 }) {
   useState(applyInitialScheme);
   const settings = useAtomValue(primaryServerConfigAtom)?.settings ?? null;
-  if (!authenticated) return <EmbedNotice text="This chat needs a T3 sign-in." />;
+  if (!authenticated) {
+    return (
+      <EmbedNotice
+        text={readEmbedSignIn() === "expired" ? "Sign-in expired" : "This chat needs a T3 sign-in."}
+      />
+    );
+  }
   if (settings === null) return null;
   if (!settings.embedModeEnabled) {
     return <EmbedNotice text="Embedded chats are off on this T3 server." />;
