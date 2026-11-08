@@ -12,6 +12,8 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <script>
       (() => {
+        if (location.pathname.startsWith("/embed/"))
+          document.documentElement.dataset.embed = "true";
         const LIGHT_BACKGROUND = "#ffffff";
         const DARK_BACKGROUND = "#000000";
         const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
@@ -431,6 +433,10 @@
         justify-content: center;
         width: 96px;
         height: 96px;
+      }
+
+      html[data-embed="true"] #boot-shell-card {
+        display: none;
       }
 
       #boot-shell-logo {
