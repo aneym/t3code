@@ -11,6 +11,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { searchableSetting } from "./settingsSearch";
 import { LegacyFeaturesSection } from "./SettingsPanels";
 import { RemovedLinkedRoutes } from "./RemovedLinkedRoutes";
+import { EmbedModeSettings } from "./EmbedModeSettings";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
@@ -28,6 +29,7 @@ export function LabsSettingsPanel() {
         <LinkedEnvironmentsLoadBalancingRow />
         <RemovedLinkedRoutes />
         <SimlockHostsRow />
+        <EmbedModeSettings />
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>

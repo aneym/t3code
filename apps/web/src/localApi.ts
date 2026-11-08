@@ -3,6 +3,7 @@ import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/c
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
+import { openThroughEmbedHost } from "./embed/embedHost";
 
 let cachedApi: LocalApi | undefined;
 
@@ -19,6 +20,7 @@ export function createLocalApi(): LocalApi {
     },
     shell: {
       openExternal: async (url) => {
+        if (openThroughEmbedHost(url)) return;
         if (window.desktopBridge) {
           const opened = await window.desktopBridge.openExternal(url);
           if (!opened) {

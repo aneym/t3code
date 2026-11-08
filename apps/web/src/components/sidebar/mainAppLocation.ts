@@ -1,5 +1,6 @@
 import { useNavigate, type AnyRouter } from "@tanstack/react-router";
 
+import { isEmbedPath } from "../../embed/embedProtocol";
 import { GUEST_PAGE_PATH } from "../../guestPage";
 
 /** Settings and Usage open as modals over the last main-app view. */
@@ -23,7 +24,7 @@ let appModalReturnHref: string | null = null;
 export function startMainAppLocationTracking(router: AnyRouter): () => void {
   const record = () => {
     const { pathname, href } = router.state.location;
-    if (isAppModalPage(pathname) || SHELL_LESS_PATHS.has(pathname)) return;
+    if (isAppModalPage(pathname) || SHELL_LESS_PATHS.has(pathname) || isEmbedPath(pathname)) return;
     appModalReturnHref = href;
     if (!isSidebarUtilityPage(pathname)) mainAppHref = href;
   };

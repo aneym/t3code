@@ -2,6 +2,7 @@ import * as ForkAgentToolProfiles from "./forkAgentToolProfileSettings.ts";
 import { CodexFields as ForkCodexFields } from "./forkCodexSettings.ts";
 import * as ForkMcpAppGrants from "./forkMcpAppGrantSettings.ts";
 import * as ForkPreview from "./forkPreviewSettings.ts";
+import * as ForkEmbed from "./forkEmbedSettings.ts";
 import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
 import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
 import {
@@ -1174,6 +1175,7 @@ export const ServerSettings = Schema.Struct({
 
   enableAgentBrowserAccess: DefaultTrue,
   ...ForkPreview.Server,
+  ...ForkEmbed.Server,
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1557,6 +1559,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ...ForkAgentToolProfiles.ServerPatch,
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   ...ForkPreview.ServerPatch,
+  ...ForkEmbed.ServerPatch,
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
