@@ -10,6 +10,7 @@ import RemoveUnusedEventCorrelationIndex from "./ForkMigrations/005_RemoveUnused
 
 import ProjectPinOrderToPinnedAt from "./ForkMigrations/006_ProjectPinOrderToPinnedAt.ts";
 import McpEventsSubscriptions from "./ForkMigrations/007_McpEventsSubscriptions.ts";
+import HostLinkLanes from "./ForkMigrations/008_HostLinkLanes.ts";
 
 const run = Migrator.make({});
 const loader = Migrator.fromRecord({
@@ -20,6 +21,7 @@ const loader = Migrator.fromRecord({
   "5_RemoveUnusedEventCorrelationIndex": RemoveUnusedEventCorrelationIndex,
   "6_ProjectPinOrderToPinnedAt": ProjectPinOrderToPinnedAt,
   "7_McpEventsSubscriptions": McpEventsSubscriptions,
+  "8_HostLinkLanes": HostLinkLanes,
 });
 
 export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {

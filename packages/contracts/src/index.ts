@@ -93,5 +93,6 @@ export * from "./clientRpcPermissions.ts";
 export * from "./messageSender.ts";
 export * from "./orchestratorMcpTimeline.ts";
 export * from "./mcpEvents.ts";
+export * from "./hostLink.ts";
 export * from "./agentPlacement.ts";
 export { chooseLoadBalancedEnvironment } from "./loadBalancingSettings.ts";
