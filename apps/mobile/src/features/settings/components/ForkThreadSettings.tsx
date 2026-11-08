@@ -42,15 +42,26 @@ export function ForkThreadSettings() {
             "Let agents subscribe threads to MCP servers' events. A verified event wakes the thread or queues into its turn.",
           icon: "bell.badge",
         },
+        {
+          key: "hostLinkEnabled",
+          title: "Host app",
+          label: "Host app link",
+          subtitle:
+            "Push turns, messages, steps and thread ends of threads with a host lane to the linked host app.",
+          icon: "link",
+        },
       ].map(({ key, title, label, subtitle, icon }) => {
         const settingKey = key as
           | "queuedMessagesAnswerPendingInput"
           | "settleIdleChildren"
-          | "mcpEventsEnabled";
+          | "mcpEventsEnabled"
+          | "hostLinkEnabled";
         return (
           <SettingsSection key={key} title={title}>
             <SettingsSwitchRow
-              icon={icon as "bubble.left.and.bubble.right" | "checkmark.circle" | "bell.badge"}
+              icon={
+                icon as "bubble.left.and.bubble.right" | "checkmark.circle" | "bell.badge" | "link"
+              }
               label={label}
               subtitle={subtitle}
               value={uniformMobileSetting(targets, settingKey)}

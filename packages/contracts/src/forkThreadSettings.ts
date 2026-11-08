@@ -12,6 +12,8 @@ export const ForkThreadSettingsFields = {
   settleIdleChildren: DefaultTrue,
   mcpEventsEnabled: DefaultFalse,
   mcpEventsCallbackBaseUrl: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  hostLinkEnabled: DefaultFalse,
+  hostLinkUrl: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 };
 
 export const ForkThreadSettingsPatchFields = {
@@ -22,4 +24,6 @@ export const ForkThreadSettingsPatchFields = {
   settleIdleChildren: Schema.optionalKey(Schema.Boolean),
   mcpEventsEnabled: Schema.optionalKey(Schema.Boolean),
   mcpEventsCallbackBaseUrl: Schema.optionalKey(Schema.String),
+  hostLinkEnabled: Schema.optionalKey(Schema.Boolean),
+  hostLinkUrl: Schema.optionalKey(Schema.String),
 };

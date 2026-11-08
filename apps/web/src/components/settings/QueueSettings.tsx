@@ -38,12 +38,20 @@ export function QueueSettings() {
           description:
             "Let agents subscribe threads to MCP servers' events. A verified event wakes the thread or queues into its turn.",
         },
+        {
+          key: "hostLinkEnabled",
+          searchId: "host-link",
+          label: "Host app link",
+          description:
+            "Push turns, messages, steps and thread ends of threads with a host lane to the linked host app. Link one with `t3 host-link set`.",
+        },
       ].map(({ key, searchId, label, description }) => {
         const settingKey = key as
           | "batchQueuedMessages"
           | "queueSendAll"
           | "settleIdleChildren"
-          | "mcpEventsEnabled";
+          | "mcpEventsEnabled"
+          | "hostLinkEnabled";
         return (
           <SettingsRow
             key={key}

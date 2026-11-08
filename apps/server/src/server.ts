@@ -136,6 +136,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as CodexManagedTokenBroker from "./provider/CodexManagedTokenBroker.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as McpEventsService from "./mcpEvents/McpEventsService.ts";
+import * as HostLinkService from "./hostLink/HostLinkService.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
@@ -781,7 +782,7 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   Layer.provide(AgentRouting.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   Layer.provide(PeerLinkRequests.layer),
-  Layer.provide(McpEventsService.layer),
+  Layer.provide(Layer.merge(McpEventsService.layer, HostLinkService.layer)),
   // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
   Layer.provide(layerPullRequestService),
   // The same activity instance RunExecutionService reports to, by layer memoization.
