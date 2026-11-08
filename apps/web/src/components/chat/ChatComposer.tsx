@@ -1,6 +1,7 @@
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
+import { useEmbedComposerTrigger, useEmbedProviderSkills } from "../../embed/useEmbedComposerScope";
 import { BackgroundThreadContext } from "./backgroundThread";
 import {
   resolveCompatibleRuntimeMode,
@@ -946,9 +947,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = selectedProviderEntry?.snapshot ?? null;
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
-  const selectedProviderSkills = selectedProviderStatus
-    ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
-    : NO_PROVIDER_SKILLS;
+  const selectedProviderSkills = useEmbedProviderSkills(
+    selectedProviderStatus
+      ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
+      : NO_PROVIDER_SKILLS,
+  );
   const selectedProviderSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SLASH_COMMANDS;
@@ -1009,7 +1012,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return collapseExpandedComposerCursor(value, value.length, isLiteralPendingAnswer);
   });
   const {
-    trigger: composerTrigger,
+    trigger: detectedComposerTrigger,
     setTrigger: setComposerTrigger,
     resolveTrigger: resolveComposerTrigger,
     dismissTrigger: dismissComposerTrigger,
@@ -1017,6 +1020,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   } = useComposerTriggerState(() =>
     isLiteralPendingAnswer ? null : detectComposerTrigger(prompt, prompt.length),
   );
+  const composerTrigger = useEmbedComposerTrigger(detectedComposerTrigger);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const composerSuggestionId = useId();
   const composerSuggestionListId = `${composerSuggestionId}-${encodeURIComponent(draftId ?? activeThreadId ?? "new")}-suggestions`;
