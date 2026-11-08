@@ -1,28 +1,11 @@
 import type { PermissionMode, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { OrchestrationV2ProviderTurn } from "@t3tools/contracts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 export const CLAUDE_READ_ONLY_ALLOWED_TOOLS = ["Read", "Glob", "Grep"] as const;
-
-const RAILS_READ_TOOLS = [
-  "memory_search",
-  "app_data_get",
-  "app_data_list",
-  "inbox",
-  "task_list",
-  "lane_list",
-  "lane_get",
-  "doc_list",
-  "file_read",
-  "registry",
-  "brief",
-];
-
-const CLAUDE_ASK_ONLY_ALLOWED_TOOLS: ReadonlyArray<string> = [
-  ...CLAUDE_READ_ONLY_ALLOWED_TOOLS,
-  ...RAILS_READ_TOOLS.map((tool) => `mcp__rails__${tool}`),
-];
 
 const RAILS_ASK_ONLY_ENV = "RAILS_ASK_ONLY";
 
@@ -184,7 +167,7 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
 
 const CLAUDE_ASK_ONLY_QUERY_POLICY: ClaudeRuntimeQueryPolicy = {
   permissionMode: "dontAsk",
-  allowedTools: CLAUDE_ASK_ONLY_ALLOWED_TOOLS,
+  allowedTools: CLAUDE_READ_ONLY_ALLOWED_TOOLS,
   installPermissionCallback: false,
 };
 
@@ -196,6 +179,59 @@ export function claudeRuntimeQueryPolicyForTurn(
     ? CLAUDE_ASK_ONLY_QUERY_POLICY
     : claudeRuntimeQueryPolicyForRuntimePolicy(turn.runtimePolicy, availability);
 }
+
+const McpServerStatuses = Schema.Array(
+  Schema.Struct({
+    name: Schema.String,
+    status: Schema.String,
+    tools: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          name: Schema.String,
+          annotations: Schema.optional(
+            Schema.Struct({ readOnly: Schema.optional(Schema.Boolean) }),
+          ),
+        }),
+      ),
+    ),
+  }),
+);
+const decodeMcpServerStatuses = Schema.decodeUnknownEffect(McpServerStatuses);
+const mcpRuleName = (name: string) => name.replace(/[^a-zA-Z0-9_-]/gu, "_");
+
+interface AskOnlyMcpQuery<E> {
+  readonly mcpServerStatus?: Effect.Effect<ReadonlyArray<unknown>, E>;
+  readonly applyFlagSettings: (settings: {
+    readonly permissions: { allow: Array<string> };
+  }) => Effect.Effect<void, E>;
+}
+
+export const allowAskOnlyReadOnlyMcpTools = Effect.fn(
+  "ClaudeRuntimeQueryPolicy.allowAskOnlyReadOnlyMcpTools",
+)(function* <E>(turn: Pick<ClaudePolicyTurn, "appThread">, query: AskOnlyMcpQuery<E>) {
+  if (!isAskOnlyTurn(turn) || query.mcpServerStatus === undefined) return [];
+  const servers = yield* query.mcpServerStatus.pipe(
+    Effect.flatMap(decodeMcpServerStatuses),
+    Effect.repeat({
+      until: (statuses) => statuses.every((server) => server.status !== "pending"),
+      schedule: Schedule.spaced("250 millis"),
+      times: 20,
+    }),
+  );
+  const allow = servers.flatMap((server) =>
+    server.status !== "connected"
+      ? []
+      : (server.tools ?? [])
+          .filter((tool) => tool.annotations?.readOnly === true)
+          .map((tool) =>
+            tool.name.startsWith("mcp__")
+              ? tool.name
+              : `mcp__${mcpRuleName(server.name)}__${mcpRuleName(tool.name)}`,
+          ),
+  );
+  if (allow.length > 0) yield* query.applyFlagSettings({ permissions: { allow } });
+  return allow;
+});
 
 export const claudeTurnUsesReadOnlyMcpTools = (turn: ClaudePolicyTurn): boolean =>
   isAskOnlyTurn(turn) || sandboxPolicyKindForClaudeRuntimePolicy(turn.runtimePolicy) === "readOnly";

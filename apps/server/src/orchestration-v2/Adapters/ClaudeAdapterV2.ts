@@ -208,6 +208,7 @@ import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/sel
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
+  allowAskOnlyReadOnlyMcpTools,
   claudeAskOnlyEnvironment,
   claudeRuntimeQueryPolicyForTurn,
   claudeTurnPermissionDenials,
@@ -10226,6 +10227,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : Effect.void,
               ),
             );
+          yield* allowAskOnlyReadOnlyMcpTools(turnInput, querySession).pipe(
+            Effect.tap((allow) =>
+              allow.length === 0
+                ? Effect.void
+                : Effect.logInfo("claude.ask-only.mcp-allow", { allow }),
+            ),
+            Effect.catchCause((cause) => Effect.logWarning("claude.ask-only.mcp-allow", cause)),
+          );
           // Mark only successful opens; retries must not resume sessions that failed to create.
           yield* Ref.update(openedNativeThreads, (current) => {
             if (current.has(nativeThreadId)) {
