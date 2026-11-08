@@ -104,7 +104,7 @@ export const layer = McpToolAccess.toLayer(
               ...mcpMessageSender(scope),
               text: input.message ?? "",
               attachments,
-              mode: input.mode ?? "auto",
+              mode: input.mode ?? "queue",
               createdBy: "agent",
               creationSource: "mcp",
             }).pipe(
