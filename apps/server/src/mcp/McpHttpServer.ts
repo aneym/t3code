@@ -3,6 +3,8 @@ import { AgentToolkit } from "./toolkits/agent/tools.ts";
 import * as AgentHandlers from "./toolkits/agent/handlers.ts";
 import { McpEventsToolkit } from "./toolkits/mcpEvents/tools.ts";
 import * as McpEventsHandlers from "./toolkits/mcpEvents/handlers.ts";
+import * as HostLinkHandlers from "./toolkits/hostLink/handlers.ts";
+import { HostLinkToolkit } from "./toolkits/hostLink/tools.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -1120,6 +1122,7 @@ export const layerTools = Layer.mergeAll(
   layerThreadToolkit.pipe(Layer.provide(ThreadConfiguration.toolkitLayer)),
   toolkitRegistration(AgentToolkit, AgentHandlers.layer),
   toolkitRegistration(McpEventsToolkit, McpEventsHandlers.layer),
+  toolkitRegistration(HostLinkToolkit, HostLinkHandlers.layer),
   layerAttachmentToolkit,
   layerProjectRegistration,
   layerEnvironmentToolkit,

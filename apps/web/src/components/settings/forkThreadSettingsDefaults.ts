@@ -5,6 +5,7 @@ export const forkThreadSettingsDefaults = {
   queueSendAll: DEFAULT_UNIFIED_SETTINGS.queueSendAll,
   settleIdleChildren: DEFAULT_UNIFIED_SETTINGS.settleIdleChildren,
   mcpEventsEnabled: DEFAULT_UNIFIED_SETTINGS.mcpEventsEnabled,
+  hostLinkEnabled: DEFAULT_UNIFIED_SETTINGS.hostLinkEnabled,
 };
 
 export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyArray<string> {
@@ -20,6 +21,9 @@ export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyAr
       : null,
     settings.mcpEventsEnabled !== forkThreadSettingsDefaults.mcpEventsEnabled
       ? "MCP Events subscriptions"
+      : null,
+    settings.hostLinkEnabled !== forkThreadSettingsDefaults.hostLinkEnabled
+      ? "Host app link"
       : null,
   ].filter((label) => label !== null);
 }
