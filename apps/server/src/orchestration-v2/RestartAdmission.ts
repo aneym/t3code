@@ -6,10 +6,10 @@ type RestartAdmission = "open" | "draining" | "prepared";
 type DispatchMode = Extract<OrchestrationV2Command, { type: "message.dispatch" }>["dispatchMode"];
 
 export const restartAdmission = Effect.fn("RestartAdmission.snapshot")(function* (
-  outbox: Pick<EffectOutboxV2Shape, "restartPrepared" | "restartDraining">,
+  outbox: Pick<EffectOutboxV2Shape, "restartPrepared" | "draining">,
 ): Effect.fn.Return<RestartAdmission> {
   if ((yield* outbox.restartPrepared) !== undefined) return "prepared";
-  return (yield* outbox.restartDraining) === undefined ? "open" : "draining";
+  return (yield* outbox.draining) ? "draining" : "open";
 });
 
 export const admittedDispatchMode = (

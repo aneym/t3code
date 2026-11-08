@@ -9,11 +9,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
-import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { makeRestartGate } from "./RestartGate.ts";
+import { makeRestartGate, type RestartGate } from "./RestartGate.ts";
 import { forkParked } from "../serverActivation.ts";
 import { claimableCandidatePredicate } from "./EffectOutboxClaims.ts";
 import { type EffectRow, encodeRequest, rowToEffect } from "./EffectOutboxRows.ts";
@@ -32,21 +31,14 @@ import {
 } from "./EffectOutboxModel.ts";
 const PRUNE_BATCH_SIZE = 500;
 
-export interface EffectOutboxV2Shape {
-  readonly withDispatch: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+export interface EffectOutboxV2Shape extends RestartGate {
   readonly withTransaction: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | EffectOutboxError, R>;
-  readonly awaitRestartReopen: Effect.Effect<void>;
-  readonly abortRestart: (epoch: string) => Effect.Effect<void>;
   readonly runningEffects: Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
   readonly unsettledEffects: (
     effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>,
   ) => Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
-  readonly restartPrepared: Effect.Effect<string | undefined>;
-  readonly prepareRestart: (epoch: string) => Effect.Effect<void>;
-  readonly restartDraining: Effect.Effect<string | undefined>;
-  readonly drainForRestart: (epoch: string) => Effect.Effect<void, never, Scope.Scope>;
   readonly serializeRestartPrepare: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E, R>;
@@ -347,7 +339,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               WHERE ${claimableCandidatePredicate(sql, {
                 availableBefore: nowIso,
                 excludeRestartContinuations,
-                draining: (yield* gate.restartDraining) !== undefined,
+                draining: yield* gate.draining,
               })}
                 AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
               ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
@@ -377,7 +369,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         const rows = yield* sql<{ readonly available_at: string | null }>`
           SELECT MIN(candidate.available_at) AS available_at
           FROM orchestration_v2_effect_outbox AS candidate
-          WHERE ${claimableCandidatePredicate(sql, { draining: (yield* gate.restartDraining) !== undefined })}
+          WHERE ${claimableCandidatePredicate(sql, { draining: yield* gate.draining })}
         `.pipe(NodeSqliteClient.readOnly, Effect.withTracerEnabled(false));
         const availableAt = rows[0]?.available_at;
         if (availableAt === undefined || availableAt === null) return Option.none();

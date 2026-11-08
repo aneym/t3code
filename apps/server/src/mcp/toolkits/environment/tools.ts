@@ -7,13 +7,15 @@ import {
   ExecutionEnvironmentDescriptor,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
+  ServerDrainStatus,
   ServerSettings,
   ServerSettingsPatch,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
+import * as ServerDrain from "../../../orchestration-v2/ServerDrain.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -82,4 +84,27 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
   }),
   success: Schema.Struct(PreferenceFields),
 }).annotate(Tool.Destructive, true);
-export const EnvironmentToolkit = Toolkit.make(EnvironmentReadTool, EnvironmentPreferencesTool);
+const ServerDrainTool = Tool.make("t3_server_drain", {
+  ...shared,
+  dependencies: [...shared.dependencies, ServerDrain.ServerDrain],
+  description:
+    "Owner CLI only. Turn server drain on or off, read it, or wait up to timeoutMs for 0 active runs.",
+  parameters: Schema.Struct({
+    action: Schema.Literals(["on", "off", "status", "wait"]),
+    timeoutMs: Schema.optionalKey(
+      Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(60_000)),
+    ),
+  }),
+  success: Schema.Struct({
+    ...ServerDrainStatus.fields,
+    idle: Schema.optionalKey(Schema.Boolean),
+    waitedMs: Schema.optionalKey(Schema.Number),
+  }),
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.ownerCliOnly);
+export const EnvironmentToolkit = Toolkit.make(
+  EnvironmentReadTool,
+  EnvironmentPreferencesTool,
+  ServerDrainTool,
+);

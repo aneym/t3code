@@ -22,6 +22,7 @@ import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderRuntimeRecoveryService from "../orchestration-v2/ProviderRuntimeRecoveryService.ts";
+import * as ServerDrain from "../orchestration-v2/ServerDrain.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as PullRequestSyncReactor from "../orchestration-v2/PullRequestSyncReactor.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -137,6 +138,7 @@ export const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({}),
   Layer.mock(ServerSelfUpdate.ServerSelfUpdate)({}),
   Layer.mock(ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService)({}),
+  Layer.mock(ServerDrain.ServerDrain)({}),
   Layer.mock(ForkReleases.ForkReleases)({}),
   Layer.mock(SessionStore.SessionStore)({ cookieName: "config-test", legacyCookieName: undefined }),
   Layer.mock(SourceControlDiscovery.SourceControlDiscovery)({}),

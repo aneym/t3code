@@ -86,6 +86,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverImportRestartHandoff]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverGetRestartStatus]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverPrepareRestart]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverSetDrain]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverGetDrainStatus]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverUpdateServer]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverUpdateServerWithProgress]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCommitDesktopUpdate]: AuthEnvironmentMaintainScope,

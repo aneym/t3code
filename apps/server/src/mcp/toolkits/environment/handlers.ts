@@ -6,6 +6,7 @@ import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { isProviderAvailable, resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
+import * as ServerDrain from "../../../orchestration-v2/ServerDrain.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -114,6 +115,24 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
               })),
             }),
       };
+    }),
+  ),
+  t3_server_drain: McpToolAccess.reads(({ action, timeoutMs }) =>
+    Effect.gen(function* () {
+      const { scope } = yield* access;
+      if (scope.client?.ownerCli !== true)
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "Server drain is only for the owner's t3 CLI on this machine.",
+        });
+      const drain = yield* ServerDrain.ServerDrain;
+      const result =
+        action === "status"
+          ? drain.status
+          : action === "wait"
+            ? drain.wait(timeoutMs ?? 30_000)
+            : drain.set(action === "on");
+      return yield* result.pipe(Effect.mapError(unavailable));
     }),
   ),
   t3_environment_preferences_update: McpToolAccess.writesEnvironment((patch, check) =>

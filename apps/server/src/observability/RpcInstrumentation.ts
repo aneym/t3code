@@ -57,6 +57,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverImportRestartHandoff]: "server",
   [WS_METHODS.serverGetRestartStatus]: "server",
   [WS_METHODS.serverPrepareRestart]: "server",
+  [WS_METHODS.serverSetDrain]: "server",
+  [WS_METHODS.serverGetDrainStatus]: "server",
   [WS_METHODS.serverUpdateServer]: "server",
   [WS_METHODS.serverUpdateServerWithProgress]: "server",
   [WS_METHODS.serverCommitDesktopUpdate]: "server",

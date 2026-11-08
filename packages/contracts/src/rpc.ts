@@ -1,13 +1,7 @@
 import { STORAGE_CLEANUP_WS_METHODS, StorageCleanupRpcs } from "./storageCleanupRpc.ts";
+import { SERVER_RESTART_WS_METHODS, ServerRestartRpcs } from "./serverRestartRpc.ts";
 import { ServerProviderRefreshInput } from "./serverProviderRefresh.ts";
 import { ServerHandoffProbe, ServerHandoffSubscription } from "./serverLifecycle.ts";
-import {
-  ServerPrepareRestartInput,
-  ServerPrepareRestartResult,
-  ServerPrepareRestartError,
-  ServerAbortRestartResult,
-  ServerRestartStatus,
-} from "./serverRestart.ts";
 import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
@@ -34,10 +28,6 @@ import {
   ChatGptHandoffInput,
   ChatGptHandoffState,
 } from "./providerSetup.ts";
-import {
-  ServerImportRestartHandoffInput,
-  ServerImportRestartHandoffError,
-} from "./serverRestartImport.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -510,10 +500,6 @@ export const WS_METHODS = {
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
-  serverGetRestartStatus: "server.getRestartStatus",
-  serverPrepareRestart: "server.prepareRestart",
-  serverAbortRestart: "server.abortRestart",
-  serverImportRestartHandoff: "server.importRestartHandoff",
   serverGetNpmRelease: "server.getNpmRelease",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
@@ -524,6 +510,7 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
   ...STORAGE_CLEANUP_WS_METHODS,
+  ...SERVER_RESTART_WS_METHODS,
   serverGetDatabaseStorage: "server.getDatabaseStorage",
   ...PEER_LINK_WS_METHODS,
   serverUpdateSettings: "server.updateSettings",
@@ -645,28 +632,6 @@ const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
   payload: ServerHandoffProbe,
   success: Schema.Struct({}),
   error: EnvironmentAuthorizationError,
-});
-
-const WsServerGetRestartStatusRpc = Rpc.make(WS_METHODS.serverGetRestartStatus, {
-  payload: ServerPrepareRestartInput,
-  success: ServerRestartStatus,
-  error: Schema.Union([ServerPrepareRestartError, EnvironmentAuthorizationError]),
-});
-const WsServerAbortRestartRpc = Rpc.make(WS_METHODS.serverAbortRestart, {
-  payload: ServerPrepareRestartInput,
-  success: ServerAbortRestartResult,
-  error: Schema.Union([ServerPrepareRestartError, EnvironmentAuthorizationError]),
-});
-const WsServerImportRestartHandoffRpc = Rpc.make(WS_METHODS.serverImportRestartHandoff, {
-  payload: ServerImportRestartHandoffInput,
-  success: ServerPrepareRestartResult,
-  error: Schema.Union([ServerImportRestartHandoffError, EnvironmentAuthorizationError]),
-});
-
-const WsServerPrepareRestartRpc = Rpc.make(WS_METHODS.serverPrepareRestart, {
-  payload: ServerPrepareRestartInput,
-  success: ServerPrepareRestartResult,
-  error: Schema.Union([ServerPrepareRestartError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
@@ -1991,10 +1956,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
-  WsServerPrepareRestartRpc,
-  WsServerAbortRestartRpc,
-  WsServerGetRestartStatusRpc,
-  WsServerImportRestartHandoffRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
@@ -2019,6 +1980,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   ...StorageCleanupRpcs,
+  ...ServerRestartRpcs,
   WsServerGetDatabaseStorageRpc,
   WsServerUpdateSettingsRpc,
   ...PeerLinkRpcs,

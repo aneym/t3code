@@ -32,6 +32,7 @@ export * from "./keybindings.ts";
 export * from "./server.ts";
 export * from "./serverRestart.ts";
 export * from "./serverRestartImport.ts";
+export * from "./serverDrain.ts";
 export * from "./settings.ts";
 export * from "./sidebarAgents.ts";
 export * from "./managedPolicy.ts";

@@ -52,7 +52,7 @@ export const restartPausedRunIds = (projection: ProjectionStore.ProjectionRuntim
   return projection.runs.filter((run) => paused.has(run.id)).map((run) => run.id);
 };
 
-const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
+export const activeRuns = Effect.fn("RestartDrain.activeRuns")(function* (
   mode: "hot-swap" | "cold",
   threadIds?: ReadonlySet<ThreadId>,
 ) {
@@ -157,9 +157,16 @@ export const drainBeforeRestart = Effect.fn("RestartDrain.drainBeforeRestart")(f
   mode: "hot-swap" | "cold",
 ) {
   const outbox = yield* EffectOutbox.EffectOutboxV2;
+  yield* outbox.drainForRestart(epoch);
+  return yield* awaitNoActiveRuns(deadline, mode);
+});
+
+export const awaitNoActiveRuns = Effect.fn("RestartDrain.awaitNoActiveRuns")(function* (
+  deadline: Duration.Duration,
+  mode: "hot-swap" | "cold",
+) {
   const sink = yield* EventSink.EventSinkV2;
   const startedAt = yield* Clock.currentTimeMillis;
-  yield* outbox.drainForRestart(epoch);
   const settled = yield* Effect.scoped(
     Effect.gen(function* () {
       const wakes = yield* Queue.sliding<void>(1);

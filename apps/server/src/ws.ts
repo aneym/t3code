@@ -1,4 +1,5 @@
 import { makeStorageCleanupRpcHandlers } from "./storageCleanupRpcHandlers.ts";
+import { makeServerRestartRpcHandlers } from "./serverRestartRpcHandlers.ts";
 import { subscribeServerLifecycle } from "./serverLifecycleSubscription.ts";
 import { acknowledgeHandoff } from "./serverHandoffDelivery.ts";
 import { handoffRpc } from "./serverHandoffProtocol.ts";
@@ -184,7 +185,6 @@ import { latestProviderVersionCacheKeys } from "@t3tools/provider-core/server/ma
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
-import * as ProviderRuntimeRecoveryService from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ForkReleases from "./cloud/forkReleases.ts";
 import * as NpmRelease from "./cloud/npmRelease.ts";
@@ -1290,8 +1290,7 @@ export const layerWsRpc = (
       const eventLoopMonitor = yield* EventLoopMonitor.EventLoopMonitor;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
 
-      const providerRuntimeRecovery =
-        yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+      const serverRestartHandlers = yield* makeServerRestartRpcHandlers;
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
       const analytics = yield* AnalyticsService.AnalyticsService;
@@ -2531,13 +2530,7 @@ export const layerWsRpc = (
         [WS_METHODS.providerInstallSubscribe]: (input) => providerInstallation.subscribe(input),
         [WS_METHODS.providerInstallRemove]: (input) => providerInstallation.remove(input),
         [WS_METHODS.serverListForkReleases]: () => forkReleases.list(),
-        [WS_METHODS.serverGetRestartStatus]: (input) =>
-          providerRuntimeRecovery.getRestartStatus(input.epoch),
-        [WS_METHODS.serverAbortRestart]: ({ epoch }) => providerRuntimeRecovery.abortRestart(epoch),
-        [WS_METHODS.serverImportRestartHandoff]: (input) =>
-          providerRuntimeRecovery.importRestartHandoff(input),
-        [WS_METHODS.serverPrepareRestart]: (input) =>
-          providerRuntimeRecovery.prepareRestart(input.epoch, input.drainTimeoutMs),
+        ...serverRestartHandlers,
         [WS_METHODS.serverUpdateServer]: (input) => serverSelfUpdate.update(input),
         [WS_METHODS.serverGetNpmRelease]: (input) => npmRelease.get(input),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>

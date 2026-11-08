@@ -21,6 +21,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverImportRestartHandoff]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverGetRestartStatus]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverPrepareRestart]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverSetDrain]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverUpdateServer]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverUpdateServerWithProgress]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverListForkReleases]: AuthEnvironmentMaintainScope,
