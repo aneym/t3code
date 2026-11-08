@@ -1,0 +1,19 @@
+import { createFileRoute } from "@tanstack/react-router";
+
+import { EmbedPage } from "../components/embed/EmbedPage";
+
+function EmbedRoute() {
+  const { environmentId, threadId } = Route.useParams();
+  const { authGateState } = Route.useRouteContext();
+  return (
+    <EmbedPage
+      authenticated={authGateState.status === "authenticated"}
+      environmentId={environmentId}
+      threadId={threadId}
+    />
+  );
+}
+
+export const Route = createFileRoute("/embed/$environmentId/$threadId")({
+  component: EmbedRoute,
+});

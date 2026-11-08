@@ -1,5 +1,6 @@
 import * as ForkMcpAppGrants from "./forkMcpAppGrantSettings.ts";
 import * as ForkPreview from "./forkPreviewSettings.ts";
+import * as ForkEmbed from "./forkEmbedSettings.ts";
 import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
 import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
 import {
@@ -544,8 +545,6 @@ export const ClientSettingsSchema = Schema.Struct({
   snapShotFlash: DefaultTrue,
   snapShotAnimations: DefaultTrue,
   wordWrap: DefaultTrue,
-  // Opt-in TeX typesetting in rendered Markdown. Off keeps math parsing and
-  // KaTeX out of the render path entirely.
   mathRenderingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -1174,6 +1173,7 @@ export const ServerSettings = Schema.Struct({
 
   enableAgentBrowserAccess: DefaultTrue,
   ...ForkPreview.Server,
+  ...ForkEmbed.Server,
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1556,6 +1556,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ...ForkMcpAppGrants.ServerPatch,
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   ...ForkPreview.ServerPatch,
+  ...ForkEmbed.ServerPatch,
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
