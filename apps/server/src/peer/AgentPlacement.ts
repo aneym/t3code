@@ -1,9 +1,7 @@
 import {
   AgentPlacementReceipt,
-  chooseLoadBalancedEnvironment,
-  AgentPlacementProviders,
+  type AgentPlacementScore,
   EnvironmentId,
-  HostResourcesSnapshot,
   ModelSelection,
   OrchestratorMcpFailure,
   ProjectId,
@@ -11,6 +9,7 @@ import {
   isProviderAvailable,
   linkOriginIsFenced,
   resolveProjectProviderInstanceEnabled,
+  scoreAgentPlacement,
 } from "@t3tools/contracts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -20,13 +19,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
-import * as Fiber from "effect/Fiber";
-import * as Semaphore from "effect/Semaphore";
-import * as Scope from "effect/Scope";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Threads from "../orchestration-v2/ThreadManagementService.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "../config.ts";
@@ -38,6 +35,7 @@ import * as Resources from "../resourceTelemetry/HostResources.ts";
 import * as Environment from "../environment/ServerEnvironment.ts";
 import * as Peers from "./PeerMcpClient.ts";
 import * as Links from "./PeerLinks.ts";
+import * as PlacementSnapshots from "./PlacementSnapshots.ts";
 import * as Invocation from "../mcp/McpInvocationContext.ts";
 import { assertLiveCaller, readCaller, unavailable } from "../mcp/threadAccess.ts";
 import { callerLinkOrigin } from "../mcp/linkOrigin.ts";
@@ -50,12 +48,8 @@ const Selection = Schema.Struct({
 });
 const SavedSelection = Schema.Struct({ savedAt: Schema.Number, selection: Selection });
 const RECEIPT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const Snapshot = Schema.Struct({
-  label: Schema.String,
-  hostResources: Schema.optionalKey(Schema.NullOr(HostResourcesSnapshot)),
-  placementProjectId: Schema.optionalKey(ProjectId),
-  placementProviders: Schema.optionalKey(AgentPlacementProviders),
-});
+const decodeReceipt = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentPlacementReceipt));
+const encodeReceipt = Schema.encodeEffect(Schema.fromJsonString(AgentPlacementReceipt));
 
 export class AgentPlacement extends Context.Service<
   AgentPlacement,
@@ -72,6 +66,11 @@ export class AgentPlacement extends Context.Service<
         readonly localOnlyReason?: string | undefined;
       },
     ) => Effect.Effect<typeof Selection.Type | undefined, OrchestratorMcpFailure>;
+    readonly record: (
+      threadId: string,
+      placement: AgentPlacementReceipt | undefined,
+    ) => Effect.Effect<void>;
+    readonly read: (threadId: string) => Effect.Effect<AgentPlacementReceipt | undefined>;
   }
 >()("t3/peer/AgentPlacement") {}
 
@@ -93,13 +92,8 @@ const make = Effect.gen(function* () {
   const lock = yield* KeyedLock.make<string>();
   const encode = Schema.encodeEffect(Schema.fromJsonString(SavedSelection));
   const encodeModel = Schema.encodeEffect(Schema.fromJsonString(ModelSelection));
-  const readGate = yield* Semaphore.make(4);
-  const snapshotScope = yield* Scope.Scope;
-  const pending = new Map<string, Fiber.Fiber<void>>();
-  const snapshots = new Map<
-    string,
-    { expiresAt: number; value: typeof Snapshot.Type | undefined }
-  >();
+  const sql = yield* SqlClient.SqlClient;
+  const snapshots = yield* PlacementSnapshots.make(peers);
   const encodeKey = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
   const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(SavedSelection));
   const receiptDir = path.join(config.stateDir, "agent-placement");
@@ -146,17 +140,34 @@ const make = Effect.gen(function* () {
       );
       const descriptor = yield* environment.getDescriptor;
       const projectId = input.projectId ?? caller.caller?.projectId;
-      const modelSelection = input.modelSelection ?? caller.caller?.modelSelection;
-      const local = (reason: string): typeof Selection.Type => ({
-        placement: { environmentId: scope.environmentId, label: descriptor.label, reason },
+      const modelSelection =
+        input.modelSelection ??
+        caller.caller?.modelSelection ??
+        (projectId === undefined
+          ? undefined
+          : Option.getOrUndefined(
+              yield* projects.getById(projectId).pipe(Effect.orElseSucceed(() => Option.none())),
+            )?.defaultModelSelection) ??
+        undefined;
+      const local = (
+        reason: string,
+        scores?: ReadonlyArray<AgentPlacementScore>,
+        decidedAt?: number,
+      ): typeof Selection.Type => ({
+        placement: {
+          environmentId: scope.environmentId,
+          label: descriptor.label,
+          reason,
+          mode: "local",
+          ...(decidedAt === undefined ? {} : { decidedAt }),
+          ...(scores === undefined ? {} : { scores }),
+        },
         ...(projectId === undefined ? {} : { projectId }),
         ...(modelSelection === undefined ? {} : { modelSelection }),
       });
       const origin = callerLinkOrigin(caller);
       if ((origin !== undefined && linkOriginIsFenced(origin)) || scope.client?.linked === true)
         return local("Placement was resolved by the originating environment.");
-      if (scope.client?.ownerCli === true)
-        return local("The CLI keeps its selected local workspace.");
       if (input.localOnlyReason !== undefined) return local(input.localOnlyReason);
       if (projectId === undefined || modelSelection === undefined)
         return local("No project or model to match across environments.");
@@ -220,14 +231,11 @@ const make = Effect.gen(function* () {
             (provider) => provider.instanceId === modelSelection.instanceId,
           );
           const driver = input.driverKind ?? selectedProvider?.driver;
-          const candidates: Array<{
-            environmentId: EnvironmentId;
-            label: string;
-            projectId: ProjectId;
-            resources: HostResourcesSnapshot;
-            weight: number;
-            receivedAt: number;
-          }> = [];
+          const line = current.agentPlacementHealthLine;
+          const weightOf = (environmentId: EnvironmentId) =>
+            current.agentLoadBalancingWeights[environmentId] ?? 50;
+          const scores: Array<AgentPlacementScore> = [];
+          const matching = new Map<EnvironmentId, ProjectId>();
           const localReady =
             selectedProvider !== undefined &&
             isProviderAvailable(selectedProvider) &&
@@ -242,16 +250,20 @@ const make = Effect.gen(function* () {
               selectedProvider.instanceId,
             ) &&
             selectedProvider.models.some((model) => model.slug === modelSelection.model);
-          const localResources = yield* resources.read;
-          if (localReady && localResources !== null)
-            candidates.push({
-              environmentId: scope.environmentId,
-              label: descriptor.label,
-              projectId,
-              resources: localResources,
-              weight: current.agentLoadBalancingWeights[scope.environmentId] ?? 50,
-              receivedAt: now,
-            });
+          const localScore = scoreAgentPlacement({
+            environmentId: scope.environmentId,
+            label: descriptor.label,
+            resources: yield* resources.read,
+            weight: weightOf(scope.environmentId),
+            line,
+            now,
+          });
+          if (localReady) matching.set(scope.environmentId, projectId);
+          scores.push(
+            localReady
+              ? localScore
+              : { ...localScore, score: 0, skipped: "Provider or model unavailable here." },
+          );
           if (
             current.linkedEnvironmentsEnabled &&
             current.loadBalancingIncludeLinkedEnvironments &&
@@ -260,104 +272,84 @@ const make = Effect.gen(function* () {
             yield* Effect.gen(function* () {
               const linked = (yield* links.stored).filter(
                 (link) =>
-                  link.access === "full-access" &&
-                  DateTime.toEpochMillis(link.expiresAt) > now &&
-                  (current.agentLoadBalancingWeights[link.environmentId] ?? 50) > 0,
+                  link.access === "full-access" && DateTime.toEpochMillis(link.expiresAt) > now,
               );
-              const reads = yield* Effect.forEach(linked, (link) =>
-                Effect.gen(function* () {
-                  const snapshotKey = `${link.environmentId}:${key}`;
-                  const cached = snapshots.get(snapshotKey);
-                  if (cached !== undefined && cached.expiresAt > now) return undefined;
-                  const existing = pending.get(snapshotKey);
-                  if (existing !== undefined) return existing;
-                  const read = peers
-                    .call({
-                      environmentId: link.environmentId,
-                      tool: "t3_environment_read",
-                      arguments: { placementRepositoryKey: key, includePlacementProviders: true },
-                      limits: caller.limits,
-                      success: Snapshot,
-                    })
-                    .pipe(
-                      readGate.withPermits(1),
-                      Effect.timeout("6 seconds"),
-                      Effect.orElseSucceed(() => undefined),
-                      Effect.flatMap((value) =>
-                        DateTime.now.pipe(
-                          Effect.map((sampledAt) => {
-                            if (snapshots.size >= 128) snapshots.clear();
-                            snapshots.set(snapshotKey, {
-                              expiresAt: DateTime.toEpochMillis(sampledAt) + 5000,
-                              value,
-                            });
-                          }),
-                        ),
-                      ),
-                      Effect.ensuring(
-                        Effect.sync(() => {
-                          pending.delete(snapshotKey);
-                        }),
-                      ),
-                    );
-                  const fiber = yield* read.pipe(Effect.forkIn(snapshotScope));
-                  pending.set(snapshotKey, fiber);
-                  return fiber;
-                }),
-              );
-              yield* Fiber.joinAll(reads.filter((fiber) => fiber !== undefined)).pipe(
-                Effect.timeout("750 millis"),
-                Effect.ignore,
-              );
+              yield* snapshots.refresh({
+                environmentIds: linked
+                  .filter((link) => weightOf(link.environmentId) > 0)
+                  .map((link) => link.environmentId),
+                key,
+                limits: caller.limits,
+                now,
+              });
               for (const link of linked) {
-                const cached = snapshots.get(`${link.environmentId}:${key}`);
-                const snapshot =
-                  cached !== undefined && cached.expiresAt > now ? cached.value : undefined;
-                if (
-                  snapshot?.hostResources == null ||
-                  snapshot.placementProjectId === undefined ||
-                  !snapshot.placementProviders?.some(
-                    (entry) =>
-                      entry.instanceId === modelSelection.instanceId &&
-                      entry.driver === driver &&
-                      entry.enabled &&
-                      entry.models.includes(modelSelection.model),
-                  )
-                )
-                  continue;
-                candidates.push({
+                const snapshot = snapshots.cached(link.environmentId, key, now);
+                const scored = scoreAgentPlacement({
                   environmentId: link.environmentId,
-                  label: snapshot.label,
-                  projectId: snapshot.placementProjectId,
-                  resources: snapshot.hostResources,
-                  weight: current.agentLoadBalancingWeights[link.environmentId] ?? 50,
-                  receivedAt: now,
+                  label: snapshot?.label ?? link.label,
+                  resources: snapshot?.hostResources,
+                  weight: weightOf(link.environmentId),
+                  line: snapshot?.placementHealthLine ?? line,
+                  now,
                 });
+                const skipped =
+                  scored.skipped === "Weight is 0."
+                    ? scored.skipped
+                    : snapshot === undefined
+                      ? "No reply from this environment."
+                      : snapshot.placementProjectId === undefined
+                        ? "The project is not registered there."
+                        : !snapshot.placementProviders?.some(
+                              (entry) =>
+                                entry.instanceId === modelSelection.instanceId &&
+                                entry.driver === driver &&
+                                entry.enabled &&
+                                entry.models.includes(modelSelection.model),
+                            )
+                          ? "Provider or model unavailable there."
+                          : undefined;
+                if (skipped === undefined && snapshot?.placementProjectId !== undefined)
+                  matching.set(link.environmentId, snapshot.placementProjectId);
+                scores.push(skipped === undefined ? scored : { ...scored, score: 0, skipped });
               }
             }).pipe(Effect.timeout("1 second"), Effect.ignore);
           }
-          const chosen = chooseLoadBalancedEnvironment(
-            candidates,
-            DateTime.toEpochMillis(yield* DateTime.now),
-          );
-          const winner = candidates.find((candidate) => candidate.environmentId === chosen);
-          if (winner === undefined)
-            return local("No eligible placement data; using the local launch path.");
-          const score =
-            (winner.weight *
-              winner.resources.cpuCount *
-              (1 - (winner.resources.cpuUtilization ?? 1)) *
-              winner.resources.availableMemoryBytes) /
-            winner.resources.totalMemoryBytes;
-          return {
-            projectId: winner.projectId,
-            modelSelection,
-            placement: {
-              environmentId: winner.environmentId,
-              label: winner.label,
-              reason: `Highest weighted free CPU and memory score (${score.toFixed(2)}).`,
-            },
+          const decided = (
+            environmentId: EnvironmentId,
+            mode: "auto" | "pinned",
+            reason: string,
+          ): typeof Selection.Type => {
+            const chosen = scores.find((entry) => entry.environmentId === environmentId);
+            return {
+              projectId: matching.get(environmentId) ?? projectId,
+              modelSelection,
+              placement: {
+                environmentId,
+                label: chosen?.label ?? descriptor.label,
+                reason,
+                mode,
+                decidedAt: now,
+                scores,
+              },
+            };
           };
+          const pinned = current.agentPlacementPinnedEnvironmentId;
+          if (pinned !== null && matching.has(pinned))
+            return decided(pinned, "pinned", "Pinned to this environment in settings.");
+          const winner = scores
+            .filter((entry) => entry.skipped === undefined && entry.score > 0)
+            .toSorted((left, right) => right.score - left.score)[0];
+          if (winner === undefined)
+            return local(
+              "No environment is under its health line with a match; launching here.",
+              scores,
+              now,
+            );
+          return decided(
+            winner.environmentId,
+            "auto",
+            `${pinned === null ? "" : "The pinned environment is unavailable. "}Most weighted headroom (${winner.score.toFixed(2)}).`,
+          );
         });
         const result = yield* evaluate.pipe(
           Effect.timeout("8 seconds"),
@@ -384,7 +376,38 @@ const make = Effect.gen(function* () {
       return yield* digest === undefined ? choose : lock.withLock(digest, choose);
     },
   );
-  return AgentPlacement.of({ enabled, select });
+  const record: AgentPlacement["Service"]["record"] = Effect.fn("AgentPlacement.record")(
+    function* (threadId, placement) {
+      if (placement === undefined) return;
+      const json = yield* encodeReceipt(placement);
+      const recordedAt = placement.decidedAt ?? DateTime.toEpochMillis(yield* DateTime.now);
+      yield* sql`INSERT INTO aneym_thread_placements (thread_id, placement_json, recorded_at)
+        VALUES (${threadId}, ${json}, ${recordedAt})
+        ON CONFLICT(thread_id) DO UPDATE SET placement_json = excluded.placement_json,
+          recorded_at = excluded.recorded_at`;
+    },
+    Effect.ignore({ log: true }),
+  );
+  const read: AgentPlacement["Service"]["read"] = Effect.fn("AgentPlacement.read")(
+    function* (threadId) {
+      const rows = yield* sql<{ readonly placement_json: string }>`
+        SELECT placement_json FROM aneym_thread_placements WHERE thread_id = ${threadId}`;
+      const row = rows[0];
+      return row === undefined ? undefined : yield* decodeReceipt(row.placement_json);
+    },
+    Effect.orElseSucceed(() => undefined),
+  );
+  return AgentPlacement.of({ enabled, select, record, read });
 });
 
 export const layer = Layer.effect(AgentPlacement, make);
+
+export const withRecordedPlacement = Effect.fn("AgentPlacement.withRecordedPlacement")(function* <
+  A extends object,
+>(threadId: string | null | undefined, result: A): Effect.fn.Return<A> {
+  if (threadId == null || ("placement" in result && result.placement !== undefined)) return result;
+  const service = yield* Effect.serviceOption(AgentPlacement);
+  if (Option.isNone(service)) return result;
+  const placement = yield* service.value.read(threadId);
+  return placement === undefined ? result : { ...result, placement };
+});

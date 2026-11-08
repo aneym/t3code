@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - Effect has no free-space query.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import type { HostResourcesSnapshot } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -7,7 +9,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as Config from "../config.ts";
 
 export class HostResources extends Context.Service<
   HostResources,
@@ -41,6 +45,11 @@ const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcess.Platform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const config = yield* Effect.serviceOption(Config.ServerConfig);
+  const diskPath = Option.match(config, {
+    onNone: () => NodeOS.homedir(),
+    onSome: (value) => value.stateDir,
+  });
 
   const sample = Effect.fn("HostResources.sample")(function* () {
     const previousCpu = readCpu();
@@ -70,7 +79,19 @@ const make = Effect.fn("makeHostResources")(function* () {
         );
       availableMemoryBytes = darwinAvailableMemory(output) ?? availableMemoryBytes;
     }
+    const disk = yield* Effect.tryPromise(() => NodeFSP.statfs(diskPath)).pipe(
+      Effect.timeout("1 second"),
+      Effect.orElseSucceed(() => undefined),
+    );
+    const loadAverage1m = platform === "win32" ? undefined : NodeOS.loadavg()[0];
     return {
+      ...(loadAverage1m === undefined || !Number.isFinite(loadAverage1m) ? {} : { loadAverage1m }),
+      ...(disk === undefined
+        ? {}
+        : {
+            freeDiskBytes: Math.max(0, Math.floor(disk.bavail * disk.bsize)),
+            totalDiskBytes: Math.max(0, Math.floor(disk.blocks * disk.bsize)),
+          }),
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
       cpuCount: cpu.count,

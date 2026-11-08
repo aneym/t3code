@@ -6,26 +6,20 @@ import {
   OrchestrationV2DispatchCommandResult,
   IsoDateTime,
   OrchestratorMcpThreadStatus,
-  ProjectId,
   RunId,
-  ThreadId,
   TrimmedNonEmptyString,
   type OrchestratorMcpThreadListItem,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 
 import { ThreadRestartResult } from "../mcp/toolkits/thread/tools.ts";
 import { projectLocationFlags } from "./config.ts";
-import { printJson, withOwnerMcpTools, type OwnerMcpTools } from "./ownerMcpTools.ts";
+import { printJson, withOwnerMcpTools } from "./ownerMcpTools.ts";
 import {
-  ThreadProjectNotFoundError,
   ThreadUsageError,
   decodeThreadId,
   jsonFlag,
@@ -39,67 +33,8 @@ import { finishRun, readFullText, readLatestMessages } from "./threadRun.ts";
 import { threadSendCommand } from "./threadSend.ts";
 import { threadConfigureCommand } from "./threadConfigure.ts";
 import { threadUpdateCommand } from "./threadUpdate.ts";
-
-const ProjectListResult = Schema.Struct({
-  projects: Schema.Array(
-    Schema.Struct({ id: ProjectId, title: Schema.String, workspaceRoot: Schema.String }),
-  ),
-  nextCursor: Schema.NullOr(Schema.Int),
-});
-
-const ThreadLaunchResult = Schema.Struct({
-  threadId: ThreadId,
-  projectId: ProjectId,
-  runId: Schema.NullOr(RunId),
-});
-
-const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools: OwnerMcpTools) {
-  const projects: Array<(typeof ProjectListResult.Type)["projects"][number]> = [];
-  let cursor: number | null = 0;
-  while (cursor !== null) {
-    const page: typeof ProjectListResult.Type = yield* tools.call(
-      "t3_project_list",
-      { cursor, limit: 100 },
-      ProjectListResult,
-    );
-    projects.push(...page.projects);
-    cursor = page.nextCursor;
-  }
-  return projects;
-});
-
-const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
-  tools: OwnerMcpTools,
-  identifier: string,
-) {
-  const projects = yield* listAllProjects(tools);
-  const byId = projects.find((project) => project.id === identifier);
-  if (byId !== undefined) return byId;
-
-  const path = yield* Path.Path;
-  const fileSystem = yield* FileSystem.FileSystem;
-  // Stored roots keep the path the project was added with, which may pass
-  // through a symlink (macOS /tmp), so both sides compare as real paths.
-  const realPath = (value: string) =>
-    fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
-  const target = yield* realPath(path.resolve(yield* HostProcess.WorkingDirectory, identifier));
-  const roots = yield* Effect.forEach(projects, (project) =>
-    Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
-  );
-  const containing = roots
-    .filter(({ root }) => {
-      const relative = path.relative(root, target);
-      return (
-        relative === "" ||
-        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-      );
-    })
-    .toSorted((left, right) => right.root.length - left.root.length)[0];
-  if (containing === undefined) {
-    return yield* new ThreadProjectNotFoundError({ identifier });
-  }
-  return containing.project;
-});
+import { resolveProject } from "./threadProject.ts";
+import { ThreadLaunchResult, onEnvironment, threadPlacementCommand } from "./threadPlacement.ts";
 
 const launchWorkspaceStrategy = (input: {
   readonly worktree: Option.Option<string>;
@@ -266,7 +201,7 @@ const threadStartCommand = Command.make("start", {
           );
           if (flags.wait && launched.runId !== null) {
             if (!flags.json) yield* Console.error(`Thread ${launched.threadId}`);
-            return yield* finishRun(tools, {
+            return yield* finishRun(onEnvironment(tools, launched.placement?.environmentId), {
               threadId: launched.threadId,
               runId: launched.runId,
               json: flags.json,
@@ -550,6 +485,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadUnqueueCommand,
     threadInterruptCommand,
     threadShowCommand,
+    threadPlacementCommand,
     threadUpdateCommand,
     threadConfigureCommand,
     ...(

@@ -422,9 +422,16 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
                   environmentId: routed.environmentId,
                 });
               });
-        return routed.placement === undefined || typeof result !== "object" || result === null
-          ? result
-          : { ...result, placement: routed.placement };
+        if (typeof result !== "object" || result === null) return result;
+        if (name === "t3_thread_read" && target !== undefined && "threadId" in routed.params)
+          return yield* AgentPlacement.withRecordedPlacement(
+            String(routed.params.threadId),
+            result,
+          );
+        if (routed.placement === undefined) return result;
+        if ("threadId" in result && typeof result.threadId === "string" && Option.isSome(placement))
+          yield* placement.value.record(result.threadId, routed.placement);
+        return { ...result, placement: routed.placement };
       });
   }
   return handlers as Toolkit.HandlersFrom<Tools>;

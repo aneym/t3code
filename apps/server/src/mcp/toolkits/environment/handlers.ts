@@ -1,4 +1,9 @@
-import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts";
+import {
+  OrchestratorMcpFailure,
+  scoreAgentPlacement,
+  type ServerSettings,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
@@ -17,6 +22,8 @@ export function preferences(settings: ServerSettings) {
   const {
     agentLoadBalancingEnabled,
     agentLoadBalancingWeights,
+    agentPlacementPinnedEnvironmentId,
+    agentPlacementHealthLine,
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
@@ -27,6 +34,8 @@ export function preferences(settings: ServerSettings) {
   return {
     agentLoadBalancingEnabled,
     agentLoadBalancingWeights,
+    agentPlacementPinnedEnvironmentId,
+    agentPlacementHealthLine,
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
@@ -81,14 +90,24 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
           if (cursor === null && matches.length === 1) placementProjectId = matches[0]?.id;
         }
       }
+      const hostResources = Option.isSome(resources) ? yield* resources.value.read : null;
       return {
         ...(placementProjectId === undefined ? {} : { placementProjectId }),
+        placementHealthLine: current.agentPlacementHealthLine,
+        placementHealth: scoreAgentPlacement({
+          environmentId: descriptor.environmentId,
+          label: descriptor.label,
+          resources: hostResources,
+          weight: current.agentLoadBalancingWeights[descriptor.environmentId] ?? 50,
+          line: current.agentPlacementHealthLine,
+          now: DateTime.toEpochMillis(yield* DateTime.now),
+        }),
         environmentId: descriptor.environmentId,
         label: descriptor.label,
         serverVersion: descriptor.serverVersion,
         platform: descriptor.platform,
         preferences: preferences(current),
-        hostResources: Option.isSome(resources) ? yield* resources.value.read : null,
+        hostResources,
         ...(input.includePlacementProviders !== true
           ? {}
           : {

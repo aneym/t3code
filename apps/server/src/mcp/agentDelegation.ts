@@ -62,5 +62,7 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
         }
       : input,
   );
+  const childThreadId = result.remoteChild?.threadId ?? result.childThreadId;
+  if (childThreadId !== null) yield* placement.value.record(childThreadId, selected.placement);
   return { ...result, placement: selected.placement };
 });

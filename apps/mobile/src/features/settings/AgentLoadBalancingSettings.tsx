@@ -23,7 +23,7 @@ export function AgentLoadBalancingSettings(props: {
     <>
       <SettingsSection
         title="Agent load balancing"
-        footer="Agent launches choose a linked machine with this repository, the selected provider, and free CPU and memory. An explicit machine always wins."
+        footer="Agent launches go to the linked machine with this repository, the selected provider, and the most weighted free CPU, memory and disk. Machines past their health line are skipped. An explicit machine always wins."
       >
         <SettingsSwitchRow
           label="Automatically place agent work"
@@ -37,15 +37,26 @@ export function AgentLoadBalancingSettings(props: {
           key={environment.environmentId}
           title={`${environment.environmentLabel} agent preference`}
         >
-          {choices.map((choice, index) => (
+          <ListChoiceRow
+            label="Always here"
+            disabled={props.disabled || !props.settings.agentLoadBalancingEnabled}
+            selected={
+              props.settings.agentPlacementPinnedEnvironmentId === environment.environmentId
+            }
+            onPress={() =>
+              props.update({ agentPlacementPinnedEnvironmentId: environment.environmentId })
+            }
+          />
+          {choices.map((choice) => (
             <ListChoiceRow
               key={choice.weight}
               label={choice.label}
-              separated={index > 0}
+              separated
               disabled={props.disabled || !props.settings.agentLoadBalancingEnabled}
               selected={
+                props.settings.agentPlacementPinnedEnvironmentId !== environment.environmentId &&
                 (props.settings.agentLoadBalancingWeights[environment.environmentId] ?? 50) ===
-                choice.weight
+                  choice.weight
               }
               onPress={() =>
                 props.update({
@@ -53,6 +64,9 @@ export function AgentLoadBalancingSettings(props: {
                     ...props.settings.agentLoadBalancingWeights,
                     [environment.environmentId]: choice.weight,
                   },
+                  ...(props.settings.agentPlacementPinnedEnvironmentId === environment.environmentId
+                    ? { agentPlacementPinnedEnvironmentId: null }
+                    : {}),
                 })
               }
             />

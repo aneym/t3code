@@ -6,7 +6,9 @@ import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
+const PINNED = -1;
 const choices = [
+  { value: PINNED, label: "Always here" },
   { value: 100, label: "Prefer" },
   { value: 50, label: "Normal" },
   { value: 25, label: "Less often" },
@@ -35,9 +37,9 @@ export function AgentLoadBalancingSettings({
       }
     >
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
-        Agent launches choose a linked machine with this repository, the selected provider, and free
-        CPU and memory. An explicit machine always wins. Preferences apply to launches from the
-        selected server.
+        Agent launches go to the linked machine with this repository, the selected provider, and the
+        most weighted free CPU, memory and disk. Machines past their health line are skipped. An
+        explicit machine always wins. Preferences apply to launches from the selected server.
       </p>
       {environments.map((environment) => (
         <EnvironmentRow
@@ -48,15 +50,24 @@ export function AgentLoadBalancingSettings({
         >
           <Select
             items={choices}
-            value={settings.agentLoadBalancingWeights[environment.environmentId] ?? 50}
+            value={
+              settings.agentPlacementPinnedEnvironmentId === environment.environmentId
+                ? PINNED
+                : (settings.agentLoadBalancingWeights[environment.environmentId] ?? 50)
+            }
             disabled={!settings.agentLoadBalancingEnabled}
             onValueChange={(value) => {
-              if (value !== null)
+              if (value === PINNED)
+                update({ agentPlacementPinnedEnvironmentId: environment.environmentId });
+              else if (value !== null)
                 update({
                   agentLoadBalancingWeights: {
                     ...settings.agentLoadBalancingWeights,
                     [environment.environmentId]: value,
                   },
+                  ...(settings.agentPlacementPinnedEnvironmentId === environment.environmentId
+                    ? { agentPlacementPinnedEnvironmentId: null }
+                    : {}),
                 });
             }}
           >
