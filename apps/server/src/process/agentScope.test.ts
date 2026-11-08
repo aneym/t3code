@@ -296,8 +296,8 @@ describe("AgentScope service", () => {
             "set-property",
             "--runtime",
             "app-t3code.slice",
-            "CPUWeight=10",
-            "IOWeight=10",
+            "CPUWeight=100",
+            "IOWeight=100",
             "TasksMax=25%",
           ],
         ]);
