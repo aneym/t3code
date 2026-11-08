@@ -426,6 +426,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     attachmentReferences.map((reference) => reference.attachmentId),
   );
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
+  const fitWholeImage = useEmbedHostConnected();
   const unchippedFiles = otherUserFiles.filter((file) => !chippedAttachmentIds.has(file.id));
   // Images or videos sent without words show as media, not as a bubble around them.
   const mediaOnly =
@@ -679,11 +680,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   loading="lazy"
                   className={cn(
                     "block transform-gpu",
-                    standaloneMedia && image.source?.kind === "snap-shot"
+                    standaloneMedia && (image.source?.kind === "snap-shot" || fitWholeImage)
                       ? "h-auto max-h-48 w-auto min-w-24 max-w-full object-contain"
                       : loneImage
                         ? "h-48 w-auto min-w-24 max-w-full object-cover"
-                        : "size-full object-cover",
+                        : fitWholeImage
+                          ? "size-full object-contain"
+                          : "size-full object-cover",
                   )}
                 />
               </button>
