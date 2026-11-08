@@ -290,7 +290,7 @@ const makeSetEnabledCommand = (enabled: boolean) =>
           flags,
           Effect.fn("cli.schedule.setEnabled")(function* (tools) {
             const task = yield* tools.call(
-              "update_scheduled_task",
+              "schedule_task",
               { scheduledTaskId, enabled },
               OrchestratorMcpScheduleTaskResult,
             );
