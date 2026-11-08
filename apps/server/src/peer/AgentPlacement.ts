@@ -405,7 +405,7 @@ export const layer = Layer.effect(AgentPlacement, make);
 export const withRecordedPlacement = Effect.fn("AgentPlacement.withRecordedPlacement")(function* <
   A extends object,
 >(threadId: string | null | undefined, result: A): Effect.fn.Return<A> {
-  if (threadId == null || ("placement" in result && result.placement !== undefined)) return result;
+  if (threadId == null) return result;
   const service = yield* Effect.serviceOption(AgentPlacement);
   if (Option.isNone(service)) return result;
   const placement = yield* service.value.read(threadId);

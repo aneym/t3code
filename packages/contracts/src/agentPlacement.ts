@@ -1,20 +1,31 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { EnvironmentId, NonNegativeInt } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import type { HostResourcesSnapshot } from "./resourceTelemetry.ts";
 
-export const AgentPlacementHealthLine = Schema.Struct({
-  maxLoadPerCore: Schema.Finite.check(Schema.isGreaterThan(0)),
-  minAvailableMemoryRatio: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
-  minFreeDiskBytes: NonNegativeInt,
-});
-export type AgentPlacementHealthLine = typeof AgentPlacementHealthLine.Type;
-
-export const DEFAULT_AGENT_PLACEMENT_HEALTH_LINE: AgentPlacementHealthLine = {
-  maxLoadPerCore: 2,
+export const DEFAULT_AGENT_PLACEMENT_HEALTH_LINE = {
+  maxLoadPerCore: 4,
   minAvailableMemoryRatio: 0.05,
   minFreeDiskBytes: 10 * 1024 * 1024 * 1024,
 };
+
+export const AgentPlacementHealthLine = Schema.Struct({
+  maxLoadPerCore: Schema.Finite.check(Schema.isGreaterThan(0)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_PLACEMENT_HEALTH_LINE.maxLoadPerCore)),
+  ),
+  minAvailableMemoryRatio: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })).pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(DEFAULT_AGENT_PLACEMENT_HEALTH_LINE.minAvailableMemoryRatio),
+    ),
+  ),
+  minFreeDiskBytes: NonNegativeInt.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(DEFAULT_AGENT_PLACEMENT_HEALTH_LINE.minFreeDiskBytes),
+    ),
+  ),
+});
+export type AgentPlacementHealthLine = typeof AgentPlacementHealthLine.Type;
 
 export const AgentPlacementScore = Schema.Struct({
   environmentId: EnvironmentId,

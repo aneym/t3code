@@ -8,7 +8,8 @@ import {
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Command } from "effect/cli";
+import { Command, Flag } from "effect/cli";
+import * as Option from "effect/Option";
 
 import { projectLocationFlags } from "./config.ts";
 import { printJson, withOwnerMcpTools, type OwnerMcpTools } from "./ownerMcpTools.ts";
@@ -53,6 +54,10 @@ export const formatPlacementScore = (entry: AgentPlacementScore) =>
 export const threadPlacementCommand = Command.make("placement", {
   ...projectLocationFlags,
   thread: threadArgument,
+  environment: Flag.String("environment").pipe(
+    Flag.withDescription("Environment id the thread runs on, when it was placed on another one."),
+    Flag.optional,
+  ),
   json: jsonFlag,
 }).pipe(
   Command.withDescription("Show where a thread runs and why it was placed there."),
@@ -61,11 +66,10 @@ export const threadPlacementCommand = Command.make("placement", {
       const threadId = yield* decodeThreadId(flags.thread);
       yield* withOwnerMcpTools("thread", flags, (tools) =>
         Effect.gen(function* () {
-          const { placement } = yield* tools.call(
-            "t3_thread_read",
-            { threadId, limit: 1, runLimit: 1 },
-            ThreadPlacementResult,
-          );
+          const { placement } = yield* onEnvironment(
+            tools,
+            Option.getOrUndefined(flags.environment),
+          ).call("t3_thread_read", { threadId, limit: 1, runLimit: 1 }, ThreadPlacementResult);
           if (flags.json) return yield* printJson({ threadId, placement: placement ?? null });
           if (placement === undefined)
             return yield* Console.log("No placement was recorded for this thread.");
