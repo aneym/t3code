@@ -1,3 +1,4 @@
+import * as ForkAgentToolProfiles from "./forkAgentToolProfileSettings.ts";
 import * as ForkMcpAppGrants from "./forkMcpAppGrantSettings.ts";
 import * as ForkPreview from "./forkPreviewSettings.ts";
 import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
@@ -508,8 +509,6 @@ export const ClientSettingsSchema = Schema.Struct({
   threadDetailsItems: Schema.Record(Schema.String, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
-  // Opt-in for the removed legacy sidebar. Still read so those users land in
-  // the boring sidebar; the boring sidebar toggle clears it.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarWorkingShelfEnabled: DefaultTrue,
   sidebarOfflineShelfEnabled: DefaultTrue,
@@ -544,8 +543,6 @@ export const ClientSettingsSchema = Schema.Struct({
   snapShotFlash: DefaultTrue,
   snapShotAnimations: DefaultTrue,
   wordWrap: DefaultTrue,
-  // Opt-in TeX typesetting in rendered Markdown. Off keeps math parsing and
-  // KaTeX out of the render path entirely.
   mathRenderingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -1171,6 +1168,7 @@ export const ServerSettings = Schema.Struct({
   continueThreadsAfterServerUpdate: DefaultTrue,
   ...ForkThreadSettingsFields,
   ...ForkMcpAppGrants.Server,
+  ...ForkAgentToolProfiles.Server,
 
   enableAgentBrowserAccess: DefaultTrue,
   ...ForkPreview.Server,
@@ -1554,6 +1552,7 @@ export const ServerSettingsPatch = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   ...ForkThreadSettingsPatchFields,
   ...ForkMcpAppGrants.ServerPatch,
+  ...ForkAgentToolProfiles.ServerPatch,
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   ...ForkPreview.ServerPatch,
   projectAgentBrowserAccessOverrides: Schema.optionalKey(

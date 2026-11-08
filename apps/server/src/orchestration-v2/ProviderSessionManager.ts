@@ -44,6 +44,7 @@ import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
+import { matchesAgentToolProfile, resolveThreadAgentToolProfile } from "../mcp/agentToolProfile.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
@@ -455,10 +456,17 @@ export const layerWithOptions = (
                 >(["orchestration", "worktree", "pull-requests"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
-                const subagent = yield* projectionStore.getThread(threadId).pipe(
-                  Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
-                  Effect.orElseSucceed(() => false),
-                );
+                const thread = yield* projectionStore
+                  .getThread(threadId)
+                  .pipe(Effect.orElseSucceed(() => undefined));
+                const subagent = thread?.lineage.relationshipToParent === "subagent";
+                const toolProfile =
+                  thread === undefined || Option.isNone(serverSettings)
+                    ? undefined
+                    : yield* serverSettings.value.getSettings.pipe(
+                        Effect.map((settings) => resolveThreadAgentToolProfile(settings, thread)),
+                        Effect.orElseSucceed(() => undefined),
+                      );
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
                   reserveMcpCredential(threadId, existing.providerSessionId);
@@ -478,7 +486,14 @@ export const layerWithOptions = (
                     resolved.thread.providerInstanceId === providerInstanceId &&
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
-                    (resolved.thread.subagent === true) === subagent
+                    (resolved.thread.subagent === true) === subagent &&
+                    matchesAgentToolProfile(
+                      {
+                        toolAllowlist: resolved.toolAllowlist,
+                        toolGuidance: existing.toolGuidance,
+                      },
+                      toolProfile,
+                    )
                   ) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
@@ -491,6 +506,7 @@ export const layerWithOptions = (
                   browserToolsAvailable,
                   capabilities,
                   subagent,
+                  ...(toolProfile === undefined ? {} : { toolProfile }),
                 });
                 yield* mcpSessions.set(credential.config);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
@@ -1199,10 +1215,6 @@ export const layerWithOptions = (
           ),
         );
 
-      // Provider activity restarts the pin budget, so background work that keeps
-      // reporting progress (a long Claude workflow) is never cut off; only work
-      // that went silent for maxIdlePinMs is released. This runs for every
-      // provider event, so keep it untraced.
       const scheduleIdleReleaseInternal = Effect.fnUntraced(function* (
         providerSessionId: ProviderSessionId,
         options?: { readonly providerActivity?: boolean },
@@ -1417,8 +1429,6 @@ export const layerWithOptions = (
             .pipe(Effect.ensuring(Effect.sync(dropReservation)));
         });
 
-      // Marks only the entry this runtime belongs to: a released or replaced session must not
-      // gain a busy turn that never ends. Succeeds with whether the turn was marked.
       const markBusy = (
         providerSessionId: ProviderSessionId,
         turnKey: string,
@@ -1629,7 +1639,6 @@ export const layerWithOptions = (
               return "unloaded" as const;
             }),
           );
-          // Wait outside the lock so the next attach is not blocked.
           if (outcome === "deferred") {
             yield* Effect.sleep(Duration.millis(idleTimeoutMs));
             return yield* unloadIdleThread(input);
@@ -1995,10 +2004,6 @@ export const layerWithOptions = (
                       });
                     });
                   }
-                  // Some providers can block before a run subscriber exists
-                  // (project trust, login, or session-switch hooks). Persist
-                  // their runless request artifacts directly so the normal T3
-                  // request UI can answer them and unblock session setup.
                   const threadId = sessionScopedRuntimeRequestThreadId(event);
                   if (threadId !== undefined) {
                     yield* Effect.gen(function* () {
@@ -2066,8 +2071,6 @@ export const layerWithOptions = (
                 cause,
               });
               yield* Ref.set(entry.eventSubscribers, new Map());
-              // lastError is the thread banner, so it gets the same bounded
-              // message as a failed turn; the raw cause survives only in the log.
               yield* Effect.logWarning("orchestration-v2.provider-session-runtime-failed", {
                 providerSessionId: entry.runtime.providerSessionId,
                 cause,

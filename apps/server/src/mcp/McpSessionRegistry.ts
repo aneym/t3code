@@ -9,6 +9,7 @@ import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import type { ResolvedAgentToolProfile } from "./agentToolProfile.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 
@@ -19,6 +20,7 @@ export interface McpCredentialRequest {
   readonly browserToolsAvailable?: boolean;
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
   readonly subagent?: boolean;
+  readonly toolProfile?: ResolvedAgentToolProfile;
 }
 
 export interface McpIssuedCredential {
@@ -115,6 +117,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           "pull-requests",
           ...(request.capabilities ?? (browserToolsAvailable ? (["preview"] as const) : [])),
         ]),
+        ...(request.toolProfile === undefined
+          ? {}
+          : { toolAllowlist: new Set(request.toolProfile.tools) }),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
@@ -132,6 +137,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           authorizationHeader: `Bearer ${rawToken}`,
           browserToolsAvailable: scope.capabilities.has("preview"),
           capabilities: scope.capabilities,
+          ...(request.toolProfile === undefined
+            ? {}
+            : { toolGuidance: request.toolProfile.guidance }),
         },
       };
     },

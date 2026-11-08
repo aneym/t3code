@@ -11,6 +11,7 @@ export interface McpProviderSessionConfig {
   readonly browserToolsAvailable: boolean;
   readonly capabilities?: ReadonlySet<string>;
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  readonly toolGuidance?: string;
 }
 
 export function withAgentDeviceEnvironment(

@@ -903,8 +903,6 @@ const withToolAnalytics =
             yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
           )?.thread;
           const providers = Option.isSome(registry) ? yield* registry.value.getProviders : [];
-          // Only handoff tools pay for thread lookups; the rest report the
-          // caller's provider from the credential.
           const caller =
             handoff && invocation !== undefined
               ? ((yield* shellOf(invocation.threadId)) ?? undefined)
@@ -994,6 +992,7 @@ const withAdvertisedParameters = Effect.fn("McpHttpServer.withAdvertisedSchemas"
       return server.addTool({
         ...options,
         tool,
+        annotations: McpInvocationContext.gateByToolProfile(tool.name, options.annotations),
         handle: (payload) =>
           validateAdvertisedParameters(tool.name, tool.inputSchema, payload).pipe(
             Effect.andThen(() => options.handle(payload)),
