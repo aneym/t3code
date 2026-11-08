@@ -68,6 +68,8 @@ def parse():
     parser.add_argument("--receipt-host", choices=("studio", "ax42", "forge", "owl", "ax102"))
     parser.add_argument("--rehearsal", action="store_true")
     parser.add_argument("--strict-drain-proof", action="store_true")
+    parser.add_argument("--handoff-stop", action=argparse.BooleanOptionalAction, default=False, help="window flag: when the drain times out, stop on a ready restart handoff instead of refusing")
+    parser.add_argument("--handoff-wait-s", type=int, default=180)
     parser.add_argument("--rehearsal-inject", dest="inject", choices=("none", "warm-death", "post-flip"), default="none")
     parser.add_argument("--rollback-fallback-proof", action="store_true", help="isolated non-release fallback proof; never changes existing injection semantics")
     parser.add_argument("--compatibility-probe", action="store_true")
@@ -108,6 +110,8 @@ def parse():
         parser.error("fault and fallback proofs require isolated --rehearsal --seamless")
     if args.rollback_fallback_proof and (args.inject != "none" or args.force_rollback):
         parser.error("--rollback-fallback-proof cannot replace an existing rollback proof")
+    if not 0 <= args.handoff_wait_s <= 900:
+        parser.error("--handoff-wait-s must be between 0 and 900")
     if args.strict_drain_proof and not args.rehearsal:
         parser.error("--strict-drain-proof requires isolated --rehearsal")
     if args.force_rollback and not args.rehearsal:

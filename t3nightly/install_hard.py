@@ -189,24 +189,14 @@ def install(run):
 
     def stop():
         nonlocal stopped
-        from .install_policy import isolated, recheck
+        from .install_handoff import admit_stop
+        from .install_policy import recheck
 
         recheck(run)
         drain = getattr(run, "drain_before_stop", None)
         run.drain_before_stop = None
         if drain:
-            receipt = drain()
-            reported = receipt.get("drain") or {}
-            if reported.get("drained") is not True:
-                active_run_ids = reported.get("activeRunIds", [])
-                drain_outcome = "timed-out" if reported else "unreported"
-                if getattr(run.args, "rehearsal", False) and not getattr(run.args, "strict_drain_proof", False) and isolated(run.home, run.args.port, run.args.service_label, getattr(run.args, "live_home", [])):
-                    run.report["restartDrain"] = {**run.report.get("restartDrain", {}), "outcome": drain_outcome, "stopForcedInRehearsal": True, "activeRunIds": active_run_ids}
-                    run.step("rehearsal-stop-after-drain", active_run_ids=active_run_ids)
-                else:
-                    run.report["restartDrain"] = {**run.report.get("restartDrain", {}), "outcome": drain_outcome, "stopRefused": True, "activeRunIds": active_run_ids, "retryable": True}
-                    run.step("hard-stop-refused", active_run_ids=active_run_ids)
-                    raise ValueError(f"restart drain did not report drained: true; nothing stopped; active_run_ids={active_run_ids}")
+            admit_stop(run, drain())
         install_settings.capture(run)
         service(run, "stop")
         stopped = True
@@ -345,6 +335,8 @@ def install(run):
                 advisory(run, backup)
             except (OSError, subprocess.SubprocessError) as error:
                 run.step("advisory-backup-check-failed", error=str(error))
+    if getattr(run, "handoff_check", None):
+        run.handoff_check(outcome)
     moment = datetime.now(timezone.utc).isoformat()
     serving_version = run.server_version() or "unavailable"
     serving_digest = ""
@@ -363,7 +355,7 @@ def install(run):
         "oldRuntime": {"version": previous, "digest": observed["oldRuntime.digest"]},
         "servingRuntime": {"version": serving_version, "digest": serving_digest},
         "installWindow": run.report.get("installWindow"), "hotSwap": {**(run.report.get("hotSwap") or {}), "forwardRepairRequired": run.report.get("forwardRepairRequired", False)},
-        **{key: run.report[key] for key in ("restartDrain", "connectorRestore", "databaseQuiescence") if key in run.report},
+        **{key: run.report[key] for key in ("restartDrain", "restartHandoff", "connectorRestore", "databaseQuiescence") if key in run.report},
         "retryable": any((run.report.get(key) or {}).get("retryable") is True for key in ("restartDrain", "databaseQuiescence")),
         "migrationHistory": migration_evidence, "databaseRollback": database_rollback,
         **install_settings.receipt(run),

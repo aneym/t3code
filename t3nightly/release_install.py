@@ -20,7 +20,7 @@ class InstallCommand:
 def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, artifact_manifest,
                           receipt, receipt_host, install_receipt, state_dir, chat_project,
                           smoke_verdict, rollback_proof, override_reason="", launcher_artifact=None,
-                          connector_artifact=None, home=None, drain_s=None):
+                          connector_artifact=None, home=None, drain_s=None, handoff_stop=None):
     home = Path.home() if home is None else Path(home)
     state, env, prefix = Path(state_dir), None, []
     if host == "ax42":
@@ -44,6 +44,8 @@ def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, a
         if not 1 <= drain_s <= 300:
             raise ValueError("drain_s must be between 1 and 300")
         words.extend(["--drain-s", str(drain_s)])
+    if handoff_stop is not None:
+        words.append("--handoff-stop" if handoff_stop else "--no-handoff-stop")
     return InstallCommand(words, state, env)
 
 

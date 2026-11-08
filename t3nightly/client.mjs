@@ -269,12 +269,22 @@ if (!program) {
   console.error(`usage: client.mjs session|pair|mobile|bgwait|queue-drain --tree DIR ...`);
   process.exit(2);
 }
+const emit = (line, code) => process.stdout.write(`${line}\n`, () => process.exit(code));
 try {
   const result = await Effect.runPromise(program().pipe(Effect.scoped, Effect.provide(layers)));
-  console.log(JSON.stringify({ ok: true, ...result }));
-  process.exit(0);
+  emit(JSON.stringify({ ok: true, ...result }), 0);
 } catch (error) {
-  const message = String(error?.message ?? error).replace(/(token|ticket)=[^&\s"]+/gi, "$1=REDACTED");
-  console.log(JSON.stringify({ ok: false, error: message, ...(error?.result ?? {}) }).replace(/(token|ticket)=[^&\s"\\]+/gi, "$1=REDACTED"));
-  process.exit(1);
+  const describe = (value) => {
+    if (value === undefined || value === null) return "";
+    if (typeof value !== "object") return String(value);
+    try {
+      return JSON.stringify(value, (key, item) => (item instanceof Error ? { tag: item._tag, message: item.message, cause: item.cause } : item));
+    } catch {
+      return String(value);
+    }
+  };
+  const cause = describe(error?.cause).slice(0, 600);
+  const detail = [error?._tag, String(error?.message ?? error), cause && `cause: ${cause}`].filter(Boolean).join(": ");
+  const message = detail.replace(/(token|ticket)=[^&\s"]+/gi, "$1=REDACTED").replace(/(Bearer\s+)[^\s"]+/gi, "$1REDACTED");
+  emit(JSON.stringify({ ok: false, error: message, ...(error?.result ?? {}) }).replace(/(token|ticket)=[^&\s"\\]+/gi, "$1=REDACTED"), 1);
 }

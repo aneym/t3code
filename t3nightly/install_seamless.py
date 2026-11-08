@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .install_rpc import restart_rpc, restart_session
 from .install_hard import install as hard_install
+from .install_handoff import check_resumed
 
 
 def prepare_with_drain(run, bearer, epoch):
@@ -20,6 +21,8 @@ def prepare_with_drain(run, bearer, epoch):
             timeout=drain_s + 120,
         )
     except (OSError, ValueError, subprocess.SubprocessError) as error:
+        run.report["restartDrain"] = {"outcome": "rpc-failed", "deadlineS": drain_s, "error": str(error)[:600]}
+        run.step("restart-drain-rpc-failed", deadline_s=drain_s, error=str(error)[:600])
         raise ValueError("restart drain RPC unavailable; nothing stopped") from error
     drain = receipt.get("drain")
     if drain is None:
@@ -53,11 +56,13 @@ def drain_then_hard(run, previous):
         succeeded = False
         try:
             run.drain_before_stop = lambda: prepare_with_drain(run, bearer, epoch)
+            run.handoff_check = lambda outcome: check_resumed(run, bearer, outcome)
             result = hard_install(run)
             succeeded = run.report.get("outcome") in ("installed", "current")
             return result
         finally:
             run.drain_before_stop = None
+            run.handoff_check = None
             if not succeeded:
                 try:
                     restart_rpc(run, bearer, "abort", {"epoch": epoch}, timeout=30)

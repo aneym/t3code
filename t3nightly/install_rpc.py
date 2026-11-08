@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -97,6 +98,7 @@ def restart_rpc(run, bearer, operation, payload, *, timeout=120):
     ) as handle:
         json.dump(payload, handle)
         path = Path(handle.name)
+    started = time.monotonic()
     try:
         result = subprocess.run(
             [
@@ -123,8 +125,9 @@ def restart_rpc(run, bearer, operation, payload, *, timeout=120):
         rows = [line for line in result.stdout.splitlines() if line.startswith("{")]
         response = json.loads(rows[-1]) if rows else {}
         if result.returncode or response.get("ok") is not True:
+            detail = str(response.get("error") or result.stderr.strip()[-300:] or "no output")[:400]
             raise ValueError(
-                f"server {operation} did not return a verified restart receipt"
+                f"server {operation} did not return a verified restart receipt after {time.monotonic() - started:.1f}s (exit {result.returncode}): {detail}"
             )
         return response["receipt"]
     finally:
