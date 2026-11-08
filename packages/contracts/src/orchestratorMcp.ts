@@ -3,6 +3,7 @@ import { OrchestratorMcpSchedule } from "./orchestratorMcpSchedule.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { OrchestratorMcpThreadTimelineItem } from "./orchestratorMcpTimeline.ts";
+import { OrchestratorMcpThreadRun } from "./orchestratorMcpThreadRun.ts";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { AuthMcpClientAccess } from "./auth.ts";
@@ -298,18 +299,6 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   ...ThreadLifecycleFields,
 });
 export type OrchestratorMcpThreadDetail = typeof OrchestratorMcpThreadDetail.Type;
-
-export const OrchestratorMcpThreadRun = Schema.Struct({
-  runId: RunId,
-  ordinal: PositiveInt,
-  status: OrchestrationV2RunStatus,
-  providerInstanceId: ProviderInstanceId,
-  model: Schema.String,
-  requestedAt: IsoDateTime,
-  startedAt: Schema.NullOr(IsoDateTime),
-  completedAt: Schema.NullOr(IsoDateTime),
-});
-export type OrchestratorMcpThreadRun = typeof OrchestratorMcpThreadRun.Type;
 
 export const OrchestratorMcpThreadReadResult = Schema.Struct({
   thread: OrchestratorMcpThreadDetail,

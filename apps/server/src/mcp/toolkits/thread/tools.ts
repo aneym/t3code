@@ -209,6 +209,12 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
     sourcePoint: Schema.optional(OrchestrationV2ThreadForkSourcePoint),
     targetThreadId: Schema.optional(ThreadId),
     title: Schema.optional(TrimmedNonEmptyString),
+    askOnly: Schema.optional(
+      Schema.Boolean.annotate({
+        description:
+          "fork only, Claude only: a one-time copy that answers while this thread works. It can read but not act, stays out of thread lists and is archived after its answer.",
+      }),
+    ),
   }),
   success: Schema.Union([
     Schema.Struct({ sequence: NonNegativeInt, targetThreadId: ThreadId }),

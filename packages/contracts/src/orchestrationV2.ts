@@ -100,6 +100,11 @@ import {
   ToolActivitySource,
 } from "./providerRuntime.ts";
 import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
+import {
+  isListedThreadLineage,
+  OrchestrationV2AppThreadLineage,
+} from "./orchestrationV2Lineage.ts";
+import { ProviderPermissionDenial } from "./providerPermissionDenial.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
 export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
@@ -165,18 +170,6 @@ export const OrchestrationV2ProviderRef = Schema.Struct({
   ordinal: Schema.optional(NonNegativeInt),
 });
 export type OrchestrationV2ProviderRef = typeof OrchestrationV2ProviderRef.Type;
-
-export const OrchestrationV2AppThreadLineage = Schema.Struct({
-  parentThreadId: Schema.NullOr(ThreadId),
-  relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
-  rootThreadId: ThreadId,
-  sideChat: Schema.optional(Schema.Boolean),
-});
-export type OrchestrationV2AppThreadLineage = typeof OrchestrationV2AppThreadLineage.Type;
-
-/** Subagents and side chats live inside their parent's view, never in thread lists. */
-export const isListedThreadLineage = (lineage: OrchestrationV2AppThreadLineage): boolean =>
-  lineage.relationshipToParent !== "subagent" && lineage.sideChat !== true;
 
 export const OrchestrationV2ContextTransferType = Schema.Literals([
   "fork",
@@ -1180,6 +1173,7 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   tokenUsage: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
   turnTokenUsage: Schema.optional(TurnTokenUsage),
+  permissionDenials: Schema.optional(Schema.Array(ProviderPermissionDenial)),
 });
 export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
 
@@ -3254,6 +3248,7 @@ export const OrchestrationV2Command = Schema.Union([
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
     title: Schema.optional(TrimmedNonEmptyString),
     sideChat: Schema.optional(Schema.Boolean),
+    askOnly: Schema.optional(Schema.Boolean),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({

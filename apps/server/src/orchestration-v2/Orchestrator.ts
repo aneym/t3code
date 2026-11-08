@@ -239,6 +239,7 @@ import {
 import {
   forkableSourceRunStatusError,
   isForkableSourceRunStatus,
+  threadForkFlags,
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
@@ -4441,7 +4442,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         transferId,
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
-        ...(command.sideChat ? { sideChat: true } : {}),
+        ...threadForkFlags(command),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
         createdAt: now,

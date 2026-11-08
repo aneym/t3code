@@ -199,6 +199,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               targetThreadId,
               sourcePoint,
               ...(input.title === undefined ? {} : { title: input.title }),
+              ...(input.askOnly === true ? { sideChat: true, askOnly: true } : {}),
               createdBy: "agent",
               creationSource: "mcp",
             })

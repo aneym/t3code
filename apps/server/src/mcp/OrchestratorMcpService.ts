@@ -46,7 +46,6 @@ import {
   type OrchestratorMcpThreadListResult,
   type OrchestratorMcpThreadReadInput,
   type OrchestratorMcpThreadReadResult,
-  type OrchestratorMcpThreadRun,
   type OrchestratorMcpThreadSendInput,
   type OrchestratorMcpThreadSendResult,
   type OrchestratorMcpThreadTimelineItem,
@@ -130,6 +129,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import { resolveDelegatedTaskWorkspace } from "./delegatedTaskWorkspace.ts";
+import { threadRun } from "./threadRunSummary.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -745,19 +745,6 @@ function threadDetail(
   };
 }
 
-function threadRun(run: OrchestrationV2Run): OrchestratorMcpThreadRun {
-  return {
-    runId: run.id,
-    ordinal: run.ordinal,
-    status: run.status,
-    providerInstanceId: run.modelSelection.instanceId,
-    model: run.modelSelection.model,
-    requestedAt: DateTime.formatIso(run.requestedAt),
-    startedAt: run.startedAt === null ? null : DateTime.formatIso(run.startedAt),
-    completedAt: run.completedAt === null ? null : DateTime.formatIso(run.completedAt),
-  };
-}
-
 function jsonText(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2);
@@ -1133,16 +1120,18 @@ const make = Effect.gen(function* () {
       );
     }
     const input = { projectId: shell.projectId, threadId };
+    const usage = shell.lineage.sideChat === true ? (["providerTurns"] as const) : [];
     // Transfers are needed only to acknowledge a caller's child-task result.
     const records =
       parent === undefined
         ? threadManagement
-            .getProjectThreadRecords(input, ["runs", "runtimeRequests"])
+            .getProjectThreadRecords(input, ["runs", "runtimeRequests", ...usage])
             .pipe(Effect.map((target) => ({ ...target, contextTransfers: [] })))
         : threadManagement.getProjectThreadRecords(input, [
             "runs",
             "runtimeRequests",
             "contextTransfers",
+            ...usage,
           ]);
     const target = yield* records.pipe(Effect.mapError(threadManagementFailure));
     return { parent, target, shell } as const;
@@ -2864,7 +2853,7 @@ const make = Effect.gen(function* () {
         recentRuns: target.runs
           .toSorted((left, right) => right.ordinal - left.ordinal)
           .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
-          .map(threadRun),
+          .map((run) => threadRun(run, target.providerTurns)),
         items: page.map((row) =>
           timelineItem({
             row,
