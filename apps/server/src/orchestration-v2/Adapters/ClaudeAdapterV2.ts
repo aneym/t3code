@@ -209,6 +209,7 @@ import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/s
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   allowAskOnlyReadOnlyMcpTools,
+  claudeAskOnlyToolGuard,
   claudeAskOnlyEnvironment,
   claudeRuntimeQueryPolicyForTurn,
   claudeTurnPermissionDenials,
@@ -1479,6 +1480,7 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
+  readonly hooks?: ClaudeQueryOptions["hooks"];
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1596,8 +1598,15 @@ export function makeClaudeQueryOptions(input: {
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-    ...(deviceInstructions
-      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
+    ...(deviceInstructions || input.hooks !== undefined
+      ? {
+          hooks: {
+            ...input.hooks,
+            ...(deviceInstructions
+              ? { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] }
+              : {}),
+          },
+        }
       : {}),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
@@ -10160,7 +10169,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.runtimePolicy.cwd,
             launchArgSettings,
           );
+          const askOnlyGuard = claudeAskOnlyToolGuard(turnInput, mcpOverrides.allowedTools ?? []);
           const queryOptions = makeClaudeQueryOptions({
+            ...(askOnlyGuard === undefined ? {} : { hooks: askOnlyGuard.hooks }),
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
             resume: shouldResume,
@@ -10228,11 +10239,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
             );
           yield* allowAskOnlyReadOnlyMcpTools(turnInput, querySession).pipe(
-            Effect.tap((allow) =>
-              allow.length === 0
+            Effect.tap((allow) => {
+              askOnlyGuard?.allow(allow);
+              return allow.length === 0
                 ? Effect.void
-                : Effect.logInfo("claude.ask-only.mcp-allow", { allow }),
-            ),
+                : Effect.logInfo("claude.ask-only.mcp-allow", { allow });
+            }),
             Effect.catchCause((cause) => Effect.logWarning("claude.ask-only.mcp-allow", cause)),
           );
           // Mark only successful opens; retries must not resume sessions that failed to create.

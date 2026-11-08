@@ -1,4 +1,9 @@
-import type { PermissionMode, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  HookCallback,
+  Options as ClaudeQueryOptions,
+  PermissionMode,
+  SDKResultMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { OrchestrationV2ProviderTurn } from "@t3tools/contracts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
@@ -232,6 +237,38 @@ export const allowAskOnlyReadOnlyMcpTools = Effect.fn(
   if (allow.length > 0) yield* query.applyFlagSettings({ permissions: { allow } });
   return allow;
 });
+
+export interface ClaudeAskOnlyToolGuard {
+  readonly hooks: NonNullable<ClaudeQueryOptions["hooks"]>;
+  readonly allow: (tools: ReadonlyArray<string>) => void;
+}
+
+export function claudeAskOnlyToolGuard(
+  turn: Pick<ClaudePolicyTurn, "appThread">,
+  allowedTools: ReadonlyArray<string>,
+): ClaudeAskOnlyToolGuard | undefined {
+  if (!isAskOnlyTurn(turn)) return undefined;
+  const allowed = new Set([...CLAUDE_READ_ONLY_ALLOWED_TOOLS, "ToolSearch", ...allowedTools]);
+  const guard: HookCallback = (hookInput) =>
+    Promise.resolve(
+      hookInput.hook_event_name === "PreToolUse" && !allowed.has(hookInput.tool_name)
+        ? {
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "deny",
+              permissionDecisionReason:
+                "This is a read-only copy of the thread; it can read but not act.",
+            },
+          }
+        : {},
+    );
+  return {
+    hooks: { PreToolUse: [{ hooks: [guard] }] },
+    allow: (tools) => {
+      for (const tool of tools) allowed.add(tool);
+    },
+  };
+}
 
 export const claudeTurnUsesReadOnlyMcpTools = (turn: ClaudePolicyTurn): boolean =>
   isAskOnlyTurn(turn) || sandboxPolicyKindForClaudeRuntimePolicy(turn.runtimePolicy) === "readOnly";
