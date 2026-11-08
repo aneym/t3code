@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpFailure,
   type OrchestrationV2RemoteTaskChild,
   type ProjectId,
@@ -14,12 +15,14 @@ import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import { WorktreeToolkit } from "../mcp/toolkits/worktree/tools.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as WorktreeTransfer from "./WorktreeTransfer.ts";
 
 type ThreadScope = McpInvocationContext.McpThreadInvocationScope;
 type LaunchParams = Tool.Parameters<typeof ProjectToolkit.tools.t3_thread_launch>;
 type LaunchResult = Tool.Success<typeof ProjectToolkit.tools.t3_thread_launch>;
+type WorkspaceRequest = Pick<OrchestratorMcpDelegateTaskInput, "isolation" | "baseRef">;
 interface ParentCheckout {
   readonly projectId: ProjectId;
   readonly worktreePath: string | null;
@@ -34,7 +37,8 @@ export class RemoteWorktreeTask extends Context.Service<
     readonly launch: (
       scope: ThreadScope,
       environmentId: EnvironmentId,
-      worktreeOf: ParentCheckout | undefined,
+      parent: ParentCheckout,
+      request: WorkspaceRequest,
       params: LaunchParams,
     ) => Effect.Effect<
       { readonly launched: LaunchResult; readonly worktreeBase?: string },
@@ -54,6 +58,7 @@ const make = Effect.gen(function* () {
   const forwarding = yield* PeerForwarding.PeerForwarding;
   const projects = yield* ProjectService.ProjectService;
   const transfer = yield* WorktreeTransfer.WorktreeTransfer;
+  const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
 
   const checkoutOf = (parent: ParentCheckout) =>
     parent.worktreePath === null
@@ -63,27 +68,70 @@ const make = Effect.gen(function* () {
         )
       : Effect.succeed(parent.worktreePath);
 
+  const repositoryKeyThere = Effect.fn("RemoteWorktreeTask.repositoryKeyThere")(function* (
+    scope: ThreadScope,
+    environmentId: EnvironmentId,
+    projectId: ProjectId,
+  ) {
+    let cursor: number | null = 0;
+    while (cursor !== null) {
+      const listed: Tool.Success<typeof ProjectToolkit.tools.t3_project_list> =
+        yield* forwarding.call(scope, ProjectToolkit.tools.t3_project_list, environmentId, {
+          cursor,
+          limit: 100,
+        });
+      const project = listed.projects.find((candidate) => candidate.id === projectId);
+      if (project !== undefined) return project.repositoryIdentity?.canonicalKey;
+      cursor = listed.nextCursor;
+    }
+    return undefined;
+  });
+
   const launch: RemoteWorktreeTask["Service"]["launch"] = Effect.fn("RemoteWorktreeTask.launch")(
-    function* (scope, environmentId, worktreeOf, params) {
-      if (worktreeOf === undefined) {
-        const launched = yield* forwarding.call(
-          scope,
-          ProjectToolkit.tools.t3_thread_launch,
-          environmentId,
-          params,
-        );
-        return { launched };
+    function* (scope, environmentId, parent, request, params) {
+      const launchOn = (baseRef: string | undefined) =>
+        forwarding.call(scope, ProjectToolkit.tools.t3_thread_launch, environmentId, {
+          ...params,
+          ...(baseRef === undefined
+            ? {}
+            : { workspaceStrategy: { type: "worktree" as const, baseRef, startFromOrigin: true } }),
+        });
+      if (request.isolation !== "worktree") {
+        if (request.baseRef !== undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: `baseRef needs isolation "worktree".`,
+          });
+        return { launched: yield* launchOn(undefined) };
       }
-      const cwd = yield* checkoutOf(worktreeOf);
-      const base =
+      if (request.baseRef !== undefined) return { launched: yield* launchOn(request.baseRef) };
+      const cwd = yield* checkoutOf(parent);
+      const commitBase =
         cwd === undefined
           ? undefined
           : yield* transfer.resolveBase(cwd).pipe(Effect.orElseSucceed(() => undefined));
+      const targetKey =
+        commitBase === undefined || params.projectId === undefined
+          ? undefined
+          : yield* repositoryKeyThere(scope, environmentId, params.projectId);
+      const parentKey =
+        targetKey === undefined || cwd === undefined
+          ? undefined
+          : (yield* repositoryIdentities.resolve(cwd))?.canonicalKey;
+      const base = targetKey !== undefined && targetKey !== parentKey ? undefined : commitBase;
       if (base === undefined) {
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: 'Isolation "worktree" needs this thread\'s checkout to have a commit.',
-        });
+        const target =
+          params.projectId === undefined
+            ? undefined
+            : yield* forwarding.call(scope, ProjectToolkit.tools.t3_project_read, environmentId, {
+                projectId: params.projectId,
+              });
+        if (target?.defaultBaseRef === undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: `Isolation "worktree" has no base: project "${target?.title ?? params.projectId}" there has no default branch, and this thread's checkout has no commit of its repository. Pass baseRef (a branch, tag, or commit in that project), or use isolation "shared".`,
+          });
+        return { launched: yield* launchOn(target.defaultBaseRef) };
       }
       const launchFrom = (baseRef: string, startFromOrigin: boolean) =>
         forwarding.call(scope, ProjectToolkit.tools.t3_thread_launch, environmentId, {

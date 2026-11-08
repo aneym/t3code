@@ -67,11 +67,16 @@ const ProjectListTool = Tool.make("t3_project_list", {
   .annotate(Tool.Destructive, false);
 const ProjectReadTool = Tool.make("t3_project_read", {
   ...shared,
-  description: "Read one project: workspace and saved scripts.",
+  description: "Read one project: workspace, default base ref and saved scripts.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,
   }),
+  success: Schema.Struct({
+    ...Project.fields,
+    defaultBaseRef: Schema.optional(TrimmedNonEmptyString),
+  }),
+  dependencies: [...shared.dependencies, GitVcsDriver.GitVcsDriver],
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);

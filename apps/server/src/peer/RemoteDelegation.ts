@@ -255,7 +255,8 @@ const make = Effect.gen(function* () {
       const { launched, worktreeBase } = yield* worktrees.launch(
         scope,
         target.environmentId,
-        input.isolation === "worktree" ? parent.thread : undefined,
+        parent.thread,
+        input,
         {
           projectId,
           title: input.title ?? parent.thread.title,

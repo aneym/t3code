@@ -34,7 +34,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   baseRef: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description:
-        "Isolation 'worktree' on this environment only: branch, tag, or commit in the task's project to start from.",
+        "Isolation 'worktree': branch, tag, or commit in the task's project to start from, on target.environmentId when set.",
     }),
   ),
   mode: Schema.optional(

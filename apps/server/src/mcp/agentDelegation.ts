@@ -1,8 +1,4 @@
-import {
-  type OrchestratorMcpDelegateTaskInput,
-  OrchestratorMcpFailure,
-  ProviderInstanceId,
-} from "@t3tools/contracts";
+import { type OrchestratorMcpDelegateTaskInput, ProviderInstanceId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as AgentPlacement from "../peer/AgentPlacement.ts";
@@ -15,11 +11,6 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
 ) {
   const scope = yield* Invocation.McpInvocationContext;
   const service = yield* Orchestrator.OrchestratorMcpService;
-  if (input.baseRef !== undefined && input.target?.environmentId !== undefined)
-    return yield* new OrchestratorMcpFailure({
-      code: "invalid_request",
-      message: "baseRef is for tasks on this environment. Omit it with target.environmentId.",
-    });
   if (input.target?.environmentId !== undefined || scope.linkedEnvironments === false)
     return yield* service.delegateTask(scope, input);
   const placement = yield* Effect.serviceOption(AgentPlacement.AgentPlacement);
