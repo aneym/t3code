@@ -18,6 +18,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import { isActiveRun } from "./CommandPolicy.ts";
+
 const CLAUDE_ASK_ONLY_DRIVER = ProviderDriverKind.make("claudeAgent");
 
 export interface ThreadForkPlanV2 {
@@ -58,6 +60,11 @@ export const threadForkFlags = (command: {
   ...(command.sideChat ? { sideChat: true } : {}),
   ...(command.askOnly ? { askOnly: true } : {}),
 });
+
+export const forkSourceBusy = (
+  laterSourceRuns: ReadonlyArray<OrchestrationV2Run>,
+  target: { readonly thread: Pick<OrchestrationV2AppThread, "lineage"> },
+) => target.thread.lineage.askOnly !== true && laterSourceRuns.some(isActiveRun);
 
 function askOnlyForkRefusal(input: {
   readonly sideChat?: boolean;

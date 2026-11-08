@@ -239,6 +239,7 @@ import {
 import {
   forkableSourceRunStatusError,
   isForkableSourceRunStatus,
+  forkSourceBusy,
   threadForkFlags,
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
@@ -6703,12 +6704,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
       ),
     );
-    const sourceRunsAfterFork =
-      sourceProjection === null
-        ? []
-        : sourceProjection.runs.filter(
-            (candidate) => sourceRun === null || candidate.ordinal > sourceRun.ordinal,
-          );
+    const sourceRunsAfterFork = (sourceProjection?.runs ?? []).filter(
+      (candidate) => sourceRun === null || candidate.ordinal > sourceRun.ordinal,
+    );
     const forkExecution =
       pendingForkTransfer === undefined || sourceRun === null
         ? null
@@ -6723,7 +6721,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               hasStrongNativeSource: sourceProviderThread?.nativeThreadRef?.strength === "strong",
               sourceRunStatus: sourceRun.status,
               fromSpecificTurn: sourceRun !== null,
-              sourceBusy: sourceRunsAfterFork.some(isActiveRun),
+              sourceBusy: forkSourceBusy(sourceRunsAfterFork, projection),
             }),
           );
     const canResolveForkNatively = forkExecution === "native_fork";

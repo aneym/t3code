@@ -36,7 +36,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
-import { isActiveRun } from "./CommandPolicy.ts";
+import { forkSourceBusy } from "./ThreadForkService.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
@@ -1150,10 +1150,8 @@ export const layer: Layer.Layer<
           }
           // Providers refuse to fork a busy thread, so a source that started a turn after
           // dispatch planned this fork gets the portable context dispatch gives a busy source.
-          const sourceBusy = sourceProjection.runs.some(
-            (candidate) => candidate.ordinal > sourceRun.ordinal && isActiveRun(candidate),
-          );
-          if (!sourceBusy) {
+          const laterRuns = sourceProjection.runs.filter((run) => run.ordinal > sourceRun.ordinal);
+          if (!forkSourceBusy(laterRuns, projection)) {
             return yield* loadFromProvider(
               session.forkThread({
                 sourceProviderThread,

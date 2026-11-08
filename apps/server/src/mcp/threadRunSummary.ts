@@ -8,9 +8,9 @@ import * as DateTime from "effect/DateTime";
 
 export function threadRun(
   run: OrchestrationV2Run,
-  providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>,
+  providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn> | undefined,
 ): OrchestratorMcpThreadRun {
-  const turn = latestProviderTurnForAttempt(providerTurns, run.activeAttemptId);
+  const turn = latestProviderTurnForAttempt(providerTurns ?? [], run.activeAttemptId);
   return {
     runId: run.id,
     ordinal: run.ordinal,

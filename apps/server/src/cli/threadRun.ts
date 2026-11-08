@@ -172,6 +172,7 @@ export const finishRun = Effect.fn("cli.thread.finishRun")(function* (
     readonly runId: RunId;
     readonly json: boolean;
     readonly extra?: Readonly<Record<string, unknown>>;
+    readonly includeRun?: boolean;
   },
 ) {
   const outcome = yield* waitForRun(tools, input.threadId, input.runId);
@@ -185,8 +186,23 @@ export const finishRun = Effect.fn("cli.thread.finishRun")(function* (
     status === "completed" || status === "waiting"
       ? null
       : yield* runResultText(tools, input.threadId, runId, "error");
+  const run = input.includeRun
+    ? (yield* tools.call(
+        "t3_thread_read",
+        { threadId: input.threadId, limit: 1, runLimit: 1 },
+        OrchestratorMcpThreadReadResult,
+      )).recentRuns.find((candidate) => candidate.runId === runId)
+    : undefined;
   if (input.json) {
-    yield* printJson({ threadId: input.threadId, runId, status, reply, error, ...input.extra });
+    yield* printJson({
+      threadId: input.threadId,
+      runId,
+      status,
+      reply,
+      error,
+      ...input.extra,
+      ...(run === undefined ? {} : { run }),
+    });
   } else if (reply !== null) {
     yield* Console.log(reply);
   }

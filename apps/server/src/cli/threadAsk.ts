@@ -62,6 +62,7 @@ export const threadAskCommand = Command.make("ask", {
             runId: sent.runId,
             json: flags.json,
             extra: { sourceThreadId: threadId },
+            includeRun: flags.json,
           });
         }),
       );
