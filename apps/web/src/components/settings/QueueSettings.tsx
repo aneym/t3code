@@ -32,6 +32,13 @@ export function QueueSettings() {
             "Show Send all to release and send up to 20 compatible queued messages together, into the current turn or as one new turn.",
         },
         {
+          key: "quietThreadNotes",
+          searchId: "quiet-thread-notes",
+          label: "Quiet thread notes",
+          description:
+            "Let agents post notes that show in a thread without starting a turn. The thread's next turn reads them as context.",
+        },
+        {
           key: "mcpEventsEnabled",
           searchId: "mcp-events",
           label: "MCP Events subscriptions",
@@ -50,6 +57,7 @@ export function QueueSettings() {
           | "batchQueuedMessages"
           | "queueSendAll"
           | "settleIdleChildren"
+          | "quietThreadNotes"
           | "mcpEventsEnabled"
           | "hostLinkEnabled";
         return (

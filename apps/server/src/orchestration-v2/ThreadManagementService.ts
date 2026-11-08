@@ -66,7 +66,10 @@ import {
   ThreadManagementNoSteerableRunError,
   ThreadManagementSendConflictError,
   ThreadManagementThreadArchivedError,
+  makeNoteToThread,
   makeSendToThread,
+  type ThreadNoteInput,
+  type ThreadNoteResult,
   type ThreadSendInput,
   type ThreadSendResult,
 } from "./ThreadSend.ts";
@@ -86,7 +89,6 @@ export function withCreationProvenance(
 ): OrchestrationV2Command {
   switch (command.type) {
     case "thread.create": {
-      // Only the server stamps a link's origin, so a client cannot set one.
       const { linkOrigin: _linkOrigin, delegatedFrom: _delegatedFrom, ...rest } = command;
       return { ...rest, ...provenance };
     }
@@ -106,8 +108,6 @@ function existingThreadIdsForCommand(
   switch (command.type) {
     case "thread.create":
       return [];
-    // Read-state commands never touch messages, so they skip v1 transcript import.
-    // Visits fire on every thread-activity bump while a thread is open.
     case "thread.visit":
     case "thread.mark-unread":
       return [];
@@ -145,11 +145,6 @@ export interface ThreadManagementWaitInput {
   readonly runId?: RunId;
   readonly timeoutMs: number;
   readonly returnOnFreeze?: boolean;
-  /**
-   * Also wait until the thread's own delegated work settles: an ended run
-   * still owes the thread's answer while a child, a background task or a
-   * completion delivery will wake it again, as a delegated task's result does.
-   */
   readonly untilDelegatedWorkSettled?: boolean;
 }
 
@@ -157,7 +152,6 @@ export interface ThreadManagementWaitResult {
   readonly threadId: ThreadId;
   readonly run: OrchestrationV2Run | null;
   readonly timedOut: boolean;
-  /** With `untilDelegatedWorkSettled`, once settled: the run with the thread's final answer. */
   readonly resultRun?: OrchestrationV2Run;
 }
 
@@ -363,7 +357,6 @@ export interface ThreadManagementServiceShape {
     OrchestratorV2Error
   >;
   readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
-  /** Omit `projectId` to list every project's threads. Side chats are never listed. */
   readonly listProjectThreads: (input: {
     readonly projectId?: ProjectId | undefined;
     readonly includeSubagents: boolean;
@@ -371,6 +364,9 @@ export interface ThreadManagementServiceShape {
   readonly sendToThread: (
     input: ThreadSendInput,
   ) => Effect.Effect<ThreadSendResult, ThreadManagementFailure>;
+  readonly noteToThread: (
+    input: ThreadNoteInput,
+  ) => Effect.Effect<ThreadNoteResult | ThreadSendResult, ThreadManagementFailure>;
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
     readonly commandId: CommandId;
@@ -753,6 +749,16 @@ const make = Effect.gen(function* () {
     latestActiveRun,
     sessionIsLive: sessions.isLive,
     hasReceipt,
+  });
+  const noteToThread: ThreadManagementServiceShape["noteToThread"] = makeNoteToThread({
+    loadRecords: getProjectThreadRecords,
+    dispatch,
+    hasReceipt,
+    quietNotes: serverSettings.getSettings.pipe(
+      Effect.map((current) => current.quietThreadNotes),
+      Effect.orElseSucceed(() => true),
+    ),
+    send: sendToThread,
   });
 
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = Effect.fn(
@@ -1445,6 +1451,7 @@ const make = Effect.gen(function* () {
     getThreadShell: orchestrator.getThreadShell,
     listProjectThreads,
     sendToThread,
+    noteToThread,
     assertProviderInstanceEnabled,
     isProviderInstanceEnabledForProject,
     hasReceipt,

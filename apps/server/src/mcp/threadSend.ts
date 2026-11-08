@@ -67,29 +67,45 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
     message: request.message,
   });
 
-  const result = yield* threadManagement
-    .sendToThread({
-      projectId: target.thread.projectId,
-      commandId,
+  const send = {
+    projectId: target.thread.projectId,
+    commandId,
+    threadId: request.threadId,
+    ...mcpMessageSender(scope),
+    messageId,
+    text: request.message,
+    attachments: [],
+    createdBy: "agent",
+    creationSource: "mcp",
+  } as const;
+  const result = yield* (
+    mode === "note"
+      ? threadManagement.noteToThread(send)
+      : threadManagement.sendToThread({ ...send, mode })
+  ).pipe(
+    Effect.mapError((error) =>
+      isThreadManagementError(error)
+        ? threadManagementFailure(error)
+        : failure(
+            "orchestration_error",
+            `Unable to send to thread ${request.threadId}: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
+          ),
+    ),
+  );
+  const receipt = {
+    commandId,
+    sequence: result.dispatch.sequence,
+    replayed: result.dispatch.replayed === true,
+  };
+  if (!("run" in result))
+    return {
       threadId: request.threadId,
-      ...mcpMessageSender(scope),
+      link: threadLinkFor(scope, request.threadId),
       messageId,
-      text: request.message,
-      attachments: [],
-      mode,
-      createdBy: "agent",
-      creationSource: "mcp",
-    })
-    .pipe(
-      Effect.mapError((error) =>
-        isThreadManagementError(error)
-          ? threadManagementFailure(error)
-          : failure(
-              "orchestration_error",
-              `Unable to send to thread ${request.threadId}: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
-            ),
-      ),
-    );
+      delivery: result.delivery,
+      clientRequestId: requestKey,
+      receipt,
+    } satisfies OrchestratorMcpThreadSendResult;
   return {
     threadId: request.threadId,
     link: threadLinkFor(scope, request.threadId),
@@ -101,10 +117,6 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
     ...(result.holdReason === undefined ? {} : { holdReason: result.holdReason }),
     ...(result.next === undefined ? {} : { next: result.next }),
     clientRequestId: requestKey,
-    receipt: {
-      commandId,
-      sequence: result.dispatch.sequence,
-      replayed: result.dispatch.replayed === true,
-    },
+    receipt,
   } satisfies OrchestratorMcpThreadSendResult;
 });

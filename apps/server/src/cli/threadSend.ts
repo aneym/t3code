@@ -52,13 +52,13 @@ const receiptText = (sent: OrchestratorMcpThreadSendResult) =>
 const deliveryText = (sent: OrchestratorMcpThreadSendResult) =>
   sent.delivery === "held"
     ? `Held (${sent.holdReason ?? "manual"}).${receiptText(sent)} ${sent.next ?? "Send with mode auto to start now."}`
-    : `${sent.delivery === "queued" ? "Queued" : "Sent"}.${receiptText(sent)}`;
+    : `${sent.delivery === "queued" ? "Queued" : sent.delivery === "noted" ? "Noted" : "Sent"}.${receiptText(sent)}`;
 
 export const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
   thread: threadArgument,
   message: messageArgument,
-  mode: Flag.Literals("mode", ["auto", "queue", "steer", "restart"]).pipe(
+  mode: Flag.Literals("mode", ["auto", "queue", "steer", "restart", "note"]).pipe(
     Flag.withDescription("How to deliver the message to the thread."),
     Flag.withDefault("queue"),
   ),
@@ -72,7 +72,7 @@ export const threadSendCommand = Command.make("send", {
   json: jsonFlag,
 }).pipe(
   Command.withDescription(
-    "Send a message: queue uses the next turn without interrupting; steer updates the running turn mid-turn; restart interrupts and restarts; auto starts an idle thread, steers a running turn, or queues.",
+    "Send a message: queue uses the next turn without interrupting; note shows it in the thread and gives it to the next turn as context without starting one; steer updates the running turn mid-turn; restart interrupts and restarts; auto starts an idle thread, steers a running turn, or queues.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -93,7 +93,7 @@ export const threadSendCommand = Command.make("send", {
             if (flags.wait) return yield* new ThreadQueueHeldError({ threadId });
             return;
           }
-          if (flags.wait) {
+          if (flags.wait && sent.runId !== undefined) {
             yield* flags.json
               ? printJsonToStderr({
                   threadId,

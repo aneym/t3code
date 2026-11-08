@@ -56,6 +56,10 @@ const decodeMainBinding = (value: unknown): AgentHomeBinding | null => {
     by: text(data.by),
   });
 };
+const t3Field = (doc: Record<string, unknown>, key: string) =>
+  typeof doc.t3 === "object" && doc.t3 !== null
+    ? (doc.t3 as Record<string, unknown>)[key]
+    : undefined;
 const binding = (value: unknown, strict: boolean): AgentHomeBinding | null => {
   try {
     return decodeMainBinding(value);
@@ -83,11 +87,10 @@ export const homeFromDocument = (
     lanes,
     binding: binding(doc.t3, strict),
     previous: binding(
-      typeof doc.t3 === "object" && doc.t3 !== null
-        ? (doc.t3 as Record<string, unknown>).previous
-        : doc.t3_previous,
+      typeof doc.t3 === "object" && doc.t3 !== null ? t3Field(doc, "previous") : doc.t3_previous,
       false,
     ),
+    office: binding(t3Field(doc, "office"), false),
   });
 export const isLaneThread = async (root: string, threadId: string) => {
   const lanes = NodePath.join(root, "..", "lanes");
@@ -149,6 +152,25 @@ export const readHomes = async (
   }
   return { homes: homes.sort((a, b) => a.handle.localeCompare(b.handle)) };
 };
+const writeDocument = async (
+  root: string,
+  handle: string,
+  updated: Record<string, unknown>,
+  readText: string,
+) => {
+  const target = await agentFile(root, handle);
+  const temporary = `${target}.${crypto.randomUUID()}.tmp`;
+  try {
+    await NodeFSP.writeFile(temporary, JSON.stringify(updated, null, 2) + "\n", {
+      mode: (await NodeFSP.stat(target)).mode,
+    });
+    if ((await NodeFSP.readFile(target, "utf8")) !== readText)
+      throw new Error("agent.json changed while binding; try again");
+    await NodeFSP.rename(temporary, target);
+  } finally {
+    await NodeFSP.unlink(temporary).catch(() => undefined);
+  }
+};
 export const writeBinding = async (
   root: string,
   handle: string,
@@ -160,31 +182,28 @@ export const writeBinding = async (
   const old =
     typeof doc.t3 === "object" && doc.t3 !== null ? (doc.t3 as Record<string, unknown>) : null;
   const { t3: _binding, ...withoutBinding } = doc;
-  const { previous: _previous, reason: _reason, ...previous } = old ?? {};
+  const { previous: _previous, reason: _reason, office, ...previous } = old ?? {};
   const prior = old ? previous : doc.t3_previous;
   if (next) next.previous = prior;
+  if (next && office !== undefined && binding(office, false)?.threadId !== next.thread_id)
+    next.office = office;
   const updated =
     next === undefined
       ? doc
       : next === null
         ? { ...withoutBinding, t3_previous: prior }
         : { ...withoutBinding, t3: next };
-  const target = await agentFile(root, handle);
-  const temporary = `${target}.${crypto.randomUUID()}.tmp`;
-  try {
-    await NodeFSP.writeFile(
-      temporary,
-      JSON.stringify({ ...updated, ...(projects ? { projects } : {}) }, null, 2) + "\n",
-      {
-        mode: (await NodeFSP.stat(target)).mode,
-      },
-    );
-    if ((await NodeFSP.readFile(target, "utf8")) !== readText)
-      throw new Error("agent.json changed while binding; try again");
-    await NodeFSP.rename(temporary, target);
-  } finally {
-    await NodeFSP.unlink(temporary).catch(() => undefined);
-  }
+  await writeDocument(root, handle, { ...updated, ...(projects ? { projects } : {}) }, readText);
+};
+export const writeOffice = async (
+  root: string,
+  handle: string,
+  doc: Record<string, unknown>,
+  office: Record<string, unknown> | null,
+  readText: string,
+) => {
+  const { office: _office, ...t3 } = doc.t3 as Record<string, unknown>;
+  await writeDocument(root, handle, { ...doc, t3: office ? { ...t3, office } : t3 }, readText);
 };
 export const watchHomes = (root: string, changed: () => void) => {
   const watchers = new Map<string, NodeFS.FSWatcher>();
@@ -246,13 +265,15 @@ export const readAgentMainThreads = async (environmentId?: EnvironmentId) => {
     true,
   );
   return new Set(
-    homes.flatMap(({ binding }) =>
-      binding !== null &&
-      (environmentId === undefined ||
-        binding.environmentId === null ||
-        binding.environmentId === environmentId)
-        ? [binding.threadId]
-        : [],
+    homes.flatMap(({ binding, office }) =>
+      [binding, office ?? null].flatMap((bound) =>
+        bound !== null &&
+        (environmentId === undefined ||
+          bound.environmentId === null ||
+          bound.environmentId === environmentId)
+          ? [bound.threadId]
+          : [],
+      ),
     ),
   );
 };

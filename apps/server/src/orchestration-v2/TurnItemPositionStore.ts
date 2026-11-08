@@ -22,6 +22,7 @@ export interface TurnItemPositionStoreV2Shape {
     readonly turnItemId: TurnItemId;
     readonly runId: RunId | null;
     readonly runOrdinal?: number;
+    readonly afterLatestRun?: boolean;
   }) => Effect.Effect<number, TurnItemPositionStoreError>;
   readonly normalize: (
     item: OrchestrationV2TurnItem,
@@ -42,7 +43,13 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
     const allocate: TurnItemPositionStoreV2Shape["allocate"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
-        function* ({ threadId, turnItemId, runId, runOrdinal: suppliedRunOrdinal }) {
+        function* ({
+          threadId,
+          turnItemId,
+          runId,
+          runOrdinal: suppliedRunOrdinal,
+          afterLatestRun,
+        }) {
           const existing = yield* sql<{ readonly ordinal: number }>`
           SELECT ordinal
           FROM orchestration_v2_turn_item_positions
@@ -53,7 +60,13 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
 
           const runRows =
             runId === null
-              ? []
+              ? afterLatestRun
+                ? yield* sql<{ readonly ordinal: number | null }>`
+                SELECT MAX(ordinal) AS ordinal
+                FROM orchestration_v2_projection_runs
+                WHERE thread_id = ${threadId}
+              `
+                : []
               : yield* sql<{ readonly ordinal: number }>`
                 SELECT ordinal
                 FROM orchestration_v2_projection_runs
@@ -109,6 +122,7 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           threadId: item.threadId,
           turnItemId: item.id,
           runId: item.runId,
+          afterLatestRun: item.type === "user_message" && item.quietNote === true,
           ...(runOrdinal === undefined ? {} : { runOrdinal }),
         }).pipe(Effect.map((ordinal) => (item.ordinal === ordinal ? item : { ...item, ordinal })));
       }),

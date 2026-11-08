@@ -176,6 +176,7 @@ import {
   decideGuestShareCommand,
   type GuestShareCommand,
 } from "./GuestShareDecider.ts";
+import { quietNoteEvents } from "./ThreadNote.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { withCommandMetrics } from "../observability/Metrics.ts";
 import type {
@@ -266,7 +267,6 @@ const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
 const isOrchestratorProviderAdapterError = Schema.is(OrchestratorProviderAdapterError);
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
 
-/** The ceiling refusal under however many dispatch errors wrapped it on the way out. */
 function runtimePolicyCeilingCause(error: unknown) {
   let current = error;
   while (isOrchestratorDispatchError(current)) current = current.cause;
@@ -276,7 +276,6 @@ function runtimePolicyCeilingCause(error: unknown) {
 export interface OrchestratorV2DispatchResult {
   readonly sequence: number;
   readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
-  /** The command id was already accepted; analytics skip it. */
   readonly replayed?: true;
 }
 
@@ -395,7 +394,6 @@ export class OrchestratorV2 extends Context.Service<OrchestratorV2, Orchestrator
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
-/** Unfinished runs (including queued) or open requests block moving a thread to another project. */
 export function threadHasUnfinishedWork(records: {
   readonly runs: ReadonlyArray<{ readonly status: string }>;
   readonly runtimeRequests: ReadonlyArray<{ readonly status: string }>;
@@ -552,7 +550,6 @@ function restartedPreparationItem(
   } as const;
 }
 
-/** Stop ended this task, so its result is not delivered to the parent agent. */
 function cancelledAppOwnedTask(
   task: OrchestrationV2Subagent,
   now: DateTime.Utc,
@@ -575,7 +572,6 @@ function mayStartSubagentFollowup(
   return command.createdBy === "user" || command.creationSource === "mcp";
 }
 
-/** Waiting runs only drain post-terminal output; their agent turn is over and still needs a wake. */
 function isLiveRun(run: OrchestrationV2Run): boolean {
   return run.status === "preparing" || run.status === "starting" || run.status === "running";
 }
@@ -643,7 +639,6 @@ function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]
   );
 }
 
-/** Failed worktree setup keeps the queue held so queued messages cannot start in the project checkout. */
 function worktreeSetupPending(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
 ): boolean {
@@ -13036,6 +13031,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandId: command.commandId,
             threadId: command.threadId,
           });
+        }
+        if (command.dispatchMode.type === "note") {
+          const [message, item] = quietNoteEvents(command, yield* DateTime.now, {
+            id: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
+            ordinal: yield* nextTurnItemOrdinal({ thread }),
+          });
+          yield* emit(events, command)(message);
+          yield* emit(events, command)(item);
+          break;
         }
         const guestSend =
           command.guestMessageId === undefined

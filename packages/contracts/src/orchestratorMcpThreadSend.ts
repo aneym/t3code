@@ -13,7 +13,7 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
   message: OrchestratorMcpPrompt,
-  mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
+  mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart", "note"])),
   clientRequestId: Schema.optional(
     OrchestratorMcpClientRequestId.annotate({
       description:
@@ -36,9 +36,9 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   threadId: ThreadId,
   link: Schema.optional(Schema.String),
   messageId: MessageId,
-  runId: RunId,
+  runId: Schema.optional(RunId),
   taskId: Schema.optional(NodeId),
-  status: OrchestrationV2RunStatus,
+  status: Schema.optional(OrchestrationV2RunStatus),
   ...ThreadSendDelivery.fields,
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   receipt: Schema.optional(OrchestratorMcpThreadSendReceipt),

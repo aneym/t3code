@@ -19,6 +19,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { MessageSender } from "./messageSender.ts";
+import { QuietNoteDispatchMode, QuietNoteFields } from "./threadNote.ts";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -521,7 +522,6 @@ export const OrchestrationV2AppThread = Schema.Struct({
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
-/** Provider-native children cannot receive messages; T3 delegate_task children can. */
 export function isProviderNativeSubagentThread(
   thread: Pick<OrchestrationV2AppThread, "lineage" | "creationSource">,
 ): boolean {
@@ -539,7 +539,6 @@ interface CompactionMessageFields {
   readonly idleCompaction?: OrchestrationV2IdleCompaction | undefined;
 }
 
-/** A prompt that only asks the provider to compact, so its turn is the compaction itself. */
 export function isCompactionCommandMessage(message: CompactionMessageFields): boolean {
   return (
     message.role === "user" &&
@@ -555,7 +554,6 @@ export type OrchestrationV2GoalCommand =
   | { readonly type: "resume" }
   | { readonly type: "set"; readonly objective: string };
 
-/** Reads a `/goal` control message. Messages with attachments are ordinary prompts. */
 export function parseGoalCommand(message: {
   readonly text: string;
   readonly attachments?: ReadonlyArray<unknown> | undefined;
@@ -1280,6 +1278,7 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
   ...MessageSender.fields,
+  ...QuietNoteFields,
   idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
   composerSubmit: Schema.optional(OrchestrationV2ComposerSubmit),
   workflowScript: Schema.optional(Schema.Boolean),
@@ -1575,6 +1574,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     messageId: MessageId,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     ...MessageSender.fields,
+    ...QuietNoteFields,
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
     inputIntent: OrchestrationV2UserMessageInputIntent,
@@ -2412,6 +2412,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     messageId: MessageId,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     ...MessageSender.fields,
+    ...QuietNoteFields,
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
     inputIntent: OrchestrationV2UserMessageInputIntent,
@@ -3128,6 +3129,7 @@ export const OrchestrationV2Command = Schema.Union([
       Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),
       Schema.Struct({ type: Schema.Literal("queue_after_active") }),
       Schema.Struct({ type: Schema.Literal("start_immediately") }),
+      QuietNoteDispatchMode,
     ]),
   }),
   Schema.Struct({

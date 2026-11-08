@@ -192,7 +192,6 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDeleteScheduledTaskInput,
   ) => Effect.Effect<OrchestratorMcpDeleteScheduledTaskResult, OrchestratorMcpFailure>;
-  /** Only status reaches the agent, never this value. */
   readonly requestSecret: (
     scope: McpInvocationScope,
     input: OrchestratorMcpRequestSecretInput,
@@ -224,16 +223,10 @@ export class OrchestratorMcpService extends Context.Service<
   OrchestratorMcpServiceShape
 >()("t3/mcp/OrchestratorMcpService") {}
 
-// Without a reason, a Stop reads as the user's (see RunExecutionService.USER_STOP_REASON).
 function agentStopReason(reason: string | undefined): string {
   return reason === undefined ? "Stopped by an agent" : `Stopped by an agent: ${reason}`;
 }
 
-/**
- * Large catalogs (OpenCode, Cursor, Pi) can list hundreds of models, so agents
- * get a short list by default and search for the rest. These providers have
- * small official catalogs, so all their current models are listed.
- */
 const FULL_CATALOG_DRIVERS: ReadonlySet<string> = new Set(["codex", "claudeAgent", "muse", "grok"]);
 const LISTED_MODEL_LIMIT = 8;
 
@@ -1835,9 +1828,16 @@ const make = Effect.gen(function* () {
 
   return OrchestratorMcpService.of({
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
-      const { parent, limits } = yield* loadCaller(scope);
+      const caller = yield* loadCaller(scope);
+      const { limits } = caller;
+      const bound =
+        input.threadId === undefined
+          ? undefined
+          : (yield* loadScopedThread(scope, input.threadId, false)).target;
+      if (bound !== undefined) yield* assertLiveCallerForOtherThread(scope, caller.parent, bound);
+      const parent = bound ?? caller.parent;
       const projectId = yield* resolveProjectTarget(parent, input.projectId);
-      yield* assertLiveCallerForOtherProject(scope, parent, projectId);
+      yield* assertLiveCallerForOtherProject(scope, caller.parent, projectId);
       const project = yield* requireProject(projectId);
       const bindToCurrentThread =
         input.bindToCurrentThread ??
@@ -1868,8 +1868,6 @@ const make = Effect.gen(function* () {
         interactionMode: limits.interactionMode,
         createdBy: "agent",
         creationSource: "mcp",
-        // Scope the idempotency key by provider session so two callers
-        // reusing the same clientRequestId cannot collide on one task row.
         ...(input.clientRequestId === undefined
           ? {}
           : {
@@ -1887,7 +1885,7 @@ const make = Effect.gen(function* () {
             failure("orchestration_error", `Could not schedule task: ${error.message}`),
           ),
         );
-      return yield* summarizeScheduledTask(scope, { parent, limits }, task);
+      return yield* summarizeScheduledTask(scope, caller, task);
     }),
     listScheduledTasks: Effect.fn("OrchestratorMcpService.listScheduledTasks")(
       function* (scope, input) {
