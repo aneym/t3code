@@ -7,7 +7,9 @@ const SKILL_QUERY_START = /^\p{L}/u;
 
 export function useEmbedComposerTrigger(trigger: ComposerTrigger | null): ComposerTrigger | null {
   const embedded = useEmbedHostConnected();
-  if (!embedded || trigger?.kind !== "skill") return trigger;
+  if (!embedded || trigger === null) return trigger;
+  if (trigger.kind === "pull-request") return null;
+  if (trigger.kind !== "skill") return trigger;
   return SKILL_QUERY_START.test(trigger.query) ? trigger : null;
 }
 
