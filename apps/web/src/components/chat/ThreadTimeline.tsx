@@ -9,6 +9,7 @@ import {
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
 } from "../ChatView.logic";
+import { useEmbedTimeline } from "../../embed/useEmbedTimeline";
 import { MessagesTimeline } from "./MessagesTimeline";
 
 /**
@@ -24,6 +25,7 @@ export function ThreadTimeline({
   activeThreadKey,
   syncing,
   detailLoading,
+  historyControls,
   ...timelineProps
 }: Omit<ComponentProps<typeof MessagesTimeline>, "timelineEntries"> & {
   /** Null until the thread's detail may load; see resolveThreadDetailRef. */
@@ -54,5 +56,16 @@ export function ThreadTimeline({
     }
     rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries });
   }, [activeThreadKey, detailLoading, entries]);
-  return <MessagesTimeline {...timelineProps} timelineEntries={displayedEntries} />;
+  const embedTimeline = useEmbedTimeline(
+    threadDetailRef?.threadId ?? null,
+    displayedEntries,
+    historyControls,
+  );
+  return (
+    <MessagesTimeline
+      {...timelineProps}
+      historyControls={embedTimeline.historyControls}
+      timelineEntries={embedTimeline.entries}
+    />
+  );
 }

@@ -197,6 +197,7 @@ export interface MessagesTimelineHistoryControls {
   readonly hasMoreHistory: boolean;
   readonly loading: boolean;
   readonly error: string | null;
+  readonly label?: string;
   readonly onLoadEarlier: (throughEntryId?: string) => void;
 }
 
@@ -695,7 +696,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     (approval) =>
       isVisiblePendingApproval(approval) && !matchedApprovalRequestIds.has(approval.requestId),
   );
-  // Run status/timestamps change per stream event; keep them out of shared row context.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = deriveTimelineMinimapItems(rows);
   const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
@@ -1396,13 +1396,13 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
           <button
             type="button"
             disabled={props.loading}
-            aria-label="Load earlier turns"
+            aria-label={props.label ?? "Load earlier turns"}
             onClick={() => props.onLoadEarlier()}
             className="flex w-full cursor-pointer items-center gap-3 py-1.5 text-muted-foreground text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
           >
             <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
             <span className="shrink-0">
-              {props.loading ? "Loading earlier turns…" : "Load earlier turns"}
+              {props.loading ? "Loading earlier turns…" : (props.label ?? "Load earlier turns")}
             </span>
             <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
           </button>

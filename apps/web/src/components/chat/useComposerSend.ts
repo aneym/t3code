@@ -16,6 +16,7 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { clearEmbedViewFromCommand } from "../../embed/embedClearView";
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_MODEL,
@@ -399,7 +400,6 @@ export function useComposerSend(input: ComposerSendInput) {
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
   const composerSendGenerationRef = useRef(0);
   const environmentUnavailableSendToastSlotRef = useRef(0);
-  // A send awaits uploads before it declines, so it reads the approvals pending by then.
   const pendingApprovalsRef = useRef(pendingApprovals);
   const respondingRequestIdsRef = useRef(respondingRequestIds);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors approvals into refs that an async send reads after awaiting uploads
@@ -432,6 +432,18 @@ export function useComposerSend(input: ComposerSendInput) {
         setComposerDraftPrompt(composerDraftTarget, "");
         composerRef.current?.resetCursorState();
       }
+      return;
+    }
+
+    if (
+      activeThread &&
+      !directAnnotation &&
+      !draftHasNonPromptContent(composerDraftTarget) &&
+      clearEmbedViewFromCommand(promptAtSend, activeThread.id)
+    ) {
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
       return;
     }
 
@@ -488,14 +500,12 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
-    // `/side` beats an open question and a plan follow-up, which would send the text to main.
     const sideChatCommand =
       sendCtx && !directAnnotation && !queuedRunEdit.isEditing
         ? parseSideChatCommand(promptAtSend)
         : null;
     const answeringQuestion =
       Boolean(activePendingProgress) && sendCtx?.answeringPendingUserInput !== false;
-    // Where side chats are unavailable, `/side` text can still be a literal answer.
     if (sideChatDisabledReason !== null && sideChatCommand && !answeringQuestion) {
       toastManager.add(
         stackedThreadToast({
@@ -526,7 +536,6 @@ export function useComposerSend(input: ComposerSendInput) {
         return;
       }
       const started = await onSideChat(sideChatCommand.prompt);
-      // Clear only what was sent; the user may have edited the draft or left meanwhile.
       if (
         started &&
         currentRouteThreadKeyRef.current === routeThreadKey &&
@@ -605,7 +614,6 @@ export function useComposerSend(input: ComposerSendInput) {
         previewAnnotations: sendContextPreviewAnnotations,
         direct: directAnnotation,
       });
-    // A direct "send annotation" writes the draft and sends in the same tick; the reference
     // must be in the text now, not after the next render.
     const promptForSend = directAnnotation
       ? ensureInlineContextReferences(promptRef.current, [
