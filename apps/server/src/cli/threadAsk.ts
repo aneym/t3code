@@ -52,7 +52,7 @@ export const threadAskCommand = Command.make("ask", {
             { threadId: fork.targetThreadId, message, mode: "auto", clientRequestId },
             OrchestratorMcpThreadSendResult,
           );
-          if (!flags.wait) {
+          if (!flags.wait || sent.runId === undefined) {
             return yield* flags.json
               ? printJson(sent)
               : Console.log(`Asked fork ${fork.targetThreadId}, run ${sent.runId}.`);

@@ -29,6 +29,7 @@ import {
   readHomes,
   watchHomes,
   writeBinding,
+  writeOffice,
 } from "./AgentHomeFiles.ts";
 import { createLaneReader, localHostMatcher } from "./AgentLaneFiles.ts";
 
@@ -138,6 +139,63 @@ export const layer = Layer.effect(
           const environmentId = input.threadEnvironmentId ?? descriptor.environmentId;
           const threadId = input.threadId;
           const projects = input.projects?.map((name) => name.trim()).filter(Boolean);
+          const fail = (message: string) => new AgentHomeError({ handle: input.handle, message });
+          if (input.office) {
+            if (threadId === undefined) return yield* fail("Give the office thread");
+            if (home.binding === null) return yield* fail("Bind the main thread before its office");
+            if (threadId === home.binding.threadId)
+              return yield* fail("The office cannot be the main thread");
+            if (
+              threadId === null
+                ? home.office == null
+                : home.office?.threadId === threadId &&
+                  (home.office.environmentId === null ||
+                    home.office.environmentId === environmentId)
+            )
+              return { home, changed: false };
+            const local = threadId !== null && environmentId === descriptor.environmentId;
+            if (threadId !== null && (yield* Effect.promise(() => isLaneThread(root, threadId))))
+              return yield* fail("Lane threads cannot be agent offices");
+            if (local) {
+              const shell = yield* threads
+                .getThreadShell(threadId)
+                .pipe(Effect.mapError(() => fail("Unable to read the office thread")));
+              if (!shell || shell.deletedAt !== null)
+                return yield* fail("Office thread does not exist on this environment");
+            }
+            const officeAt = DateTime.formatIso(yield* DateTime.now).replace(/\.\d{3}Z$/, "Z");
+            yield* Effect.tryPromise({
+              try: () =>
+                writeOffice(
+                  root,
+                  input.handle,
+                  doc,
+                  threadId === null
+                    ? null
+                    : {
+                        thread_id: threadId,
+                        environment_id: environmentId,
+                        host: input.host ?? descriptor.label.toLowerCase(),
+                        at: officeAt,
+                        by: input.by ?? "t3",
+                      },
+                  text,
+                ),
+              catch: (cause) =>
+                new AgentHomeError({
+                  handle: input.handle,
+                  message: "Unable to save agent office",
+                  cause,
+                }),
+            });
+            if (local)
+              yield* setPin(threadId, false).pipe(
+                Effect.catch((error) => Effect.logWarning(error.message)),
+              );
+            const updated = (yield* list).homes.find((entry) => entry.handle === input.handle);
+            if (!updated) return yield* fail("Agent home disappeared after binding");
+            return { home: updated, changed: true };
+          }
           if (threadId === undefined && projects === undefined)
             return yield* new AgentHomeError({
               handle: input.handle,

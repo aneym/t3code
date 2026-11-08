@@ -59,6 +59,7 @@ import {
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import { makeThreadSessionPreparation } from "./ThreadSessionTransitions.ts";
+import { ThreadNoteContext, previousPromptStart } from "./ThreadNoteContext.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -107,11 +108,6 @@ const isProviderAdapterOpenSessionError = Schema.is(
   ProviderAdapter.ProviderAdapterOpenSessionError,
 );
 
-/**
- * Claude refuses these before it reads the prompt: replacing a process running background work,
- * launch arguments whose appended system prompt or settings cannot be read, or MCP registration
- * that never answers while the query opens.
- */
 const PROMPT_REFUSAL_TAGS = [
   "ClaudeBackgroundWorkBlocksQueryReplacementError",
   "ClaudeAppendSystemPromptFileError",
@@ -124,7 +120,6 @@ const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
-// The provider may have acted on a request it never answered, so a retry could duplicate it.
 const OUTCOME_UNKNOWN_TAGS = ["CodexAppServerUnresponsiveError"] as const;
 
 const outcomeUnknown = (error: unknown): boolean =>
@@ -178,10 +173,10 @@ export const layer: Layer.Layer<
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+    const { quietNotes: quietNoteContext } = yield* ThreadNoteContext;
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
       function* (cwd: string) {
-        // Recovery can follow an external checkout, before the status cache expires.
         yield* gitWorkflow.invalidateLocalStatus(cwd);
         const { refName: currentBranch } = yield* gitWorkflow.localStatus({ cwd });
         if (currentBranch !== null) {
@@ -194,7 +189,6 @@ export const layer: Layer.Layer<
             refName: "HEAD",
             fallbackRemoteName: "origin",
           });
-          // Start from the commit so the thread branch does not track the default branch.
           return { refName: commitSha, baseRefName: "refs/remotes/origin/HEAD" };
         }
         if (yield* gitWorkflow.hasCommit({ cwd, refName: "HEAD" })) {
@@ -1458,6 +1452,13 @@ export const layer: Layer.Layer<
         status: "running",
         startedAt: now,
       };
+      const quietNotes = goalCommand
+        ? ""
+        : yield* quietNoteContext(
+            projection.thread.id,
+            previousPromptStart(run, projection.runs, projection.messages),
+            now,
+          );
       const runningAttempt: OrchestrationV2RunAttempt = {
         ...attempt,
         ...(runningProviderThread.nativeThreadRef?.nativeId == null
@@ -1611,7 +1612,12 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          const context = [
+            delivery.context,
+            sideChatContext,
+            compact ? "" : quietNotes,
+            restartNote,
+          ]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1679,6 +1685,7 @@ export const layer: Layer.Layer<
         retryHandoff.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
+        quietNotes === "" &&
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);

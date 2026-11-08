@@ -33,6 +33,7 @@ export const AgentHome = Schema.Struct({
   lanes: Schema.Array(AgentLane).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   binding: Schema.NullOr(AgentHomeBinding),
   previous: Schema.NullOr(AgentHomeBinding),
+  office: Schema.optionalKey(Schema.NullOr(AgentHomeBinding)),
 });
 export type AgentHome = typeof AgentHome.Type;
 
@@ -49,6 +50,7 @@ export const AgentBindInput = Schema.Struct({
   host: Schema.optional(TrimmedNonEmptyString),
   by: Schema.optional(TrimmedNonEmptyString),
   onlyIfUnbound: Schema.optional(Schema.Boolean),
+  office: Schema.optional(Schema.Boolean),
 });
 export type AgentBindInput = typeof AgentBindInput.Type;
 

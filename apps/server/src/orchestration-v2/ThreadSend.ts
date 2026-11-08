@@ -329,3 +329,53 @@ export const makeSendToThread = <LoadError, DispatchError>(
     };
   });
 };
+
+export type ThreadNoteInput = Omit<ThreadSendInput, "mode" | "modelSelection" | "scheduledTaskId">;
+
+export interface ThreadNoteResult {
+  readonly delivery: "noted";
+  readonly dispatch: Orchestrator.OrchestratorV2DispatchResult;
+  readonly message: OrchestrationV2ConversationMessage;
+}
+
+export const makeNoteToThread = <LoadError, DispatchError, SendError>(
+  deps: Pick<
+    ThreadSendDeps<LoadError, DispatchError>,
+    "loadRecords" | "dispatch" | "hasReceipt"
+  > & {
+    readonly quietNotes: Effect.Effect<boolean>;
+    readonly send: (input: ThreadSendInput) => Effect.Effect<ThreadSendResult, SendError>;
+  },
+) =>
+  Effect.fn("ThreadManagementService.noteToThread")(function* (input: ThreadNoteInput) {
+    if (!(yield* deps.quietNotes)) return yield* deps.send({ ...input, mode: "queue" });
+    if (!(yield* deps.hasReceipt(input.commandId))) {
+      const loaded = yield* deps.loadRecords(input, []);
+      if (loaded.thread.archivedAt !== null) {
+        return yield* new ThreadManagementThreadArchivedError({ threadId: input.threadId });
+      }
+    }
+    const dispatched = yield* deps.dispatch({
+      type: "message.dispatch",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      messageId: input.messageId,
+      ...messageSender(input),
+      text: input.text,
+      attachments: input.attachments,
+      dispatchMode: { type: "note" },
+      createdBy: input.createdBy,
+      creationSource: input.creationSource,
+    });
+    const { messages } = yield* deps.loadRecords(input, ["messages"], {
+      messageIds: [input.messageId],
+    });
+    const message = messages.find((candidate) => candidate.id === input.messageId);
+    if (message?.quietNote !== true) {
+      return yield* new ThreadManagementSendConflictError({
+        threadId: input.threadId,
+        commandId: input.commandId,
+      });
+    }
+    return { delivery: "noted", dispatch: dispatched, message } satisfies ThreadNoteResult;
+  });

@@ -4,6 +4,7 @@ export const forkThreadSettingsDefaults = {
   batchQueuedMessages: DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages,
   queueSendAll: DEFAULT_UNIFIED_SETTINGS.queueSendAll,
   settleIdleChildren: DEFAULT_UNIFIED_SETTINGS.settleIdleChildren,
+  quietThreadNotes: DEFAULT_UNIFIED_SETTINGS.quietThreadNotes,
   mcpEventsEnabled: DEFAULT_UNIFIED_SETTINGS.mcpEventsEnabled,
 };
 
@@ -17,6 +18,9 @@ export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyAr
       : null,
     settings.settleIdleChildren !== forkThreadSettingsDefaults.settleIdleChildren
       ? "Settle idle child threads"
+      : null,
+    settings.quietThreadNotes !== forkThreadSettingsDefaults.quietThreadNotes
+      ? "Quiet thread notes"
       : null,
     settings.mcpEventsEnabled !== forkThreadSettingsDefaults.mcpEventsEnabled
       ? "MCP Events subscriptions"

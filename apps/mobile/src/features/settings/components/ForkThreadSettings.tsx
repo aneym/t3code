@@ -35,6 +35,14 @@ export function ForkThreadSettings() {
           icon: "checkmark.circle",
         },
         {
+          key: "quietThreadNotes",
+          title: "Thread notes",
+          label: "Quiet thread notes",
+          subtitle:
+            "Let agents post notes that show in a thread without starting a turn. The thread's next turn reads them as context.",
+          icon: "bubble.left.and.bubble.right",
+        },
+        {
           key: "mcpEventsEnabled",
           title: "MCP Events",
           label: "MCP Events subscriptions",
@@ -46,6 +54,7 @@ export function ForkThreadSettings() {
         const settingKey = key as
           | "queuedMessagesAnswerPendingInput"
           | "settleIdleChildren"
+          | "quietThreadNotes"
           | "mcpEventsEnabled";
         return (
           <SettingsSection key={key} title={title}>

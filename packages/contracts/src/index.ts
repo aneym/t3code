@@ -91,6 +91,7 @@ export * from "./secretReference.ts";
 export * from "./settingsSecretValue.ts";
 export * from "./clientRpcPermissions.ts";
 export * from "./messageSender.ts";
+export * from "./threadNote.ts";
 export * from "./orchestratorMcpTimeline.ts";
 export * from "./mcpEvents.ts";
 export * from "./agentPlacement.ts";

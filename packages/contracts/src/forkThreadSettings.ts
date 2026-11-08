@@ -10,6 +10,7 @@ export const ForkThreadSettingsFields = {
   batchQueuedMessages: DefaultTrue,
   queueSendAll: DefaultTrue,
   settleIdleChildren: DefaultTrue,
+  quietThreadNotes: DefaultTrue,
   mcpEventsEnabled: DefaultFalse,
   mcpEventsCallbackBaseUrl: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 };
@@ -20,6 +21,7 @@ export const ForkThreadSettingsPatchFields = {
   batchQueuedMessages: Schema.optionalKey(Schema.Boolean),
   queueSendAll: Schema.optionalKey(Schema.Boolean),
   settleIdleChildren: Schema.optionalKey(Schema.Boolean),
+  quietThreadNotes: Schema.optionalKey(Schema.Boolean),
   mcpEventsEnabled: Schema.optionalKey(Schema.Boolean),
   mcpEventsCallbackBaseUrl: Schema.optionalKey(Schema.String),
 };

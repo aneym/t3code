@@ -268,7 +268,7 @@ const ThreadUpdateTool = Tool.make("t3_thread_update", {
 
 const ThreadSendTool = Tool.make("t3_thread_send", {
   description:
-    "Send a message to any thread. The target cannot run with broader modes than yours. Default `queue`: a new turn without interrupting. Opt in to `auto` to start an idle thread, steer a running turn, or queue; `steer` for a mid-turn update; `restart` to interrupt and restart execution without pausing the queue. A send to a finished child thread starts a fresh task and returns its `taskId`. Pass a `clientRequestId` to retry a send that timed out: it is delivered once and the retry returns the same `receipt`. In your reply, name it as its `link` verbatim.",
+    "Send a message to any thread. The target cannot run with broader modes than yours. Default `queue`: a new turn without interrupting. Opt in to `auto` to start an idle thread, steer a running turn, or queue; `steer` for a mid-turn update; `restart` to interrupt and restart execution without pausing the queue; `note` to show it in the thread without starting a turn, as context for its next turn. A send to a finished child thread starts a fresh task and returns its `taskId`. Pass a `clientRequestId` to retry a send that timed out: it is delivered once and the retry returns the same `receipt`. In your reply, name it as its `link` verbatim.",
   parameters: OrchestratorMcpThreadSendInput,
   success: OrchestratorMcpThreadSendResult,
   failure: OrchestratorMcpFailure,

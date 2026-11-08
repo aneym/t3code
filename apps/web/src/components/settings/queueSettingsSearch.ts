@@ -23,6 +23,13 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     searchTerms: ["queue queued messages batch combine together one turn release drain follow up"],
   },
   {
+    id: "quiet-thread-notes",
+    title: "Quiet thread notes",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["note notes back office agent message silent quiet context no turn"],
+  },
+  {
     id: "mcp-events",
     title: "MCP Events subscriptions",
     to: "/settings/chat",

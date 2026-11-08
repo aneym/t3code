@@ -32,7 +32,7 @@ const list = Command.make("list", {
               result.homes
                 .map(
                   (home) =>
-                    `${home.handle}\t${home.displayName ?? home.handle}\t${home.binding?.threadId ?? "unbound"}`,
+                    `${home.handle}\t${home.displayName ?? home.handle}\t${home.binding?.threadId ?? "unbound"}\t${home.office?.threadId ?? "-"}`,
                 )
                 .join("\n"),
             );
@@ -50,6 +50,10 @@ const bind = Command.make("bind", {
   by: Flag.String("by").pipe(Flag.optional),
   unbind: Flag.Boolean("unbind").pipe(Flag.withDefault(false)),
   onlyIfUnbound: Flag.Boolean("if-unbound").pipe(Flag.withDefault(false)),
+  office: Flag.Boolean("office").pipe(
+    Flag.withDescription("Bind the thread as the agent's office, next to its main thread."),
+    Flag.withDefault(false),
+  ),
   json: Flag.Boolean("json").pipe(Flag.withDefault(false)),
 }).pipe(
   Command.withHandler((flags) =>
@@ -57,10 +61,8 @@ const bind = Command.make("bind", {
       Effect.gen(function* () {
         if (flags.unbind && Option.isSome(flags.thread)) {
           const snapshot = yield* tools.call("t3_agent_list", {}, AgentHomesSnapshot);
-          if (
-            snapshot.homes.find((home) => home.handle === flags.agent)?.binding?.threadId !==
-            flags.thread.value
-          )
+          const home = snapshot.homes.find((entry) => entry.handle === flags.agent);
+          if ((flags.office ? home?.office : home?.binding)?.threadId !== flags.thread.value)
             return yield* new McpToolFailedError({
               tool: "t3_agent_bind",
               detail: "Cannot unbind: the given thread is not the agent home’s current binding.",
@@ -84,6 +86,7 @@ const bind = Command.make("bind", {
               }),
             }),
             onlyIfUnbound: flags.onlyIfUnbound,
+            ...(flags.office ? { office: true } : {}),
             ...Option.match(flags.environment, {
               onNone: () => ({}),
               onSome: (threadEnvironmentId) => ({ threadEnvironmentId }),
@@ -96,7 +99,7 @@ const bind = Command.make("bind", {
         yield* flags.json
           ? printJson(result)
           : Console.log(
-              `${result.home.handle}: ${result.home.binding?.threadId ?? "unbound"} projects=${result.home.projects.join(",") || "-"} (${result.changed ? "updated" : "unchanged"})`,
+              `${result.home.handle}: ${result.home.binding?.threadId ?? "unbound"} office=${result.home.office?.threadId ?? "-"} projects=${result.home.projects.join(",") || "-"} (${result.changed ? "updated" : "unchanged"})`,
             );
       }),
     ).pipe(reportErrors),
