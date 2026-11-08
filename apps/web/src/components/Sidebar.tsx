@@ -140,7 +140,6 @@ import {
 import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
-  useDelegatedUnderParent,
   useProjects,
   useServerConfigs,
   useQuietThreadShells,
@@ -231,6 +230,7 @@ import { SidebarProjectScopePicker } from "./sidebar/SidebarProjectScopePicker";
 import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import { useListedDelegatedUnderParent } from "./agents/agentDelegated";
 import {
   SidebarSearchResultRow,
   SortableThreadRow,
@@ -271,7 +271,6 @@ function sameSidebarProviderEntries(
   return true;
 }
 
-// Resolve providers per environment because default instance ids collide across environments.
 const sidebarProviderEntriesAtom = Atom.make((get) => {
   const providersByEnvironment = get(environmentPresentations.providersByEnvironmentAtom);
   const derived = deriveProviderEntriesByEnvironment(
@@ -771,7 +770,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectByKey,
     projectDisplayNameByKey,
   } = useSidebarLookups();
-  const delegatedUnderParent = useDelegatedUnderParent();
+  const delegatedUnderParent = useListedDelegatedUnderParent();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const closeMobileSidebar = () => {

@@ -85,36 +85,61 @@ function bindingTime(home: EnvironmentAgentHome): number {
   return Number.isFinite(time) ? time : 0;
 }
 
+type EnvironmentIdentity = { readonly environmentId: EnvironmentId; readonly label: string };
+
+function liveAgentHomes(homes: ReadonlyArray<EnvironmentAgentHome>) {
+  const groups = new Map<string, EnvironmentAgentHome[]>();
+  for (const home of homes) {
+    if (home.role !== "orch") continue;
+    const group = groups.get(home.handle) ?? [];
+    group.push(home);
+    groups.set(home.handle, group);
+  }
+  return groups;
+}
+
+function resolveAgentTarget(
+  live: ReadonlyArray<EnvironmentAgentHome>,
+  environments: ReadonlyArray<EnvironmentIdentity>,
+) {
+  const ordered = live.toSorted((a, b) => a.environmentId.localeCompare(b.environmentId));
+  const winner = ordered
+    .filter((home) => home.binding !== null)
+    .toSorted((a, b) => bindingTime(b) - bindingTime(a))[0];
+  const binding = winner?.binding;
+  const targetEnvironmentId = binding
+    ? (environments.find((env) => env.environmentId === binding.environmentId)?.environmentId ??
+      environmentForHost(environments, binding.host) ??
+      (binding.environmentId === null && binding.host === null ? winner?.environmentId : null))
+    : null;
+  const target: ScopedThreadRef | null =
+    binding && targetEnvironmentId
+      ? { environmentId: targetEnvironmentId, threadId: binding.threadId }
+      : null;
+  const remoteHost = binding && !target ? (binding.host ?? "another host") : null;
+  return { ordered, winner, target, remoteHost };
+}
+
+export function agentMainThreadKeys(
+  homes: ReadonlyArray<EnvironmentAgentHome>,
+  environments: ReadonlyArray<EnvironmentIdentity>,
+): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const live of liveAgentHomes(homes).values()) {
+    const { target } = resolveAgentTarget(live, environments);
+    if (target) keys.add(`${target.environmentId}:${target.threadId}`);
+  }
+  return keys;
+}
+
 export function useRailsAgents(): ReadonlyArray<RailsAgent> {
   const projects = useProjects();
   const threads = useQuietThreadShells();
   const homes = useAgentHomes();
   const environments = useEnvironmentIdentities();
-  const groups = new Map<string, EnvironmentAgentHome[]>();
-  for (const home of homes) {
-    const group = groups.get(home.handle) ?? [];
-    group.push(home);
-    groups.set(home.handle, group);
-  }
   const agents: RailsAgent[] = [];
-  for (const [handle, group] of groups) {
-    const live = group.filter((home) => home.role === "orch");
-    if (live.length === 0) continue;
-    const ordered = live.toSorted((a, b) => a.environmentId.localeCompare(b.environmentId));
-    const winner = ordered
-      .filter((home) => home.binding !== null)
-      .toSorted((a, b) => bindingTime(b) - bindingTime(a))[0];
-    const binding = winner?.binding;
-    const targetEnvironmentId = binding
-      ? (environments.find((env) => env.environmentId === binding.environmentId)?.environmentId ??
-        environmentForHost(environments, binding.host) ??
-        (binding.environmentId === null && binding.host === null ? winner?.environmentId : null))
-      : null;
-    const target =
-      binding && targetEnvironmentId
-        ? { environmentId: targetEnvironmentId, threadId: binding.threadId }
-        : null;
-    const remoteHost = binding && !target ? (binding.host ?? "another host") : null;
+  for (const [handle, live] of liveAgentHomes(homes)) {
+    const { ordered, winner, target, remoteHost } = resolveAgentTarget(live, environments);
     const homeProjectRefs = ordered.flatMap((home) => {
       const project = projects.find(
         (entry) =>

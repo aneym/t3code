@@ -32,8 +32,28 @@ const parseLane = (name: string, raw: string): LaneRecord | null => {
   };
 };
 
+const LANE_FILES = ["lane.json", "t3-lane.json"] as const;
+
+const laneFile = async (lanesDir: string, name: string) => {
+  for (const file of LANE_FILES) {
+    const path = NodePath.join(lanesDir, name, file);
+    const stat = await NodeFSP.stat(path).catch(() => null);
+    if (stat?.isFile()) return { path, mtimeMs: stat.mtimeMs };
+  }
+  return null;
+};
+
+export const readLaneText = async (lanesDir: string, name: string) => {
+  const found = await laneFile(lanesDir, name);
+  if (found === null) throw new Error(`No lane record for ${name}`);
+  return NodeFSP.readFile(found.path, "utf8");
+};
+
 export const createLaneReader = (lanesDir: string) => {
-  const cache = new Map<string, { readonly mtimeMs: number; readonly record: LaneRecord | null }>();
+  const cache = new Map<
+    string,
+    { readonly path: string; readonly mtimeMs: number; readonly record: LaneRecord | null }
+  >();
   return async (): Promise<ReadonlyArray<LaneRecord>> => {
     const entries = await NodeFSP.readdir(lanesDir, { withFileTypes: true }).catch(() => []);
     const names = new Set(
@@ -42,18 +62,17 @@ export const createLaneReader = (lanesDir: string) => {
     for (const name of cache.keys()) if (!names.has(name)) cache.delete(name);
     const records = await Promise.all(
       [...names].map(async (name) => {
-        const file = NodePath.join(lanesDir, name, "lane.json");
-        const stat = await NodeFSP.stat(file).catch(() => null);
-        if (stat === null || !stat.isFile()) {
+        const found = await laneFile(lanesDir, name);
+        if (found === null) {
           cache.delete(name);
           return null;
         }
         const cached = cache.get(name);
-        if (cached?.mtimeMs === stat.mtimeMs) return cached.record;
-        const record = await NodeFSP.readFile(file, "utf8")
+        if (cached?.path === found.path && cached.mtimeMs === found.mtimeMs) return cached.record;
+        const record = await NodeFSP.readFile(found.path, "utf8")
           .then((raw) => ({ ok: true as const, value: parseLane(name, raw) }))
           .catch(() => ({ ok: false as const, value: null }));
-        if (record.ok) cache.set(name, { mtimeMs: stat.mtimeMs, record: record.value });
+        if (record.ok) cache.set(name, { ...found, record: record.value });
         else cache.delete(name);
         return record.value;
       }),

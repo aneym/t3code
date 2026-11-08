@@ -6,7 +6,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
-import { lanesUnder, type createLaneReader } from "./AgentLaneFiles.ts";
+import { lanesUnder, readLaneText, type createLaneReader } from "./AgentLaneFiles.ts";
 
 const agentFile = async (root: string, handle: string) => {
   if (!AGENT_HOME_HANDLE_PATTERN.test(handle)) throw new Error("Invalid agent handle");
@@ -96,7 +96,7 @@ export const isLaneThread = async (root: string, threadId: string) => {
     entries
       .filter((entry) => entry.isDirectory())
       .map((entry) =>
-        NodeFSP.readFile(NodePath.join(lanes, entry.name, "lane.json"), "utf8")
+        readLaneText(lanes, entry.name)
           .then(parseDocument)
           .then(
             (lane) => {

@@ -29,6 +29,7 @@ import {
   threadNotificationTag,
   unlockNotificationAudio,
 } from "../threadNotifications";
+import { delegatedOutsideAgentMains, readAgentMainThreadKeys } from "./agents/agentDelegated";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.logic";
 import {
   createThreadNotificationGate,
@@ -181,7 +182,11 @@ export function startThreadNotifications(
     const subagentRequests = registry.get(
       environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
     );
-    const delegatedUnderParent = registry.get(environmentThreadShells.delegatedUnderParentAtom);
+    const delegatedUnderParent = delegatedOutsideAgentMains(
+      registry.get(environmentThreadShells.delegatedUnderParentAtom),
+      threads.map((thread) => ({ ...thread, environmentId })),
+      readAgentMainThreadKeys(registry),
+    );
     const changed: Array<[NotificationState | undefined, NotificationState]> = [];
     for (const rawThread of threads) {
       if (

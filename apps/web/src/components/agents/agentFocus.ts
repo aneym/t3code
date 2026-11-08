@@ -19,6 +19,7 @@ import {
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { threadFamilies } from "../../state/threads";
+import { delegatedFromAgentMain } from "./agentDelegated";
 import { type RailsAgent, railsAgentThreadKey, useRailsAgents } from "./railsAgents";
 import { sidebarProjectPinKey } from "./sidebarPins";
 
@@ -88,6 +89,9 @@ export function useSidebarAgentThreads<T extends EnvironmentThreadShell>(
     ...ownProjectKeys,
     ...scopeGroups.flatMap((group) => group.memberProjectRefs.map(scopedProjectKey)),
   ]);
+  const focusedMain = focused?.target
+    ? new Set([`${focused.target.environmentId}:${focused.target.threadId}`])
+    : null;
   const laneKeys = new Set(
     (focused?.lanes ?? []).map((lane) => `${lane.environmentId}:${lane.threadId}`),
   );
@@ -96,6 +100,7 @@ export function useSidebarAgentThreads<T extends EnvironmentThreadShell>(
       (thread) =>
         projectKeys.has(`${thread.environmentId}:${thread.projectId}`) ||
         laneKeys.has(railsAgentThreadKey(thread)) ||
+        (focusedMain !== null && delegatedFromAgentMain(thread, focusedMain)) ||
         laneKeys.has(`${thread.environmentId}:${thread.lineage.rootThreadId}`),
     ),
     projectKeys,
