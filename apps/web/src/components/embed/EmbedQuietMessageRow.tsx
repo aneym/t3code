@@ -1,0 +1,57 @@
+import { messageSenderRef } from "@t3tools/contracts";
+import { ChevronDownIcon } from "lucide-react";
+import { use, useState } from "react";
+
+import type { EmbedQuietLine } from "../../embed/embedQuietMessages";
+import { cn } from "../../lib/utils";
+import { useQuietThreadShell } from "../../state/entities";
+import type { ChatMessage } from "../../types";
+import { findRevealRef } from "../chat/markdownFindContext";
+import { TimelineRowCtx } from "../chat/timelineRowContext";
+import { MessageAuthorHeading } from "../chat/TimelineRowParts";
+
+export function EmbedQuietMessageRow({
+  message,
+  line,
+}: {
+  readonly message: ChatMessage;
+  readonly line: EmbedQuietLine;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const [expanded, setExpanded] = useState(false);
+  const revealRef = findRevealRef(() => setExpanded(true));
+  const sender = useQuietThreadShell(
+    line.kind === "agent" ? messageSenderRef(message, ctx.activeThreadEnvironmentId) : null,
+  );
+  const label = line.kind === "agent" ? `From ${sender?.title.trim() || "an agent"}` : "Event";
+  return (
+    <div className="flex min-w-0 flex-col items-start gap-1" data-embed-quiet-line={line.kind}>
+      <MessageAuthorHeading>{label}</MessageAuthorHeading>
+      <button
+        type="button"
+        aria-expanded={expanded}
+        data-scroll-anchor-ignore
+        onClick={() => setExpanded((value) => !value)}
+        className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-left text-muted-foreground text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+      >
+        <span className="shrink-0">{label}</span>
+        {line.summary.length > 0 ? (
+          <span className="min-w-0 truncate text-muted-foreground/70">{line.summary}</span>
+        ) : null}
+        <ChevronDownIcon
+          className={cn("size-3 shrink-0 transition-transform", expanded && "rotate-180")}
+        />
+      </button>
+      {expanded || ctx.findActive ? (
+        <div
+          ref={revealRef}
+          hidden={!expanded}
+          data-thread-find-text="true"
+          className="max-h-96 w-full overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-3 text-muted-foreground text-xs"
+        >
+          {message.text}
+        </div>
+      ) : null}
+    </div>
+  );
+}
