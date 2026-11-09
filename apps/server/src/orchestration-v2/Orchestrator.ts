@@ -2,7 +2,11 @@ import { delegatedTaskTerminalStatus } from "./DelegatedTaskStatus.ts";
 import { delegatedRestartPending } from "./DelegatedRestartPending.ts";
 import { delegatedChildWorkspace } from "./DelegatedChildWorkspace.ts";
 import { resumeOnReopen } from "./RestartQueuedRuns.ts";
-import { restartAdmission, admittedDispatchMode } from "./RestartAdmission.ts";
+import {
+  admittedDispatchMode,
+  dispatchAdmission,
+  queueAdvanceAdmitted,
+} from "./RestartAdmission.ts";
 import { decideSecretRequestRecord } from "./SecretRequestRecord.ts";
 import { makeAutoSettlementValidation } from "./SettlementValidation.ts";
 import {
@@ -222,6 +226,7 @@ import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import {
   isAutomaticCompletionRun,
   queuedRunsInDeliveryOrder,
+  nextQueuedRun,
   nextRunOrdinal,
   wakeWorkStartedAt,
 } from "./QueuedRunOrder.ts";
@@ -610,12 +615,6 @@ function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]
     status === "cancelled" ||
     status === "interrupted"
   );
-}
-
-function nextQueuedRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
-): OrchestrationV2Run | undefined {
-  return queuedRunsInDeliveryOrder(projection).find((run) => run.queueHeld !== true);
 }
 
 function followsCurrentConversation(
@@ -1337,7 +1336,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly sendAll?: boolean;
       },
     ) {
-      if ((yield* restartAdmission(effectOutbox)) !== "open") return;
+      if (!(yield* queueAdvanceAdmitted(effectOutbox, readCommandProjection(threadId), options)))
+        return;
       if (options?.endedRunId !== undefined) {
         const view = yield* readCommandProjection(threadId);
         const latest = latestExecutedRun(view.runs);
@@ -5541,7 +5541,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         dispatchMode = { type: "start_immediately" };
       }
     }
-    const admission = yield* restartAdmission(effectOutbox);
+    const admission = yield* dispatchAdmission(effectOutbox, command);
     dispatchMode = admittedDispatchMode(dispatchMode, admission);
     // Stop leaves the run reading as running until its provider stops. A plain
     // send in that window queues behind the stopped queue instead of steering

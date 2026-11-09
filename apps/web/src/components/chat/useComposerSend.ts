@@ -18,6 +18,7 @@ import {
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
   AuthOrchestrationOperateScope,
+  CommandId,
   DEFAULT_MODEL,
   type EnvironmentId,
   type ModelSelection,
@@ -27,7 +28,10 @@ import {
   RuntimeMode,
 } from "@t3tools/contracts";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
-import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
+import {
+  isTransportConnectionErrorMessage,
+  wasBootstrapThreadDeleted,
+} from "@t3tools/client-runtime/errors";
 import {
   declinePendingApprovals,
   sendApprovalFeedback,
@@ -63,7 +67,8 @@ import { type ChatMessage } from "../../types";
 import { recordPromptSent } from "../GitHubStarPrompt";
 import { claimEmbedClearCommand } from "../../embed/embedClear";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { newMessageId, newThreadId } from "~/lib/utils";
+import { newMessageId, newThreadId, randomUUID } from "~/lib/utils";
+import { heldIdsFor, holdSend, releaseHeldSend } from "./heldSendStore";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -475,6 +480,16 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     if (activeEnvironmentUnavailable) {
+      if (
+        isServerThread &&
+        !directAnnotation &&
+        submissionIntent === "foreground" &&
+        !queuedRunEdit.isEditing &&
+        (promptAtSend.trim() !== "" || draftHasNonPromptContent(composerDraftTarget))
+      ) {
+        holdSend(routeThreadKey, promptAtSend);
+        return;
+      }
       const toastSlot = environmentUnavailableSendToastSlotRef.current;
       environmentUnavailableSendToastSlotRef.current =
         (toastSlot + 1) % ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE;
@@ -903,7 +918,9 @@ export function useComposerSend(input: ComposerSendInput) {
     const outgoingMessageContext = buildOutgoingMessageContext(
       composerAttachmentsSnapshot.map((attachment) => attachment.id),
     );
-    const messageIdForSend = newMessageId();
+    const heldIds = isServerThread ? heldIdsFor(routeThreadKey, messageTextForSend) : null;
+    const messageIdForSend = heldIds?.messageId ?? newMessageId();
+    const commandIdForSend = heldIds?.commandId ?? CommandId.make(randomUUID());
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
@@ -1365,6 +1382,7 @@ export function useComposerSend(input: ComposerSendInput) {
           interactionMode: sendInteractionMode,
           dispatchMode: turnDispatchMode,
           ...(bootstrap ? { bootstrap } : {}),
+          commandId: commandIdForSend,
           createdAt: messageCreatedAt,
         },
       });
@@ -1396,6 +1414,7 @@ export function useComposerSend(input: ComposerSendInput) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        if (isServerThread) releaseHeldSend(routeThreadKey);
         if (isLocalDraftThread)
           void bindAgentFirstOpen(
             threadIdForSend,
@@ -1476,6 +1495,20 @@ export function useComposerSend(input: ComposerSendInput) {
             cursor: collapseExpandedComposerCursor(messageTextForSend, messageTextForSend.length),
             prompt: messageTextForSend,
             detectTrigger: true,
+          });
+        }
+        const sendError = squashAtomCommandFailure(failure);
+        if (
+          isServerThread &&
+          submissionIntent === "foreground" &&
+          (isAtomCommandInterrupted(failure) ||
+            (sendError as { readonly _tag?: unknown } | null)?._tag ===
+              "ConnectionTransientError" ||
+            (sendError instanceof Error && isTransportConnectionErrorMessage(sendError.message)))
+        ) {
+          holdSend(routeThreadKey, messageTextForSend, {
+            messageId: messageIdForSend,
+            commandId: commandIdForSend,
           });
         }
       }

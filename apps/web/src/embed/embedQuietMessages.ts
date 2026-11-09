@@ -1,12 +1,13 @@
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 
+import { mcpEventHeadOf } from "../mcpEventMessage";
 import type { ChatMessage } from "../types";
 
 export type EmbedQuietLine =
   | { readonly kind: "agent"; readonly summary: string; readonly from?: string }
-  | { readonly kind: "event"; readonly summary: string };
+  | { readonly kind: "event"; readonly summary: string }
+  | { readonly kind: "note"; readonly summary: string };
 
-const MCP_EVENT_HEAD = /^MCP event `([^`]{1,80})` from ([^\s(]{1,120})/;
 const HANDOFF_HEAD = /^Handed over from ([^\n]{1,80}?)\. The person asked /;
 const HANDOFF_BODY = /\nWhat was handed over:\r?\n([\s\S]*)$/;
 
@@ -29,11 +30,12 @@ export function isEmbedLaunchBrief(message: ChatMessage, threadId: string): bool
 }
 
 type SentMessage = Parameters<typeof resolveUserMessagePresentation>[0] &
-  Pick<ChatMessage, "senderThreadId">;
+  Pick<ChatMessage, "senderThreadId"> & { readonly quietNote?: true | undefined };
 
 export function isEmbedPersonMessage(message: SentMessage): boolean {
   return (
     message.role === "user" &&
+    message.quietNote !== true &&
     message.createdBy === "agent" &&
     message.creationSource === "mcp" &&
     message.senderThreadId === undefined &&
@@ -44,11 +46,12 @@ export function isEmbedPersonMessage(message: SentMessage): boolean {
 
 export function embedQuietLine(message: ChatMessage): EmbedQuietLine | null {
   if (message.role !== "user") return null;
+  if (message.quietNote === true) return { kind: "note", summary: firstLine(message.text) };
   if (message.createdBy === "system") {
-    const event = MCP_EVENT_HEAD.exec(message.text);
+    const event = mcpEventHeadOf(message.text);
     return {
       kind: "event",
-      summary: event ? `${event[1]} from ${event[2]}` : firstLine(message.text),
+      summary: event ? `${event.name} from ${event.from}` : firstLine(message.text),
     };
   }
   const attribution = resolveUserMessagePresentation(message).attribution;
