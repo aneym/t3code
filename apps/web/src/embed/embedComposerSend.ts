@@ -1,6 +1,12 @@
 import { CommandId, type MessageId } from "@t3tools/contracts";
 
-import { holdSend, holdUnansweredSend, releaseHeldSend } from "../components/chat/heldSendStore";
+import {
+  failHeldSend,
+  heldIdsFor,
+  holdSend,
+  holdUnansweredSend,
+  releaseHeldSend,
+} from "../components/chat/heldSendStore";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import {
   type ComposerThreadTarget,
@@ -73,8 +79,11 @@ export function sendComposerThroughHost(
       holdUnansweredSend(input.routeThreadKey, input.text, input.ids);
       return;
     }
-    toastManager.add(
-      stackedThreadToast({
+    if (result.outcome === "refused" && heldIdsFor(input.routeThreadKey, input.text) !== null) {
+      failHeldSend(input.routeThreadKey);
+    }
+    toastManager.add({
+      ...stackedThreadToast({
         type: "warning",
         title: "Not sent",
         description:
@@ -82,7 +91,8 @@ export function sendComposerThroughHost(
             ? result.message
             : `No answer from the app, so this wasn't sent: ${input.text.trim().slice(0, 200)}`,
       }),
-    );
+      id: `embed-host-not-sent:${input.ids.messageId}`,
+    });
   });
 }
 
