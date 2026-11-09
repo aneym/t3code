@@ -13,7 +13,7 @@ from . import install_offbox, install_settings
 from .install_restore_copy import RecoveryRequired
 from .install_db_rollback import recovery_required
 from .install_backup import advisory, capture
-from .install_compact import compact, served
+from .install_compact import UNSAFE, compact, served
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_process import serving_process
 from .install_service import service
@@ -292,6 +292,8 @@ def install(run):
                 run.step("forward-repair-required", error_type=type(rollback).__name__, database_preserved=True)
         elif backup:
             try:
+                if getattr(error, "reason", None) in UNSAFE:
+                    raise error
                 if not stopped:
                     try:
                         stop()

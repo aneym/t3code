@@ -10,6 +10,7 @@ from contextlib import closing
 from pathlib import Path
 
 from .install_backup_retention import inventory
+from .install_restore_copy import RecoveryRequired, checksum, identity, restore
 from .install_storage import EXTERNAL, backup_roots
 from .snapshot_space import database_bytes
 
@@ -20,6 +21,7 @@ TIMEOUT_S = 2400
 TAIL_BYTES = 4000
 TEMP_ROOT = EXTERNAL / "tmp/t3-compact"
 LOG_NAME = "compact-db-doctor.log"
+UNSAFE = ("compaction-restore-failed", "compaction-restored-check-failed")
 
 
 def header(db):
@@ -99,9 +101,46 @@ def skip(record, reason):
     return record
 
 
-def run_step(run, backup, *, temp_root=TEMP_ROOT, timeout=TIMEOUT_S):
+def unsafe(record):
+    return bool(record.get("error")) or record["doctor"]["outcome"] in ("timed-out", "failed") or record["quickCheck"]["outcome"] != "ok"
+
+
+def source(backup):
+    if backup.get("local"):
+        return backup["local"]
+    path = Path(backup["path"])
+    record = {"path": str(path), "bytes": path.stat().st_size, "sha256": checksum(path), "source": "rollback-backup", "identity": None}
+    try:
+        record["identity"] = identity(path, copy=True)
+    except sqlite3.Error as error:
+        record["identityError"] = str(error)
+    return record
+
+
+def recover(run, backup, record, db):
+    started = time.monotonic()
+    copy = None
+    try:
+        copy = source(backup)
+        record["restore"] = restore(copy, db, run.step)
+        record["restoredQuickCheck"] = quick_check(db)
+    except Exception as error:
+        record["restore"] = {**record.get("restore", {}), "error": f"{type(error).__name__}: {error}"}
+    record["restoreSeconds"] = round(time.monotonic() - started, 3)
+    if (record.get("restoredQuickCheck") or {}).get("outcome") == "ok":
+        record["outcome"] = "restored-from-backup"
+        return
+    reason = UNSAFE[1] if "restoredQuickCheck" in record else UNSAFE[0]
+    record.update(outcome="recovery-required", reason=reason)
+    if copy and not backup.get("local"):
+        backup["local"] = copy
+    path = None if copy else backup.get("path") or backup.get("remote") or str(db)
+    raise RecoveryRequired(f"database failed integrity after compaction and {reason.removeprefix('compaction-').replace('-', ' ')}; service held stopped", reason, backup_path=path)
+
+
+def run_step(run, backup, record, *, temp_root=TEMP_ROOT, timeout=TIMEOUT_S):
     db = run.db.resolve()
-    record = {"requested": True, "database": str(db)}
+    record["database"] = str(db)
     if sys.platform != "darwin":
         return skip(record, "compaction is supported on macOS installs only")
     if not (backup.get("path") or backup.get("local") or backup.get("remote")):
@@ -119,13 +158,18 @@ def run_step(run, backup, *, temp_root=TEMP_ROOT, timeout=TIMEOUT_S):
     scratch = Path(tempfile.mkdtemp(prefix="doctor-", dir=temp_root))
     record["tempDirectory"] = str(scratch)
     try:
-        record["doctor"] = doctor(run, scratch, timeout)
-    finally:
-        shutil.rmtree(scratch, ignore_errors=True)
-        record["tempCleaned"] = not scratch.exists()
-    record["after"] = header(db)
-    record["quickCheck"] = quick_check(db)
-    record["outcome"] = record["doctor"]["outcome"]
+        try:
+            record["doctor"] = doctor(run, scratch, timeout)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+            record["tempCleaned"] = not scratch.exists()
+        record["outcome"] = record["doctor"]["outcome"]
+        record["after"] = header(db)
+        record["quickCheck"] = quick_check(db)
+    except Exception as error:
+        record["error"] = f"{type(error).__name__}: {error}"
+    if unsafe(record):
+        recover(run, backup, record, db)
     return record
 
 
@@ -133,15 +177,22 @@ def compact(run, backup):
     if not getattr(run.args, "compact_db", False):
         return
     started = time.monotonic()
+    record = {"requested": True}
+    held = None
     try:
-        record = run_step(run, backup)
+        run_step(run, backup, record)
+    except RecoveryRequired as error:
+        held = error
     except Exception as error:
-        record = {"requested": True, "outcome": "error", "error": f"{type(error).__name__}: {error}"}
+        record.update(outcome="error", error=f"{type(error).__name__}: {error}")
     record["stepSeconds"] = round(time.monotonic() - started, 3)
     if hasattr(run, "stop_deadline"):
         run.stop_deadline += record["stepSeconds"]
     run.report["databaseCompaction"] = record
-    run.step("database-compaction", **{key: record.get(key) for key in ("outcome", "reason", "stepSeconds")}, quickCheck=(record.get("quickCheck") or {}).get("outcome"))
+    run.step("database-compaction", **{key: record.get(key) for key in ("outcome", "reason", "stepSeconds", "restoreSeconds")},
+             quickCheck=(record.get("quickCheck") or {}).get("outcome"), restoredQuickCheck=(record.get("restoredQuickCheck") or {}).get("outcome"))
+    if held:
+        raise held
 
 
 def served(run):
