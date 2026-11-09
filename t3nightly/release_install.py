@@ -66,6 +66,7 @@ def fast_install(config, log):
         chat_project=config.chat_project(), override_reason=config.override_reason,
         smoke_verdict=config.run / f"e2e-{config.host}" / "smoke-verdict.json",
         rollback_proof=config.receipt("rollback-proof"), home=config.home, compact_db=config.compact_db or None,
+        handoff_stop=True if config.compact_db else None,
         **{artifacts[index].removeprefix("--").replace("-", "_"): artifacts[index + 1] for index in range(0, len(artifacts), 2)},
     )
     plan.state.mkdir(parents=True, exist_ok=True)
