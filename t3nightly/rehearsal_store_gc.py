@@ -1,6 +1,5 @@
 import fcntl
 import json
-import os
 import re
 import shutil
 import time
@@ -48,10 +47,10 @@ def home_references(run, root):
     return references
 
 
-def retain_references(root):
+def retain_references(root, skip=()):
     references = set()
     for run in root.parent.iterdir():
-        if not run.name.startswith("rehearsal-") or run.is_symlink() or not run.is_dir():
+        if not run.name.startswith("rehearsal-") or run.is_symlink() or not run.is_dir() or run in skip:
             continue
         reservation = run / ".rehearsal-active.lock"
         if reservation.exists():
@@ -86,13 +85,13 @@ def remove(root, path):
     return size
 
 
-def prune():
+def prune(*, dry_run=False, skip=(), keep=None):
     root = store_root()
-    report = {"deleted": [], "kib": 0, "recent": [], "publicationGraceSeconds": PUBLICATION_GRACE_S}
+    report = {"dryRun": dry_run, "deleted": [], "bytes": 0, "recent": [], "publicationGraceSeconds": PUBLICATION_GRACE_S}
     with (root / ".store.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            references = retain_references(root)
+            references = retain_references(root, set(skip))
         except (OSError, ValueError) as error:
             return {**report, "held": str(error)}
         candidates = [path for path in root.iterdir() if DIGEST.fullmatch(path.name) and path.is_dir()]
@@ -102,43 +101,13 @@ def prune():
         for path in candidates:
             if path in references or not removable(root, path):
                 continue
+            if keep and (receipt := keep(path)) is not None:
+                report.setdefault("cited", {})[str(path)] = str(receipt)
+                continue
             if recent(root, path):
                 report["recent"].append(str(path))
                 continue
-            report["kib"] += remove(root, path) // 1024
-            report["deleted"].append(str(path))
-    return report
-
-
-def release(candidates):
-    root = store_root()
-    report = {"deleted": [], "bytes": 0, "referenced": [], "pending": []}
-    with (root / ".store.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        pending = root / ".release-pending.json"
-        if pending.is_symlink():
-            raise ValueError("rehearsal store release list must not be a symlink")
-        wanted = sorted({*json.loads(pending.read_text()), *map(str, candidates)} if pending.exists() else set(map(str, candidates)))
-        try:
-            references = retain_references(root)
-        except (OSError, ValueError) as error:
-            report["held"], waiting = str(error), wanted
-        else:
-            waiting = []
-            for raw in wanted:
-                path = Path(raw)
-                if not path.exists() or not removable(root, path):
-                    continue
-                if path in references:
-                    report["referenced"].append(raw)
-                elif recent(root, path):
-                    waiting.append(raw)
-                else:
-                    size = remove(root, path)
-                    report["deleted"].append({"path": raw, "bytes": size})
-                    report["bytes"] += size
-        staged = pending.with_suffix(".next")
-        staged.write_text(json.dumps(waiting) + "\n")
-        os.replace(staged, pending)
-        report["pending"] = waiting
+            size = kib(path) * 1024 if dry_run else remove(root, path)
+            report["deleted"].append({"path": str(path), "bytes": size})
+            report["bytes"] += size
     return report
