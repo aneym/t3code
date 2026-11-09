@@ -13,6 +13,7 @@ export interface HeldSend {
   readonly text: string;
   readonly since: number;
   readonly status: "waiting" | "failed";
+  readonly hostUnanswered?: true;
 }
 
 interface HeldSendState {
@@ -51,9 +52,19 @@ const sameText = (held: HeldSend | null, text: string): held is HeldSend =>
 export function heldIdsFor(
   threadKey: string,
   text: string,
-): { readonly messageId: MessageId; readonly commandId: CommandId } | null {
+): {
+  readonly messageId: MessageId;
+  readonly commandId: CommandId;
+  readonly hostUnanswered: boolean;
+} | null {
   const held = readHeldSend(threadKey);
-  return sameText(held, text) ? { messageId: held.messageId, commandId: held.commandId } : null;
+  return sameText(held, text)
+    ? {
+        messageId: held.messageId,
+        commandId: held.commandId,
+        hostUnanswered: held.hostUnanswered === true,
+      }
+    : null;
 }
 
 export function holdSend(
@@ -69,7 +80,16 @@ export function holdSend(
     text,
     since: same && held.status === "waiting" ? held.since : Date.now(),
     status: "waiting",
+    ...(same && held.hostUnanswered ? { hostUnanswered: true as const } : {}),
   });
+}
+
+export function holdUnansweredSend(
+  threadKey: string,
+  text: string,
+  ids: { readonly messageId: MessageId; readonly commandId: CommandId },
+): void {
+  put(threadKey, { ...ids, text, since: Date.now(), status: "failed", hostUnanswered: true });
 }
 
 export function failHeldSend(threadKey: string): void {

@@ -2982,22 +2982,36 @@ export default function ChatView(props: ChatViewProps) {
   const heldSendDelivered =
     heldSend !== null &&
     serverProjection?.messages.some((message) => message.id === heldSend.messageId) === true;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the held marker once the server has the held message and the composer moved on
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- once the server has the held message, its text leaves the composer and the held marker is dropped, so it can't be sent twice
   useEffect(() => {
-    if (heldSendDelivered && !composerHoldsHeldSend) releaseHeldSend(routeThreadKey);
-  }, [composerHoldsHeldSend, heldSendDelivered, routeThreadKey]);
+    if (!heldSendDelivered) return;
+    if (composerHoldsHeldSend) {
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
+    }
+    releaseHeldSend(routeThreadKey);
+  }, [
+    composerDraftTarget,
+    composerHoldsHeldSend,
+    composerRef,
+    heldSendDelivered,
+    routeThreadKey,
+    setComposerDraftPrompt,
+  ]);
   const heldSendReady =
     heldSendShown &&
-    (heldSend.status === "waiting" || (heldSendDelivered && composerHoldsHeldSend)) &&
+    heldSend.status === "waiting" &&
+    !heldSendDelivered &&
     !activeEnvironmentUnavailable &&
     !threadDetailLoading &&
     !isSendBusy;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends a held message once its environment is connected again
   useEffect(() => {
     if (!heldSendReady) return;
-    const timer = setTimeout(() => void onComposerSendStable(), heldSendDelivered ? 0 : 1_500);
+    const timer = setTimeout(() => void onComposerSendStable(), 1_500);
     return () => clearTimeout(timer);
-  }, [heldSendDelivered, heldSendReady, onComposerSendStable]);
+  }, [heldSendReady, onComposerSendStable]);
   const retryHeldSendNow = useStableCallback(() => {
     retryHeldSend(routeThreadKey);
     if (!activeEnvironmentUnavailable) void onComposerSendStable();
