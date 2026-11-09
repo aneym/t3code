@@ -2,6 +2,7 @@ import { sendAllQueuedMembers } from "@t3tools/shared/queuedMessages";
 import {
   type ChatAttachment,
   isCompactionCommandMessage,
+  mcpEventOfMessage,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
@@ -127,7 +128,26 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
   );
 }
 
-export function getUserQueuedThreadRuns(
+export function countQueuedThreadRuns(
+  projection: Pick<Projection, "runs" | "messages">,
+): { readonly messages: number; readonly label: string } | null {
+  const queued = queuedRunsExceptCompletions(projection);
+  if (queued.length === 0) return null;
+  const mcpEventMessageIds = new Set(
+    projection.messages
+      .filter((message) => mcpEventOfMessage(message) !== null)
+      .map((message) => message.id),
+  );
+  const messages = queued.filter((run) => !mcpEventMessageIds.has(run.userMessageId)).length;
+  const events = queued.length - messages;
+  return {
+    messages,
+    label:
+      messages > 0 ? `${messages} queued` : `${events} ${events === 1 ? "event" : "events"} queued`,
+  };
+}
+
+function queuedRunsExceptCompletions(
   projection: Pick<Projection, "runs" | "messages">,
 ): ReadonlyArray<Run> {
   const automaticCompletionMessageIds = new Set(
@@ -169,7 +189,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
     );
   const queuedRuns = copySorted(
-    getUserQueuedThreadRuns(projection),
+    queuedRunsExceptCompletions(projection),
     (left, right) =>
       (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
       left.ordinal - right.ordinal,

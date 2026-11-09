@@ -1,6 +1,7 @@
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { mcpEventOfMessage } from "@t3tools/contracts";
 
-import { mcpEventHeadOf } from "../mcpEventMessage";
+import { mcpEventLabel } from "../mcpEventMessage";
 import type { ChatMessage } from "../types";
 
 export type EmbedQuietLine =
@@ -48,11 +49,8 @@ export function embedQuietLine(message: ChatMessage): EmbedQuietLine | null {
   if (message.role !== "user") return null;
   if (message.quietNote === true) return { kind: "note", summary: firstLine(message.text) };
   if (message.createdBy === "system") {
-    const event = mcpEventHeadOf(message.text);
-    return {
-      kind: "event",
-      summary: event ? `${event.name} from ${event.from}` : firstLine(message.text),
-    };
+    const event = mcpEventOfMessage(message);
+    return { kind: "event", summary: event ? mcpEventLabel(event) : firstLine(message.text) };
   }
   const attribution = resolveUserMessagePresentation(message).attribution;
   if (attribution === "t3code") return { kind: "event", summary: firstLine(message.text) };

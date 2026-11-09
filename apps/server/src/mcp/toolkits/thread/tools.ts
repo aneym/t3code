@@ -80,6 +80,9 @@ const queueEntry = Schema.Struct({
   queuedRunId: RunId,
   text: Schema.String,
   truncated: Schema.Boolean,
+  mcpEvent: Schema.optional(
+    Schema.Struct({ name: Schema.optional(Schema.String), server: Schema.optional(Schema.String) }),
+  ),
   hold: Schema.optional(
     Schema.Struct({
       reason: Schema.NullOr(QueueHoldReason),

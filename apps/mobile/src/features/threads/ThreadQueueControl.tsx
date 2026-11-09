@@ -9,7 +9,13 @@ import {
   makeQueuedRunsAtom,
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
-import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  mcpEventOfMessage,
+  type ChatAttachment,
+  type EnvironmentId,
+  type RunId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -47,7 +53,7 @@ import {
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 const REMOVE_ACTION_WIDTH = 76;
 const THUMBNAIL_LIMIT = 3;
-const EMPTY_QUEUED_COUNT_ATOM = Atom.make(0).pipe(
+const EMPTY_QUEUED_COUNT_ATOM = Atom.make<{ readonly label: string } | null>(null).pipe(
   Atom.withLabel("mobile-thread-queue-count:empty"),
 );
 
@@ -102,10 +108,15 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const act = async (runId: RunId, action: QueueAction) => {
     if (busyRef.current) return;
     const index = queuedRuns.findIndex(({ run }) => run.id === runId);
-    if (index < 0 || queuedRuns[index]?.isBackgroundResult) return;
+    const entry = queuedRuns[index];
+    if (
+      entry === undefined ||
+      entry.isBackgroundResult ||
+      mcpEventOfMessage(entry.message) !== null
+    )
+      return;
     if (action === "edit") {
       if (editBlockedReason !== null) return;
-      const entry = queuedRuns[index]!;
       void Haptics.selectionAsync();
       beginQueuedRunEdit(
         threadKey,
@@ -214,7 +225,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           editBlocked: editBlockedReason !== null,
           isEditing: editing?.runId === run.id,
           isGuestMessage: context?.guest !== undefined,
-          isBackgroundResult,
+          isBackgroundResult: isBackgroundResult || mcpEventOfMessage(message) !== null,
           text,
         });
         const title =

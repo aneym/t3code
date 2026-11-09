@@ -1,4 +1,5 @@
 import {
+  mcpEventOfMessage,
   parseGoalCommand,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2Run,
@@ -64,6 +65,7 @@ export function sendAllQueuedMembers(projection: QueueProjection) {
     if (
       message === undefined ||
       message.delegatedCompletion !== undefined ||
+      mcpEventOfMessage(message) !== null ||
       (message.creationSource === "server" && message.id.startsWith("async-answer:"))
     )
       continue;

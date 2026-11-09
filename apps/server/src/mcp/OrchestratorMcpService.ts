@@ -6,7 +6,6 @@ import {
   secretRequestTurnItemId,
   CommandId,
   type RunId,
-  isProviderAvailable,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -65,6 +64,11 @@ import {
 } from "@t3tools/contracts";
 import { withLegacyUltracodeEffort, getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { invalidOptionSelections, knownOptions } from "./optionSelections.ts";
+import { providerConstraints } from "./providerConstraints.ts";
+import {
+  delegatedChildDefaultModel,
+  type DelegatedChildModelSetting,
+} from "./delegatedChildModel.ts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { plainTitleLine } from "@t3tools/shared/threadTitleText";
@@ -289,33 +293,6 @@ function capabilityModelOption(descriptor: ProviderOptionDescriptor): Orchestrat
       descriptor.type === "boolean" ? [false, true] : descriptor.options.map((choice) => choice.id),
     ...(defaultValue === undefined ? {} : { default: defaultValue }),
   };
-}
-
-function providerConstraints(
-  provider: ServerProvider | undefined,
-  supportsOrchestrationV2: boolean,
-): ReadonlyArray<string> {
-  const constraints: Array<string> = [];
-  if (!supportsOrchestrationV2) {
-    constraints.push("No V2 provider adapter is registered.");
-  }
-  if (provider === undefined) return constraints;
-  if (!isProviderAvailable(provider)) {
-    constraints.push(provider.unavailableReason ?? "Provider driver is unavailable.");
-  }
-  if (!provider.enabled) {
-    constraints.push("Provider instance is disabled.");
-    // Disabled snapshots contain placeholders for installation, health, and auth.
-    return constraints;
-  }
-  if (!provider.installed) constraints.push("Provider executable is not installed.");
-  if (provider.status === "error" || provider.status === "disabled") {
-    constraints.push(provider.message ?? `Provider status is ${provider.status}.`);
-  }
-  if (provider.auth.status === "unauthenticated") {
-    constraints.push("Provider is not authenticated.");
-  }
-  return constraints;
 }
 
 function taskStatusForRun(
@@ -1176,6 +1153,7 @@ const make = Effect.gen(function* () {
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
+    readonly childModel?: DelegatedChildModelSetting;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
@@ -1255,9 +1233,8 @@ const make = Effect.gen(function* () {
     const requestedModel = input.target?.model;
     const model =
       requestedModel ??
-      (instanceId === inheritedSelection.instanceId
-        ? inheritedSelection.model
-        : provider.models[0]?.slug);
+      delegatedChildDefaultModel(input.childModel ?? null, instanceId, inheritedSelection) ??
+      provider.models[0]?.slug;
     if (model === undefined) {
       return yield* failure(
         "model_unavailable",
@@ -2164,6 +2141,9 @@ const make = Effect.gen(function* () {
         target: input.target,
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
+        childModel: (yield* serverSettings.getSettings.pipe(
+          Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+        )).delegatedChildModel,
       });
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,

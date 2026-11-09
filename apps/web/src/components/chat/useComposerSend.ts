@@ -68,7 +68,8 @@ import { recordPromptSent } from "../GitHubStarPrompt";
 import { claimEmbedClearCommand } from "../../embed/embedClear";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId, randomUUID } from "~/lib/utils";
-import { heldIdsFor, holdSend, releaseHeldSend } from "./heldSendStore";
+import { heldIdsFor, holdSend, holdUnansweredSend, releaseHeldSend } from "./heldSendStore";
+import { sendThroughEmbedHost } from "../../embed/embedHostSend";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -903,6 +904,79 @@ export function useComposerSend(input: ComposerSendInput) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }
+    const plainText =
+      isServerThread &&
+      !directAnnotation &&
+      submissionIntent !== "background" &&
+      multipleModelSelections === null &&
+      composerAttachmentsSnapshot.length === 0 &&
+      composerFilesSnapshot.length === 0 &&
+      composerTerminalContextsSnapshot.length === 0 &&
+      composerPreviewAnnotationsSnapshot.length === 0 &&
+      composerReviewCommentsSnapshot.length === 0 &&
+      composerThreadContextsSnapshot.length === 0 &&
+      composerEnvironmentContextsSnapshot.length === 0 &&
+      messageTextForSend.trim() !== "";
+    const heldIds = isServerThread ? heldIdsFor(routeThreadKey, messageTextForSend) : null;
+    const messageIdForSend = heldIds?.messageId ?? newMessageId();
+    const commandIdForSend = heldIds?.commandId ?? CommandId.make(randomUUID());
+    const landedThroughHost = () => {
+      const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (draft?.prompt.trim() === messageTextForSend.trim()) {
+        clearComposerDraftContent(composerDraftTarget);
+        if (promptRef.current.trim() === messageTextForSend.trim()) promptRef.current = "";
+      }
+      releaseHeldSend(routeThreadKey);
+    };
+    const hostSend =
+      plainText && heldIds?.hostUnanswered !== true
+        ? sendThroughEmbedHost(
+            {
+              thread: threadIdForSend,
+              requestId: randomUUID(),
+              commandId: commandIdForSend,
+              messageId: messageIdForSend,
+              text: messageTextForSend.trim(),
+              when: turnDispatchMode === "steer" ? "steer" : "queue",
+            },
+            (late) => {
+              if (late.outcome !== "refused") landedThroughHost();
+            },
+          )
+        : null;
+    if (hostSend !== null) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      const result = await hostSend;
+      if (result.outcome === "sent" || result.outcome === "held") {
+        releaseHeldSend(routeThreadKey);
+        return;
+      }
+      const restored = promptRef.current.trim() === "";
+      if (restored) {
+        promptRef.current = messageTextForSend;
+        setComposerDraftPrompt(composerDraftTarget, messageTextForSend);
+      }
+      if (result.outcome === "unanswered" && restored) {
+        holdUnansweredSend(routeThreadKey, messageTextForSend, {
+          messageId: messageIdForSend,
+          commandId: commandIdForSend,
+        });
+        return;
+      }
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Not sent",
+          description:
+            result.outcome === "refused"
+              ? result.message
+              : `No answer from the app, so this wasn't sent: ${messageTextForSend.trim().slice(0, 200)}`,
+        }),
+      );
+      return;
+    }
     const buildOutgoingMessageContext = (attachmentIds: ReadonlyArray<string>) =>
       buildMessageContext({
         terminalContexts: composerTerminalContextsSnapshot,
@@ -918,9 +992,6 @@ export function useComposerSend(input: ComposerSendInput) {
     const outgoingMessageContext = buildOutgoingMessageContext(
       composerAttachmentsSnapshot.map((attachment) => attachment.id),
     );
-    const heldIds = isServerThread ? heldIdsFor(routeThreadKey, messageTextForSend) : null;
-    const messageIdForSend = heldIds?.messageId ?? newMessageId();
-    const commandIdForSend = heldIds?.commandId ?? CommandId.make(randomUUID());
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
