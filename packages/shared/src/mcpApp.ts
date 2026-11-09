@@ -6,7 +6,7 @@ export const MCP_APP_EXTENSION_ID = "io.modelcontextprotocol/ui";
 export const MCP_APP_RESOURCE_SCHEME = "ui://";
 export const MCP_APP_OUTPUT_KEY = "t3McpApp";
 
-const MCP_APP_MIN_HEIGHT = 80;
+const MCP_APP_MIN_HEIGHT = 16;
 export const MCP_APP_DEFAULT_HEIGHT = 320;
 export const MCP_APP_MAX_HEIGHT = 2000;
 export const MCP_APP_MAX_HTML_BYTES = 5 * 1024 * 1024;
