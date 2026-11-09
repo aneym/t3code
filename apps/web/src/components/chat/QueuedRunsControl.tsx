@@ -17,6 +17,7 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { QueuedEventRow } from "./QueuedEventRow";
 import { QueuedMessage } from "./QueuedMessage";
 import { serverEnvironment } from "../../state/server";
 import { useAtomValue } from "@effect/atom-react";
@@ -29,6 +30,7 @@ import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
+import { queuedMcpEventOf } from "../../mcpEventMessage";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
@@ -122,6 +124,8 @@ export function QueuedRunsControl({
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
   const items = queuedRunRows(queued, optimisticQueued, queuedImageUrlById);
+  const ownQueued = queued.filter((run) => queuedMcpEventOf(run.message) === null);
+  const offerSendAll = canSendAll && ownQueued.length >= 2;
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
     if (
@@ -148,7 +152,7 @@ export function QueuedRunsControl({
   };
 
   const sendAllMessages = async () => {
-    if (!queueSendAll || !canSendAll || steerInFlightRef.current || busyRunId !== null) return;
+    if (!queueSendAll || !offerSendAll || steerInFlightRef.current || busyRunId !== null) return;
     steerInFlightRef.current = true;
     setBusyRunId(queued[0]!.run.id);
     await sendAll({
@@ -162,19 +166,19 @@ export function QueuedRunsControl({
 
   useImperativeHandle(ref, () => ({
     sendAll(repeat) {
-      if (!queueSendAll || !canSendAll) return false;
+      if (!queueSendAll || !offerSendAll) return false;
       if (!repeat) void sendAllMessages();
       return true;
     },
     steerNext(repeat) {
-      const next = queued[0];
+      const next = ownQueued[0];
       if (!next || !canSend || next.isBackgroundResult) return false;
       if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
       return true;
     },
     // Leave the key to caret navigation while editing.
     editLatest(repeat) {
-      const latest = queued.at(-1);
+      const latest = ownQueued.at(-1);
       if (
         !latest ||
         latest.isBackgroundResult ||
@@ -222,7 +226,7 @@ export function QueuedRunsControl({
       <span className="sr-only" aria-live="polite">
         {items.length} queued
       </span>
-      {queueSendAll && canSendAll && workflow ? (
+      {queueSendAll && offerSendAll && workflow ? (
         <div className="flex justify-end">
           <Tooltip>
             <TooltipTrigger
@@ -266,6 +270,20 @@ export function QueuedRunsControl({
                 ),
               ).trim();
           const isEditing = item.runId !== null && item.runId === props.editingRunId;
+          const event = queuedMcpEventOf(item.message);
+          if (event !== null) {
+            return (
+              <li
+                key={item.key}
+                aria-label={`Queued event ${position + 1} of ${items.length}, delivered when this turn ends`}
+                aria-posinset={position + 1}
+                aria-setsize={items.length}
+                className="flex w-full flex-col items-start"
+              >
+                <QueuedEventRow event={event} text={item.text} />
+              </li>
+            );
+          }
           return (
             <li
               key={item.key}
