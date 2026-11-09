@@ -1,5 +1,4 @@
 import * as DocumentText from "../provider/DocumentText.ts";
-import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -423,7 +422,7 @@ it.effect("an agent here works on a linked environment's threads within its own 
         `delegated-tasks.stop ${boxThread}`,
       ]);
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ),
 );
 
 it.effect("keeps a forwarded wait short and its retries scoped to the caller", () =>
@@ -475,7 +474,7 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
       expect(other).not.toBe(first);
       expect(first).not.toContain("same-key");
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ),
 );
 
 it.effect("launches in a linked environment with the caller's modes, retry-safe", () =>
@@ -528,7 +527,7 @@ it.effect("launches in a linked environment with the caller's modes, retry-safe"
       expect(yield* Ref.get(b.bearers)).toEqual([]);
       expect((yield* Ref.get(seen)).launches).toHaveLength(2);
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ),
 );
 
 it.effect("brings a repository to a linked environment, only through full access", () =>
@@ -578,7 +577,7 @@ it.effect("brings a repository to a linked environment, only through full access
       expect((yield* Ref.get(seen)).clones).toHaveLength(1);
       expect((yield* Ref.get(seen)).projects).toHaveLength(1);
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ),
 );
 
 it.effect("runs any tool that takes a linked environment there", () =>
@@ -613,7 +612,7 @@ it.effect("runs any tool that takes a linked environment there", () =>
         runtimeMode: "full-access",
       });
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ),
 );
 
 it.effect("refuses what a linked environment cannot take before anything leaves", () =>
@@ -685,5 +684,5 @@ it.effect("refuses what a linked environment cannot take before anything leaves"
       }
       expect(yield* Ref.get(b.bearers)).toEqual([]);
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ),
 );

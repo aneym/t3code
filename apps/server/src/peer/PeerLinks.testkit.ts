@@ -1,4 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - NodeHttpServer builds from a Node server factory.
+import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeHttp from "node:http";
 import {
   EnvironmentHttpApi,
   EnvironmentId,
@@ -51,6 +54,11 @@ export const descriptorOf = (
     linkFence: true,
     ...capabilities,
   },
+});
+
+export const layerLoopbackServer = NodeHttpServer.layer(NodeHttp.createServer, {
+  port: 0,
+  host: "127.0.0.1",
 });
 
 /**
@@ -118,13 +126,15 @@ export const servePeer = <E, R>(
       Layer.provide(layerEnvironment),
       Layer.provide(Layer.succeedContext(authContext)),
     );
+    const server = yield* Layer.build(Layer.fresh(layerLoopbackServer));
     // Fresh, so the peer never shares a toolkit or MCP server with the
     // environment that links to it in the same test.
     yield* HttpRouter.serve(layerRoutes, { disableListenLog: true, disableLogger: true }).pipe(
+      Layer.provide(Layer.succeedContext(server)),
       Layer.fresh,
       Layer.build,
     );
-    const address = (yield* HttpServer.HttpServer).address;
+    const address = Context.get(server, HttpServer.HttpServer).address;
     if (address._tag === "UnixPathAddress") return yield* Effect.die("expected a TCP address");
     const url = `http://127.0.0.1:${address.port}`;
     const auth = Context.get(authContext, EnvironmentAuth.EnvironmentAuth);

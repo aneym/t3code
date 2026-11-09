@@ -1,4 +1,3 @@
-import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -60,6 +59,7 @@ import * as PeerLinks from "./PeerLinks.ts";
 import {
   descriptorOf,
   layerLinkingEnvironment,
+  layerLoopbackServer,
   linkTo,
   servePeer,
   type ServedPeer,
@@ -453,7 +453,7 @@ const withBoth = <A, E, R>(body: (a: Laptop, b: ServedPeer) => Effect.Effect<A, 
       const a = yield* makeLaptop;
       return yield* body(a, b);
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest));
+  );
 
 it.live("the agent asks without waiting, and the user links the box after its turn ended", () =>
   withBoth((a, b) =>
@@ -725,7 +725,7 @@ it.live("a slow machine holds up only its own card's answer", () =>
         // A machine that takes the descriptor request and answers when the test says.
         const reached = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
-        const slow = yield* Layer.build(Layer.fresh(NodeHttpServer.layerTest));
+        const slow = yield* Layer.build(Layer.fresh(layerLoopbackServer));
         const server = Context.get(slow, HttpServer.HttpServer);
         yield* server.serve(
           Deferred.succeed(reached, undefined).pipe(
