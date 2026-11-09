@@ -9,6 +9,7 @@ import { BotIcon, PencilRulerIcon } from "lucide-react";
 import { type ComponentProps, memo, useId, useRef, useState } from "react";
 
 import type { ContextWindowSnapshot } from "../../lib/contextWindow";
+import { EmbedControlsToggle } from "../embed/EmbedControlsToggle";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -287,17 +288,20 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
 }) {
   return (
     <>
-      {props.activeContextWindow ? (
-        <ContextWindowMeter
-          usage={props.activeContextWindow}
-          modelDisplayName={props.activeThreadModelDisplayName}
-          onCompact={props.onCompactContext}
-          compactDisabled={props.compactDisabled}
-          compactDisabledReason={props.compactDisabledReason}
-        />
-      ) : props.reserveContextWindowMeter ? (
-        <ContextWindowMeterPlaceholder />
-      ) : null}
+      <EmbedControlsToggle />
+      <span data-embed-composer-extra="" className="contents">
+        {props.activeContextWindow ? (
+          <ContextWindowMeter
+            usage={props.activeContextWindow}
+            modelDisplayName={props.activeThreadModelDisplayName}
+            onCompact={props.onCompactContext}
+            compactDisabled={props.compactDisabled}
+            compactDisabledReason={props.compactDisabledReason}
+          />
+        ) : props.reserveContextWindowMeter ? (
+          <ContextWindowMeterPlaceholder />
+        ) : null}
+      </span>
       <ComposerPrimaryActions
         compact={props.compact}
         canOperateThread={props.canOperateThread}

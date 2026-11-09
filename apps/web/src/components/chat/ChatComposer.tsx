@@ -1,7 +1,11 @@
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
-import { useEmbedComposerTrigger, useEmbedProviderSkills } from "../../embed/useEmbedComposerScope";
+import {
+  useComposerMobileViewport,
+  useEmbedComposerTrigger,
+  useEmbedProviderSkills,
+} from "../../embed/useEmbedComposerScope";
 import { BackgroundThreadContext } from "./backgroundThread";
 import {
   resolveCompatibleRuntimeMode,
@@ -259,11 +263,6 @@ import {
   type ComposerDispatchMode,
 } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { ContextWindowSnapshot } from "../../lib/contextWindow";
-import {
-  resolveProviderSkillsForCwd,
-  resolveProviderSlashCommandsForCwd,
-} from "@t3tools/client-runtime/providerSkills";
-import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useRestartThreadSession } from "../../hooks/useRestartThreadSession";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -505,9 +504,6 @@ export interface ChatComposerProps {
   onExpandImage: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
 }
-
-const NO_PROVIDER_SKILLS: ServerProvider["skills"] = [];
-const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
@@ -943,14 +939,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = selectedProviderEntry?.snapshot ?? null;
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
-  const selectedProviderSkills = useEmbedProviderSkills(
-    selectedProviderStatus
-      ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
-      : NO_PROVIDER_SKILLS,
-  );
-  const selectedProviderSlashCommands = selectedProviderStatus
-    ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
-    : NO_PROVIDER_SLASH_COMMANDS;
+  const { skills: selectedProviderSkills, slashCommands: selectedProviderSlashCommands } =
+    useEmbedProviderSkills(selectedProviderStatus, gitCwd);
   const { refresh: refreshWorkspaceSnapshotOnTyping, scanning: workspaceSkillsScanning } =
     useProviderWorkspaceSnapshotRefresh({
       environmentId,
@@ -1030,7 +1020,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
-  const isMobileViewport = useMediaQuery("max-sm");
+  const isMobileViewport = useComposerMobileViewport();
   const isSoftwareKeyboardOpen = useSoftwareKeyboardOpen();
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);

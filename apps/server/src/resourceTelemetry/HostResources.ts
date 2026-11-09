@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no free-space query.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
+import * as NodePerfHooks from "node:perf_hooks";
 import type { HostResourcesSnapshot } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cache from "effect/Cache";
@@ -51,6 +52,7 @@ const make = Effect.fn("makeHostResources")(function* () {
     onSome: (value) => value.stateDir,
   });
 
+  let previousEventLoop = NodePerfHooks.performance.eventLoopUtilization();
   const sample = Effect.fn("HostResources.sample")(function* () {
     const previousCpu = readCpu();
     yield* Effect.sleep("200 millis");
@@ -84,7 +86,16 @@ const make = Effect.fn("makeHostResources")(function* () {
       Effect.orElseSucceed(() => undefined),
     );
     const loadAverage1m = platform === "win32" ? undefined : NodeOS.loadavg()[0];
+    const eventLoop = NodePerfHooks.performance.eventLoopUtilization();
+    const serverEventLoopUtilization = NodePerfHooks.performance.eventLoopUtilization(
+      eventLoop,
+      previousEventLoop,
+    ).utilization;
+    previousEventLoop = eventLoop;
     return {
+      ...(Number.isFinite(serverEventLoopUtilization)
+        ? { serverEventLoopUtilization: Math.min(1, Math.max(0, serverEventLoopUtilization)) }
+        : {}),
       ...(loadAverage1m === undefined || !Number.isFinite(loadAverage1m) ? {} : { loadAverage1m }),
       ...(disk === undefined
         ? {}

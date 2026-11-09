@@ -47,6 +47,7 @@ export const formatPlacementScore = (entry: AgentPlacementScore) =>
       ? null
       : `memory ${Math.round(entry.availableMemoryRatio * 100)}% free`,
     entry.freeDiskBytes === null ? null : `disk ${(entry.freeDiskBytes / GIB).toFixed(0)} GiB free`,
+    entry.note ?? null,
   ]
     .filter((part) => part !== null)
     .join("  ");

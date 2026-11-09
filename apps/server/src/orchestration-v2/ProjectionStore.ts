@@ -6,6 +6,24 @@ import { preserveRunRecordedFields } from "./RecordedRunFields.ts";
 import { pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
+import {
+  decodeCheckpointPayload,
+  decodeCheckpointScopePayload,
+  decodeContextHandoffPayload,
+  decodeContextTransferPayload,
+  decodeMessagePayload,
+  decodeNodePayload,
+  decodePlanJson,
+  decodeProviderSessionPayload,
+  decodeProviderThreadPayload,
+  decodeProviderTurnPayload,
+  decodeRunAttemptPayload,
+  decodeRunPayload,
+  decodeRuntimeRequestPayload,
+  decodeSubagentPayload,
+  decodeThreadPayload,
+  decodeTurnItemPayload,
+} from "./ProjectionPayloadDecoders.ts";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
@@ -1061,55 +1079,6 @@ const encodeContextHandoffPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ContextHandoffJsonSchema),
 );
 const encodeContextTransferPayload = Schema.encodeEffect(
-  Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema),
-);
-
-const decodeThreadPayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
-);
-const decodeRunPayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2RunJsonSchema),
-);
-const decodeRunAttemptPayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2RunAttemptJsonSchema),
-);
-const decodeNodePayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2ExecutionNodeJsonSchema),
-);
-const decodeSubagentPayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2SubagentJsonSchema),
-);
-const decodeProviderSessionPayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2ProviderSessionJsonSchema),
-);
-const decodeProviderThreadPayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2ProviderThreadJsonSchema),
-);
-const decodeProviderTurnPayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2ProviderTurnJsonSchema),
-);
-const decodeRuntimeRequestPayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2RuntimeRequestJsonSchema),
-);
-const decodeMessagePayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2ConversationMessageJsonSchema),
-);
-const decodePlanJson = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2PlanArtifactSchema),
-);
-const decodeTurnItemPayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema),
-);
-const decodeCheckpointScopePayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2CheckpointScopeJsonSchema),
-);
-const decodeCheckpointPayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2CheckpointJsonSchema),
-);
-const decodeContextHandoffPayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2ContextHandoffJsonSchema),
-);
-const decodeContextTransferPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema),
 );
 
