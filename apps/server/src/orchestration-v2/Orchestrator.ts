@@ -45,6 +45,7 @@ import {
   inheritedQueueHold,
   releasesQueueHoldAtRunEnd,
   stoppedQueueHold,
+  releasesStopHoldOf,
   usageLimitHoldsQueue,
   providerInstanceDisabledForProject,
   worktreeSetupPending,
@@ -178,6 +179,7 @@ import {
   type GuestShareCommand,
 } from "./GuestShareDecider.ts";
 import { quietNoteEvents } from "./ThreadNote.ts";
+import { delegatedTasksEffect, pendingThreadTitleGenerationEffect } from "./PendingEffects.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { withCommandMetrics } from "../observability/Metrics.ts";
 import type {
@@ -501,37 +503,6 @@ const decodeUserInputAnswers = Schema.decodeUnknownEffect(
     ]),
   ),
 );
-
-function pendingThreadTitleGenerationEffect(
-  commandId: CommandId,
-  threadId: ThreadId,
-  kind:
-    | { readonly type: "initial"; readonly messageId: MessageId }
-    | { readonly type: "regenerate" },
-): PendingOrchestrationEffectV2 {
-  return {
-    id: `effect:${commandId}:thread-title.generate`,
-    commandId,
-    threadId,
-    request: { type: "thread-title.generate", kind },
-  };
-}
-
-function delegatedTasksStopEffect(command: {
-  readonly commandId: CommandId;
-  readonly threadId: ThreadId;
-  readonly reason?: string | undefined;
-}): PendingOrchestrationEffectV2 {
-  return {
-    id: `effect:${command.commandId}:delegated-tasks.stop`,
-    commandId: command.commandId,
-    threadId: command.threadId,
-    request: {
-      type: "delegated-tasks.stop",
-      ...(command.reason === undefined ? {} : { reason: command.reason }),
-    },
-  };
-}
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
 const RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE =
@@ -5345,6 +5316,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: "This thread can no longer be resumed from that run.",
         });
       }
+      yield* Ref.update(effects, (all) => [
+        ...all,
+        delegatedTasksEffect("delegated-tasks.resume", command),
+      ]);
     }
     if (command.usageLimitContinuationOfRunId !== undefined) {
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
@@ -10701,15 +10676,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         continue;
       }
-      const hold = stoppedQueueHold(run, input.now);
-      if (hold === undefined) continue;
+      const payload = stoppedQueueHold(run, input.now, input.command.heldByThreadId);
+      if (payload === undefined) continue;
       yield* emitEvent({
         type: "run.updated",
         threadId: thread.id,
         runId: run.id,
         providerInstanceId: run.providerInstanceId,
         occurredAt: input.now,
-        payload: { ...run, ...hold },
+        payload,
       });
     }
     const pullRequests = thread.pullRequests ?? [];
@@ -11710,7 +11685,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (task) => task.origin === "app_owned" && task.childThreadId !== null,
       )
         ? Effect.void
-        : Ref.update(effects, (existing) => [...existing, delegatedTasksStopEffect(command)]);
+        : Ref.update(effects, (existing) => [
+            ...existing,
+            delegatedTasksEffect("delegated-tasks.stop", command),
+          ]);
     const latestRun = projection.runs.findLast((run) => run.status !== "queued");
     const target =
       projection.runs.findLast(
@@ -11737,6 +11715,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
             runId: target.id,
             holdQueue: true,
+            heldByThreadId: command.heldByThreadId,
             ...(command.reason === undefined ? {} : { reason: command.reason }),
           },
           interruptEvents,
@@ -13079,7 +13058,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             });
           yield* Ref.update(effects, (existing) => [
             ...existing,
-            delegatedTasksStopEffect(command),
+            delegatedTasksEffect("delegated-tasks.stop", command),
           ]);
         }
         break;
@@ -13155,8 +13134,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
         const now = yield* DateTime.now;
-        for (const event of queueReleaseEvents(projection, now))
+        const heldBy = command.type === "queue.resume" ? command.heldByThreadId : undefined;
+        for (const event of queueReleaseEvents(projection, now, releasesStopHoldOf(heldBy)))
           yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
+        if (command.type === "queue.resume" && heldBy === undefined)
+          yield* Ref.update(effects, (all) => [
+            ...all,
+            delegatedTasksEffect("delegated-tasks.resume", command),
+          ]);
         break;
       }
       case "queued-run.reorder":

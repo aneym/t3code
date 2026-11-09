@@ -240,6 +240,7 @@ export const make = Effect.gen(function* () {
       worktreeContentIntegration: true,
       worktreeDisposableIgnoredPaths: true,
       worktreeOrphans: true,
+      worktreeAcceptPushed: true,
       worktreesDirectory: true,
       threadAutoSettlementScope: true,
       threadRestartContinuation: true,

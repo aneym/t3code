@@ -35,7 +35,7 @@ import { Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
-import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -73,71 +73,14 @@ import {
   resolveThreadListV2Status,
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
-  type ThreadListV2Status,
 } from "./threadListV2";
+import { STATUS_LABEL_BY_STATUS, unreadStatusLabel } from "./thread-list-v2-status-labels";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
-
-interface StatusLabel {
-  readonly label: string;
-  readonly icon: AppSymbolName;
-  readonly className: string;
-  readonly iconTintClassName: string;
-}
-const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
-  approval: {
-    label: "Approval",
-    icon: "exclamationmark.shield",
-    className: "text-warning-foreground",
-    iconTintClassName: "accent-warning-foreground",
-  },
-  input: {
-    label: "Input",
-    icon: "questionmark.bubble",
-    className: "text-adaptive-indigo-600-300",
-    iconTintClassName: "accent-adaptive-indigo-600-300",
-  },
-  request: {
-    label: "Request",
-    icon: "person.crop.circle",
-    className: "text-adaptive-fuchsia-600-300",
-    iconTintClassName: "accent-adaptive-fuchsia-600-300",
-  },
-  working: {
-    label: "Working",
-    icon: "circle.dashed",
-    className: "text-adaptive-sky-600-400",
-    iconTintClassName: "accent-adaptive-sky-600-400",
-  },
-  waiting: {
-    label: "Waiting",
-    icon: "circle.dashed.inset.filled",
-    className: "text-foreground-muted",
-    iconTintClassName: "accent-foreground-muted",
-  },
-  failed: {
-    label: "Failed",
-    icon: "exclamationmark.circle",
-    className: "text-danger-foreground",
-    iconTintClassName: "accent-danger-foreground",
-  },
-  limited: {
-    label: "Limited",
-    icon: "exclamationmark.circle",
-    className: "text-warning-foreground",
-    iconTintClassName: "accent-warning-foreground",
-  },
-};
-const DONE_STATUS_LABEL: StatusLabel = {
-  label: "Done",
-  icon: "checkmark.circle",
-  className: "text-adaptive-emerald-700-300",
-  iconTintClassName: "accent-adaptive-emerald-700-300",
-};
 
 function ThreadListV2Duration(props: { readonly startedAt: string | null }) {
   const startedAtMs = Date.parse(props.startedAt ?? "");
@@ -698,7 +641,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const statusLabel =
     (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
       ? { ...workingLabel, label: "Goal" }
-      : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
+      : workingLabel) ?? (isUnread ? unreadStatusLabel(thread) : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const rowAccessibilityLabel = `${thread.title}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;

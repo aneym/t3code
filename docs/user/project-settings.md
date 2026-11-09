@@ -238,6 +238,9 @@ its pull request to be merged at the worktree's current commit.
 Turn on **Count squashed and rebased branches as landed** to also treat a branch as landed when
 merging it into the remote default branch would change nothing, which covers squash, rebase and
 cherry-pick landings without a pull request.
+Turn on **Count pushed branches as safe** to let those rules remove a clean worktree whose commits
+are all on the remote, even if its branch hasn't landed or an agent renamed it. The thread then
+shows the renamed branch, and starting another turn recreates the checkout from it.
 
 Enable **Delete worktrees with deleted threads** to remove safe worktrees after their last
 thread is deleted, including archived threads and worktrees left by earlier deletions. The
@@ -246,7 +249,7 @@ Existing prompts for deleting a worktree manually remain available when this pol
 
 Choose **Delete now** to run the enabled rules immediately. The latest results show which
 worktrees were removed or kept and why, plus any failures.
-Results also list folders in the worktree folder that no thread uses, with their sizes; cleanup never removes them, so remove them manually if you want.
+Results also list folders in the worktree folder that no thread uses, with their sizes. **Delete orphaned worktrees** removes the clean ones whose commits are pushed or landed; with **Count pushed branches as safe** on, they wait as long as the settled retention first.
 
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.

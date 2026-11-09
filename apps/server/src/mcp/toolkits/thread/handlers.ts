@@ -45,6 +45,7 @@ function queueEntry(
             reason: run.queueHoldReason ?? null,
             heldAt: run.queueHeldAt === undefined ? null : DateTime.formatIso(run.queueHeldAt),
             failureClass: run.queueHoldFailureClass ?? null,
+            heldByThreadId: run.queueHeldByThreadId ?? null,
           },
         }
       : {}),
@@ -297,10 +298,10 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     ),
     writesThread((input) =>
       Effect.gen(function* () {
-        if (input.action === "send_all")
+        if (input.action === "send_all" || input.action === "resume")
           return yield* dispatch(input.threadId, (common) => ({
             ...common,
-            type: "queue.send-all",
+            type: input.action === "resume" ? "queue.resume" : "queue.send-all",
           }));
         const runId = yield* required(input.queuedRunId, "queuedRunId");
         switch (input.action) {

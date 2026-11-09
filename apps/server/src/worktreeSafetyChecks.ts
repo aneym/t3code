@@ -10,10 +10,7 @@ export const makeWorktreeSafetyChecks = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const git = yield* GitVcsDriver.GitVcsDriver;
-  const branchChanged = Effect.fn("StorageCleanup.branchChanged")(function* (
-    cwd: string,
-    branch: string | null,
-  ) {
+  const checkedOutBranch = Effect.fn("StorageCleanup.branchChanged")(function* (cwd: string) {
     const failure = (detail: string) =>
       new GitCommandError({
         operation: "StorageCleanup.branchChanged",
@@ -46,17 +43,19 @@ export const makeWorktreeSafetyChecks = Effect.gen(function* () {
       );
     });
     const index = yield* read(["rev-parse", "--git-path", "index"]);
-    if (index === null) return true;
+    if (index === null) return undefined;
     if (yield* fs.exists(`${path.resolve(cwd, index.stdout.trim())}.lock`))
       return yield* failure(
         "Git index is locked. Status will resume when the index lock is removed.",
       );
     const head = yield* read(["symbolic-ref", "--quiet", "HEAD"], 1);
-    if (head === null) return true;
+    if (head === null) return undefined;
     const ref = head.exitCode === 0 ? head.stdout.trim() : "";
     const name = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length).trim() : null;
-    return (name?.startsWith("(") ? null : name) !== branch;
+    return name?.startsWith("(") ? null : name;
   });
+  const branchChanged = (cwd: string, branch: string | null) =>
+    checkedOutBranch(cwd).pipe(Effect.map((name) => name === undefined || name !== branch));
 
   const localChangesReason = Effect.fn("StorageCleanup.localChangesReason")(function* (
     cwd: string,
@@ -206,5 +205,5 @@ export const makeWorktreeSafetyChecks = Effect.gen(function* () {
     Effect.orElseSucceed(() => "submodules could not be inspected"),
   );
 
-  return { branchChanged, localChangesReason, submoduleKeepReason };
+  return { branchChanged, checkedOutBranch, localChangesReason, submoduleKeepReason };
 });

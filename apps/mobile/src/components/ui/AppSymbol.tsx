@@ -38,6 +38,7 @@ import IconChevronUp from "@tabler/icons-react-native/IconChevronUp";
 import IconCircle from "@tabler/icons-react-native/IconCircle";
 import IconCircleFilled from "@tabler/icons-react-native/IconCircleFilled";
 import IconCircleCheck from "@tabler/icons-react-native/IconCircleCheck";
+import IconCircleSquare from "@tabler/icons-react-native/IconCircleSquare";
 import IconCircleDashed from "@tabler/icons-react-native/IconCircleDashed";
 import IconCircleDot from "@tabler/icons-react-native/IconCircleDot";
 import IconCircleXFilled from "@tabler/icons-react-native/IconCircleXFilled";
@@ -262,6 +263,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   star: IconStar,
   "star.fill": IconStarFilled,
   "sun.max": IconSun,
+  "stop.circle": IconCircleSquare,
   "stop.fill": IconPlayerStopFilled,
   target: IconTarget,
   terminal: IconTerminal2,

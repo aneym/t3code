@@ -2875,11 +2875,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     reason: Schema.optional(Schema.String),
-    /**
-     * False when the caller stops the thread's delegated tasks itself, as the server's tree walks
-     * do under their caller's dispatch limit. Otherwise Stop also stops every task under the thread.
-     */
     stopDelegatedTasks: Schema.optional(Schema.Boolean),
+    heldByThreadId: Schema.optional(ThreadId),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.create"),
@@ -3178,6 +3175,7 @@ export const OrchestrationV2Command = Schema.Union([
     runId: RunId,
     reason: Schema.optional(Schema.String),
     holdQueue: Schema.optional(Schema.Boolean),
+    heldByThreadId: Schema.optional(ThreadId),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-message.promote-to-steer"),
@@ -3187,7 +3185,10 @@ export const OrchestrationV2Command = Schema.Union([
     targetRunId: RunId,
   }),
   threadCommand("queue.send-all"),
-  threadCommand("queue.resume"),
+  Schema.Struct({
+    ...threadCommand("queue.resume").fields,
+    heldByThreadId: Schema.optional(ThreadId),
+  }),
   Schema.Struct({
     type: Schema.Literal("queued-run.start"),
     commandId: CommandId,

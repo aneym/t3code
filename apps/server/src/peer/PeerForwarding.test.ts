@@ -125,6 +125,7 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
         ...current,
         stops: [...current.stops, `delegated-tasks.stop ${input.threadId}`],
       })),
+    resumeDelegatedTasks: () => Effect.void,
     waitForThread: (input) =>
       Ref.updateAndGet(seen, (current) => ({ ...current, waits: [...current.waits, input] })).pipe(
         Effect.map(({ waits }) => ({

@@ -8,11 +8,10 @@ import * as ForkFollowUp from "./forkFollowUpSettings.ts";
 import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
 import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
 import {
-  StorageRetentionDays,
-  DisposableIgnoredPaths,
   WorktreeCleanupRulesPatchFields,
   WorktreeCleanup,
   StorageCleanupSettings,
+  StorageCleanupSettingsPatch,
 } from "./storageCleanupSettings.ts";
 export {
   WorktreeKeepWhen,
@@ -1542,16 +1541,7 @@ export const ServerSettingsPatch = Schema.Struct({
       ]),
     ),
   ),
-  storageCleanup: Schema.optionalKey(
-    Schema.Struct({
-      ...WorktreeCleanupRulesPatchFields,
-      browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
-      logsAfterDays: Schema.optionalKey(StorageRetentionDays),
-      threadHistoryAfterDays: Schema.optionalKey(StorageRetentionDays),
-      worktreeDisposableIgnoredPaths: Schema.optionalKey(DisposableIgnoredPaths),
-      worktreeOrphans: Schema.optionalKey(Schema.Boolean),
-    }),
-  ),
+  storageCleanup: Schema.optionalKey(StorageCleanupSettingsPatch),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
