@@ -1,5 +1,6 @@
 import { STORAGE_CLEANUP_WS_METHODS, StorageCleanupRpcs } from "./storageCleanupRpc.ts";
 import { ServerProviderRefreshInput } from "./serverProviderRefresh.ts";
+import { ServerConfigSubscriptionInput } from "./serverConfigSubscription.ts";
 import { ServerHandoffProbe, ServerHandoffSubscription } from "./serverLifecycle.ts";
 import {
   ServerPrepareRestartInput,
@@ -1866,15 +1867,7 @@ const WsSubscribeTerminalMetadataRpc = Rpc.make(WS_METHODS.subscribeTerminalMeta
 });
 
 export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerConfig, {
-  payload: Schema.Struct({
-    /** Opt-in protects older clients that reject unknown theme event types. */
-    environmentThemes: Schema.optional(Schema.Boolean),
-    usageLimitSources: Schema.optional(Schema.Boolean),
-    /** Advertise client handling before the server offers /usage-limits, or older clients send it as a prompt. */
-    usageLimitsCommand: Schema.optional(Schema.Boolean),
-    /** Omit per-cwd provider snapshots; the client fetches its cwd through `server.refreshProviders`. */
-    workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
-  }),
+  payload: ServerConfigSubscriptionInput,
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
   stream: true,

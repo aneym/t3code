@@ -12,8 +12,10 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <script>
       (() => {
-        if (location.pathname.startsWith("/embed/"))
+        if (location.pathname.startsWith("/embed/")) {
           document.documentElement.dataset.embed = "true";
+          document.querySelector('link[rel="icon"]').href = "data:,";
+        }
         const LIGHT_BACKGROUND = "#ffffff";
         const DARK_BACKGROUND = "#000000";
         const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
@@ -46,8 +48,6 @@
             chrome: "oklch(0.22813 0.020366 307.469)",
           },
         };
-        // Keep this small boot-time copy in sync with the built-in palettes so
-        // the selected theme is visible before the app has mounted.
         const BUILT_IN_THEME_PALETTES = {
           "t3-chat": {
             light: {
@@ -676,7 +676,7 @@
     <div id="root">
       <div id="boot-shell">
         <div id="boot-shell-card" aria-label="T3 Code splash screen">
-          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
+          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" loading="lazy" />
         </div>
       </div>
     </div>

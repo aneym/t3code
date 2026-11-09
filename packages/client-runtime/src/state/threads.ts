@@ -25,6 +25,7 @@ import { HttpClient } from "effect/http";
 import { Atom } from "effect/reactivity";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import type { PreparedConnection } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -49,6 +50,7 @@ import {
   type ThreadHistoryMeta,
 } from "./threadHistoryMerge.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
+import { awaitPreparedConnection, prefetchOnPrepared } from "./preparedPrefetch.ts";
 import { makeThreadRequestsResolvedAnnouncer, pendingRuntimeRequestIds } from "./threadRequests.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
@@ -925,11 +927,58 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     );
   });
 
+  const loadOverHttp = Effect.fn("EnvironmentThreadState.loadOverHttp")(function* (
+    prepared: PreparedConnection,
+  ) {
+    const httpResult = yield* snapshotLoader.load(prepared, threadId);
+    switch (httpResult._tag) {
+      case "present": {
+        if (canLoadHistory && httpResult.history !== undefined) {
+          yield* Ref.set(acceptsBoundedSocketSnapshots, true);
+        }
+        // Atomic projection + progressive meta so a settled bounded window
+        // never persists as a complete full-timeline cache entry. Socket
+        // snapshots still go through applyItem (resetHistory).
+        yield* applyLock.withPermits(1)(
+          Effect.gen(function* () {
+            yield* SubscriptionRef.set(lastSequence, httpResult.snapshot.snapshotSequence);
+            const history: ThreadHistoryMeta =
+              httpResult.history !== undefined
+                ? {
+                    historyCursor: httpResult.history.historyCursor,
+                    hasMoreHistory: httpResult.history.hasMoreHistory,
+                    loading: false,
+                    error: null,
+                    expanded: false,
+                    latestLocalTurnOrdinal: httpResult.history.latestLocalTurnOrdinal ?? null,
+                  }
+                : EMPTY_THREAD_HISTORY_META;
+            yield* setThread(httpResult.snapshot.projection, { history });
+            yield* remember;
+          }),
+        );
+        return;
+      }
+      case "missing": {
+        yield* setDeleted();
+        // A 404 also means "not created yet". Only a delete event may outlive this mount.
+        if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
+      }
+    }
+  });
+  const takeEarly =
+    Option.isNone(initialState.data) && initialState.status !== "deleted"
+      ? yield* prefetchOnPrepared(supervisor.prepared, (prepared) =>
+          Ref.set(awaitingCompletion, true).pipe(Effect.andThen(loadOverHttp(prepared))),
+        )
+      : Effect.void;
+
   yield* markSynchronizing;
   yield* Effect.forkScoped(
     subscribeDynamic(
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
+        yield* takeEarly;
         let current = yield* SubscriptionRef.get(state);
         // A prior definitive miss (or delete event) already cleared this thread.
         // Park the subscription attempt without opening the socket so we do not
@@ -944,61 +993,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         yield* Ref.set(resumingLive, false);
 
         if (Option.isNone(current.data)) {
-          const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
-            Effect.flatMap(
-              Option.match({
-                onSome: Effect.succeed,
-                onNone: () =>
-                  SubscriptionRef.changes(supervisor.prepared).pipe(
-                    Stream.filter(Option.isSome),
-                    Stream.map((value) => value.value),
-                    Stream.runHead,
-                    Effect.map(Option.getOrThrow),
-                  ),
-              }),
-            ),
-          );
-          const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
-            yield* snapshotLoader.load(prepared, threadId);
-          switch (httpResult._tag) {
-            case "present": {
-              if (canLoadHistory && httpResult.history !== undefined) {
-                yield* Ref.set(acceptsBoundedSocketSnapshots, true);
-              }
-              // Atomic projection + progressive meta so a settled bounded window
-              // never persists as a complete full-timeline cache entry. Socket
-              // snapshots still go through applyItem (resetHistory).
-              yield* applyLock.withPermits(1)(
-                Effect.gen(function* () {
-                  yield* SubscriptionRef.set(lastSequence, httpResult.snapshot.snapshotSequence);
-                  const history: ThreadHistoryMeta =
-                    httpResult.history !== undefined
-                      ? {
-                          historyCursor: httpResult.history.historyCursor,
-                          hasMoreHistory: httpResult.history.hasMoreHistory,
-                          loading: false,
-                          error: null,
-                          expanded: false,
-                          latestLocalTurnOrdinal: httpResult.history.latestLocalTurnOrdinal ?? null,
-                        }
-                      : EMPTY_THREAD_HISTORY_META;
-                  yield* setThread(httpResult.snapshot.projection, { history });
-                  yield* remember;
-                }),
-              );
-              current = yield* SubscriptionRef.get(state);
-              break;
-            }
-            case "missing": {
-              yield* setDeleted();
-              // A 404 also means "not created yet". Only a delete event may outlive this mount.
-              if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
-              return yield* Effect.never;
-            }
-            case "unavailable": {
-              break;
-            }
-          }
+          yield* loadOverHttp(yield* awaitPreparedConnection(supervisor.prepared));
+          current = yield* SubscriptionRef.get(state);
+          if (current.status === "deleted") return yield* Effect.never;
         }
 
         const sequence = yield* SubscriptionRef.get(lastSequence);

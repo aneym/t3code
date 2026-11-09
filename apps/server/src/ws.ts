@@ -87,7 +87,6 @@ import {
   type RelayClientInstallProgressEvent,
   type ServerConfig as ClientServerConfig,
   type ServerConfigStreamEvent,
-  type ServerProvider,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -175,6 +174,11 @@ import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
 import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
+import {
+  type ConfigProviderShape,
+  shapeConfigProviders,
+  withoutWorkspaceSnapshots,
+} from "./provider/configProviders.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
@@ -412,10 +416,6 @@ export const resolveOpenDiscoveryForConfig = <T, D, E1, R1, E2, R2, E3, R3, E4, 
     },
     { concurrency: "unbounded" },
   ).pipe(Effect.map(({ editorConfig, ...endpoints }) => ({ ...editorConfig, ...endpoints })));
-function withoutWorkspaceSnapshots(providers: ReadonlyArray<ServerProvider>): ServerProvider[] {
-  return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) => provider);
-}
-
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
 }
@@ -1769,19 +1769,18 @@ export const layerWsRpc = (
           ),
         );
 
-      const loadServerConfig = Effect.fn("ws.loadServerConfig")(function* (options: {
-        readonly usageLimitsCommand: boolean;
-        readonly workspaceSnapshotsOnDemand: boolean;
-        readonly deferRemoteOpenTargets: boolean;
-      }) {
+      const loadServerConfig = Effect.fn("ws.loadServerConfig")(function* (
+        options: ConfigProviderShape & {
+          readonly usageLimitsCommand: boolean;
+          readonly deferRemoteOpenTargets: boolean;
+        },
+      ) {
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const currentProviders = yield* providerRegistry.getProviders;
         const commandProviders = options.usageLimitsCommand
           ? withUsageLimitsCommands(currentProviders, yield* usageLimitSources.current)
           : currentProviders;
-        const providers = options.workspaceSnapshotsOnDemand
-          ? withoutWorkspaceSnapshots(commandProviders)
-          : commandProviders;
+        const providers = shapeConfigProviders(commandProviders, options);
         const settings = ServerSettings.redactServerSettingsForClient(
           yield* serverSettings.getSettings,
         );
@@ -2225,7 +2224,6 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetConfig]: (_input) =>
           loadServerConfig({
             usageLimitsCommand: false,
-            workspaceSnapshotsOnDemand: false,
             deferRemoteOpenTargets: false,
           }),
         [WS_METHODS.serverSearchAcpRegistry]: (input) =>
@@ -3146,7 +3144,10 @@ export const layerWsRpc = (
           Stream.unwrap(
             Effect.gen(function* () {
               const usageLimitsCommand = input.usageLimitsCommand === true;
-              const workspaceSnapshotsOnDemand = input.workspaceSnapshotsOnDemand === true;
+              const shape = {
+                workspaceSnapshotsOnDemand: input.workspaceSnapshotsOnDemand === true,
+                providerCatalogsOnDemand: input.providerCatalogsOnDemand === true,
+              };
               // Buffer changes through discovery and the initial snapshot's RPC ACK wait.
               const keybindingsChanges = yield* keybindings.subscribeChanges;
               const settingsChanges = yield* serverSettings.subscribeChanges;
@@ -3154,8 +3155,8 @@ export const layerWsRpc = (
                 startImmediately: true,
               });
               const config = yield* loadServerConfig({
+                ...shape,
                 usageLimitsCommand,
-                workspaceSnapshotsOnDemand,
                 deferRemoteOpenTargets: true,
               });
               const keybindingsUpdates = keybindingsChanges.pipe(
@@ -3184,9 +3185,7 @@ export const layerWsRpc = (
                     ? withUsageLimitsCommands(providers, sources)
                     : providers;
                   // Stripped before the de-dupe below, so snapshot-only changes send nothing.
-                  return workspaceSnapshotsOnDemand
-                    ? withoutWorkspaceSnapshots(commandProviders)
-                    : commandProviders;
+                  return shapeConfigProviders(commandProviders, shape);
                 },
               ).pipe(
                 // Compare initial paired values with the snapshot; blindly dropping them loses changes between snapshot and subscription.
