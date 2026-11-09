@@ -43,6 +43,8 @@ const OVERRIDABLE = new Set([
   "--input",
   "--ring",
   "--radius",
+  "--radius-control",
+  "--radius-surface",
   "--font-sans",
   "--font-mono",
 ]);

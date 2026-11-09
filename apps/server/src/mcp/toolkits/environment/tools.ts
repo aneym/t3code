@@ -55,6 +55,7 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: Schema.optionalKey(ProjectId),
     placementRepositoryKey: Schema.optionalKey(Schema.String),
+    placementRepositoryKeys: Schema.optionalKey(Schema.Array(Schema.String)),
     includePlacementProviders: Schema.optionalKey(Schema.Boolean),
   }),
   success: Schema.Struct({

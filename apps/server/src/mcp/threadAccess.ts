@@ -12,6 +12,7 @@ import {
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as ProviderWakeDispatches from "@t3tools/provider-core/server/ProviderWakeDispatches";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/OrchestratorErrors.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -166,6 +167,17 @@ export const isLiveCallerShell = (
       (task) => task.kind === "subagent" && task.providerInstanceId === providerInstanceId,
     ) ??
       false));
+
+export const awaitProviderStartedRun = Effect.gen(function* () {
+  const scope = yield* McpInvocationContext.McpInvocationContext;
+  if (scope.thread === undefined) return;
+  const wakes = yield* ProviderWakeDispatches.ProviderWakeDispatches;
+  yield* wakes
+    .awaitDispatch(scope.thread.threadId)
+    .pipe(Effect.timeoutOption(PROVIDER_STARTED_RUN_WAIT));
+});
+
+const PROVIDER_STARTED_RUN_WAIT = "5 minutes";
 
 /** Thread callers need a live run or its background subagent in an unarchived thread. OAuth clients rely on their session and ceiling. */
 export function assertLiveCaller({ caller, scope }: Caller) {

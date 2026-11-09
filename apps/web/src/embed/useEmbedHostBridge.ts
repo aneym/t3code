@@ -27,6 +27,8 @@ import {
   readEmbedThemeMessage,
   reservedEmbedChord,
 } from "./embedProtocol";
+import { loadEmbedFonts, readEmbedFonts } from "./embedFonts";
+import { applyEmbedLinksMessage, isEmbedRailsUrl } from "./embedLinks";
 import { applyEmbedTheme, themeFromEmbedMessage } from "./embedTheme";
 
 const COMPOSER_SELECTOR = '[data-testid="composer-editor"]';
@@ -79,13 +81,17 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
     const onMessage = (event: MessageEvent) => {
       if (!fromHost(channel, event)) return;
       const theme = readEmbedThemeMessage(event.data);
-      if (theme !== null) applyEmbedTheme(themeFromEmbedMessage(theme));
+      if (theme !== null) {
+        applyEmbedTheme(themeFromEmbedMessage(theme));
+        loadEmbedFonts(readEmbedFonts(event.data));
+      }
       const clear = readEmbedClearMessage(event.data);
       if (clear !== null) applyEmbedClearMessage(clear);
       const keys = readEmbedKeysMessage(event.data);
       if (keys !== null) setEmbedKClears(keys.kClears);
       const composer = readEmbedComposerMessage(event.data);
       if (composer !== null) applyEmbedComposerMessage(composer);
+      applyEmbedLinksMessage(event.data);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       const controlsKey = embedControlsKey();
@@ -104,11 +110,18 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       else postToEmbedHost({ type: EMBED_KEY_MESSAGE, key });
     };
     const onClick = (event: MouseEvent) => {
+      const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
+      if (anchor?.querySelector("[data-rails-link-gone]")) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
       const url = leavingLink(event);
       if (url === null) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      openThroughEmbedHost(url.href);
+      const tab = event.button === 1 || (mac ? event.metaKey : event.ctrlKey);
+      openThroughEmbedHost(url.href, tab && isEmbedRailsUrl(url.href));
     };
     window.addEventListener("message", onMessage);
     window.addEventListener("keydown", onKeyDown, true);

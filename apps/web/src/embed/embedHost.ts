@@ -67,10 +67,11 @@ export function postToEmbedHost(message: EmbedOutboundMessage): boolean {
   return true;
 }
 
-export function openThroughEmbedHost(url: string): boolean {
+export function openThroughEmbedHost(url: string, tab = false): boolean {
   if (!URL.canParse(url, window.location.href)) return false;
   return postToEmbedHost({
     type: EMBED_OPEN_MESSAGE,
     url: new URL(url, window.location.href).href,
+    ...(tab ? { tab } : {}),
   });
 }

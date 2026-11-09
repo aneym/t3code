@@ -66,6 +66,7 @@ import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceR
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
+import * as McpOrchestrationServices from "./mcp/McpOrchestrationServices.ts";
 import * as PeerForwarding from "./peer/PeerForwarding.ts";
 import * as AgentRouting from "./peer/AgentRouting.ts";
 import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
@@ -99,7 +100,6 @@ import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
 import * as CodexInstallation from "./provider/CodexInstallation.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
-import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
@@ -771,7 +771,7 @@ const layerMakeRoutes = Layer.mergeAll(
     Ws.layer,
   ),
   McpHttpServer.layer.pipe(
-    Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+    Layer.provide(McpOrchestrationServices.layer),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
   ),
   Layer.effectDiscard(AgentRouting.start),

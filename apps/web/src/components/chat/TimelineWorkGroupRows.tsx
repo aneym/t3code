@@ -55,6 +55,7 @@ import {
 } from "./TimelineWorkEntryRow.logic";
 import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
 import { useEmbedLiveActivityLabel } from "../../embed/useEmbedLiveActivityLabel";
+import { EmbedLivePeek } from "../embed/EmbedLivePeek";
 
 export const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
@@ -276,7 +277,8 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
   const compacting = row.compacting === true || isCompacting;
-  const shimmer = isPreparingWorktree || compacting;
+  const embedded = useEmbedLiveActivityLabel(undefined, true) !== null;
+  const shimmer = isPreparingWorktree || compacting || embedded;
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
   ) : compacting ? (
@@ -298,6 +300,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
           {label}
           {shimmer ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
         </span>
+        <EmbedLivePeek at={row.createdAt} />
         {backgroundWorktreeSetup ? (
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
         ) : null}
@@ -359,7 +362,6 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
-  // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
   const live = ctx.pendingApprovals.size === 0;
   const activity = (
     <LiveActivityRow label="Thinking" iconName="brain" active={live} shimmer={live} />

@@ -42,6 +42,7 @@ import {
   useEffectEvent,
   useRef,
   useState,
+  Fragment,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
@@ -135,8 +136,14 @@ import {
   type TimelineViewport,
 } from "./timelineViewport";
 import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
+import { useLiveTurnFold } from "~/embed/useLiveTurnFold";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
-import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
+import {
+  useStableHandoffRuns,
+  useIncrementalTimelineRows,
+  useStableRows,
+  useTimelineLiveTail,
+} from "./useTimelineRows";
 
 function timelineListStateFor(identity: string): {
   readonly identity: string;
@@ -239,7 +246,6 @@ interface MessagesTimelineProps {
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   routeThreadKey: string;
   displayThreadKey?: string;
-  /** Off where another region already speaks the thread's status, like a subagent's bar. */
   announceTurnStatus?: boolean;
   onOpenToolDiff?: (target: ToolCallDiffTarget) => void;
   onOpenTurnDiff?: (runId: RunId, filePath?: string) => void;
@@ -288,9 +294,7 @@ interface MessagesTimelineProps {
   onIsAtEndChange: (isAtEnd: boolean) => void;
   /** Disable while reading history to prevent LegendList re-pinning near the bottom. */
   liveFollowEnabled: boolean;
-  /** Receives the list's viewport when it mounts; the returned cleanup runs when it goes away. */
   onViewportAttach?: (viewport: TimelineViewport) => () => void;
-  /** The footer's content grew, such as a new queued turn or status line. */
   onFooterGrow?: () => void;
   findOpen?: boolean;
   hideEmptyPlaceholder?: boolean;
@@ -681,7 +685,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     availableRevertTurnCounts,
     worktreeSetup,
   });
-  const rows = useStableRows(rawRows, listIdentityKey);
+  const { rows, liveTail } = useTimelineLiveTail(
+    useStableRows(useLiveTurnFold(rawRows, isWorking), listIdentityKey),
+    footer !== null,
+  );
   const matchedApprovalRequestIds = new Set<string>();
   for (const row of pendingApprovalRequestIds.size > 0 ? rows : []) {
     const entries =
@@ -695,7 +702,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     (approval) =>
       isVisiblePendingApproval(approval) && !matchedApprovalRequestIds.has(approval.requestId),
   );
-  // Run status/timestamps change per stream event; keep them out of shared row context.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = deriveTimelineMinimapItems(rows);
   const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
@@ -1280,6 +1286,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
           </div>
         </TimelineRowCtx>
       ) : null}
+      {liveTail.map((item) => (
+        <Fragment key={item.id}>{renderItem({ item })}</Fragment>
+      ))}
     </TimelineListFooter>
   );
 

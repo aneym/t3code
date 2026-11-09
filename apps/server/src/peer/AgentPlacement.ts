@@ -31,6 +31,7 @@ import * as Settings from "../serverSettings.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import * as Projects from "../project/ProjectService.ts";
 import * as Identities from "../project/RepositoryIdentityResolver.ts";
+import { repositoryIdentityKeys } from "../project/RepositoryIdentityKeys.ts";
 import * as Resources from "../resourceTelemetry/HostResources.ts";
 import * as Environment from "../environment/ServerEnvironment.ts";
 import * as Peers from "./PeerMcpClient.ts";
@@ -220,11 +221,10 @@ const make = Effect.gen(function* () {
           const project = yield* projects
             .getById(projectId)
             .pipe(Effect.map(Option.getOrUndefined));
-          const key =
-            project === undefined
-              ? undefined
-              : (yield* identities.resolve(project.workspaceRoot))?.canonicalKey;
-          if (key === undefined)
+          const keys = repositoryIdentityKeys(
+            project === undefined ? undefined : yield* identities.resolve(project.workspaceRoot),
+          );
+          if (keys.length === 0)
             return local("No repository identity to match across environments.");
           const localProviders = yield* providers.getProviders;
           const selectedProvider = localProviders.find(
@@ -278,13 +278,13 @@ const make = Effect.gen(function* () {
                 environmentIds: linked
                   .filter((link) => weightOf(link.environmentId) > 0)
                   .map((link) => link.environmentId),
-                key,
+                keys,
                 limits: caller.limits,
                 now,
               });
               const scoredAt = DateTime.toEpochMillis(yield* DateTime.now);
               for (const link of linked) {
-                const entry = snapshots.cached(link.environmentId, key, now);
+                const entry = snapshots.cached(link.environmentId, keys, now);
                 const snapshot = entry?.value;
                 const scored = scoreAgentPlacement({
                   environmentId: link.environmentId,

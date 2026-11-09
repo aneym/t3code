@@ -59,6 +59,10 @@
       "types": "./src/projectFaviconCache.ts",
       "default": "./src/projectFaviconCache.ts"
     },
+    "./lane-result": {
+      "types": "./src/laneResult.ts",
+      "default": "./src/laneResult.ts"
+    },
     "./user-message": {
       "types": "./src/userMessage.ts",
       "default": "./src/userMessage.ts"
