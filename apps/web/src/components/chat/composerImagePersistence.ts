@@ -2,7 +2,7 @@ import type {
   ComposerImageAttachment,
   PersistedComposerImageAttachment,
 } from "../../composerDraftStore";
-import { readFileAsDataUrl } from "../../lib/imageCompression";
+import { persistableImage } from "../../embed/embedImagePersistence";
 
 export async function serializeComposerImages(
   images: ReadonlyArray<ComposerImageAttachment>,
@@ -15,14 +15,13 @@ export async function serializeComposerImages(
   await Promise.all(
     images.map(async (image) => {
       try {
-        const dataUrl =
-          existingPersistedById.get(image.id)?.dataUrl ?? (await readFileAsDataUrl(image.file));
+        const persisted = existingPersistedById.get(image.id) ?? (await persistableImage(image));
         stagedAttachmentById.set(image.id, {
           id: image.id,
           name: image.name,
-          mimeType: image.mimeType,
-          sizeBytes: image.sizeBytes,
-          dataUrl,
+          mimeType: persisted.mimeType,
+          sizeBytes: persisted.sizeBytes,
+          dataUrl: persisted.dataUrl,
           ...(image.source ? { source: image.source } : {}),
         });
       } catch {

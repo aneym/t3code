@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useBlocker } from "@tanstack/react-router";
 import { useState, type CSSProperties } from "react";
 
+import { startEmbedControls } from "../../embed/embedComposer";
 import { placeEmbedHost, type EmbedHostSpot } from "../../embed/embedHost";
 import { isEmbedPath, normalizeEmbedOrigins, readEmbedScheme } from "../../embed/embedProtocol";
 import { readEmbedSignIn } from "../../embed/embedSignIn";
@@ -62,6 +63,7 @@ export function EmbedPage({
   readonly threadId: string;
 }) {
   useState(applyInitialScheme);
+  useState(startEmbedControls);
   const settings = useAtomValue(primaryServerConfigAtom)?.settings ?? null;
   if (!authenticated) {
     return (

@@ -15,11 +15,14 @@ import {
   setEmbedKClears,
   startEmbedClear,
 } from "./embedClear";
+import { applyEmbedComposerMessage, embedControlsKey, toggleEmbedControls } from "./embedComposer";
 import {
   EMBED_COMPOSER_FOCUS_MESSAGE,
   EMBED_KEY_MESSAGE,
   EMBED_READY_MESSAGE,
+  pressedHostChord,
   readEmbedClearMessage,
+  readEmbedComposerMessage,
   readEmbedKeysMessage,
   readEmbedThemeMessage,
   reservedEmbedChord,
@@ -81,8 +84,17 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       if (clear !== null) applyEmbedClearMessage(clear);
       const keys = readEmbedKeysMessage(event.data);
       if (keys !== null) setEmbedKClears(keys.kClears);
+      const composer = readEmbedComposerMessage(event.data);
+      if (composer !== null) applyEmbedComposerMessage(composer);
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      const controlsKey = embedControlsKey();
+      if (controlsKey !== null && pressedHostChord(event, controlsKey, mac)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!event.repeat) toggleEmbedControls();
+        return;
+      }
       const key = reservedEmbedChord(event, mac);
       if (key === null) return;
       event.preventDefault();
