@@ -16,6 +16,8 @@ import * as Duration from "effect/Duration";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { awaitRestartEffects, drainBeforeRestart, restartPausedRunIds } from "./RestartDrain.ts";
 import { legacyRestartHandoffs } from "./RestartHandoffImport.ts";
+import { bufferedWakeRuns } from "./BufferedWakeRuns.ts";
+import { restartHandoffRunIds } from "./RestartAwaits.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -50,8 +52,13 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
             const requests = projection.runtimeRequests.filter(
               (request) => request.status === "pending",
             );
+            const wakes = yield* bufferedWakeRuns(projections, threadId, projection.runs);
             const runIds = projection.runs
-              .filter((run) => ["preparing", "starting", "running", "waiting"].includes(run.status))
+              .filter(
+                (run) =>
+                  ["preparing", "starting", "running", "waiting"].includes(run.status) ||
+                  wakes.includes(run),
+              )
               .map((run) => run.id);
             handoffs.push({
               threadId,
@@ -59,7 +66,7 @@ export const prepareRestart = Effect.fn("ProviderRuntimeRecoveryService.prepareR
               runIds,
               sourceRunIds: runIds,
               queuedRunIds: projection.runs
-                .filter((run) => run.status === "queued")
+                .filter((run) => run.status === "queued" && !wakes.includes(run))
                 .map((run) => run.id),
               requestIds: requests.map((request) => request.id),
               delegatedTaskIds: projection.subagents
@@ -170,7 +177,6 @@ export const prepareForShutdown = Effect.gen(function* () {
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const settings = yield* ServerSettings.ServerSettingsService;
   const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
-  const prepared = (yield* outbox.restartPrepared) !== undefined;
   const linux = (yield* HostProcess.Platform) === "linux";
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
@@ -187,22 +193,25 @@ export const prepareForShutdown = Effect.gen(function* () {
       const released = linux ? 0 : releaseClaudeBackgroundWork(threadId);
       if (released > 0)
         yield* Effect.logInfo("Released Claude background work for restart", { threadId });
-      if (prepared) return;
+      const handedOff = restartHandoffRunIds(yield* outbox.restartHandoffs);
       const run = restartContinuationRun(projection) ?? unacceptedRestartRun(projection);
-      if (!run) return;
-      const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
-      yield* eventSink.writeWithEffects({
-        commandId,
-        events: [],
-        effects: [
-          {
-            id: `effect:restart-continuation:${run.id}`,
-            commandId,
-            threadId,
-            request: { type: "provider-runtime.continue", sourceRunId: run.id },
-          },
-        ],
-      });
+      const wakes = yield* bufferedWakeRuns(projections, threadId, projection.runs);
+      for (const source of [...(run === undefined ? [] : [run]), ...wakes]) {
+        if (handedOff.has(source.id)) continue;
+        const commandId = CommandId.make(`command:restart-prepare:${source.id}`);
+        yield* eventSink.writeWithEffects({
+          commandId,
+          events: [],
+          effects: [
+            {
+              id: `effect:restart-continuation:${source.id}`,
+              commandId,
+              threadId,
+              request: { type: "provider-runtime.continue", sourceRunId: source.id },
+            },
+          ],
+        });
+      }
     }).pipe(
       Effect.catchCauseIf(
         (cause) => !Cause.hasInterruptsOnly(cause),
