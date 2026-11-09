@@ -55,6 +55,7 @@ import {
 } from "./TimelineWorkEntryRow.logic";
 import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
 import { useEmbedLiveActivityLabel } from "../../embed/useEmbedLiveActivityLabel";
+import { EmbedLivePeek } from "../embed/EmbedLivePeek";
 
 export const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
@@ -299,6 +300,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
           {label}
           {shimmer ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
         </span>
+        <EmbedLivePeek at={row.createdAt} />
         {backgroundWorktreeSetup ? (
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
         ) : null}

@@ -1,5 +1,6 @@
 import type { MessagesTimelineRow } from "../components/chat/MessagesTimeline.logic";
 import { useEmbedHostConnected } from "./embedHost";
+import { useEmbedLivePeek } from "./embedLivePeek";
 
 const SHOWN = new Set<MessagesTimelineRow["kind"]>([
   "proposed-plan",
@@ -20,9 +21,12 @@ export function useLiveTurnFold(
   isWorking: boolean,
 ): MessagesTimelineRow[] {
   const embedded = useEmbedHostConnected();
+  const peeked = useEmbedLivePeek();
   if (!embedded || !isWorking) return rows;
   const header = rows.findIndex((row) => row.kind === "working");
   if (header < 0) return rows;
+  const working = rows[header];
+  if (working?.kind === "working" && working.createdAt && working.createdAt === peeked) return rows;
   const turn = rows.slice(header + 1);
   const kept = turn.filter(
     (row) =>
