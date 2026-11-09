@@ -37,28 +37,27 @@ function WakeClock(props: { readonly threads: ReadonlyArray<{ readonly snoozedUn
   return <output>{useSnoozeWakeClock(props.threads)}</output>;
 }
 
+const automationKeys =
+  "environment-test,environment-test:task-automation,environment-test:thread-automation";
+
 describe("useAutomationThreadKeys", () => {
   it("retains bound threads while the task source disconnects or fails", async () => {
     automationState.connectedIds = ["environment-test"];
-    automationState.query = AsyncResult.success({ tasks: [{ threadId: "thread-automation" }] });
+    automationState.query = AsyncResult.success({
+      tasks: [{ id: "task-automation", threadId: "thread-automation" }],
+    });
     await using screen = await render(<AutomationKeys />, { router: false });
-    await expect
-      .element(screen.getByRole("status"))
-      .toHaveTextContent("environment-test:thread-automation");
+    await expect.element(screen.getByRole("status")).toHaveTextContent(automationKeys);
 
     automationState.query = AsyncResult.failure(Cause.fail(new Error("request failed")));
     await screen.rerender(<AutomationKeys />);
-    await expect
-      .element(screen.getByRole("status"))
-      .toHaveTextContent("environment-test:thread-automation");
+    await expect.element(screen.getByRole("status")).toHaveTextContent(automationKeys);
 
     automationState.connectedIds = [];
     automationState.query = AsyncResult.failure(Cause.fail(new Error("disconnected")));
     await screen.rerender(<AutomationKeys />);
 
-    await expect
-      .element(screen.getByRole("status"))
-      .toHaveTextContent("environment-test:thread-automation");
+    await expect.element(screen.getByRole("status")).toHaveTextContent(automationKeys);
   });
 });
 
