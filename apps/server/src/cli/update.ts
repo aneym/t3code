@@ -2,9 +2,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   CLI_RELEASE_BASE_URL_ENV,
   CLI_RELEASE_CHANNELS,
-  cliReleaseIndexPageUrl,
   cliReleaseChannelOf,
-  newestCliReleaseVersion,
   type CliReleaseChannel,
 } from "@t3tools/shared/cliRelease";
 import * as Console from "effect/Console";
@@ -16,7 +14,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag, Prompt } from "effect/cli";
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
@@ -37,6 +35,7 @@ import { managedUpdateRefusal } from "../policy/managedUpdates.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { resolveNewestVersion } from "./releaseIndex.ts";
 import { createUpdateProgress } from "./updateProgress.ts";
 import * as CliService from "./service.ts";
 
@@ -47,53 +46,6 @@ export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpd
     return this.reason;
   }
 }
-
-const ReleaseIndex = Schema.Array(
-  Schema.Struct({
-    tag_name: Schema.String,
-    draft: Schema.optional(Schema.Boolean),
-  }),
-);
-const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseIndex));
-
-const RELEASE_INDEX_TIMEOUT = Duration.seconds(30);
-const RELEASE_INDEX_MAX_PAGES = 10;
-
-export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
-  channel: CliReleaseChannel,
-  currentVersion?: string,
-) {
-  const httpClient = yield* HttpClient.HttpClient;
-  const environment = yield* HostProcess.Environment;
-  const githubToken = environment.GH_TOKEN?.trim() || environment.GITHUB_TOKEN?.trim() || undefined;
-  for (let page = 1; page <= RELEASE_INDEX_MAX_PAGES; page += 1) {
-    const request = HttpClientRequest.get(cliReleaseIndexPageUrl(page, currentVersion)).pipe(
-      HttpClientRequest.setHeader("Accept", "application/vnd.github+json"),
-    );
-    const authenticatedRequest =
-      githubToken === undefined
-        ? request
-        : HttpClientRequest.setHeader(request, "Authorization", `Bearer ${githubToken}`);
-    const body = yield* httpClient.execute(authenticatedRequest).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) => response.text),
-      Effect.mapError(() => new CliUpdateError({ reason: "Could not list t3 releases." })),
-      Effect.timeoutOrElse({
-        duration: RELEASE_INDEX_TIMEOUT,
-        orElse: () => Effect.fail(new CliUpdateError({ reason: "Timed out listing t3 releases." })),
-      }),
-    );
-    const releases = yield* decodeReleaseIndex(body).pipe(
-      Effect.mapError(
-        () => new CliUpdateError({ reason: "The t3 release index had an unexpected shape." }),
-      ),
-    );
-    const version = newestCliReleaseVersion(releases, channel);
-    if (version !== undefined) return version;
-    if (releases.length === 0) break;
-  }
-  return yield* new CliUpdateError({ reason: `No published ${channel} release was found.` });
-});
 
 /**
  * Only a launcher that already points into this home's `runtime/versions` tree is touched; a
@@ -340,7 +292,9 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   progress.status("Checking for updates...");
   const targetVersion = yield* (
     input.requestedVersion === undefined
-      ? resolveNewestVersion(channel, currentVersion)
+      ? resolveNewestVersion(channel, currentVersion, `${platform}-${arch}`).pipe(
+          Effect.mapError((error) => new CliUpdateError({ reason: error.reason })),
+        )
       : Effect.succeed(input.requestedVersion)
   ).pipe(Effect.ensuring(Effect.sync(progress.finish)));
   const targetChannel = cliReleaseChannelOf(targetVersion);
