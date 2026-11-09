@@ -1,0 +1,4 @@
+html[data-embed="true"] {
+  --glass-opacity: 100% !important;
+  --glass-blur: 0px !important;
+}

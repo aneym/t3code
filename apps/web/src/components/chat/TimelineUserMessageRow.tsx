@@ -182,8 +182,6 @@ function UserVideoAttachment({
   readonly cornerClassName?: string | undefined;
 }) {
   const ctx = use(TimelineRowCtx);
-  // Row updates rebuild attachment objects, so the asset follows only the
-  // fields it reads.
   const { downloadable, id, mimeType, name } = file;
   const environmentId = ctx.activeThreadEnvironmentId;
   const asset =
@@ -300,7 +298,6 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           onToggle={() => setExpanded((value) => !value)}
         />
         {bodyMounted ? (
-          // `beforematch` does not bubble, so the reveal listener sits on the hidden fold itself.
           <div
             ref={revealRef}
             hidden={!expanded}

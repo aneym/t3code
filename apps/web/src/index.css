@@ -16,11 +16,6 @@
   }
 }
 
-html[data-embed="true"] {
-  --glass-opacity: 100%;
-  --glass-blur: 0px;
-}
-
 /* On mobile, morph the expanded hero composer into the compact docked
    composer while it moves; the rest of the app remains visually stationary. */
 html[data-mobile-composer-route-transition="true"]::view-transition-old(root),
