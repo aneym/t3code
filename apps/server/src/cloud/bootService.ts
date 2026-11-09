@@ -338,8 +338,22 @@ export class BootServiceDowngradeRefusedError extends Schema.TaggedError<BootSer
   }
 }
 
+export class BootServiceOtherHomeError extends Schema.TaggedError<BootServiceOtherHomeError>()(
+  "BootServiceOtherHomeError",
+  {
+    unitPath: Schema.String,
+    installedBaseDir: Schema.optional(Schema.String),
+    baseDir: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Refusing to uninstall: ${this.unitPath} belongs to the T3 home ${this.installedBaseDir ?? "(unknown)"}, not ${this.baseDir}.`;
+  }
+}
+
 export type BootServiceError =
   | BootServiceUnsupportedError
+  | BootServiceOtherHomeError
   | BootServiceCommandError
   | BootServiceInstallError
   | BootServicePrerequisiteError
@@ -763,17 +777,19 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     return plan;
   });
 
+  const servesThisHome = (unit: string) => {
+    const installedBaseDir = bootServiceBaseDirOf(unit);
+    return (
+      installedBaseDir !== undefined &&
+      path.resolve(installedBaseDir) === path.resolve(input.baseDir)
+    );
+  };
+
   const restart: BootService["Service"]["restart"] = Effect.gen(function* () {
     const manager = yield* requireManager;
     const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
     if (Option.isNone(unit)) return "skipped" as const;
-    const installedBaseDir = bootServiceBaseDirOf(unit.value);
-    if (
-      installedBaseDir === undefined ||
-      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
-    ) {
-      return "skipped" as const;
-    }
+    if (!servesThisHome(unit.value)) return "skipped" as const;
     // Writes no state, and the launcher lets an update transition in flight
     // finish before the queued stop tears it down.
     if (runningInService && manager.handoff !== undefined) {
@@ -800,13 +816,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const manager = detectedManager;
     const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
     if (Option.isNone(unit)) return yield* operation;
-    const installedBaseDir = bootServiceBaseDirOf(unit.value);
-    if (
-      installedBaseDir === undefined ||
-      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
-    ) {
-      return yield* operation;
-    }
+    if (!servesThisHome(unit.value)) return yield* operation;
     // `is-active` misses crash-looping systemd units; launchd can be loaded without a pid.
     // Always stop; restore only if previously active, enabled, or loaded,
     // so disabled crash loops stay stopped.
@@ -844,6 +854,16 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
     const manager = yield* requireManager;
+    for (const owned of [unitPath, connectorServiceManager(manager).unitPath]) {
+      const unit = yield* fs.readFileString(owned).pipe(Effect.option);
+      if (Option.isSome(unit) && !servesThisHome(unit.value)) {
+        return yield* new BootServiceOtherHomeError({
+          unitPath: owned,
+          installedBaseDir: bootServiceBaseDirOf(unit.value),
+          baseDir: input.baseDir,
+        });
+      }
+    }
     if (
       yield* fs
         .exists(connectorServiceManager(manager).unitPath)

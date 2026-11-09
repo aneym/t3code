@@ -610,18 +610,27 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("restart leaves a service that serves another T3 home alone", () =>
-    Effect.gen(function* () {
-      const { service, fs, commands, makeService } = yield* makeHarness();
-      yield* service.install();
-      commands.length = 0;
-      const path = yield* Path.Path;
-      const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-other-home-" });
+  it.effect.each(["linux", "darwin"] as const)(
+    "restart and uninstall leave a %s service that serves another T3 home alone",
+    (platform) =>
+      Effect.gen(function* () {
+        const { service, fs, commands, makeService, baseDir } = yield* makeHarness(platform);
+        const plan = yield* service.install();
+        commands.length = 0;
+        const path = yield* Path.Path;
+        const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-other-home-" });
 
-      const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
-      expect(yield* other.restart).toBe("skipped");
-      expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([]);
-    }),
+        const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
+        expect(yield* other.restart).toBe("skipped");
+        const refused = yield* Effect.flip(other.uninstall);
+        expect(refused).toMatchObject({
+          _tag: "BootServiceOtherHomeError",
+          installedBaseDir: baseDir,
+        });
+        expect(refused.message).toContain(baseDir);
+        expect(commands.filter((command) => /^(systemctl|launchctl) /.test(command))).toEqual([]);
+        expect(yield* fs.exists(plan.unitPath)).toBe(true);
+      }),
   );
 
   it.effect("hands the whole install to systemd without changing the running service", () =>
