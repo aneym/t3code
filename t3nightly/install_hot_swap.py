@@ -38,9 +38,10 @@ def measure_candidate(sandbox, manifest):
     receipt = {**samples[-1], "candidateMeasuredStartupMs": int(statistics.median(measured)) if valid else None, "samplesMs": measured, "aggregation": "median", "samples": samples}
     ready = [sample.get("acquireToReadyMs") for sample in samples]
     old_ready = [sample.get("acquireToReadyMs") for sample in baseline]
-    receipt.update(host=platform.node(), measuredAt=time.time(), idle=all(sample["idle"] for sample in samples),
+    admitted = lambda group: all(sample["idle"] or sample.get("busyAllowed") is True for sample in group)
+    receipt.update(host=platform.node(), measuredAt=time.time(), idle=all(sample["idle"] for sample in samples), busyAllowed=admitted(samples) and not all(sample["idle"] for sample in samples),
                    acquireToReadyMs=int(statistics.median(ready)) if all(type(value) is int and value > 0 for value in ready) else None,
-                   hostBaseline={"host": platform.node(), "runtimeDigest": file_digest(sandbox.old / "t3"), "idle": all(sample["idle"] for sample in baseline),
+                   hostBaseline={"host": platform.node(), "runtimeDigest": file_digest(sandbox.old / "t3"), "idle": all(sample["idle"] for sample in baseline), "busyAllowed": admitted(baseline) and not all(sample["idle"] for sample in baseline),
                                  "acquireToReadyMs": int(statistics.median(old_ready)) if all(type(value) is int and value > 0 for value in old_ready) else None, "samples": baseline})
     (sandbox.evidence / "candidate-startup.json").write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt
@@ -53,7 +54,7 @@ def measure_startup_sample(sandbox, manifest, index, *, binary=None, version=Non
 
     version = version or manifest["version"]
     binary = binary or stage_runtime(sandbox.home, version, sandbox.args.assets)
-    def idle():
+    def load():
         if sys.platform == "linux":
             def ticks():
                 values = [int(value) for value in Path("/proc/stat").read_text().splitlines()[0].split()[1:9]]
@@ -61,16 +62,20 @@ def measure_startup_sample(sandbox, manifest, index, *, binary=None, version=Non
             before = ticks()
             time.sleep(0.1)
             after = ticks()
-            host_idle = (after[1] - before[1]) / max(1, after[0] - before[0]) >= 0.2
-        else:
-            host_idle = os.getloadavg()[0] <= max(1, (os.cpu_count() or 1) * 0.5)
-        return host_idle
+            fraction = (after[1] - before[1]) / max(1, after[0] - before[0])
+            return {"idleFraction": round(fraction, 3), "threshold": ">= 0.2"}, fraction >= 0.2
+        load1 = os.getloadavg()[0]
+        limit = max(1, (os.cpu_count() or 1) * 0.5)
+        return {"load1": round(load1, 2), "threshold": f"<= {limit}"}, load1 <= limit
+    def idle():
+        return load()[1]
+    busy_ok = getattr(sandbox.args, "startup_busy_ok", False) is True
     idle_deadline = time.monotonic() + getattr(sandbox.args, "startup_idle_s", 60)
     while not idle() and time.monotonic() < idle_deadline:
         time.sleep(0.5)
-    idle_before = idle()
-    if not idle_before:
-        receipt = {"idle": False, "candidateMeasuredStartupMs": None, "acquireToReadyMs": None, "reason": "idle-wait-deadline", "version": version, "candidateDigest": manifest["digest"], "runtimeDigest": file_digest(binary)}
+    host_load, idle_before = load()
+    if not idle_before and not busy_ok:
+        receipt = {"idle": False, "candidateMeasuredStartupMs": None, "acquireToReadyMs": None, "reason": "idle-wait-deadline", "hostLoad": host_load, "version": version, "candidateDigest": manifest["digest"], "runtimeDigest": file_digest(binary)}
         (sandbox.evidence / f"candidate-startup-{index}.json").write_text(json.dumps(receipt) + "\n")
         return receipt
     root = sandbox.home / "snapshots"
@@ -120,7 +125,9 @@ def measure_startup_sample(sandbox, manifest, index, *, binary=None, version=Non
                 finally:
                     receipt["exitCode"] = process.poll()
                     receipt["idle"] = idle_before
-                    receipt["sampling"] = "idle-at-probe-start"
+                    receipt["hostLoad"] = host_load
+                    receipt["busyAllowed"] = busy_ok and not idle_before
+                    receipt["sampling"] = "idle-at-probe-start" if idle_before else "busy-allowed-interleaved"
                     log.flush()
                     matches = re.findall(r'acquireToReadyMs[\"\s:=]+(\d+)', (sandbox.evidence / f"candidate-startup-{index}.log").read_text())
                     receipt["acquireToReadyMs"] = int(matches[-1]) if matches else None
@@ -157,7 +164,7 @@ def mark_candidate(run, manifest, rehearsal, compatibility, observed):
     host = platform.node()
     measured = startup.get("acquireToReadyMs")
     budget = baseline.get("acquireToReadyMs")
-    if startup.get("host") != host or baseline.get("host") != host or startup.get("idle") is not True or baseline.get("idle") is not True or not 0 <= time.time() - startup.get("measuredAt", 0) <= 3600:
+    if startup.get("host") != host or baseline.get("host") != host or not (startup.get("idle") is True or startup.get("busyAllowed") is True) or not (baseline.get("idle") is True or baseline.get("busyAllowed") is True) or not 0 <= time.time() - startup.get("measuredAt", 0) <= 3600:
         run.step("hot-swap-fallback", reason="fresh-idle-host-startup-baseline-required")
         return False
     if baseline.get("runtimeDigest") != observed["oldRuntime.digest"]:

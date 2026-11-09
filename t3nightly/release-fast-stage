@@ -30,6 +30,7 @@ def main():
     parser.add_argument("--override-reason", default="")
     parser.add_argument("--advisory-workers", type=int, default=4)
     parser.add_argument("--rehearsal-drain-s", type=int, choices=range(30, 61), default=45)
+    parser.add_argument("--startup-busy-ok", action="store_true")
     parser.add_argument("--defer-host", action="append", default=[], choices=tuple(LINUX_TARGETS), help="Linux host deferred for this release (repeatable); readiness skips it")
     parser.add_argument("--defer-reason", default="", help="operator decision authorizing the deferral")
     args = parser.parse_args()
@@ -45,7 +46,7 @@ def main():
         parser.error("--advisory-workers must be positive")
     home = Path.home()
     os.environ["PATH"] = os.pathsep.join([str(home / ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", os.environ.get("PATH", "/usr/bin:/bin")])
-    config = FastConfig(args.version, args.topic, args.run.resolve(), args.host, args.remote_run, args.remote_tools, args.base, linux_host=args.linux_host, override_reason=args.override_reason, advisory_workers=args.advisory_workers, rehearsal_drain_s=args.rehearsal_drain_s, defer_hosts=args.defer_host, defer_reason=args.defer_reason)
+    config = FastConfig(args.version, args.topic, args.run.resolve(), args.host, args.remote_run, args.remote_tools, args.base, linux_host=args.linux_host, override_reason=args.override_reason, advisory_workers=args.advisory_workers, rehearsal_drain_s=args.rehearsal_drain_s, startup_busy_ok=args.startup_busy_ok, defer_hosts=args.defer_host, defer_reason=args.defer_reason)
     config.run.mkdir(parents=True, exist_ok=True)
     print(json.dumps({"stage": args.stage, "host": args.host, "run": str(config.run)}), flush=True)
     try:

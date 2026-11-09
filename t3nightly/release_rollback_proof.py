@@ -74,7 +74,7 @@ def fast_rollback_proof(config, log):
                     "--assets", str(config.build_out()), "--artifact-manifest", str(config.artifact()), "--seed", plan["seed"],
                     "--home", str(root / "home"), "--evidence", str(root / "evidence"), "--label", f"{plan['label']}-rollback", "--port", str(port),
                     "--target-host", config.host, "--provider-binary", str(config.home / ".local/bin/claude"), "--health-s", "300", "--force-rollback",
-                    "--hot-swap", "--rehearsal-drain-s", str(config.rehearsal_drain_s), "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")),
+                    "--hot-swap", "--rehearsal-drain-s", str(config.rehearsal_drain_s), *(["--startup-busy-ok"] if config.startup_busy_ok else []), "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")),
                     *config.service_artifacts(), *config.target_artifacts()], log)
     result = json.loads((root / "evidence" / "result.json").read_text())
     installer = result.get("hotSwap", {}).get("install", {})

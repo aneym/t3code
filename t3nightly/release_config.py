@@ -89,6 +89,7 @@ class FastConfig:
     override_reason: str = ""
     advisory_workers: int = 4
     rehearsal_drain_s: int = 45
+    startup_busy_ok: bool = False
     defer_hosts: tuple[str, ...] = ()
     defer_reason: str = ""
 
@@ -134,7 +135,7 @@ class FastConfig:
 
     def on(self, host):
         run = Path(self.remote_run) if host in LINUX_TARGETS and self.host == "studio" else self.run
-        return FastConfig(self.version, self.topic, run, host, self.remote_run, self.remote_tools, self.base, linux_host=self.linux_host, override_reason=self.override_reason, advisory_workers=self.advisory_workers, rehearsal_drain_s=self.rehearsal_drain_s, defer_hosts=self.defer_hosts, defer_reason=self.defer_reason)
+        return FastConfig(self.version, self.topic, run, host, self.remote_run, self.remote_tools, self.base, linux_host=self.linux_host, override_reason=self.override_reason, advisory_workers=self.advisory_workers, rehearsal_drain_s=self.rehearsal_drain_s, startup_busy_ok=self.startup_busy_ok, defer_hosts=self.defer_hosts, defer_reason=self.defer_reason)
 
     def tree(self, stage):
         return HOSTS[self.host]["trees"] / f"aneym-fast-{stage}"

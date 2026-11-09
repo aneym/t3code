@@ -218,7 +218,7 @@ def fast_rehearse(config, log):
                     "--assets", str(config.build_out()), "--artifact-manifest", str(config.artifact()), "--seed", plan["seed"],
                     "--home", plan["home"], "--evidence", plan["evidence"], "--label", plan["label"], "--port", str(plan["port"]),
                     "--target-host", config.host, "--provider-binary", str(config.home / ".local/bin/claude"), "--health-s", "300",
-                    "--hot-swap", "--rehearsal-drain-s", str(config.rehearsal_drain_s), "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")),
+                    "--hot-swap", "--rehearsal-drain-s", str(config.rehearsal_drain_s), *(["--startup-busy-ok"] if config.startup_busy_ok else []), "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")),
                     *config.service_artifacts(), *config.target_artifacts()], log)
     if not code:
         config.receipt("rehearsal").parent.mkdir(parents=True, exist_ok=True)
