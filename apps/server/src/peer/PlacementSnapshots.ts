@@ -8,6 +8,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -22,16 +23,21 @@ export const Snapshot = Schema.Struct({
 });
 export type Snapshot = typeof Snapshot.Type;
 
+export const READ_SECONDS = 6;
+
 export const make = Effect.fn("PlacementSnapshots.make")(function* (
   peers: Peers.PeerMcpClient["Service"],
 ) {
-  const readGate = yield* Semaphore.make(4);
+  const readGate = yield* Semaphore.make(16);
   const snapshotScope = yield* Scope.Scope;
   const pending = new Map<string, Fiber.Fiber<void>>();
-  const snapshots = new Map<string, { expiresAt: number; value: Snapshot | undefined }>();
+  const snapshots = new Map<
+    string,
+    { expiresAt: number; value: Snapshot | undefined; failure: string | undefined }
+  >();
   const cached = (environmentId: EnvironmentId, key: string, now: number) => {
     const entry = snapshots.get(`${environmentId}:${key}`);
-    return entry !== undefined && entry.expiresAt > now ? entry.value : undefined;
+    return entry !== undefined && entry.expiresAt > now ? entry : undefined;
   };
   const refresh = Effect.fn("PlacementSnapshots.refresh")(function* (input: {
     readonly environmentIds: ReadonlyArray<EnvironmentId>;
@@ -56,15 +62,24 @@ export const make = Effect.fn("PlacementSnapshots.make")(function* (
           })
           .pipe(
             readGate.withPermits(1),
-            Effect.timeout("6 seconds"),
-            Effect.orElseSucceed(() => undefined),
-            Effect.flatMap((value) =>
+            Effect.timeoutOption(`${READ_SECONDS} seconds`),
+            Effect.map((value) =>
+              Option.isSome(value)
+                ? { value: value.value, failure: undefined }
+                : { value: undefined, failure: `No reply within ${READ_SECONDS} s.` },
+            ),
+            Effect.catch((error) =>
+              Effect.succeed({ value: undefined, failure: `Read failed: ${error.message}` }),
+            ),
+            Effect.flatMap((result) =>
               DateTime.now.pipe(
                 Effect.map((sampledAt) => {
                   if (snapshots.size >= 128) snapshots.clear();
                   snapshots.set(snapshotKey, {
-                    expiresAt: DateTime.toEpochMillis(sampledAt) + 5000,
-                    value,
+                    ...result,
+                    expiresAt:
+                      DateTime.toEpochMillis(sampledAt) +
+                      (result.failure === undefined ? 5000 : 30_000),
                   });
                 }),
               ),
@@ -81,7 +96,7 @@ export const make = Effect.fn("PlacementSnapshots.make")(function* (
       }),
     );
     yield* Fiber.joinAll(reads.filter((fiber) => fiber !== undefined)).pipe(
-      Effect.timeout("750 millis"),
+      Effect.timeout(`${READ_SECONDS * 1000 + 500} millis`),
       Effect.ignore,
     );
   });

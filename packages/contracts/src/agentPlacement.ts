@@ -36,6 +36,7 @@ export const AgentPlacementScore = Schema.Struct({
   availableMemoryRatio: Schema.NullOr(Schema.Finite),
   freeDiskBytes: Schema.NullOr(Schema.Finite),
   skipped: Schema.optionalKey(Schema.String),
+  note: Schema.optionalKey(Schema.String),
 });
 export type AgentPlacementScore = typeof AgentPlacementScore.Type;
 
@@ -59,6 +60,7 @@ export const AgentPlacementProviders = Schema.Array(
 );
 
 const GIB = 1024 * 1024 * 1024;
+const UNKNOWN_RATIO = 0.1;
 const percent = (ratio: number) => `${Math.round(ratio * 100)}%`;
 
 export function scoreAgentPlacement(input: {
@@ -71,11 +73,9 @@ export function scoreAgentPlacement(input: {
 }): AgentPlacementScore {
   const { resources, weight, line } = input;
   const loadPerCore =
-    resources == null || resources.cpuCount <= 0
+    resources == null || resources.cpuCount <= 0 || resources.loadAverage1m === undefined
       ? null
-      : resources.loadAverage1m !== undefined
-        ? resources.loadAverage1m / resources.cpuCount
-        : resources.cpuUtilization;
+      : resources.loadAverage1m / resources.cpuCount;
   const availableMemoryRatio =
     resources == null || resources.totalMemoryBytes <= 0
       ? null
@@ -94,9 +94,9 @@ export function scoreAgentPlacement(input: {
   if (resources == null) return skip("No host resources reported.");
   if (input.now - resources.sampledAt > 15_000 || resources.sampledAt > input.now + 5_000)
     return skip("Host resources are stale.");
-  if (loadPerCore === null || availableMemoryRatio === null)
+  if (resources.cpuCount <= 0 || availableMemoryRatio === null)
     return skip("No CPU or memory reading.");
-  if (loadPerCore > line.maxLoadPerCore)
+  if (loadPerCore !== null && loadPerCore > line.maxLoadPerCore)
     return skip(
       `Load per core ${loadPerCore.toFixed(2)} is over the health line ${line.maxLoadPerCore}.`,
     );
@@ -108,10 +108,26 @@ export function scoreAgentPlacement(input: {
     return skip(
       `Free disk ${(freeDiskBytes / GIB).toFixed(1)} GiB is under the health line ${(line.minFreeDiskBytes / GIB).toFixed(1)} GiB.`,
     );
+  const totalDiskBytes = resources.totalDiskBytes ?? 0;
   const diskRatio =
-    freeDiskBytes !== null && resources.totalDiskBytes !== undefined && resources.totalDiskBytes > 0
-      ? freeDiskBytes / resources.totalDiskBytes
-      : 1;
-  const freeCores = resources.cpuCount * Math.max(0, 1 - loadPerCore / line.maxLoadPerCore);
-  return { ...base, score: weight * freeCores * availableMemoryRatio * diskRatio };
+    freeDiskBytes !== null && totalDiskBytes > 0 ? freeDiskBytes / totalDiskBytes : null;
+  const unknown = [
+    ...(loadPerCore === null ? ["load average"] : []),
+    ...(diskRatio === null ? ["free disk"] : []),
+  ];
+  const freeCoreRatio =
+    loadPerCore === null ? UNKNOWN_RATIO : Math.max(0, 1 - loadPerCore / line.maxLoadPerCore);
+  const score =
+    weight *
+    resources.cpuCount *
+    freeCoreRatio *
+    availableMemoryRatio *
+    (diskRatio ?? UNKNOWN_RATIO);
+  return unknown.length === 0
+    ? { ...base, score }
+    : {
+        ...base,
+        score,
+        note: `Unknown ${unknown.join(" and ")}; each counts as 10%, so this machine is a last resort.`,
+      };
 }

@@ -282,21 +282,23 @@ const make = Effect.gen(function* () {
                 limits: caller.limits,
                 now,
               });
+              const scoredAt = DateTime.toEpochMillis(yield* DateTime.now);
               for (const link of linked) {
-                const snapshot = snapshots.cached(link.environmentId, key, now);
+                const entry = snapshots.cached(link.environmentId, key, now);
+                const snapshot = entry?.value;
                 const scored = scoreAgentPlacement({
                   environmentId: link.environmentId,
                   label: snapshot?.label ?? link.label,
                   resources: snapshot?.hostResources,
                   weight: weightOf(link.environmentId),
                   line: snapshot?.placementHealthLine ?? line,
-                  now,
+                  now: scoredAt,
                 });
                 const skipped =
                   scored.skipped === "Weight is 0."
                     ? scored.skipped
                     : snapshot === undefined
-                      ? "No reply from this environment."
+                      ? (entry?.failure ?? `No reply within ${PlacementSnapshots.READ_SECONDS} s.`)
                       : snapshot.placementProjectId === undefined
                         ? "The project is not registered there."
                         : !snapshot.placementProviders?.some(
@@ -312,7 +314,10 @@ const make = Effect.gen(function* () {
                   matching.set(link.environmentId, snapshot.placementProjectId);
                 scores.push(skipped === undefined ? scored : { ...scored, score: 0, skipped });
               }
-            }).pipe(Effect.timeout("1 second"), Effect.ignore);
+            }).pipe(
+              Effect.timeout(`${PlacementSnapshots.READ_SECONDS + 2} seconds`),
+              Effect.ignore,
+            );
           }
           const decided = (
             environmentId: EnvironmentId,
@@ -352,7 +357,7 @@ const make = Effect.gen(function* () {
           );
         });
         const result = yield* evaluate.pipe(
-          Effect.timeout("8 seconds"),
+          Effect.timeout(`${PlacementSnapshots.READ_SECONDS * 2} seconds`),
           Effect.orElseSucceed(() =>
             local("Placement data is unavailable; using the local launch path."),
           ),
