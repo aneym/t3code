@@ -9,6 +9,7 @@ import { isEmbedPath, normalizeEmbedOrigins, readEmbedScheme } from "../../embed
 import { readEmbedSignIn } from "../../embed/embedSignIn";
 import { applyEmbedTheme, themeFromEmbedMessage } from "../../embed/embedTheme";
 import { useEmbedHostBridge } from "../../embed/useEmbedHostBridge";
+import { useEmbedNavigationPrefetch } from "../../embed/useEmbedNavigationPrefetch";
 import { useEmbedReadyReport } from "../../embed/useEmbedReadyReport";
 import { primaryServerConfigAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
@@ -37,6 +38,7 @@ function EmbedNotice({ text }: { readonly text: string }) {
 function EmbedPrefetch({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   useAtomMount(environmentShell.stateAtom(threadRef.environmentId));
   useAtomMount(environmentThreads.stateAtom(threadRef.environmentId, threadRef.threadId));
+  useEmbedNavigationPrefetch();
   return null;
 }
 
