@@ -1,7 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - NodeHttpServer builds from a Node server factory.
-import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeHttp from "node:http";
 import {
   EnvironmentHttpApi,
   EnvironmentId,
@@ -34,6 +31,7 @@ import * as PeerLinks from "./PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { layerLoopbackServer } from "../testUtils/loopbackHttpServer.ts";
 
 class PeerTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.metadata)
@@ -54,11 +52,6 @@ export const descriptorOf = (
     linkFence: true,
     ...capabilities,
   },
-});
-
-export const layerLoopbackServer = NodeHttpServer.layer(NodeHttp.createServer, {
-  port: 0,
-  host: "127.0.0.1",
 });
 
 /**

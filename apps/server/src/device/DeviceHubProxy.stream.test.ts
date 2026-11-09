@@ -7,7 +7,6 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { HttpRouter, HttpServer } from "effect/http";
 import * as Socket from "effect/socket/Socket";
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   AuthOrchestrationOperateScope,
   AuthSessionId,
@@ -16,11 +15,12 @@ import {
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceHubProxy from "./DeviceHubProxy.ts";
+import { layerLoopbackTest } from "../testUtils/loopbackHttpServer.ts";
 
 it.effect("preserves binary input and admission frames through the real socket proxy", () =>
   Effect.gen(function* () {
     const hub = yield* Effect.acquireRelease(
-      Effect.sync(() => new NodeWS.WebSocketServer({ port: 0 })),
+      Effect.sync(() => new NodeWS.WebSocketServer({ port: 0, host: "127.0.0.1" })),
       (server) =>
         Effect.promise(
           () =>
@@ -40,7 +40,7 @@ it.effect("preserves binary input and admission frames through the real socket p
     });
     const services = yield* Layer.build(
       HttpRouter.serve(DeviceHubProxy.layer, { disableListenLog: true }).pipe(
-        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provideMerge(layerLoopbackTest),
         Layer.provide(
           Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
             authenticateWebSocketUpgrade: () =>

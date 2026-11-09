@@ -1,5 +1,4 @@
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -24,6 +23,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import { routeLayer } from "./ServerBrowserStream.ts";
+import { layerLoopbackTest } from "../testUtils/loopbackHttpServer.ts";
 
 const platformLayer = NodeHttpPlatform.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -107,7 +107,7 @@ it.effect.each([
           Layer.provide(platformLayer),
         ),
         { disableListenLog: true },
-      ).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provide(auth.layer)),
+      ).pipe(Layer.provideMerge(layerLoopbackTest), Layer.provide(auth.layer)),
     );
     const server = Context.get(services, HttpServer.HttpServer);
     const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
@@ -176,7 +176,7 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
         ),
         { disableListenLog: true },
       ).pipe(
-        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provideMerge(layerLoopbackTest),
         Layer.provide(makeAuth([AuthOrchestrationReadScope]).layer),
       ),
     );
@@ -405,7 +405,7 @@ it.effect.each([
         ),
         { disableListenLog: true },
       ).pipe(
-        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provideMerge(layerLoopbackTest),
         Layer.provide(makeAuth([AuthOrchestrationReadScope]).layer),
       ),
     );
