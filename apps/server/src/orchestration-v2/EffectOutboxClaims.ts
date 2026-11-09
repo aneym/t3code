@@ -1,6 +1,7 @@
 import type * as SqlClient from "effect/sql/SqlClient";
 
 import { RESTART_DRAIN_HELD_EFFECT_TYPES } from "./EffectOutboxModel.ts";
+import { PERSON_CREATION_SOURCES } from "./PersonSender.ts";
 
 // Retry backoff must block later effects so turns cannot race a pending rollback.
 export const claimableCandidatePredicate = (
@@ -19,7 +20,22 @@ export const claimableCandidatePredicate = (
   AND candidate.status = 'pending'
   AND ${
     input.draining
-      ? sql`candidate.effect_type NOT IN ${sql.in(RESTART_DRAIN_HELD_EFFECT_TYPES)}`
+      ? sql`(
+          candidate.effect_type NOT IN ${sql.in(RESTART_DRAIN_HELD_EFFECT_TYPES)}
+          OR (
+            candidate.effect_type = 'provider-turn.start'
+            AND EXISTS (
+              SELECT 1
+              FROM orchestration_v2_projection_runs AS run
+              JOIN orchestration_v2_projection_messages AS message
+                ON message.message_id = json_extract(run.payload_json, '$.userMessageId')
+              WHERE run.run_id = json_extract(candidate.payload_json, '$.runId')
+                AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                AND json_extract(message.payload_json, '$.creationSource') IN ${sql.in(PERSON_CREATION_SOURCES)}
+                AND json_extract(message.payload_json, '$.scheduledTaskId') IS NULL
+            )
+          )
+        )`
       : sql`1 = 1`
   }
   AND NOT EXISTS (
