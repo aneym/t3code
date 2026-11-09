@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-DEFAULT_DRAIN_S = 120
+DEFAULT_DRAIN_S = 300
 
 LIVE_SERVICES = {"t3code.service", "com.t3tools.t3code.service"}
 MAX_ADMISSION_AGE_S = 7200
