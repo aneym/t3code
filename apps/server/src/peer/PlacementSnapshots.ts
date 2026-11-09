@@ -35,19 +35,19 @@ export const make = Effect.fn("PlacementSnapshots.make")(function* (
     string,
     { expiresAt: number; value: Snapshot | undefined; failure: string | undefined }
   >();
-  const cached = (environmentId: EnvironmentId, key: string, now: number) => {
-    const entry = snapshots.get(`${environmentId}:${key}`);
+  const cached = (environmentId: EnvironmentId, keys: ReadonlyArray<string>, now: number) => {
+    const entry = snapshots.get(`${environmentId}:${keys.join(" ")}`);
     return entry !== undefined && entry.expiresAt > now ? entry : undefined;
   };
   const refresh = Effect.fn("PlacementSnapshots.refresh")(function* (input: {
     readonly environmentIds: ReadonlyArray<EnvironmentId>;
-    readonly key: string;
+    readonly keys: ReadonlyArray<string>;
     readonly limits: Peers.PeerCallLimits;
     readonly now: number;
   }) {
     const reads = yield* Effect.forEach(input.environmentIds, (environmentId) =>
       Effect.gen(function* () {
-        const snapshotKey = `${environmentId}:${input.key}`;
+        const snapshotKey = `${environmentId}:${input.keys.join(" ")}`;
         const entry = snapshots.get(snapshotKey);
         if (entry !== undefined && entry.expiresAt > input.now) return undefined;
         const existing = pending.get(snapshotKey);
@@ -56,7 +56,11 @@ export const make = Effect.fn("PlacementSnapshots.make")(function* (
           .call({
             environmentId,
             tool: "t3_environment_read",
-            arguments: { placementRepositoryKey: input.key, includePlacementProviders: true },
+            arguments: {
+              placementRepositoryKey: input.keys[0],
+              placementRepositoryKeys: input.keys,
+              includePlacementProviders: true,
+            },
             limits: input.limits,
             success: Snapshot,
           })
