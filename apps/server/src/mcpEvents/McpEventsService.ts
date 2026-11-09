@@ -34,7 +34,7 @@ import {
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { relayHookBaseUrl } from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { callEventsMethod, serverKey } from "./eventsRpc.ts";
+import { callEventsMethod, serverKey, serverLabel } from "./eventsRpc.ts";
 import * as Store from "./McpEventsStore.ts";
 import {
   newUrlToken,
@@ -325,17 +325,19 @@ const make = Effect.gen(function* () {
       .pipe(Effect.orElseSucceed(() => null));
     if (shell === null) return false;
     const key = deliveryKey(row, event);
+    const subscription = Store.toSubscription(row);
     return yield* threads
       .sendToThread({
         projectId: shell.projectId,
         commandId: CommandId.make(`command:${key}`),
         threadId: shell.id,
         messageId: MessageId.make(`message:${key}`),
-        text: deliveryText({ subscription: Store.toSubscription(row), event }),
+        text: deliveryText({ subscription, event }),
         attachments: [],
         mode: "queue",
         createdBy: "system",
         creationSource: "server",
+        mcpEvent: { name: event.name, server: serverLabel(subscription.server) },
       })
       .pipe(
         Effect.as(true),

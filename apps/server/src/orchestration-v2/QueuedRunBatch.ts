@@ -121,6 +121,7 @@ export function queuedRunBatchEvents(input: {
       senderThreadId: _sender,
       senderEnvironmentId: _environment,
       senderEnvironmentLabel: _label,
+      mcpEvent: _event,
       ...base
     } = item;
     return [

@@ -237,6 +237,7 @@ import {
 } from "./QueuedRunSendAll.ts";
 import { makeQueuedSteerRecovery } from "./QueuedSteerRecovery.ts";
 import { queuedRunBatch, queuedRunBatchEvents } from "./QueuedRunBatch.ts";
+import { queuedMessageRefusal } from "./QueuedMessageRefusal.ts";
 import { isRuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
   endOrphanedNativeSubagent,
@@ -9336,14 +9337,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Queued run ${queuedRun.id} is missing message or execution state.`,
       });
     }
-    if (
-      queuedMessage.delegatedCompletion !== undefined ||
-      queuedMessage.notification !== undefined
-    ) {
+    const refusal = queuedMessageRefusal(queuedMessage, "promoted to Steer");
+    if (refusal !== undefined) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: "Automatic completion deliveries cannot be promoted to Steer.",
+        ...refusal,
       });
     }
 
@@ -9692,14 +9691,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Queued run ${queuedRun.id} has no user message.`,
       });
     }
-    if (
-      queuedMessage.delegatedCompletion !== undefined ||
-      queuedMessage.notification !== undefined
-    ) {
+    const refusal = queuedMessageRefusal(queuedMessage, "edited");
+    if (refusal !== undefined) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: "Automatic completion deliveries cannot be edited.",
+        ...refusal,
       });
     }
     // The agent text and the shown text of a guest message must stay the guest's words.

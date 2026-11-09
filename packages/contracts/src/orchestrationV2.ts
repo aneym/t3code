@@ -8,7 +8,10 @@ import {
   ThreadSettleCommand,
   ThreadAutoSettleCommand,
 } from "./threadSettlement.ts";
-import { OrchestrationV2DelegatedCompletionCohort } from "./delegatedCompletionDelivery.ts";
+import {
+  OrchestrationV2DelegatedCompletionCohort,
+  OrchestrationV2DelegatedCompletionRef,
+} from "./delegatedCompletionDelivery.ts";
 import { RestartRunState } from "./restartRunState.ts";
 import { QueueHoldState, QueueHoldStateJson } from "./queueHoldReason.ts";
 import { OrchestrationV2ProviderFailureClass } from "./providerFailureClass.ts";
@@ -1293,13 +1296,7 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   streaming: Schema.Boolean,
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
-  delegatedCompletion: Schema.optional(
-    Schema.Struct({
-      parentRunId: RunId,
-      generation: PositiveInt,
-      taskIds: Schema.Array(NodeId),
-    }),
-  ),
+  delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionRef),
 });
 export type OrchestrationV2ConversationMessage = typeof OrchestrationV2ConversationMessage.Type;
 
@@ -3110,13 +3107,7 @@ export const OrchestrationV2Command = Schema.Union([
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
     retrySteeringBatch: Schema.optional(Schema.Boolean),
-    delegatedCompletion: Schema.optional(
-      Schema.Struct({
-        parentRunId: RunId,
-        generation: PositiveInt,
-        taskIds: Schema.Array(NodeId),
-      }),
-    ),
+    delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionRef),
     dispatchMode: Schema.Union([
       Schema.Struct({
         type: Schema.Literal("defer_start"),
@@ -3852,6 +3843,7 @@ export const ThreadOrganizeRefusalReason = Schema.Literals([
   "snooze_superseded",
   "thread_archived",
   "thread_deleted",
+  "mcp_event_run",
 ]);
 export type ThreadOrganizeRefusalReason = typeof ThreadOrganizeRefusalReason.Type;
 

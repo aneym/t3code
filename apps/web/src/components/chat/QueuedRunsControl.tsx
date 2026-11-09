@@ -10,12 +10,13 @@ import {
   isAttachmentOnlyBootstrapPrompt,
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
-import type {
-  ChatAttachment as ContractChatAttachment,
-  EnvironmentId,
-  MessageId,
-  RunId,
-  ThreadId,
+import {
+  mcpEventOfMessage,
+  type ChatAttachment as ContractChatAttachment,
+  type EnvironmentId,
+  type MessageId,
+  type RunId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { QueuedEventRow } from "./QueuedEventRow";
 import { QueuedMessage } from "./QueuedMessage";
@@ -30,7 +31,6 @@ import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
-import { queuedMcpEventOf } from "../../mcpEventMessage";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
@@ -124,7 +124,7 @@ export function QueuedRunsControl({
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
   const items = queuedRunRows(queued, optimisticQueued, queuedImageUrlById);
-  const ownQueued = queued.filter((run) => queuedMcpEventOf(run.message) === null);
+  const ownQueued = queued.filter((run) => mcpEventOfMessage(run.message) === null);
   const offerSendAll = canSendAll && ownQueued.length >= 2;
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
@@ -213,18 +213,23 @@ export function QueuedRunsControl({
     setBusyRunId(null);
   };
 
+  const ownItemCount = items.filter((item) => mcpEventOfMessage(item.message) === null).length;
+  const queueLabel =
+    ownItemCount > 0
+      ? `${ownItemCount} queued message${ownItemCount === 1 ? "" : "s"}`
+      : `${items.length} queued event${items.length === 1 ? "" : "s"}`;
   const collapsible = items.length > QUEUE_VISIBLE_ROWS;
   const visibleItems = collapsible && !showAll ? items.slice(0, QUEUE_VISIBLE_ROWS - 1) : items;
 
   return (
     <section
-      aria-label={`${items.length} queued message${items.length === 1 ? "" : "s"}`}
+      aria-label={queueLabel}
       data-thread-queue="true"
       // Anchors the sr-only live region; unanchored, it escapes the timeline scroller and makes the chat column scroll.
       className="relative mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-2 pb-4"
     >
       <span className="sr-only" aria-live="polite">
-        {items.length} queued
+        {queueLabel}
       </span>
       {queueSendAll && offerSendAll && workflow ? (
         <div className="flex justify-end">
@@ -270,7 +275,7 @@ export function QueuedRunsControl({
                 ),
               ).trim();
           const isEditing = item.runId !== null && item.runId === props.editingRunId;
-          const event = queuedMcpEventOf(item.message);
+          const event = mcpEventOfMessage(item.message);
           if (event !== null) {
             return (
               <li
