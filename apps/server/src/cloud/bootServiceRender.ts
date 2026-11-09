@@ -3,6 +3,11 @@ import {
   connectorUnitPath,
   serviceUnitFileName,
 } from "../serviceConnectorUnit.ts";
+import {
+  associatedBundleEnvironmentPlistLines,
+  associatedBundlePlistLines,
+} from "./bootServiceAssociation.ts";
+import { selfUpdateOffPlistLines, selfUpdateOffUnitLines } from "./selfUpdateSwitch.ts";
 import type * as Duration from "effect/Duration";
 export const BOOT_SERVICE_NAME_ENV = "T3CODE_SERVICE_NAME";
 const BOOT_SERVICE_CUSTOM_NAME = process.env[BOOT_SERVICE_NAME_ENV]?.trim() || undefined;
@@ -91,6 +96,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${quoteSystemdValue(serviceUnitFileName(plan.unitPath))}`,
     `Environment=${CONNECTOR_UNIT_PATH_ENV}=${quoteSystemdValue(plan.connectorUnitPath ?? connectorUnitPath(plan.unitPath))}`,
     ...customNameUnitLines,
+    ...selfUpdateOffUnitLines,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark the stop before it signals the server.
     // Past TimeoutStopSec, systemd SIGKILLs the cgroup.
@@ -150,6 +156,8 @@ export function renderBootServicePlist(
     `    <key>${CONNECTOR_UNIT_PATH_ENV}</key>`,
     `    <string>${escapeXmlText(plan.connectorUnitPath ?? connectorUnitPath(plan.unitPath))}</string>`,
     ...customNamePlistLines,
+    ...associatedBundleEnvironmentPlistLines,
+    ...selfUpdateOffPlistLines,
     `  </dict>`,
     `  <key>WorkingDirectory</key>`,
     `  <string>${escapeXmlText(options.homeDir)}</string>`,
@@ -167,6 +175,7 @@ export function renderBootServicePlist(
     `  <string>${escapeXmlText(plan.logPath)}</string>`,
     `  <key>StandardErrorPath</key>`,
     `  <string>${escapeXmlText(plan.logPath)}</string>`,
+    ...associatedBundlePlistLines,
     `</dict>`,
     `</plist>`,
     ``,
