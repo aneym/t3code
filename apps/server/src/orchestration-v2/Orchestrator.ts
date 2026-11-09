@@ -47,6 +47,7 @@ import {
   stoppedQueueHold,
   usageLimitHoldsQueue,
   providerInstanceDisabledForProject,
+  worktreeSetupPending,
 } from "./QueueHoldPolicy.ts";
 import type {
   GuestShareId,
@@ -637,19 +638,6 @@ function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]
     status === "failed" ||
     status === "cancelled" ||
     status === "interrupted"
-  );
-}
-
-function worktreeSetupPending(
-  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
-): boolean {
-  return (
-    projection.thread.worktreePath === null &&
-    projection.runs.some(
-      (run) =>
-        (run.status === "failed" || run.status === "interrupted") &&
-        run.workspacePreparation?.type === "worktree",
-    )
   );
 }
 
@@ -1379,7 +1367,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     ) {
       if ((yield* restartAdmission(effectOutbox)) !== "open") return;
-      {
+      if (
+        options?.endedRunId !== undefined ||
+        (yield* projectionStore.getHeldQueuedRuns(threadId)).length > 0
+      ) {
         const view = yield* readCommandProjection(threadId);
         const latest = latestExecutedRun(view.runs);
         const ended = latest?.id === options?.endedRunId ? latest : undefined;
