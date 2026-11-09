@@ -22,6 +22,7 @@ import * as ProcessRunner from "./processRunner.ts";
 import * as Settings from "./serverSettings.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { makeWorktreeIntegrationCheck } from "./worktreeIntegration.ts";
+import { makeWorktreePublicationCheck } from "./worktreePublication.ts";
 import { makeWorktreeSafetyChecks } from "./worktreeSafetyChecks.ts";
 import { makeWorktreeTrash, WORKTREE_TRASH_FOLDER } from "./worktreeTrash.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
@@ -159,6 +160,13 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
     };
     const disposable = settings.storageCleanup.worktreeDisposableIgnoredPaths;
     const integration = makeWorktreeIntegrationCheck(git);
+    const publication = makeWorktreePublicationCheck(git);
+    const graceMs = Math.max(
+      3_600_000,
+      settings.storageCleanup.worktreeAcceptPushed
+        ? (policy.worktreeSettledAfterDays ?? 0) * 86_400_000
+        : 0,
+    );
     const candidates = new Set<string>();
     const skipped: Record<string, number> = {};
     let removed = 0;
@@ -221,7 +229,7 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
         );
         if (info === null) return keep("worktree no longer exists");
         const modified = Option.getOrNull(info.mtime);
-        if (modified === null || modified.getTime() > (yield* Clock.currentTimeMillis) - 3_600_000)
+        if (modified === null || modified.getTime() > (yield* Clock.currentTimeMillis) - graceMs)
           return keep("worktree was created or modified recently");
         const run = (args: string[]) =>
           git.execute({ operation: "StorageCleanup.orphan", cwd, args });
@@ -338,59 +346,14 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
         });
         const early = yield* ready(false);
         if (early !== null) return keep(early);
-        failureReason = "inspection-failed: upstream";
-        let published = false;
-        let remoteMissing = false;
-        const upstream = yield* run([
-          "for-each-ref",
-          "--format=%(upstream:remotename)%00%(upstream:remoteref)",
-          `refs/heads/${branch}`,
-        ]);
-        if (upstream.stdoutTruncated || upstream.stderrTruncated)
-          return keep("upstream-inspection-truncated");
-        const [remote, remoteRef] = upstream.stdout.trim().split("\0");
-        if (remote && remote !== "." && remoteRef?.startsWith("refs/heads/")) {
-          failureReason = "fetch-failed";
-          const fetched = yield* git.execute({
-            operation: "StorageCleanup.orphanFetch",
-            cwd,
-            args: [
-              "fetch",
-              "--quiet",
-              "--no-tags",
-              "--",
-              remote,
-              `+${remoteRef}:refs/remotes/${remote}/${remoteRef.slice(11)}`,
-            ],
-            env: { LC_ALL: "C" },
-            allowNonZeroExit: true,
-          });
-          if (fetched.stdoutTruncated || fetched.stderrTruncated)
-            return keep("fetch-output-truncated");
-          if (fetched.exitCode !== 0) {
-            remoteMissing =
-              fetched.exitCode === 128 &&
-              fetched.stderr.trim() === `fatal: couldn't find remote ref ${remoteRef}`;
-            if (!remoteMissing) return keep("fetch-failed");
-          } else {
-            failureReason = "publication-check-failed";
-            const remoteHead = yield* git.resolveCommit({
-              cwd,
-              revision: `refs/remotes/${remote}/${remoteRef.slice(11)}`,
-            });
-            const ancestor = yield* git.execute({
-              operation: "StorageCleanup.orphanPublished",
-              cwd,
-              args: ["merge-base", "--is-ancestor", head, remoteHead.commitSha],
-              allowNonZeroExit: true,
-            });
-            if (ancestor.exitCode !== 0 && ancestor.exitCode !== 1)
-              return keep("publication-check-failed");
-            published = ancestor.exitCode === 0;
-          }
-        }
+        failureReason = "publication-check-failed";
+        const pushed = yield* publication({
+          repositoryCwd: repository,
+          worktreePath: cwd,
+          headSha: head,
+        });
         failureReason = "integration-check-failed";
-        const landed = published
+        const landed = pushed
           ? null
           : yield* integration({
               repositoryCwd: repository,
@@ -399,12 +362,7 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
               matchContent: rules.worktreeContentIntegration,
             });
         if (typeof landed === "string") return keep(landed);
-        if (!published && !landed?.integrated)
-          return keep(
-            remoteMissing
-              ? "remote-branch-missing-not-integrated"
-              : "branch-not-published-or-integrated",
-          );
+        if (!pushed && !landed?.integrated) return keep("branch-not-published-or-integrated");
         failureReason = "inspection-failed: final-readiness";
         const final = yield* ready(true);
         if (final !== null) return keep(final);

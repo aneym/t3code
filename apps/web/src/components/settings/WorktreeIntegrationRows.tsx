@@ -1,6 +1,7 @@
 import type { StorageCleanupSettings, WorktreeCleanupRules } from "@t3tools/contracts";
 import { Switch } from "../ui/switch";
 import { OrphanWorktreesRow } from "./OrphanWorktreesRow";
+import { PushedWorktreesRow } from "./PushedWorktreesRow";
 import { DisposableIgnoredPathsRow } from "./DisposableIgnoredPathsRow";
 import { SettingsRow } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -78,6 +79,7 @@ export function WorktreeIntegrationRows({
           />
         )}
       {serverScoped && <OrphanWorktreesRow />}
+      {serverScoped && <PushedWorktreesRow />}
       {serverScoped && <DisposableIgnoredPathsRow />}
     </>
   );
