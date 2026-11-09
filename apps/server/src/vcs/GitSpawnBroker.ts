@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The broker needs an IPC channel, which Effect ChildProcess lacks.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -14,42 +15,6 @@ import * as Stream from "effect/Stream";
 import type * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-
-const BROKER_SOURCE = `
-const { spawn } = require("node:child_process");
-const kids = new Map();
-const send = (m) => { if (process.connected) process.send(m); };
-const signalGroup = (c, s) => { try { process.kill(-c.pid, s); } catch { try { c.kill(s); } catch {} } };
-process.on("message", (m) => {
-  if (m.t === "spawn") {
-    let c;
-    try {
-      c = spawn(m.command, m.args, { cwd: m.cwd, env: m.env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
-    } catch (e) {
-      send({ id: m.id, t: "error", code: e && e.code, message: String(e && e.message) });
-      return;
-    }
-    kids.set(m.id, c);
-    c.on("error", (e) => { send({ id: m.id, t: "error", code: e.code, message: String(e.message) }); });
-    c.on("spawn", () => send({ id: m.id, t: "spawned", pid: c.pid }));
-    c.stdin.on("error", () => {});
-    c.stdout.on("data", (d) => send({ id: m.id, t: "out", fd: 1, d }));
-    c.stderr.on("data", (d) => send({ id: m.id, t: "out", fd: 2, d }));
-    c.on("close", (code, signal) => { kids.delete(m.id); send({ id: m.id, t: "exit", code, signal }); });
-    return;
-  }
-  const c = kids.get(m.id);
-  if (c === undefined) return;
-  if (m.t === "in") c.stdin.write(m.d);
-  else if (m.t === "end") c.stdin.end();
-  else if (m.t === "kill") {
-    signalGroup(c, m.signal);
-    if (m.forceAfter !== undefined) setTimeout(() => { if (kids.has(m.id)) signalGroup(c, "SIGKILL"); }, m.forceAfter).unref();
-  }
-});
-process.on("disconnect", () => { for (const c of kids.values()) signalGroup(c, "SIGKILL"); process.exit(0); });
-send({ t: "ready" });
-`;
 
 type ExitResult = readonly [code: number | null, signal: string | null];
 type OutputQueue = Queue.Queue<Uint8Array, PlatformError.PlatformError | Cause.Done>;
@@ -98,7 +63,10 @@ const resolveEnv = (options: ChildProcess.CommandOptions) => {
   return Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== undefined));
 };
 
-const makeBroker = () => {
+const makeBroker = (launch: {
+  readonly executable: string;
+  readonly args: ReadonlyArray<string>;
+}) => {
   const jobs = new Map<number, Job>();
   let nextId = 0;
   let disabled = false;
@@ -168,7 +136,7 @@ const makeBroker = () => {
 
   const connect = () => {
     if (current !== undefined) return current;
-    const proc = NodeChildProcess.spawn(process.execPath, ["-e", BROKER_SOURCE], {
+    const proc = NodeChildProcess.spawn(launch.executable, [...launch.args, "__git-spawn-broker"], {
       stdio: ["ignore", "ignore", "inherit", "ipc"],
       serialization: "advanced",
       env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
@@ -195,7 +163,18 @@ const makeBroker = () => {
   });
 
   const ready = Effect.suspend(() =>
-    disabled ? Effect.succeed(false) : Deferred.await(connect().ready),
+    disabled
+      ? Effect.succeed(false)
+      : Deferred.await(connect().ready).pipe(
+          Effect.timeoutOrElse({
+            duration: "10 seconds",
+            orElse: () =>
+              Effect.sync(() => {
+                disabled = true;
+                return false;
+              }),
+          }),
+        ),
   );
 
   const spawn = Effect.fnUntraced(function* (command: ChildProcess.StandardCommand) {
@@ -281,7 +260,16 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const upstream = yield* ChildProcessSpawner.ChildProcessSpawner;
     const brokered = (yield* HostProcess.Platform) !== "win32";
-    const broker = makeBroker();
+    const broker = makeBroker({
+      executable: yield* HostProcess.ExecutablePath,
+      args: (yield* HostProcess.IsExecutable)
+        ? []
+        : [
+            NodeURL.fileURLToPath(
+              new URL(import.meta.url.endsWith(".ts") ? "../bin.ts" : "./bin.mjs", import.meta.url),
+            ),
+          ],
+    });
     yield* Effect.addFinalizer(() => broker.shutdown);
     return ChildProcessSpawner.make((command) =>
       brokered && isBrokerCommand(command)

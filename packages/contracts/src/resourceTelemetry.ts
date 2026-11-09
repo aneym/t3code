@@ -13,6 +13,9 @@ export const HostResourcesSnapshot = Schema.Struct({
   availableMemoryBytes: NonNegativeInt,
   totalMemoryBytes: NonNegativeInt,
   loadAverage1m: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+  serverEventLoopUtilization: Schema.optionalKey(
+    Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  ),
   freeDiskBytes: Schema.optionalKey(NonNegativeInt),
   totalDiskBytes: Schema.optionalKey(NonNegativeInt),
 });

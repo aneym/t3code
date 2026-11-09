@@ -8,6 +8,7 @@ export const DEFAULT_AGENT_PLACEMENT_HEALTH_LINE = {
   maxLoadPerCore: 4,
   minAvailableMemoryRatio: 0.05,
   minFreeDiskBytes: 10 * 1024 * 1024 * 1024,
+  maxServerEventLoopUtilization: 0.8,
 };
 
 export const AgentPlacementHealthLine = Schema.Struct({
@@ -22,6 +23,13 @@ export const AgentPlacementHealthLine = Schema.Struct({
   minFreeDiskBytes: NonNegativeInt.pipe(
     Schema.withDecodingDefault(
       Effect.succeed(DEFAULT_AGENT_PLACEMENT_HEALTH_LINE.minFreeDiskBytes),
+    ),
+  ),
+  maxServerEventLoopUtilization: Schema.Finite.check(
+    Schema.isBetween({ minimum: 0, maximum: 1 }),
+  ).pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(DEFAULT_AGENT_PLACEMENT_HEALTH_LINE.maxServerEventLoopUtilization),
     ),
   ),
 });
@@ -103,6 +111,13 @@ export function scoreAgentPlacement(input: {
   if (availableMemoryRatio < line.minAvailableMemoryRatio)
     return skip(
       `Available memory ${percent(availableMemoryRatio)} is under the health line ${percent(line.minAvailableMemoryRatio)}.`,
+    );
+  if (
+    resources.serverEventLoopUtilization !== undefined &&
+    resources.serverEventLoopUtilization > line.maxServerEventLoopUtilization
+  )
+    return skip(
+      `T3 server busy ${percent(resources.serverEventLoopUtilization)} is over the health line ${percent(line.maxServerEventLoopUtilization)}.`,
     );
   if (freeDiskBytes !== null && freeDiskBytes < line.minFreeDiskBytes)
     return skip(
