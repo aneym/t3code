@@ -47,6 +47,7 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
+import { Unadvertised } from "../../advertisedJsonSchema.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -281,7 +282,8 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
 })
   .annotate(Tool.Title, "Send to a T3 thread")
   .annotate(Tool.Destructive, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(Unadvertised, ["composerIds"]);
 
 const ThreadWaitTool = Tool.make("t3_thread_wait", {
   description:

@@ -45,7 +45,7 @@ import {
   MAX_REPORTED_DEPTH,
   toolOutcome,
 } from "../telemetry/ProviderDimensions.ts";
-import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+import { acceptedJsonSchema, advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import { decodeAsAdvertised, validateAdvertisedParameters } from "./advertisedParameters.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { withPeerRequestContext } from "./peerRequestContext.ts";
@@ -996,9 +996,11 @@ const withAdvertisedParameters = Effect.fn("McpHttpServer.withAdvertisedSchemas"
         tool,
         annotations: McpInvocationContext.gateByToolProfile(tool.name, options.annotations),
         handle: (payload) =>
-          validateAdvertisedParameters(tool.name, tool.inputSchema, payload).pipe(
-            Effect.andThen(() => options.handle(payload)),
-          ),
+          validateAdvertisedParameters(
+            tool.name,
+            original === undefined ? tool.inputSchema : acceptedJsonSchema(original),
+            payload,
+          ).pipe(Effect.andThen(() => options.handle(payload))),
       });
     }),
   });

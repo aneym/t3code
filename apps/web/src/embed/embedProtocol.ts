@@ -46,6 +46,8 @@ export type EmbedOutboundMessage =
       readonly type: typeof EMBED_SEND_MESSAGE;
       readonly thread: string;
       readonly requestId: string;
+      readonly commandId: string;
+      readonly messageId: string;
       readonly text: string;
       readonly when: EmbedSendWhen;
     };

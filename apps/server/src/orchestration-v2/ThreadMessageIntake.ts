@@ -2,8 +2,7 @@ import { remapComposerContextAttachments } from "@t3tools/shared/composerContext
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
 import {
   type ChatAttachment,
-  MCP_EVENT_MESSAGE_ID_PREFIX,
-  MessageId,
+  clientMessageId,
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -93,9 +92,7 @@ function withoutServerMarks(
   command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
 ) {
   const { mcpEvent: _mcpEvent, ...rest } = command;
-  return rest.messageId.startsWith(MCP_EVENT_MESSAGE_ID_PREFIX)
-    ? { ...rest, messageId: MessageId.make(`message:client:${rest.messageId}`) }
-    : rest;
+  return { ...rest, messageId: clientMessageId(rest.messageId) };
 }
 
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
