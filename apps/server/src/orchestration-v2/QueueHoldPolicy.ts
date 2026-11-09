@@ -76,6 +76,19 @@ export function wakesBlockedQueue(
   );
 }
 
+export function worktreeSetupPending(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+): boolean {
+  return (
+    projection.thread.worktreePath === null &&
+    projection.runs.some(
+      (run) =>
+        (run.status === "failed" || run.status === "interrupted") &&
+        run.workspacePreparation?.type === "worktree",
+    )
+  );
+}
+
 export function canReleaseQueueHold(run: OrchestrationV2Run, release: Release): boolean {
   if (run.status !== "queued" || run.queueHeld !== true) return false;
   switch (release) {

@@ -7,6 +7,10 @@ import { pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import {
+  sortMessagesByTurnItemOrder,
+  turnItemsOrderLoadedMessages,
+} from "./ProjectionMessageOrder.ts";
+import {
   decodeCheckpointPayload,
   decodeCheckpointScopePayload,
   decodeContextHandoffPayload,
@@ -1118,49 +1122,6 @@ const decodeRows =
           }),
       ),
     );
-
-function messageIdForTurnItem(item: OrchestrationV2TurnItem): string | null {
-  switch (item.type) {
-    case "user_message":
-    case "assistant_message":
-      return item.messageId;
-    default:
-      return null;
-  }
-}
-
-function sortMessagesByTurnItemOrder(
-  messages: ReadonlyArray<OrchestrationV2ConversationMessage>,
-  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
-  messageOrdinals = new Map<string, number>(),
-): Array<OrchestrationV2ConversationMessage> {
-  for (const turnItem of turnItems) {
-    const messageId = messageIdForTurnItem(turnItem);
-    if (messageId === null) {
-      continue;
-    }
-    const existing = messageOrdinals.get(messageId);
-    if (existing === undefined || turnItem.ordinal < existing) {
-      messageOrdinals.set(messageId, turnItem.ordinal);
-    }
-  }
-
-  return messages.toSorted((left, right) => {
-    const leftOrdinal = messageOrdinals.get(left.id) ?? Number.MAX_SAFE_INTEGER;
-    const rightOrdinal = messageOrdinals.get(right.id) ?? Number.MAX_SAFE_INTEGER;
-    if (leftOrdinal !== rightOrdinal) {
-      return leftOrdinal - rightOrdinal;
-    }
-
-    const leftCreatedAt = DateTime.toEpochMillis(left.createdAt);
-    const rightCreatedAt = DateTime.toEpochMillis(right.createdAt);
-    if (leftCreatedAt !== rightCreatedAt) {
-      return leftCreatedAt - rightCreatedAt;
-    }
-
-    return left.id.localeCompare(right.id);
-  });
-}
 
 function activeLocalTurnItems(
   projection: OrchestrationV2ThreadProjection,
@@ -3556,7 +3517,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           decodeRows(decodeContextTransferPayload, threadId)(contextTransferRows),
         ]);
         const messageOrdinals = new Map<string, number>();
-        if (fields !== undefined && fields.includes("messages") && messages.length > 1) {
+        if (
+          fields?.includes("messages") &&
+          messages.length > 1 &&
+          !turnItemsOrderLoadedMessages(
+            filter,
+            window === undefined && fields.includes("turnItems"),
+          )
+        ) {
           const rows = yield* sql<{ message_id: string; ordinal: number }>`
             SELECT json_extract(payload_json, '$.messageId') AS message_id, MIN(ordinal) AS ordinal
             FROM orchestration_v2_projection_turn_items
