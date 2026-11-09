@@ -43,16 +43,12 @@ import {
 } from "./serviceProtocol.ts";
 
 export {
-  BOOT_SERVICE_UNIT_FILE,
-  BOOT_SERVICE_LAUNCHD_LABEL,
-  BOOT_SERVICE_PLIST_FILE,
   BOOT_SERVICE_LOG_FILE,
   bootServiceBaseDirOf,
   bootServiceProgramOf,
   renderBootServiceUnit,
   renderBootServicePlist,
   type BootServicePlan,
-  type BootServiceStep,
 } from "./bootServiceRender.ts";
 import {
   BOOT_SERVICE_UNIT_FILE,
@@ -599,6 +595,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     readonly start?: boolean;
   }) {
     const manager = yield* requireManager;
+    yield* requireUnitsServeHome({ fs, path, unitPath, baseDir: input.baseDir });
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));

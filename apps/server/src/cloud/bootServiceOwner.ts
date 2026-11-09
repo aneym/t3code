@@ -16,7 +16,7 @@ export class BootServiceOtherHomeError extends Schema.TaggedError<BootServiceOth
   },
 ) {
   override get message(): string {
-    return `Refusing to uninstall: ${this.unitPath} belongs to the T3 home ${this.installedBaseDir ?? "(unknown)"}, not ${this.baseDir}.`;
+    return `Refusing to change ${this.unitPath}: it belongs to the T3 home ${this.installedBaseDir ?? "(unknown)"}, not ${this.baseDir}.`;
   }
 }
 
