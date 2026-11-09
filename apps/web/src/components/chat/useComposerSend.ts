@@ -70,6 +70,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId, randomUUID } from "~/lib/utils";
 import { heldIdsFor, holdSend, holdUnansweredSend, releaseHeldSend } from "./heldSendStore";
 import { sendThroughEmbedHost } from "../../embed/embedHostSend";
+import { holdOrSendThroughHost } from "../../embed/embedOfflineSend";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -488,8 +489,9 @@ export function useComposerSend(input: ComposerSendInput) {
         !queuedRunEdit.isEditing &&
         (promptAtSend.trim() !== "" || draftHasNonPromptContent(composerDraftTarget))
       ) {
-        holdSend(routeThreadKey, promptAtSend);
-        return;
+        const thread = activeThread.id;
+        const held = { routeThreadKey, thread, promptAtSend, composerDraftTarget };
+        return holdOrSendThroughHost({ ...held, promptRef, composerRef });
       }
       const toastSlot = environmentUnavailableSendToastSlotRef.current;
       environmentUnavailableSendToastSlotRef.current =
