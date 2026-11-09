@@ -1,5 +1,7 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { type ComponentProps, useLayoutEffect } from "react";
+import { embedLiveRunId, useEmbedClearedEntries } from "../../embed/embedClear";
+import { isEmbedPath } from "../../embed/embedProtocol";
 import { useIncrementalTimelineEntries } from "../../hooks/useIncrementalTimelineEntries";
 import type { TimelineEntriesInput, TimelineEntry } from "../../session-logic";
 import { useTimelineVisibleTurnItems } from "../../state/entities";
@@ -9,6 +11,8 @@ import {
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
 } from "../ChatView.logic";
+import { useEmbedTimeline } from "../../embed/useEmbedTimeline";
+import { EmbedShowEarlier } from "../embed/EmbedShowEarlier";
 import { MessagesTimeline } from "./MessagesTimeline";
 
 /**
@@ -54,5 +58,25 @@ export function ThreadTimeline({
     }
     rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries });
   }, [activeThreadKey, detailLoading, entries]);
-  return <MessagesTimeline {...timelineProps} timelineEntries={displayedEntries} />;
+  const embedPage = isEmbedPath(window.location.pathname);
+  const embedEntries = useEmbedTimeline(threadDetailRef?.threadId ?? null, displayedEntries);
+  const cleared = useEmbedClearedEntries(
+    embedEntries,
+    embedLiveRunId(timelineProps.runningRunId ?? null, timelineProps.latestRun),
+    embedPage,
+  );
+  const timeline = (
+    <MessagesTimeline
+      {...timelineProps}
+      hideEmptyPlaceholder={timelineProps.hideEmptyPlaceholder === true || cleared.hidden > 0}
+      timelineEntries={cleared.shown}
+    />
+  );
+  if (!embedPage) return timeline;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <EmbedShowEarlier hidden={cleared.hidden} />
+      <div className="relative min-h-0 flex-1">{timeline}</div>
+    </div>
+  );
 }

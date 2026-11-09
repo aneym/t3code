@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { MessageSender } from "./messageSender.ts";
+import { QuietNoteFields } from "./threadNote.ts";
 import {
   ThreadId,
   TurnItemId,
@@ -26,6 +27,7 @@ export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
   createdBy: Schema.NullOr(OrchestrationV2Actor),
   creationSource: Schema.NullOr(OrchestrationV2CreationSource),
   ...MessageSender.fields,
+  ...QuietNoteFields,
   type: Schema.String,
   status: OrchestrationV2TurnItemStatus,
   title: Schema.NullOr(Schema.String),

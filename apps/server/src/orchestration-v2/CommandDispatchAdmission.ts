@@ -5,8 +5,12 @@ import type {
 } from "@t3tools/contracts";
 import type * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { withServerAdmission } from "../serverHandoffBarrier.ts";
 import type { EffectOutboxV2Shape } from "./EffectOutbox.ts";
+import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
+
+const SIDE_CHAT_SOURCE_WAIT = "30 seconds";
 
 export function makeCommandDispatchAdmission<A, E, R, P>(options: {
   readonly execute: (
@@ -41,9 +45,20 @@ export function makeCommandDispatchAdmission<A, E, R, P>(options: {
     ) {
       const source = yield* options.findThread(command.sourceThreadId);
       const target = yield* options.findThread(command.targetThreadId);
-      return yield* source === null || source.lineage.sideChat === true || target !== null
-        ? execution
-        : options.locks.withLock(command.sourceThreadId, execution);
+      if (source === null || source.lineage.sideChat === true || target !== null)
+        return yield* execution;
+      const forked = yield* options.locks.withLockWithin(
+        command.sourceThreadId,
+        SIDE_CHAT_SOURCE_WAIT,
+        execution,
+      );
+      if (Option.isSome(forked)) return forked.value;
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause:
+          "The source thread stayed busy for 30 seconds, so the fork did not start. Try again.",
+      });
     }
     if (command.type === "thread.delete")
       return yield* options.locks.withLock(

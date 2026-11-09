@@ -9,12 +9,35 @@ import {
   type EmbedHostChannel,
 } from "./embedHost";
 import {
+  applyEmbedClearMessage,
+  embedKClears,
+  requestEmbedClear,
+  setEmbedKClears,
+  startEmbedClear,
+} from "./embedClear";
+import {
+  EMBED_COMPOSER_FOCUS_MESSAGE,
   EMBED_KEY_MESSAGE,
   EMBED_READY_MESSAGE,
+  readEmbedClearMessage,
+  readEmbedKeysMessage,
   readEmbedThemeMessage,
   reservedEmbedChord,
 } from "./embedProtocol";
 import { applyEmbedTheme, themeFromEmbedMessage } from "./embedTheme";
+
+const COMPOSER_SELECTOR = '[data-testid="composer-editor"]';
+
+function composerFocused(): boolean {
+  const active = document.activeElement;
+  return (
+    document.hasFocus() && active instanceof Element && active.closest(COMPOSER_SELECTOR) !== null
+  );
+}
+
+function clearsView(key: string): boolean {
+  return key === "mod+shift+k" || (key === "mod+k" && embedKClears() && composerFocused());
+}
 
 const OPENABLE_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
 
@@ -40,18 +63,33 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
   useEffect(() => {
     const channel = channelForSpot({ origin, framed });
     const disconnect = connectEmbedHost(channel);
+    const stopClear = startEmbedClear(threadId);
+    let focused = false;
+    const reportFocus = () => {
+      const next = composerFocused();
+      if (next === focused) return;
+      focused = next;
+      postToEmbedHost({ type: EMBED_COMPOSER_FOCUS_MESSAGE, focused });
+    };
+    const onFocusChange = () => queueMicrotask(reportFocus);
     const mac = isMacPlatform(navigator.platform);
     const onMessage = (event: MessageEvent) => {
       if (!fromHost(channel, event)) return;
       const theme = readEmbedThemeMessage(event.data);
       if (theme !== null) applyEmbedTheme(themeFromEmbedMessage(theme));
+      const clear = readEmbedClearMessage(event.data);
+      if (clear !== null) applyEmbedClearMessage(clear);
+      const keys = readEmbedKeysMessage(event.data);
+      if (keys !== null) setEmbedKClears(keys.kClears);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       const key = reservedEmbedChord(event, mac);
       if (key === null) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (!event.repeat) postToEmbedHost({ type: EMBED_KEY_MESSAGE, key });
+      if (event.repeat) return;
+      if (clearsView(key)) requestEmbedClear();
+      else postToEmbedHost({ type: EMBED_KEY_MESSAGE, key });
     };
     const onClick = (event: MouseEvent) => {
       const url = leavingLink(event);
@@ -64,12 +102,21 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("click", onClick, true);
     window.addEventListener("auxclick", onClick, true);
+    window.addEventListener("focusin", onFocusChange);
+    window.addEventListener("focusout", onFocusChange);
+    window.addEventListener("focus", onFocusChange);
+    window.addEventListener("blur", onFocusChange);
     postToEmbedHost({ type: EMBED_READY_MESSAGE, threadId });
     return () => {
       window.removeEventListener("message", onMessage);
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("click", onClick, true);
       window.removeEventListener("auxclick", onClick, true);
+      window.removeEventListener("focusin", onFocusChange);
+      window.removeEventListener("focusout", onFocusChange);
+      window.removeEventListener("focus", onFocusChange);
+      window.removeEventListener("blur", onFocusChange);
+      stopClear();
       disconnect();
     };
   }, [origin, framed, threadId]);

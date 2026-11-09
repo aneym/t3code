@@ -1,17 +1,17 @@
+import * as FairMutex from "@t3tools/shared/FairMutex";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
-import * as Semaphore from "effect/Semaphore";
 
 export const makeRestartGate = Effect.fn("RestartGate.make")(function* (
   notifyAvailable: () => Effect.Effect<void>,
 ) {
-  const claimGate = yield* Semaphore.make(1);
+  const claimGate = FairMutex.makeUnsafe();
   const reopened = yield* Queue.sliding<void>(1);
   let restartEpoch: string | undefined;
   let drain: { readonly epoch: string } | undefined;
   const withDispatch = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    claimGate.withPermits(1)(NodeSqliteClient.prioritized(effect));
+    claimGate.withLock(NodeSqliteClient.prioritized(effect));
   const notifyReopened = Effect.gen(function* () {
     yield* notifyAvailable();
     if (restartEpoch === undefined && drain === undefined) yield* Queue.offer(reopened, undefined);

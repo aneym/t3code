@@ -75,6 +75,9 @@ import { markdownProseDirection } from "~/textDirection";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
+import { useEmbedHostConnected } from "../../embed/embedHost";
+import { embedQuietLine } from "../../embed/embedQuietMessages";
+import { EmbedQuietMessageRow } from "../embed/EmbedQuietMessageRow";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import {
   MESSAGE_HEADING_LEVEL,
@@ -87,7 +90,6 @@ import {
   userMessageFileLabel,
 } from "./TimelineUserMessageRow.logic";
 
-// Drawn inside the media so dark screenshots keep an edge on the dark background.
 const MEDIA_EDGE_CLASS_NAME =
   "relative after:pointer-events-none after:absolute after:inset-0 after:z-10 after:rounded-[inherit] after:ring-1 after:ring-inset after:ring-black/9 dark:after:ring-white/12";
 
@@ -180,8 +182,6 @@ function UserVideoAttachment({
   readonly cornerClassName?: string | undefined;
 }) {
   const ctx = use(TimelineRowCtx);
-  // Row updates rebuild attachment objects, so the asset follows only the
-  // fields it reads.
   const { downloadable, id, mimeType, name } = file;
   const environmentId = ctx.activeThreadEnvironmentId;
   const asset =
@@ -244,12 +244,15 @@ function UserVideoAttachment({
 
 export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  const quietLine = useEmbedHostConnected() ? embedQuietLine(row.message) : null;
   return ctx.workflowOpening?.messageId === row.message.id ? (
     <WorkflowOpeningBlock
       opening={ctx.workflowOpening}
       environmentId={ctx.activeThreadEnvironmentId}
       onOpenThread={(threadId) => ctx.onOpenThread(ThreadId.make(threadId))}
     />
+  ) : quietLine !== null ? (
+    <EmbedQuietMessageRow message={row.message} line={quietLine} />
   ) : resolveUserMessagePresentation(row.message).attribution === "automation" ? (
     <AutomationMessageRow row={row} />
   ) : (
@@ -270,7 +273,6 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
 
   const revertTurnCount = row.revertTurnCount;
   const promptLink = promptLinkFor(text);
-  // Find reads the DOM, so a folded prompt stays mounted but hidden while find is open.
   const bodyMounted = expanded || ctx.findActive;
 
   return (
@@ -296,7 +298,6 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           onToggle={() => setExpanded((value) => !value)}
         />
         {bodyMounted ? (
-          // `beforematch` does not bubble, so the reveal listener sits on the hidden fold itself.
           <div
             ref={revealRef}
             hidden={!expanded}
@@ -394,7 +395,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
   const userMessage = resolveUserMessagePresentation(row.message);
-  // Messages from other agents fold to one line so the user's own messages stay easy to find.
   const folded = userMessage.attribution === "agent";
   const [expanded, setExpanded] = useState(false);
   const revealFoldRef = findRevealRef(() => setExpanded(true));
@@ -423,6 +423,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     attachmentReferences.map((reference) => reference.attachmentId),
   );
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
+  const fitWholeImage = useEmbedHostConnected();
   const unchippedFiles = otherUserFiles.filter((file) => !chippedAttachmentIds.has(file.id));
   // Images or videos sent without words show as media, not as a bubble around them.
   const mediaOnly =
@@ -676,11 +677,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   loading="lazy"
                   className={cn(
                     "block transform-gpu",
-                    standaloneMedia && image.source?.kind === "snap-shot"
+                    standaloneMedia && (image.source?.kind === "snap-shot" || fitWholeImage)
                       ? "h-auto max-h-48 w-auto min-w-24 max-w-full object-contain"
                       : loneImage
                         ? "h-48 w-auto min-w-24 max-w-full object-cover"
-                        : "size-full object-cover",
+                        : fitWholeImage
+                          ? "size-full object-contain"
+                          : "size-full object-cover",
                   )}
                 />
               </button>
@@ -713,8 +716,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       </div>
     ) : null;
 
-  // Touch shows actions all the time, and narrow lanes have no room beside the
-  // bubble, so both keep the actions on their own line.
   const floatActions = row.groupedWithNext === true && !coarsePointer;
   const messageActions = (
     <div

@@ -2,6 +2,7 @@ import { awaitSecretAnswer, reenterSecretCard } from "./SecretRequestWait.ts";
 import { threadSettlement } from "./threadSettlement.ts";
 import {
   messageSender,
+  quietNoteOf,
   secretRequestTurnItemId,
   CommandId,
   type RunId,
@@ -820,14 +821,13 @@ function timelineItem(input: {
   readonly textOffset?: number;
   readonly messagesByThreadId: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection["messages"]>;
 }): OrchestratorMcpThreadTimelineItem {
-  const text = turnItemText(input.row.item);
+  const item = input.row.item;
+  const text = turnItemText(item);
   const offset = input.textOffset ?? 0;
   const end = offset + input.maxChars;
   const textTruncated = text !== null && text.length > end;
   const messageId =
-    input.row.item.type === "user_message" || input.row.item.type === "assistant_message"
-      ? input.row.item.messageId
-      : null;
+    item.type === "user_message" || item.type === "assistant_message" ? item.messageId : null;
   const message =
     messageId === null
       ? undefined
@@ -839,19 +839,20 @@ function timelineItem(input: {
     visibility: input.row.visibility,
     sourceThreadId: input.row.sourceThreadId,
     itemId: input.row.sourceItemId,
-    ...(input.row.item.type === "subagent" ? { subagentId: input.row.item.subagentId } : {}),
-    runId: input.row.item.runId,
+    ...(item.type === "subagent" ? { subagentId: item.subagentId } : {}),
+    runId: item.runId,
     messageId,
     createdBy: message?.createdBy ?? null,
     creationSource: message?.creationSource ?? null,
     ...messageSender(message),
-    type: input.row.item.type,
-    status: input.row.item.status,
-    title: input.row.item.title,
+    ...quietNoteOf(item),
+    type: item.type,
+    status: item.status,
+    title: item.title,
     text: text === null ? null : text.slice(offset, end),
     textTruncated,
     nextTextOffset: textTruncated ? end : null,
-    updatedAt: DateTime.formatIso(input.row.item.updatedAt),
+    updatedAt: DateTime.formatIso(item.updatedAt),
   };
 }
 
