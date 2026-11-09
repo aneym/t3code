@@ -11,7 +11,6 @@ import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQ
 import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
@@ -111,6 +110,7 @@ import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as GitSpawnBroker from "./vcs/GitSpawnBroker.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -373,11 +373,11 @@ const layerHttpServer = Layer.unwrap(
   }),
 ).pipe(Layer.provide(ManagedPolicy.layer));
 
-const layerPlatformServices = DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const layerPlatformServices = DocumentText.layer.pipe(Layer.provideMerge(GitSpawnBroker.layerNode));
 
 const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
 
-const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer));
+const layerVcsDriverRegistry = VcsDriverRegistry.layer;
 
 const layerSourceControlProviderRegistry = SourceControlProviderRegistry.layer.pipe(
   Layer.provideMerge(SourceControlBuiltInDrivers.layer),
@@ -1081,7 +1081,7 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(
         RelayTracing.layerServerRelayBroker.pipe(Layer.provide(ManagedPolicy.layer)),
       ),
-      Layer.provideMerge(layerHttpServer),
+      Layer.provideMerge(GitSpawnBroker.layer.pipe(Layer.provideMerge(layerHttpServer))),
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(VcsProcess.layer),
