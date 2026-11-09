@@ -8,6 +8,8 @@ const EMBED_CLEAR_MESSAGE = "t3-embed/clear";
 const EMBED_KEYS_MESSAGE = "t3-embed/keys";
 export const EMBED_CLEAR_REQUEST_MESSAGE = "t3-embed/clear-request";
 export const EMBED_COMPOSER_FOCUS_MESSAGE = "t3-embed/composer-focus";
+const EMBED_COMPOSER_MESSAGE = "t3-embed/composer";
+export const EMBED_CONTROLS_MESSAGE = "t3-embed/composer-controls";
 
 export type EmbedScheme = "light" | "dark";
 
@@ -27,7 +29,15 @@ export type EmbedOutboundMessage =
       readonly at: string;
       readonly item: string | null;
     }
-  | { readonly type: typeof EMBED_COMPOSER_FOCUS_MESSAGE; readonly focused: boolean };
+  | { readonly type: typeof EMBED_COMPOSER_FOCUS_MESSAGE; readonly focused: boolean }
+  | { readonly type: typeof EMBED_CONTROLS_MESSAGE; readonly shown: boolean };
+
+export type EmbedControls = "shown" | "hidden";
+
+export type EmbedComposerMessage = {
+  readonly controls: EmbedControls | null;
+  readonly key: string | null;
+};
 
 export type EmbedClearMark = { readonly at: string; readonly item: string | null };
 
@@ -45,6 +55,10 @@ const UNSAFE_VALUE = /[;{}<>\\]|url\(|expression\(|@import/i;
 
 export function isEmbedPath(pathname: string): boolean {
   return pathname.startsWith(EMBED_PATH_PREFIX);
+}
+
+export function inEmbedPage(): boolean {
+  return typeof window !== "undefined" && isEmbedPath(window.location.pathname);
 }
 
 export function readEmbedScheme(value: unknown): EmbedScheme | null {
@@ -103,12 +117,67 @@ export function readEmbedKeysMessage(data: unknown): { readonly kClears: boolean
   return message === null ? null : { kClears: message.k_clears === true };
 }
 
+const HOST_CHORD = /^(?:(?:Mod|Ctrl|Alt|Shift)\+){1,4}[A-Za-z0-9\\[\],./;'`=-]$/;
+
+export function readEmbedControls(value: unknown): EmbedControls | null {
+  return value === "shown" || value === "hidden" ? value : null;
+}
+
+export function readEmbedComposerMessage(data: unknown): EmbedComposerMessage | null {
+  const message = readMessage(data, EMBED_COMPOSER_MESSAGE);
+  if (message === null) return null;
+  const key = typeof message.key === "string" && HOST_CHORD.test(message.key) ? message.key : null;
+  return { controls: readEmbedControls(message.controls), key };
+}
+
+const CODE_NAMES: Readonly<Record<string, string>> = {
+  Backslash: "\\",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Equal: "=",
+  Minus: "-",
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  Semicolon: ";",
+  Quote: "'",
+  Backquote: "`",
+};
+
+function keyOfCode(code: string): string {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit\d$/.test(code)) return code.slice(5);
+  return CODE_NAMES[code] ?? code;
+}
+
+export function pressedHostChord(event: KeyboardEvent, chord: string, mac: boolean): boolean {
+  const parts = chord.split("+");
+  const key = parts.pop() ?? "";
+  const mod = mac ? event.metaKey : event.ctrlKey;
+  const ctrl = mac ? event.ctrlKey : event.metaKey;
+  return (
+    mod === parts.includes("Mod") &&
+    ctrl === parts.includes("Ctrl") &&
+    event.altKey === parts.includes("Alt") &&
+    event.shiftKey === parts.includes("Shift") &&
+    keyOfCode(event.code).toUpperCase() === key.toUpperCase()
+  );
+}
+
+export function hostChordWords(chord: string, mac: boolean): string {
+  const words: Readonly<Record<string, string>> = mac
+    ? { Mod: "⌘", Shift: "⇧", Alt: "⌥", Ctrl: "⌃" }
+    : { Mod: "Ctrl" };
+  const parts = chord.split("+").map((part) => words[part] ?? part);
+  return mac ? parts.join("") : parts.join("+");
+}
+
 export function isClearCommand(text: string): boolean {
   return /^\/clear$/i.test(text.trim());
 }
 
 export function isEmbedClearCommand(text: string): boolean {
-  return isEmbedPath(window.location.pathname) && isClearCommand(text);
+  return inEmbedPage() && isClearCommand(text);
 }
 
 const SHIFT_CHORDS: Readonly<Record<string, string>> = {

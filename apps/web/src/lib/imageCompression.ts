@@ -8,6 +8,8 @@ import {
   readImageDimensions,
 } from "@t3tools/shared/imageDimensions";
 
+import { inEmbedPage } from "../embed/embedProtocol";
+
 const MAX_DIMENSION = IMAGE_ATTACHMENT_MAX_EDGE;
 export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
 /** Bound source decoding: enormous ImageBitmaps can OOM the tab before resizing. */
@@ -239,6 +241,32 @@ export function inheritComposerImageThumbnail(source: File, target: File): void 
   );
 }
 
+function drawSquareThumbnail(bitmap: ImageBitmap, side: number) {
+  const dimension = Math.min(256, side);
+  const surface = createCanvas(dimension, dimension);
+  surface?.context.drawImage(
+    bitmap,
+    (bitmap.width - side) / 2,
+    (bitmap.height - side) / 2,
+    side,
+    side,
+    0,
+    0,
+    dimension,
+    dimension,
+  );
+  return surface;
+}
+
+function drawWholeThumbnail(bitmap: ImageBitmap) {
+  const scale = Math.min(1, 256 / Math.max(bitmap.width, bitmap.height));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const surface = createCanvas(width, height);
+  surface?.context.drawImage(bitmap, 0, 0, width, height);
+  return surface;
+}
+
 async function renderComposerImageThumbnail(file: File): Promise<string | null> {
   // Placeholders thumbnail the uncompressed source, which can be big enough to OOM the decode.
   if (!canRecompress() || file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) return null;
@@ -247,20 +275,8 @@ async function renderComposerImageThumbnail(file: File): Promise<string | null> 
     bitmap = await createImageBitmap(file);
     const side = Math.min(bitmap.width, bitmap.height);
     if (side <= 0) return null;
-    const dimension = Math.min(256, side);
-    const surface = createCanvas(dimension, dimension);
+    const surface = inEmbedPage() ? drawWholeThumbnail(bitmap) : drawSquareThumbnail(bitmap, side);
     if (!surface) return null;
-    surface.context.drawImage(
-      bitmap,
-      (bitmap.width - side) / 2,
-      (bitmap.height - side) / 2,
-      side,
-      side,
-      0,
-      0,
-      dimension,
-      dimension,
-    );
     const blob = await encodeCanvas(surface.canvas, 1, "image/png");
     return blob ? await readFileAsDataUrl(blob) : null;
   } catch {
