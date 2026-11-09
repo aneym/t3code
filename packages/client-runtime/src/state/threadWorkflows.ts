@@ -128,17 +128,23 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
   );
 }
 
-export function getUserQueuedThreadRuns(
+export function countQueuedThreadRuns(
   projection: Pick<Projection, "runs" | "messages">,
-): ReadonlyArray<Run> {
+): { readonly messages: number; readonly label: string } | null {
+  const queued = queuedRunsExceptCompletions(projection);
+  if (queued.length === 0) return null;
   const mcpEventMessageIds = new Set(
     projection.messages
       .filter((message) => mcpEventOfMessage(message) !== null)
       .map((message) => message.id),
   );
-  return queuedRunsExceptCompletions(projection).filter(
-    (run) => !mcpEventMessageIds.has(run.userMessageId),
-  );
+  const messages = queued.filter((run) => !mcpEventMessageIds.has(run.userMessageId)).length;
+  const events = queued.length - messages;
+  return {
+    messages,
+    label:
+      messages > 0 ? `${messages} queued` : `${events} ${events === 1 ? "event" : "events"} queued`,
+  };
 }
 
 function queuedRunsExceptCompletions(

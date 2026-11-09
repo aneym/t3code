@@ -53,7 +53,7 @@ import {
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 const REMOVE_ACTION_WIDTH = 76;
 const THUMBNAIL_LIMIT = 3;
-const EMPTY_QUEUED_COUNT_ATOM = Atom.make(0).pipe(
+const EMPTY_QUEUED_COUNT_ATOM = Atom.make<{ readonly label: string } | null>(null).pipe(
   Atom.withLabel("mobile-thread-queue-count:empty"),
 );
 

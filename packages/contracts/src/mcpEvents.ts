@@ -108,7 +108,7 @@ export const McpEventMessageSource = Schema.Struct({
 });
 export type McpEventMessageSource = typeof McpEventMessageSource.Type;
 
-const MCP_EVENT_MESSAGE_ID_PREFIX = "message:mcp-events:";
+export const MCP_EVENT_MESSAGE_ID_PREFIX = "message:mcp-events:";
 
 export function mcpEventOfMessage(
   message:

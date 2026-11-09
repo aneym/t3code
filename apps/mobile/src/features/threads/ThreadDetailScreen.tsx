@@ -477,7 +477,7 @@ function ThreadDetailBody(
     threadId: props.selectedThread.id,
   });
   const composerError = useAtomValue(threadComposerErrorsAtom)[selectedThreadKey]?.message ?? null;
-  const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
+  const queued = useThreadQueuedCount(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
   const defaultComposerEditorRef = useRef<ComposerEditorHandle>(null);
@@ -840,7 +840,7 @@ function ThreadDetailBody(
   const showWorkingControl = floatingStatus !== null;
   const showFloatingStatus =
     showWorkingControl ||
-    queuedCount > 0 ||
+    queued !== null ||
     agentsSegment !== null ||
     devicePreviews.length > 0 ||
     browserTabs.tabs.length > 0 ||
@@ -1534,7 +1534,7 @@ function ThreadDetailBody(
                         threadId: props.selectedThread.id,
                       });
                     }}
-                    queuedCount={queuedCount}
+                    queueLabel={queued?.label ?? null}
                     onOpenQueue={() => {
                       Keyboard.dismiss();
                       navigation.navigate("ThreadQueue", {
