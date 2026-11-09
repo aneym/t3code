@@ -113,7 +113,6 @@ import { environmentIdsKey } from "~/state/environmentAtomList";
 import { useUpdateEverythingRun } from "../sidebar/updateEverythingRun";
 import { awaitsTrackSwitch, channelSwitchLabel } from "../sidebar/updateEverything.logic";
 import { isHostedByThisApp } from "../sidebar/useUpdateEverything";
-import { chooseFollowUp, FOLLOW_UP_UNCHOSEN } from "~/followUpDefault";
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
   turn: "Wait for the full response",
@@ -671,7 +670,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       queuedMessagesAnswerPendingInput: DEFAULT_UNIFIED_SETTINGS.queuedMessagesAnswerPendingInput,
-      ...FOLLOW_UP_UNCHOSEN,
+      followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -1260,7 +1259,11 @@ export function ChatSettingsPanel() {
             settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior ? (
               <SettingResetButton
                 label="follow-up behavior"
-                onClick={() => updateSettings(FOLLOW_UP_UNCHOSEN)}
+                onClick={() =>
+                  updateSettings({
+                    followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
+                  })
+                }
               />
             ) : null
           }
@@ -1269,7 +1272,7 @@ export function ChatSettingsPanel() {
               value={settings.followUpBehavior}
               onValueChange={(value) => {
                 if (value === "queue" || value === "steer") {
-                  updateSettings(chooseFollowUp(value));
+                  updateSettings({ followUpBehavior: value });
                 }
               }}
             >
