@@ -185,6 +185,7 @@ import type {
 } from "./EffectOutboxModel.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as HeadlessThreadStreaming from "./HeadlessThreadStreaming.ts";
 import {
   DispatchModeLimit,
   exceededDispatchModeLimit,
@@ -849,6 +850,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  const headlessStreaming = yield* HeadlessThreadStreaming.HeadlessThreadStreaming;
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
   const runtimeModeCeiling: RuntimeModeCeiling | undefined =
@@ -1428,17 +1430,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
-      if (options?.explicitResume !== true) {
-        const handoffRunIds = restartHandoffRunIds(yield* effectOutbox.restartHandoffs);
-        if (
-          Option.isSome(
-            yield* Effect.findFirst(projection.runs, (run) =>
-              awaitsRestartContinuation(effectOutbox, run, handoffRunIds),
-            ),
-          )
-        )
-          return;
-      }
+      if (
+        options?.explicitResume !== true &&
+        (yield* threadAwaitsRestartContinuation(effectOutbox, projection.runs))
+      )
+        return;
 
       const storedQueuedRun =
         options?.queuedRunId === undefined
@@ -2285,11 +2281,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
       .pipe(
         Effect.mapError(
-          (cause) =>
-            new OrchestratorProjectionError({
-              threadId: command.parentThreadId,
-              cause,
-            }),
+          (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),
         ),
       );
     const task = projection.subagents.find(
@@ -13627,13 +13619,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ((stored.event.payload.delegatedTaskId !== undefined &&
             (stored.event.payload.status === "queued" ||
               stored.event.payload.status === "starting")) ||
-            stored.event.payload.status === "completed" ||
-            stored.event.payload.status === "interrupted" ||
-            stored.event.payload.status === "failed" ||
-            stored.event.payload.status === "cancelled" ||
-            stored.event.payload.status === "rolled_back"),
+            delegatedTaskTerminalStatus(stored.event.payload.status) !== null),
       ),
-      Stream.runForEach(handleRunUpdate),
+      Stream.groupByKey((stored) => stored.event.threadId, { idleTimeToLive: "5 minutes" }),
+      Stream.mapEffect(([, events]) => Stream.runForEach(events, handleRunUpdate), {
+        concurrency: "unbounded",
+        unordered: true,
+      }),
+      Stream.runDrain,
       Effect.forkScoped,
     );
 
@@ -13976,23 +13969,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .latestSequence({ threadId })
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
-    streamStoredEvents: eventSink.stream().pipe(
-      Stream.mapError(
-        (cause) =>
-          new OrchestratorDomainEventStreamError({
-            cause,
-          }),
-      ),
-    ),
-    streamStoredEventsFrom: (input) =>
-      eventSink.stream({ ...input, bounded: true }).pipe(
-        Stream.mapError(
-          (cause) =>
-            new OrchestratorDomainEventStreamError({
-              cause,
-            }),
-        ),
-      ),
+    streamStoredEvents: eventSink
+      .stream()
+      .pipe(Stream.mapError((cause) => new OrchestratorDomainEventStreamError({ cause }))),
+    streamStoredEventsFrom: (input) => {
+      const stream = eventSink
+        .stream({ ...input, bounded: true })
+        .pipe(Stream.mapError((cause) => new OrchestratorDomainEventStreamError({ cause })));
+      return input?.threadId === undefined || input.eventType !== undefined
+        ? stream
+        : headlessStreaming.watch(input.threadId, stream);
+    },
     // Start at the latest sequence; awareness needs no historical replay.
     streamDomainEvents: Stream.unwrap(
       eventSink
@@ -14000,12 +13987,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(Effect.map((latest) => eventSink.stream({ afterSequence: latest }))),
     ).pipe(
       Stream.map((stored) => stored.event),
-      Stream.mapError(
-        (cause) =>
-          new OrchestratorDomainEventStreamError({
-            cause,
-          }),
-      ),
+      Stream.mapError((cause) => new OrchestratorDomainEventStreamError({ cause })),
     ),
   });
 });
@@ -14031,5 +14013,5 @@ export const layer: Layer.Layer<
   | ServerSettings.ServerSettingsService
   | ThreadForkServiceV2
 > = Layer.effect(OrchestratorV2, resumeOnReopen(makeOrchestrator())).pipe(
-  Layer.provide(ThreadCommandExecutor.layer),
+  Layer.provide([ThreadCommandExecutor.layer, HeadlessThreadStreaming.layer]),
 );

@@ -1,3 +1,4 @@
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Semaphore from "effect/Semaphore";
@@ -10,7 +11,7 @@ export const makeRestartGate = Effect.fn("RestartGate.make")(function* (
   let restartEpoch: string | undefined;
   let drain: { readonly epoch: string } | undefined;
   const withDispatch = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    claimGate.withPermits(1)(effect);
+    claimGate.withPermits(1)(NodeSqliteClient.prioritized(effect));
   const notifyReopened = Effect.gen(function* () {
     yield* notifyAvailable();
     if (restartEpoch === undefined && drain === undefined) yield* Queue.offer(reopened, undefined);
