@@ -1,7 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { describe, vi } from "vite-plus/test";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -31,6 +30,7 @@ import * as ServerConfig from "./config.ts";
 
 import { assetResponseHeaders, assetFileResponse, downloadContentDisposition } from "./http.ts";
 import * as ServerHttp from "./http.ts";
+import { layerLoopbackTest } from "./testUtils/loopbackHttpServer.ts";
 
 describe("MCP app asset responses", () => {
   it.effect(
@@ -170,7 +170,7 @@ describe("untraced requests", () => {
       const services = yield* Layer.build(
         HttpRouter.serve(layerRoutes, { disableListenLog: true, disableLogger: true }).pipe(
           ServerHttp.withUntracedRequests,
-          Layer.provideMerge(NodeHttpServer.layerTest),
+          Layer.provideMerge(layerLoopbackTest),
           Layer.provide(layerTracer),
         ),
       );
@@ -211,12 +211,12 @@ const makeStaticRequest = Effect.fn("HttpTest.makeStaticRequest")(function* (sta
     ServerHttp.layerStaticAndDevRoute,
     ServerHttp.layerHttpCompression,
   ).pipe(Layer.provideMerge(NodeHttpPlatform.layer));
-  // HttpRouter.serve prefers outer services; inject the test FileSystem between it and NodeHttpServer.layerTest.
+  // HttpRouter.serve prefers outer services; inject the test FileSystem between it and layerLoopbackTest.
   const services = yield* Layer.build(
     HttpRouter.serve(layerApp, { disableListenLog: true }).pipe(
       Layer.provideMerge(ServerConfig.layer({ ...config, staticDir })),
       Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, fileSystem)),
-      Layer.provideMerge(NodeHttpServer.layerTest),
+      Layer.provideMerge(layerLoopbackTest),
     ),
   );
   const client = Context.get(services, HttpClient.HttpClient);

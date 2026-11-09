@@ -945,7 +945,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     useProviderWorkspaceSnapshotRefresh({
       environmentId,
       gitCwd,
-      instanceId: selectedProviderEntry?.instanceId,
+      provider: selectedProviderStatus,
     });
 
   const selectedPromptEffort = composerProviderState.promptEffort;

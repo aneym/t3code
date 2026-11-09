@@ -1,4 +1,3 @@
-import { NodeHttpServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -88,7 +87,7 @@ it.effect.each([false, true])(
         yield* Deferred.succeed(release, undefined);
         if (!cancelFirst) expect(yield* Fiber.join(held)).toEqual({ modes: "auto/default" });
       }),
-    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    ),
 );
 
 it.effect("renews a missing peer session once and reuses its replacement", () =>

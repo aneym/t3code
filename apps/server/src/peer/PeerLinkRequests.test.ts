@@ -1,4 +1,3 @@
-import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -65,6 +64,7 @@ import {
   type ServedPeer,
 } from "./PeerLinks.testkit.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
+import { layerLoopbackServer } from "../testUtils/loopbackHttpServer.ts";
 
 // The laptop's agent asks the user to link the box. The laptop is its real
 // orchestrator and toolkit; the box is its real descriptor and MCP OAuth on a
@@ -453,7 +453,7 @@ const withBoth = <A, E, R>(body: (a: Laptop, b: ServedPeer) => Effect.Effect<A, 
       const a = yield* makeLaptop;
       return yield* body(a, b);
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest));
+  );
 
 it.live("the agent asks without waiting, and the user links the box after its turn ended", () =>
   withBoth((a, b) =>
@@ -725,7 +725,7 @@ it.live("a slow machine holds up only its own card's answer", () =>
         // A machine that takes the descriptor request and answers when the test says.
         const reached = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
-        const slow = yield* Layer.build(Layer.fresh(NodeHttpServer.layerTest));
+        const slow = yield* Layer.build(Layer.fresh(layerLoopbackServer));
         const server = Context.get(slow, HttpServer.HttpServer);
         yield* server.serve(
           Deferred.succeed(reached, undefined).pipe(
