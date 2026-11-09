@@ -1,10 +1,10 @@
 import { messageSenderRef } from "@t3tools/contracts";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide";
 import { use, useState } from "react";
 
 import type { EmbedQuietLine } from "../../embed/embedQuietMessages";
-import { cn } from "../../lib/utils";
 import { useQuietThreadShell } from "../../state/entities";
+import { MorphIcon } from "../MorphIcon";
 import type { ChatMessage } from "../../types";
 import { findRevealRef } from "../chat/markdownFindContext";
 import { TimelineRowCtx } from "../chat/timelineRowContext";
@@ -35,15 +35,13 @@ export function EmbedQuietMessageRow({
         aria-expanded={expanded}
         data-scroll-anchor-ignore
         onClick={() => setExpanded((value) => !value)}
-        className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-left text-muted-foreground text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+        className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-muted-foreground text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
       >
         <span className="shrink-0">{label}</span>
         {line.summary.length > 0 ? (
           <span className="min-w-0 truncate text-muted-foreground/70">{line.summary}</span>
         ) : null}
-        <ChevronDownIcon
-          className={cn("size-3 shrink-0 transition-transform", expanded && "rotate-180")}
-        />
+        <MorphIcon className="size-3.5 shrink-0" icon={expanded ? ChevronDown : ChevronRight} />
       </button>
       {expanded || ctx.findActive ? (
         <div
