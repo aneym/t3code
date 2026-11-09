@@ -1,4 +1,5 @@
 import {
+  AgentPlacementReceipt,
   OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpCapabilitiesResult,
   OrchestrationV2StopWorkflowInput,
@@ -238,7 +239,10 @@ const ThreadReadTool = Tool.make("t3_thread_read", {
   description:
     "Read any thread by id. `messages` (default): user and assistant messages and plans. `activity`: all timeline items. Keep reads small: low `limit` and `maxCharsPerItem`. Page with `afterPosition=nextPosition`. Cut-off text: `itemId` with `textOffset=nextTextOffset`. Reading a child's final result marks it delivered. In your reply, name it as its `link` verbatim.",
   parameters: OrchestratorMcpThreadReadInput,
-  success: OrchestratorMcpThreadReadResult,
+  success: Schema.Struct({
+    ...OrchestratorMcpThreadReadResult.fields,
+    placement: Schema.optional(AgentPlacementReceipt),
+  }),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies,

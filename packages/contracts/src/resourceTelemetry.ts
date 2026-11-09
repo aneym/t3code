@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { HostPowerSnapshot } from "./background.ts";
-import { DesktopUpdateChannelSchema, DesktopUpdateStateSchema } from "./ipc.ts";
+import { DesktopUpdateStateSchema } from "./ipc.ts";
 
 export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
 
@@ -12,6 +12,9 @@ export const HostResourcesSnapshot = Schema.Struct({
   cpuCount: NonNegativeInt,
   availableMemoryBytes: NonNegativeInt,
   totalMemoryBytes: NonNegativeInt,
+  loadAverage1m: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+  freeDiskBytes: Schema.optionalKey(NonNegativeInt),
+  totalDiskBytes: Schema.optionalKey(NonNegativeInt),
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 
@@ -341,56 +344,6 @@ export const DesktopHostTelemetryMessage = Schema.Union([
   DesktopUpdateStatusReport,
 ]);
 export type DesktopHostTelemetryMessage = typeof DesktopHostTelemetryMessage.Type;
-
-export const DesktopTelemetrySetDiagnosticsDemand = Schema.Struct({
-  version: Schema.Literal(1),
-  type: Schema.Literal("setDiagnosticsDemand"),
-  enabled: Schema.Boolean,
-});
-export type DesktopTelemetrySetDiagnosticsDemand = typeof DesktopTelemetrySetDiagnosticsDemand.Type;
-
-export const DesktopTelemetrySetHostPowerIntervals = Schema.Struct({
-  version: Schema.Literal(1),
-  type: Schema.Literal("setHostPowerIntervals"),
-  activeIntervalMs: PositiveInt,
-  idleIntervalMs: PositiveInt,
-});
-export type DesktopTelemetrySetHostPowerIntervals =
-  typeof DesktopTelemetrySetHostPowerIntervals.Type;
-
-/** Runs check/download/quit-and-install without local confirmation; the remote RPC click supplies consent. */
-export const DesktopTelemetryRequestDesktopUpdate = Schema.Struct({
-  version: Schema.Literal(1),
-  type: Schema.Literal("requestDesktopUpdate"),
-  requestId: TrimmedNonEmptyString,
-  /** A track switch: move to this channel first, and install only `targetVersion`. */
-  channel: Schema.optionalKey(DesktopUpdateChannelSchema),
-  targetVersion: Schema.optionalKey(TrimmedNonEmptyString),
-});
-export type DesktopTelemetryRequestDesktopUpdate = typeof DesktopTelemetryRequestDesktopUpdate.Type;
-
-export const DesktopTelemetryCommitDesktopUpdate = Schema.Struct({
-  version: Schema.Literal(1),
-  type: Schema.Literal("commitDesktopUpdate"),
-  requestId: TrimmedNonEmptyString,
-});
-export type DesktopTelemetryCommitDesktopUpdate = typeof DesktopTelemetryCommitDesktopUpdate.Type;
-
-export const DesktopTelemetryCancelDesktopUpdate = Schema.Struct({
-  version: Schema.Literal(1),
-  type: Schema.Literal("cancelDesktopUpdate"),
-  requestId: TrimmedNonEmptyString,
-});
-export type DesktopTelemetryCancelDesktopUpdate = typeof DesktopTelemetryCancelDesktopUpdate.Type;
-
-export const DesktopTelemetryControlMessage = Schema.Union([
-  DesktopTelemetrySetDiagnosticsDemand,
-  DesktopTelemetrySetHostPowerIntervals,
-  DesktopTelemetryRequestDesktopUpdate,
-  DesktopTelemetryCommitDesktopUpdate,
-  DesktopTelemetryCancelDesktopUpdate,
-]);
-export type DesktopTelemetryControlMessage = typeof DesktopTelemetryControlMessage.Type;
 
 export const ResourceTelemetryProcess = Schema.Struct({
   identity: ResourceTelemetryProcessIdentity,

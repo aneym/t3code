@@ -10,10 +10,21 @@ const LaunchInput = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   clientRequestId: Schema.optional(Schema.String),
   attachments: Schema.optional(Schema.Array(Schema.Unknown)),
-  workspaceStrategy: Schema.optional(Schema.Struct({ type: Schema.String })),
+  workspaceStrategy: Schema.optional(
+    Schema.Struct({
+      type: Schema.String,
+      baseRef: Schema.optional(Schema.String),
+      startFromOrigin: Schema.optional(Schema.Boolean),
+    }),
+  ),
 });
 
 const decodeInput = Schema.decodeUnknownEffect(LaunchInput);
+const sharedBase = (strategy: (typeof LaunchInput.Type)["workspaceStrategy"]) =>
+  strategy?.type === "worktree" &&
+  strategy.baseRef !== undefined &&
+  !/^[0-9a-f]{7,40}$/i.test(strategy.baseRef) &&
+  (strategy.baseRef.startsWith("origin/") || strategy.startFromOrigin === true);
 
 export const prepare = Effect.fn("AgentLaunchRouting.prepare")(function* (
   service: AgentPlacement.AgentPlacement["Service"],
@@ -38,7 +49,9 @@ export const prepare = Effect.fn("AgentLaunchRouting.prepare")(function* (
       ? { localOnlyReason: "Scratch work has no shared project to match." }
       : (input.attachments?.length ?? 0) > 0
         ? { localOnlyReason: "Pending attachments belong to this environment." }
-        : input.workspaceStrategy !== undefined && input.workspaceStrategy.type !== "root"
+        : input.workspaceStrategy !== undefined &&
+            input.workspaceStrategy.type !== "root" &&
+            !sharedBase(input.workspaceStrategy)
           ? { localOnlyReason: "Worktree launches keep their local base references." }
           : {}),
   });

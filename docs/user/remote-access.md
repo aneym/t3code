@@ -167,6 +167,14 @@ on that machine. Existing threads stay where they started. If resource checks ar
 unavailable or all eligible machines are full, choose a machine manually to continue.
 Mobile keeps its manual environment selection.
 
+Agent launches (`delegate_task`, `t3_thread_launch` and `t3 thread start`) that name no
+environment use **Agent load balancing** on the server instead. It picks the linked
+machine with the repository, the provider and the most weighted free CPU, memory and
+disk. A machine past its health line (load per core, available memory or free disk,
+set by `agentPlacementHealthLine`) is skipped. **Always here** pins launches to one
+machine. Run `t3 thread placement <thread>` to see where a thread runs and why, or
+`t3 environment show` for this machine's headroom.
+
 ### Tailscale HTTPS
 
 Join both devices to the same tailnet. In the desktop app, enable **Tailscale

@@ -1,0 +1,89 @@
+import {
+  AgentPlacementHealthLine,
+  AgentPlacementProviders,
+  type EnvironmentId,
+  HostResourcesSnapshot,
+  ProjectId,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
+import type * as Peers from "./PeerMcpClient.ts";
+
+export const Snapshot = Schema.Struct({
+  label: Schema.String,
+  hostResources: Schema.optionalKey(Schema.NullOr(HostResourcesSnapshot)),
+  placementProjectId: Schema.optionalKey(ProjectId),
+  placementProviders: Schema.optionalKey(AgentPlacementProviders),
+  placementHealthLine: Schema.optionalKey(AgentPlacementHealthLine),
+});
+export type Snapshot = typeof Snapshot.Type;
+
+export const make = Effect.fn("PlacementSnapshots.make")(function* (
+  peers: Peers.PeerMcpClient["Service"],
+) {
+  const readGate = yield* Semaphore.make(4);
+  const snapshotScope = yield* Scope.Scope;
+  const pending = new Map<string, Fiber.Fiber<void>>();
+  const snapshots = new Map<string, { expiresAt: number; value: Snapshot | undefined }>();
+  const cached = (environmentId: EnvironmentId, key: string, now: number) => {
+    const entry = snapshots.get(`${environmentId}:${key}`);
+    return entry !== undefined && entry.expiresAt > now ? entry.value : undefined;
+  };
+  const refresh = Effect.fn("PlacementSnapshots.refresh")(function* (input: {
+    readonly environmentIds: ReadonlyArray<EnvironmentId>;
+    readonly key: string;
+    readonly limits: Peers.PeerCallLimits;
+    readonly now: number;
+  }) {
+    const reads = yield* Effect.forEach(input.environmentIds, (environmentId) =>
+      Effect.gen(function* () {
+        const snapshotKey = `${environmentId}:${input.key}`;
+        const entry = snapshots.get(snapshotKey);
+        if (entry !== undefined && entry.expiresAt > input.now) return undefined;
+        const existing = pending.get(snapshotKey);
+        if (existing !== undefined) return existing;
+        const read = peers
+          .call({
+            environmentId,
+            tool: "t3_environment_read",
+            arguments: { placementRepositoryKey: input.key, includePlacementProviders: true },
+            limits: input.limits,
+            success: Snapshot,
+          })
+          .pipe(
+            readGate.withPermits(1),
+            Effect.timeout("6 seconds"),
+            Effect.orElseSucceed(() => undefined),
+            Effect.flatMap((value) =>
+              DateTime.now.pipe(
+                Effect.map((sampledAt) => {
+                  if (snapshots.size >= 128) snapshots.clear();
+                  snapshots.set(snapshotKey, {
+                    expiresAt: DateTime.toEpochMillis(sampledAt) + 5000,
+                    value,
+                  });
+                }),
+              ),
+            ),
+            Effect.ensuring(
+              Effect.sync(() => {
+                pending.delete(snapshotKey);
+              }),
+            ),
+          );
+        const fiber = yield* read.pipe(Effect.forkIn(snapshotScope));
+        pending.set(snapshotKey, fiber);
+        return fiber;
+      }),
+    );
+    yield* Fiber.joinAll(reads.filter((fiber) => fiber !== undefined)).pipe(
+      Effect.timeout("750 millis"),
+      Effect.ignore,
+    );
+  });
+  return { cached, refresh };
+});

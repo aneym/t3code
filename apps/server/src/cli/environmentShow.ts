@@ -1,10 +1,11 @@
-import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import { AgentPlacementScore, ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
 
 import { projectLocationFlags } from "./config.ts";
+import { formatPlacementScore } from "./threadPlacement.ts";
 import {
   McpServerNotRunningError,
   McpServerUnreachableError,
@@ -19,6 +20,7 @@ const EnvironmentIdentity = Schema.Struct({
   serverVersion: ExecutionEnvironmentDescriptor.fields.serverVersion,
   label: ExecutionEnvironmentDescriptor.fields.label,
   platform: ExecutionEnvironmentDescriptor.fields.platform,
+  placementHealth: Schema.optionalKey(AgentPlacementScore),
 });
 
 const reportEnvironmentErrors = reportCliErrors(
@@ -42,7 +44,14 @@ export const environmentShowCommand = Command.make("show", {
         yield* flags.json
           ? printJson(descriptor)
           : Console.log(
-              `${descriptor.label}\n  environmentId: ${descriptor.environmentId}\n  serverVersion: ${descriptor.serverVersion}`,
+              [
+                descriptor.label,
+                `  environmentId: ${descriptor.environmentId}`,
+                `  serverVersion: ${descriptor.serverVersion}`,
+                ...(descriptor.placementHealth === undefined
+                  ? []
+                  : [`placement:\n${formatPlacementScore(descriptor.placementHealth)}`]),
+              ].join("\n"),
             );
       }),
     ).pipe(reportEnvironmentErrors),

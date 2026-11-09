@@ -1,5 +1,7 @@
 import {
+  AgentPlacementHealthLine,
   AgentPlacementProviders,
+  AgentPlacementScore,
   ProjectId,
   HostResourcesSnapshot,
   BackgroundActivityProfile,
@@ -21,6 +23,8 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 const PreferenceFields = {
   agentLoadBalancingEnabled: ServerSettings.fields.agentLoadBalancingEnabled,
   agentLoadBalancingWeights: ServerSettings.fields.agentLoadBalancingWeights,
+  agentPlacementPinnedEnvironmentId: ServerSettings.fields.agentPlacementPinnedEnvironmentId,
+  agentPlacementHealthLine: ServerSettings.fields.agentPlacementHealthLine,
   defaultThreadEnvMode: ServerSettings.fields.defaultThreadEnvMode,
   newWorktreesStartFromOrigin: ServerSettings.fields.newWorktreesStartFromOrigin,
   enableProviderUpdateChecks: ServerSettings.fields.enableProviderUpdateChecks,
@@ -62,6 +66,8 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
     hostResources: Schema.optionalKey(Schema.NullOr(HostResourcesSnapshot)),
     placementProjectId: Schema.optionalKey(ProjectId),
     placementProviders: Schema.optionalKey(AgentPlacementProviders),
+    placementHealthLine: Schema.optionalKey(AgentPlacementHealthLine),
+    placementHealth: Schema.optionalKey(AgentPlacementScore),
   }),
 })
   .annotate(Tool.Readonly, true)
@@ -74,6 +80,8 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
     environmentId: OrchestratorMcpEnvironmentTarget,
     agentLoadBalancingEnabled: ServerSettingsPatch.fields.agentLoadBalancingEnabled,
     agentLoadBalancingWeights: ServerSettingsPatch.fields.agentLoadBalancingWeights,
+    agentPlacementPinnedEnvironmentId: ServerSettingsPatch.fields.agentPlacementPinnedEnvironmentId,
+    agentPlacementHealthLine: ServerSettingsPatch.fields.agentPlacementHealthLine,
     defaultThreadEnvMode: ServerSettingsPatch.fields.defaultThreadEnvMode,
     newWorktreesStartFromOrigin: ServerSettingsPatch.fields.newWorktreesStartFromOrigin,
     enableProviderUpdateChecks: ServerSettingsPatch.fields.enableProviderUpdateChecks,

@@ -39,6 +39,13 @@ export function QueueSettings() {
             "Let agents post notes that show in a thread without starting a turn. The thread's next turn reads them as context.",
         },
         {
+          key: "headlessSubagentStreaming",
+          searchId: "headless-child-threads",
+          label: "Headless child threads",
+          description:
+            "Child threads stream to an open client only. While no one watches one, its turns store finished messages and skip partial text, thinking and token updates.",
+        },
+        {
           key: "mcpEventsEnabled",
           searchId: "mcp-events",
           label: "MCP Events subscriptions",
@@ -58,6 +65,7 @@ export function QueueSettings() {
           | "queueSendAll"
           | "settleIdleChildren"
           | "quietThreadNotes"
+          | "headlessSubagentStreaming"
           | "mcpEventsEnabled"
           | "hostLinkEnabled";
         return (

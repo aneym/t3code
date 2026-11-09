@@ -30,11 +30,25 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     searchTerms: ["note notes back office agent message silent quiet context no turn"],
   },
   {
+    id: "headless-child-threads",
+    title: "Headless child threads",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["headless child subagent delegate stream streaming partial thinking performance"],
+  },
+  {
     id: "mcp-events",
     title: "MCP Events subscriptions",
     to: "/settings/chat",
     scope: "environment-defaults",
     searchTerms: ["mcp events subscribe webhook trigger wake thread rails"],
+  },
+  {
+    id: "host-link",
+    title: "Host app link",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["host app link push turns messages steps thread ends lane rails"],
   },
   {
     id: "mcp-app-remember-tool-grants",

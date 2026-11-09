@@ -1,5 +1,6 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as AgentDelegation from "../../agentDelegation.ts";
+import { withRecordedPlacement } from "../../../peer/AgentPlacement.ts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
@@ -25,7 +26,11 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.taskStatus(scope, taskId);
+      const status = yield* service.taskStatus(scope, taskId);
+      return yield* withRecordedPlacement(
+        status.remoteChild?.threadId ?? status.childThreadId,
+        status,
+      );
     }),
   ),
   task_cancel: McpToolAccess.actsAsCaller((input) =>
@@ -160,7 +165,7 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.readThread(scope, input);
+      return yield* withRecordedPlacement(input.threadId, yield* service.readThread(scope, input));
     }),
   ),
   t3_thread_update: McpToolAccess.writesThreads(
