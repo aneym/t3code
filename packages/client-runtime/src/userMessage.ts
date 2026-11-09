@@ -31,6 +31,10 @@ export const IDLE_COMPACTION_TITLES = {
 
 const LEGACY_AUTOMATION_PREFIX = /^\[Triggered by schedule task: [^\r\n]+\]\r?\n\r?\n/;
 const LEGACY_AUTOMATION_MESSAGE_ID = /^scheduled-task-message:(.+):\d+:(?:scheduled|manual)$/;
+const RAILS_DESK_CONTEXT = /^<rails-desk lane="[A-Za-z0-9_-]{1,64}">\n[\s\S]*?\n<\/rails-desk>\n+/;
+
+export const withoutRailsDeskContext = (text: string): string =>
+  text.replace(RAILS_DESK_CONTEXT, "");
 
 export function resolveUserMessageFileCards(message: {
   readonly text: string;
@@ -104,9 +108,10 @@ export function resolveUserMessagePresentation(message: {
       scheduledTaskId: legacyTaskId === undefined ? undefined : ScheduledTaskId.make(legacyTaskId),
     };
   }
+  const ownText = withoutRailsDeskContext(message.text);
   return {
     // The agent needs words to start a turn; people sent only the attachments.
-    text: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
+    text: isAttachmentOnlyBootstrapPrompt(ownText) ? "" : ownText,
     attribution:
       message.createdBy !== "agent"
         ? null

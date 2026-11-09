@@ -1,5 +1,6 @@
 import { queuedRunRows } from "./queuedRunRows";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { withoutRailsDeskContext } from "@t3tools/client-runtime/user-message";
 import {
   deriveThreadQueueWorkflowState,
   canSendAllQueued,
@@ -258,10 +259,11 @@ export function QueuedRunsControl({
       ) : null}
       <ol className="flex flex-col items-end gap-3" id={queueListId}>
         {visibleItems.map((item, position) => {
-          const previewText = isAttachmentOnlyBootstrapPrompt(item.text)
+          const ownText = withoutRailsDeskContext(item.text);
+          const previewText = isAttachmentOnlyBootstrapPrompt(ownText)
             ? ""
             : assistantCitationsToPlainText(
-                replaceComposerContextReferences(item.text, (reference) =>
+                replaceComposerContextReferences(ownText, (reference) =>
                   reference.kind === "image" && item.thumbnails.length > 0 ? "" : reference.label,
                 ),
               ).trim();
