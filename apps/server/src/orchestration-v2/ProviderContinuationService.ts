@@ -5,6 +5,7 @@ import * as Ref from "effect/Ref";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderWakeDispatches from "@t3tools/provider-core/server/ProviderWakeDispatches";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 
@@ -54,6 +55,7 @@ export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const ids = yield* IdAllocator.IdAllocatorV2;
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+    const wakes = yield* ProviderWakeDispatches.ProviderWakeDispatches;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const retryAttempts = yield* Ref.make(new Map<string, number>());
 
@@ -277,6 +279,11 @@ export const layer = Layer.effectDiscard(
                 );
               }
             }),
+          ),
+          Effect.ensuring(
+            ProviderContinuationRequests.isProviderStartedTurn(request)
+              ? wakes.settle(request.threadId)
+              : Effect.void,
           ),
         ),
       ),
