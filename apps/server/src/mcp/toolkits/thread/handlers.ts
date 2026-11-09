@@ -1,4 +1,5 @@
 import {
+  mcpEventOfMessage,
   type CommandId,
   type RuntimeRequestId,
   ThreadId,
@@ -35,10 +36,12 @@ function queueEntry(
   const message = projection.messages.find((message) => message.id === run?.userMessageId);
   if (run === undefined || message === undefined) return undefined;
   const characters = Array.from(message.text);
+  const mcpEvent = mcpEventOfMessage(message);
   return {
     queuedRunId: run.id,
     text: characters.slice(0, limit).join(""),
     truncated: characters.length > limit,
+    ...(mcpEvent === null ? {} : { mcpEvent }),
     ...(run.queueHeld === true
       ? {
           hold: {

@@ -1,6 +1,11 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
-import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
+import {
+  type ChatAttachment,
+  MCP_EVENT_MESSAGE_ID_PREFIX,
+  MessageId,
+  type OrchestrationV2Command,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -84,11 +89,22 @@ const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments
   return { ...command, attachments: message?.attachments ?? [] };
 });
 
+function withoutServerMarks(
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+) {
+  const { mcpEvent: _mcpEvent, ...rest } = command;
+  return rest.messageId.startsWith(MCP_EVENT_MESSAGE_ID_PREFIX)
+    ? { ...rest, messageId: MessageId.make(`message:client:${rest.messageId}`) }
+    : rest;
+}
+
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
   incoming: OrchestrationV2Command,
 ) {
   const command =
-    incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
+    incoming.type === "message.dispatch"
+      ? yield* withGuestAttachments(withoutServerMarks(incoming))
+      : incoming;
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "thread.snooze" && command.whenQueueDrains === undefined) {
     const result = yield* threads.snoozeThread(command);

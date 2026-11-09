@@ -72,9 +72,7 @@ export const dispatchFailure = (
           typeof error.cause === "string" &&
           error.cause.length > 0
         ? new OrchestratorMcpFailure({
-            code:
-              (error._tag === "OrchestratorDispatchError" ? error.reason : undefined) ??
-              "orchestration_error",
+            code: error.reason ?? "orchestration_error",
             message: Array.from(error.cause).slice(0, 1000).join(""),
           })
         : unavailable();
