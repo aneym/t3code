@@ -50,7 +50,10 @@ def serving_process(run, version, expected):
         raise ValueError("endpoint listener does not belong to intended service" if not owned else "intended service has more than one listener PID")
     pid = next(iter(owned))
     if pid == root:
-        state = json.loads((run.home / "userdata/server-runtime.json").read_text())
+        try:
+            state = json.loads((run.home / "userdata/server-runtime.json").read_text())
+        except (OSError, ValueError):
+            raise ValueError("serving child has not published its runtime state") from None
         child_pid = str(state["pid"])
         if child_pid == root or not descends(child_pid, root, parents):
             raise ValueError("public launcher runtime identity is not its serving child")

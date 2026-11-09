@@ -135,7 +135,7 @@ def serving(run, version, expected, reap=True):
                 serving_process(run, version, expected)
                 return
             except ValueError as error:
-                if str(error) != "endpoint listener does not belong to intended service":
+                if str(error) not in ("endpoint listener does not belong to intended service", "serving child has not published its runtime state"):
                     raise
         time.sleep(0.5)
     raise ValueError("candidate serving version did not become healthy")
