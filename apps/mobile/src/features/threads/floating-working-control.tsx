@@ -74,7 +74,7 @@ export function FloatingWorkingControl(props: {
   readonly onScrollToEnd: () => void;
   readonly agents: SubagentPillSegment | null;
   readonly onOpenAgents: () => void;
-  readonly queueLabel: string | null;
+  readonly queueLabel?: string;
   readonly onOpenQueue: () => void;
   readonly lift?: SharedValue<number>;
 }) {
@@ -91,7 +91,7 @@ export function FloatingWorkingControl(props: {
       ? props.status.action
       : null;
   const [agentsWidth, setAgentsWidth] = useState(0);
-  const hasQueue = props.queueLabel !== null;
+  const hasQueue = props.queueLabel !== undefined;
   const hasConnectionChip = props.connectionChip !== null;
   const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
   const [previewWidth, setPreviewWidth] = useState(0);

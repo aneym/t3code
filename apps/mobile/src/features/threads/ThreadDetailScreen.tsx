@@ -1534,7 +1534,7 @@ function ThreadDetailBody(
                         threadId: props.selectedThread.id,
                       });
                     }}
-                    queueLabel={queued?.label ?? null}
+                    queueLabel={queued?.label}
                     onOpenQueue={() => {
                       Keyboard.dismiss();
                       navigation.navigate("ThreadQueue", {
