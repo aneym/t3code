@@ -85,5 +85,16 @@ export const StorageCleanupSettings = Schema.Struct({
   worktreeDisposableIgnoredPaths: DisposableIgnoredPaths.pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  worktreeAcceptPushed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
+
+export const StorageCleanupSettingsPatch = Schema.Struct({
+  ...WorktreeCleanupRulesPatchFields,
+  browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
+  logsAfterDays: Schema.optionalKey(StorageRetentionDays),
+  threadHistoryAfterDays: Schema.optionalKey(StorageRetentionDays),
+  worktreeDisposableIgnoredPaths: Schema.optionalKey(DisposableIgnoredPaths),
+  worktreeOrphans: Schema.optionalKey(Schema.Boolean),
+  worktreeAcceptPushed: Schema.optionalKey(Schema.Boolean),
+});

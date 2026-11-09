@@ -56,6 +56,7 @@ describe("storage cleanup settings", () => {
       logsAfterDays: null,
       worktreeDisposableIgnoredPaths: [],
       worktreeOrphans: false,
+      worktreeAcceptPushed: false,
       threadHistoryAfterDays: null,
     });
   });

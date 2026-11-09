@@ -98,6 +98,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   worktreeContentIntegration: Schema.optionalKey(Schema.Boolean),
   worktreeDisposableIgnoredPaths: Schema.optionalKey(Schema.Boolean),
   worktreeOrphans: Schema.optionalKey(Schema.Boolean),
+  worktreeAcceptPushed: Schema.optionalKey(Schema.Boolean),
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
   threadAutoSettlementScope: Schema.optionalKey(Schema.Boolean),
   threadRestartContinuation: Schema.optionalKey(Schema.Boolean),

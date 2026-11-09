@@ -1,4 +1,5 @@
 import {
+  CommandId,
   GitCommandError,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderSessionJson,
@@ -32,7 +33,6 @@ import type { PlatformError } from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { parse as parseYaml } from "yaml";
 
 import * as ProcessRunner from "./processRunner.ts";
 import * as ServerConfig from "./config.ts";
@@ -49,24 +49,18 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { makeWorktreeSafetyChecks } from "./worktreeSafetyChecks.ts";
 import { makeOrphanWorktreeCleanup } from "./orphanWorktreeCleanup.ts";
 import { makeWorktreeIntegrationCheck } from "./worktreeIntegration.ts";
+import { makeWorktreePublicationCheck } from "./worktreePublication.ts";
 import { makeWorktreeTrash, WORKTREE_TRASH_FOLDER } from "./worktreeTrash.ts";
+import { makeWorktreeSize } from "./worktreeSize.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import { isNetworkPath } from "@t3tools/shared/path";
 
 const decodeCleanupThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
 );
 const decodeCleanupSession = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ProviderSessionJson),
-);
-// pnpm 11 writes this file as JSON, older versions as YAML.
-const decodePnpmModulesManifest = Schema.decodeUnknownEffect(
-  Schema.Struct({
-    storeDir: Schema.String,
-    virtualStoreDir: Schema.optional(Schema.String),
-  }),
 );
 
 const DAY_MS = 86_400_000;
@@ -268,6 +262,7 @@ const make = Effect.gen(function* () {
   const terminals = yield* TerminalManager.TerminalManager;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const measureWorktree = yield* makeWorktreeSize;
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
   const orphanSizes = new Map<string, number | null>();
   const noteTerminal = (terminal: TerminalSummary) => {
@@ -304,79 +299,6 @@ const make = Effect.gen(function* () {
           inside(worktreePath, cwd)
         );
       });
-
-  // pnpm imports packages by clone or reflink when its store shares a device
-  // with the worktree. Those files have one link but share blocks with the
-  // store, so removing them frees almost nothing. A store on another device
-  // forces real copies, which still count.
-  const sharedPnpmVirtualStore = Effect.fnUntraced(
-    function* (root: string) {
-      const nodeModules = path.join(root, "node_modules");
-      const text = yield* fs.readFileString(path.join(nodeModules, ".modules.yaml"));
-      const manifest = yield* decodePnpmModulesManifest(yield* Effect.try(() => parseYaml(text)));
-      // An agent can write this manifest, and statting a network path makes
-      // Windows sign in to its host with the user's NTLM credentials.
-      if (isNetworkPath(manifest.storeDir) || isNetworkPath(manifest.virtualStoreDir ?? "")) {
-        return null;
-      }
-      const virtualStore = path.resolve(nodeModules, manifest.virtualStoreDir ?? ".pnpm");
-      const [store, virtual] = yield* Effect.all([
-        fs.stat(manifest.storeDir),
-        fs.stat(virtualStore),
-      ]);
-      return store.dev === virtual.dev ? virtualStore : null;
-    },
-    Effect.orElseSucceed(() => null),
-  );
-
-  const measureWorktree = Effect.fn("storageCleanup.measureWorktree")(
-    function* (worktreePath: string) {
-      const root = yield* fs.realPath(worktreePath);
-      const skipped = yield* sharedPnpmVirtualStore(root);
-      const pending = [root];
-      let entries = 1;
-      let bytes = 0;
-      while (pending.length > 0) {
-        const target = pending.pop()!;
-        if (target === skipped) continue;
-        // Effect's stat follows links. Probe with readLink first to get lstat
-        // semantics, including skipping dangling links and directory links.
-        const isLink = yield* fs.readLink(target).pipe(
-          Effect.as(true),
-          Effect.catchIf(
-            (error) =>
-              error.cause instanceof Error &&
-              "code" in error.cause &&
-              error.cause.code === "EINVAL",
-            () => Effect.succeed(false),
-          ),
-        );
-        if (isLink) continue;
-        if ((yield* fs.realPath(target)) !== target) return null;
-        const stat = yield* fs.stat(target);
-        if (stat.type === "File") {
-          // Removing a shared hardlink leaves its blocks allocated.
-          if (Option.getOrElse(stat.nlink, () => 1n) !== 1n) continue;
-          bytes += Option.match(stat.blocks, {
-            onNone: () => Number(stat.size),
-            onSome: (blocks) => Number(blocks * 512n),
-          });
-        } else if (stat.type === "Directory") {
-          const names = yield* fs.readDirectory(target);
-          entries += names.length;
-          if (entries > 2_000_000) return null;
-          for (const name of names) {
-            const child = path.join(target, name);
-            if (!inside(root, child)) return null;
-            pending.push(child);
-          }
-        }
-      }
-      return bytes;
-    },
-    Effect.timeout("30 seconds"),
-    Effect.orElseSucceed(() => null),
-  );
 
   // Large snapshots take seconds; use the reader worker instead of blocking the event loop.
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
@@ -529,7 +451,7 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const { branchChanged, localChangesReason, submoduleKeepReason } =
+  const { branchChanged, checkedOutBranch, localChangesReason, submoduleKeepReason } =
     yield* makeWorktreeSafetyChecks;
   const cleanOrphans = yield* makeOrphanWorktreeCleanup;
 
@@ -560,6 +482,8 @@ const make = Effect.gen(function* () {
     )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
     const snapshot = yield* readThreads();
     const integration = makeWorktreeIntegrationCheck(git);
+    const published = makeWorktreePublicationCheck(git);
+    const acceptPushed = serverSettings.storageCleanup.worktreeAcceptPushed;
     const groups = Map.groupBy(
       snapshot.threads.filter((thread) => thread.worktreePath !== null),
       (thread) => path.resolve(thread.worktreePath!),
@@ -648,8 +572,13 @@ const make = Effect.gen(function* () {
           return keep("contains a project checkout");
         if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File")
           return keep("not a linked worktree");
-        if (yield* branchChanged(worktreePath, thread.branch))
-          return keep("repository or branch changed");
+        let branch = thread.branch;
+        if (yield* branchChanged(worktreePath, branch)) {
+          const current = acceptPushed ? yield* checkedOutBranch(worktreePath) : null;
+          if (!current) return keep("repository or branch changed");
+          branch = current;
+        }
+        const renamed = branch !== thread.branch;
         const changes = yield* localChangesReason(worktreePath, settings);
         if (changes !== null) return keep(changes);
         if (
@@ -683,6 +612,7 @@ const make = Effect.gen(function* () {
             : `settled for ${settledDays} days`;
         if (
           settings.worktreeRequireIntegrated ||
+          renamed ||
           (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge))
         ) {
           const landed = yield* integration({
@@ -705,11 +635,11 @@ const make = Effect.gen(function* () {
               : settings.worktreeOnMerge
           ) {
             const pullRequest = yield* gitManager.branchPullRequest(
-              { cwd: worktreePath, branch: thread.branch },
+              { cwd: worktreePath, branch },
               { refresh: true },
             );
             merged = storageCleanupPullRequestMerged(pullRequest, {
-              branch: thread.branch,
+              branch,
               defaultBranch: landed.defaultBranch,
               headSha: head.commitSha,
               integrated: landed.integrated,
@@ -719,8 +649,24 @@ const make = Effect.gen(function* () {
               removalReason = "pull request was merged";
             }
           }
-          if (eligible && !landed.integrated && !merged)
-            return keep("has commits that are not on the default branch");
+          if (
+            eligible &&
+            !landed.integrated &&
+            !merged &&
+            !(
+              acceptPushed &&
+              (yield* published({
+                repositoryCwd: path.resolve(project.workspaceRoot),
+                worktreePath,
+                headSha: head.commitSha,
+              }))
+            )
+          )
+            return keep(
+              acceptPushed
+                ? "has unpushed commits"
+                : "has commits that are not on the default branch",
+            );
         }
         // Merge and unchanged rules act only once every thread on the checkout has let it go.
         if (
@@ -819,7 +765,7 @@ const make = Effect.gen(function* () {
         const bytes = yield* measureWorktree(worktreePath);
         const blockedWhileMeasuring = yield* blockedSinceCheck();
         if (blockedWhileMeasuring !== null) return keep(blockedWhileMeasuring);
-        if (yield* branchChanged(worktreePath, thread.branch))
+        if (yield* branchChanged(worktreePath, branch))
           return keep("repository or branch changed since check");
         if (
           (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
@@ -853,7 +799,7 @@ const make = Effect.gen(function* () {
               if (blocked !== null) return blocked;
               const moved = yield* identity;
               if (moved !== null) return moved;
-              if (yield* branchChanged(worktreePath, thread.branch))
+              if (yield* branchChanged(worktreePath, branch))
                 return "repository or branch changed since check";
               if (
                 (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
@@ -871,6 +817,23 @@ const make = Effect.gen(function* () {
         if (removal !== null) return keep(removal);
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
+        if (renamed)
+          yield* Effect.forEach(group, (member) =>
+            engine
+              .dispatch({
+                type: "thread.metadata.update",
+                commandId: CommandId.make(`server:worktree-branch:${member.id}:${head.commitSha}`),
+                threadId: member.id,
+                branch,
+                expectedBranch: thread.branch,
+                expectedWorktreePath: member.worktreePath,
+              })
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("storage cleanup kept the old thread branch", { error }),
+                ),
+              ),
+          );
         // Preserve branch/path so ProviderTurnStartService can recreate the checkout on resume.
         yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
       }).pipe(
