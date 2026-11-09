@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import install_offbox, install_settings
+from . import install_offbox, install_rollback_retention, install_settings
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_copy import backup_database
 from .install_hard import connect_returns, install as hard_install
@@ -251,6 +251,7 @@ def install(run):
         backup["markError"] = run.report["backupMarkError"]
     store = run.home / "runtime/.rollback-runtime"
     retain_runtime(run.home, previous, store)
+    install_rollback_retention.apply(run, previous, args.version)
     try:
         original_launcher = launcher_identity(run, previous, observed["oldRuntime.digest"])
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):

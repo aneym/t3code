@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .identity_snapshot import finish as finish_identities
-from . import install_offbox, install_settings
+from . import install_offbox, install_rollback_retention, install_settings
 from .install_restore_copy import RecoveryRequired
 from .install_db_rollback import recovery_required
 from .install_backup import advisory, capture
@@ -222,6 +222,7 @@ def install(run):
             if file_digest(staged) != observed["candidateRuntime.digest"]:
                 raise ValueError("staged candidate runtime changed after provenance check")
             run.step("hard-retain-runtime", version=previous, path=str(retain_runtime(run.home, previous, run.home / "runtime/.rollback-runtime")))
+            install_rollback_retention.apply(run, previous, args.version)
             backup = install_offbox.capture(run, previous, stop, rollback_gate, keep_local=restore_class) if args.offbox else capture(run, previous, stop, rollback_gate, keep_local=restore_class)
             if restore_class and not backup.get("local") and not backup.get("stoppedShip"):
                 raise ValueError("restore-rollback requires a verified local restore copy")
