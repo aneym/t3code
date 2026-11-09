@@ -94,6 +94,12 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       else postToEmbedHost({ type: EMBED_KEY_MESSAGE, key });
     };
     const onClick = (event: MouseEvent) => {
+      const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
+      if (anchor?.querySelector("[data-rails-link-gone]")) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
       const url = leavingLink(event);
       if (url === null) return;
       event.preventDefault();
