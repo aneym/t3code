@@ -49,9 +49,10 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
     clone_root = run.home / "runtime/rollback-backups"
     volume_reason = "APFS clone unavailable on this platform"
     clones = 1
+    if sys.platform == "darwin" and (keep_local or getattr(run.args, "compact_db", False)):
+        run.step("backup-prune", **best_effort(run.backups, None, run.home, keep=KEEP - 1))
     if sys.platform == "darwin" and keep_local:
         clone_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        run.step("backup-prune", **best_effort(run.backups, None, run.home, keep=KEEP - 1))
         clones += kept_on_live_volume(run.home, run.backups, KEEP - 1)
         if source.stat().st_dev == clone_root.stat().st_dev and room(clone_root, run.home, clones)["passes"]:
             root = clone_root

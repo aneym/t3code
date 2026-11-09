@@ -70,6 +70,7 @@ def parse():
     parser.add_argument("--strict-drain-proof", action="store_true")
     parser.add_argument("--handoff-stop", action=argparse.BooleanOptionalAction, default=False, help="window flag: when the drain times out, stop on a ready restart handoff instead of refusing")
     parser.add_argument("--handoff-wait-s", type=int, default=180)
+    parser.add_argument("--compact-db", action=argparse.BooleanOptionalAction, default=False, help="window flag: run the installed t3 doctor --fix in the stopped window after the rollback backup; macOS only")
     parser.add_argument("--rehearsal-inject", dest="inject", choices=("none", "warm-death", "post-flip"), default="none")
     parser.add_argument("--rollback-fallback-proof", action="store_true", help="isolated non-release fallback proof; never changes existing injection semantics")
     parser.add_argument("--compatibility-probe", action="store_true")
@@ -112,6 +113,8 @@ def parse():
         parser.error("--rollback-fallback-proof cannot replace an existing rollback proof")
     if not 0 <= args.handoff_wait_s <= 900:
         parser.error("--handoff-wait-s must be between 0 and 900")
+    if args.compact_db and (sys.platform != "darwin" or not (args.hard or args.seamless) or args.offbox):
+        parser.error("--compact-db requires a macOS --hard or --seamless install without --offbox")
     if args.strict_drain_proof and not args.rehearsal:
         parser.error("--strict-drain-proof requires isolated --rehearsal")
     if args.force_rollback and not args.rehearsal:

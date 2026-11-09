@@ -20,7 +20,7 @@ class InstallCommand:
 def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, artifact_manifest,
                           receipt, receipt_host, install_receipt, state_dir, chat_project,
                           smoke_verdict, rollback_proof, override_reason="", launcher_artifact=None,
-                          connector_artifact=None, home=None, drain_s=None, handoff_stop=None):
+                          connector_artifact=None, home=None, drain_s=None, handoff_stop=None, compact_db=None):
     home = Path.home() if home is None else Path(home)
     state, env, prefix = Path(state_dir), None, []
     if host == "ax42":
@@ -46,6 +46,10 @@ def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, a
         words.extend(["--drain-s", str(drain_s)])
     if handoff_stop is not None:
         words.append("--handoff-stop" if handoff_stop else "--no-handoff-stop")
+    if compact_db is not None:
+        if compact_db and host != "studio":
+            raise ValueError("compact_db is supported on studio only")
+        words.append("--compact-db" if compact_db else "--no-compact-db")
     return InstallCommand(words, state, env)
 
 
@@ -61,7 +65,7 @@ def fast_install(config, log):
         install_receipt=config.receipt("install"), state_dir=config.install_state(),
         chat_project=config.chat_project(), override_reason=config.override_reason,
         smoke_verdict=config.run / f"e2e-{config.host}" / "smoke-verdict.json",
-        rollback_proof=config.receipt("rollback-proof"), home=config.home,
+        rollback_proof=config.receipt("rollback-proof"), home=config.home, compact_db=config.compact_db or None,
         **{artifacts[index].removeprefix("--").replace("-", "_"): artifacts[index + 1] for index in range(0, len(artifacts), 2)},
     )
     plan.state.mkdir(parents=True, exist_ok=True)

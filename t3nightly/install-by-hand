@@ -25,6 +25,7 @@ def main():
     parser.add_argument("--connector-artifact", type=Path)
     parser.add_argument("--override-reason", default="", help="separate install-window override, when required")
     parser.add_argument("--handoff-stop", action=argparse.BooleanOptionalAction, default=None, help="window flag passed to install; off unless set")
+    parser.add_argument("--compact-db", action=argparse.BooleanOptionalAction, default=None, help="window flag passed to install; off unless set")
     parser.add_argument("--print", action="store_true", help="print the command only; no installer or filesystem mutations")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", args.host):
@@ -41,6 +42,7 @@ def main():
         smoke_verdict=args.smoke_verdict, rollback_proof=args.rollback_proof,
         override_reason=args.override_reason, launcher_artifact=args.launcher_artifact,
         connector_artifact=args.connector_artifact, drain_s=DEFAULT_DRAIN_S, handoff_stop=args.handoff_stop,
+        compact_db=args.compact_db,
     )
     env = {**(os.environ if plan.env is None else plan.env), "T3_LIVE_RESTART_REASON": reason}
     if args.print:

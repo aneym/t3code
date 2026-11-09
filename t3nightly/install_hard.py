@@ -13,6 +13,7 @@ from . import install_offbox, install_settings
 from .install_restore_copy import RecoveryRequired
 from .install_db_rollback import recovery_required
 from .install_backup import advisory, capture
+from .install_compact import compact, served
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_process import serving_process
 from .install_service import service
@@ -162,7 +163,7 @@ def install(run):
 
     def rollback_gate():
         live = migration_history(run)
-        eligible = binary_rollback(compatibility) and live == base_history
+        eligible = binary_rollback(compatibility) and live == base_history and not getattr(args, "compact_db", False)
         return {"liveMigrationHistory": live, "baseMigrationHistory": base_history} if eligible else None
     from .launcher_artifact import preflight_launcher
 
@@ -200,6 +201,7 @@ def install(run):
         install_settings.capture(run)
         service(run, "stop")
         stopped = True
+        run.stopped_at = time.monotonic()
         run.stop_deadline = time.monotonic() + args.offbox_stop_s
         try:
             attempts = 0
@@ -222,10 +224,12 @@ def install(run):
             backup = install_offbox.capture(run, previous, stop, rollback_gate, keep_local=restore_class) if args.offbox else capture(run, previous, stop, rollback_gate, keep_local=restore_class)
             if restore_class and not backup.get("local") and not backup.get("stoppedShip"):
                 raise ValueError("restore-rollback requires a verified local restore copy")
+            compact(run, backup)
             install_settings.apply(run)
             stopped = False
             activate(run, args.version)
             serving(run, args.version, observed["candidateRuntime.digest"])
+            served(run)
             routed = True
             migration_evidence["candidate"] = migration_history(run)
             if restore_class and migration_evidence["candidate"] != compatibility["candidateMigrations"]["history"]:
@@ -355,7 +359,7 @@ def install(run):
         "oldRuntime": {"version": previous, "digest": observed["oldRuntime.digest"]},
         "servingRuntime": {"version": serving_version, "digest": serving_digest},
         "installWindow": run.report.get("installWindow"), "hotSwap": {**(run.report.get("hotSwap") or {}), "forwardRepairRequired": run.report.get("forwardRepairRequired", False)},
-        **{key: run.report[key] for key in ("restartDrain", "restartHandoff", "connectorRestore", "databaseQuiescence") if key in run.report},
+        **{key: run.report[key] for key in ("restartDrain", "restartHandoff", "connectorRestore", "databaseQuiescence", "databaseCompaction") if key in run.report},
         "retryable": any((run.report.get(key) or {}).get("retryable") is True for key in ("restartDrain", "databaseQuiescence")),
         "migrationHistory": migration_evidence, "databaseRollback": database_rollback,
         **install_settings.receipt(run),
