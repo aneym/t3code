@@ -304,6 +304,8 @@ import {
   shouldShowThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
+import { HeldSendNotice } from "./chat/HeldSendNotice";
+import { releaseHeldSend, retryHeldSend, useHeldSendStore } from "./chat/heldSendStore";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
@@ -2970,6 +2972,36 @@ export default function ChatView(props: ChatViewProps) {
   };
   const onWorktreeSetupWorkLocallyStable = useStableCallback(onWorktreeSetupWorkLocally);
   const onComposerSendStable = useStableCallback(onSend);
+  const heldSend = useHeldSendStore((store) => store.byThread[routeThreadKey] ?? null);
+  const composerPrompt = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.prompt ?? "",
+  );
+  const composerHoldsHeldSend = heldSend !== null && composerPrompt.trim() === heldSend.text.trim();
+  const heldSendShown =
+    heldSend !== null && (composerPrompt.trim() !== "" || composerHasAttachments);
+  const heldSendDelivered =
+    heldSend !== null &&
+    serverProjection?.messages.some((message) => message.id === heldSend.messageId) === true;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the held marker once the server has the held message and the composer moved on
+  useEffect(() => {
+    if (heldSendDelivered && !composerHoldsHeldSend) releaseHeldSend(routeThreadKey);
+  }, [composerHoldsHeldSend, heldSendDelivered, routeThreadKey]);
+  const heldSendReady =
+    heldSendShown &&
+    (heldSend.status === "waiting" || (heldSendDelivered && composerHoldsHeldSend)) &&
+    !activeEnvironmentUnavailable &&
+    !threadDetailLoading &&
+    !isSendBusy;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends a held message once its environment is connected again
+  useEffect(() => {
+    if (!heldSendReady) return;
+    const timer = setTimeout(() => void onComposerSendStable(), 1_500);
+    return () => clearTimeout(timer);
+  }, [heldSendReady, onComposerSendStable]);
+  const retryHeldSendNow = useStableCallback(() => {
+    retryHeldSend(routeThreadKey);
+    if (!activeEnvironmentUnavailable) void onComposerSendStable();
+  });
   const sendPreviewAnnotation = (
     annotation: PreviewAnnotationPayload,
     image: ComposerImageAttachment | null,
@@ -3106,7 +3138,8 @@ export default function ChatView(props: ChatViewProps) {
     !hasThreadNow &&
     threadStatusLine === null &&
     pendingGuestMessageCount === 0 &&
-    !hasQueuedTurns ? null : (
+    !hasQueuedTurns &&
+    !heldSendShown ? null : (
       <>
         <ThreadRestartNotices
           label={restartPause}
@@ -3130,6 +3163,14 @@ export default function ChatView(props: ChatViewProps) {
           />
         ) : null}
         {hasQueuedTurns ? queuedRunsControl : null}
+        {heldSendShown ? (
+          <HeldSendNotice
+            threadKey={routeThreadKey}
+            held={heldSend}
+            label={activeEnvironment?.label ?? "T3"}
+            onRetry={retryHeldSendNow}
+          />
+        ) : null}
       </>
     );
 
