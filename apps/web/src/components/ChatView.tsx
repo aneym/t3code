@@ -2995,9 +2995,9 @@ export default function ChatView(props: ChatViewProps) {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends a held message once its environment is connected again
   useEffect(() => {
     if (!heldSendReady) return;
-    const timer = setTimeout(() => void onComposerSendStable(), 1_500);
+    const timer = setTimeout(() => void onComposerSendStable(), heldSendDelivered ? 0 : 1_500);
     return () => clearTimeout(timer);
-  }, [heldSendReady, onComposerSendStable]);
+  }, [heldSendDelivered, heldSendReady, onComposerSendStable]);
   const retryHeldSendNow = useStableCallback(() => {
     retryHeldSend(routeThreadKey);
     if (!activeEnvironmentUnavailable) void onComposerSendStable();
@@ -3139,7 +3139,7 @@ export default function ChatView(props: ChatViewProps) {
     threadStatusLine === null &&
     pendingGuestMessageCount === 0 &&
     !hasQueuedTurns &&
-    !heldSendShown ? null : (
+    !(heldSendShown && !heldSendDelivered) ? null : (
       <>
         <ThreadRestartNotices
           label={restartPause}
@@ -3163,7 +3163,7 @@ export default function ChatView(props: ChatViewProps) {
           />
         ) : null}
         {hasQueuedTurns ? queuedRunsControl : null}
-        {heldSendShown ? (
+        {heldSendShown && !heldSendDelivered ? (
           <HeldSendNotice
             threadKey={routeThreadKey}
             held={heldSend}
