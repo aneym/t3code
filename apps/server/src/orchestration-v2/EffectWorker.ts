@@ -891,7 +891,7 @@ export interface OrchestrationEffectDaemonOptions {
   readonly livenessPollIntervalMs?: number;
 }
 
-const DEFAULT_EFFECT_WORKER_CONCURRENCY = 4;
+const DEFAULT_EFFECT_WORKER_CONCURRENCY = 16;
 const DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS = 30_000;
 
 export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions = {}) =>
