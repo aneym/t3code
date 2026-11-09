@@ -1,14 +1,22 @@
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import type * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Semaphore from "effect/Semaphore";
+
+import * as FairMutex from "./FairMutex.ts";
 
 export interface KeyedLock<Key> {
   readonly withLock: <A, E, R>(key: Key, effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  readonly withLockWithin: <A, E, R>(
+    key: Key,
+    within: Duration.Input,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<Option.Option<A>, E, R>;
   readonly activeKeys: Effect.Effect<ReadonlyArray<Key>>;
 }
 
 interface LockEntry {
-  readonly semaphore: Semaphore.Semaphore;
+  readonly mutex: FairMutex.FairMutex;
   readonly users: number;
 }
 
@@ -21,15 +29,13 @@ export const make = Effect.fn("KeyedLock.make")(function* <Key>(): Effect.fn.Ret
   const locks = yield* Ref.make<ReadonlyMap<Key, LockEntry>>(new Map());
 
   const acquire = (key: Key) =>
-    Effect.flatMap(Semaphore.make(1), (candidate) =>
-      Ref.modify(locks, (current) => {
-        const existing = current.get(key);
-        const semaphore = existing?.semaphore ?? candidate;
-        const next = new Map(current);
-        next.set(key, { semaphore, users: (existing?.users ?? 0) + 1 });
-        return [semaphore, next] as const;
-      }),
-    );
+    Ref.modify(locks, (current) => {
+      const existing = current.get(key);
+      const mutex = existing?.mutex ?? FairMutex.makeUnsafe();
+      const next = new Map(current);
+      next.set(key, { mutex, users: (existing?.users ?? 0) + 1 });
+      return [mutex, next] as const;
+    });
 
   const release = (key: Key) =>
     Ref.update(locks, (current) => {
@@ -48,7 +54,13 @@ export const make = Effect.fn("KeyedLock.make")(function* <Key>(): Effect.fn.Ret
     withLock: (key, effect) =>
       Effect.acquireUseRelease(
         acquire(key),
-        (semaphore) => semaphore.withPermit(effect),
+        (mutex) => mutex.withLock(effect),
+        () => release(key),
+      ),
+    withLockWithin: (key, within, effect) =>
+      Effect.acquireUseRelease(
+        acquire(key),
+        (mutex) => mutex.withLockWithin(within, effect),
         () => release(key),
       ),
     activeKeys: Effect.map(Ref.get(locks), (current) => Array.from(current.keys())),

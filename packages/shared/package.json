@@ -111,6 +111,10 @@
       "types": "./src/KeyedCoalescingWorker.ts",
       "import": "./src/KeyedCoalescingWorker.ts"
     },
+    "./FairMutex": {
+      "types": "./src/FairMutex.ts",
+      "import": "./src/FairMutex.ts"
+    },
     "./KeyedLock": {
       "types": "./src/KeyedLock.ts",
       "import": "./src/KeyedLock.ts"
