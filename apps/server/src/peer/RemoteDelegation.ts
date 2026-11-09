@@ -35,6 +35,8 @@ import {
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { delegatedChildDefaultModel } from "../mcp/delegatedChildModel.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -125,6 +127,7 @@ const make = Effect.gen(function* () {
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const crypto = yield* Crypto.Crypto;
   const worktrees = yield* RemoteWorktreeTask.RemoteWorktreeTask;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
   );
@@ -213,12 +216,11 @@ const make = Effect.gen(function* () {
       }
       const parentNodeId = parentRun.rootNodeId;
       const { target } = input;
-      // The provider and model inherit as they do for a task here. Another
-      // provider there has no model to inherit, so the caller names one.
       const inherited = parent.thread.modelSelection;
       const instanceId = target.providerInstanceId ?? inherited.instanceId;
+      const { delegatedChildModel } = yield* settings.getSettings.pipe(Effect.orDie);
       const model =
-        target.model ?? (instanceId === inherited.instanceId ? inherited.model : undefined);
+        target.model ?? delegatedChildDefaultModel(delegatedChildModel, instanceId, inherited);
       if (model === undefined) {
         return yield* new OrchestratorMcpFailure({
           code: "target_required",
@@ -230,9 +232,7 @@ const make = Effect.gen(function* () {
         (instanceId === inherited.instanceId && model === inherited.model
           ? inherited.options
           : undefined);
-      // Modes asked for are checked against this thread. Omitted ones are left
-      // to the other side, which inherits this thread's modes capped by the
-      // link's access, so a narrower link still takes the task.
+      // Omitted modes are left to the other side, which caps them by the link's access.
       const runtimeMode =
         input.runtimeMode === undefined || input.runtimeMode === "inherit"
           ? undefined
@@ -248,8 +248,6 @@ const make = Effect.gen(function* () {
         target.projectId,
       );
       // One key for the launch there and the record here, so a retry finds both.
-      // Both are scoped to the provider session, as every key a caller passes is:
-      // the forwarder scopes the launch's, and the record's names it.
       const key = input.clientRequestId ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
       const task = taskPrompt(input);
       const { launched, worktreeBase } = yield* worktrees.launch(
