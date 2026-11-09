@@ -82,3 +82,11 @@ export const decodeShellSnapshotDeferringPullRequests = Effect.fnUntraced(functi
   const snapshot = yield* decodeShellSnapshotJson(json);
   return deferPullRequests(snapshot, rawLinks);
 });
+
+export function withoutDeferredPullRequests(
+  value: DeferredShellSnapshot,
+): OrchestrationV2ShellSnapshot {
+  if (value.loadPullRequests === undefined) return value;
+  const { loadPullRequests: _deferred, ...snapshot } = value;
+  return snapshot;
+}

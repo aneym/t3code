@@ -25,11 +25,11 @@ export function hasRunMcpApp(entries: ReadonlyArray<TimelineEntry>, runId: RunId
 }
 
 export function isGrowingMcpApp(info: {
-  itemData: { kind: string };
+  itemData: { kind: string } | undefined;
   size: number;
   previous: number;
 }) {
-  return info.itemData.kind === "mcp-app" && info.size > info.previous;
+  return info.itemData?.kind === "mcp-app" && info.size > info.previous;
 }
 
 export function useMcpAppFollow(
