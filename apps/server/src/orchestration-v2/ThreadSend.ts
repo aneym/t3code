@@ -323,7 +323,7 @@ export const makeSendToThread = <LoadError, DispatchError>(
       ...(delivery === "held"
         ? {
             holdReason: run.queueHoldReason ?? null,
-            next: threadSendHint(run.queueHoldReason, projection.thread),
+            next: threadSendHint(run, projection.thread),
           }
         : {}),
     };

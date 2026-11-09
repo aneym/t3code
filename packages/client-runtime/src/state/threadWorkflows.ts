@@ -37,6 +37,7 @@ export interface ThreadQueueWorkflowState {
   readonly activeRun: Run | null;
   readonly queuedRuns: ReadonlyArray<QueuedThreadRun>;
   readonly isHeld: boolean;
+  readonly heldByThreadId: NonNullable<Run["queueHeldByThreadId"]> | null;
   readonly canPromoteToSteer: boolean;
   /** The active run is a compaction, so promoting a queued message stops it instead of steering. */
   readonly promoteSkipsCompaction: boolean;
@@ -211,6 +212,13 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
         ["/compact", "/logout"].includes(activeMessage.text.trim().toLowerCase())
       ),
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
+    heldByThreadId:
+      projection.runs.find(
+        (run) =>
+          run.status === "queued" &&
+          run.queueHeld === true &&
+          run.queueHeldByThreadId !== undefined,
+      )?.queueHeldByThreadId ?? null,
     canSendNow,
     canPromoteToSteer,
     promoteSkipsCompaction,

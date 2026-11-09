@@ -109,7 +109,7 @@ export const layerExecutor: Layer.Layer<
       ),
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
-        const restartFailed = (cause: unknown) =>
+        const executionFailed = (cause: unknown) =>
           new OrchestrationEffectExecutionError({
             effectId: effect.id,
             effectType: effect.request.type,
@@ -121,7 +121,7 @@ export const layerExecutor: Layer.Layer<
           case "provider-runtime.continue":
             return executeRestartEffect(effect, willRetry).pipe(
               Effect.provideContext(restartContext),
-              Effect.mapError(restartFailed),
+              Effect.mapError(executionFailed),
             );
           case "provider-session.detach":
             if (effect.request.detail === THREAD_SESSION_RESTART_REASON) {
@@ -562,36 +562,31 @@ export const layerExecutor: Layer.Layer<
                 ),
               );
           case "delegated-tasks.stop":
-            return threads
-              .stopDelegatedTasks({
-                threadId: effect.threadId,
-                commandId: effect.commandId,
-                reason: effect.request.reason,
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
-              );
+          case "delegated-tasks.resume":
+            return (
+              effect.request.type === "delegated-tasks.stop"
+                ? threads.stopDelegatedTasks({
+                    threadId: effect.threadId,
+                    commandId: effect.commandId,
+                    reason: effect.request.reason,
+                  })
+                : threads.resumeDelegatedTasks({
+                    threadId: effect.threadId,
+                    commandId: effect.commandId,
+                  })
+            ).pipe(Effect.mapError(executionFailed));
         }
       }),
     });
   }),
 );
 
-// A running effect blocks later work on its thread and its lease is never reclaimed in-process,
-// so a stop that hangs must give up and fall through to the normal retry/fail path.
 const DELEGATED_TASKS_STOP_TIMEOUT = Duration.seconds(30);
 
 const boundExecution =
   (effect: EffectOutboxModel.OrchestrationEffectV2) =>
   (execution: Effect.Effect<void, OrchestrationEffectExecutionError>) =>
-    effect.request.type === "delegated-tasks.stop"
+    effect.request.type.startsWith("delegated-tasks.")
       ? execution.pipe(
           Effect.timeoutOrElse({
             duration: DELEGATED_TASKS_STOP_TIMEOUT,

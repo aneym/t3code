@@ -408,6 +408,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
           )
         : Effect.die(`The box does not expect ${command.type}`),
     stopDelegatedTasks: (input) => recordStop(input.commandId, "delegated-tasks"),
+    resumeDelegatedTasks: () => Effect.void,
     sendToThread: (input) =>
       Ref.update(thread.sent, (seen) => [...seen, input.text]).pipe(
         Effect.as({

@@ -179,7 +179,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       ) : null}
       {workflow?.isHeld && queuedRuns.length > 0 ? (
         <View className="gap-2 py-3">
-          <Text className="text-sm text-foreground-muted">Queue paused</Text>
+          <Text className="text-sm text-foreground-muted">
+            {workflow.heldByThreadId === null
+              ? "Queue paused"
+              : "Paused by a Stop on a parent thread. Resuming that thread resumes this queue."}
+          </Text>
           <Button
             label="Resume queue"
             disabled={resuming || busyRunId !== null}

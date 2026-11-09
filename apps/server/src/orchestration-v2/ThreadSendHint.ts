@@ -1,14 +1,14 @@
 import type { OrchestrationV2Run, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 export function threadSendHint(
-  reason: OrchestrationV2Run["queueHoldReason"],
+  run: Pick<OrchestrationV2Run, "queueHoldReason" | "queueHeldByThreadId">,
   thread: OrchestrationV2ThreadProjection["thread"],
 ): string {
-  switch (reason) {
+  switch (run.queueHoldReason) {
     case "stop":
-      return thread.createdBy === "agent"
-        ? "Releases when the stopped run ends; mode auto starts now."
-        : "Waits for the user to resume; mode auto starts now.";
+      return run.queueHeldByThreadId === undefined
+        ? "Waits for a resume of this thread; mode auto starts now."
+        : `Waits for a resume of ${run.queueHeldByThreadId}, whose Stop held it, or of this thread; mode auto starts now.`;
     case "restart":
       return "Waits for server restart recovery; mode auto starts now.";
     case "blocked":

@@ -10,7 +10,7 @@ import * as DateTime from "effect/DateTime";
 
 type Hold = Pick<
   OrchestrationV2Run,
-  "queueHeld" | "queueHoldReason" | "queueHeldAt" | "queueHoldFailureClass"
+  "queueHeld" | "queueHoldReason" | "queueHeldAt" | "queueHoldFailureClass" | "queueHeldByThreadId"
 >;
 type Release = "restart" | "client" | "preparation";
 
@@ -24,6 +24,7 @@ export function clearQueueHold(run: OrchestrationV2Run): OrchestrationV2Run {
     queueHoldReason: _reason,
     queueHeldAt: _heldAt,
     queueHoldFailureClass: _failureClass,
+    queueHeldByThreadId: _heldBy,
     ...rest
   } = run;
   return { ...rest, queueHeld: false };
@@ -44,9 +45,8 @@ export function blockedQueueHold(
   now: DateTime.Utc,
   failureClass: OrchestrationV2ProviderFailureClass | undefined,
 ): OrchestrationV2Run {
-  const { queueHoldFailureClass: _previous, ...rest } = run;
   return {
-    ...rest,
+    ...clearQueueHold(run),
     queueHeld: true,
     queueHoldReason: "blocked",
     queueHeldAt: now,
@@ -116,10 +116,32 @@ export function releasesQueueHoldAtRunEnd(
   }
 }
 
-export function stoppedQueueHold(run: OrchestrationV2Run, now: DateTime.Utc): Hold | undefined {
+export function stoppedQueueHold(
+  run: OrchestrationV2Run,
+  now: DateTime.Utc,
+  heldByThreadId: OrchestrationV2Run["queueHeldByThreadId"],
+): OrchestrationV2Run | undefined {
   if (run.queueHeld === true && run.queueHoldReason !== "restart" && run.queueHoldReason !== "stop")
     return undefined;
-  return { queueHeld: true, queueHoldReason: "stop", queueHeldAt: now };
+  const heldBy =
+    run.queueHoldReason === "stop" && heldByThreadId !== undefined
+      ? run.queueHeldByThreadId
+      : heldByThreadId;
+  return {
+    ...clearQueueHold(run),
+    queueHeld: true,
+    queueHoldReason: "stop",
+    queueHeldAt: now,
+    ...(heldBy === undefined ? {} : { queueHeldByThreadId: heldBy }),
+  };
+}
+
+export function releasesStopHoldOf(heldByThreadId: OrchestrationV2Run["queueHeldByThreadId"]) {
+  return (run: OrchestrationV2Run) =>
+    heldByThreadId === undefined ||
+    (run.queueHeld === true &&
+      run.queueHoldReason === "stop" &&
+      run.queueHeldByThreadId === heldByThreadId);
 }
 
 export function recoveryQueueHold(
@@ -153,10 +175,14 @@ export function inheritedQueueHold(
           : latest,
       undefined,
     );
+    const heldBy = stopped[0]?.queueHeldByThreadId;
     return {
       queueHeld: true,
       queueHoldReason: "stop",
       ...(queueHeldAt === undefined ? {} : { queueHeldAt }),
+      ...(heldBy !== undefined && stopped.every((run) => run.queueHeldByThreadId === heldBy)
+        ? { queueHeldByThreadId: heldBy }
+        : {}),
     };
   }
   if (blocked) return { queueHeld: true, queueHoldReason: "blocked" };

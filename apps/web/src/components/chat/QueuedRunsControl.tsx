@@ -25,7 +25,7 @@ import { useId, useImperativeHandle, useRef, useState, type Ref } from "react";
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
-import { useThreadProjection } from "../../state/entities";
+import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
@@ -108,6 +108,10 @@ export function QueuedRunsControl({
   const queued = workflow?.queuedRuns ?? [];
   const activeRun = workflow?.activeRun ?? null;
   const canSend = workflow?.canSendNow === true || workflow?.canPromoteToSteer === true;
+  const heldByThreadId = workflow?.isHeld ? workflow.heldByThreadId : null;
+  const heldByThread = useQuietThreadShell(
+    heldByThreadId === null ? null : scopeThreadRef(props.environmentId, heldByThreadId),
+  );
   const queuedImageUrlById = new Map(
     queuedImageAttachmentUrls.flatMap((url, index) => {
       const resource = queuedImageAttachmentResources[index];
@@ -236,6 +240,21 @@ export function QueuedRunsControl({
             <TooltipPopup>{describeSendAllQueued(workflow)}</TooltipPopup>
           </Tooltip>
         </div>
+      ) : null}
+      {workflow?.isHeld ? (
+        <p className="self-end pe-1 text-muted-foreground text-xs" data-queue-held="true">
+          {heldByThreadId === null ? (
+            "Queue paused. Resume the thread to send it."
+          ) : (
+            <>
+              {"Paused by a Stop on "}
+              <InlineButton tone="muted" onClick={() => props.onOpenThread(heldByThreadId)}>
+                {heldByThread?.title ?? "its parent"}
+              </InlineButton>
+              {". Resuming that thread resumes this queue."}
+            </>
+          )}
+        </p>
       ) : null}
       <ol className="flex flex-col items-end gap-3" id={queueListId}>
         {visibleItems.map((item, position) => {
