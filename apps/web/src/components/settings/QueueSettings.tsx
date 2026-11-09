@@ -3,6 +3,7 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 import { SettingsRow, SettingResetButton } from "./settingsLayout";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { searchableSetting } from "./settingsSearch";
+import { DelegatedChildModelSetting } from "./DelegatedChildModelSetting";
 
 export function QueueSettings() {
   const settings = useScopedSettings();
@@ -96,6 +97,7 @@ export function QueueSettings() {
           />
         );
       })}
+      <DelegatedChildModelSetting />
     </>
   );
 }

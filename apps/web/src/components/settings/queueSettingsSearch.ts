@@ -64,4 +64,11 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     scope: "environment-defaults",
     searchTerms: ["mcp app widget tool always allow revoke approval grant"],
   },
+  {
+    id: "delegated-child-model",
+    title: "Delegated child model",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["delegate child subagent task default model inherit opus fable"],
+  },
 ];
