@@ -11,6 +11,7 @@ import {
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
 } from "../ChatView.logic";
+import { useEmbedTimeline } from "../../embed/useEmbedTimeline";
 import { EmbedShowEarlier } from "../embed/EmbedShowEarlier";
 import { MessagesTimeline } from "./MessagesTimeline";
 
@@ -58,8 +59,9 @@ export function ThreadTimeline({
     rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries });
   }, [activeThreadKey, detailLoading, entries]);
   const embedPage = isEmbedPath(window.location.pathname);
+  const embedEntries = useEmbedTimeline(threadDetailRef?.threadId ?? null, displayedEntries);
   const cleared = useEmbedClearedEntries(
-    displayedEntries,
+    embedEntries,
     embedLiveRunId(timelineProps.runningRunId ?? null, timelineProps.latestRun),
     embedPage,
   );

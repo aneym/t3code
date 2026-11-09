@@ -10,6 +10,7 @@ import { useEmbedHostBridge } from "../../embed/useEmbedHostBridge";
 import { primaryServerConfigAtom } from "../../state/server";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { ConfirmDialogHost } from "../ConfirmDialogHost";
+import "./EmbedPage.css";
 import { ThreadRouteView } from "../ThreadRouteView";
 import { SidebarProvider } from "../ui/sidebar";
 

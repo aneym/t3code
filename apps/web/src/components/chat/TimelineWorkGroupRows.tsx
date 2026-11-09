@@ -54,6 +54,7 @@ import {
   workEntryIconName,
 } from "./TimelineWorkEntryRow.logic";
 import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
+import { useEmbedLiveActivityLabel } from "../../embed/useEmbedLiveActivityLabel";
 
 export const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
@@ -142,8 +143,6 @@ function ExpandedWorkGroupEntries({
   const [expandedContentHeight, setExpandedContentHeight] = useState(0);
   const [fades, setFades] = useState({ top: false, bottom: false, viewportHeight: 0 });
   const [appendState, setAppendState] = useState({ entries, follow: false });
-  // Capture the pre-change edge once per incoming array, before new layout
-  // metrics arrive. Edge/viewport changes never turn a status update into a follow.
   if (appendState.entries !== entries) {
     setAppendState({
       entries,
@@ -189,8 +188,6 @@ function ExpandedWorkGroupEntries({
     const list = listRef.current;
     const element = list?.getScrollableNode();
     if (initialScrollIndex && list && element) {
-      // Bootstrap can report the restored target before the DOM has applied it.
-      // Reconcile once at load, before releasing the measured anchor row.
       const offset = Math.max(
         0,
         Math.min(list.getState().scroll, element.scrollHeight - element.clientHeight),
@@ -494,6 +491,7 @@ export function LiveWorkEntryTimelineRow({
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
   const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const threadLabel = threadReadLabel(label, threadTarget);
+  const embedLabel = useEmbedLiveActivityLabel(row.entry.itemType, row.active);
 
   const item = row.entry.projectedItem?.item;
   const pendingApproval =
@@ -501,7 +499,10 @@ export function LiveWorkEntryTimelineRow({
   if (pendingApproval) return <TimelinePendingApprovalRow approval={pendingApproval} />;
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
-  const thoughtLine = row.thought && !row.expanded ? liveThoughtLine(row.thought.detail ?? "") : "";
+  const thoughtLine =
+    row.thought && !row.expanded && embedLabel === null
+      ? liveThoughtLine(row.thought.detail ?? "")
+      : "";
   const thoughtIsStatus = thoughtLine !== "" && row.entry === row.thought;
 
   return (
@@ -547,7 +548,8 @@ export function LiveWorkEntryTimelineRow({
       ) : null}
       <LiveActivityRow
         label={
-          thoughtIsStatus ? (
+          embedLabel ??
+          (thoughtIsStatus ? (
             row.active ? (
               "Thinking"
             ) : (
@@ -569,7 +571,7 @@ export function LiveWorkEntryTimelineRow({
             />
           ) : (
             label
-          )
+          ))
         }
         iconName={workEntryIconName(row.entry)}
         toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
