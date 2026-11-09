@@ -171,6 +171,7 @@ const writeDocument = async (
     await NodeFSP.unlink(temporary).catch(() => undefined);
   }
 };
+const BINDING_KEYS = new Set(["thread_id", "environment_id", "host", "at", "by"]);
 export const writeBinding = async (
   root: string,
   handle: string,
@@ -182,9 +183,16 @@ export const writeBinding = async (
   const old =
     typeof doc.t3 === "object" && doc.t3 !== null ? (doc.t3 as Record<string, unknown>) : null;
   const { t3: _binding, ...withoutBinding } = doc;
-  const { previous: _previous, reason: _reason, office, ...previous } = old ?? {};
+  const { previous: _previous, reason: _reason, office, ...rest } = old ?? {};
+  const previous = Object.fromEntries(
+    Object.entries(rest).filter(([key]) => BINDING_KEYS.has(key)),
+  );
+  const kept = Object.fromEntries(Object.entries(rest).filter(([key]) => !BINDING_KEYS.has(key)));
   const prior = old ? previous : doc.t3_previous;
-  if (next) next.previous = prior;
+  if (next) {
+    for (const [key, value] of Object.entries(kept)) if (!(key in next)) next[key] = value;
+    next.previous = prior;
+  }
   if (next && office !== undefined && binding(office, false)?.threadId !== next.thread_id)
     next.office = office;
   const updated =
