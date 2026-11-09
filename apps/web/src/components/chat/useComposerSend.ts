@@ -68,7 +68,7 @@ import { recordPromptSent } from "../GitHubStarPrompt";
 import { claimEmbedClearCommand } from "../../embed/embedClear";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId, randomUUID } from "~/lib/utils";
-import { failHeldSend, heldIdsFor, holdSend, releaseHeldSend } from "./heldSendStore";
+import { heldIdsFor, holdSend, holdUnansweredSend, releaseHeldSend } from "./heldSendStore";
 import { sendThroughEmbedHost } from "../../embed/embedHostSend";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -917,6 +917,9 @@ export function useComposerSend(input: ComposerSendInput) {
       composerThreadContextsSnapshot.length === 0 &&
       composerEnvironmentContextsSnapshot.length === 0 &&
       messageTextForSend.trim() !== "";
+    const heldIds = isServerThread ? heldIdsFor(routeThreadKey, messageTextForSend) : null;
+    const messageIdForSend = heldIds?.messageId ?? newMessageId();
+    const commandIdForSend = heldIds?.commandId ?? CommandId.make(randomUUID());
     const landedThroughHost = () => {
       const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
       if (draft?.prompt.trim() === messageTextForSend.trim()) {
@@ -925,19 +928,22 @@ export function useComposerSend(input: ComposerSendInput) {
       }
       releaseHeldSend(routeThreadKey);
     };
-    const hostSend = plainText
-      ? sendThroughEmbedHost(
-          {
-            thread: threadIdForSend,
-            requestId: randomUUID(),
-            text: messageTextForSend.trim(),
-            when: turnDispatchMode === "steer" ? "steer" : "queue",
-          },
-          (late) => {
-            if (late.outcome !== "refused") landedThroughHost();
-          },
-        )
-      : null;
+    const hostSend =
+      plainText && heldIds?.hostUnanswered !== true
+        ? sendThroughEmbedHost(
+            {
+              thread: threadIdForSend,
+              requestId: randomUUID(),
+              commandId: commandIdForSend,
+              messageId: messageIdForSend,
+              text: messageTextForSend.trim(),
+              when: turnDispatchMode === "steer" ? "steer" : "queue",
+            },
+            (late) => {
+              if (late.outcome !== "refused") landedThroughHost();
+            },
+          )
+        : null;
     if (hostSend !== null) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
@@ -953,8 +959,10 @@ export function useComposerSend(input: ComposerSendInput) {
         setComposerDraftPrompt(composerDraftTarget, messageTextForSend);
       }
       if (result.outcome === "unanswered" && restored) {
-        holdSend(routeThreadKey, messageTextForSend);
-        failHeldSend(routeThreadKey);
+        holdUnansweredSend(routeThreadKey, messageTextForSend, {
+          messageId: messageIdForSend,
+          commandId: commandIdForSend,
+        });
         return;
       }
       toastManager.add(
@@ -984,9 +992,6 @@ export function useComposerSend(input: ComposerSendInput) {
     const outgoingMessageContext = buildOutgoingMessageContext(
       composerAttachmentsSnapshot.map((attachment) => attachment.id),
     );
-    const heldIds = isServerThread ? heldIdsFor(routeThreadKey, messageTextForSend) : null;
-    const messageIdForSend = heldIds?.messageId ?? newMessageId();
-    const commandIdForSend = heldIds?.commandId ?? CommandId.make(randomUUID());
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
