@@ -15,9 +15,6 @@ const asksPerson = (row: MessagesTimelineRow) =>
     (entry) => entry.projectedItem?.item.type === "approval_request",
   );
 
-const isActivity = (row: MessagesTimelineRow) =>
-  row.kind === "work-live" || row.kind === "thinking";
-
 export function useLiveTurnFold(
   rows: MessagesTimelineRow[],
   isWorking: boolean,
@@ -27,10 +24,8 @@ export function useLiveTurnFold(
   const header = rows.findIndex((row) => row.kind === "working");
   if (header < 0) return rows;
   const turn = rows.slice(header + 1);
-  const activity = turn.findLastIndex(isActivity);
   const kept = turn.filter(
-    (row, index) =>
-      index === activity ||
+    (row) =>
       SHOWN.has(row.kind) ||
       asksPerson(row) ||
       (row.kind === "message" && row.message.role === "user"),
