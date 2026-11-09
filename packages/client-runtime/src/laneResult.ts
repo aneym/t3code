@@ -7,10 +7,10 @@ export interface LaneResult {
   readonly detail: string;
 }
 
-export const LANE_RESULT_STATE_LABELS = {
-  finished: "finished",
-  dropped: "dropped",
-  failed: "couldn't start",
+export const LANE_RESULT_VERBS = {
+  finished: "Finished",
+  dropped: "Dropped",
+  failed: "Couldn't start",
 } satisfies Record<LaneResultState, string>;
 
 const NOTE = /^<rails-desk lane="([^"]+)">[\s\S]*?<\/rails-desk>\s*/;
