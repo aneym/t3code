@@ -3057,13 +3057,13 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         commandId,
         threadId: ThreadId.make(`thread:restart-stagger:${index}`),
         request:
-          index === 0
+          index < 2
             ? {
                 type: "provider-runtime.restart-handoff" as const,
                 epoch: "epoch:stagger",
                 handoff: {
-                  threadId: ThreadId.make("thread:restart-stagger:0"),
-                  runIds: [],
+                  threadId: ThreadId.make(`thread:restart-stagger:${index}`),
+                  runIds: index === 0 ? [] : [RunId.make("run:1")],
                   queuedRunIds: [],
                   requestIds: [],
                   delegatedTaskIds: [],
@@ -3097,6 +3097,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       });
       assert.deepEqual(yield* claimNow, [
         "effect:restart-stagger:0",
+        "effect:restart-stagger:1",
         "effect:restart-stagger:cleanup",
       ]);
       const nextAt = yield* outbox.nextClaimableAt;
@@ -3104,8 +3105,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         Option.map(nextAt, DateTime.toEpochMillis).pipe(Option.getOrUndefined),
         DateTime.toEpochMillis(now) + 2_000,
       );
-      yield* TestClock.adjust("2 seconds");
-      assert.deepEqual(yield* claimNow, ["effect:restart-stagger:1"]);
       yield* TestClock.adjust("2 seconds");
       assert.deepEqual(yield* claimNow, ["effect:restart-stagger:2"]);
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
