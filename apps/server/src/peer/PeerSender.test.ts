@@ -1,4 +1,3 @@
-import { NodeHttpServer } from "@effect/platform-node";
 import { EnvironmentId, OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -98,5 +97,5 @@ it.effect(
           if (environmentId !== source.environmentId) expect(result).toEqual({});
         }
       }),
-    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    ),
 );

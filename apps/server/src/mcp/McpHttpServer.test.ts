@@ -2,7 +2,6 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { expect, it } from "@effect/vitest";
-import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DeviceId,
@@ -49,6 +48,7 @@ import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
+import { layerLoopbackTest } from "../testUtils/loopbackHttpServer.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -828,7 +828,7 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
       });
       expect(reusedSessionResponse.status).toBe(404);
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ).pipe(Effect.provide(layerLoopbackTest)),
 );
 
 it.effect("admits provider and OAuth client credentials and points only clients at OAuth", () =>
@@ -951,7 +951,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
       expect(deadProvider.status).toBe(401);
       expect(deadProvider.headers["www-authenticate"]).toBe('Bearer error="invalid_token"');
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ).pipe(Effect.provide(layerLoopbackTest)),
 );
 
 it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected credentials", () => {
@@ -1047,7 +1047,7 @@ it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected cr
   ).pipe(
     Effect.provide(
       layerAuth.pipe(
-        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provideMerge(layerLoopbackTest),
         Layer.provideMerge(Logger.layer([logger], { mergeWithExisting: false })),
       ),
     ),
@@ -1175,7 +1175,7 @@ it.effect("hides tools for links and refuses another environment while the beta 
         content: [{ text: expect.stringContaining("cannot reach linked environments") }],
       });
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ).pipe(Effect.provide(layerLoopbackTest)),
 );
 
 it.effect("lists pull request watch tools only to threads that are not delegated children", () =>
@@ -1264,7 +1264,7 @@ it.effect("lists pull request watch tools only to threads that are not delegated
       expect(childTools).not.toContain("watch_pull_request");
       expect(childTools).not.toContain("unwatch_pull_request");
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ).pipe(Effect.provide(layerLoopbackTest)),
 );
 
 it.effect(
@@ -1410,5 +1410,5 @@ it.effect(
         expect(yield* start("auto/default/extra")).toBe(400);
         expect(yield* start("root/default")).toBe(400);
       }),
-    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    ).pipe(Effect.provide(layerLoopbackTest)),
 );

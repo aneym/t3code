@@ -31,6 +31,7 @@ import * as PeerLinks from "./PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { layerLoopbackServer } from "../testUtils/loopbackHttpServer.ts";
 
 class PeerTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.metadata)
@@ -118,13 +119,15 @@ export const servePeer = <E, R>(
       Layer.provide(layerEnvironment),
       Layer.provide(Layer.succeedContext(authContext)),
     );
+    const server = yield* Layer.build(Layer.fresh(layerLoopbackServer));
     // Fresh, so the peer never shares a toolkit or MCP server with the
     // environment that links to it in the same test.
     yield* HttpRouter.serve(layerRoutes, { disableListenLog: true, disableLogger: true }).pipe(
+      Layer.provide(Layer.succeedContext(server)),
       Layer.fresh,
       Layer.build,
     );
-    const address = (yield* HttpServer.HttpServer).address;
+    const address = Context.get(server, HttpServer.HttpServer).address;
     if (address._tag === "UnixPathAddress") return yield* Effect.die("expected a TCP address");
     const url = `http://127.0.0.1:${address.port}`;
     const auth = Context.get(authContext, EnvironmentAuth.EnvironmentAuth);
