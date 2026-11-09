@@ -6,6 +6,8 @@ import { Link } from "@tanstack/react-router";
 import { CalendarClockIcon, MessagesSquareIcon } from "lucide-react";
 import * as DateTime from "effect/DateTime";
 import { useState, type ReactNode } from "react";
+import { useEmbedHostConnected } from "../../embed/embedHost";
+import { isEmbedPersonMessage } from "../../embed/embedQuietMessages";
 import { useQuietThreadShell } from "../../state/entities";
 import { cn } from "~/lib/utils";
 import { InlineButton } from "../ui/button";
@@ -31,7 +33,8 @@ export function QueuedMessage(props: {
   readonly children: ReactNode;
 }) {
   const presentation = props.message ? resolveUserMessagePresentation(props.message) : null;
-  const attribution = presentation?.attribution ?? null;
+  const person = useEmbedHostConnected() && !!props.message && isEmbedPersonMessage(props.message);
+  const attribution = person ? null : (presentation?.attribution ?? null);
   const scheduledTaskId = presentation?.scheduledTaskId;
   const senderThreadId = props.message?.senderThreadId;
   const [expanded, setExpanded] = useState(false);

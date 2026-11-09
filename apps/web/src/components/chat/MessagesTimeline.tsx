@@ -136,6 +136,7 @@ import {
   type TimelineViewport,
 } from "./timelineViewport";
 import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
+import { useLiveTurnFold } from "~/embed/useLiveTurnFold";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
 import {
   useStableHandoffRuns,
@@ -685,7 +686,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     worktreeSetup,
   });
   const { rows, liveTail } = useTimelineLiveTail(
-    useStableRows(rawRows, listIdentityKey),
+    useStableRows(useLiveTurnFold(rawRows, isWorking), listIdentityKey),
     footer !== null,
   );
   const matchedApprovalRequestIds = new Set<string>();
@@ -701,7 +702,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     (approval) =>
       isVisiblePendingApproval(approval) && !matchedApprovalRequestIds.has(approval.requestId),
   );
-  // Run status/timestamps change per stream event; keep them out of shared row context.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = deriveTimelineMinimapItems(rows);
   const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
