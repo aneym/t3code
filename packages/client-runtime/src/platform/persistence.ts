@@ -104,10 +104,12 @@ export class EnvironmentCacheStore extends Context.Service<
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly loadServerConfig: (
       environmentId: EnvironmentId,
+      slim?: boolean,
     ) => Effect.Effect<Option.Option<ServerConfig>, ConnectionPersistenceError>;
     readonly saveServerConfig: (
       environmentId: EnvironmentId,
       config: ServerConfig,
+      slim?: boolean,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     /**
      * Query-specific lists are not cached because they are incomplete and unsafe

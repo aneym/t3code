@@ -3,7 +3,6 @@ import {
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerConfig,
-  type ServerConfigStreamEvent,
   type ServerProviderWorkspaceSnapshot,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
@@ -357,12 +356,6 @@ export function resolveServerUpdateProgressResult<E>(
   return Effect.fail(new ServerUpdateProgressIncompleteError({ targetVersion }));
 }
 
-const cachedConfigSnapshotEvent = (config: ServerConfig): ServerConfigStreamEvent => ({
-  version: 1,
-  type: "snapshot",
-  config,
-});
-
 // Configs are JSON-shaped. Missing and undefined object fields persist identically.
 function sameCacheValue(previous: unknown, next: unknown): boolean {
   if (previous === next) return true;
@@ -403,7 +396,8 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const cache = yield* Persistence.EnvironmentCacheStore;
     const environmentId = supervisor.target.environmentId;
-    const cachedConfig = yield* cache.loadServerConfig(environmentId).pipe(
+    const slim = subscription.providerCatalogsOnDemand;
+    const cachedConfig = yield* cache.loadServerConfig(environmentId, slim).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not load cached server configuration.").pipe(
           Effect.annotateLogs({
@@ -415,9 +409,9 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       ),
     );
     const state = yield* SubscriptionRef.make<Option.Option<ServerConfigProjection>>(
-      Option.map(cachedConfig, (cached) => ({
-        config: withoutEnvironmentThemes(cached),
-        latestEvent: cachedConfigSnapshotEvent(withoutEnvironmentThemes(cached)),
+      Option.map(Option.map(cachedConfig, withoutEnvironmentThemes), (config) => ({
+        config,
+        latestEvent: { version: 1 as const, type: "snapshot" as const, config },
         source: "cache" as const,
       })),
     );
@@ -438,7 +432,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       if (lastPersisted !== undefined && sameCacheValue(lastPersisted, cacheable)) {
         return true;
       }
-      const saved = yield* cache.saveServerConfig(environmentId, cacheable).pipe(
+      const saved = yield* cache.saveServerConfig(environmentId, cacheable, slim).pipe(
         Effect.as(true),
         Effect.catch((error) =>
           Effect.logWarning("Could not persist cached server configuration.").pipe(

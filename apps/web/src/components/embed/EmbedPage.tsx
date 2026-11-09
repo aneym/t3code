@@ -9,6 +9,7 @@ import { isEmbedPath, normalizeEmbedOrigins, readEmbedScheme } from "../../embed
 import { readEmbedSignIn } from "../../embed/embedSignIn";
 import { applyEmbedTheme, themeFromEmbedMessage } from "../../embed/embedTheme";
 import { useEmbedHostBridge } from "../../embed/useEmbedHostBridge";
+import { useEmbedReadyReport } from "../../embed/useEmbedReadyReport";
 import { primaryServerConfigAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { environmentThreads } from "../../state/threads";
@@ -54,6 +55,7 @@ function EmbeddedThread({
     enableBeforeUnload: false,
   });
   const target = resolveThreadRouteTarget({ environmentId, threadId });
+  useEmbedReadyReport(target?.kind === "server" ? target.threadRef : null, threadId);
   return (
     <SidebarProvider className="h-dvh! min-h-0!" defaultOpen={false} style={BARE_LAYOUT_STYLE}>
       {target ? <ThreadRouteView target={target} /> : null}

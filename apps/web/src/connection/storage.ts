@@ -111,6 +111,16 @@ function persistenceError(
   });
 }
 
+const isPersistenceError = Schema.is(Persistence.ConnectionPersistenceError);
+
+function asPersistenceError(operation: Parameters<typeof persistenceError>[0]) {
+  return (cause: unknown) =>
+    isPersistenceError(cause) ? cause : persistenceError(operation, cause);
+}
+
+const serverConfigKey = (environmentId: EnvironmentId, slim?: boolean) =>
+  slim === true ? `${environmentId}:slim` : environmentId;
+
 const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* () {
   return yield* Effect.callback<IDBDatabase, ConnectionTransientError>((resume) => {
     if (typeof indexedDB === "undefined") {
@@ -628,11 +638,11 @@ export const layer = Layer.effectContext(
     const targetStore = Persistence.ConnectionTargetStore.of({
       list: catalog.read.pipe(
         Effect.map((document) => document.targets),
-        Effect.mapError((cause) => persistenceError("list-targets", cause)),
+        Effect.mapError(asPersistenceError("list-targets")),
       ),
       listDisabled: catalog.read.pipe(
         Effect.map((document) => document.disabledEnvironmentIds),
-        Effect.mapError((cause) => persistenceError("list-disabled-targets", cause)),
+        Effect.mapError(asPersistenceError("list-disabled-targets")),
       ),
     });
     const registrationStore = Persistence.ConnectionRegistrationStore.of({
@@ -640,26 +650,26 @@ export const layer = Layer.effectContext(
         function (registration, routes) {
           return catalog
             .update((document) => registerConnectionInCatalog(document, registration, routes))
-            .pipe(Effect.mapError((cause) => persistenceError("register-connection", cause)));
+            .pipe(Effect.mapError(asPersistenceError("register-connection")));
         },
       ),
       setRoutes: Effect.fn("Persistence.ConnectionRegistrationStore.setRoutes")(
         function (environmentId, routes) {
           return catalog
             .update((document) => setRoutesInCatalog(document, environmentId, routes))
-            .pipe(Effect.mapError((cause) => persistenceError("set-connection-routes", cause)));
+            .pipe(Effect.mapError(asPersistenceError("set-connection-routes")));
         },
       ),
       remove: Effect.fn("Persistence.ConnectionRegistrationStore.remove")(function (environmentId) {
         return catalog
           .update((document) => removeConnectionFromCatalog(document, environmentId))
-          .pipe(Effect.mapError((cause) => persistenceError("remove-connection", cause)));
+          .pipe(Effect.mapError(asPersistenceError("remove-connection")));
       }),
       setEnabled: Effect.fn("Persistence.ConnectionRegistrationStore.setEnabled")(
         function (environmentId, enabled) {
           return catalog
             .update((document) => setConnectionEnabledInCatalog(document, environmentId, enabled))
-            .pipe(Effect.mapError((cause) => persistenceError("set-connection-enabled", cause)));
+            .pipe(Effect.mapError(asPersistenceError("set-connection-enabled")));
         },
       ),
     });
@@ -744,7 +754,7 @@ export const layer = Layer.effectContext(
             }
             return decodeOrDiscardOrchestrationCache(
               decodeStoredShellSnapshot(raw).pipe(
-                Effect.mapError((cause) => persistenceError("load-shell", cause)),
+                Effect.mapError(asPersistenceError("load-shell")),
                 Effect.map((stored) =>
                   stored.environmentId === environmentId
                     ? Option.some(stored.snapshot)
@@ -754,7 +764,7 @@ export const layer = Layer.effectContext(
               removeDatabaseValue(database, SHELL_STORE_NAME, environmentId),
             );
           }),
-          Effect.mapError((cause) => persistenceError("load-shell", cause)),
+          Effect.mapError(asPersistenceError("load-shell")),
         );
       }),
       saveShell: Effect.fn("storage.saveShell")(
@@ -763,24 +773,25 @@ export const layer = Layer.effectContext(
             schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
             environmentId,
             snapshot,
-          }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
+          }).pipe(Effect.mapError(asPersistenceError("save-shell")));
           yield* writeDatabaseValue(database, SHELL_STORE_NAME, environmentId, encoded);
         },
-        Effect.mapError((cause) =>
-          cause._tag === "ConnectionPersistenceError"
-            ? cause
-            : persistenceError("save-shell", cause),
-        ),
+        Effect.mapError(asPersistenceError("save-shell")),
       ),
       loadServerConfig: Effect.fn("Persistence.EnvironmentCacheStore.loadServerConfig")(
-        function (environmentId) {
-          return readDatabaseValue(database, SERVER_CONFIG_STORE_NAME, environmentId).pipe(
+        function (environmentId, slim) {
+          const key = serverConfigKey(environmentId, slim);
+          return readDatabaseValue(database, SERVER_CONFIG_STORE_NAME, key).pipe(
+            Effect.filterOrElse(
+              (raw) => typeof raw === "string" || key === environmentId,
+              () => readDatabaseValue(database, SERVER_CONFIG_STORE_NAME, environmentId),
+            ),
             Effect.flatMap((raw) => {
               if (typeof raw !== "string") {
                 return Effect.succeedNone;
               }
               return decodeStoredServerConfig(raw).pipe(
-                Effect.mapError((cause) => persistenceError("load-server-config", cause)),
+                Effect.mapError(asPersistenceError("load-server-config")),
                 Effect.map((stored) =>
                   stored.environmentId === environmentId
                     ? Option.some(stored.config)
@@ -788,28 +799,25 @@ export const layer = Layer.effectContext(
                 ),
               );
             }),
-            Effect.mapError((cause) =>
-              cause._tag === "ConnectionPersistenceError"
-                ? cause
-                : persistenceError("load-server-config", cause),
-            ),
+            Effect.mapError(asPersistenceError("load-server-config")),
           );
         },
       ),
       saveServerConfig: Effect.fn("storage.saveServerConfig")(
-        function* (environmentId, config) {
+        function* (environmentId, config, slim) {
           const encoded = yield* encodeStoredServerConfig({
             schemaVersion: 1,
             environmentId,
             config,
-          }).pipe(Effect.mapError((cause) => persistenceError("save-server-config", cause)));
-          yield* writeDatabaseValue(database, SERVER_CONFIG_STORE_NAME, environmentId, encoded);
+          }).pipe(Effect.mapError(asPersistenceError("save-server-config")));
+          yield* writeDatabaseValue(
+            database,
+            SERVER_CONFIG_STORE_NAME,
+            serverConfigKey(environmentId, slim),
+            encoded,
+          );
         },
-        Effect.mapError((cause) =>
-          cause._tag === "ConnectionPersistenceError"
-            ? cause
-            : persistenceError("save-server-config", cause),
-        ),
+        Effect.mapError(asPersistenceError("save-server-config")),
       ),
       loadThread: Effect.fn("Persistence.EnvironmentCacheStore.loadThread")(
         function (environmentId, threadId) {
@@ -824,7 +832,7 @@ export const layer = Layer.effectContext(
               }
               return decodeOrDiscardOrchestrationCache(
                 decodeStoredThreadSnapshot(raw).pipe(
-                  Effect.mapError((cause) => persistenceError("load-thread", cause)),
+                  Effect.mapError(asPersistenceError("load-thread")),
                   Effect.map((stored) =>
                     stored.environmentId === environmentId && stored.threadId === threadId
                       ? Option.some(stored.snapshot)
@@ -838,7 +846,7 @@ export const layer = Layer.effectContext(
                 ),
               );
             }),
-            Effect.mapError((cause) => persistenceError("load-thread", cause)),
+            Effect.mapError(asPersistenceError("load-thread")),
           );
         },
       ),
@@ -849,7 +857,7 @@ export const layer = Layer.effectContext(
             environmentId,
             threadId: snapshot.projection.thread.id,
             snapshot,
-          }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
+          }).pipe(Effect.mapError(asPersistenceError("save-thread")));
           yield* writeDatabaseValue(
             database,
             THREAD_STORE_NAME,
@@ -857,11 +865,7 @@ export const layer = Layer.effectContext(
             encoded,
           );
         },
-        Effect.mapError((cause) =>
-          cause._tag === "ConnectionPersistenceError"
-            ? cause
-            : persistenceError("save-thread", cause),
-        ),
+        Effect.mapError(asPersistenceError("save-thread")),
       ),
       loadVcsRefs: Effect.fn("Persistence.EnvironmentCacheStore.loadVcsRefs")(
         function (environmentId, cwd) {
@@ -875,7 +879,7 @@ export const layer = Layer.effectContext(
                 return Effect.succeedNone;
               }
               return decodeStoredVcsRefs(raw).pipe(
-                Effect.mapError((cause) => persistenceError("load-vcs-refs", cause)),
+                Effect.mapError(asPersistenceError("load-vcs-refs")),
                 Effect.map((stored) =>
                   stored.environmentId === environmentId && stored.cwd === cwd
                     ? Option.some(stored.refs)
@@ -883,11 +887,7 @@ export const layer = Layer.effectContext(
                 ),
               );
             }),
-            Effect.mapError((cause) =>
-              cause._tag === "ConnectionPersistenceError"
-                ? cause
-                : persistenceError("load-vcs-refs", cause),
-            ),
+            Effect.mapError(asPersistenceError("load-vcs-refs")),
           );
         },
       ),
@@ -898,7 +898,7 @@ export const layer = Layer.effectContext(
             environmentId,
             cwd,
             refs,
-          }).pipe(Effect.mapError((cause) => persistenceError("save-vcs-refs", cause)));
+          }).pipe(Effect.mapError(asPersistenceError("save-vcs-refs")));
           yield* writeDatabaseValue(
             database,
             VCS_REFS_STORE_NAME,
@@ -906,11 +906,7 @@ export const layer = Layer.effectContext(
             encoded,
           );
         },
-        Effect.mapError((cause) =>
-          cause._tag === "ConnectionPersistenceError"
-            ? cause
-            : persistenceError("save-vcs-refs", cause),
-        ),
+        Effect.mapError(asPersistenceError("save-vcs-refs")),
       ),
       removeVcsRefs: Effect.fn("Persistence.EnvironmentCacheStore.removeVcsRefs")(
         function (environmentId, cwd) {
@@ -918,7 +914,7 @@ export const layer = Layer.effectContext(
             database,
             VCS_REFS_STORE_NAME,
             vcsRefsCacheKey(environmentId, cwd),
-          ).pipe(Effect.mapError((cause) => persistenceError("remove-vcs-refs", cause)));
+          ).pipe(Effect.mapError(asPersistenceError("remove-vcs-refs")));
         },
       ),
       clearVcsRefs: Effect.fn("Persistence.EnvironmentCacheStore.clearVcsRefs")(
@@ -927,7 +923,7 @@ export const layer = Layer.effectContext(
             database,
             VCS_REFS_STORE_NAME,
             IDBKeyRange.bound(`${environmentId}:`, `${environmentId}:\uffff`),
-          ).pipe(Effect.mapError((cause) => persistenceError("clear-vcs-refs", cause)));
+          ).pipe(Effect.mapError(asPersistenceError("clear-vcs-refs")));
         },
       ),
       removeThread: Effect.fn("Persistence.EnvironmentCacheStore.removeThread")(
@@ -936,7 +932,7 @@ export const layer = Layer.effectContext(
             database,
             THREAD_STORE_NAME,
             threadCacheKey(environmentId, threadId),
-          ).pipe(Effect.mapError((cause) => persistenceError("remove-thread", cause)));
+          ).pipe(Effect.mapError(asPersistenceError("remove-thread")));
         },
       ),
       clear: Effect.fn("Persistence.EnvironmentCacheStore.clear")(function (environmentId) {
@@ -950,6 +946,11 @@ export const layer = Layer.effectContext(
               IDBKeyRange.bound(`${environmentId}:`, `${environmentId}:\uffff`),
             ),
             removeDatabaseValue(database, SERVER_CONFIG_STORE_NAME, environmentId),
+            removeDatabaseValue(
+              database,
+              SERVER_CONFIG_STORE_NAME,
+              serverConfigKey(environmentId, true),
+            ),
             removeDatabaseValuesInRange(
               database,
               VCS_REFS_STORE_NAME,
@@ -957,7 +958,7 @@ export const layer = Layer.effectContext(
             ),
           ],
           { concurrency: "unbounded", discard: true },
-        ).pipe(Effect.mapError((cause) => persistenceError("clear-environment", cause)));
+        ).pipe(Effect.mapError(asPersistenceError("clear-environment")));
       }),
     });
 
