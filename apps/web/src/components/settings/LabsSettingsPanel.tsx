@@ -12,6 +12,7 @@ import { searchableSetting } from "./settingsSearch";
 import { LegacyFeaturesSection } from "./SettingsPanels";
 import { RemovedLinkedRoutes } from "./RemovedLinkedRoutes";
 import { EmbedModeSettings } from "./EmbedModeSettings";
+import { LaneResultRowsSetting } from "./LaneResultRowsSetting";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
@@ -30,6 +31,7 @@ export function LabsSettingsPanel() {
         <RemovedLinkedRoutes />
         <SimlockHostsRow />
         <EmbedModeSettings />
+        <LaneResultRowsSetting />
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>
