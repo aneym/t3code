@@ -21,9 +21,12 @@ export function EmbedQuietMessageRow({
   const [expanded, setExpanded] = useState(false);
   const revealRef = findRevealRef(() => setExpanded(true));
   const sender = useQuietThreadShell(
-    line.kind === "agent" ? messageSenderRef(message, ctx.activeThreadEnvironmentId) : null,
+    line.kind === "agent" && line.from === undefined
+      ? messageSenderRef(message, ctx.activeThreadEnvironmentId)
+      : null,
   );
-  const label = line.kind === "agent" ? `From ${sender?.title.trim() || "an agent"}` : "Event";
+  const from = line.kind === "agent" ? (line.from ?? (sender?.title.trim() || "an agent")) : null;
+  const label = from === null ? "Event" : `From ${from}`;
   return (
     <div className="flex min-w-0 flex-col items-start gap-1" data-embed-quiet-line={line.kind}>
       <MessageAuthorHeading>{label}</MessageAuthorHeading>
