@@ -7,6 +7,7 @@ from contextlib import closing
 RESUMED = ("continued", "completed")
 ACTIVE = ("preparing", "starting", "running", "waiting")
 STUCK = ("stuck", "missing", "unreported")
+UNCLAIMED = ("pending", "running")
 ID_FIELDS = ("runIds", "queuedRunIds", "delegatedTaskIds", "pausedRunIds")
 
 
@@ -56,10 +57,12 @@ def queue_states(run, handoff):
         for thread in handoff["threads"]:
             runs = {run_id: (status, json.loads(payload)) for run_id, status, payload in connection.execute("SELECT run_id,status,payload_json FROM orchestration_v2_projection_runs WHERE thread_id=?", (thread["threadId"],))}
             active = sorted(run_id for run_id, (status, _) in runs.items() if status in ACTIVE)
+            claim = connection.execute("SELECT status FROM orchestration_v2_effect_outbox WHERE effect_id=?", (f"effect:restart-handoff:{handoff['epoch']}:{thread['threadId']}",)).fetchone()
+            claim = claim[0] if claim else "missing"
             for run_id in thread.get("queuedRunIds") or []:
                 status, payload = runs.get(run_id, ("missing", {}))
-                state = status if status != "queued" else "behind-active" if active else "stuck"
-                rows.append({"threadId": thread["threadId"], "runId": run_id, "status": status, "state": state, "activeRunIds": active, **({"queueHeld": payload["queueHeld"]} if "queueHeld" in payload else {})})
+                state = status if status != "queued" else "behind-active" if active else "awaiting-handoff" if claim in UNCLAIMED else "stuck"
+                rows.append({"threadId": thread["threadId"], "runId": run_id, "status": status, "state": state, "handoffEffect": claim, "activeRunIds": active, **({"queueHeld": payload["queueHeld"]} if "queueHeld" in payload else {})})
     return rows
 
 
@@ -85,7 +88,7 @@ def check_resumed(run, bearer, outcome):
         except (OSError, ValueError, sqlite3.Error) as failure:
             error = error or str(failure)
             queues = [{"threadId": thread["threadId"], "runId": run_id, "state": "unreported"} for thread in handoff["threads"] for run_id in thread.get("queuedRunIds") or []]
-        settled = not error and all(key in states and states[key]["state"] != "pending" for key in expected) and not any(row["state"] in STUCK for row in queues)
+        settled = not error and all(key in states and states[key]["state"] != "pending" for key in expected) and not any(row["state"] in STUCK or row["state"] == "awaiting-handoff" for row in queues)
         if settled or time.monotonic() >= deadline:
             break
         time.sleep(5)
@@ -95,4 +98,5 @@ def check_resumed(run, bearer, outcome):
         runs.append({"threadId": thread_id, "runId": run_id, "state": source.get("state", "unreported"), **{key: source[key] for key in ("continuationRunId", "reason") if key in source}})
     handoff["resume"] = {"waitS": wait_s, "checkedAfter": outcome, "runs": runs, "queues": queues, **({"error": error} if error else {})}
     handoff["notResumed"] = [row for row in runs if row["state"] not in RESUMED] + [row for row in queues if row["state"] in STUCK]
-    run.step("handoff-resume", epoch=handoff["epoch"], runs=len(runs), queues=len(queues), not_resumed=len(handoff["notResumed"]))
+    handoff["awaitingHandoff"] = [row for row in queues if row["state"] == "awaiting-handoff"]
+    run.step("handoff-resume", epoch=handoff["epoch"], runs=len(runs), queues=len(queues), not_resumed=len(handoff["notResumed"]), awaiting_handoff=len(handoff["awaitingHandoff"]))
