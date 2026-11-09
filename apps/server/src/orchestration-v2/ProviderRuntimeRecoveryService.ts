@@ -52,7 +52,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartRecoverySource } from "./RestartRecoverySource.ts";
-import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
+import { bufferedWakeRuns } from "./BufferedWakeRuns.ts";
 import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
@@ -240,28 +240,22 @@ export const make = Effect.gen(function* () {
         }
       };
       const queuedRuns = projection.runs.filter((run) => run.status === "queued");
-      const queuedMessages =
-        queuedRuns.length === 0
-          ? []
-          : (yield* projections
-              .getThreadRecords(projection.thread.id, ["messages"], {
-                messageIds: queuedRuns.map((run) => run.userMessageId),
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderRuntimeRecoveryError({
-                      operation: "read-projections",
-                      threadId: projection.thread.id,
-                      cause,
-                    }),
-                ),
-              )).messages;
-      const bufferedMessageIds = new Set(
-        queuedMessages.filter(isBufferedProviderNotification).map((message) => message.id),
+      const bufferedRuns = yield* bufferedWakeRuns(
+        projections,
+        projection.thread.id,
+        projection.runs,
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderRuntimeRecoveryError({
+              operation: "read-projections",
+              threadId: projection.thread.id,
+              cause,
+            }),
+        ),
       );
       for (const run of queuedRuns) {
-        if (bufferedMessageIds.has(run.userMessageId)) {
+        if (bufferedRuns.includes(run)) {
           runs.push(run);
           continue;
         }

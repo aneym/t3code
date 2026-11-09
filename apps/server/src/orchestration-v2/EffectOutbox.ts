@@ -17,13 +17,12 @@ import { makeRestartGate } from "./RestartGate.ts";
 import { forkParked } from "../serverActivation.ts";
 import { claimableCandidatePredicate } from "./EffectOutboxClaims.ts";
 import { type EffectRow, encodeRequest, rowToEffect } from "./EffectOutboxRows.ts";
+import { paceRestartResumes } from "./RestartResumePacing.ts";
 
 import {
   OrchestrationEffectRequestV2,
   REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS,
   PROCESS_BOUND_EFFECT_TYPES,
-  RESTART_RESUME_EFFECT_TYPES,
-  RESTART_RESUME_SPACING_MS,
   SETTLED_EFFECT_RETENTION,
   type OrchestrationEffectV2,
   type PendingOrchestrationEffectV2,
@@ -358,16 +357,10 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           const rows = yield* claimStatement.pipe(Effect.withTracerEnabled(false));
           const row = rows[0];
           if (row === undefined) return Option.none();
-          if (RESTART_RESUME_EFFECT_TYPES.some((type) => type === row.effect_type)) {
-            const spacedUntil = DateTime.toEpochMillis(now) + RESTART_RESUME_SPACING_MS;
-            yield* sql`
-              UPDATE orchestration_v2_effect_outbox
-              SET available_at = MAX(available_at, ${DateTime.formatIso(DateTime.makeUnsafe(spacedUntil))})
-              WHERE status = 'pending' AND effect_type IN ${sql.in(RESTART_RESUME_EFFECT_TYPES)}
-            `;
-          }
+          const claimed = yield* rowToEffect(row);
+          yield* paceRestartResumes(sql, claimed, now);
           cancellationSignals.set(row.effect_id, Deferred.makeUnsafe<void>());
-          return Option.some(yield* rowToEffect(row));
+          return Option.some(claimed);
         },
         gate.withDispatch,
         Effect.mapError((cause) => new EffectOutboxError({ operation: "claim", cause })),
