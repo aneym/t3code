@@ -41,7 +41,8 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import { continueRestartedRun } from "./RestartContinuation.ts";
+import { executeRestartEffect } from "./RestartEffectExecution.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
@@ -1343,6 +1344,26 @@ const seedRestartCancelledChild = (input: {
     return { taskId, childThreadId, childRunId };
   });
 
+const runRestartContinuation = (
+  child: { childThreadId: ThreadId; childRunId: RunId },
+  on: boolean,
+) =>
+  executeRestartEffect(
+    {
+      threadId: child.childThreadId,
+      request: { type: "provider-runtime.continue", sourceRunId: child.childRunId },
+      attemptCount: 1,
+    } as Parameters<typeof executeRestartEffect>[0],
+    false,
+  ).pipe(
+    Effect.provide(
+      Layer.merge(
+        ServerSettings.layerTest({ continueThreadsAfterServerUpdate: on }),
+        IdAllocator.layer,
+      ),
+    ),
+  );
+
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
@@ -2496,19 +2517,13 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       const held = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(held.subagents.find((row) => row.id === child.taskId)?.status, "running");
 
-      yield* continueRestartedRun({
-        threadId: child.childThreadId,
-        sourceRunId: child.childRunId,
-      }).pipe(
-        Effect.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false })),
-      );
+      yield* runRestartContinuation(child, false);
 
       const settled = yield* orchestrator.getThreadProjection(threadId);
       const task = settled.subagents.find((row) => row.id === child.taskId);
       assert.equal(task?.status, "cancelled");
       assert.equal(task?.completionDelivery?.state, "claimed");
 
-      // The parent's Stop committed, but the restart cut the effect that stops its children.
       const stoppedChild = yield* seedRestartCancelledChild({
         parentThreadId: threadId,
         projectId,
@@ -2551,10 +2566,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
           },
         ],
       });
-      yield* continueRestartedRun({
-        threadId: stoppedChild.childThreadId,
-        sourceRunId: stoppedChild.childRunId,
-      }).pipe(Effect.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true })));
+      yield* runRestartContinuation(stoppedChild, true);
       const afterStop = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(
         afterStop.subagents.find((row) => row.id === stoppedChild.taskId)?.status,
@@ -2602,17 +2614,12 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       const held = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(held.subagents.find((row) => row.id === child.taskId)?.status, "running");
 
-      yield* continueRestartedRun({
-        threadId: child.childThreadId,
-        sourceRunId: child.childRunId,
-      }).pipe(
-        Effect.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false })),
-      );
+      yield* runRestartContinuation(child, false);
 
       const settled = yield* orchestrator.getThreadProjection(threadId);
       const task = settled.subagents.find((row) => row.id === child.taskId);
       assert.equal(task?.status, "interrupted");
-      assert.equal(task?.result, "Child task ended with status interrupted.");
+      assert.equal(task?.result, "Child task stopped by a T3 Code update; resend to continue.");
       assert.equal(task?.completionDelivery?.state, "claimed");
     }),
   );

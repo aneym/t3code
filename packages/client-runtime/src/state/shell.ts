@@ -29,7 +29,8 @@ import { runCachePersistence } from "./cachePersistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
-import type { DeferredShellSnapshot } from "./shellPullRequests.ts";
+import { awaitPreparedConnection, prefetchOnPrepared } from "./preparedPrefetch.ts";
+import { type DeferredShellSnapshot, withoutDeferredPullRequests } from "./shellPullRequests.ts";
 import {
   applyShellStreamEvents,
   type ShellStreamEvent,
@@ -72,12 +73,6 @@ function shellStatusForSnapshot(
   snapshot: Option.Option<OrchestrationV2ShellSnapshot>,
 ): EnvironmentShellStatus {
   return Option.isSome(snapshot) ? "cached" : "empty";
-}
-
-function withoutDeferredPullRequests(value: DeferredShellSnapshot): OrchestrationV2ShellSnapshot {
-  if (value.loadPullRequests === undefined) return value;
-  const { loadPullRequests: _deferred, ...snapshot } = value;
-  return snapshot;
 }
 
 const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
@@ -365,6 +360,33 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   if (Option.isSome(cached) && Option.isSome(cachedSnapshot)) {
     yield* fillDeferredPullRequests(cached.value, cachedSnapshot.value);
   }
+  const applyHttp = Effect.fnUntraced(function* (loaded: DeferredShellSnapshot) {
+    yield* cancelActiveFill;
+    const previous = yield* SubscriptionRef.get(state);
+    const snapshot = reuseUnchangedThreadShells(
+      Option.getOrNull(previous.snapshot),
+      withoutDeferredPullRequests(loaded),
+    );
+    const pendingLinkIds = new Set(
+      loaded.loadPullRequests === undefined ? [] : loaded.threads.map((thread) => thread.id),
+    );
+    yield* applyItems([{ kind: "snapshot", snapshot }], pendingLinkIds);
+    const now = yield* SubscriptionRef.get(state);
+    if (Option.isSome(now.snapshot)) {
+      yield* fillDeferredPullRequests(loaded, now.snapshot.value);
+    }
+  });
+  const takeEarly = yield* prefetchOnPrepared(supervisor.prepared, (prepared) =>
+    snapshotLoader
+      .load(prepared, { omitIdleSubagents: true, omitOlderSettled: true })
+      .pipe(
+        Effect.tap((loaded) =>
+          Option.isNone(loaded)
+            ? Effect.void
+            : Ref.set(awaitingCompletion, true).pipe(Effect.andThen(applyHttp(loaded.value))),
+        ),
+      ),
+  );
 
   const foregroundResubscriptions = Option.match(wakeups, {
     onNone: () => Stream.never,
@@ -396,43 +418,19 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         let canResume = hasAuthoritativeSnapshot;
         let current = yield* SubscriptionRef.get(state);
         if (!hasAuthoritativeSnapshot || Option.isNone(current.snapshot)) {
-          const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
-            Effect.flatMap(
-              Option.match({
-                onSome: Effect.succeed,
-                onNone: () =>
-                  SubscriptionRef.changes(supervisor.prepared).pipe(
-                    Stream.filter(Option.isSome),
-                    Stream.map((value) => value.value),
-                    Stream.runHead,
-                    Effect.map(Option.getOrThrow),
-                  ),
-              }),
-            ),
-          );
+          const early = Option.flatten(yield* takeEarly);
           // HTTP and the socket must agree, or omitted children would return through the socket.
-          const httpSnapshot = yield* snapshotLoader.load(prepared, {
-            omitIdleSubagents,
-            omitOlderSettled,
-          });
+          const httpSnapshot =
+            omitIdleSubagents && omitOlderSettled && Option.isSome(early)
+              ? early
+              : yield* snapshotLoader.load(yield* awaitPreparedConnection(supervisor.prepared), {
+                  omitIdleSubagents,
+                  omitOlderSettled,
+                });
           if (Option.isSome(httpSnapshot)) {
-            yield* cancelActiveFill;
-            const previous = yield* SubscriptionRef.get(state);
-            const snapshot = reuseUnchangedThreadShells(
-              Option.getOrNull(previous.snapshot),
-              withoutDeferredPullRequests(httpSnapshot.value),
-            );
-            const pendingLinkIds = new Set(
-              httpSnapshot.value.loadPullRequests === undefined
-                ? []
-                : httpSnapshot.value.threads.map((thread) => thread.id),
-            );
-            yield* applyItems([{ kind: "snapshot", snapshot }], pendingLinkIds);
+            if (httpSnapshot !== early) yield* applyHttp(httpSnapshot.value);
             canResume = true;
             current = yield* SubscriptionRef.get(state);
-            if (Option.isSome(current.snapshot)) {
-              yield* fillDeferredPullRequests(httpSnapshot.value, current.snapshot.value);
-            }
           }
         }
 

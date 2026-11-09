@@ -1367,13 +1367,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     ) {
       if ((yield* restartAdmission(effectOutbox)) !== "open") return;
-      if (
-        options?.endedRunId !== undefined ||
-        (yield* projectionStore.getHeldQueuedRuns(threadId)).length > 0
-      ) {
+      if (options?.endedRunId !== undefined) {
         const view = yield* readCommandProjection(threadId);
         const latest = latestExecutedRun(view.runs);
-        const ended = latest?.id === options?.endedRunId ? latest : undefined;
+        const ended = latest?.id === options.endedRunId ? latest : undefined;
         for (const run of ended?.status === "completed" ? view.runs : []) {
           const delivery = run.delegatedCompletion?.delivery;
           if (delivery != null && completionDeliveryMessage(view, delivery) === undefined) {
@@ -1386,10 +1383,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             releasesQueueHoldAtRunEnd(
               run,
               run.queueHoldReason === "restart"
-                ? view.runs.find((candidate) => candidate.id === options?.endedRunId)
+                ? view.runs.find((candidate) => candidate.id === options.endedRunId)
                 : ended,
               view,
-              options?.endedRunId === undefined,
             ) &&
             !(ended?.retainBlockedCompletionHolds && isBlockedCompletionRun(view, run)),
         );
@@ -1421,12 +1417,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
-      if (
-        options?.explicitResume !== true &&
-        (yield* threadAwaitsRestartContinuation(effectOutbox, projection.runs))
-      )
-        return;
-
       const storedQueuedRun =
         options?.queuedRunId === undefined
           ? options?.sendAll
@@ -1457,7 +1447,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // Failed worktree creation would run queued work in the project checkout; wait for the user.
       const failedRun = latestExecutedRun(projection.runs);
       const failureClass =
-        failedRun?.id === options?.failedRunId &&
+        (failedRun?.id === options?.failedRunId ||
+          (failedRun?.status === "failed" && options?.endedRunId !== undefined)) &&
         failedRun?.providerInstanceId === queuedRun.providerInstanceId
           ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
           : undefined;
@@ -1488,6 +1479,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         return;
       }
+      if (
+        options?.explicitResume !== true &&
+        (yield* threadAwaitsRestartContinuation(effectOutbox, projection.runs))
+      )
+        return;
       const newerRunIds = projection.runs
         .filter((run) => run.status !== "queued" && run.ordinal > queuedRun.ordinal)
         .map((run) => run.id);
@@ -2186,7 +2182,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Only the newest run completing shows the thread moved past the hold; a late or
     // bookkeeping update to an older run, overtaken by a failure or Stop, does not.
     if (
-      latestExecutedRun(projection.runs)?.id !== completedRunId ||
+      latestExecutedRun(projection.runs.filter((run) => !isActiveRun(run)))?.id !==
+        completedRunId ||
       projection.turnItems.length > 0 ||
       worktreeSetupPending(projection)
     )
@@ -2217,6 +2214,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     let resumed = 0;
     for (const threadId of threadIds) {
       const resumedThread = yield* Effect.gen(function* () {
+        if (!(yield* projectionStore.canStartQueuedRun(threadId))) return false;
         const projection = yield* readCommandProjection(threadId);
         const handoffs = yield* effectOutbox.restartHandoffs;
         const handoffRunIds = restartHandoffRunIds(handoffs);
@@ -5811,13 +5809,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const queueBehindRun =
       activeRun ??
       worktreeMissingRun ??
-      (dispatchMode.type === "queue_after_active"
-        ? projection.runs.find((run) => run.status === "queued")
-        : dispatchMode.type === "start_immediately" &&
-            command.createdBy === "agent" &&
-            command.restartContinuationOfRunId === undefined
-          ? nextQueuedRun(projection)
-          : undefined);
+      (dispatchMode.type === "queue_after_active" ||
+      (dispatchMode.type === "start_immediately" &&
+        command.createdBy === "agent" &&
+        command.restartContinuationOfRunId === undefined)
+        ? nextQueuedRun(projection)
+        : undefined);
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||

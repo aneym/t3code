@@ -87,7 +87,12 @@ function runBootScript(options: {
       property === "color" && toCanonicalThemeColor(value) !== null,
   };
 
-  new Function("window", "document", "CSS", bootScript)(fakeWindow, fakeDocument, fakeCss);
+  new Function("window", "document", "CSS", "location", bootScript)(
+    fakeWindow,
+    fakeDocument,
+    fakeCss,
+    { pathname: "/" },
+  );
 
   return {
     isDark: classes.has("dark"),

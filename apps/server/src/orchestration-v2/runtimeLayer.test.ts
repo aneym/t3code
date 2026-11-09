@@ -296,6 +296,12 @@ const layerTest = Layer.mergeAll(
     ServerSettings.layerTest({
       batchQueuedMessages: false,
       continueThreadsAfterServerUpdate: false,
+      projectSettingsOverrides: Object.fromEntries(
+        [false, true].map((stopped) => [
+          ProjectId.make(`runtime-layer-continuation-start-retry-${stopped}:project`),
+          { continueThreadsAfterServerUpdate: true },
+        ]),
+      ),
     }),
   ),
   Layer.provide(layerTestProviderInstanceRegistry),
@@ -6366,9 +6372,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         held,
       );
       // Nobody will resume a server message, so the completed run released it behind the wake.
+      const released = yield* events
+        .stream({ threadId, afterSequence: 0, eventType: "run.updated" })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" &&
+              stored.event.payload.id === textContinuation.id &&
+              stored.event.payload.queueHeld === false,
+          ),
+          Stream.runHead,
+        );
       assert.deepEqual(
-        after.runs.find((run) => run.id === textContinuation.id),
-        { ...textContinuation, queueHeld: false },
+        Option.map(released, (stored) => stored.event.payload),
+        Option.some({ ...textContinuation, queueHeld: false }),
       );
     }),
   );

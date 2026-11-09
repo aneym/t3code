@@ -19,7 +19,6 @@ import { applyEmbedComposerMessage, embedControlsKey, toggleEmbedControls } from
 import {
   EMBED_COMPOSER_FOCUS_MESSAGE,
   EMBED_KEY_MESSAGE,
-  EMBED_READY_MESSAGE,
   pressedHostChord,
   readEmbedClearMessage,
   readEmbedComposerMessage,
@@ -131,7 +130,6 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
     window.addEventListener("focusout", onFocusChange);
     window.addEventListener("focus", onFocusChange);
     window.addEventListener("blur", onFocusChange);
-    postToEmbedHost({ type: EMBED_READY_MESSAGE, threadId });
     return () => {
       window.removeEventListener("message", onMessage);
       window.removeEventListener("keydown", onKeyDown, true);

@@ -3,7 +3,6 @@ import {
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerConfig,
-  type ServerConfigStreamEvent,
   type ServerProviderWorkspaceSnapshot,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
@@ -56,7 +55,11 @@ import {
   subscribeDynamicWithSession,
   type EnvironmentRpcInput,
 } from "../rpc/client.ts";
-import type { RpcSession } from "../rpc/session.ts";
+import {
+  type RpcSession,
+  type RpcSessionOptions,
+  serverConfigSubscriptionInput,
+} from "../rpc/session.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import {
   applyServerConfigProjection,
@@ -353,18 +356,6 @@ export function resolveServerUpdateProgressResult<E>(
   return Effect.fail(new ServerUpdateProgressIncompleteError({ targetVersion }));
 }
 
-const cachedConfigSnapshotEvent = (config: ServerConfig): ServerConfigStreamEvent => ({
-  version: 1,
-  type: "snapshot",
-  config,
-});
-
-export interface ServerConfigSubscriptionOptions {
-  readonly environmentThemes?: boolean;
-  readonly usageLimitSources?: boolean;
-  readonly usageLimitsCommand?: boolean;
-}
-
 // Configs are JSON-shaped. Missing and undefined object fields persist identically.
 function sameCacheValue(previous: unknown, next: unknown): boolean {
   if (previous === next) return true;
@@ -401,11 +392,12 @@ function sameCacheValue(previous: unknown, next: unknown): boolean {
 }
 
 export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConfigState.make")(
-  function* (subscription: ServerConfigSubscriptionOptions) {
+  function* (subscription: RpcSessionOptions) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const cache = yield* Persistence.EnvironmentCacheStore;
     const environmentId = supervisor.target.environmentId;
-    const cachedConfig = yield* cache.loadServerConfig(environmentId).pipe(
+    const slim = subscription.providerCatalogsOnDemand;
+    const cachedConfig = yield* cache.loadServerConfig(environmentId, slim).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not load cached server configuration.").pipe(
           Effect.annotateLogs({
@@ -417,9 +409,9 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       ),
     );
     const state = yield* SubscriptionRef.make<Option.Option<ServerConfigProjection>>(
-      Option.map(cachedConfig, (cached) => ({
-        config: withoutEnvironmentThemes(cached),
-        latestEvent: cachedConfigSnapshotEvent(withoutEnvironmentThemes(cached)),
+      Option.map(Option.map(cachedConfig, withoutEnvironmentThemes), (config) => ({
+        config,
+        latestEvent: { version: 1 as const, type: "snapshot" as const, config },
         source: "cache" as const,
       })),
     );
@@ -440,7 +432,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       if (lastPersisted !== undefined && sameCacheValue(lastPersisted, cacheable)) {
         return true;
       }
-      const saved = yield* cache.saveServerConfig(environmentId, cacheable).pipe(
+      const saved = yield* cache.saveServerConfig(environmentId, cacheable, slim).pipe(
         Effect.as(true),
         Effect.catch((error) =>
           Effect.logWarning("Could not persist cached server configuration.").pipe(
@@ -480,11 +472,10 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
 
     yield* runCachePersistence(persistence, persistPending).pipe(Effect.forkScoped);
 
-    yield* subscribe(WS_METHODS.subscribeServerConfig, {
-      ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
-      ...(subscription.usageLimitSources === true ? { usageLimitSources: true } : {}),
-      ...(subscription.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
-    }).pipe(
+    yield* subscribe(
+      WS_METHODS.subscribeServerConfig,
+      serverConfigSubscriptionInput(subscription),
+    ).pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
           const next = applyServerConfigProjection(yield* SubscriptionRef.get(state), event);
@@ -503,10 +494,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
   },
 );
 
-function serverConfigStateChanges(
-  environmentId: EnvironmentId,
-  subscription: ServerConfigSubscriptionOptions,
-) {
+function serverConfigStateChanges(environmentId: EnvironmentId, subscription: RpcSessionOptions) {
   return followStreamInEnvironment(
     environmentId,
     Stream.unwrap(
@@ -746,13 +734,10 @@ export function createServerEnvironmentAtoms<R, E>(
     EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
     E
   >,
-  options: {
+  options: RpcSessionOptions & {
     readonly initialConfigValueAtom: (
       environmentId: EnvironmentId,
     ) => Atom.Atom<ServerConfig | null>;
-    readonly environmentThemes?: boolean;
-    readonly usageLimitSources?: boolean;
-    readonly usageLimitsCommand?: boolean;
   },
 ) {
   const configScheduler = createAtomCommandScheduler();
@@ -763,13 +748,7 @@ export function createServerEnvironmentAtoms<R, E>(
   };
   const configProjectionFamily = Atom.family((environmentId: EnvironmentId) =>
     runtime
-      .atom(
-        serverConfigStateChanges(environmentId, {
-          ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
-          ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
-          ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
-        }),
-      )
+      .atom(serverConfigStateChanges(environmentId, options))
       .pipe(
         Atom.setIdleTTL(5 * 60_000),
         Atom.withLabel(`environment-data:server:config-projection:${environmentId}`),

@@ -357,11 +357,11 @@ it.effect("selects unfinished recovery work without reading settled thread histo
     });
 
     yield* sql`
-      UPDATE orchestration_v2_projection_runs SET payload_json = '{broken'
+      UPDATE orchestration_v2_projection_runs SET payload_json = '[]'
       WHERE thread_id = ${ThreadId.make("thread:recovery:settled-599")}
     `;
     yield* sql`
-      UPDATE orchestration_v2_projection_runs SET payload_json = '{broken'
+      UPDATE orchestration_v2_projection_runs SET payload_json = '[]'
       WHERE thread_id = ${queued} AND ordinal = 1
     `;
     assert.deepEqual(yield* projections.getRecoveryThreadIds("queued-runs"), [queued]);

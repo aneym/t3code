@@ -16,7 +16,11 @@ const CLAUDE_RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;
 export function providerSupportsManualCompaction(
   provider: ProviderInstanceEntry | null | undefined,
 ): boolean {
-  return provider?.snapshot.slashCommands.some((command) => command.name === "compact") ?? false;
+  const hasCompact = (commands: ReadonlyArray<{ readonly name: string }>) =>
+    commands.some((command) => command.name === "compact");
+  if (!provider) return false;
+  const { slashCommands, workspaceSnapshots = [] } = provider.snapshot;
+  return hasCompact(slashCommands) || workspaceSnapshots.some((s) => hasCompact(s.slashCommands));
 }
 
 export function hasAvailableCompactionProvider(input: {

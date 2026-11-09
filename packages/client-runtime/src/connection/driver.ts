@@ -41,6 +41,7 @@ export interface EnvironmentConnectionLease {
 }
 
 export type RouteCheck = "answered" | "silent" | "unchecked";
+export type HostCheck = RouteCheck | "refused";
 /** "unprepared" means the route answered its check but could not be prepared. */
 export type RoutePreflight = "ready" | "unprepared" | "silent" | "unchecked";
 
@@ -62,7 +63,7 @@ export class ConnectionDriver extends Context.Service<
       route: ConnectionRoute,
     ) => Effect.Effect<RoutePreflight>;
     /** Asks the host behind a live session to answer a fresh request on the session's own origin. */
-    readonly checkHost: (prepared: PreparedConnection) => Effect.Effect<RouteCheck>;
+    readonly checkHost: (prepared: PreparedConnection) => Effect.Effect<HostCheck>;
   }
 >()("@t3tools/client-runtime/connection/driver/ConnectionDriver") {}
 
@@ -147,7 +148,7 @@ export const make = Effect.gen(function* () {
 
   // The descriptor is public, so this sends no credential to whatever
   // answers at a saved LAN address on a different network.
-  const checkDescriptor = (httpBaseUrl: string, environmentId: string) =>
+  const fetchDescriptor = (httpBaseUrl: string, environmentId: string) =>
     fetchRemoteEnvironmentDescriptor({
       httpBaseUrl,
       timeoutMs: ROUTE_CHECK_TIMEOUT_MS,
@@ -155,10 +156,13 @@ export const make = Effect.gen(function* () {
       Effect.map((descriptor): RouteCheck =>
         descriptor.environmentId === environmentId ? "answered" : "silent",
       ),
-      Effect.orElseSucceed((): RouteCheck => "silent"),
       // A cached descriptor would answer for a host that cannot be reached.
       Effect.provideService(FetchHttpClient.RequestInit, { cache: "no-store" }),
       Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+  const checkDescriptor = (httpBaseUrl: string, environmentId: string) =>
+    fetchDescriptor(httpBaseUrl, environmentId).pipe(
+      Effect.orElseSucceed((): RouteCheck => "silent"),
     );
 
   const checkRoute = (entry: ConnectionCatalogEntry, route: ConnectionRoute) => {
@@ -172,7 +176,10 @@ export const make = Effect.gen(function* () {
   };
 
   const checkHost = (prepared: PreparedConnection) =>
-    checkDescriptor(prepared.httpBaseUrl, prepared.environmentId).pipe(
+    fetchDescriptor(prepared.httpBaseUrl, prepared.environmentId).pipe(
+      Effect.catch((error): Effect.Effect<HostCheck> =>
+        Effect.succeed(error._tag === "RemoteEnvironmentAuthTimeoutError" ? "silent" : "refused"),
+      ),
       Effect.withSpan("ConnectionDriver.checkHost", {
         attributes: { "connection.target.kind": prepared.target._tag },
       }),

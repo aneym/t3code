@@ -28,6 +28,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { isConnectedWithConfig } from "../components/settings/scopedSettings";
 import { environmentCatalog } from "../connection/catalog";
+import { inEmbedPage } from "../embed/embedProtocol";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentAtomList } from "./environmentAtomList";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
@@ -40,6 +41,7 @@ const sharedServerEnvironment = createServerEnvironmentAtoms(connectionAtomRunti
   environmentThemes: true,
   usageLimitSources: true,
   usageLimitsCommand: true,
+  providerCatalogsOnDemand: inEmbedPage(),
 });
 export const serverEnvironment = {
   ...sharedServerEnvironment,

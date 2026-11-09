@@ -1,4 +1,5 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomMount, useAtomValue } from "@effect/atom-react";
+import type { ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
 import { useBlocker } from "@tanstack/react-router";
 import { useState, type CSSProperties } from "react";
 
@@ -8,7 +9,10 @@ import { isEmbedPath, normalizeEmbedOrigins, readEmbedScheme } from "../../embed
 import { readEmbedSignIn } from "../../embed/embedSignIn";
 import { applyEmbedTheme, themeFromEmbedMessage } from "../../embed/embedTheme";
 import { useEmbedHostBridge } from "../../embed/useEmbedHostBridge";
+import { useEmbedReadyReport } from "../../embed/useEmbedReadyReport";
 import { primaryServerConfigAtom } from "../../state/server";
+import { environmentShell } from "../../state/shell";
+import { environmentThreads } from "../../state/threads";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { ConfirmDialogHost } from "../ConfirmDialogHost";
 import "./EmbedPage.css";
@@ -30,6 +34,12 @@ function EmbedNotice({ text }: { readonly text: string }) {
   );
 }
 
+function EmbedPrefetch({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  useAtomMount(environmentShell.stateAtom(threadRef.environmentId));
+  useAtomMount(environmentThreads.stateAtom(threadRef.environmentId, threadRef.threadId));
+  return null;
+}
+
 function EmbeddedThread({
   spot,
   environmentId,
@@ -45,6 +55,7 @@ function EmbeddedThread({
     enableBeforeUnload: false,
   });
   const target = resolveThreadRouteTarget({ environmentId, threadId });
+  useEmbedReadyReport(target?.kind === "server" ? target.threadRef : null, threadId);
   return (
     <SidebarProvider className="h-dvh! min-h-0!" defaultOpen={false} style={BARE_LAYOUT_STYLE}>
       {target ? <ThreadRouteView target={target} /> : null}
@@ -72,6 +83,24 @@ export function EmbedPage({
       />
     );
   }
+  const target = resolveThreadRouteTarget({ environmentId, threadId });
+  return (
+    <>
+      {target?.kind === "server" ? <EmbedPrefetch threadRef={target.threadRef} /> : null}
+      <EmbedContent settings={settings} environmentId={environmentId} threadId={threadId} />
+    </>
+  );
+}
+
+function EmbedContent({
+  settings,
+  environmentId,
+  threadId,
+}: {
+  readonly settings: ServerConfig["settings"] | null;
+  readonly environmentId: string;
+  readonly threadId: string;
+}) {
   if (settings === null) return null;
   if (!settings.embedModeEnabled) {
     return <EmbedNotice text="Embedded chats are off on this T3 server." />;
