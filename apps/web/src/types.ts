@@ -82,6 +82,7 @@ export interface ChatMessage extends MessageSender {
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
+  readonly quietNote?: true;
   readonly idleCompaction?: import("@t3tools/contracts").OrchestrationV2IdleCompaction;
   readonly createdAt: string;
   readonly updatedAt: string;

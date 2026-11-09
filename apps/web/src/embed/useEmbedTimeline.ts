@@ -1,6 +1,8 @@
 import type { TimelineEntry } from "../session-logic";
 import { useEmbedHostConnected } from "./embedHost";
+import { foldNoteRuns } from "./embedNoteRuns";
 import { isEmbedLaunchBrief, isEmbedPersonMessage } from "./embedQuietMessages";
+import { useEmbedSeenMark } from "./embedSeen";
 
 const asPerson = new WeakMap<TimelineEntry, TimelineEntry>();
 
@@ -17,8 +19,9 @@ export function useEmbedTimeline(
   entries: ReadonlyArray<TimelineEntry>,
 ): ReadonlyArray<TimelineEntry> {
   const embedThreadId = useEmbedHostConnected() ? threadId : null;
+  useEmbedSeenMark(embedThreadId);
   if (embedThreadId === null) return entries;
-  return entries.flatMap((entry) =>
+  const shown = entries.flatMap((entry) =>
     entry.kind !== "message"
       ? [entry]
       : isEmbedLaunchBrief(entry.message, embedThreadId)
@@ -27,4 +30,5 @@ export function useEmbedTimeline(
           ? [personEntry(entry)]
           : [entry],
   );
+  return foldNoteRuns(shown);
 }

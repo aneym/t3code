@@ -2,9 +2,12 @@ import { messageSenderRef } from "@t3tools/contracts";
 import { ChevronDown, ChevronRight } from "lucide";
 import { use, useState } from "react";
 
+import { noteRunOf } from "../../embed/embedNoteRuns";
 import type { EmbedQuietLine } from "../../embed/embedQuietMessages";
+import { embedSeenAt } from "../../embed/embedSeen";
 import { useQuietThreadShell } from "../../state/entities";
 import { MorphIcon } from "../MorphIcon";
+import { formatShortTimestamp } from "../../timestampFormat";
 import type { ChatMessage } from "../../types";
 import { findRevealRef } from "../chat/markdownFindContext";
 import { TimelineRowCtx } from "../chat/timelineRowContext";
@@ -25,8 +28,22 @@ export function EmbedQuietMessageRow({
       ? messageSenderRef(message, ctx.activeThreadEnvironmentId)
       : null,
   );
+  const run = line.kind === "note" ? noteRunOf(message) : null;
+  const seen = run === null || ctx.threadRef === null ? null : embedSeenAt(ctx.threadRef.threadId);
+  const fresh = seen !== null && run !== null && run.every((note) => note.createdAt > seen);
   const from = line.kind === "agent" ? (line.from ?? (sender?.title.trim() || "an agent")) : null;
-  const label = from === null ? "Event" : `From ${from}`;
+  const label =
+    run !== null
+      ? `${run.length} updates${fresh ? " since you were here" : ""}`
+      : line.kind === "note"
+        ? "Note"
+        : from === null
+          ? "Event"
+          : `From ${from}`;
+  const time = (note: ChatMessage) => formatShortTimestamp(note.createdAt, ctx.timestampFormat);
+  const first = run === null ? time(message) : time(run[0]!);
+  const last = run === null ? first : time(run[run.length - 1]!);
+  const span = first === last ? first : `${first}–${last}`;
   return (
     <div className="flex min-w-0 flex-col items-start gap-1" data-embed-quiet-line={line.kind}>
       <MessageAuthorHeading>{label}</MessageAuthorHeading>
@@ -38,7 +55,10 @@ export function EmbedQuietMessageRow({
         className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-muted-foreground text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
       >
         <span className="shrink-0">{label}</span>
-        {line.summary.length > 0 ? (
+        {line.kind === "note" ? (
+          <span className="shrink-0 tabular-nums text-muted-foreground/70">{span}</span>
+        ) : null}
+        {run === null && line.summary.length > 0 ? (
           <span className="min-w-0 truncate text-muted-foreground/70">{line.summary}</span>
         ) : null}
         <MorphIcon className="size-3.5 shrink-0" icon={expanded ? ChevronDown : ChevronRight} />
@@ -50,7 +70,16 @@ export function EmbedQuietMessageRow({
           data-thread-find-text="true"
           className="max-h-96 w-full overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-3 text-muted-foreground text-xs"
         >
-          {message.text}
+          {run === null
+            ? message.text
+            : run.map((note) => (
+                <div key={note.id} className="flex gap-2 py-1" data-embed-note-run-item="">
+                  <span className="shrink-0 tabular-nums text-muted-foreground/70">
+                    {time(note)}
+                  </span>
+                  <span className="min-w-0">{note.text}</span>
+                </div>
+              ))}
         </div>
       ) : null}
     </div>
