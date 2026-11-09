@@ -24,6 +24,7 @@ import {
   readEmbedThemeMessage,
   reservedEmbedChord,
 } from "./embedProtocol";
+import { applyEmbedLinksMessage, isEmbedRailsUrl } from "./embedLinks";
 import { applyEmbedTheme, themeFromEmbedMessage } from "./embedTheme";
 
 const COMPOSER_SELECTOR = '[data-testid="composer-editor"]';
@@ -81,6 +82,7 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       if (clear !== null) applyEmbedClearMessage(clear);
       const keys = readEmbedKeysMessage(event.data);
       if (keys !== null) setEmbedKClears(keys.kClears);
+      applyEmbedLinksMessage(event.data);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       const key = reservedEmbedChord(event, mac);
@@ -96,7 +98,8 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       if (url === null) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      openThroughEmbedHost(url.href);
+      const tab = event.button === 1 || (mac ? event.metaKey : event.ctrlKey);
+      openThroughEmbedHost(url.href, tab && isEmbedRailsUrl(url.href));
     };
     window.addEventListener("message", onMessage);
     window.addEventListener("keydown", onKeyDown, true);

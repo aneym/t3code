@@ -8,6 +8,7 @@ const EMBED_CLEAR_MESSAGE = "t3-embed/clear";
 const EMBED_KEYS_MESSAGE = "t3-embed/keys";
 export const EMBED_CLEAR_REQUEST_MESSAGE = "t3-embed/clear-request";
 export const EMBED_COMPOSER_FOCUS_MESSAGE = "t3-embed/composer-focus";
+export const EMBED_LINK_ASK_MESSAGE = "t3-embed/link-ask";
 
 export type EmbedScheme = "light" | "dark";
 
@@ -20,7 +21,8 @@ export type EmbedThemeMessage = {
 export type EmbedOutboundMessage =
   | { readonly type: typeof EMBED_READY_MESSAGE; readonly threadId: string }
   | { readonly type: typeof EMBED_KEY_MESSAGE; readonly key: string }
-  | { readonly type: typeof EMBED_OPEN_MESSAGE; readonly url: string }
+  | { readonly type: typeof EMBED_OPEN_MESSAGE; readonly url: string; readonly tab?: true }
+  | { readonly type: typeof EMBED_LINK_ASK_MESSAGE; readonly urls: ReadonlyArray<string> }
   | {
       readonly type: typeof EMBED_CLEAR_REQUEST_MESSAGE;
       readonly thread: string;
