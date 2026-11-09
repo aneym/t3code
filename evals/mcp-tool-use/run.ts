@@ -65,6 +65,9 @@ import {
   makeClaudeQueryOptions,
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { withRestartNotice } from "./restart-notices.ts";
+import { claudePrint, runAgentSdk } from "./agent-sdk.ts";
+import { SHELL_PROMPT } from "./shell-prompt.ts";
+import { NATIVE_SCHEMAS, nativeResult } from "./native-tools.ts";
 import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
 import {
@@ -494,29 +497,6 @@ const t3ContextReport = (model: Model) => {
     `tool descriptions ${size(descriptions)}`,
     `full tool schemas ${size(schemas)} across ${t3Tools.length} tools.`,
   ].join(", ");
-};
-
-const stringProperty = (description: string) => ({ type: "string", description });
-const NATIVE_SCHEMAS: Readonly<Record<string, Omit<ApiTool, "name">>> = {
-  WebFetch: {
-    description: "Fetches content from a URL and answers the prompt about it.",
-    input_schema: {
-      type: "object",
-      properties: {
-        url: stringProperty("The URL to fetch"),
-        prompt: stringProperty("What to extract"),
-      },
-      required: ["url", "prompt"],
-    },
-  },
-  WebSearch: {
-    description: "Searches the web and returns result titles, links, and snippets.",
-    input_schema: {
-      type: "object",
-      properties: { query: stringProperty("The search query") },
-      required: ["query"],
-    },
-  },
 };
 
 /** Rebuilds the parts of a captured request that every case shares. */
@@ -1218,25 +1198,6 @@ const searchTools = (base: Base, query: string, max: number) => {
 const SUBAGENT_WATCH_ERROR =
   "This thread is a subagent, so it cannot watch pull requests. Its parent thread owns the pull request: finish your task and report back instead.";
 
-/** Result for a native tool the case does not mock, other than shell, file, and web tools. */
-const nativeResult = (name: string, input: Readonly<Record<string, unknown>>) => {
-  const skill = valueText(input.skill);
-  const results: Readonly<Record<string, string>> = {
-    Agent: "The agent finished. Summary: the task is done and nothing else needs attention.",
-    Skill: `Launching skill: ${skill}\n\nBase directory for this skill: ~/.claude/skills/${skill}\n\nThis skill adds no steps for this task. Do it with your usual tools.`,
-    WebSearch: "No results found.",
-  };
-  return results[name] ?? "OK";
-};
-
-const SHELL_PROMPT = `You play the computer a coding agent works on. You get a description of the machine, the agent's tool calls so far with their outputs, and one new call. Reply in JSON. In "facts", note briefly what the output must agree with. In "output", put only the call's output, exactly as the tool prints it: no notes, headings, code fences, or corrections. The agent sees "output" unchanged.
-
-- Bash: what the command prints in a real terminal (git, gh, ls, cat, grep, package managers). If it fails, start with "Exit code N", then the error. If it prints nothing, reply "(Bash completed with no output)".
-- Read: the file with numbered lines, like \`cat -n\`. Write: "File created successfully at: <path>". Edit: "The file <path> has been updated successfully." Edit may instead supply a Codex apply_patch patch; apply its additions, deletions and hunks. A missing file, or an Edit whose old_string is not in the file: "<tool_use_error>reason</tool_use_error>".
-- WebFetch: the page's text.
-
-Stay consistent with the machine and with earlier outputs: edits, commits, pushes, and new PRs show in later output. Where the description is silent, invent plausible small details that fit it (file contents, SHAs, test names) rather than printing nothing. Commands succeed unless the description says otherwise, including git push, gh pr create, installs, builds, and tests. A new PR gets the next number after the highest one in the description or the history, or 124 if there is none.`;
-
 const ShellReply = Schema.Struct({ facts: Schema.String, output: Schema.String });
 const SHELL_REPLY_SCHEMA = {
   ...Schema.toJsonSchemaDocument(ShellReply).schema,
@@ -1312,6 +1273,7 @@ type Config = {
   readonly effort: string;
   readonly maxSteps: number;
   readonly shellModel: PricedModel;
+  readonly claudeBin?: string;
 };
 
 /**
@@ -1333,11 +1295,10 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
   let output = typeof command === "string" ? cannedOutput(sample, command) : undefined;
   if (output === undefined) {
     const body = shellRequest(sample, call, config.shellModel);
-    const response = yield* callModel(
-      config.apiKey,
-      body,
-      config.apiKey ? undefined : config.proxy,
-    );
+    const bin = config.claudeBin;
+    const response = bin
+      ? yield* Effect.promise(() => claudePrint(bin, body))
+      : yield* callModel(config.apiKey, body, config.apiKey ? undefined : config.proxy);
     addUsage(sample.shellUsage, response.usage);
     output = shellOutput(response.content);
   }
@@ -1634,6 +1595,61 @@ export const ranCalls = (
     .filter((use) => base.codex !== undefined || hasTool(tools, use.name))
     .map((use) => recordedCall(step, use));
 
+const runSdkSample = Effect.fn("evaluateMcpToolUse.runSdkSample")(function* (
+  sample: Sample & { readonly shellUsage: Usage },
+  config: Config,
+  maxTurns: number,
+  usage: Usage,
+) {
+  const { testCase, base } = sample;
+  sample.tools.push(...base.deferred);
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<HttpClient.HttpClient>());
+  const calls: Array<Call> = [];
+  const said: Array<string> = [];
+  const text = () => said.join("\n\n");
+  const stop = () => failedEarly(testCase.expect, { calls, text: text(), stopReason: "" });
+  const run = yield* Effect.promise(() =>
+    runAgentSdk({
+      bin: config.claudeBin ?? "claude",
+      model: config.model,
+      effort: config.effort,
+      maxTurns,
+      systemPrompt: claudeQueryOptions(config.model).systemPrompt ?? "",
+      messages: buildMessages({ ...sample, base: { ...base, reminders: [], gitStatusAt: 0 } }),
+      t3Tools: base.t3,
+      nativeName: normalizeToolName,
+      answer: (use) => {
+        const name = findTool(base, normalizeToolName(use.name))?.name ?? use.name;
+        return runPromise(answerToolCall(sample, config, { ...use, name }));
+      },
+      onAssistant: (step, content) => {
+        said.push(...content.filter(isText).map((block) => block.text));
+        calls.push(...content.filter(isToolUse).map((use) => recordedCall(step, use)));
+        return stop();
+      },
+      afterResults: (results) => {
+        for (const result of results)
+          settle(
+            calls.find(({ id }) => id === result.tool_use_id),
+            result,
+          );
+        return stop();
+      },
+    }),
+  );
+  addUsage(usage, run.usage);
+  return {
+    calls,
+    text: text(),
+    stopReason: run.stopReason,
+    finalText: run.finalText,
+    linked: [...sample.linked],
+    usage,
+    shellUsage: sample.shellUsage,
+    transcript: run.transcript,
+  };
+});
+
 /**
  * Runs one sample until the model ends its turn, uses up its steps, or fails a check that no
  * later step can undo. Tokens add up in `spent`, so a sample that errors still reports them.
@@ -1659,6 +1675,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   // Codex's code-mode cells take more model calls, so a case's own budget grows for it too.
   const extra = isCodex(config.model) ? 4 : 0;
   const maxSteps = testCase.maxSteps === undefined ? config.maxSteps : testCase.maxSteps + extra;
+  if (config.claudeBin) return yield* runSdkSample(sample, config, maxSteps, usage);
   for (let step = 0; step < maxSteps; step++) {
     const response = input
       ? yield* callCodex(config, codexRequest(base, input))
@@ -1879,6 +1896,7 @@ const Flags = Schema.Struct({
   "stop-on-regression": Schema.Boolean,
   "regression-budget": Schema.optional(PositiveIntOrZero),
   context: Schema.Boolean,
+  claude: Schema.optional(Schema.String),
 });
 const decodeFlags = Schema.decodeUnknownEffect(Flags);
 const decodeCapture = Schema.decodeUnknownEffect(Schema.fromJsonString(Capture));
@@ -1920,6 +1938,7 @@ const main = Effect.gen(function* () {
       "regression-budget": string,
       // Prints the size of T3's text and tool schemas, then exits. Needs no template or key.
       context: { type: "boolean", default: false },
+      claude: string,
     },
   });
   const flags = yield* decodeFlags({ template: "", ...values });
@@ -2031,9 +2050,8 @@ const main = Effect.gen(function* () {
   }
   const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
   const out = flags.out;
-  if ((!apiKey && !codex) || out === undefined) {
-    const message =
-      "Set ANTHROPIC_API_KEY and pass --out <directory>. ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are never used.";
+  if ((!apiKey && !codex && !flags.claude) || out === undefined) {
+    const message = "Set ANTHROPIC_API_KEY or pass --claude <bin>, and pass --out <directory>.";
     return yield* Effect.die(new Error(message));
   }
   const config: Config = {
@@ -2043,6 +2061,7 @@ const main = Effect.gen(function* () {
     effort,
     maxSteps: flags["max-steps"] ?? (codex ? 10 : 6),
     shellModel: flags["shell-model"],
+    ...(flags.claude ? { claudeBin: flags.claude } : {}),
   };
   const previous =
     flags.baseline === undefined ? [] : yield* readNdjson(flags.baseline, decodeBaselineRow);
