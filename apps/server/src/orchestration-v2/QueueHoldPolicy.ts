@@ -104,7 +104,7 @@ export function releasesQueueHoldAtRunEnd(
     case "restart":
       return true;
     case "blocked":
-      return ended.status === "completed";
+      return ended.status === "completed" && projection.thread.createdBy === "agent";
     case undefined:
       return projection.thread.createdBy === "agent";
   }
