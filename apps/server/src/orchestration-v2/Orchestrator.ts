@@ -13382,6 +13382,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               commandId: cause.commandId,
               commandType: cause.commandType,
               cause: cause.cause,
+              ...(cause.reason && { reason: cause.reason }),
             });
           }
           return yield* cause;
