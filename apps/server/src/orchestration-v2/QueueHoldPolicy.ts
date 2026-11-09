@@ -5,10 +5,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type ServerSettings,
 } from "@t3tools/contracts";
-import {
-  latestExecutedRun,
-  usageLimitBlockedRun,
-} from "@t3tools/shared/orchestrationV2ThreadError";
+import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 
 type Hold = Pick<
@@ -104,16 +101,12 @@ export function canReleaseQueueHold(run: OrchestrationV2Run, release: Release): 
 export function releasesQueueHoldAtRunEnd(
   run: OrchestrationV2Run,
   ended: OrchestrationV2Run | null | undefined,
-  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "turnItems" | "runs">,
-  recovering = false,
+  projection: Pick<OrchestrationV2ThreadProjection, "thread">,
 ): boolean {
-  if (ended == null && recovering && run.queueHoldReason === "stop") {
-    ended = latestExecutedRun(projection.runs);
-  }
   if (run.status !== "queued" || run.queueHeld !== true || ended == null) return false;
   switch (run.queueHoldReason) {
     case "stop":
-      return releasesStopHold(run, ended, projection);
+      return false;
     case "restart":
       return true;
     case "blocked":
@@ -121,31 +114,6 @@ export function releasesQueueHoldAtRunEnd(
     case undefined:
       return projection.thread.createdBy === "agent";
   }
-}
-
-function releasesStopHold(
-  run: OrchestrationV2Run,
-  ended: OrchestrationV2Run,
-  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "turnItems">,
-): boolean {
-  if (
-    projection.thread.createdBy !== "agent" ||
-    !["completed", "failed", "interrupted", "cancelled", "rolled_back"].includes(ended.status) ||
-    ended.completedAt === null
-  )
-    return false;
-  let heldAt = run.queueHeldAt;
-  for (const item of projection.turnItems) {
-    if (
-      item.type === "run_interrupt_request" &&
-      item.startedAt !== null &&
-      run.queueHeldAt === undefined &&
-      (heldAt === undefined || DateTime.isGreaterThan(item.startedAt, heldAt))
-    ) {
-      heldAt = item.startedAt;
-    }
-  }
-  return heldAt !== undefined && DateTime.isGreaterThanOrEqualTo(ended.completedAt, heldAt);
 }
 
 export function stoppedQueueHold(run: OrchestrationV2Run, now: DateTime.Utc): Hold | undefined {
