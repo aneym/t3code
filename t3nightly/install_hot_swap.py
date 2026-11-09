@@ -263,6 +263,7 @@ def install(run):
         try:
             run.step("restart-drain-launcher", deadline_s=args.drain_s)
             requested = True
+            run.payloads.commit()
             update = swap(run, bearer, args.version)
             retained(run, before)
             if connect and not connect_returns(run, args.version):
@@ -314,14 +315,10 @@ def install(run):
     receipt.update(install_settings.receipt(run))
     destination.parent.mkdir(parents=True, exist_ok=True)
     write(destination, receipt)
-    if outcome == "installed" and backup.get("path"):
-        from .install_backup_retention import best_effort
+    if outcome == "installed":
+        from .install_backup_retention import settle
 
-        retention = best_effort(Path(backup["path"]).parent.parent, backup["path"], run.home)
-        try:
-            (destination.parent / "backup-retention.json").write_text(json.dumps(retention, indent=2) + "\n")
-        except OSError as error:
-            run.step("backup-retention-receipt-failed", error=str(error))
+        settle(run, backup.get("path"), destination.parent)
     if outcome == "installed" and not args.rehearsal:
         run.link_cli(args.version)
     return run.finish(outcome, f"hot-swap {outcome}: {previous} -> {args.version}")

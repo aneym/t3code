@@ -1,6 +1,7 @@
 import fcntl
 import json
 import os
+import signal
 import sqlite3
 import time
 from contextlib import ExitStack, closing, contextmanager
@@ -118,10 +119,35 @@ def idle(path):
 class Payloads:
     def __init__(self):
         self.locks = ExitStack()
+        self.backups = []
+        self.committed = False
 
     def hold(self, root, path):
         if not self.locks.enter_context(payload_lock(root, path)):
             raise ValueError(f"payload already owned: {path}")
+
+    def backup(self, root, path):
+        self.hold(root, path)
+        self.backups.append((root, path))
+
+    def commit(self):
+        self.committed = True
+
+
+def discard_abandoned(run, payloads):
+    if payloads.committed:
+        return
+    watched = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+    mask = signal.pthread_sigmask(signal.SIG_BLOCK, watched)
+    try:
+        for root, path in payloads.backups:
+            try:
+                discard(root, path, run.state, "discard-abandoned-install-backup")
+                run.step("abandoned-backup-discarded", path=str(path))
+            except (OSError, ValueError) as error:
+                run.step("abandoned-backup-discard-failed", path=str(path), error=f"{type(error).__name__}: {error}")
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, mask)
 
 
 @contextmanager
@@ -136,6 +162,7 @@ def payload_lifecycle(run):
         yield
     finally:
         try:
+            discard_abandoned(run, payloads)
             if owned:
                 discard_snapshot(
                     run.snapshots, run.snapshot, run.state, "discard-run-read-snapshot"

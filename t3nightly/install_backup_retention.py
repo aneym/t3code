@@ -8,7 +8,7 @@ from pathlib import Path
 from .install_clone_floor import on_live_volume
 from .install_storage import backup_roots
 
-KEEP = 2
+KEEP = 1
 SCHEMA = "t3nightly.at-stop-backup/1"
 LEGACY_APPROVAL = Path.home() / ".open-factory/approvals/alex-t3nightly-legacy-backup-delete.json"
 
@@ -49,28 +49,21 @@ def marked_rows(roots, home):
     return sorted((row for row in rows if row["marked"]), key=lambda row: row["createdNs"], reverse=True), [row for row in rows if not row["marked"]]
 
 
-def kept_on_live_volume(home, root, keep):
+def kept_on_live_volume(home, root):
     marked, _ = marked_rows(backup_roots(home, root), home)
-    return sum(1 for row in marked[:keep] if on_live_volume(row["path"], home))
+    return sum(1 for row in marked[:KEEP] if on_live_volume(row["path"], home))
 
 
-def retain(root, current, home, *, keep=KEEP):
+def retain(root, current, home):
     from .install_payload_gc import payload_lock
 
     roots = backup_roots(home, root)
-    result = {"removed": [], "legacyKept": [], "kept": [], "roots": [str(path) for path in roots], "keep": keep, "legacyApprovalPath": str(LEGACY_APPROVAL)}
+    result = {"removed": [], "legacyKept": [], "kept": [], "roots": [str(path) for path in roots], "keep": KEEP, "legacyApprovalPath": str(LEGACY_APPROVAL)}
     with ExitStack() as locks:
         if not all(locks.enter_context(payload_lock(path, path / "at-stop-retention")) for path in roots):
             return {**result, "deferred": True}
         marked, result["legacyKept"] = marked_rows(roots, home)
-        protected = {row["path"] for row in marked[:keep]}
-        if current:
-            protected.add(str(Path(current)))
-            older = [row for row in marked if row["path"] == str(Path(current))]
-            if older:
-                previous = next((row for row in marked if row["createdNs"] < older[0]["createdNs"]), None)
-                if previous:
-                    protected.add(previous["path"])
+        protected = {str(Path(current))} if current else {row["path"] for row in marked[:KEEP]}
         for row in marked:
             if row["path"] in protected:
                 result["kept"].append(row)
@@ -97,13 +90,19 @@ def main():
     print(json.dumps({"count": len(rows), "logicalBytes": sum(row["bytes"] for row in rows), "allocatedBytes": sum(row["allocatedBytes"] for row in rows), "privateBytes": sum(row["allocatedBytes"] for row in rows) if sys.platform != "darwin" else None, "privateSizeReason": "Linux full copies use allocated blocks; APFS shared extent ownership requires volume df before/after", "backups": rows, "legacyOrForeign": [row for row in all_rows if not row["marked"]]}))
 
 
-def best_effort(root, current, home, *, metadata=None, keep=KEEP):
+def best_effort(root, current, home):
     try:
-        if current and metadata is not None:
-            mark(current, metadata, home)
-        return retain(root, current, home, keep=keep)
+        return retain(root, current, home)
     except Exception as error:
         return {"error": f"{type(error).__name__}: {error}"}
+
+
+def settle(run, current, receipts):
+    retention = best_effort(Path(current).parent.parent if current else run.backups, current, run.home)
+    try:
+        (Path(receipts) / "backup-retention.json").write_text(json.dumps(retention, indent=2) + "\n")
+    except OSError as error:
+        run.step("backup-retention-receipt-failed", error=str(error))
 
 
 if __name__ == "__main__":

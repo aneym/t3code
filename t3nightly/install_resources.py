@@ -76,14 +76,15 @@ def installer_owner(run):
             "installer cancelled; old service and retained backups preserved"
         )
 
-    prior = signal.signal(signal.SIGTERM, cancel)
+    prior = {number: signal.signal(number, cancel) for number in (signal.SIGTERM, signal.SIGHUP)}
     try:
         if sys.platform == "darwin" and not getattr(run.args, "rehearsal", False):
             thread_memory_settled(run)
         with exclusive(run, "installer"):
             yield
     finally:
-        signal.signal(signal.SIGTERM, prior)
+        for number, handler in prior.items():
+            signal.signal(number, handler)
 
 
 def _sample():

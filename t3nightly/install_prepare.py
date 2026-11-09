@@ -75,6 +75,7 @@ def prepare(run):
     persist_release_feed(run.args, run.args.version)
     before = capture_work(run)
     backup = backup_database(run, previous, preparing=True)
+    run.payloads.commit()
     after = capture_work(run)
     receipt = {
         "target": run.args.version,

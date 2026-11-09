@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from t3nightly.install_copy import refresh_snapshot, backup_database
+from t3nightly.install_backup_retention import settle
 from t3nightly.release_signatures import verify_cli
 from t3nightly.install_runtime import mark_update_restart, stage_runtime
 from t3nightly.install_diagnostics import persist_memory_diagnostics
@@ -23,12 +24,10 @@ from t3nightly.install_feed import persist_release_feed, verify_release_feed
 from t3nightly.install_storage import payload_locations, snapshot_path
 from t3nightly import install_settings
 
-FORK_BASE_URL = "https://github.com/aneym/t3code/releases/download"
 STREAMING = ("queued", "preparing", "starting", "running")
 REACHABLE = "Other devices can reach this machine"
 ET = ZoneInfo("America/New_York")
 LAUNCHD_LABEL = "com.t3tools.t3code.service"
-LAUNCHD_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
 
 
 def now():
@@ -440,6 +439,7 @@ class Run:
         problem = None
         errors = (Failure, OSError, ValueError, subprocess.SubprocessError)
         try:
+            self.payloads.commit()
             if not self.update(previous, self.args.version, downgrade):
                 problem = "t3 update failed"
             else:
@@ -455,6 +455,7 @@ class Run:
                     "verified", threads=self.thread_count(), connect=connect_before
                 )
                 self.link_cli(self.args.version)
+                settle(self, str(backup), self.state)
                 return self.finish(
                     "installed",
                     f"{self.report['host']}: {previous} -> {self.args.version} installed, threads intact, Connect {'ok' if connect_before else 'not in use'}",

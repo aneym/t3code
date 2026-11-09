@@ -8,7 +8,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
-from t3nightly.install_backup_retention import KEEP, best_effort, mark
+from t3nightly.install_backup_retention import best_effort, mark
 from t3nightly.install_resources import copy_snapshot
 from t3nightly.install_storage import record_payload
 from t3nightly.install_payload_gc import discard_snapshot
@@ -57,7 +57,7 @@ def backup_database(run, version, *, preparing=False):
         )
     if getattr(run.args, "offbox", ""):
         raise ValueError("offbox install must use the offbox backup path; nothing stopped")
-    run.step("backup-prune", **best_effort(run.backups, None, run.home, keep=KEEP - 1))
+    run.step("backup-prune", **best_effort(run.backups, None, run.home))
     root = run.backups
     require_install_space(run.db, snapshot_root(run.home), run.snapshots, root)
     refresh_snapshot(run)
@@ -72,7 +72,7 @@ def backup_database(run, version, *, preparing=False):
     target = (
         root / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}-{version}"
     )
-    run.payloads.hold(root, target)
+    run.payloads.backup(root, target)
     target.mkdir(mode=0o700)
     dest = target / "statev2.sqlite"
     started = time.monotonic()

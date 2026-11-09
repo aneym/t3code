@@ -12,7 +12,7 @@ from pathlib import Path
 from .install_database_copy import copy_rate, database_copy, require_space
 from .install_calibration import rates
 from .install_restore_copy import checksum, estimate, fsync, identity, verify
-from .install_backup_retention import KEEP, best_effort, kept_on_live_volume, mark
+from .install_backup_retention import best_effort, kept_on_live_volume, mark
 from .install_clone_floor import room
 
 
@@ -50,10 +50,10 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
     volume_reason = "APFS clone unavailable on this platform"
     clones = 1
     if sys.platform == "darwin" and (keep_local or getattr(run.args, "compact_db", False)):
-        run.step("backup-prune", **best_effort(run.backups, None, run.home, keep=KEEP - 1))
+        run.step("backup-prune", **best_effort(run.backups, None, run.home))
     if sys.platform == "darwin" and keep_local:
         clone_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        clones += kept_on_live_volume(run.home, run.backups, KEEP - 1)
+        clones += kept_on_live_volume(run.home, run.backups)
         if source.stat().st_dev == clone_root.stat().st_dev and room(clone_root, run.home, clones)["passes"]:
             root = clone_root
             volume_reason = "same-volume clone above the free-space floor plus one database size per live-volume clone"
