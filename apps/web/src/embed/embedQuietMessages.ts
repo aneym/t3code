@@ -28,6 +28,20 @@ export function isEmbedLaunchBrief(message: ChatMessage, threadId: string): bool
   );
 }
 
+type SentMessage = Parameters<typeof resolveUserMessagePresentation>[0] &
+  Pick<ChatMessage, "senderThreadId">;
+
+export function isEmbedPersonMessage(message: SentMessage): boolean {
+  return (
+    message.role === "user" &&
+    message.createdBy === "agent" &&
+    message.creationSource === "mcp" &&
+    message.senderThreadId === undefined &&
+    resolveUserMessagePresentation(message).attribution === "agent" &&
+    !HANDOFF_HEAD.test(message.text)
+  );
+}
+
 export function embedQuietLine(message: ChatMessage): EmbedQuietLine | null {
   if (message.role !== "user") return null;
   if (message.createdBy === "system") {
@@ -39,7 +53,7 @@ export function embedQuietLine(message: ChatMessage): EmbedQuietLine | null {
   }
   const attribution = resolveUserMessagePresentation(message).attribution;
   if (attribution === "t3code") return { kind: "event", summary: firstLine(message.text) };
-  if (attribution !== "agent") return null;
+  if (attribution !== "agent" || isEmbedPersonMessage(message)) return null;
   const from = HANDOFF_HEAD.exec(message.text)?.[1];
   if (from === undefined) return { kind: "agent", summary: firstLine(message.text) };
   return { kind: "agent", from, summary: firstLine(HANDOFF_BODY.exec(message.text)?.[1] ?? "") };
