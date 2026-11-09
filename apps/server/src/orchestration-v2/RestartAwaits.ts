@@ -98,9 +98,5 @@ export const threadAwaitsRestartContinuation = Effect.fn("RestartAwaits.threadPe
       effect.request.type === "provider-runtime.continue" ? [effect.request.sourceRunId] : [],
     ),
   );
-  return Option.isSome(
-    yield* Effect.findFirst(runs, (run) =>
-      awaitsRestartContinuation(outbox, run, handoffs, continuations),
-    ),
-  );
+  return runs.some((run) => continuations.has(run.id) || handoffs.has(run.id));
 });
