@@ -160,16 +160,17 @@ def install(run):
     if refusal:
         return run.finish("failed", refusal)
     restore_class = compatibility.get("eligibility") == RESTORE_CLASS
+    compacting = getattr(args, "compact_db", False)
 
     def rollback_gate():
         live = migration_history(run)
-        eligible = binary_rollback(compatibility) and live == base_history and not getattr(args, "compact_db", False)
+        eligible = binary_rollback(compatibility) and live == base_history and not compacting
         return {"liveMigrationHistory": live, "baseMigrationHistory": base_history} if eligible else None
     from .launcher_artifact import preflight_launcher
 
     try:
         capture_service_launch(run)
-        current = preflight_launcher(run, current=previous == args.version) == "current"
+        current = preflight_launcher(run, current=previous == args.version and not compacting) == "current"
     except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as error:
         return run.finish("failed", str(error) if str(error).endswith("nothing stopped") else f"{error}; nothing stopped")
     precheck(run, previous, observed["oldRuntime.digest"])
