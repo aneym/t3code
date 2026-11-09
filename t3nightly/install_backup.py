@@ -12,7 +12,8 @@ from pathlib import Path
 from .install_database_copy import copy_rate, database_copy, require_space
 from .install_calibration import rates
 from .install_restore_copy import checksum, estimate, fsync, identity, verify
-from .install_backup_retention import mark
+from .install_backup_retention import KEEP, best_effort, kept_on_live_volume, mark
+from .install_clone_floor import room
 
 
 def quiescent(run, db):
@@ -47,13 +48,16 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
     root = run.backups
     clone_root = run.home / "runtime/rollback-backups"
     volume_reason = "APFS clone unavailable on this platform"
+    clones = 1
     if sys.platform == "darwin" and keep_local:
         clone_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if source.stat().st_dev == clone_root.stat().st_dev and shutil.disk_usage(clone_root).free >= size * 3:
+        run.step("backup-prune", **best_effort(run.backups, None, run.home, keep=KEEP - 1))
+        clones += kept_on_live_volume(run.home, run.backups, KEEP - 1)
+        if source.stat().st_dev == clone_root.stat().st_dev and room(clone_root, run.home, clones)["passes"]:
             root = clone_root
-            volume_reason = "same-volume clone with two database sizes reserved after clone"
+            volume_reason = "same-volume clone above the free-space floor plus one database size per live-volume clone"
         else:
-            volume_reason = "same-volume space guard refused clone; configured-root full copy"
+            volume_reason = "same-volume free-space floor refused clone; configured-root full copy"
 
     require_space(run.backups, size)
     require_space(root, size, clone=root == clone_root)
@@ -114,8 +118,8 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
                 if wal.exists():
                     subprocess.run(["/bin/cp", "-c", str(wal), str(target) + "-wal"], check=True, capture_output=True, timeout=30)
                 verify(target, expected, deadline)
-                if shutil.disk_usage(root).free < size * 2:
-                    raise ValueError("clone reserve below two database sizes")
+                if not room(root, run.home, clones)["passes"]:
+                    raise ValueError("clone free-space floor no longer holds")
                 method, reason = "apfs-clone", volume_reason
             except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError):
                 for suffix in ("", "-wal", "-shm"):

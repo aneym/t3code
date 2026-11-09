@@ -26,6 +26,22 @@ def private_directory(path):
     return path
 
 
+def external_base(home):
+    key = hashlib.sha256(str(Path(home).absolute()).encode()).hexdigest()[:16]
+    return EXTERNAL / "t3nightly-install-data" / key
+
+
+def backup_roots(home, root):
+    roots = [Path(root).absolute()]
+    if sys.platform == "darwin":
+        roots += [Path(home).absolute() / "runtime/rollback-backups", external_base(home) / "backups"]
+    unique = []
+    for path in roots:
+        if path not in unique and path.is_dir() and not path.is_symlink():
+            unique.append(path)
+    return unique
+
+
 def payload_locations(state, home, version, backups):
     if sys.platform == "darwin":
         from .rehearsal_storage import enabled
@@ -43,8 +59,7 @@ def payload_locations(state, home, version, backups):
         return private_directory(state), private_directory(Path(backups).expanduser())
     if not version or Path(version).name != version or version in (".", ".."):
         raise ValueError("invalid installer version path")
-    key = hashlib.sha256(str(Path(home).absolute()).encode()).hexdigest()[:16]
-    base = EXTERNAL / "t3nightly-install-data" / key
+    base = external_base(home)
     root = private_directory(base / version)
     snapshots = private_directory(root / "snapshots")
     requested = Path(backups).expanduser().absolute()

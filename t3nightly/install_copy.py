@@ -8,6 +8,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
+from t3nightly.install_backup_retention import KEEP, best_effort, mark
 from t3nightly.install_resources import copy_snapshot
 from t3nightly.install_storage import record_payload
 from t3nightly.install_payload_gc import discard_snapshot
@@ -54,9 +55,10 @@ def backup_database(run, version, *, preparing=False):
         raise ValueError(
             "provider turns became active before the backup; nothing changed"
         )
-    root = run.backups
     if getattr(run.args, "offbox", ""):
         raise ValueError("offbox install must use the offbox backup path; nothing stopped")
+    run.step("backup-prune", **best_effort(run.backups, None, run.home, keep=KEEP - 1))
+    root = run.backups
     require_install_space(run.db, snapshot_root(run.home), run.snapshots, root)
     refresh_snapshot(run)
     if not preparing and (run.streaming_runs() or run.streaming_runs(live=True)):
@@ -112,7 +114,6 @@ def backup_database(run, version, *, preparing=False):
         method=method,
     )
     run.step("backup", path=str(dest), bytes=dest.stat().st_size, method=method, copy_s=round(copied - started, 3), quick_check_s=round(time.monotonic() - copied, 3))
-    from .install_backup_retention import mark
     try:
         mark(dest, {"method": method, "previous": version}, run.home)
     except Exception as error:

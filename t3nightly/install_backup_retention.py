@@ -2,8 +2,13 @@ import argparse
 import json
 import sys
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
+from .install_clone_floor import on_live_volume
+from .install_storage import backup_roots
+
+KEEP = 2
 SCHEMA = "t3nightly.at-stop-backup/1"
 LEGACY_APPROVAL = Path.home() / ".open-factory/approvals/alex-t3nightly-legacy-backup-delete.json"
 
@@ -39,18 +44,26 @@ def mark(path, metadata, home):
     marker.chmod(0o600)
 
 
-def retain(root, current, home):
+def marked_rows(roots, home):
+    rows = [row for root in roots for row in inventory(root, home)]
+    return sorted((row for row in rows if row["marked"]), key=lambda row: row["createdNs"], reverse=True), [row for row in rows if not row["marked"]]
+
+
+def kept_on_live_volume(home, root, keep):
+    marked, _ = marked_rows(backup_roots(home, root), home)
+    return sum(1 for row in marked[:keep] if on_live_volume(row["path"], home))
+
+
+def retain(root, current, home, *, keep=KEEP):
     from .install_payload_gc import payload_lock
 
-    root = Path(root)
-    result = {"removed": [], "legacyKept": [], "kept": [], "legacyApprovalPath": str(LEGACY_APPROVAL)}
-    with payload_lock(root, root / "at-stop-retention") as acquired:
-        if not acquired:
+    roots = backup_roots(home, root)
+    result = {"removed": [], "legacyKept": [], "kept": [], "roots": [str(path) for path in roots], "keep": keep, "legacyApprovalPath": str(LEGACY_APPROVAL)}
+    with ExitStack() as locks:
+        if not all(locks.enter_context(payload_lock(path, path / "at-stop-retention")) for path in roots):
             return {**result, "deferred": True}
-        rows = inventory(root, home)
-        marked = sorted((row for row in rows if row["marked"]), key=lambda row: row["createdNs"], reverse=True)
-        result["legacyKept"] = [row for row in rows if not row["marked"]]
-        protected = {row["path"] for row in marked[:2]}
+        marked, result["legacyKept"] = marked_rows(roots, home)
+        protected = {row["path"] for row in marked[:keep]}
         if current:
             protected.add(str(Path(current)))
             older = [row for row in marked if row["path"] == str(Path(current))]
@@ -84,11 +97,11 @@ def main():
     print(json.dumps({"count": len(rows), "logicalBytes": sum(row["bytes"] for row in rows), "allocatedBytes": sum(row["allocatedBytes"] for row in rows), "privateBytes": sum(row["allocatedBytes"] for row in rows) if sys.platform != "darwin" else None, "privateSizeReason": "Linux full copies use allocated blocks; APFS shared extent ownership requires volume df before/after", "backups": rows, "legacyOrForeign": [row for row in all_rows if not row["marked"]]}))
 
 
-def best_effort(root, current, home, *, metadata=None):
+def best_effort(root, current, home, *, metadata=None, keep=KEEP):
     try:
         if current and metadata is not None:
             mark(current, metadata, home)
-        return retain(root, current, home)
+        return retain(root, current, home, keep=keep)
     except Exception as error:
         return {"error": f"{type(error).__name__}: {error}"}
 
