@@ -33,6 +33,9 @@ node_bin="$HOME/.vite-plus/js_runtime/node/$node_version/bin"
 [ -x "$node_bin/node" ] || { echo "node $node_version not installed under $node_bin" >&2; exit 3; }
 export PATH="$tree/node_modules/.bin:$node_bin:$HOME/.vite-plus/bin:$PATH"
 export T3NIGHTLY_BUILD_OUT="$out" T3NIGHTLY_BUILD_PLATFORM=darwin T3NIGHTLY_BUILD_ARCH=arm64
+build_jobs="${T3NIGHTLY_DESKTOP_JOBS:-$(( $(sysctl -n hw.ncpu) / 2 ))}"
+export CARGO_BUILD_JOBS="$build_jobs" RAYON_NUM_THREADS="$build_jobs" UV_THREADPOOL_SIZE="$build_jobs"
+echo "build-desktop: nice 10, jobs $build_jobs"
 cd "$tree"
 step() {
   name="$1"
