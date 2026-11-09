@@ -2889,15 +2889,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
-    const thread = yield* projectionStore.getThread(command.threadId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestratorProjectionError({
-            threadId: command.threadId,
-            cause,
-          }),
-      ),
-    );
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
     if (
       command.type === "thread.model-selection.set" &&
       command.expectedModelSelection &&
@@ -3072,15 +3070,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (command.type === "thread.pull-request.sync") {
       const project = yield* projects.get(command.projectId).pipe(mapDispatchError(command));
-      const currentSequence = yield* eventSink.latestSequence({ threadId: command.threadId }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorProjectionError({
-              threadId: command.threadId,
-              cause,
-            }),
-        ),
-      );
+      const currentSequence = yield* eventSink
+        .latestSequence({ threadId: command.threadId })
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
       if (
         Option.isNone(project) ||
         project.value.deletedAt !== null ||
@@ -4349,11 +4345,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ])
       .pipe(
         Effect.mapError(
-          (cause) =>
-            new OrchestratorProjectionError({
-              threadId: command.sourceThreadId,
-              cause,
-            }),
+          (cause) => new OrchestratorProjectionError({ threadId: command.sourceThreadId, cause }),
         ),
       );
     // Only side chat forks lock the source; validate the modes copied here, not an earlier read.
@@ -4476,11 +4468,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ])
       .pipe(
         Effect.mapError(
-          (cause) =>
-            new OrchestratorProjectionError({
-              threadId: command.sourceThreadId,
-              cause,
-            }),
+          (cause) => new OrchestratorProjectionError({ threadId: command.sourceThreadId, cause }),
         ),
       );
     // The source is unlocked; validate the modes copied here, not an earlier read.
@@ -5834,7 +5822,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       worktreeMissingRun ??
       (dispatchMode.type === "queue_after_active"
         ? projection.runs.find((run) => run.status === "queued")
-        : undefined);
+        : dispatchMode.type === "start_immediately" &&
+            command.createdBy === "agent" &&
+            command.restartContinuationOfRunId === undefined
+          ? nextQueuedRun(projection)
+          : undefined);
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
