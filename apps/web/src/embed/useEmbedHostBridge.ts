@@ -27,6 +27,7 @@ import {
   readEmbedThemeMessage,
   reservedEmbedChord,
 } from "./embedProtocol";
+import { loadEmbedFonts, readEmbedFonts } from "./embedFonts";
 import { applyEmbedTheme, themeFromEmbedMessage } from "./embedTheme";
 
 const COMPOSER_SELECTOR = '[data-testid="composer-editor"]';
@@ -79,7 +80,10 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
     const onMessage = (event: MessageEvent) => {
       if (!fromHost(channel, event)) return;
       const theme = readEmbedThemeMessage(event.data);
-      if (theme !== null) applyEmbedTheme(themeFromEmbedMessage(theme));
+      if (theme !== null) {
+        applyEmbedTheme(themeFromEmbedMessage(theme));
+        loadEmbedFonts(readEmbedFonts(event.data));
+      }
       const clear = readEmbedClearMessage(event.data);
       if (clear !== null) applyEmbedClearMessage(clear);
       const keys = readEmbedKeysMessage(event.data);
