@@ -30,6 +30,13 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     searchTerms: ["note notes back office agent message silent quiet context no turn"],
   },
   {
+    id: "headless-child-threads",
+    title: "Headless child threads",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["headless child subagent delegate stream streaming partial thinking performance"],
+  },
+  {
     id: "mcp-events",
     title: "MCP Events subscriptions",
     to: "/settings/chat",

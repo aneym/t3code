@@ -866,11 +866,7 @@ export const layerWithOptions = (
         runRecoveryOnce: runOnce(true),
         nextClaimableAt: outbox.nextClaimableAt.pipe(
           Effect.mapError(
-            (cause) =>
-              new OrchestrationEffectWorkerError({
-                operation: "next-claimable",
-                cause,
-              }),
+            (cause) => new OrchestrationEffectWorkerError({ operation: "next-claimable", cause }),
           ),
         ),
         drain: Effect.fn("EffectWorker.drain")(function* (maxEffects = Number.MAX_SAFE_INTEGER) {

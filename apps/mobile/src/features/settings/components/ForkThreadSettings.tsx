@@ -43,6 +43,14 @@ export function ForkThreadSettings() {
           icon: "bubble.left.and.bubble.right",
         },
         {
+          key: "headlessSubagentStreaming",
+          title: "Headless child threads",
+          label: "Headless child threads",
+          subtitle:
+            "Child threads stream to an open client only. While no one watches one, its turns store finished messages and skip partial text, thinking and token updates.",
+          icon: "bolt.circle",
+        },
+        {
           key: "mcpEventsEnabled",
           title: "MCP Events",
           label: "MCP Events subscriptions",
@@ -63,13 +71,19 @@ export function ForkThreadSettings() {
           | "queuedMessagesAnswerPendingInput"
           | "settleIdleChildren"
           | "quietThreadNotes"
+          | "headlessSubagentStreaming"
           | "mcpEventsEnabled"
           | "hostLinkEnabled";
         return (
           <SettingsSection key={key} title={title}>
             <SettingsSwitchRow
               icon={
-                icon as "bubble.left.and.bubble.right" | "checkmark.circle" | "bell.badge" | "link"
+                icon as
+                  | "bubble.left.and.bubble.right"
+                  | "checkmark.circle"
+                  | "bell.badge"
+                  | "link"
+                  | "bolt.circle"
               }
               label={label}
               subtitle={subtitle}

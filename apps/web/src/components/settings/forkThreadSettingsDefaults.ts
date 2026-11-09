@@ -5,6 +5,7 @@ export const forkThreadSettingsDefaults = {
   queueSendAll: DEFAULT_UNIFIED_SETTINGS.queueSendAll,
   settleIdleChildren: DEFAULT_UNIFIED_SETTINGS.settleIdleChildren,
   quietThreadNotes: DEFAULT_UNIFIED_SETTINGS.quietThreadNotes,
+  headlessSubagentStreaming: DEFAULT_UNIFIED_SETTINGS.headlessSubagentStreaming,
   mcpEventsEnabled: DEFAULT_UNIFIED_SETTINGS.mcpEventsEnabled,
   hostLinkEnabled: DEFAULT_UNIFIED_SETTINGS.hostLinkEnabled,
 };
@@ -22,6 +23,9 @@ export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyAr
       : null,
     settings.quietThreadNotes !== forkThreadSettingsDefaults.quietThreadNotes
       ? "Quiet thread notes"
+      : null,
+    settings.headlessSubagentStreaming !== forkThreadSettingsDefaults.headlessSubagentStreaming
+      ? "Headless child threads"
       : null,
     settings.mcpEventsEnabled !== forkThreadSettingsDefaults.mcpEventsEnabled
       ? "MCP Events subscriptions"

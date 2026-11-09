@@ -68,7 +68,11 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
   return { ready: text.slice(0, boundary), rest: text.slice(boundary) };
 }
 
-export function makeAssistantStreamingFilter(mode: ResponseStreamingMode) {
+export function makeAssistantStreamingFilter(
+  mode:
+    | ResponseStreamingMode
+    | ((event: ProviderAdapter.ProviderAdapterV2Event) => ResponseStreamingMode),
+) {
   const delivered = new Map<string, { text: string; at: number }>();
   return (
     event: ProviderAdapter.ProviderAdapterV2Event,
@@ -93,7 +97,7 @@ export function makeAssistantStreamingFilter(mode: ResponseStreamingMode) {
       delivered.delete(key);
       return event;
     }
-    if (mode === "turn") return null;
+    if ((typeof mode === "function" ? mode(event) : mode) === "turn") return null;
     const previous = delivered.get(key);
     if (previous && now - previous.at < 400) return null;
     const { ready } = splitBufferedAssistantText(message.text);
