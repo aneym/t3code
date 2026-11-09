@@ -27,6 +27,8 @@ from .launcher_update import supported, swap
 from .release_eligibility import RESTORE_CLASS
 from .release_receipts import INSTALL_SCHEMA, write
 
+FAILURES = (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError)
+
 
 def measure_candidate(sandbox, manifest):
     baseline, samples = [], []
@@ -209,7 +211,7 @@ def install(run):
     manifest, rehearsal, host, observed = validate(run, previous, candidate)
     compatibility = manifest["targets"][host]["compatibility"]
     if previous == args.version:
-        return hard_install(run)
+        return drain_then_hard(run, previous) if args.compact_db else hard_install(run)
     from .launcher_artifact import changed, preflight_launcher
     from .launcher_qualify import qualify
 
@@ -270,7 +272,7 @@ def install(run):
             if args.force_rollback:
                 candidate_writes(run, args.version, post["proof"])
                 raise ValueError("forced isolated acceptance failure")
-        except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as error:
+        except FAILURES as error:
             run.step("hot-swap-failure", error=str(error))
             if not requested:
                 restart_rpc(run, bearer, "abort", {"epoch": epoch})
@@ -281,7 +283,7 @@ def install(run):
                     fallback = clean_rollback(run, previous, observed["oldRuntime.digest"], original_launcher)
                     recover(run, bearer, previous, compatibility, before, connect, baseline)
                     outcome = "rolled-back"
-                except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
+                except FAILURES as rollback:
                     run.step("hot-swap-rollback-failed", error_type=type(rollback).__name__)
                     outcome = "broken"
                     run.report["hotSwap"].pop("rollback", None)
@@ -293,7 +295,7 @@ def install(run):
             try:
                 with restart_session(run, previous) as bearer:
                     recover(run, bearer, previous, compatibility, before, connect, baseline)
-            except (OSError, ValueError, sqlite3.Error, KeyError, subprocess.SubprocessError) as rollback:
+            except FAILURES as rollback:
                 run.step("hot-swap-rollback-failed", error_type=type(rollback).__name__)
                 outcome = "broken"
                 run.report["hotSwap"].pop("rollback", None)

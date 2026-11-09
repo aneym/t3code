@@ -177,7 +177,7 @@ def compact(run, backup):
     if not getattr(run.args, "compact_db", False):
         return
     started = time.monotonic()
-    record = {"requested": True}
+    record = {"requested": True, "sameVersion": run.report.get("previous") == run.args.version}
     held = None
     try:
         run_step(run, backup, record)
