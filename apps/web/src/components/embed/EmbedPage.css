@@ -1,7 +1,7 @@
 html[data-embed="true"] {
   --glass-opacity: 100% !important;
   --glass-blur: 0px !important;
-  --control-radius: calc(var(--radius) * 1.8);
+  --control-radius: var(--radius-control, calc(var(--radius) * 1.8));
   --app-scrollbar-thumb: color-mix(in oklab, var(--foreground) 22%, transparent);
   --app-scrollbar-thumb-hover: color-mix(in oklab, var(--foreground) 36%, transparent);
 }
@@ -13,7 +13,7 @@ html[data-embed="true"] ::-webkit-scrollbar-thumb {
 html[data-embed="true"] [data-chat-composer-send] {
   width: 28px;
   height: 28px;
-  border-radius: calc(var(--radius) * 1.8);
+  border-radius: var(--control-radius);
   background: var(--primary);
   color: var(--primary-foreground);
   box-shadow: none;
@@ -40,6 +40,7 @@ html[data-embed="true"] [data-chat-composer-send]:focus-visible {
 }
 
 html[data-embed="true"] [data-chat-composer-surface="true"] {
+  border-radius: var(--radius-surface, 1rem);
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
