@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from t3nightly.release_signatures import verify_archive, verify_desktop_zip
 from t3nightly.release_approval import require_approval, verdict_path
 from t3nightly.release_outputs import fast_evidence
+from t3nightly import public_mirror
 
 FEED = Path("/Volumes/StudioExt/t3nightly-feed")
 RELEASES = Path.home() / ".agent-rails/lanes/t3-nightly/release"
@@ -174,6 +175,7 @@ def publish(directory, desktop, feed):
             if match and match[1] not in retained_versions and path.name not in protected_desktop:
                 path.unlink()
         print(json.dumps({"published": version, "feed": str(manifest), "releases": [entry["version"] for entry in kept]}))
+    return version
 
 
 def main():
@@ -182,6 +184,7 @@ def main():
     parser.add_argument("--desktop-dir", type=Path, help="Desktop output containing nightly-mac.yml, zip and blockmap")
     parser.add_argument("--feed-dir", type=Path, default=FEED, help="Release feed directory")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--public-dir", type=Path, help="Mirror to this local directory instead of the configured public mirror")
     parser.add_argument("--verdict", type=Path)
     parser.add_argument("--fast-evidence", type=Path, help="fast-release run whose rehearsal, install and desktop-swap receipts replace the visual verdict")
     args = parser.parse_args()
@@ -215,7 +218,11 @@ def main():
                 for source in args.desktop_dir.expanduser().iterdir():
                     if source.is_file() and source.suffix in (".zip", ".blockmap", ".yml"):
                         atomic_copy(source, desktop / source.name)
-            publish(snapshot, desktop, feed)
+            version = publish(snapshot, desktop, feed)
+        if args.public_dir or (public_mirror.configured() and not args.dry_run):
+            print(json.dumps(public_mirror.mirror_feed(public_mirror.store(directory=args.public_dir), feed, version)))
+        else:
+            print(json.dumps({"publicMirror": "skipped", "config": str(public_mirror.CONFIG)}))
     except (OSError, ValueError, KeyError, tarfile.TarError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"publish-feed: {error}\n")
 
