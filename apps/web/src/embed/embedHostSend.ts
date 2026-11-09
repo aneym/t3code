@@ -15,15 +15,36 @@ export function applyEmbedSendResult(result: EmbedSendOutcome): void {
   settle(result);
 }
 
-export function sendThroughEmbedHost(input: {
-  readonly thread: string;
-  readonly requestId: string;
-  readonly text: string;
-  readonly when: EmbedSendWhen;
-}): Promise<EmbedSendOutcome> | null {
+const EMBED_SEND_TIMEOUT_MS = 10_000;
+
+export type EmbedSendSettled =
+  | EmbedSendOutcome
+  | { readonly requestId: string; readonly outcome: "unanswered" };
+
+export function sendThroughEmbedHost(
+  input: {
+    readonly thread: string;
+    readonly requestId: string;
+    readonly text: string;
+    readonly when: EmbedSendWhen;
+  },
+  onLate: (result: EmbedSendOutcome) => void,
+): Promise<EmbedSendSettled> | null {
   if (!hostSends) return null;
-  const outcome = new Promise<EmbedSendOutcome>((resolve) => waiting.set(input.requestId, resolve));
+  let settle: (result: EmbedSendSettled) => void = () => undefined;
+  const outcome = new Promise<EmbedSendSettled>((resolve) => {
+    settle = resolve;
+  });
+  const timer = setTimeout(() => {
+    waiting.set(input.requestId, onLate);
+    settle({ requestId: input.requestId, outcome: "unanswered" });
+  }, EMBED_SEND_TIMEOUT_MS);
+  waiting.set(input.requestId, (result) => {
+    clearTimeout(timer);
+    settle(result);
+  });
   if (postToEmbedHost({ type: EMBED_SEND_MESSAGE, ...input })) return outcome;
+  clearTimeout(timer);
   waiting.delete(input.requestId);
   return null;
 }

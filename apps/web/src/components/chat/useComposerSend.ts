@@ -68,7 +68,7 @@ import { recordPromptSent } from "../GitHubStarPrompt";
 import { claimEmbedClearCommand } from "../../embed/embedClear";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId, randomUUID } from "~/lib/utils";
-import { heldIdsFor, holdSend, releaseHeldSend } from "./heldSendStore";
+import { failHeldSend, heldIdsFor, holdSend, releaseHeldSend } from "./heldSendStore";
 import { sendThroughEmbedHost } from "../../embed/embedHostSend";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -917,26 +917,55 @@ export function useComposerSend(input: ComposerSendInput) {
       composerThreadContextsSnapshot.length === 0 &&
       composerEnvironmentContextsSnapshot.length === 0 &&
       messageTextForSend.trim() !== "";
+    const landedThroughHost = () => {
+      const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (draft?.prompt.trim() === messageTextForSend.trim()) {
+        clearComposerDraftContent(composerDraftTarget);
+        if (promptRef.current.trim() === messageTextForSend.trim()) promptRef.current = "";
+      }
+      releaseHeldSend(routeThreadKey);
+    };
     const hostSend = plainText
-      ? sendThroughEmbedHost({
-          thread: threadIdForSend,
-          requestId: randomUUID(),
-          text: messageTextForSend.trim(),
-          when: turnDispatchMode === "steer" ? "steer" : "queue",
-        })
+      ? sendThroughEmbedHost(
+          {
+            thread: threadIdForSend,
+            requestId: randomUUID(),
+            text: messageTextForSend.trim(),
+            when: turnDispatchMode === "steer" ? "steer" : "queue",
+          },
+          (late) => {
+            if (late.outcome !== "refused") landedThroughHost();
+          },
+        )
       : null;
     if (hostSend !== null) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
       const result = await hostSend;
-      if (result.outcome !== "refused") return;
-      if (promptRef.current.trim() === "") {
+      if (result.outcome === "sent" || result.outcome === "held") {
+        releaseHeldSend(routeThreadKey);
+        return;
+      }
+      const restored = promptRef.current.trim() === "";
+      if (restored) {
         promptRef.current = messageTextForSend;
         setComposerDraftPrompt(composerDraftTarget, messageTextForSend);
       }
+      if (result.outcome === "unanswered" && restored) {
+        holdSend(routeThreadKey, messageTextForSend);
+        failHeldSend(routeThreadKey);
+        return;
+      }
       toastManager.add(
-        stackedThreadToast({ type: "warning", title: "Not sent", description: result.message }),
+        stackedThreadToast({
+          type: "warning",
+          title: "Not sent",
+          description:
+            result.outcome === "refused"
+              ? result.message
+              : `No answer from the app, so this wasn't sent: ${messageTextForSend.trim().slice(0, 200)}`,
+        }),
       );
       return;
     }
