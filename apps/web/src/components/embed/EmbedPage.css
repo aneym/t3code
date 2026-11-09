@@ -39,36 +39,70 @@ html[data-embed="true"] [data-chat-composer-send]:focus-visible {
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 30%, transparent);
 }
 
-html[data-embed="true"][data-embed-controls="hidden"] [data-chat-composer-surface="true"] {
+html[data-embed="true"] [data-chat-composer-surface="true"] {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
+  column-gap: 0.25rem;
 }
 
-html[data-embed="true"][data-embed-controls="hidden"]
+html[data-embed="true"]
   [data-chat-composer-surface="true"]
   > :not([data-chat-composer-body], [data-chat-composer-footer]) {
   flex-basis: 100%;
   order: 2;
 }
 
-html[data-embed="true"][data-embed-controls="hidden"] [data-chat-composer-body="true"] {
+html[data-embed="true"] [data-chat-composer-body="true"] {
   flex: 1 1 0;
   min-width: 0;
-  padding-top: 0.75rem;
-  padding-right: 0.25rem;
-  padding-bottom: 0.75rem;
+  padding: 0.6875rem 0.25rem 0.6875rem 1rem;
 }
 
-html[data-embed="true"][data-embed-controls="hidden"]
-  [data-chat-composer-body="true"]
-  [data-composer-rich-text] {
+html[data-embed="true"] [data-chat-composer-body="true"] [data-composer-rich-text] {
   min-height: calc(1lh + 0.5rem);
 }
 
-html[data-embed="true"][data-embed-controls="hidden"] [data-chat-composer-footer="true"] {
+html[data-embed="true"] [data-chat-composer-body="true"] .text-placeholder {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+html[data-embed="true"] [data-chat-composer-footer="true"],
+html[data-embed="true"] [data-chat-composer-actions="right"] {
+  display: contents;
+}
+
+html[data-embed="true"] [data-chat-composer-footer="true"] > :first-child,
+html[data-embed="true"] [data-embed-controls-toggle],
+html[data-embed="true"] [data-chat-composer-footer="true"] span:has(> [data-chat-composer-send]) {
   flex: none;
-  padding: 0 0.5rem 0.5rem 0;
+  order: 1;
+  margin: 0 0 0.5rem;
+}
+
+html[data-embed="true"] [data-chat-composer-footer="true"] span:has(> [data-chat-composer-send]) {
+  margin-inline-end: 0.5rem;
+}
+
+html[data-embed="true"] [data-chat-composer-footer="true"] [aria-label="Attach files"],
+html[data-embed="true"] [data-embed-controls-toggle] {
+  width: 28px;
+  height: 28px;
+  color: var(--muted-foreground);
+}
+
+html[data-embed="true"] [data-embed-composer-extra] > * {
+  order: 1;
+  margin-bottom: 0.5rem;
+}
+
+html[data-embed="true"] [data-chat-composer-footer-controls="true"] {
+  order: 3;
+  flex-basis: 100%;
+  justify-content: flex-start;
+  padding: 0 0.5rem 0.5rem;
 }
 
 html[data-embed="true"][data-embed-controls="hidden"] [data-chat-composer-footer-controls="true"],
@@ -76,9 +110,37 @@ html[data-embed="true"][data-embed-controls="hidden"] [data-embed-composer-extra
   display: none;
 }
 
-html[data-embed="true"][data-embed-controls="hidden"] [data-chat-composer-actions="right"] {
-  flex: none;
-  gap: 0.25rem;
+html[data-embed="true"] [data-embed-controls-toggle]:hover {
+  background: color-mix(in oklab, var(--muted) 60%, transparent);
+}
+
+html[data-embed="true"] [data-embed-controls-toggle][aria-pressed="true"] {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+html[data-embed="true"] [data-embed-controls-toggle]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 30%, transparent);
+}
+
+html[data-embed="true"] [data-composer-command-drawer] {
+  margin-bottom: 0.5rem;
+}
+
+html[data-embed="true"] [data-chat-composer-form] .top-1 > button[aria-label^="Remove "] {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border-radius: 9999px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+}
+
+html[data-embed="true"] [data-chat-composer-form] .top-1 > button[aria-label^="Remove "] svg {
+  width: 12px;
+  height: 12px;
 }
 
 html[data-embed="true"] .chat-composer-lane {
