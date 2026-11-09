@@ -674,6 +674,7 @@ describe("EnvironmentSupervisor", () => {
   const makeSilentSocketHarness = (options?: {
     readonly probe?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
     readonly checkHost?: (check: number) => ConnectionDriver.RouteCheck;
+    readonly inboundFrames?: Effect.Effect<number>;
   }) =>
     Effect.gen(function* () {
       const hostChecks = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -681,6 +682,7 @@ describe("EnvironmentSupervisor", () => {
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
         initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
         probe: options?.probe ?? ((attempt) => (attempt === 1 ? Effect.never : Effect.void)),
+        ...(options?.inboundFrames ? { inboundFrames: options.inboundFrames } : {}),
         checkHost: (prepared) =>
           Ref.updateAndGet(hostChecks, (checks) => [...checks, prepared.target._tag]).pipe(
             Effect.map((checks) => options?.checkHost?.(checks.length) ?? "answered"),
@@ -846,8 +848,10 @@ describe("EnvironmentSupervisor", () => {
 
   it.effect("leaves a web or desktop foreground probe to its own deadline", () =>
     Effect.gen(function* () {
+      const reads = yield* Ref.make(0);
       const harness = yield* makeSilentSocketHarness({
         probe: (attempt) => (attempt === 1 ? Effect.sleep("4 seconds") : Effect.void),
+        inboundFrames: Ref.updateAndGet(reads, (count) => count + 1),
       });
       const supervisor = yield* EnvironmentSupervisor.make(LAN_ENTRY, {
         initiallyDesired: true,
