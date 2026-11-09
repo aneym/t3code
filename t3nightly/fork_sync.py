@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from .release_uplink import rsync_cap
 from .remote_shell import ssh_argv
 
 DEFAULT_CACHE = Path("/Volumes/StudioExt/repos/t3code-rr-cache")
@@ -59,7 +60,7 @@ def sync_cache(cache, host):
         check=True,
     )
     subprocess.run(
-        ["rsync", "-e", shlex.join(ssh_argv()), "-a", "--update", f"{cache.resolve()}/", remote],
+        ["rsync", "-e", shlex.join(ssh_argv()), "-a", "--update", *rsync_cap(), f"{cache.resolve()}/", remote],
         check=True,
     )
 

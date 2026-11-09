@@ -92,7 +92,7 @@ def run_action(stage, config, log):
         return 0
     if stage == "install-ax42":
         transfer(config.verdict, f"{config.linux_host}:{config.remote_run}/visual-verdict.md", log)
-        transfer(str(config.run / "shots") + "/", f"{config.linux_host}:{config.remote_run}/shots/", log)
+        transfer(str(config.run / "shots") + "/", f"{config.linux_host}:{config.remote_run}/shots/", log, bulk=True)
         transfer(config.run / "SHA256SUMS", f"{config.linux_host}:{config.remote_run}/SHA256SUMS", log)
         transfer(str(Path(config.verdict).parent / "smoke") + "/", f"{config.linux_host}:{config.remote_run}/smoke/", log)
         code = remote_worker(config, "install", log)

@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from .release_ownership import ownership, verify_tree
+from .release_uplink import remote_path, rsync_cap
 from .remote_shell import ssh_argv
 
 
@@ -39,9 +40,10 @@ def remote_worker(config, action, log):
     ], log, config.linux_host)
 
 
-def transfer(source, destination, log, *, metadata_only=False):
+def transfer(source, destination, log, *, metadata_only=False, bulk=False):
     filters = ["--include=*.json", "--include=*.jsonl", "--include=*.log", "--exclude=*"] if metadata_only else []
-    require(["rsync", "-e", shlex.join(ssh_argv()), "-a", *filters, "--", str(source), str(destination)], log)
+    cap = rsync_cap() if bulk and remote_path(destination) else []
+    require(["rsync", "-e", shlex.join(ssh_argv()), "-a", *filters, *cap, "--", str(source), str(destination)], log)
 
 
 def prepare_remote(config, log):
@@ -52,7 +54,7 @@ def prepare_remote(config, log):
     if ssh(["mkdir", "-p", config.remote_run], log, config.linux_host):
         return 1
     transfer(str(config.tools) + "/", f"{config.linux_host}:{config.remote_root}/tools/", log)
-    transfer(bundle, f"{config.linux_host}:{config.remote_run}/candidate.bundle", log)
+    transfer(bundle, f"{config.linux_host}:{config.remote_run}/candidate.bundle", log, bulk=True)
     (config.run / "candidate-head").write_text(assembly["head"] + "\n")
     transfer(config.run / "candidate-head", f"{config.linux_host}:{config.remote_run}/candidate-head", log)
     return remote_worker(config, "build", log)

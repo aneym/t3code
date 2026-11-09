@@ -8,38 +8,16 @@ from pathlib import Path
 
 from .release_engine import require_engine, require_remote_engine
 from .release_graph import FAST_DEADLINE, SUCCESS_OUTCOMES, critical_path, fast_graph
-from .release_job_runner import LIVE_HOLD_WAIT_S, RESOURCE_WAIT_CAP_S, TERM_GRACE_S
+from .release_fast_spec import HANG_GUARD, defer_argv, stage_spec, wait_cap
+from .release_job_runner import RESOURCE_WAIT_CAP_S, TERM_GRACE_S
 from .release_jobs import HostJobs, TERMINAL, status, submit, write_status
 from .release_targets import LINUX_TARGETS, linux_target, stage_action
 from .release_timeline import Timeline, utc_now
+from .release_uplink import UPLINK_KBPS, UPLINK_NODES, WINDOW, UplinkGate, parse_window
 from .release_run_binding import bind_remote_runs
 from .run_retention import finish_runs
 
-HANG_GUARD = 10
 LIVE_NODES = {"IM", "IL", "S", "F", "LM", "LR", "H", "AS", "W", "FW"}
-
-
-def stage_spec(node, args):
-    if node.defer_reason:
-        return {"outcome": "deferred", "reason": node.defer_reason, "budget": 0, "resources": node.resources}
-    root = str(args.run) if node.host == "studio" else args.remote_run
-    tools = str(Path(__file__).resolve().parent) if node.host == "studio" else args.remote_tools
-    python = sys.executable if node.host == "studio" else "python3"
-    command = [python, f"{tools}/release-fast-stage", "--stage", node.id, "--host", node.host,
-               "--version", args.version, "--topic", args.topic, "--run", root, "--advisory-workers", str(args.advisory_workers), "--rehearsal-drain-s", str(args.rehearsal_drain_s), *(["--startup-busy-ok"] if args.startup_busy_ok else []),
-               "--remote-run", args.remote_run, "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, *defer_argv(args)]
-    install = stage_action(node.id) == "install"
-    return {"label": f"com.agent-rails.t3fast-{args.version}-{node.id}",
-            "command": command, "host": node.host,
-            "budget": node.budget * HANG_GUARD, "resourceWaitCapSeconds": wait_cap(node),
-            "resources": node.resources, "outcomes": node.outcomes,
-            "lockRoot": str(Path.home() / ".t3nightly/resource-locks") if node.host == "studio"
-            else "/home/jobs/t3nightly/resource-locks",
-            "install": install, "result": f"{root}/install-{node.host}/outcome.json" if install else None}
-
-
-def defer_argv(args):
-    return [*(word for host in args.defer_host for word in ("--defer-host", host)), "--defer-reason", args.defer_reason] if args.defer_host else []
 
 
 def remote_engine():
@@ -50,10 +28,6 @@ def remote_engine():
 
 def unavailable_host(node, unavailable):
     return next((host for host in (node.host, *node.writes) if host in unavailable), None)
-
-
-def wait_cap(node):
-    return LIVE_HOLD_WAIT_S if any(resource.startswith("live-install:") for resource in node.resources) else RESOURCE_WAIT_CAP_S
 
 
 def remote_engine_failures(args):
@@ -128,6 +102,7 @@ def drive_fast(args):
     pending = {node.id: node for node in graph if not (args.rehearse_only and (node.id in LIVE_NODES or stage_action(node.id) == "install"))}
     recorded = set(existing.get("recorded", [])) - set(existing.get("failed", []))
     completed_at = existing.get("releaseSeconds")
+    uplink = UplinkGate(args.uplink_window, args.dry_run, existing.get("uplinkHeldSeconds", 0.0))
     last_status_poll = {}
     if not args.dry_run:
         for key, node in list(pending.items()):
@@ -200,6 +175,8 @@ def drive_fast(args):
                     blocked.discard(key)
                     del pending[key]
                     continue
+                if uplink.hold(node):
+                    continue
                 spec = stage_spec(node, args)
                 del pending[key]
                 blocked.discard(key)
@@ -244,15 +221,14 @@ def drive_fast(args):
                 recorded.add(key)
             del running[key]
         if "F" in done and completed_at is None:
-            completed_at = time.monotonic() - start
+            completed_at = max(0.0, time.monotonic() - start - uplink.seconds)
         write_status(state, {"start": started_at, "monotonicStart": start,
                             "seconds": time.monotonic() - start, "releaseSeconds": completed_at,
                             "done": sorted(done), "failed": sorted(failed), "blocked": sorted(blocked & failed),
-                            "recorded": sorted(recorded)})
-        if running and not args.dry_run:
-            time.sleep(0.2)
+                            "recorded": sorted(recorded), "uplinkHeld": uplink.held, "uplinkHeldSeconds": uplink.seconds})
+        uplink.pause(running, len(done) + len(failed))
     gating_failures = failed & {node.id for node in graph if node.gating}
-    print(json.dumps({"done": sorted(done), "failed": sorted(failed), "releaseSeconds": completed_at,
+    print(json.dumps({"done": sorted(done), "failed": sorted(failed), "releaseSeconds": completed_at, "uplinkHeldSeconds": round(uplink.seconds, 3),
                       "dryRun": args.dry_run, "rehearseOnly": args.rehearse_only, "gatingFailures": sorted(gating_failures),
                       **({"deferredHosts": inputs["deferredHosts"]} if "deferredHosts" in inputs else {})}))
     if args.rehearse_only:
@@ -282,7 +258,12 @@ def main(argv):
     parser.add_argument("--defer-host", action="append", default=[], choices=tuple(LINUX_TARGETS), help="skip a Linux host for this release (repeatable): no readiness probe, sandbox proofs or install")
     parser.add_argument("--defer-reason", default="", help="operator decision authorizing the deferral")
     parser.add_argument("--base", default="", help="base ref to build on instead of the serving release head; must contain it")
+    parser.add_argument("--uplink-window", default=WINDOW, help=f"UTC span when bulk uploads may leave Studio (default {WINDOW}); off starts them at once")
     args = parser.parse_args(argv)
+    try:
+        parse_window(args.uplink_window)
+    except ValueError as error:
+        parser.error(str(error))
     args.defer_host = list(dict.fromkeys(args.defer_host))
     args.defer_reason = args.defer_reason.strip()
     if bool(args.defer_host) != bool(args.defer_reason):
@@ -311,8 +292,8 @@ def main(argv):
         return refresh(args, sys.stdout)
     if args.plan:
         path, seconds = critical_path(graph)
-        print(json.dumps({"deadline": FAST_DEADLINE, "criticalPath": path, "criticalSeconds": seconds,
-                          "nodes": [dict(id=node.id, name=node.name, needs=node.needs,
+        print(json.dumps({"deadline": FAST_DEADLINE, "criticalPath": path, "criticalSeconds": seconds, "uplinkWindow": args.uplink_window, "uplinkKBps": UPLINK_KBPS,
+                          "nodes": [dict(id=node.id, name=node.name, needs=node.needs, uplink=node.id in UPLINK_NODES,
                                          gating=node.gating, **stage_spec(node, args)) for node in graph]}, indent=2))
         return 0
     if args.dry_run or args.coordinator:
@@ -333,7 +314,7 @@ def main(argv):
     command = [sys.executable, str(Path(__file__).resolve().with_name("release")),
                "--fast", "--version", args.version, "--topic", args.topic,
                "--run", str(args.run), "--remote-run", args.remote_run, "--advisory-workers", str(args.advisory_workers), "--rehearsal-drain-s", str(args.rehearsal_drain_s), *(["--startup-busy-ok"] if args.startup_busy_ok else []),
-               "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, "--coordinator", *defer_argv(args), *(["--rehearse-only"] if args.rehearse_only else [])]
+               "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, "--uplink-window", args.uplink_window, "--coordinator", *defer_argv(args), *(["--rehearse-only"] if args.rehearse_only else [])]
     spec = {"label": f"com.agent-rails.t3fast-{args.version}-coordinator-{coordinator.name}", "host": "studio",
             "command": command, "budget": sum(node.budget * HANG_GUARD + wait_cap(node) + TERM_GRACE_S + 5 for node in graph) + 60,
             "resourceWaitCapSeconds": RESOURCE_WAIT_CAP_S,

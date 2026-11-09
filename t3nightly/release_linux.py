@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shlex
 import shutil
@@ -39,10 +40,15 @@ def prepare_dependencies(config, head, log, tree_factory):
 
 
 def stage_linux(config, host, log):
-    source = config.run / config.build_host
+    if config.host != config.build_host:
+        raise ValueError(f"stage-linux runs on the Linux builder {config.build_host}, not {config.host}")
+    source = config.build_out()
     target = config.on(host)
+    artifact = json.loads((source / target.artifact().name).read_text())
+    with (source / artifact["archive"]["name"]).open("rb") as handle:
+        if hashlib.file_digest(handle, "sha256").hexdigest() != artifact["archive"]["sha256"]:
+            raise ValueError(f"{source}: builder archive does not match its artifact manifest")
     require(["rsync", "-e", shlex.join(ssh_argv()), "-a", "--partial", f"--rsync-path=mkdir -p {shlex.quote(str(target.build_out()))} && rsync", "--",
              str(source) + "/", f"{LINUX_TARGETS[host]}:{target.build_out()}/"], log)
-    artifact = json.loads((source / target.artifact().name).read_text())
     (config.run / f"payload-{host}.json").write_text(json.dumps({"archive": artifact["archive"]["sha256"]}) + "\n")
     return 0

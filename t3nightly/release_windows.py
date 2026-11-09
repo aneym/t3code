@@ -11,6 +11,7 @@ import tarfile
 from pathlib import Path
 
 from .release_assemble import PACKAGE_FILES
+from .release_uplink import scp_cap
 from .remote_shell import ssh_argv
 
 WINDOWS_STAGES = ("W", "FW")
@@ -109,7 +110,7 @@ def windows_build(config, head, log):
     try:
         if stream(ssh_words(f"powershell -NoProfile -Command \"New-Item -ItemType Directory -Force '{remote}' | Out-Null\""), log):
             return 1
-        if stream(["scp", "-q", *ssh_argv()[1:], *[str(path) for path in sorted(stage.iterdir())], f"{HOST}:{remote}/"], log):
+        if stream(["scp", "-q", *scp_cap(), *ssh_argv()[1:], *[str(path) for path in sorted(stage.iterdir())], f"{HOST}:{remote}/"], log):
             return 1
     finally:
         target.unlink(missing_ok=True)

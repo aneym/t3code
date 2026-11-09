@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .release_signatures import verify_archive
+from .release_uplink import Paced
 
 CONFIG = Path(os.environ.get("T3NIGHTLY_PUBLIC_MIRROR", Path.home() / ".config/t3nightly/public-mirror.json"))
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]+\.[0-9]+\.aneym\.[0-9]+")
@@ -120,7 +121,7 @@ class Bucket:
 
     def call(self, method, key, payload=EMPTY, body=None, extra=None, missing_ok=False):
         for attempt in range(4):
-            data = body.open("rb") if isinstance(body, Path) else body
+            data = Paced(body.open("rb")) if isinstance(body, Path) else body
             try:
                 request = urllib.request.Request(self.endpoint + self.path(key), data=data, method=method, headers=self.signed(method, key, payload, extra or {}))
                 with urllib.request.urlopen(request, timeout=600) as response:

@@ -68,7 +68,7 @@ def linux_nodes(host, builder, defer_hosts=(), defer_reason=""):
     if host in defer_hosts:
         return (FastNode(f"I{suffix}", f"install-{host}", host, (), 0, (), outcomes=("deferred",), defer_reason=defer_reason),)
     payload = "L" if host == builder else f"T{suffix}"
-    transfer = () if host == builder else (FastNode(payload, f"stage-linux-{host}", "studio", ("SL",), 900, (f"payload:{host}",), writes=(host,)),)
+    transfer = () if host == builder else (FastNode(payload, f"stage-linux-{host}", builder, ("L",), 900, (f"payload:{host}",), writes=(host,)),)
     return (*transfer,
             FastNode(f"P{suffix}", f"prepare-sandbox-{host}", host, ("A",), 180, (f"sandbox:{host}",)),
             FastNode(f"R{suffix}", f"rehearse-{host}", host, (payload, f"P{suffix}"), 150, (f"sandbox:{host}",)),

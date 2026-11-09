@@ -18,6 +18,12 @@ PYTHONPATH=/Volumes/StudioExt/repos/t3code-wt/t3nightly python3 t3nightly/publis
 
 `{"target": "dir", "path": "<dir>"}` writes a local directory instead. Keys under the prefix: `v<version>/t3-<version>-<platform>-<arch>.tar.gz`, `v<version>/SHA256SUMS`, then `releases.json` (feed schema, `desktop: []`), then `pin.json` (`{"version": ...}`) last. Every darwin CLI must pass the Developer ID and notarization check first. The pin moves only to the newest release. `t3nightly/public-mirror publish <version>` backfills one feed version, `public-mirror pin <version>` moves the pin (rollback), and `public-mirror status` prints both; `--dir <path>` aims any of them at a local directory.
 
+## Studio uplink
+
+Studio has a 24 Mbps uplink, so the fast release keeps bulk uploads off it during the day. `t3nightly/release_uplink.py` holds the one cap setting, `UPLINK_KBPS` (default 1000 KB/s, about 8 Mbps): every outbound bulk rsync from Studio gets `--bwlimit`, the Windows source scp gets `-l`, and the public mirror's R2 upload is paced to the same rate. Inbound pulls to Studio and tiny copies are uncapped.
+
+Nodes that upload from Studio (`M` and `D` notarize through notarytool, which cannot be rate-capped; `SM` and `SD` prestage to the Linux builder; `W` ships the Windows source; `F` may push the public mirror) start only inside `--uplink-window`, default `05:00-12:00` UTC. Outside it the scheduler holds them without failing and prints `deferredUntil`; Linux nodes keep running. `--uplink-window off` starts them at once for an emergency. The Linux builder (`--linux-host`) copies its artifact straight to the other Linux hosts (`T*` nodes run on the builder), so no Linux artifact leaves Studio; `SL` still pulls it to Studio for the feed.
+
 Land engine changes here with fast-forward pushes to `aneym/t3nightly` on git@github.com:aneym/t3code.git. Linux hosts take a copy with `git archive aneym/t3nightly | ssh <host> tar -x -C t3nightly/engine-<sha>`.
 
 Source: moved from open-factory `engine/t3nightly` at 3c2abf5fe; the load-guard reader that came from `fleet.factory` now lives in `t3nightly/load_guard.py`.

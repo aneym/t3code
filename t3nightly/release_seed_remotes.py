@@ -1,6 +1,7 @@
 import shlex
 
 from .release_transport import require
+from .release_uplink import rsync_cap
 from .remote_shell import ssh_argv
 
 
@@ -22,7 +23,7 @@ def commands(config):
         ))
         rows.extend((
             [*ssh_argv(host), 'mkdir -p "$HOME/.t3/runtime/versions"'],
-            ["rsync", "-e", shlex.join(ssh_argv()), "-a", "--", str(archive), f"{host}:{upload}"],
+            ["rsync", "-e", shlex.join(ssh_argv()), "-a", *rsync_cap(), "--", str(archive), f"{host}:{upload}"],
             [*ssh_argv(host), script],
         ))
     return rows

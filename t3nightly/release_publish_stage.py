@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .build_artifacts import load
 from .release_transport import require, ssh
+from .release_uplink import rsync_cap
 from .remote_shell import ssh_argv
 
 
@@ -72,7 +73,7 @@ def stage_payload(config, stage, log):
         dest = remote.run / 'publish-staged' / stage
         if ssh(['mkdir', '-p', str(dest)], log, config.linux_host):
             raise RuntimeError(f'{stage}: cannot create remote staging directory')
-        require(['rsync', "-e", shlex.join(ssh_argv()), '-a', '--partial', '--', *(str(directory / name) for name in hashes), str(manifest), f'{config.linux_host}:{dest}/'], log)
+        require(['rsync', "-e", shlex.join(ssh_argv()), '-a', '--partial', *rsync_cap(), '--', *(str(directory / name) for name in hashes), str(manifest), f'{config.linux_host}:{dest}/'], log)
         remote_verify(config, stage, {**hashes, manifest.name: sha256(manifest)})
     if stage in ('SM', 'SL'):
         publish = config.run / 'publish'

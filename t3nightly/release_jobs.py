@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .launch_path import launch_path
 from .release_targets import LINUX_TARGETS, stage_action
+from .release_uplink import rsync_cap
 from .remote_shell import ssh_argv
 from .unit_resources import systemd_arguments
 
@@ -150,7 +151,7 @@ class HostJobs:
         if self.dry_run or node.host == "studio" or (node.id != "L" and stage_action(node.id) != "prepare"):
             return
         names = ("candidate.json", "assembly.json", "candidate.bundle", "readiness.json")
-        subprocess.run(["rsync", "-a", "--partial", "--timeout=20", "-e", shlex.join(ssh_argv(None, "-oConnectTimeout=5")),
+        subprocess.run(["rsync", "-a", "--partial", "--timeout=20", *rsync_cap(), "-e", shlex.join(ssh_argv(None, "-oConnectTimeout=5")),
                         f"--rsync-path=mkdir -p {shlex.quote(self.remote_run)}/receipts && rsync", "--",
                         *(str(self.local_run / name) for name in names), f"{LINUX_TARGETS[node.host]}:{self.remote_run}/"],
                        capture_output=True, text=True, timeout=180, check=True)
