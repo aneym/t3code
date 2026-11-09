@@ -91,13 +91,14 @@ def agent_secret(name):
 
 
 class Bucket:
-    def __init__(self, endpoint, bucket, prefix, key_id, secret):
+    def __init__(self, endpoint, bucket, prefix, key_id, secret, token=None):
         self.endpoint = endpoint.rstrip("/")
         self.host = urllib.parse.urlsplit(self.endpoint).netloc
         self.bucket = bucket
         self.prefix = prefix.strip("/")
         self.key_id = key_id
         self.secret = secret
+        self.token = token
 
     def describe(self):
         return f"r2://{self.bucket}/{self.prefix}"
@@ -108,6 +109,8 @@ class Bucket:
     def signed(self, method, key, payload, extra):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         headers = {**{name.lower(): value for name, value in extra.items()}, "host": self.host, "x-amz-content-sha256": payload, "x-amz-date": stamp}
+        if self.token:
+            headers["x-amz-security-token"] = self.token
         names = sorted(headers)
         canonical = "\n".join([method, self.path(key), "", "".join(f"{name}:{str(headers[name]).strip()}\n" for name in names), ";".join(names), payload])
         scope = f"{stamp[:8]}/auto/s3/aws4_request"
@@ -172,7 +175,8 @@ def store(config_path=CONFIG, directory=None):
     if config.get("target") == "dir":
         return Directory(config["path"])
     if config.get("target") == "r2":
-        return Bucket(config["endpoint"], config["bucket"], config.get("prefix", "t3"), agent_secret(config["keyIdSecret"]), agent_secret(config["secretSecret"]))
+        token = agent_secret(config["sessionTokenSecret"]) if config.get("sessionTokenSecret") else None
+        return Bucket(config["endpoint"], config["bucket"], config.get("prefix", "t3"), agent_secret(config["keyIdSecret"]), agent_secret(config["secretSecret"]), token)
     raise ValueError(f"{config_path}: target must be dir or r2")
 
 

@@ -13,8 +13,10 @@ PYTHONPATH=/Volumes/StudioExt/repos/t3code-wt/t3nightly python3 t3nightly/publis
 `publish-feed` also mirrors each published CLI release to the public T3 mirror that `https://one.rails.so/t3` serves, so `T3CODE_RELEASE_BASE_URL=https://one.rails.so/t3` works for T3's own `install.sh` and `t3 update`. The mirror runs when `~/.config/t3nightly/public-mirror.json` exists (`T3NIGHTLY_PUBLIC_MIRROR` names another path); a mirror failure fails the publish. With no config it prints `publicMirror: skipped`.
 
 ```json
-{"target": "r2", "endpoint": "https://<account>.r2.cloudflarestorage.com", "bucket": "rails-desktop", "prefix": "t3", "keyIdSecret": "<agent-secret name>", "secretSecret": "<agent-secret name>"}
+{"target": "r2", "endpoint": "https://<account>.r2.cloudflarestorage.com", "bucket": "rails-desktop", "prefix": "t3", "keyIdSecret": "<agent-secret name>", "secretSecret": "<agent-secret name>", "sessionTokenSecret": "<agent-secret name>"}
 ```
+
+`sessionTokenSecret` is optional: set it for temporary R2 credentials, and every request carries the token as a signed `x-amz-security-token` header. Leave it out for a long-lived key.
 
 `{"target": "dir", "path": "<dir>"}` writes a local directory instead. Keys under the prefix: `v<version>/t3-<version>-<platform>-<arch>.tar.gz`, `v<version>/SHA256SUMS`, then `releases.json` (feed schema, `desktop: []`), then `pin.json` (`{"version": ...}`) last. Every darwin CLI must pass the Developer ID and notarization check first. The pin moves only to the newest release. `t3nightly/public-mirror publish <version>` backfills one feed version, `public-mirror pin <version>` moves the pin (rollback), and `public-mirror status` prints both; `--dir <path>` aims any of them at a local directory.
 
