@@ -228,13 +228,19 @@ export const makeOrphanWorktreeCleanup = Effect.gen(function* () {
           ),
         );
         if (info === null) return keep("worktree no longer exists");
-        const modified = Option.getOrNull(info.mtime);
-        if (modified === null || modified.getTime() > (yield* Clock.currentTimeMillis) - graceMs)
-          return keep("worktree was created or modified recently");
         const run = (args: string[]) =>
           git.execute({ operation: "StorageCleanup.orphan", cwd, args });
         failureReason = "inspection-failed: git-registration";
         const admin = (yield* run(["rev-parse", "--absolute-git-dir"])).stdout.trim();
+        failureReason = "inspection-failed: git-activity";
+        const activity = [info];
+        for (const name of ["index", "HEAD", "logs/HEAD"]) {
+          const file = yield* fs.stat(path.join(admin, name)).pipe(Effect.option);
+          if (Option.isSome(file)) activity.push(file.value);
+        }
+        const cutoff = (yield* Clock.currentTimeMillis) - graceMs;
+        if (activity.some((stat) => (Option.getOrNull(stat.mtime)?.getTime() ?? cutoff) >= cutoff))
+          return keep("worktree was created or modified recently");
         const common = yield* fs.realPath(
           (yield* run(["rev-parse", "--path-format=absolute", "--git-common-dir"])).stdout.trim(),
         );
