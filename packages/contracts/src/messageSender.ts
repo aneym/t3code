@@ -1,10 +1,12 @@
 import * as Schema from "effect/Schema";
 import { EnvironmentId, ThreadId } from "./baseSchemas.ts";
+import { McpEventMessageSource } from "./mcpEvents.ts";
 
 export const MessageSender = Schema.Struct({
   senderThreadId: Schema.optional(ThreadId),
   senderEnvironmentId: Schema.optional(EnvironmentId),
   senderEnvironmentLabel: Schema.optional(Schema.String),
+  mcpEvent: Schema.optional(McpEventMessageSource),
 });
 export type MessageSender = typeof MessageSender.Type;
 
@@ -16,6 +18,7 @@ export const messageSender = (value: MessageSender | null | undefined): MessageS
   ...(value?.senderEnvironmentId === undefined
     ? {}
     : { senderEnvironmentId: value.senderEnvironmentId }),
+  ...(value?.mcpEvent === undefined ? {} : { mcpEvent: value.mcpEvent }),
 });
 
 export const PeerIdentity = Schema.Struct({ environmentId: EnvironmentId, label: Schema.String });

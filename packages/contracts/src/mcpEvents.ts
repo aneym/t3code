@@ -101,3 +101,20 @@ export const McpEventOccurrence = Schema.Struct({
   cursor: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type McpEventOccurrence = typeof McpEventOccurrence.Type;
+
+export const McpEventMessageSource = Schema.Struct({
+  name: Schema.String,
+  server: Schema.String,
+});
+export type McpEventMessageSource = typeof McpEventMessageSource.Type;
+
+const MCP_EVENT_MESSAGE_ID_PREFIX = "message:mcp-events:";
+
+export function mcpEventOfMessage(
+  message:
+    | { readonly id: string; readonly mcpEvent?: McpEventMessageSource | undefined }
+    | undefined,
+): Partial<McpEventMessageSource> | null {
+  if (message?.mcpEvent !== undefined) return message.mcpEvent;
+  return message?.id.startsWith(MCP_EVENT_MESSAGE_ID_PREFIX) ? {} : null;
+}

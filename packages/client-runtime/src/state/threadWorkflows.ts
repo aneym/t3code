@@ -2,6 +2,7 @@ import { sendAllQueuedMembers } from "@t3tools/shared/queuedMessages";
 import {
   type ChatAttachment,
   isCompactionCommandMessage,
+  mcpEventOfMessage,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
@@ -130,6 +131,19 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
 export function getUserQueuedThreadRuns(
   projection: Pick<Projection, "runs" | "messages">,
 ): ReadonlyArray<Run> {
+  const mcpEventMessageIds = new Set(
+    projection.messages
+      .filter((message) => mcpEventOfMessage(message) !== null)
+      .map((message) => message.id),
+  );
+  return queuedRunsExceptCompletions(projection).filter(
+    (run) => !mcpEventMessageIds.has(run.userMessageId),
+  );
+}
+
+function queuedRunsExceptCompletions(
+  projection: Pick<Projection, "runs" | "messages">,
+): ReadonlyArray<Run> {
   const automaticCompletionMessageIds = new Set(
     projection.messages
       .filter(
@@ -169,7 +183,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
     );
   const queuedRuns = copySorted(
-    getUserQueuedThreadRuns(projection),
+    queuedRunsExceptCompletions(projection),
     (left, right) =>
       (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
       left.ordinal - right.ordinal,

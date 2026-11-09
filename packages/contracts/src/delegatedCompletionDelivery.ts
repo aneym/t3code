@@ -17,3 +17,9 @@ export const OrchestrationV2DelegatedCompletionCohort = Schema.Struct({
 });
 export type OrchestrationV2DelegatedCompletionCohort =
   typeof OrchestrationV2DelegatedCompletionCohort.Type;
+
+export const OrchestrationV2DelegatedCompletionRef = Schema.Struct({
+  parentRunId: RunId,
+  generation: PositiveInt,
+  taskIds: Schema.Array(NodeId),
+});
