@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
+import { BOOT_SERVICE_NAME_ENV } from "./cloud/bootServiceRender.ts";
 import { SERVICE_ENV_FILE, SERVICE_LAUNCHER_CONTEXT_ENV } from "./cloud/serviceProtocol.ts";
 
 const MANAGED_SERVICE_ENV_NAMES = new Set([
@@ -10,6 +11,7 @@ const MANAGED_SERVICE_ENV_NAMES = new Set([
   "T3CODE_HOME",
   "T3_BOOT_SERVICE_UNIT",
   "T3CODE_CONNECTOR_UNIT_PATH",
+  BOOT_SERVICE_NAME_ENV,
   SERVICE_LAUNCHER_CONTEXT_ENV,
 ]);
 
