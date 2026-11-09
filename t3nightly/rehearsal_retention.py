@@ -15,6 +15,7 @@ APPROVAL = str(Path.home() / ".open-factory/approvals/alex-studio-disk-cleanup-2
 FAST_HOST = re.compile(r"rehearsal-fast-\d+-([a-z0-9]+)-[0-9a-f]{12}(?:-rollback(?:\.[A-Za-z0-9_.-]+)?)?")
 SHARED = {"rehearsal-runtimes", "rehearsal-seeds"}
 GRACE_S = 30 * 60
+ABANDONED_S = 24 * 3600
 
 
 def nightly_root():
@@ -181,6 +182,8 @@ def due(path, result, table):
     if result and result.get("result") in SUCCESS:
         return "passed", None
     state = "failed" if result else "unfinished"
+    if result is None and datetime.now().timestamp() - started(path, None) > ABANDONED_S:
+        return f"abandoned: unfinished for over {ABANDONED_S // 3600} h", None
     host = target_host(path, result)
     if host is None:
         return None, f"{state}; target host unknown"
