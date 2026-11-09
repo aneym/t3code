@@ -18,10 +18,19 @@ export function EmbedRailsLinkChip({
   link: EmbedRailsLink;
   label: string | null;
 }) {
-  const title =
-    label && label.trim() && !isUrlText(label)
-      ? label.trim()
-      : (link.ref?.title ?? fallbackTitle(href));
+  const named = label && label.trim() && !isUrlText(label) ? label.trim() : null;
+  if (link.gone) {
+    return (
+      <span
+        data-rails-link-gone
+        onContextMenu={(event) => event.stopPropagation()}
+        className="cursor-default font-normal text-muted-foreground"
+      >
+        {named ? `${named} · agent removed` : "agent removed"}
+      </span>
+    );
+  }
+  const title = named ?? link.ref?.title ?? fallbackTitle(href);
   const icon = link.ref?.icon ?? link.mark;
   return (
     <span

@@ -13,10 +13,14 @@ const ASK_BATCH = 30;
 
 export type EmbedLinkRef = { readonly kind: string; readonly title: string; readonly icon: string };
 
-export type EmbedRailsLink = { readonly ref: EmbedLinkRef | null; readonly mark: string | null };
+export type EmbedRailsLink = {
+  readonly ref: EmbedLinkRef | null;
+  readonly mark: string | null;
+  readonly gone: boolean;
+};
 
 const origins = new Set<string>();
-const refs = new Map<string, EmbedLinkRef | null>();
+const refs = new Map<string, EmbedLinkRef | "gone" | null>();
 const asked = new Set<string>();
 const waiting = new Set<string>();
 const listeners = new Set<() => void>();
@@ -30,9 +34,10 @@ function webUrl(value: unknown): URL | null {
   return url.protocol === "https:" || url.protocol === "http:" ? url : null;
 }
 
-function readRef(value: unknown): EmbedLinkRef | null {
+function readRef(value: unknown): EmbedLinkRef | "gone" | null {
   if (typeof value !== "object" || value === null) return null;
   const ref = value as Record<string, unknown>;
+  if (ref.kind === "gone") return "gone";
   const title = typeof ref.title === "string" ? ref.title.trim() : "";
   const icon = webUrl(ref.icon);
   if (typeof ref.kind !== "string" || !KINDS.has(ref.kind) || !title || icon === null) return null;
@@ -105,5 +110,6 @@ export function useEmbedRailsLink(href: string | undefined): EmbedRailsLink | nu
 }
 
 function readLink(link: string, _seen: number): EmbedRailsLink {
-  return { ref: refs.get(link) ?? null, mark };
+  const ref = refs.get(link) ?? null;
+  return { ref: ref === "gone" ? null : ref, mark, gone: ref === "gone" };
 }
