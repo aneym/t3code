@@ -39,6 +39,40 @@ html[data-embed="true"] [data-chat-composer-send]:focus-visible {
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 30%, transparent);
 }
 
+html[data-embed="true"] [data-chat-composer-stop] {
+  flex: none;
+  order: 1;
+  width: 28px;
+  height: 28px;
+  margin: 0 0.5rem 0.5rem 0;
+  border-radius: var(--control-radius);
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  box-shadow: none;
+}
+
+html[data-embed="true"] [data-chat-composer-stop]:enabled:hover {
+  background: color-mix(in oklab, var(--secondary), var(--foreground) 8%);
+}
+
+html[data-embed="true"] [data-chat-composer-stop]:active {
+  transform: translateY(1px);
+}
+
+html[data-embed="true"] [data-chat-composer-stop]:disabled {
+  opacity: 0.5;
+}
+
+html[data-embed="true"] [data-chat-composer-stop]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 30%, transparent);
+}
+
+html[data-embed="true"] [data-chat-composer-stop] svg {
+  width: 10px;
+  height: 10px;
+}
+
 html[data-embed="true"] [data-chat-composer-surface="true"] {
   border-radius: var(--radius-surface, 1rem);
   display: flex;
