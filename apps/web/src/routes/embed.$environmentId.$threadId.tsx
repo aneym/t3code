@@ -15,5 +15,6 @@ function EmbedRoute() {
 }
 
 export const Route = createFileRoute("/embed/$environmentId/$threadId")({
+  loader: () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
   component: EmbedRoute,
 });
