@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from t3nightly.public_mirror import CONFIG, mirror_feed, pinned, releases, store, write_pin
+
+FEED = Path("/Volumes/StudioExt/t3nightly-feed")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Mirror a published fork release from the Studio feed to the public T3 mirror (one.rails.so/t3).")
+    parser.add_argument("--config", type=Path, default=CONFIG, help="Mirror config JSON")
+    parser.add_argument("--dir", type=Path, help="Write to this local directory instead of the configured mirror")
+    commands = parser.add_subparsers(dest="command", required=True)
+    publish = commands.add_parser("publish", help="Upload one feed version; moves the pin when it is the newest")
+    publish.add_argument("version")
+    publish.add_argument("--feed-dir", type=Path, default=FEED)
+    pin = commands.add_parser("pin", help="Point pin.json at a version already in the mirror")
+    pin.add_argument("version")
+    commands.add_parser("status", help="Print the mirror's releases and pin")
+    args = parser.parse_args()
+    try:
+        target = store(args.config, args.dir)
+        if args.command == "publish":
+            result = mirror_feed(target, args.feed_dir.expanduser(), args.version)
+        elif args.command == "pin":
+            write_pin(target, args.version)
+            result = {"mirror": target.describe(), "pin": pinned(target)}
+        else:
+            result = {"mirror": target.describe(), "pin": pinned(target), "releases": [row["version"] for row in releases(target)]}
+        print(json.dumps(result))
+    except (OSError, ValueError, KeyError) as error:
+        parser.exit(1, f"public-mirror: {error}\n")
+
+
+if __name__ == "__main__":
+    main()
