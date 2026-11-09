@@ -1,4 +1,5 @@
 import {
+  clientMessageId,
   CommandId,
   MessageId,
   type OrchestrationV2ThreadProjection,
@@ -59,15 +60,19 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
   const requestKey =
     request.clientRequestId ?? (yield* input.crypto.randomUUIDv4().pipe(Effect.orDie));
   const { commandId, messageId } =
-    request.composerIds ??
-    (yield* sendIdentity({
-      crypto: input.crypto,
-      scope,
-      threadId: request.threadId,
-      requestKey,
-      mode,
-      message: request.message,
-    }));
+    request.composerIds === undefined
+      ? yield* sendIdentity({
+          crypto: input.crypto,
+          scope,
+          threadId: request.threadId,
+          requestKey,
+          mode,
+          message: request.message,
+        })
+      : {
+          commandId: request.composerIds.commandId,
+          messageId: clientMessageId(request.composerIds.messageId),
+        };
 
   const send = {
     projectId: target.thread.projectId,

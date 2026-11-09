@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { ThreadId } from "./baseSchemas.ts";
+import { MessageId, ThreadId } from "./baseSchemas.ts";
 
 export const McpEventsHttpServer = Schema.Struct({
   url: Schema.String.check(Schema.isPattern(/^https?:\/\//)).annotate({
@@ -108,7 +108,10 @@ export const McpEventMessageSource = Schema.Struct({
 });
 export type McpEventMessageSource = typeof McpEventMessageSource.Type;
 
-export const MCP_EVENT_MESSAGE_ID_PREFIX = "message:mcp-events:";
+const MCP_EVENT_MESSAGE_ID_PREFIX = "message:mcp-events:";
+
+export const clientMessageId = (id: MessageId): MessageId =>
+  id.startsWith(MCP_EVENT_MESSAGE_ID_PREFIX) ? MessageId.make(`message:client:${id}`) : id;
 
 export function mcpEventOfMessage(
   message:
