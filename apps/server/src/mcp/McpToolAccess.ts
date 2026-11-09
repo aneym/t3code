@@ -30,6 +30,7 @@ import {
   assertFullAccess,
   assertLiveCaller,
   assertTargetWithinLimits,
+  awaitProviderStartedRun,
   type Caller,
   loadCaller,
   readCaller,
@@ -107,11 +108,13 @@ const refuseReadOnlyClient = McpInvocationContext.McpInvocationContext.pipe(
 );
 
 const writingCaller = refuseReadOnlyClient.pipe(
+  Effect.andThen(awaitProviderStartedRun),
   Effect.andThen(loadCaller()),
   Effect.tap(assertLiveCaller),
 );
 
 const orchestratingCaller = refuseReadOnlyClient.pipe(
+  Effect.andThen(awaitProviderStartedRun),
   Effect.andThen(readCaller()),
   Effect.tap(assertLiveCaller),
 );

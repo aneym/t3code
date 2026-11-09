@@ -12,6 +12,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 
+import * as ProviderWakeDispatches from "./ProviderWakeDispatches.ts";
+
 export interface ProviderContinuationRequest {
   readonly threadId: ThreadId;
   readonly providerThreadId: ProviderThreadId;
@@ -40,17 +42,22 @@ export class ProviderContinuationRequests extends Context.Reference<{
   defaultValue: () => ({ offer: () => Effect.void, take: Effect.never }),
 }) {}
 
-export const layer = Layer.effect(
-  ProviderContinuationRequests,
+export const isProviderStartedTurn = (request: ProviderContinuationRequest) =>
+  (request.delivery ?? "adapter_buffered") === "adapter_buffered" &&
+  request.delegatedCompletion === undefined;
+
+export const layer = Layer.effectContext(
   Effect.gen(function* () {
     const queue = yield* Queue.unbounded<ProviderContinuationRequest>();
-    return {
-      offer: Effect.fn("ProviderContinuationRequests.offer")(function (
+    const wakes = yield* ProviderWakeDispatches.make;
+    return Context.make(ProviderContinuationRequests, {
+      offer: Effect.fn("ProviderContinuationRequests.offer")(function* (
         request: ProviderContinuationRequest,
       ) {
-        return Queue.offer(queue, request).pipe(Effect.asVoid);
+        if (isProviderStartedTurn(request)) yield* wakes.track(request.threadId);
+        yield* Queue.offer(queue, request);
       }),
       take: Queue.take(queue),
-    };
+    }).pipe(Context.add(ProviderWakeDispatches.ProviderWakeDispatches, wakes));
   }),
 );
