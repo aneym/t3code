@@ -1,5 +1,10 @@
+import * as Context from "effect/Context";
 import * as Predicate from "effect/Predicate";
 import { Tool } from "effect/ai";
+
+export const Unadvertised = Context.Reference<ReadonlyArray<string>>("t3/mcp/Unadvertised", {
+  defaultValue: () => [],
+});
 
 type Json = unknown;
 type JsonObject = { [key: string]: Json };
@@ -102,5 +107,20 @@ const compact = (schema: Json, optional: boolean): Json => {
  * the `null` branch of optional properties. A tagged union of objects becomes one object.
  * Decoding still uses the full schema, so each tag's own required fields still apply.
  */
-export const advertisedJsonSchema = (tool: Tool.Any) =>
+export const acceptedJsonSchema = (tool: Tool.Any) =>
   compact(Tool.getJsonSchema(tool), false) as ReturnType<typeof Tool.getJsonSchema>;
+
+export const advertisedJsonSchema = (tool: Tool.Any) => {
+  const accepted = acceptedJsonSchema(tool);
+  const hidden = new Set(Context.get(tool.annotations, Unadvertised));
+  if (hidden.size === 0 || !Predicate.isObject(accepted.properties)) return accepted;
+  return {
+    ...accepted,
+    properties: Object.fromEntries(
+      Object.entries(accepted.properties).filter(([name]) => !hidden.has(name)),
+    ),
+    ...(Array.isArray(accepted.required)
+      ? { required: accepted.required.filter((name) => !hidden.has(name)) }
+      : {}),
+  } as ReturnType<typeof Tool.getJsonSchema>;
+};

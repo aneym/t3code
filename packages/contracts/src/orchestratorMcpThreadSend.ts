@@ -20,12 +20,7 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
         "Reuse it to retry this exact send after a timeout: the message is delivered once and a retry returns the same receipt. A key belongs to one thread: reusing it for another message or mode there is refused.",
     }),
   ),
-  composerIds: Schema.optional(
-    Schema.Struct({ commandId: CommandId, messageId: MessageId }).annotate({
-      description:
-        "Only when relaying a send a T3 composer handed to its embed host: the ids that composer chose, so the message counts once whichever route delivers it.",
-    }),
-  ),
+  composerIds: Schema.optional(Schema.Struct({ commandId: CommandId, messageId: MessageId })),
 });
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
 
