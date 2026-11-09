@@ -69,6 +69,7 @@ import { claimEmbedClearCommand } from "../../embed/embedClear";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId, randomUUID } from "~/lib/utils";
 import { heldIdsFor, holdSend, releaseHeldSend } from "./heldSendStore";
+import { sendThroughEmbedHost } from "../../embed/embedHostSend";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -901,6 +902,42 @@ export function useComposerSend(input: ComposerSendInput) {
     });
     if (missingWorktreeBaseBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
+      return;
+    }
+    const plainText =
+      isServerThread &&
+      !directAnnotation &&
+      submissionIntent !== "background" &&
+      multipleModelSelections === null &&
+      composerAttachmentsSnapshot.length === 0 &&
+      composerFilesSnapshot.length === 0 &&
+      composerTerminalContextsSnapshot.length === 0 &&
+      composerPreviewAnnotationsSnapshot.length === 0 &&
+      composerReviewCommentsSnapshot.length === 0 &&
+      composerThreadContextsSnapshot.length === 0 &&
+      composerEnvironmentContextsSnapshot.length === 0 &&
+      messageTextForSend.trim() !== "";
+    const hostSend = plainText
+      ? sendThroughEmbedHost({
+          thread: threadIdForSend,
+          requestId: randomUUID(),
+          text: messageTextForSend.trim(),
+          when: turnDispatchMode === "steer" ? "steer" : "queue",
+        })
+      : null;
+    if (hostSend !== null) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      const result = await hostSend;
+      if (result.outcome !== "refused") return;
+      if (promptRef.current.trim() === "") {
+        promptRef.current = messageTextForSend;
+        setComposerDraftPrompt(composerDraftTarget, messageTextForSend);
+      }
+      toastManager.add(
+        stackedThreadToast({ type: "warning", title: "Not sent", description: result.message }),
+      );
       return;
     }
     const buildOutgoingMessageContext = (attachmentIds: ReadonlyArray<string>) =>

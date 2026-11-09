@@ -11,6 +11,15 @@ export const EMBED_COMPOSER_FOCUS_MESSAGE = "t3-embed/composer-focus";
 const EMBED_COMPOSER_MESSAGE = "t3-embed/composer";
 export const EMBED_CONTROLS_MESSAGE = "t3-embed/composer-controls";
 export const EMBED_LINK_ASK_MESSAGE = "t3-embed/link-ask";
+const EMBED_HOST_SEND_MESSAGE = "t3-embed/host-send";
+export const EMBED_SEND_MESSAGE = "t3-embed/send";
+const EMBED_SEND_RESULT_MESSAGE = "t3-embed/send-result";
+
+export type EmbedSendWhen = "queue" | "steer";
+
+export type EmbedSendOutcome =
+  | { readonly requestId: string; readonly outcome: "sent" | "held" }
+  | { readonly requestId: string; readonly outcome: "refused"; readonly message: string };
 
 export type EmbedScheme = "light" | "dark";
 
@@ -32,7 +41,14 @@ export type EmbedOutboundMessage =
       readonly item: string | null;
     }
   | { readonly type: typeof EMBED_COMPOSER_FOCUS_MESSAGE; readonly focused: boolean }
-  | { readonly type: typeof EMBED_CONTROLS_MESSAGE; readonly shown: boolean };
+  | { readonly type: typeof EMBED_CONTROLS_MESSAGE; readonly shown: boolean }
+  | {
+      readonly type: typeof EMBED_SEND_MESSAGE;
+      readonly thread: string;
+      readonly requestId: string;
+      readonly text: string;
+      readonly when: EmbedSendWhen;
+    };
 
 export type EmbedControls = "shown" | "hidden";
 
@@ -212,4 +228,29 @@ export function normalizeEmbedOrigins(entries: ReadonlyArray<string>): ReadonlyS
     if (origin !== "null") origins.add(origin);
   }
   return origins;
+}
+
+export function readEmbedHostSendMessage(data: unknown): { readonly on: boolean } | null {
+  const message = readMessage(data, EMBED_HOST_SEND_MESSAGE);
+  return message === null ? null : { on: message.on === true };
+}
+
+const SEND_REQUEST_ID = /^[A-Za-z0-9_-]{8,100}$/;
+const MAX_REFUSAL_LENGTH = 400;
+
+export function readEmbedSendResultMessage(data: unknown): EmbedSendOutcome | null {
+  const message = readMessage(data, EMBED_SEND_RESULT_MESSAGE);
+  if (message === null) return null;
+  const requestId = message.requestId;
+  if (typeof requestId !== "string" || !SEND_REQUEST_ID.test(requestId)) return null;
+  if (message.outcome === "sent" || message.outcome === "held") {
+    return { requestId, outcome: message.outcome };
+  }
+  if (message.outcome !== "refused") return null;
+  const text = typeof message.message === "string" ? message.message.trim() : "";
+  return {
+    requestId,
+    outcome: "refused",
+    message: text.slice(0, MAX_REFUSAL_LENGTH) || "The message wasn't sent.",
+  };
 }
