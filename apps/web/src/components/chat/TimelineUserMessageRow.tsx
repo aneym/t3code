@@ -76,8 +76,7 @@ import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
 import { useEmbedHostConnected } from "../../embed/embedHost";
-import { embedQuietLine } from "../../embed/embedQuietMessages";
-import { EmbedQuietMessageRow } from "../embed/EmbedQuietMessageRow";
+import { QuietUserMessageRow, useQuietUserLine } from "./QuietUserMessageRow";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import {
   MESSAGE_HEADING_LEVEL,
@@ -244,15 +243,15 @@ function UserVideoAttachment({
 
 export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const quietLine = useEmbedHostConnected() ? embedQuietLine(row.message) : null;
+  const quiet = useQuietUserLine(row.message, ctx.activeThreadEnvironmentId);
   return ctx.workflowOpening?.messageId === row.message.id ? (
     <WorkflowOpeningBlock
       opening={ctx.workflowOpening}
       environmentId={ctx.activeThreadEnvironmentId}
       onOpenThread={(threadId) => ctx.onOpenThread(ThreadId.make(threadId))}
     />
-  ) : quietLine !== null ? (
-    <EmbedQuietMessageRow message={row.message} line={quietLine} />
+  ) : quiet !== null ? (
+    <QuietUserMessageRow message={row.message} line={quiet} />
   ) : resolveUserMessagePresentation(row.message).attribution === "automation" ? (
     <AutomationMessageRow row={row} />
   ) : (

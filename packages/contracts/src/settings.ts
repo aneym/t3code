@@ -3,6 +3,7 @@ import { CodexFields as ForkCodexFields } from "./forkCodexSettings.ts";
 import * as ForkMcpAppGrants from "./forkMcpAppGrantSettings.ts";
 import * as ForkPreview from "./forkPreviewSettings.ts";
 import * as ForkEmbed from "./forkEmbedSettings.ts";
+import * as ForkLaneResult from "./forkLaneResultSettings.ts";
 import * as ForkFollowUp from "./forkFollowUpSettings.ts";
 import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
 import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
@@ -81,6 +82,7 @@ import {
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
 const DefaultTrue = Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true)));
+const DefaultFalse = Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false)));
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
@@ -378,7 +380,7 @@ export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
-  inAppNotificationsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  inAppNotificationsEnabled: DefaultFalse,
   diffColorScheme: DiffColorScheme.pipe(
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
@@ -440,9 +442,9 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmQuit: QuitConfirmationModeSetting.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_QUIT_CONFIRMATION_MODE)),
   ),
-  confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  confirmThreadArchive: DefaultFalse,
   confirmThreadDelete: DefaultTrue,
-  confirmThreadUnpin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  confirmThreadUnpin: DefaultFalse,
   diffFilesCollapsed: DefaultTrue,
   showChatChangedFiles: DefaultTrue,
   diffIgnoreWhitespace: DefaultTrue,
@@ -490,27 +492,27 @@ export const ClientSettingsSchema = Schema.Struct({
 
   pullRequestLinksOpenInApp: DefaultTrue,
 
-  planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  contextWindowMeterEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  planModeEnabled: DefaultFalse,
+  contextWindowMeterEnabled: DefaultFalse,
   composerRichTextEnabled: DefaultTrue,
   sendShortcut: Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("enter")),
   ),
   ...ForkFollowUp.Client,
-  proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  proactivePanelsEnabled: DefaultFalse,
   showSkillsInSlashMenu: DefaultTrue,
-  boringSidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  boringSidebarEnabled: DefaultFalse,
   boringSidebarMultilineRows: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   // Retired Labs toggle. Still read as the default for the Usage item in threadDetailsItems.
-  threadDetailsUsageEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  threadDetailsUsageEnabled: DefaultFalse,
   // Sparse show/hide overrides for thread details card items. Missing ids use the client's
   // default, so new items appear for everyone and unknown ids survive a downgrade.
   threadDetailsItems: Schema.Record(Schema.String, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
-  legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  legacySidebarEnabled: DefaultFalse,
   sidebarWorkingShelfEnabled: DefaultTrue,
   sidebarOfflineShelfEnabled: DefaultTrue,
   ...ForkSidebarThread.Client,
@@ -530,7 +532,7 @@ export const ClientSettingsSchema = Schema.Struct({
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
-  snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  snapShotEnabled: DefaultFalse,
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -544,7 +546,7 @@ export const ClientSettingsSchema = Schema.Struct({
   snapShotFlash: DefaultTrue,
   snapShotAnimations: DefaultTrue,
   wordWrap: DefaultTrue,
-  mathRenderingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  mathRenderingEnabled: DefaultFalse,
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -1175,10 +1177,11 @@ export const ServerSettings = Schema.Struct({
   enableAgentBrowserAccess: DefaultTrue,
   ...ForkPreview.Server,
   ...ForkEmbed.Server,
+  ...ForkLaneResult.Server,
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
-  defaultAutoPull: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  defaultAutoPull: DefaultFalse,
   defaultProjectScripts: Schema.Array(ProjectScript).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -1203,17 +1206,17 @@ export const ServerSettings = Schema.Struct({
     keepUnknownOverrideKeys(ProjectSettingsOverrides),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /** Fold once so restarts cannot undo later UI resets. */
-  projectSettingsFolded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  projectSettingsFolded: DefaultFalse,
 
-  enableAgentDeviceAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  enableAgentDeviceAccess: DefaultFalse,
   /** Enabling the Device panel must not grant providers device control. */
-  enableDeviceSupport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  deviceOnboardingCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  enableDeviceSupport: DefaultFalse,
+  deviceOnboardingCompleted: DefaultFalse,
   deviceHosts: SshDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   easDeviceHosts: EasDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   simlockDeviceHosts: SimlockDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Alpha: Simlock device hosts. Off, the server ignores `simlockDeviceHosts`. */
-  simlockDeviceHostsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  simlockDeviceHostsEnabled: DefaultFalse,
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
@@ -1221,8 +1224,8 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
-  snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  snoozeLimitedThreads: DefaultFalse,
+  autoResumeLimitedThreads: DefaultFalse,
   snoozePresets: SnoozePresetSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNOOZE_PRESETS)),
   ),
@@ -1230,7 +1233,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /** Beta: guest links for this machine's threads. Off refuses new links and pauses existing ones. */
-  guestSharingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  guestSharingEnabled: DefaultFalse,
   ...LinkedEnvironmentServerSettingsFields,
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
@@ -1289,14 +1292,14 @@ export const ServerSettings = Schema.Struct({
   ),
   branchNamePrefix: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("t3"))),
   branchNameInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
-  removeAgentCreditsOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  removeAgentCreditsOnMerge: DefaultFalse,
   sourceControlWritingStyle: SourceControlWritingStyleSetting.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  reviewGuidesEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  reviewGuidesEnabled: DefaultFalse,
   reviewGuideModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1559,6 +1562,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   ...ForkPreview.ServerPatch,
   ...ForkEmbed.ServerPatch,
+  ...ForkLaneResult.ServerPatch,
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),

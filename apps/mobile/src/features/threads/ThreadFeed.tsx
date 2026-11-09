@@ -59,6 +59,7 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
+import { laneResultOf } from "@t3tools/client-runtime/lane-result";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
@@ -275,6 +276,7 @@ import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
+import { ThreadLaneResultRow, useLaneResultRows } from "./ThreadLaneResultRow";
 import {
   MarkdownImageAvailableWidthContext,
   ThreadMarkdownImage,
@@ -302,6 +304,7 @@ function formatMessageTime(input: string): string {
   return MESSAGE_TIME_FORMATTER.format(timestamp);
 }
 
+type PressPreview = (source: FilePreviewSource) => void;
 const TURN_FOLD_HEIGHT = 42;
 const FEED_PADDING_TOP = 12;
 // Rows re-measure within a commit or two of a width change. LegendList also defers imperative
@@ -554,7 +557,7 @@ function MessageAttachmentImage(props: {
   readonly className: string;
   readonly maxWidth?: number;
   readonly height?: number;
-  readonly onPressPreview: (source: FilePreviewSource) => void;
+  readonly onPressPreview: PressPreview;
 }) {
   const withGallery = useFilePreviewGallery();
   const sourceIdentifier = useId();
@@ -645,7 +648,7 @@ function isMediaAttachment(attachment: ChatAttachment): boolean {
 function MessageAttachmentFile(props: {
   readonly environmentId: EnvironmentId;
   readonly attachment: ChatFileAttachment;
-  readonly onPressPreview: (source: FilePreviewSource) => void;
+  readonly onPressPreview: PressPreview;
   readonly onPlaybackStart: () => void;
   readonly standaloneMedia?: boolean;
   readonly standaloneFile?: boolean;
@@ -859,7 +862,7 @@ function UserMessageMedia(props: {
   readonly pendingAttachments: QueuedThreadMessage["attachments"];
   readonly environmentId: EnvironmentId;
   readonly maxWidth: number;
-  readonly onPressPreview: (source: FilePreviewSource) => void;
+  readonly onPressPreview: PressPreview;
   readonly onPlaybackStart: () => void;
 }) {
   const attachments = [...props.pendingAttachments, ...props.attachments];
@@ -987,7 +990,7 @@ function PendingMessageMedia(props: {
   readonly className: string;
   readonly maxWidth?: number;
   readonly height?: number;
-  readonly onPressPreview: (source: FilePreviewSource) => void;
+  readonly onPressPreview: PressPreview;
   readonly onPlaybackStart: () => void;
 }) {
   const withGallery = useFilePreviewGallery();
@@ -1043,7 +1046,7 @@ function PendingMessageMedia(props: {
 function MessageAttachmentList(props: {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly environmentId: EnvironmentId;
-  readonly onPressPreview: (source: FilePreviewSource) => void;
+  readonly onPressPreview: PressPreview;
   readonly onPlaybackStart: () => void;
 }) {
   return props.attachments.map((attachment) =>
@@ -1606,16 +1609,16 @@ function renderFeedEntry(
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
     readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
-    readonly onPressPreview: (source: FilePreviewSource) => void;
+    readonly onPressPreview: PressPreview;
     readonly onPlaybackStart: () => void;
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
     readonly renderMarkdownImage: MarkdownImageRenderer;
     readonly renderViewedImage: MarkdownImageRenderer;
     readonly renderReasoning: (text: string) => ReactNode;
-    readonly iconSubtleColor: string | import("react-native").ColorValue;
+    readonly iconSubtleColor: ColorValue;
     readonly replyActionSize: { readonly button: number; readonly icon: number };
     readonly screenColor: string;
-    readonly userBubbleColor: string | import("react-native").ColorValue;
+    readonly userBubbleColor: ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
     readonly reviewCommentColors: ReviewCommentColors;
     readonly reviewCommentBubbleWidth: number;
@@ -1627,10 +1630,12 @@ function renderFeedEntry(
     readonly threadTitle: string;
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
+    readonly laneResultRows: boolean;
   },
 ) {
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
+  const bubbleMaxWidth = props.duoColumns ? "85%" : props.userBubbleMaxWidth;
 
   if (entry.type === "guest-pending") {
     return (
@@ -1638,7 +1643,7 @@ function renderFeedEntry(
         threadRef={scopeThreadRef(props.environmentId, props.threadId)}
         guestName={entry.guestName}
         message={entry.message}
-        bubbleMaxWidth={props.duoColumns ? "85%" : props.userBubbleMaxWidth}
+        bubbleMaxWidth={bubbleMaxWidth}
         renderAttachments={(attachments) => (
           <MessageAttachmentList
             attachments={attachments}
@@ -1824,6 +1829,8 @@ function renderFeedEntry(
         />
       );
     }
+    const lane = props.laneResultRows ? laneResultOf(message) : null;
+    if (lane !== null) return <ThreadLaneResultRow lane={lane} tint={iconSubtleColor} />;
     if (isCompactionCommandFeedEntry(entry)) {
       // Stands in for the compaction item until the provider reports it.
       const active = props.unsettledTurnId !== null && message.runId === props.unsettledTurnId;
@@ -1855,7 +1862,7 @@ function renderFeedEntry(
           expanded={props.expandedWorkRows[rowId] ?? false}
           onToggle={() => props.onToggleWorkRow(rowId, entry.id)}
           bubbleColor={userBubbleColor}
-          bubbleMaxWidth={props.duoColumns ? "85%" : props.userBubbleMaxWidth}
+          bubbleMaxWidth={bubbleMaxWidth}
           contentMaxWidth={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
           iconSubtleColor={iconSubtleColor}
           markdownStyles={markdownStyles.user}
@@ -1925,10 +1932,7 @@ function renderFeedEntry(
             <GuestMessageName name={presentation.guestName} />
           ) : null}
           {mediaAttachments.length + pendingMedia.length > 0 ? (
-            <View
-              className={hasBubble ? "mb-2" : undefined}
-              style={{ width: props.duoColumns ? "85%" : props.userBubbleMaxWidth }}
-            >
+            <View className={hasBubble ? "mb-2" : undefined} style={{ width: bubbleMaxWidth }}>
               <UserMessageMedia
                 attachments={mediaAttachments}
                 pendingAttachments={pendingMedia}
@@ -1940,10 +1944,7 @@ function renderFeedEntry(
             </View>
           ) : null}
           {fileCards ? (
-            <View
-              className="items-end"
-              style={{ maxWidth: props.duoColumns ? "85%" : props.userBubbleMaxWidth }}
-            >
+            <View className="items-end" style={{ maxWidth: bubbleMaxWidth }}>
               {fileCards.map((file) => {
                 const pendingFile = pendingAttachments.find(
                   (attachment) => attachment.id === file.id,
@@ -1973,13 +1974,13 @@ function renderFeedEntry(
               className="min-w-0 rounded-[20px]"
               style={{
                 backgroundColor: userBubbleColor,
-                maxWidth: props.duoColumns ? "85%" : props.userBubbleMaxWidth,
+                maxWidth: bubbleMaxWidth,
                 ...(!bubbleBodyVisible
                   ? null
                   : hasReviewCommentContext
                     ? { width: props.reviewCommentBubbleWidth }
                     : hasWideBlock || foldExpanded
-                      ? { width: props.duoColumns ? "85%" : props.userBubbleMaxWidth }
+                      ? { width: bubbleMaxWidth }
                       : null),
               }}
             >
@@ -2533,6 +2534,7 @@ export const ThreadFeed = memo(function ThreadFeed({
 }: ThreadFeedProps & { readonly ref?: Ref<ThreadFeedHandle> }) {
   const { listRef, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
+  const laneResultRows = useLaneResultRows(props.environmentId);
   const guestShare = useThreadGuestShare(props.detailRef);
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
@@ -2724,6 +2726,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
     markdownLinkRequest.current?.abort();
     const request = new AbortController();
+    const queryOptions = { signal: request.signal, reportFailure: false, reportDefect: false };
     markdownLinkRequest.current = request;
     const skill = enrichedSkillReference(href, props.skills);
     if (skill) {
@@ -2769,7 +2772,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             environmentId: props.environmentId,
             input: { path: mediaPath },
           }),
-          { signal: request.signal, reportFailure: false, reportDefect: false },
+          queryOptions,
         ).then((result) => {
           if (request.signal.aborted) return;
           if (result._tag === "Success" && result.value?.kind === "directory") {
@@ -2818,7 +2821,7 @@ export const ThreadFeed = memo(function ThreadFeed({
               limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
             },
           }),
-          { signal: request.signal, reportFailure: false, reportDefect: false },
+          queryOptions,
         ).then(
           (result) => {
             const match =
@@ -2836,7 +2839,7 @@ export const ThreadFeed = memo(function ThreadFeed({
                 environmentId: props.environmentId,
                 input: { path: originalPath },
               }),
-              { signal: request.signal, reportFailure: false, reportDefect: false },
+              queryOptions,
             ).then(
               (metadata) =>
                 openAt(
@@ -3529,6 +3532,7 @@ export const ThreadFeed = memo(function ThreadFeed({
         <ThreadMediaVisibility>
           {renderFeedEntry(info, {
             userMessageGrouping: info.item.userMessageGrouping,
+            laneResultRows,
             environmentId: props.environmentId,
             connectionState: props.connectionState,
             dispatchingMessageId: props.dispatchingMessageId,
