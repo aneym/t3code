@@ -2,10 +2,12 @@ import { providerInstanceEntriesFor } from "../../providerInstances";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
+  selectsPlanAgent,
 } from "../../modelSelection";
 import { useEnvironmentProviders } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { TraitsPicker } from "../chat/TraitsPicker";
 import { Switch } from "../ui/switch";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -30,12 +32,13 @@ export function DelegatedChildModelSetting() {
   const fallback = resolveAppModelSelectionState(settings, providers);
   const instanceId = setting?.providerInstanceId ?? fallback.instanceId;
   const model = setting?.model ?? fallback.model;
+  const entry = instanceEntries.find((candidate) => candidate.instanceId === instanceId);
   return (
     <SettingsRow
       serverScoped
       settingKeys={["delegatedChildModel"]}
       {...searchableSetting("delegated-child-model")}
-      description="Model a delegated child gets when its task names no model and it runs on this model's provider. Off, a child takes its parent's model."
+      description="Model and options a delegated child gets when its task names no model and it runs on this model's provider. A child on this model that names no options, or clears them, gets these options. Off, a child takes its parent's model."
       control={
         <div className="flex flex-wrap items-center justify-end gap-2">
           {setting === null ? null : (
@@ -56,6 +59,27 @@ export function DelegatedChildModelSetting() {
               onInstanceModelChange={(nextInstanceId, nextModel) =>
                 updateSettings({
                   delegatedChildModel: { providerInstanceId: nextInstanceId, model: nextModel },
+                })
+              }
+            />
+          )}
+          {setting === null || entry === undefined ? null : (
+            <TraitsPicker
+              provider={entry.driverKind}
+              instanceId={instanceId}
+              models={entry.models}
+              model={model}
+              modelOptions={setting.options ?? []}
+              allowPromptInjectedEffort={false}
+              planModeEnabled={settings.planModeEnabled || selectsPlanAgent(setting.options)}
+              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+              onModelOptionsChange={(options) =>
+                updateSettings({
+                  delegatedChildModel: {
+                    providerInstanceId: setting.providerInstanceId,
+                    model: setting.model,
+                    ...(options === undefined || options.length === 0 ? {} : { options }),
+                  },
                 })
               }
             />

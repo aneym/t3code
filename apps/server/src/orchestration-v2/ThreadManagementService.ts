@@ -19,7 +19,6 @@ import type {
 } from "./ProjectionStore.ts";
 import {
   CommandId,
-  isListedThreadLineage,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
   OrchestrationV2ForceStopThreadError,
@@ -61,6 +60,12 @@ import * as Stream from "effect/Stream";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import {
+  makeProjectThreadListing,
+  type ProjectThreadListInput,
+  type ProjectThreadPage,
+  type ProjectThreadPageInput,
+} from "./ProjectThreadListing.ts";
 import { OrchestratorProjectionError, type OrchestratorV2Error } from "./OrchestratorErrors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
@@ -362,10 +367,12 @@ export interface ThreadManagementServiceShape {
     OrchestratorV2Error
   >;
   readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
-  readonly listProjectThreads: (input: {
-    readonly projectId?: ProjectId | undefined;
-    readonly includeSubagents: boolean;
-  }) => Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, ThreadManagementError>;
+  readonly listProjectThreads: (
+    input: ProjectThreadListInput,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, ThreadManagementError>;
+  readonly listProjectThreadPage: (
+    input: ProjectThreadPageInput,
+  ) => Effect.Effect<ProjectThreadPage, ThreadManagementError>;
   readonly sendToThread: (
     input: ThreadSendInput,
   ) => Effect.Effect<ThreadSendResult, ThreadManagementFailure>;
@@ -723,34 +730,13 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const threadListing = makeProjectThreadListing(orchestrator);
+  const listError = (projectId: ProjectId | undefined) => (cause: OrchestratorV2Error) =>
+    new ThreadManagementProjectThreadsListError({ projectId, cause });
   const listProjectThreads: ThreadManagementServiceShape["listProjectThreads"] = (input) =>
-    orchestrator
-      .getShellSnapshot({
-        location: "active",
-        ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ThreadManagementProjectThreadsListError({
-              projectId: input.projectId,
-              cause,
-            }),
-        ),
-        Effect.map((snapshot) =>
-          snapshot.threads
-            .filter((thread) =>
-              input.includeSubagents
-                ? thread.lineage.sideChat !== true
-                : isListedThreadLineage(thread.lineage),
-            )
-            .toSorted(
-              (left, right) =>
-                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
-                right.id.localeCompare(left.id),
-            ),
-        ),
-      );
+    threadListing.listProjectThreads(input).pipe(Effect.mapError(listError(input.projectId)));
+  const listProjectThreadPage: ThreadManagementServiceShape["listProjectThreadPage"] = (input) =>
+    threadListing.listProjectThreadPage(input).pipe(Effect.mapError(listError(input.projectId)));
 
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = makeSendToThread({
     loadRecords: getProjectThreadRecords,
@@ -1416,6 +1402,7 @@ const make = Effect.gen(function* () {
     readShellSnapshot: orchestrator.readShellSnapshot,
     getThreadShell: orchestrator.getThreadShell,
     listProjectThreads,
+    listProjectThreadPage,
     sendToThread,
     noteToThread,
     assertProviderInstanceEnabled,

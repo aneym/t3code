@@ -83,6 +83,10 @@
       "types": "./src/otelEnvironment.ts",
       "import": "./src/otelEnvironment.ts"
     },
+    "./appName": {
+      "types": "./src/appName.ts",
+      "import": "./src/appName.ts"
+    },
     "./httpObservability": {
       "types": "./src/httpObservability.ts",
       "import": "./src/httpObservability.ts"

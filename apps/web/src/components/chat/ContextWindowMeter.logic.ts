@@ -11,7 +11,7 @@ import {
 import { getDisplayModelName, type ModelEsque } from "./providerIconUtils";
 
 // Fallback TTL: Claude's 1h cache plus slack.
-const CLAUDE_RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;
+export const CLAUDE_RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;
 
 export function providerSupportsManualCompaction(
   provider: ProviderInstanceEntry | null | undefined,

@@ -12,6 +12,7 @@ import { AsyncResult } from "effect/reactivity";
 import { ChevronRightIcon } from "lucide-react";
 
 import { APP_VERSION } from "~/branding";
+import { connectionNamesHere } from "~/embed/embedNames";
 import { environmentCatalog } from "~/connection/catalog";
 import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -38,15 +39,18 @@ export function useConnectionDiagnosis(environment: EnvironmentPresentation) {
   const phase = environment.connection.phase;
   const diagnosis =
     environment.entry.enabled && phase !== "connected" && phase !== "unsupported"
-      ? presentConnectionDiagnosis({
-          hostLabel: environment.label,
-          state,
-          via: relayOnly ? "relay" : "direct",
-          // With a direct route as well, the relay's health says nothing about the route in use.
-          relayStatus: relayOnly ? Option.getOrNull(relayStatus ?? Option.none()) : null,
-          clientVersion: APP_VERSION,
-          serverVersion: environment.serverConfig?.environment.serverVersion,
-        })
+      ? presentConnectionDiagnosis(
+          {
+            hostLabel: environment.label,
+            state,
+            via: relayOnly ? "relay" : "direct",
+            // With a direct route as well, the relay's health says nothing about the route in use.
+            relayStatus: relayOnly ? Option.getOrNull(relayStatus ?? Option.none()) : null,
+            clientVersion: APP_VERSION,
+            serverVersion: environment.serverConfig?.environment.serverVersion,
+          },
+          connectionNamesHere(),
+        )
       : null;
   return { diagnosis, state, relayOnly };
 }

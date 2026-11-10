@@ -97,9 +97,10 @@ import * as ManagedLimits from "./policy/managedLimits.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
-import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
-import * as CodexInstallation from "./provider/CodexInstallation.ts";
-import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
+import {
+  layerProviderInstallationRefresh,
+  layerProviderInstallations,
+} from "./provider/providerInstallationLayers.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
@@ -586,38 +587,6 @@ const layerThreadPullRequestWorker = Layer.effectDiscard(
   ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(layerPullRequestService));
 
-const layerProviderInstallationRefresh = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const antigravity = yield* AntigravityInstallation.AntigravityInstallation;
-    const codex = yield* CodexInstallation.CodexInstallation;
-    const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
-    const providers = yield* ProviderRegistry.ProviderRegistry;
-    yield* Stream.merge(
-      antigravity.changes.pipe(
-        Stream.changesWith((a, b) => a.installedVersion === b.installedVersion),
-        Stream.drop(1),
-      ),
-      codex.changes.pipe(
-        Stream.changesWith((a, b) => a.installedVersion === b.installedVersion),
-        Stream.drop(1),
-      ),
-    ).pipe(
-      Stream.runForEach((state) =>
-        instances.listInstances.pipe(
-          Effect.flatMap((entries) =>
-            Effect.forEach(
-              entries.filter((instance) => instance.driverKind === state.driver),
-              (instance) => providers.refreshInstance(instance.instanceId),
-              { discard: true },
-            ),
-          ),
-        ),
-      ),
-      Effect.forkScoped,
-    );
-  }),
-);
-
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,
@@ -680,12 +649,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(ProviderRegistry.layer),
   Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
   Layer.provideMerge(layerPortScanner),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      AntigravityInstallation.AntigravityInstallation.layer,
-      CodexInstallation.CodexInstallation.layer,
-    ),
-  ),
+  Layer.provideMerge(layerProviderInstallations),
 );
 
 const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(

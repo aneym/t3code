@@ -21,6 +21,7 @@ import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as EmbedEnvironmentIdProvidersRouteImport } from './routes/embed.$environmentId.providers'
 import { Route as EmbedEnvironmentIdThreadIdRouteImport } from './routes/embed.$environmentId.$threadId'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsThreadsRouteImport } from './routes/_chat.settings.threads'
@@ -110,6 +111,12 @@ const ChatNewRoute = ChatNewRouteImport.update({
   path: '/new',
   getParentRoute: () => ChatRoute,
 } as any)
+const EmbedEnvironmentIdProvidersRoute =
+  EmbedEnvironmentIdProvidersRouteImport.update({
+    id: '/embed/$environmentId/providers',
+    path: '/embed/$environmentId/providers',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const EmbedEnvironmentIdThreadIdRoute =
   EmbedEnvironmentIdThreadIdRouteImport.update({
     id: '/embed/$environmentId/$threadId',
@@ -303,6 +310,7 @@ export interface FileRoutesByFullPath {
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/embed/$environmentId/$threadId': typeof EmbedEnvironmentIdThreadIdRoute
+  '/embed/$environmentId/providers': typeof EmbedEnvironmentIdProvidersRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -345,6 +353,7 @@ export interface FileRoutesByTo {
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/embed/$environmentId/$threadId': typeof EmbedEnvironmentIdThreadIdRoute
+  '/embed/$environmentId/providers': typeof EmbedEnvironmentIdProvidersRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -389,6 +398,7 @@ export interface FileRoutesById {
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/embed/$environmentId/$threadId': typeof EmbedEnvironmentIdThreadIdRoute
+  '/embed/$environmentId/providers': typeof EmbedEnvironmentIdProvidersRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -433,6 +443,7 @@ export interface FileRouteTypes {
     | '/settings/threads'
     | '/settings/worktrees'
     | '/embed/$environmentId/$threadId'
+    | '/embed/$environmentId/providers'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -475,6 +486,7 @@ export interface FileRouteTypes {
     | '/settings/threads'
     | '/settings/worktrees'
     | '/embed/$environmentId/$threadId'
+    | '/embed/$environmentId/providers'
   id:
     | '__root__'
     | '/_chat'
@@ -518,6 +530,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/threads'
     | '/_chat/settings/worktrees'
     | '/embed/$environmentId/$threadId'
+    | '/embed/$environmentId/providers'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -529,6 +542,7 @@ export interface RootRouteChildren {
   WelcomeRoute: typeof WelcomeRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
   EmbedEnvironmentIdThreadIdRoute: typeof EmbedEnvironmentIdThreadIdRoute
+  EmbedEnvironmentIdProvidersRoute: typeof EmbedEnvironmentIdProvidersRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -616,6 +630,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/new'
       preLoaderRoute: typeof ChatNewRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/embed/$environmentId/providers': {
+      id: '/embed/$environmentId/providers'
+      path: '/embed/$environmentId/providers'
+      fullPath: '/embed/$environmentId/providers'
+      preLoaderRoute: typeof EmbedEnvironmentIdProvidersRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/embed/$environmentId/$threadId': {
       id: '/embed/$environmentId/$threadId'
@@ -916,6 +937,7 @@ const rootRouteChildren: RootRouteChildren = {
   WelcomeRoute: WelcomeRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
   EmbedEnvironmentIdThreadIdRoute: EmbedEnvironmentIdThreadIdRoute,
+  EmbedEnvironmentIdProvidersRoute: EmbedEnvironmentIdProvidersRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -10,6 +10,7 @@ export type T3McpToolSummaryAction =
   | "delegate"
   | "task-status"
   | "task-cancel"
+  | "task-outcome"
   | "schedule-run"
   | "schedule-create"
   | "schedule-list"
@@ -146,6 +147,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Cancel", "Canceling", "Requested cancellation of", "a delegated task"],
     "task-cancel",
   ),
+  task_outcome: tool(["Report", "Reporting", "Reported", "the task outcome"], "task-outcome"),
   schedule_task: tool(["Schedule", "Scheduling", "Scheduled", "a task"], "schedule-create"),
   list_scheduled_tasks: tool(["List", "Listing", "Listed", "scheduled tasks"], "schedule-list"),
   update_scheduled_task: tool(
@@ -157,12 +159,12 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "schedule-delete",
   ),
   request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
-  create_threads: tool(["Create", "Creating", "Created", "T3 threads"], "thread-create"),
-  t3_thread_start: tool(["Start", "Starting", "Started", "a T3 thread"], "thread-create"),
-  t3_thread_list: tool(["List", "Listing", "Listed", "T3 threads"], "thread-list"),
-  t3_thread_read: tool(["Read", "Reading", "Read", "a T3 thread"], "thread-read"),
-  t3_thread_send: tool(["Send", "Sending", "Sent", "to a T3 thread"], "thread-send"),
-  t3_thread_wait: tool(["Wait", "Waiting", "Waited", "for a T3 thread"], "thread-wait"),
+  create_threads: tool(["Create", "Creating", "Created", "threads"], "thread-create"),
+  t3_thread_start: tool(["Start", "Starting", "Started", "a thread"], "thread-create"),
+  t3_thread_list: tool(["List", "Listing", "Listed", "threads"], "thread-list"),
+  t3_thread_read: tool(["Read", "Reading", "Read", "a thread"], "thread-read"),
+  t3_thread_send: tool(["Send", "Sending", "Sent", "to a thread"], "thread-send"),
+  t3_thread_wait: tool(["Wait", "Waiting", "Waited", "for a thread"], "thread-wait"),
   t3_workflow_stop: tool(
     ["Stop", "Stopping", "Requested a stop for", "a workflow"],
     "workflow-stop",
@@ -172,7 +174,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "background-wait",
   ),
   t3_thread_interrupt: tool(
-    ["Interrupt", "Interrupting", "Requested an interrupt of", "a T3 thread"],
+    ["Interrupt", "Interrupting", "Requested an interrupt of", "a thread"],
     "thread-interrupt",
   ),
   t3_worktree_handoff: tool(
@@ -313,6 +315,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Answer", "Answering", "Answered", "pending questions"],
     "question-respond",
   ),
+  t3_pending_request_dismiss: tool(
+    ["Dismiss", "Dismissing", "Dismissed", "a pending question"],
+    "question-respond",
+  ),
   t3_thread_configuration: tool(
     ["Read", "Reading", "Read", "thread configuration"],
     "thread-configuration",
@@ -331,7 +337,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Restart", "Restarting", "Requested a restart of", "the agent session"],
     "thread-restart",
   ),
-  t3_thread_update: tool(["Update", "Updating", "Updated", "T3 thread metadata"], "thread-update"),
+  t3_thread_update: tool(["Update", "Updating", "Updated", "thread metadata"], "thread-update"),
   t3_worktree_list: tool(["List", "Listing", "Listed", "workspace branches"], "worktree-list"),
   t3_preview_list: tool(["List", "Listing", "Listed", "preview tabs"], "browser", "browser"),
   t3_preview_close: tool(["Close", "Closing", "Closed", "a preview tab"], "browser", "browser"),

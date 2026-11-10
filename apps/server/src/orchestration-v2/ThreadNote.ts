@@ -1,12 +1,17 @@
 import {
   messageSender,
+  type MessageSender,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
   type TurnItemId,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 
-type NoteCommand = Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>;
+type NoteCommand = Pick<
+  Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+  "threadId" | "messageId" | "text" | "attachments" | "createdBy" | "creationSource"
+> &
+  MessageSender;
 type EventOf<T extends OrchestrationV2DomainEvent["type"]> = Omit<
   Extract<OrchestrationV2DomainEvent, { readonly type: T }>,
   "id"

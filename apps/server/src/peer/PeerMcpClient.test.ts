@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import { toolkitRegistration } from "../mcp/mcpServer/toolkitRegistration.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
 import * as PeerLinks from "./PeerLinks.ts";
@@ -54,7 +54,7 @@ it.effect.each([false, true])(
           ),
         });
         const box = descriptorOf("environment-box", "Box");
-        const b = yield* servePeer(box, McpHttpServer.toolkitRegistration(toolkit, handlers));
+        const b = yield* servePeer(box, toolkitRegistration(toolkit, handlers));
         const context = yield* Layer.build(
           layerLinkingEnvironment(descriptorOf("environment-a", "A")),
         );

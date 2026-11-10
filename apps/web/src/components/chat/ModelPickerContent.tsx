@@ -9,7 +9,6 @@ import {
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
-import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   memo,
@@ -57,6 +56,7 @@ import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
+import { useOpenProviderSettings } from "./useOpenProviderSettings";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
@@ -205,7 +205,7 @@ function ModelPickerProviderNotices({
   onRequestClose: (() => void) | undefined;
   onOpenProviderSetup: ((instanceId: ProviderInstanceId) => void) | undefined;
 }) {
-  const navigate = useNavigate();
+  const openPanel = useOpenProviderSettings();
   return (
     <>
       {setupEntries.length > 0 ? (
@@ -239,7 +239,7 @@ function ModelPickerProviderNotices({
           <InlineButton
             onClick={() => {
               onRequestClose?.();
-              void navigate({ to: "/settings/providers" });
+              openPanel();
             }}
           >
             Provider settings

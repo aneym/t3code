@@ -40,6 +40,7 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   runId: Schema.optional(RunId),
   taskId: Schema.optional(NodeId),
   status: Schema.optional(OrchestrationV2RunStatus),
+  nativeSessionId: Schema.optional(Schema.NullOr(Schema.String)),
   ...ThreadSendDelivery.fields,
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   receipt: Schema.optional(OrchestratorMcpThreadSendReceipt),

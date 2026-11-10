@@ -5,8 +5,11 @@ export const forkThreadSettingsDefaults = {
   queueSendAll: DEFAULT_UNIFIED_SETTINGS.queueSendAll,
   settleIdleChildren: DEFAULT_UNIFIED_SETTINGS.settleIdleChildren,
   quietThreadNotes: DEFAULT_UNIFIED_SETTINGS.quietThreadNotes,
+  childCompletionNotes: DEFAULT_UNIFIED_SETTINGS.childCompletionNotes,
   headlessSubagentStreaming: DEFAULT_UNIFIED_SETTINGS.headlessSubagentStreaming,
   mcpEventsEnabled: DEFAULT_UNIFIED_SETTINGS.mcpEventsEnabled,
+  mcpClientApprovals: DEFAULT_UNIFIED_SETTINGS.mcpClientApprovals,
+  liveThreadFeed: DEFAULT_UNIFIED_SETTINGS.liveThreadFeed,
   hostLinkEnabled: DEFAULT_UNIFIED_SETTINGS.hostLinkEnabled,
 };
 
@@ -24,11 +27,20 @@ export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyAr
     settings.quietThreadNotes !== forkThreadSettingsDefaults.quietThreadNotes
       ? "Quiet thread notes"
       : null,
+    settings.childCompletionNotes !== forkThreadSettingsDefaults.childCompletionNotes
+      ? "Quiet child completions"
+      : null,
     settings.headlessSubagentStreaming !== forkThreadSettingsDefaults.headlessSubagentStreaming
       ? "Headless child threads"
       : null,
     settings.mcpEventsEnabled !== forkThreadSettingsDefaults.mcpEventsEnabled
       ? "MCP Events subscriptions"
+      : null,
+    settings.mcpClientApprovals !== forkThreadSettingsDefaults.mcpClientApprovals
+      ? "Approvals from MCP clients"
+      : null,
+    settings.liveThreadFeed !== forkThreadSettingsDefaults.liveThreadFeed
+      ? "Live thread feed"
       : null,
     settings.hostLinkEnabled !== forkThreadSettingsDefaults.hostLinkEnabled
       ? "Host app link"

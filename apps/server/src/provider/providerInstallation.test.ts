@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
+import { CliInstallations } from "./cliSetup/CliInstallations.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeProviderInstallation } from "./providerInstallation.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
@@ -97,6 +98,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
               calls.push("codex-remove");
             }),
         }),
+        Layer.mock(CliInstallations)({ runnerFor: () => undefined }),
         Layer.mock(AntigravityInstallation.AntigravityInstallation)({
           managedDirectory: "/unused-managed-runtime",
           start: Effect.sync(() => {

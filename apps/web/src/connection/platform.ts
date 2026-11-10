@@ -52,6 +52,7 @@ import {
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
+import { platformRegistrationTicks } from "./platformRegistrationTicks";
 import { randomUUID } from "../lib/utils";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
@@ -488,8 +489,7 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   };
 });
 
-// The bridge has no topology event. Cache registrations until bearer credentials near expiry.
-const PLATFORM_POLL_INTERVAL = "3 seconds";
+// Cache registrations until bearer credentials near expiry.
 const SECONDARY_BEARER_REFRESH_SKEW_MS = 5_000;
 
 function secondaryBearerExpiresAtEpochMs(
@@ -781,9 +781,7 @@ const layerPlatformConnectionSource = Layer.effect(
     }).pipe(Effect.provide(FetchHttpClient.layer));
 
     return PlatformConnectionSource.PlatformConnectionSource.of({
-      registrations: Stream.tick(PLATFORM_POLL_INTERVAL).pipe(
-        Stream.mapEffect(() => buildPlatformRegistrations),
-      ),
+      registrations: platformRegistrationTicks(buildPlatformRegistrations),
     });
   }),
 );

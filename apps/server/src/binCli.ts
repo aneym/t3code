@@ -19,6 +19,7 @@ import { browserCommand } from "./cli/browser.ts";
 import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { extendConnectionAttemptTimeout, keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
+import { stopOnHangup } from "./hangupStop.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
 import { scheduleCommand } from "./cli/schedule.ts";
@@ -111,6 +112,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
 export const cli = makeCli();
 
 export function runCli() {
+  stopOnHangup();
   extendConnectionAttemptTimeout();
   keepOutboundFetchOnHttp1();
   Command.run(cli, { version: packageJson.version }).pipe(

@@ -39,6 +39,10 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
+import { layerMcpTransport } from "./mcpServer/transport.ts";
+import { McpClientAuthenticator } from "./McpAuthMiddleware.ts";
+import { MAX_SNAPSHOT_TEXT_BYTES } from "./mcpServer/previewSnapshotTool.ts";
+import { toolkitRegistration } from "./mcpServer/toolkitRegistration.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -78,6 +82,7 @@ const client = McpSchema.McpServerClient.of({
   },
   getClient: Effect.die("unused"),
 });
+const layerTransport = layerMcpTransport.pipe(Layer.provide(ServerSettings.layerTest()));
 const layerTest = McpHttpServer.layerPreviewToolkit.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
@@ -245,7 +250,7 @@ const layerRecordingTools = (calls: Array<unknown>) => {
       ),
     ),
   );
-  return McpHttpServer.toolkitRegistration(
+  return toolkitRegistration(
     RecordingToolkit,
     McpToolAccess.toLayer(RecordingToolkit, {
       delegate_task: record,
@@ -610,7 +615,7 @@ it.effect("bounds large ARIA trees without dropping every server locator", () =>
       expect(metadata.accessibilityTree.length).toBeLessThan(accessibilityTree.length);
       const body = result.content[1];
       expect(Buffer.byteLength(body?.type === "text" ? body.text : "", "utf8")).toBeLessThanOrEqual(
-        McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
+        MAX_SNAPSHOT_TEXT_BYTES,
       );
     }),
   ).pipe(Effect.provide(layerTest)),
@@ -657,9 +662,7 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
       });
       expect(text?.type).toBe("text");
       const body = text?.type === "text" ? text.text : "";
-      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
-        McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
-      );
+      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(MAX_SNAPSHOT_TEXT_BYTES);
       const parsed = decodeJsonText(body) as {
         readonly accessibilityTree?: unknown;
         readonly visibleText: string;
@@ -699,9 +702,7 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
 
       const [, text] = snapshot.content;
       const body = text?.type === "text" ? text.text : "";
-      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
-        McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
-      );
+      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(MAX_SNAPSHOT_TEXT_BYTES);
       const parsed = decodeJsonText(body) as {
         readonly title: string;
         readonly consoleEntries: ReadonlyArray<{ readonly text: string }>;
@@ -739,9 +740,7 @@ it.effect("bounds page text made of wide characters before dropping locators", (
 
       const [, text, notice] = snapshot.content;
       const body = text?.type === "text" ? text.text : "";
-      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
-        McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
-      );
+      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(MAX_SNAPSHOT_TEXT_BYTES);
       const parsed = decodeJsonText(body) as {
         readonly visibleText: string;
         readonly interactiveElements: ReadonlyArray<unknown>;
@@ -771,7 +770,7 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
         capabilities: new Set(["orchestration"]),
         issuedAt: 1,
       };
-      const layerServer = McpHttpServer.layerMcpTransport.pipe(
+      const layerServer = layerMcpTransport.pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
@@ -866,7 +865,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           dependencies: [McpInvocationContext.McpInvocationContext],
         }),
       );
-      const serverLayer = McpHttpServer.toolkitRegistration(
+      const serverLayer = toolkitRegistration(
         ProbeToolkit,
         McpToolAccess.toLayer(ProbeToolkit, {
           probe: McpToolAccess.reads(() =>
@@ -877,9 +876,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           ),
         }),
       ).pipe(
-        Layer.provideMerge(
-          McpHttpServer.layerMcpTransport.pipe(Layer.provide(ServerSettings.layerTest())),
-        ),
+        Layer.provideMerge(layerTransport),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) =>
@@ -891,7 +888,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           }),
         ),
         Layer.provide(
-          Layer.succeed(McpHttpServer.McpClientAuthenticator, {
+          Layer.succeed(McpClientAuthenticator, {
             authenticate: (request) =>
               Effect.succeed(
                 request.headers.authorization === `Bearer ${clientToken}` ? clientScope : undefined,
@@ -986,7 +983,7 @@ it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected cr
         client: { deviceType: "bot" },
       });
       yield* HttpRouter.serve(
-        McpHttpServer.layerMcpTransport.pipe(
+        layerMcpTransport.pipe(
           Layer.provide(McpOAuth.layerMcpClientAuthenticator),
           Layer.provide(ServerSettings.layerTest()),
         ),
@@ -1087,7 +1084,7 @@ it.effect("hides tools for links and refuses another environment while the beta 
       );
       const settingsContext = yield* Layer.build(ServerSettings.layerTest());
       const settings = Context.get(settingsContext, ServerSettings.ServerSettingsService);
-      const serverLayer = McpHttpServer.toolkitRegistration(
+      const serverLayer = toolkitRegistration(
         LinksToolkit,
         McpToolAccess.toLayer(LinksToolkit, {
           links: McpToolAccess.reads(() => Effect.succeed({ links: 0 })),
@@ -1095,9 +1092,7 @@ it.effect("hides tools for links and refuses another environment while the beta 
         }),
       ).pipe(
         Layer.provideMerge(
-          McpHttpServer.layerMcpTransport.pipe(
-            Layer.provide(Layer.succeedContext(settingsContext)),
-          ),
+          layerMcpTransport.pipe(Layer.provide(Layer.succeedContext(settingsContext))),
         ),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(
@@ -1202,9 +1197,7 @@ it.effect("lists pull request watch tools only to threads that are not delegated
         ["childToken", scopeFor("childToken", true)],
       ]);
       const serverLayer = McpHttpServer.layerPullRequestsToolkit.pipe(
-        Layer.provideMerge(
-          McpHttpServer.layerMcpTransport.pipe(Layer.provide(ServerSettings.layerTest())),
-        ),
+        Layer.provideMerge(layerTransport),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(scopes.get(token)),
@@ -1298,7 +1291,7 @@ it.effect(
             ],
           }),
         );
-        const serverLayer = McpHttpServer.toolkitRegistration(
+        const serverLayer = toolkitRegistration(
           StartsToolkit,
           McpToolAccess.toLayer(StartsToolkit, {
             starts: McpToolAccess.startsThreads(
@@ -1309,9 +1302,7 @@ it.effect(
             ),
           }),
         ).pipe(
-          Layer.provideMerge(
-            McpHttpServer.layerMcpTransport.pipe(Layer.provide(ServerSettings.layerTest())),
-          ),
+          Layer.provideMerge(layerTransport),
           Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
           Layer.provide(
             Layer.mock(McpSessionRegistry.McpSessionRegistry)({
@@ -1320,7 +1311,7 @@ it.effect(
             }),
           ),
           Layer.provide(
-            Layer.succeed(McpHttpServer.McpClientAuthenticator, {
+            Layer.succeed(McpClientAuthenticator, {
               authenticate: (request) =>
                 Effect.succeed(
                   request.headers.authorization === `Bearer ${clientToken}`

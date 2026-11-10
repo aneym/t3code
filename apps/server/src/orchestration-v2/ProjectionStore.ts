@@ -3,6 +3,7 @@ import {
   type SubagentThreadListingOptions,
 } from "./SubagentThreadListing.ts";
 import { preserveRunRecordedFields } from "./RecordedRunFields.ts";
+import { makeTimelineIndexRows } from "./TimelineIndexRows.ts";
 import { pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
@@ -434,7 +435,14 @@ export interface ShellSnapshotOptions {
 /** What a shell subscriber's trims read from an active thread, without building its shell. */
 export interface ActiveShellIndexEntry extends Pick<
   OrchestrationV2ThreadShell,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pinnedAt" | "snoozedUntil"
+  | "id"
+  | "projectId"
+  | "lineage"
+  | "settledOverride"
+  | "settledAt"
+  | "pinnedAt"
+  | "snoozedUntil"
+  | "updatedAt"
 > {
   /** False only when no run, request, work item, or watch can make the shell live. */
   readonly mayBeLive: boolean;
@@ -500,10 +508,9 @@ export interface ProjectionStoreV2Shape {
   /** Threads that are not deleted, archived ones included. */
   readonly countThreads: () => Effect.Effect<number, ProjectionStoreV2Error>;
   /** Every active thread, in shell order. */
-  readonly listActiveShellIndex: () => Effect.Effect<
-    ReadonlyArray<ActiveShellIndexEntry>,
-    ProjectionStoreV2Error
-  >;
+  readonly listActiveShellIndex: (options?: {
+    readonly liveness?: boolean;
+  }) => Effect.Effect<ReadonlyArray<ActiveShellIndexEntry>, ProjectionStoreV2Error>;
   /** Older settled thread ids below a cursor, newest settle first, and per-project counts. */
   readonly listOlderSettledThreads: (
     query: OlderSettledThreadsQuery,
@@ -1924,13 +1931,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 requested_at = excluded.requested_at,
                 completed_at = excluded.completed_at,
-                payload_json = ${keepRecordedRunField(
-                  keepRecordedRunField(
-                    keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
-                    "$.restartCancelledBackgroundWork",
-                  ),
+                payload_json = ${[
+                  "$.delegatedCompletion",
+                  "$.restartCancelledBackgroundWork",
                   "$.retainBlockedCompletionHolds",
-                )}
+                  "$.reportedOutcome",
+                ].reduce(keepRecordedRunField, sql`excluded.payload_json`)}
             `;
               break;
             }
@@ -5371,6 +5377,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
+    const selectTimelineIndexRows = yield* makeTimelineIndexRows;
     type TimelineIndexItem = Pick<
       OrchestrationV2TurnItem,
       "id" | "threadId" | "runId" | "nodeId" | "parentItemId" | "type" | "status" | "ordinal"
@@ -5398,6 +5405,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       threadId: ThreadId,
       seen: ReadonlySet<ThreadId>,
       includePersistentOutput?: boolean,
+      messageFields?: boolean,
     ) => Effect.Effect<
       {
         readonly records: ProjectionRecords<"runs" | "attempts">;
@@ -5406,44 +5414,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       },
       ProjectionStoreV2Error
     > = Effect.fn("ProjectionStore.readTimelineIndex")(
-      function* (threadId: ThreadId, seen: ReadonlySet<ThreadId>, includePersistentOutput = false) {
+      function* (
+        threadId: ThreadId,
+        seen: ReadonlySet<ThreadId>,
+        includePersistentOutput = false,
+        messageFields = true,
+      ) {
         const records = yield* getThreadRecords(threadId, ["runs", "attempts"]);
-        const rows = yield* sql<{
-          turn_item_id: string;
-          run_id: string | null;
-          node_id: string | null;
-          parent_item_id: string | null;
-          type: OrchestrationV2TurnItem["type"];
-          input_intent: NonNullable<TimelineIndexItem["inputIntent"]> | null;
-          created_by: "user" | "agent" | "system" | null;
-          message_id: string | null;
-          status: OrchestrationV2TurnItem["status"];
-          ordinal: number;
-          persistent_output: number;
-          attempt_id: string | null;
-          attempt_status: string | null;
-        }>`SELECT item.turn_item_id, item.run_id, item.node_id, item.parent_item_id, item.type, item.status, item.ordinal,
-          ${includePersistentOutput ? sql`attempt.attempt_id` : sql`NULL`} AS attempt_id,
-          ${includePersistentOutput ? sql`attempt.status` : sql`NULL`} AS attempt_status,
-          ${
-            includePersistentOutput ? sql`CASE WHEN ${inlineWorkOutput} THEN 1 ELSE 0 END` : sql`0`
-          } AS persistent_output,
-          CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.inputIntent') END AS input_intent,
-          CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.createdBy') END AS created_by,
-          CASE WHEN item.type IN ('user_message', 'assistant_message') THEN json_extract(item.payload_json, '$.messageId') END AS message_id
-        FROM orchestration_v2_projection_turn_items AS item
-        ${
-          includePersistentOutput
-            ? sql`LEFT JOIN orchestration_v2_projection_nodes AS node ON node.node_id = item.node_id
-        LEFT JOIN orchestration_v2_projection_run_attempts AS attempt ON attempt.attempt_id = (
-          SELECT attempt_id FROM orchestration_v2_projection_run_attempts
-          WHERE run_id = item.run_id AND root_node_id = COALESCE(node.root_node_id, item.node_id)
-          ORDER BY attempt_ordinal DESC LIMIT 1
-        )`
-            : sql``
-        }
-        WHERE item.thread_id = ${threadId}
-        ORDER BY item.ordinal ASC, item.turn_item_id ASC`;
+        const rows = yield* selectTimelineIndexRows({
+          threadId,
+          persistentOutput: includePersistentOutput ? inlineWorkOutput : null,
+          messageFields,
+        });
         const runStatuses = new Map(records.runs.map((run) => [String(run.id), run.status]));
         const items: Array<TimelineIndexItem> = rows.map((row) => ({
           id: TurnItemId.make(row.turn_item_id),
@@ -5480,6 +5462,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           fork.threadId,
           new Set([...seen, threadId]),
           includePersistentOutput,
+          messageFields,
         );
         const sourceRun = source.records.runs.find((run) => run.id === fork.runId);
         let inherited: Array<TimelineIndexRow> = [];
@@ -5668,7 +5651,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const index = yield* readTimelineIndex(threadId, new Set());
+            const index = yield* readTimelineIndex(threadId, new Set(), false, false);
             const matching = index.visible
               .map((row, position) => ({ ...row, position }))
               .filter((row) =>
@@ -6708,20 +6691,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows[0]?.count ?? 0;
     }, Effect.mapError(shellSnapshotReadError));
 
-    const listActiveShellIndex = Effect.fn("ProjectionStore.listActiveShellIndex")(function* () {
-      const rows = yield* sql<{
-        readonly thread_id: string;
-        readonly project_id: string;
-        readonly relationship_to_parent: string | null;
-        readonly parent_thread_id: string | null;
-        readonly root_thread_id: string;
-        readonly side_chat: number | null;
-        readonly settled_override: string | null;
-        readonly settled_at: string | null;
-        readonly pinned_at: string | null;
-        readonly snoozed_until: string | null;
-        readonly may_be_live: number;
-      }>`
+    const listActiveShellIndex = Effect.fn("ProjectionStore.listActiveShellIndex")(
+      function* (options?: { readonly liveness?: boolean }) {
+        const rows = yield* sql<{
+          readonly thread_id: string;
+          readonly project_id: string;
+          readonly relationship_to_parent: string | null;
+          readonly parent_thread_id: string | null;
+          readonly root_thread_id: string;
+          readonly side_chat: number | null;
+          readonly settled_override: string | null;
+          readonly settled_at: string | null;
+          readonly pinned_at: string | null;
+          readonly snoozed_until: string | null;
+          readonly updated_at: string;
+          readonly may_be_live: number;
+        }>`
         SELECT
           t.thread_id,
           t.project_id,
@@ -6733,9 +6718,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.settledAt') AS settled_at,
           json_extract(t.payload_json, '$.pinnedAt') AS pinned_at,
           json_extract(t.payload_json, '$.snoozedUntil') AS snoozed_until,
+          json_extract(t.payload_json, '$.updatedAt') AS updated_at,
           -- A superset of isLiveSubagentShell: the sources of its run status, pending request,
           -- and pending background work.
-          (
+          ${
+            options?.liveness === false
+              ? sql`1`
+              : sql`(
             EXISTS (
               SELECT 1 FROM orchestration_v2_projection_runs r
               WHERE r.thread_id = t.thread_id
@@ -6766,35 +6755,39 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               SELECT 1 FROM json_each(t.payload_json, '$.pullRequests') link
               WHERE json_type(link.value, '$.watch') IS NOT NULL
             )
-          ) AS may_be_live
+          )`
+          } AS may_be_live
         FROM orchestration_v2_projection_threads t
         WHERE t.deleted_at IS NULL
           AND json_extract(t.payload_json, '$.archivedAt') IS NULL
         ORDER BY t.updated_at ASC, t.thread_id ASC
       `;
-      return rows.map((row): ActiveShellIndexEntry => ({
-        id: ThreadId.make(row.thread_id),
-        projectId: ProjectId.make(row.project_id),
-        lineage: {
-          parentThreadId:
-            row.parent_thread_id === null ? null : ThreadId.make(row.parent_thread_id),
-          relationshipToParent:
-            row.relationship_to_parent === "fork" || row.relationship_to_parent === "subagent"
-              ? row.relationship_to_parent
+        return rows.map((row): ActiveShellIndexEntry => ({
+          id: ThreadId.make(row.thread_id),
+          projectId: ProjectId.make(row.project_id),
+          lineage: {
+            parentThreadId:
+              row.parent_thread_id === null ? null : ThreadId.make(row.parent_thread_id),
+            relationshipToParent:
+              row.relationship_to_parent === "fork" || row.relationship_to_parent === "subagent"
+                ? row.relationship_to_parent
+                : null,
+            rootThreadId: ThreadId.make(row.root_thread_id),
+            ...(row.side_chat === null ? {} : { sideChat: row.side_chat === 1 }),
+          },
+          settledOverride:
+            row.settled_override === "settled" || row.settled_override === "active"
+              ? row.settled_override
               : null,
-          rootThreadId: ThreadId.make(row.root_thread_id),
-          ...(row.side_chat === null ? {} : { sideChat: row.side_chat === 1 }),
-        },
-        settledOverride:
-          row.settled_override === "settled" || row.settled_override === "active"
-            ? row.settled_override
-            : null,
-        settledAt: row.settled_at === null ? null : DateTime.makeUnsafe(row.settled_at),
-        pinnedAt: row.pinned_at === null ? null : DateTime.makeUnsafe(row.pinned_at),
-        snoozedUntil: row.snoozed_until === null ? null : DateTime.makeUnsafe(row.snoozed_until),
-        mayBeLive: row.may_be_live === 1,
-      }));
-    }, Effect.mapError(shellSnapshotReadError));
+          settledAt: row.settled_at === null ? null : DateTime.makeUnsafe(row.settled_at),
+          pinnedAt: row.pinned_at === null ? null : DateTime.makeUnsafe(row.pinned_at),
+          snoozedUntil: row.snoozed_until === null ? null : DateTime.makeUnsafe(row.snoozed_until),
+          updatedAt: DateTime.makeUnsafe(row.updated_at),
+          mayBeLive: row.may_be_live === 1,
+        }));
+      },
+      Effect.mapError(shellSnapshotReadError),
+    );
 
     const findGuestShareThreadId = Effect.fn("ProjectionStore.findGuestShareThreadId")(function* (
       shareId: GuestShareId,

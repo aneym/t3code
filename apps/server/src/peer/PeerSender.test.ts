@@ -4,7 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Tool, Toolkit } from "effect/ai";
-import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import { toolkitRegistration } from "../mcp/mcpServer/toolkitRegistration.ts";
 import { McpInvocationContext } from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
 import * as Schema from "effect/Schema";
@@ -37,7 +37,7 @@ it.effect(
         );
         const peer = yield* servePeer(
           receiver,
-          McpHttpServer.toolkitRegistration(
+          toolkitRegistration(
             toolkit,
             McpToolAccess.toLayer(toolkit, {
               sender: McpToolAccess.reads(() =>

@@ -1,7 +1,6 @@
 import {
   mcpEventOfMessage,
   type CommandId,
-  type RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
   type RunId,
@@ -25,6 +24,7 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import * as ThreadSessionRestarts from "../../../orchestration-v2/ThreadSessionRestarts.ts";
+import * as PendingRequests from "./pendingRequests.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -65,32 +65,6 @@ const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
   return { sequence: result.sequence };
 });
 
-const readQuestion = Effect.fn("mcp.readQuestion")(function* (input: {
-  threadId?: ThreadId | undefined;
-  requestId: RuntimeRequestId;
-}) {
-  const context = yield* readThread(input.threadId, ["runtimeRequests", "turnItems"]);
-  const request = context.projection.runtimeRequests.find(
-    (request) => request.id === input.requestId && request.kind === "user_input",
-  );
-  const item = context.projection.turnItems.find(
-    (item) => item.type === "user_input_request" && item.requestId === input.requestId,
-  );
-  if (request === undefined || item?.type !== "user_input_request")
-    return yield* new OrchestratorMcpFailure({
-      code: "invalid_request",
-      message: "The pending user-input request was not found.",
-    });
-  if (request.status !== "pending")
-    return yield* new OrchestratorMcpFailure({
-      code: "invalid_request",
-      message:
-        request.status === "resolved"
-          ? "The user-input request was already answered."
-          : `The user-input request is no longer pending (${request.status}).`,
-    });
-  return { ...context, request, item };
-});
 /** A field the chosen action needs. `null` counts as given, as in `beforeRunId: null`. */
 const required = <A>(value: A | undefined, name: string) =>
   value === undefined
@@ -235,41 +209,25 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     })),
   ),
   t3_pending_request: McpToolAccess.either(
-    (input) => input.action !== "respond",
+    (input) => input.action === "list" || input.action === "read",
     McpToolAccess.reads((input) =>
       Effect.gen(function* () {
-        if (input.action === "list") {
-          const { projection } = yield* readThread(input.threadId, ["runtimeRequests"]);
-          return {
-            requestIds: projection.runtimeRequests
-              .filter((request) => request.kind === "user_input" && request.status === "pending")
-              .map((request) => request.id),
-          };
-        }
+        if (input.action === "list") return yield* PendingRequests.list(input.threadId);
         const requestId = yield* required(input.requestId, "requestId");
-        const { item } = yield* readQuestion({ threadId: input.threadId, requestId });
-        return { requestId, questions: item.questions };
+        return yield* PendingRequests.read(input.threadId, requestId);
       }),
     ),
     writesThread((input) =>
-      Effect.gen(function* () {
-        const requestId = yield* required(input.requestId, "requestId");
-        const answers = yield* required(input.answers, "answers");
-        const { threads, projection } = yield* readQuestion({
-          threadId: input.threadId,
-          requestId,
-        });
-        const result = yield* threads
-          .dispatch({
-            type: "runtime-request.respond",
-            threadId: projection.thread.id,
-            commandId: yield* newCommandId(),
-            requestId,
-            answers,
-          })
-          .pipe(Effect.mapError(dispatchFailure));
-        return { sequence: result.sequence };
-      }),
+      Effect.flatMap(required(input.requestId, "requestId"), (requestId) =>
+        input.action === "dismiss"
+          ? PendingRequests.dismiss(input.threadId, requestId)
+          : PendingRequests.respond({
+              threadId: input.threadId,
+              requestId,
+              answers: input.answers,
+              decision: input.decision,
+            }),
+      ),
     ),
   ),
   t3_queue: McpToolAccess.either(

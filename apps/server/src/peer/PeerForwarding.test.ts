@@ -87,7 +87,8 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
     getThreadShell: shellOf,
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
-    listProjectThreads: () => linked.pipe(Effect.map((shell) => [shell] as never)),
+    listProjectThreadPage: () =>
+      linked.pipe(Effect.map((s) => ({ threads: [s], total: 1 }) as never)),
     sendToThread: (input) =>
       Ref.update(seen, (current) => ({ ...current, sends: [...current.sends, input] })).pipe(
         Effect.as({ run: run("running"), delivery: "started", dispatch: { sequence: 1 } } as never),
@@ -100,7 +101,6 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
           `${command.type} ${"threadId" in command ? command.threadId : ""}`,
         ],
       })).pipe(
-        // The stop asks the provider to interrupt the thread's running turn.
         Effect.as({
           sequence: 0,
           storedEvents: [

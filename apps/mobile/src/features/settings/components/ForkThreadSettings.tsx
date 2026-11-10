@@ -43,6 +43,14 @@ export function ForkThreadSettings() {
           icon: "bubble.left.and.bubble.right",
         },
         {
+          key: "childCompletionNotes",
+          title: "Child completions",
+          label: "Quiet child completions",
+          subtitle:
+            "A delegated child that reports a clean result while its siblings still run posts it as a note instead of starting a turn. Failures, gaps, awaited children and the last child still wake the lead.",
+          icon: "bubble.left.and.bubble.right",
+        },
+        {
           key: "headlessSubagentStreaming",
           title: "Headless child threads",
           label: "Headless child threads",
@@ -71,6 +79,7 @@ export function ForkThreadSettings() {
           | "queuedMessagesAnswerPendingInput"
           | "settleIdleChildren"
           | "quietThreadNotes"
+          | "childCompletionNotes"
           | "headlessSubagentStreaming"
           | "mcpEventsEnabled"
           | "hostLinkEnabled";

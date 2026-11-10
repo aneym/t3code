@@ -18,6 +18,7 @@ export const OrchestratorMcpThreadRun = Schema.Struct({
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
+  nativeSessionId: Schema.optional(Schema.NullOr(Schema.String)),
   contextUsage: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
   tokenUsage: Schema.optional(TurnTokenUsage),
   permissionDenials: Schema.optional(Schema.Array(ProviderPermissionDenial)),

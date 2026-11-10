@@ -29,6 +29,7 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
@@ -142,19 +143,34 @@ const question = Schema.Struct({
 const PendingRequestTool = Tool.make("t3_pending_request", {
   ...commandTool,
   description:
-    "Pending user questions in a thread. Omit `threadId` for this thread. list: their ids; approvals are not listed. read: one by `requestId`. respond: answer one with `answers`; this cannot approve a permission request.",
+    "Pending questions in a thread, and its permission requests for a person's MCP client. Omit `threadId` for this thread. list: their ids. read: one by `requestId`. respond: answer a question with `answers`, or decide a permission request with `decision`; agents cannot decide permission requests. dismiss: close a question without answering, only when it is dismissible.",
   parameters: Schema.Struct({
-    action: Schema.Literals(["list", "read", "respond"]),
+    action: Schema.Literals(["list", "read", "respond", "dismiss"]),
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     requestId: Schema.optional(RuntimeRequestId),
     answers: Schema.optional(ProviderUserInputAnswers),
+    decision: Schema.optional(Schema.Literals(["accept", "decline", "acceptForSession"])),
   }),
   success: Schema.Union([
-    Schema.Struct({ requestIds: Schema.Array(RuntimeRequestId) }),
-    Schema.Struct({ requestId: RuntimeRequestId, questions: Schema.Array(question) }),
+    Schema.Struct({
+      requestIds: Schema.Array(RuntimeRequestId),
+      dismissibleRequestIds: Schema.Array(RuntimeRequestId),
+    }),
+    Schema.Struct({
+      requestId: RuntimeRequestId,
+      questions: Schema.Array(question),
+      dismissible: Schema.Boolean,
+    }),
+    Schema.Struct({
+      requestId: RuntimeRequestId,
+      kind: Schema.Literal("approval"),
+      prompt: Schema.NullOr(Schema.String),
+      reason: Schema.NullOr(Schema.String),
+    }),
     OrchestrationV2DispatchCommandResult,
   ]),
+  dependencies: [...commandTool.dependencies, ServerSettings.ServerSettingsService],
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);

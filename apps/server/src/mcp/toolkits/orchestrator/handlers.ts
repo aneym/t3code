@@ -12,6 +12,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
+import { reportTaskOutcome } from "../../taskOutcome.ts";
 
 const handlers = {
   orchestrator_capabilities: McpToolAccess.reads((input) =>
@@ -40,6 +41,7 @@ const handlers = {
       return yield* service.cancelTask(scope, input);
     }),
   ),
+  task_outcome: McpToolAccess.actsAsCaller(reportTaskOutcome),
   t3_workflow_stop: McpToolAccess.writesThreads(
     (input) => [input.threadId],
     (input) =>

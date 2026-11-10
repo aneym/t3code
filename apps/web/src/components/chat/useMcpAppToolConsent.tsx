@@ -37,7 +37,7 @@ function noticeText(server: string, notice: McpAppToolConsentNotice) {
       : ` Blocked ${notice.blocked} more ${notice.blocked === 1 ? "request" : "requests"}.`;
   return notice.kind === "denied"
     ? `${notice.tool} is denied for this card.${blocked}`
-    : `You declined ${notice.tool}. T3 declines requests from ${server} for a minute.${blocked}`;
+    : `You declined ${notice.tool}. Requests from ${server} are declined for a minute.${blocked}`;
 }
 
 export function useMcpAppToolConsent(input: {
@@ -87,7 +87,7 @@ export function useMcpAppToolConsent(input: {
           choicesFor(remember),
         );
         if (choice === undefined) {
-          throw new McpAppHostRefusal("T3 could not ask for approval here.");
+          throw new McpAppHostRefusal("Could not ask for approval here.");
         }
         return (choice ?? "cancel") as McpAppToolConsentChoice;
       },
@@ -112,7 +112,7 @@ export function useMcpAppToolConsent(input: {
             toastManager.add({
               type: "warning",
               title: "Approval not remembered",
-              description: `T3 allowed ${tool} once but could not save the approval.`,
+              description: `Allowed ${tool} once but could not save the approval.`,
             });
           });
       },

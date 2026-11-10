@@ -40,6 +40,13 @@ export function QueueSettings() {
             "Let agents post notes that show in a thread without starting a turn. The thread's next turn reads them as context.",
         },
         {
+          key: "childCompletionNotes",
+          searchId: "child-completion-notes",
+          label: "Quiet child completions",
+          description:
+            "A delegated child that reports a clean result while its siblings still run posts it as a note instead of starting a turn. Failures, gaps, awaited children and the last child still wake the lead.",
+        },
+        {
           key: "headlessSubagentStreaming",
           searchId: "headless-child-threads",
           label: "Headless child threads",
@@ -54,6 +61,20 @@ export function QueueSettings() {
             "Let agents subscribe threads to MCP servers' events. A verified event wakes the thread or queues into its turn.",
         },
         {
+          key: "mcpClientApprovals",
+          searchId: "mcp-client-approvals",
+          label: "Approvals from MCP clients",
+          description:
+            "Let a person's MCP client, such as the t3 CLI or an app you approved, approve or decline a thread's permission requests. Agents can never decide them.",
+        },
+        {
+          key: "liveThreadFeed",
+          searchId: "live-thread-feed",
+          label: "Live thread feed",
+          description:
+            "Stream Claude replies while they are written. MCP thread reads mark partial replies as streaming.",
+        },
+        {
           key: "hostLinkEnabled",
           searchId: "host-link",
           label: "Host app link",
@@ -66,8 +87,11 @@ export function QueueSettings() {
           | "queueSendAll"
           | "settleIdleChildren"
           | "quietThreadNotes"
+          | "childCompletionNotes"
           | "headlessSubagentStreaming"
           | "mcpEventsEnabled"
+          | "mcpClientApprovals"
+          | "liveThreadFeed"
           | "hostLinkEnabled";
         return (
           <SettingsRow

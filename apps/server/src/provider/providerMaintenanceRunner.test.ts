@@ -745,7 +745,7 @@ describe("providerMaintenanceRunner", () => {
         const result = yield* updater.updateProvider(CODEX_DRIVER);
 
         assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
-        assert.include(result.providers[0]?.updateState?.message ?? "", "still detects");
+        assert.include(result.providers[0]?.updateState?.message ?? "", "still outdated");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -1130,7 +1130,7 @@ it.effect(
 
       const unchanged = yield* updater.updateProvider(CODEX_DRIVER);
       assert.strictEqual(unchanged.providers[0]?.updateState?.status, "unchanged");
-      assert.match(unchanged.providers[0]?.updateState?.message ?? "", /outdated provider version/);
+      assert.match(unchanged.providers[0]?.updateState?.message ?? "", /still outdated/);
       assert.deepStrictEqual(calls, ["upgrade --cask codex"]);
 
       latest = "3.0.0";

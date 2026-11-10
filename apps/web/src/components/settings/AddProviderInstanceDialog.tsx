@@ -13,7 +13,6 @@ import {
   type EnvironmentId,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
-  isManagedDriverAllowed,
 } from "@t3tools/contracts";
 
 import {
@@ -24,6 +23,7 @@ import {
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
+import { useOfferedDriver } from "./useOfferedDriver";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
@@ -171,13 +171,10 @@ export function AddProviderInstanceDialog({
   const [addingChatGptAccount, setAddingChatGptAccount] = useState(false);
   // Drivers the administrator's policy leaves out are not offered at all.
   const managedPolicy = useManagedPolicy(environmentId);
-  const featuredDriverOptions = FEATURED_DRIVER_OPTIONS.filter((option) =>
-    isManagedDriverAllowed(managedPolicy, option.driverKind),
-  );
-  const moreDriverOptions = MORE_DRIVER_OPTIONS.filter((option) =>
-    isManagedDriverAllowed(managedPolicy, option.driverKind),
-  );
-  const acpRegistryAllowed = isManagedDriverAllowed(managedPolicy, ACP_REGISTRY_DRIVER_KIND);
+  const offered = useOfferedDriver(environmentId, managedPolicy);
+  const featuredDriverOptions = FEATURED_DRIVER_OPTIONS.filter((o) => offered(o.driverKind));
+  const moreDriverOptions = MORE_DRIVER_OPTIONS.filter((o) => offered(o.driverKind));
+  const acpRegistryAllowed = offered(ACP_REGISTRY_DRIVER_KIND);
   const [driver, setDriver] = useState<ProviderDriverKind>(
     () =>
       (featuredDriverOptions[0] ?? moreDriverOptions[0])?.driverKind ??

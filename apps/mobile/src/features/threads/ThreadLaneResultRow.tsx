@@ -1,17 +1,14 @@
-import { useAtomValue } from "@effect/atom-react";
 import {
   LANE_RESULT_VERBS,
   type LaneResult,
   type LaneResultState,
 } from "@t3tools/client-runtime/lane-result";
-import type { EnvironmentId } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
 import { useState } from "react";
 import { type ColorValue, Pressable, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
-import { serverEnvironment } from "../../state/server";
 import { ThreadDisclosureChevron } from "./thread-work-log";
 
 function LaneResultGlyph(props: { readonly state: LaneResultState }) {
@@ -35,12 +32,6 @@ const EMPTY_DETAIL: Record<LaneResultState, string> = {
   dropped: "The lane left no reason.",
   failed: "Rails gave no reason.",
 };
-
-export function useLaneResultRows(environmentId: EnvironmentId): boolean {
-  return (
-    useAtomValue(serverEnvironment.settingsValueAtom(environmentId))?.laneResultRowsEnabled ?? true
-  );
-}
 
 export function ThreadLaneResultRow(props: {
   readonly lane: LaneResult;

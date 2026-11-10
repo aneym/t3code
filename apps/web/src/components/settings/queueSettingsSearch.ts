@@ -30,6 +30,15 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     searchTerms: ["note notes back office agent message silent quiet context no turn"],
   },
   {
+    id: "child-completion-notes",
+    title: "Quiet child completions",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: [
+      "delegate delegated child subagent completion result wake note quiet clean gaps awaited",
+    ],
+  },
+  {
     id: "headless-child-threads",
     title: "Headless child threads",
     to: "/settings/chat",
@@ -42,6 +51,20 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     to: "/settings/chat",
     scope: "environment-defaults",
     searchTerms: ["mcp events subscribe webhook trigger wake thread rails"],
+  },
+  {
+    id: "mcp-client-approvals",
+    title: "Approvals from MCP clients",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["mcp client cli phone rails approve decline permission request remote"],
+  },
+  {
+    id: "live-thread-feed",
+    title: "Live thread feed",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["live stream streaming partial reply claude mcp thread read phone rails"],
   },
   {
     id: "host-link",
@@ -69,6 +92,6 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     title: "Delegated child model",
     to: "/settings/chat",
     scope: "environment-defaults",
-    searchTerms: ["delegate child subagent task default model inherit opus fable"],
+    searchTerms: ["delegate child subagent task default model effort options inherit opus fable"],
   },
 ];
