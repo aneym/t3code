@@ -106,6 +106,7 @@ import { resolveDefaultBaseRef } from "../vcs/defaultBaseRef.ts";
 import { isSnoozed } from "../orchestration-v2/AutoSettlementPolicy.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as NewThreadModelSelection from "../provider/NewThreadModelSelection.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { scheduledTaskSummary } from "./scheduledTaskSummary.ts";
@@ -859,17 +860,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const projectDefaultModelSelection = (
-    project: Effect.Success<ReturnType<typeof requireProject>>,
-  ) =>
-    project.defaultModelSelection === null
-      ? Effect.fail(
-          failure(
-            "invalid_request",
-            `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
-          ),
-        )
-      : Effect.succeed(project.defaultModelSelection);
+  const newThreadModels = yield* NewThreadModelSelection.make;
   const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>
@@ -1796,7 +1787,12 @@ const make = Effect.gen(function* () {
         );
       }
       const modelSelection =
-        parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+        parent?.thread.modelSelection ??
+        (yield* newThreadModels.resolve({ projectId, project }).pipe(Effect.orDie)) ??
+        (yield* failure(
+          "invalid_request",
+          `Project ${projectId} has no default model or ready provider.`,
+        ));
       const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
       const title =
         input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");

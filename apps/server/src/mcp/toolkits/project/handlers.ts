@@ -25,8 +25,7 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import { resolveDefaultBaseRef } from "../../../vcs/defaultBaseRef.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
-import * as DateTime from "effect/DateTime";
-import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import * as NewThreadModelSelection from "../../../provider/NewThreadModelSelection.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { truncate } from "@t3tools/shared/String";
 import { plainTitleLine } from "@t3tools/shared/threadTitleText";
@@ -194,16 +193,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           launchedModel ??
           caller?.modelSelection ??
           (projectDefaults
-            ? resolveNewThreadModelSelection({
-                defaultSelection: projectDefaults.defaultModelSelection,
-                fallbackSelection: projectDefaults.fallbackModelSelection,
-                providers: yield* ProviderRegistry.ProviderRegistry.pipe(
-                  Effect.flatMap((registry) => registry.getProviders),
-                ),
-                settings: projectDefaults,
-                projectId,
-                now: DateTime.toEpochMillis(yield* DateTime.now),
-              }).selection
+            ? yield* (yield* NewThreadModelSelection.make)
+                .resolve({ projectId, project: yield* readProject })
+                .pipe(Effect.mapError(unavailable))
             : null) ??
           undefined;
         if (modelSelection === undefined)
