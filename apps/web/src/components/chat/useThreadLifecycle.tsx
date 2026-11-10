@@ -13,6 +13,7 @@ import {
 } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useDeadlinePassed, useNowAfter } from "../../hooks/useDeadline";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import type { usePendingThreadRequests } from "./usePendingThreadRequests";
 import {
   AuthOrchestrationOperateScope,
@@ -111,7 +112,6 @@ interface ThreadLifecycleInput {
     readonly currentBranch: string;
   } | null;
   readonly gitStatusQuery: { readonly refresh: () => void };
-  readonly nowMinute: string;
   readonly composerRef: ComposerHandleRef;
   readonly composerDraftTarget: ComposerThreadTarget;
   readonly sendInFlightRef: { current: boolean };
@@ -159,7 +159,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     activePendingUserInput,
     localCheckoutBranchMismatch,
     gitStatusQuery,
-    nowMinute,
     composerRef,
     composerDraftTarget,
     sendInFlightRef,
@@ -595,18 +594,18 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         onOpenThread: onOpenRelatedThreadStable,
       })
     : null;
-  // The relative times read the clock; nowMinute re-renders them on the minute.
+  const minute = useNowMinute(activeThreadSnoozed || activeThreadSettled);
   const snoozedUntil = activeThreadShell?.snoozedUntil ?? null;
   const settledAt = activeThreadShell?.settledAt ?? null;
   // Same rounding as the sidebar's snoozed shelf, so both read the same hour.
   const snoozeWake = snoozedUntil
-    ? snoozeWakeLabel(snoozedUntil, { now: `${nowMinute}:00.000Z` })
+    ? snoozeWakeLabel(snoozedUntil, { now: `${minute}:00.000Z` })
     : null;
   const threadStatusLine = activeThreadSnoozed ? (
     <ThreadStatusLine
       icon={<AlarmClockIcon />}
       label={snoozeWake && snoozeWake !== "now" ? `Snoozed, ${snoozeWake} left` : "Snoozed"}
-      clockMinute={nowMinute}
+      clockMinute={minute}
       actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
       actionDisabled={!canOperateThread || isUnsnoozing}
       onAction={() => void handleUnsnoozeActiveThreadStable()}
@@ -615,7 +614,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     <ThreadStatusLine
       icon={<CheckCircle2Icon />}
       label={settledAt ? `Settled ${formatRelativeTimeLabel(settledAt)}` : "Settled"}
-      clockMinute={nowMinute}
+      clockMinute={minute}
       actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
       actionDisabled={!canOperateThread || isUnsettling}
       onAction={() => void handleUnsettleActiveThreadStable()}

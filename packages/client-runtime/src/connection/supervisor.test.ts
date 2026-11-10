@@ -1,5 +1,6 @@
 import { AuthStandardClientScopes, EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -150,6 +151,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   readonly checkHost?: (prepared: PreparedConnection) => Effect.Effect<ConnectionDriver.RouteCheck>;
   readonly preflight?: (route: ConnectionRoute) => Effect.Effect<ConnectionDriver.RoutePreflight>;
   readonly inboundFrames?: Effect.Effect<number>;
+  readonly lastInboundAt?: Effect.Effect<number>;
 }) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>(
     options?.networkStatus ?? "online",
@@ -205,6 +207,8 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
         ready: options?.ready?.(attempt) ?? Effect.void,
         probe: options?.probe?.(attempt) ?? Effect.void,
         inboundFrames: options?.inboundFrames ?? Effect.succeed(0),
+        lastInboundAt: options?.lastInboundAt ?? Effect.succeed(0),
+        lastOutboundAt: Clock.currentTimeMillis,
         closed: Deferred.await(closed),
       } satisfies RpcSession.RpcSession),
       () => Ref.update(releaseCount, (count) => count + 1),
@@ -675,6 +679,7 @@ describe("EnvironmentSupervisor", () => {
     readonly probe?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
     readonly checkHost?: (check: number) => ConnectionDriver.RouteCheck;
     readonly inboundFrames?: Effect.Effect<number>;
+    readonly lastInboundAt?: Effect.Effect<number>;
   }) =>
     Effect.gen(function* () {
       const hostChecks = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -683,6 +688,7 @@ describe("EnvironmentSupervisor", () => {
         initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
         probe: options?.probe ?? ((attempt) => (attempt === 1 ? Effect.never : Effect.void)),
         ...(options?.inboundFrames ? { inboundFrames: options.inboundFrames } : {}),
+        ...(options?.lastInboundAt ? { lastInboundAt: options.lastInboundAt } : {}),
         checkHost: (prepared) =>
           Ref.updateAndGet(hostChecks, (checks) => [...checks, prepared.target._tag]).pipe(
             Effect.map((checks) => options?.checkHost?.(checks.length) ?? "answered"),
@@ -852,6 +858,7 @@ describe("EnvironmentSupervisor", () => {
       const harness = yield* makeSilentSocketHarness({
         probe: (attempt) => (attempt === 1 ? Effect.sleep("4 seconds") : Effect.void),
         inboundFrames: Ref.updateAndGet(reads, (count) => count + 1),
+        lastInboundAt: Clock.currentTimeMillis,
       });
       const supervisor = yield* EnvironmentSupervisor.make(LAN_ENTRY, {
         initiallyDesired: true,

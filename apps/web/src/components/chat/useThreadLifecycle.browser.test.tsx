@@ -83,7 +83,6 @@ function RestoreBranchHarness(props: {
     activePendingApproval: null as never,
     activePendingUserInput: null as never,
     gitStatusQuery: { refresh: props.refreshGitStatus },
-    nowMinute: "",
     composerRef: { current: { focusAtEnd: props.focusComposer } } as never,
     composerDraftTarget: { kind: "thread", ref: props.thread.activeThreadRef } as never,
     sendInFlightRef: { current: false },

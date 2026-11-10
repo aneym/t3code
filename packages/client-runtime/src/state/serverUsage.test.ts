@@ -136,6 +136,8 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
+    lastInboundAt: Effect.succeed(0),
+    lastOutboundAt: Effect.succeed(0),
     closed: Effect.never,
   };
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
