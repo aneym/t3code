@@ -14,7 +14,9 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { isAppleGitPlaceholder } from "@t3tools/shared/appleGitPlaceholder";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { XcodeGitLocation } from "@t3tools/shared/shell";
 
 type ExitResult = readonly [code: number | null, signal: string | null];
 type OutputQueue = Queue.Queue<Uint8Array, PlatformError.PlatformError | Cause.Done>;
@@ -62,6 +64,15 @@ const resolveEnv = (options: ChildProcess.CommandOptions) => {
     : (options.env ?? process.env);
   return Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== undefined));
 };
+
+const appleGitPlaceholderRefusal = (command: ChildProcess.StandardCommand) =>
+  PlatformError.systemError({
+    _tag: "NotFound",
+    module: "ChildProcess",
+    method: "spawn",
+    pathOrDescriptor: command.command,
+    description: "git is not installed",
+  });
 
 const makeBroker = (launch: {
   readonly executable: string;
@@ -259,7 +270,9 @@ export const layer = Layer.effect(
   ChildProcessSpawner.ChildProcessSpawner,
   Effect.gen(function* () {
     const upstream = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const brokered = (yield* HostProcess.Platform) !== "win32";
+    const platform = yield* HostProcess.Platform;
+    const brokered = platform !== "win32";
+    const locateXcodeGit = yield* XcodeGitLocation;
     const broker = makeBroker({
       executable: yield* HostProcess.ExecutablePath,
       args: (yield* HostProcess.IsExecutable)
@@ -272,11 +285,15 @@ export const layer = Layer.effect(
     });
     yield* Effect.addFinalizer(() => broker.shutdown);
     return ChildProcessSpawner.make((command) =>
-      brokered && isBrokerCommand(command)
-        ? Effect.flatMap(broker.ready, (ready) =>
-            ready ? broker.spawn(command) : upstream.spawn(command),
-          )
-        : upstream.spawn(command),
+      platform === "darwin" &&
+      command._tag === "StandardCommand" &&
+      isAppleGitPlaceholder(command.command, resolveEnv(command.options), locateXcodeGit)
+        ? Effect.fail(appleGitPlaceholderRefusal(command))
+        : brokered && isBrokerCommand(command)
+          ? Effect.flatMap(broker.ready, (ready) =>
+              ready ? broker.spawn(command) : upstream.spawn(command),
+            )
+          : upstream.spawn(command),
     );
   }),
 );
