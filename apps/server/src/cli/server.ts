@@ -10,6 +10,7 @@ import * as ServerConfig from "../config.ts";
 import { awaitLauncherLoss } from "../launcherWatch.ts";
 import { runServer } from "../server.ts";
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
+import { reportServerFailureToStderr } from "./serverFailureReport.ts";
 
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
@@ -43,7 +44,7 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
       Effect.andThen(Effect.interrupt),
     ),
   );
-});
+}, reportServerFailureToStderr);
 
 export const runDefaultServerCommand = Effect.fn("server.runDefaultServerCommand")(function* (
   flags: CliServerFlags,
