@@ -6,6 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Formatter from "effect/Formatter";
 import * as Runtime from "effect/Runtime";
 
+import { refusePortInUse } from "./portInUseRefusal.ts";
+
 const MAX_REASON_LENGTH = 1_000;
 const MAX_CAUSE_DEPTH = 4;
 
@@ -32,7 +34,7 @@ function isReportedHere(cause: Cause.Cause<unknown>): boolean {
 }
 
 export const reportServerFailureToStderr = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.tapCause(effect, (cause) =>
+  Effect.tapCause(refusePortInUse(effect), (cause) =>
     isReportedHere(cause)
       ? Console.error(`T3 Code server failed: ${serverFailureReason(cause)}`)
       : Effect.void,
