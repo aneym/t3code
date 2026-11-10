@@ -10,6 +10,7 @@ import { readEmbedSignIn } from "../../embed/embedSignIn";
 import { applyEmbedTheme, themeFromEmbedMessage } from "../../embed/embedTheme";
 import { useEmbedHostBridge } from "../../embed/useEmbedHostBridge";
 import { useEmbedNavigationPrefetch } from "../../embed/useEmbedNavigationPrefetch";
+import { useEmbedDocumentTitle } from "../../embed/useEmbedDocumentTitle";
 import { useEmbedReadyReport } from "../../embed/useEmbedReadyReport";
 import { primaryServerConfigAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
@@ -90,6 +91,8 @@ export function EmbedPage({
   useState(applyInitialScheme);
   useState(startEmbedControls);
   const settings = useAtomValue(primaryServerConfigAtom)?.settings ?? null;
+  const target = threadId === null ? null : resolveThreadRouteTarget({ environmentId, threadId });
+  useEmbedDocumentTitle(authenticated && target?.kind === "server" ? target.threadRef : null);
   if (!authenticated) {
     return (
       <EmbedNotice
@@ -97,7 +100,6 @@ export function EmbedPage({
       />
     );
   }
-  const target = threadId === null ? null : resolveThreadRouteTarget({ environmentId, threadId });
   return (
     <>
       {target?.kind === "server" ? <EmbedPrefetch threadRef={target.threadRef} /> : null}

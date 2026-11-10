@@ -158,12 +158,17 @@ export const CodexDriver: ProviderDriver<
     );
     const homeLayout = yield* resolveCodexHomeLayout(config);
     const continuationIdentity = codexContinuationIdentity(homeLayout);
+    const setup = {
+      canInstall: yield* cliSetupEnabled(DRIVER_KIND, "install"),
+      canAuthenticate: yield* cliSetupEnabled(DRIVER_KIND, "signIn"),
+    };
     const stampIdentity = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName,
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
+      setup,
     });
     yield* materializeCodexShadowHome(homeLayout).pipe(
       Effect.mapError(
@@ -363,7 +368,7 @@ export const CodexDriver: ProviderDriver<
           ),
         );
 
-    const auth = (yield* cliSetupEnabled(DRIVER_KIND, "signIn"))
+    const auth = setup.canAuthenticate
       ? yield* makeCodexCliAuth({
           instanceId,
           binaryPath: effectiveConfig.binaryPath,

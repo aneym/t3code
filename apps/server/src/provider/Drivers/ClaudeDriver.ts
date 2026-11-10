@@ -164,12 +164,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         ? configDir
         : undefined,
     );
+    const setup = {
+      canInstall: yield* cliSetupEnabled(DRIVER_KIND, "install"),
+      canAuthenticate: yield* cliSetupEnabled(DRIVER_KIND, "signIn"),
+    };
     const stampIdentity = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName,
       accentColor,
       continuationGroupKey,
+      setup,
     });
 
     const scopedLimitNames = yield* makeClaudeScopedLimitNames;
@@ -388,7 +393,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       ),
     );
 
-    const auth = (yield* cliSetupEnabled(DRIVER_KIND, "signIn"))
+    const auth = setup.canAuthenticate
       ? yield* makeClaudeCliAuth({
           instanceId,
           binaryPath: effectiveConfig.binaryPath,
