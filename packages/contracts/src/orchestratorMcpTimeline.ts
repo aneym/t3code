@@ -34,6 +34,11 @@ export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
   text: Schema.NullOr(Schema.String),
   textTruncated: Schema.Boolean,
   nextTextOffset: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  streaming: Schema.optional(
+    Schema.Literal(true).annotate({
+      description: "A reply still being written: `text` is partial and grows.",
+    }),
+  ),
   updatedAt: IsoDateTime,
 });
 export type OrchestratorMcpThreadTimelineItem = typeof OrchestratorMcpThreadTimelineItem.Type;

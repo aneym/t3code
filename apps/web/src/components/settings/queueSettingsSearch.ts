@@ -51,6 +51,13 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     searchTerms: ["mcp client cli phone rails approve decline permission request remote"],
   },
   {
+    id: "live-thread-feed",
+    title: "Live thread feed",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["live stream streaming partial reply claude mcp thread read phone rails"],
+  },
+  {
     id: "host-link",
     title: "Host app link",
     to: "/settings/chat",
