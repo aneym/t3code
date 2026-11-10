@@ -295,9 +295,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         );
       return executable;
     },
-    Effect.mapError(
-      wrapFailure("resolve", "Codex is not installed in T3 Code. Install it to continue."),
-    ),
+    Effect.mapError(wrapFailure("resolve", "Codex is not installed. Install it to continue.")),
   );
   const acquire = Effect.fn("CodexInstallation.acquire")(function* () {
     return yield* Effect.acquireRelease(

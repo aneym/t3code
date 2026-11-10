@@ -144,7 +144,7 @@ describe("PiProvider", () => {
         snapshot.models.map((model) => model.slug),
         ["default"],
       );
-      assert.include(snapshot.message ?? "", "could not refresh its models and commands");
+      assert.include(snapshot.message ?? "", "its models and commands could not be refreshed");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
