@@ -219,6 +219,11 @@ import {
   type ClaudeRuntimeQueryPolicy,
 } from "./ClaudeRuntimeQueryPolicy.ts";
 import {
+  readClaudeSealedHome,
+  sealClaudeQuery,
+  sealedClaudeSettings,
+} from "./ClaudeSealedQuery.ts";
+import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriverCreateInput,
 } from "@t3tools/provider-core/server/adapterDriver";
@@ -10046,7 +10051,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           nativeThreadId: string,
         ) {
           const queryPolicy = yield* queryPolicyForTurn(turnInput);
-          const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+          const sealed = yield* readClaudeSealedHome(turnInput.runtimePolicy.cwd);
+          const settings = sealedClaudeSettings(sealed, adapterOptions.settings);
+          const mcpSession =
+            sealed === null ? yield* mcpSessions.read(turnInput.threadId) : undefined;
           const mcpOverrides = claudeMcpQueryOverrides({
             mcpSession,
             readOnlySandbox: claudeTurnUsesReadOnlyMcpTools(turnInput),
@@ -10054,11 +10062,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
-          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
+          const queryPolicyKey = claudeEffectiveQueryPolicyKey(
+            queryPolicy,
+            sealClaudeQuery(sealed, mcpOverrides),
+          );
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
-          // Continuations drain existing output without prompting; retain the live process regardless of selection.
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
@@ -10123,7 +10133,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return existing;
           }
 
-          // Replacing this thread's process kills its background work, even with a new native identity.
           if (
             existing !== null &&
             (existing.nativeThreadId === nativeThreadId ||
@@ -10136,13 +10145,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           // Read before closing the live process so a bad path leaves it running.
           const appendSystemPromptFileText = yield* readClaudeAppendSystemPromptFile({
-            settings: adapterOptions.settings,
+            settings,
             cwd: turnInput.runtimePolicy.cwd,
             fileSystem,
             path,
           });
           const launchArgSettings = yield* readClaudeLaunchArgSettings({
-            settings: adapterOptions.settings,
+            settings,
             cwd: turnInput.runtimePolicy.cwd,
             fileSystem,
             path,
@@ -10159,7 +10168,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const openedWithResume = (yield* Ref.get(openedNativeThreads)).has(nativeThreadId);
-          // Idle release loses openedNativeThreads; persisted turns still require resume to avoid "already in use".
           const hasPersistedProviderTurn =
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
@@ -10177,7 +10185,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
-            settings: adapterOptions.settings,
+            settings,
             ...(launchArgSettings === undefined
               ? {}
               : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
@@ -10226,7 +10234,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             .open({
               threadId: turnInput.threadId,
               providerSessionId: input.providerSessionId,
-              options: queryOptions,
+              options: sealClaudeQuery(sealed, queryOptions),
             })
             .pipe(
               Effect.onError(() =>
