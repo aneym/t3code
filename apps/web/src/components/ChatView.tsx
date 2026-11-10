@@ -199,6 +199,7 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { useResumeCompactionDue } from "./chat/useResumeCompactionDue";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
@@ -317,7 +318,6 @@ import { resolveThreadSyncPhase } from "../threadSync";
 import {
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
-  shouldOfferResumeCompaction,
 } from "./chat/ContextWindowMeter.logic";
 import {
   deriveLatestContextWindowSnapshot,
@@ -757,7 +757,7 @@ export default function ChatView(props: ChatViewProps) {
       });
     }
   }
-  const nowMinute = useNowMinute();
+  const nowMinute = useNowMinute(draftThread !== null);
   const draftDefaultModelSelection = draftThread
     ? resolveProjectSettings(
         settings,
@@ -2404,7 +2404,6 @@ export default function ChatView(props: ChatViewProps) {
     activePendingUserInput,
     localCheckoutBranchMismatch,
     gitStatusQuery,
-    nowMinute,
     composerRef,
     composerDraftTarget,
     sendInFlightRef,
@@ -2459,6 +2458,11 @@ export default function ChatView(props: ChatViewProps) {
           ? "Compaction is unavailable for this provider"
           : "Compacting is unavailable right now"
     : null;
+  const resumeCompactionDue = useResumeCompactionDue(
+    selectedProvider,
+    activeContextWindow,
+    activeThreadLiveTokenUsage?.promptCacheTtlMs,
+  );
   const resumeCompactionTokens =
     activeContextWindow &&
     resolveIdleCompaction(
@@ -2470,13 +2474,7 @@ export default function ChatView(props: ChatViewProps) {
     !compactDisabled &&
     !hasHeldQueuedRuns &&
     multipleModelSelections === null &&
-    shouldOfferResumeCompaction({
-      provider: selectedProvider,
-      usedTokens: activeContextWindow.usedTokens,
-      updatedAt: activeContextWindow.updatedAt,
-      promptCacheTtlMs: activeThreadLiveTokenUsage?.promptCacheTtlMs,
-      now: `${nowMinute}:00.000Z`,
-    })
+    resumeCompactionDue
       ? activeContextWindow.usedTokens
       : null;
   const [fullHistoryThreadKeys, setFullHistoryThreadKeys] = useState<ReadonlySet<string>>(
