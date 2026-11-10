@@ -13,6 +13,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { environmentCatalog } from "../../connection/catalog";
 import { ConnectionDiagnosisHeadline } from "../settings/ConnectionDiagnosisDetails";
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
+import { inEmbedPage } from "../../embed/embedProtocol";
 import {
   useEnvironmentDisconnectDelay,
   useEnvironmentStateHeldFor,
@@ -155,7 +156,8 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     isServerUpdateFailureDismissed(serverUpdateState);
   return (() => {
     const items: ComposerBannerStackItem[] = [];
-    const updateRunning = serverUpdateState.status === "running";
+    const embedded = inEmbedPage();
+    const updateRunning = !embedded && serverUpdateState.status === "running";
     const unavailableConnection = activeEnvironmentUnavailableState?.connection ?? null;
     const disconnectAction =
       canDisconnectActiveEnvironment && activeEnvironmentUnavailableState ? (
@@ -216,6 +218,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     // An available update is offered by the sidebar's update pill; the composer only shows one
     // that is running or failed, since either explains what this thread's server is doing.
     if (
+      !embedded &&
       !automaticEnvironment &&
       serverUpdateEnvironmentId &&
       serverUpdateState.status !== "idle" &&
@@ -259,7 +262,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
           : {}),
       });
     }
-    if (autoBalanceUpdateBanner) items.push(autoBalanceUpdateBanner);
+    if (autoBalanceUpdateBanner && !embedded) items.push(autoBalanceUpdateBanner);
     return items;
   })() as ComposerBannerStackItem[];
 }

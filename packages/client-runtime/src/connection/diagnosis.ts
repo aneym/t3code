@@ -44,6 +44,24 @@ export interface ConnectionDiagnosisInput {
   readonly serverVersion?: string | null | undefined;
 }
 
+export interface ConnectionNames {
+  readonly app: string;
+  readonly connect: string;
+  readonly connectAccount: string;
+  readonly olderApp: string;
+  readonly statusCommand: string | null;
+}
+
+export const T3_CONNECTION_NAMES: ConnectionNames = {
+  app: "T3 Code",
+  connect: "T3 Connect",
+  connectAccount: "T3 Connect account",
+  olderApp: "an older T3 Code",
+  statusCommand: "t3 connect status",
+};
+
+const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
 interface Located {
   readonly hop: ConnectionHop;
   readonly cause: ConnectionFailureCause | "offline" | "outdated" | "released" | null;
@@ -80,29 +98,36 @@ function locate(input: ConnectionDiagnosisInput): Located | null {
   return { hop: cause !== null && NOT_ANSWERING.has(cause) ? "server" : "tunnel", cause };
 }
 
-function headline(host: string, located: Located, failure: ConnectionAttemptError | null): string {
+function headline(
+  host: string,
+  located: Located,
+  failure: ConnectionAttemptError | null,
+  names: ConnectionNames,
+): string {
+  const app = sentence(names.app);
+  const connect = sentence(names.connect);
   switch (located.cause) {
     case "offline":
       return "This device is offline";
     case "outdated":
-      return `${host} runs an older T3 Code`;
+      return `${host} runs ${names.olderApp}`;
     case "clock_skew":
       return "This device's clock is off";
     case "not_linked":
-      return `${host} is not linked to your T3 Connect account`;
+      return `${host} is not linked to your ${names.connectAccount}`;
     case "relay_error":
-      return "T3 Connect returned an error";
+      return `${connect} returned an error`;
     case "tunnel_pending":
       return `${host}'s tunnel is still being set up`;
     case "tunnel_not_enabled":
-      return `T3 Connect is not turned on for ${host}`;
+      return `${connect} is not turned on for ${host}`;
     case "released":
     case "tunnel_down":
       return `${host}'s tunnel is offline`;
     case "origin_unreachable":
-      return `Tunnel works, but T3 Code on ${host} did not answer`;
+      return `Tunnel works, but ${names.app} on ${host} did not answer`;
     case "invalid_response":
-      return `T3 Code on ${host} sent an unexpected answer`;
+      return `${app} on ${host} sent an unexpected answer`;
     case "dns":
       return `${host}'s tunnel address did not resolve`;
     case "tls":
@@ -120,55 +145,63 @@ function headline(host: string, located: Located, failure: ConnectionAttemptErro
       return "This device could not prepare the connection";
     case "relay":
       return failure?.reason === "authentication"
-        ? "T3 Connect did not accept this device's sign-in"
-        : "This device can't reach T3 Connect";
+        ? `${connect} did not accept this device's sign-in`
+        : `This device can't reach ${names.connect}`;
     case "tunnel":
       // The relay already reached the host when this device fails on its own.
       return failure?.reason === "network" ||
         failure?.reason === "transport" ||
         failure?.reason === "timeout"
         ? `This device can't reach ${host}'s tunnel`
-        : `T3 Connect could not reach ${host}'s tunnel`;
+        : `${connect} could not reach ${host}'s tunnel`;
     case "server":
       return failure?.reason === "authentication" || failure?.reason === "permission"
-        ? `T3 Code on ${host} did not accept this device`
-        : `T3 Code on ${host} did not answer`;
+        ? `${app} on ${host} did not accept this device`
+        : `${app} on ${host} did not answer`;
   }
 }
 
-function steps(host: string, located: Located, failure: ConnectionAttemptError | null): string[] {
-  const checkHost = `On ${host}, check Settings > Sharing & access or run \`t3 connect status\`.`;
+function steps(
+  host: string,
+  located: Located,
+  failure: ConnectionAttemptError | null,
+  names: ConnectionNames,
+): string[] {
+  const app = sentence(names.app);
+  const checkHost = names.statusCommand
+    ? `On ${host}, check Settings > Sharing & access or run \`${names.statusCommand}\`.`
+    : `On ${host}, check Settings > Sharing & access.`;
   switch (located.cause) {
     case "offline":
-      return ["Connect this device to the internet. T3 Code reconnects on its own."];
+      return [`Connect this device to the internet. ${app} reconnects on its own.`];
     case "outdated":
-      return [`Update T3 Code on ${host}.`];
+      return [`Update ${names.app} on ${host}.`];
     case "clock_skew":
       return [`Turn on automatic date and time on this device and on ${host}, then retry.`];
     case "not_linked":
       return [
-        "Check that this device is signed in to the same T3 Connect account as the host.",
-        `On ${host}, open Settings > Sharing & access and turn T3 Connect on.`,
+        `Check that this device is signed in to the same ${names.connectAccount} as the host.`,
+        `On ${host}, open Settings > Sharing & access and turn ${names.connect} on.`,
       ];
     case "tunnel_pending":
-      return ["Wait a minute. T3 Code retries on its own.", checkHost];
+      return [`Wait a minute. ${app} retries on its own.`, checkHost];
     case "relay_error":
       return [
-        "Wait a few minutes. T3 Code retries on its own.",
+        `Wait a few minutes. ${app} retries on its own.`,
         "If it keeps failing, copy the diagnostics and report it.",
       ];
     case "tunnel_not_enabled":
-      return [`On ${host}, open Settings > Sharing & access and turn T3 Connect on.`];
+      return [`On ${host}, open Settings > Sharing & access and turn ${names.connect} on.`];
     case "released":
     case "tunnel_down":
       return [
-        `Make sure ${host} is awake and T3 Code is running on it.`,
+        `Make sure ${host} is awake and ${names.app} is running on it.`,
         checkHost,
         `A VPN or Tailscale exit node on ${host} can block the tunnel (port 7844). Turn it off or allow the tunnel.`,
       ];
     case "origin_unreachable":
     case "invalid_response":
-      return [`Open or restart T3 Code on ${host}.`, checkHost];
+      return [`Open or restart ${names.app} on ${host}.`, checkHost];
     // The relay saw these on its way to the host, so the fix is on the host.
     case "dns":
     case "tls":
@@ -182,15 +215,15 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
   switch (located.hop) {
     case "device":
       return [
-        "Restart T3 Code on this device.",
+        `Restart ${names.app} on this device.`,
         `If it keeps failing, remove ${host} from this device and add it again.`,
       ];
     case "relay":
       return failure?.reason === "authentication"
-        ? ["Sign out of T3 Connect and sign in again."]
+        ? [`Sign out of ${names.connect} and sign in again.`]
         : [
             "Check this device's internet connection.",
-            "A VPN, firewall, or ad blocker on this device can block T3 Connect.",
+            `A VPN, firewall, or ad blocker on this device can block ${names.connect}.`,
           ];
     case "tunnel":
       return failure?.reason === "network" ||
@@ -203,7 +236,7 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
         : [`Make sure ${host} is awake and online.`, checkHost];
     case "server":
       return [
-        `Make sure T3 Code is running on ${host}.`,
+        `Make sure ${names.app} is running on ${host}.`,
         "Retry. If it keeps failing, copy the diagnostics.",
       ];
   }
@@ -266,16 +299,16 @@ const HOP_ORDER = {
   direct: ["device", "server"],
 } as const;
 
-function hopLabel(hop: ConnectionHop, host: string): string {
+function hopLabel(hop: ConnectionHop, host: string, names: ConnectionNames): string {
   switch (hop) {
     case "device":
       return "This device";
     case "relay":
-      return "T3 Connect";
+      return sentence(names.connect);
     case "tunnel":
       return `${host} tunnel`;
     case "server":
-      return `T3 Code on ${host}`;
+      return `${sentence(names.app)} on ${host}`;
   }
 }
 
@@ -285,6 +318,7 @@ function hopLabel(hop: ConnectionHop, host: string): string {
  */
 export function presentConnectionDiagnosis(
   input: ConnectionDiagnosisInput,
+  names: ConnectionNames = T3_CONNECTION_NAMES,
 ): ConnectionDiagnosis | null {
   const located = locate(input);
   if (located === null) return null;
@@ -299,7 +333,7 @@ export function presentConnectionDiagnosis(
   const failedIndex = order.indexOf(located.hop);
   const hops = order.map((hop, index): ConnectionDiagnosisHop => ({
     hop,
-    label: hopLabel(hop, host),
+    label: hopLabel(hop, host, names),
     result: index < failedIndex ? "ok" : index === failedIndex ? "failed" : "unchecked",
   }));
 
@@ -318,16 +352,16 @@ export function presentConnectionDiagnosis(
       ? null
       : DateTime.formatIso(DateTime.makeUnsafe(input.state.retryAt)),
   );
-  add("Route", relayPath ? "T3 Connect" : "Direct");
+  add("Route", relayPath ? sentence(names.connect) : "Direct");
   add("App version", input.clientVersion);
   add("Host version", input.serverVersion);
   add("Error", failure?.detail);
   add("Trace ID", failure?.traceId);
 
   return {
-    headline: headline(host, located, failure),
+    headline: headline(host, located, failure, names),
     hops,
-    steps: steps(host, located, failure),
+    steps: steps(host, located, failure, names),
     facts,
     moreInfoUrl: relayPath ? t3ConnectTroubleshootingUrl(helpSection(located, failure)) : null,
   };
@@ -336,9 +370,13 @@ export function presentConnectionDiagnosis(
 const HOP_MARK = { ok: "ok", failed: "FAILED", unchecked: "not checked" } as const;
 
 /** One plain-text block for bug reports. */
-export function connectionDiagnosisText(hostLabel: string, diagnosis: ConnectionDiagnosis): string {
+export function connectionDiagnosisText(
+  hostLabel: string,
+  diagnosis: ConnectionDiagnosis,
+  names: ConnectionNames = T3_CONNECTION_NAMES,
+): string {
   return [
-    `T3 Code connection to ${hostLabel}: ${diagnosis.headline}`,
+    `${sentence(names.app)} connection to ${hostLabel}: ${diagnosis.headline}`,
     "",
     ...diagnosis.hops.map((hop) => `${hop.label}: ${HOP_MARK[hop.result]}`),
     "",

@@ -45,6 +45,7 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as AntigravityInstallation from "../provider/AntigravityInstallation.ts";
 import * as CodexInstallation from "../provider/CodexInstallation.ts";
+import { CliInstallations } from "../provider/cliSetup/CliInstallations.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
@@ -97,6 +98,7 @@ export const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({}),
   Layer.mock(CommandOutputHub.CommandOutputHub)({}),
   Layer.mock(CodexInstallation.CodexInstallation)({ managedDirectory: "/unused" }),
+  Layer.mock(CliInstallations)({ runnerFor: () => undefined }),
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),

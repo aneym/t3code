@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 
+import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { isMacPlatform } from "../lib/utils";
 import {
   channelForSpot,
@@ -20,6 +21,7 @@ import { applyEmbedSendResult, setEmbedHostSend } from "./embedHostSend";
 import {
   EMBED_COMPOSER_FOCUS_MESSAGE,
   EMBED_KEY_MESSAGE,
+  isEmbedPath,
   pressedHostChord,
   readEmbedClearMessage,
   readEmbedComposerMessage,
@@ -55,8 +57,14 @@ function leavingLink(event: MouseEvent): URL | null {
   if (!URL.canParse(anchor.href)) return null;
   const url = new URL(anchor.href);
   if (!OPENABLE_PROTOCOLS.has(url.protocol)) return null;
-  const leaves = url.origin !== window.location.origin || anchor.target === "_blank";
+  const leaves =
+    url.origin !== window.location.origin || anchor.target === "_blank" || opensStockClient(url);
   return leaves ? url : null;
+}
+
+function opensStockClient(url: URL): boolean {
+  const path = url.pathname;
+  return url.origin === window.location.origin && !isEmbedPath(path) && !isDevProxiedPath(path);
 }
 
 function fromHost(channel: EmbedHostChannel, event: MessageEvent): boolean {
@@ -65,12 +73,12 @@ function fromHost(channel: EmbedHostChannel, event: MessageEvent): boolean {
     : event.source === window && event.origin === window.location.origin;
 }
 
-export function useEmbedHostBridge(origin: string, framed: boolean, threadId: string): void {
+export function useEmbedHostBridge(origin: string, framed: boolean, threadId: string | null): void {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- connects the host channel and window listeners for the embed's lifetime
   useEffect(() => {
     const channel = channelForSpot({ origin, framed });
     const disconnect = connectEmbedHost(channel);
-    const stopClear = startEmbedClear(threadId);
+    const stopClear = threadId === null ? null : startEmbedClear(threadId);
     let focused = false;
     const reportFocus = () => {
       const next = composerFocused();
@@ -126,6 +134,7 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       if (url === null) return;
       event.preventDefault();
       event.stopImmediatePropagation();
+      if (opensStockClient(url)) return;
       const tab = event.button === 1 || (mac ? event.metaKey : event.ctrlKey);
       openThroughEmbedHost(url.href, tab && isEmbedRailsUrl(url.href));
     };
@@ -146,7 +155,7 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       window.removeEventListener("focusout", onFocusChange);
       window.removeEventListener("focus", onFocusChange);
       window.removeEventListener("blur", onFocusChange);
-      stopClear();
+      stopClear?.();
       disconnect();
     };
   }, [origin, framed, threadId]);

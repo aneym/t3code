@@ -74,7 +74,6 @@ import {
   deriveProviderSubagentStatus,
   deriveReportedModelSelection,
   deriveResumableRunId,
-  formatModelSelectionEffort,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveLatestThreadRun,
@@ -103,7 +102,6 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -271,7 +269,9 @@ import { useCitedHistory } from "./chat/citationProcedure";
 import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
-import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
+import { EmbedProviderPrompt } from "./embed/EmbedProviderPrompt";
+import { embedNeedsProvider } from "~/embed/embedProviderReady";
+import { resolveProviderSubagentLabels } from "./chat/providerSubagentLabels";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useSideChat } from "./chat/useSideChat";
@@ -376,7 +376,6 @@ import {
 
 import {
   EMPTY_PROVIDERS,
-  EMPTY_PROVIDER_MODELS,
   EMPTY_USAGE_LIMIT_SOURCES,
   EMPTY_FEEDBACK_SUBMISSIONS,
   EMPTY_PROVIDER_SKILLS,
@@ -1284,6 +1283,7 @@ export default function ChatView(props: ChatViewProps) {
     settings,
     activeProject?.id ?? null,
   );
+  const needsProvider = embedNeedsProvider(serverConfig !== null, providerInstanceEntries);
   const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
   const { selectedProviderEntry, requestedDriverKind } = resolveComposerProviderSelection({
     entries: providerInstanceEntries,
@@ -1710,30 +1710,12 @@ export default function ChatView(props: ChatViewProps) {
   const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
   // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
-  const composerMounted = !showProviderSubagentBar;
-  const providerSubagentModels = selectedProviderEntry?.models ?? EMPTY_PROVIDER_MODELS;
-  // Providers can report dated model ids or aliases.
-  const providerSubagentModelSlug = selectedProviderEntry
-    ? resolveSelectableModel(
-        selectedProviderEntry.driverKind,
-        activeThread?.modelSelection.model,
-        providerSubagentModels,
-      )
-    : null;
-  const providerSubagentCatalogModel = providerSubagentModels.find(
-    (model) => model.slug === providerSubagentModelSlug,
+  const composerMounted = !showProviderSubagentBar && !needsProvider;
+  const providerSubagentLabels = resolveProviderSubagentLabels(
+    selectedProviderEntry,
+    activeThread?.modelSelection,
+    reportedModelSelection,
   );
-  const providerSubagentModelLabel = providerSubagentCatalogModel
-    ? getTriggerDisplayModelName(providerSubagentCatalogModel, selectedProviderEntry?.driverKind)
-    : formatModelSlugName(activeThread?.modelSelection.model ?? "");
-  const providerSubagentEffortLabel =
-    activeThread === undefined
-      ? null
-      : formatModelSelectionEffort(
-          activeThread.modelSelection,
-          providerSubagentModels,
-          reportedModelSelection,
-        );
   const showComposerContextStrip =
     !embedded &&
     shouldShowComposerContextStrip({
@@ -2780,7 +2762,7 @@ export default function ChatView(props: ChatViewProps) {
         : serverConfig === null
           ? "Side chats are not ready yet. Try again in a moment."
           : serverConfig.environment.capabilities.sideChats !== true
-            ? "Update this environment's T3 Code server to use side chats."
+            ? "Update this environment's server to use side chats."
             : sideChatsOffered && !isServerThread
               ? "Side chats start after the first message."
               : sideChat.available &&
@@ -3181,7 +3163,7 @@ export default function ChatView(props: ChatViewProps) {
           <HeldSendNotice
             threadKey={routeThreadKey}
             held={heldSend}
-            label={activeEnvironment?.label ?? "T3"}
+            label={activeEnvironment?.label ?? "the server"}
             onRetry={retryHeldSendNow}
           />
         ) : null}
@@ -3609,11 +3591,13 @@ export default function ChatView(props: ChatViewProps) {
                                   providerInstanceEntries,
                                 )
                               }
-                              modelLabel={providerSubagentModelLabel}
-                              effortLabel={providerSubagentEffortLabel}
+                              modelLabel={providerSubagentLabels.modelLabel}
+                              effortLabel={providerSubagentLabels.effortLabel}
                               status={providerSubagentStatus}
                               onOpenParent={parentThreadLink?.open ?? null}
                             />
+                          ) : needsProvider ? (
+                            <EmbedProviderPrompt environmentId={environmentId} />
                           ) : null}
                           {!composerMounted ? null : (
                             <ChatComposer

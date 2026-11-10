@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
 import { InfoIcon } from "lucide-react";
 
+import { inEmbedPage } from "../../embed/embedProtocol";
 import { serverEnvironment } from "../../state/server";
 import { Alert, AlertDescription } from "../ui/alert";
 
@@ -34,15 +35,20 @@ export function MultipleAccountsNote({
       <InfoIcon aria-hidden />
       <AlertDescription>
         <p>
-          We do not recommend managing multiple {providerName} accounts in T3 Code.{" "}
-          <a
-            href={MULTIPLE_ACCOUNTS_FAQ_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="underline underline-offset-2 hover:text-foreground"
-          >
-            More info
-          </a>
+          We do not recommend managing multiple {providerName} accounts here.
+          {inEmbedPage() ? null : (
+            <>
+              {" "}
+              <a
+                href={MULTIPLE_ACCOUNTS_FAQ_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-foreground"
+              >
+                More info
+              </a>
+            </>
+          )}
         </p>
       </AlertDescription>
     </Alert>

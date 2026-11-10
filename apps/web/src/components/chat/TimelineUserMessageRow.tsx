@@ -83,6 +83,7 @@ import {
   MessageAuthorHeading,
   TimelineRowTimestamp,
 } from "./TimelineRowParts";
+import { AppSentNote } from "./AppSentNote";
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
 import {
   resolvePreviewAnnotationImage,
@@ -771,14 +772,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       className="group @container flex flex-col items-end gap-1"
       data-user-message-attribution={folded ? "agent" : undefined}
     >
-      {userMessage.attribution === "t3code" ? (
-        <p
-          className="me-1 text-2xs text-muted-foreground/70"
-          data-user-message-attribution="t3code"
-        >
-          Sent by T3 Code
-        </p>
-      ) : null}
+      {userMessage.attribution === "t3code" ? <AppSentNote /> : null}
       {/* The row's heading already names the guest for screen readers. */}
       {userMessage.guestName !== undefined ? (
         <div aria-hidden>

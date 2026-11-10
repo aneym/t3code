@@ -58,8 +58,11 @@ import {
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
+  makeClaudeEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
+import { makeClaudeCliAuth } from "../cliSetup/claudeCliAuth.ts";
+import { cliSetupEnabled } from "../cliSetup/cliSetupSwitches.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -161,12 +164,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         ? configDir
         : undefined,
     );
+    const setup = {
+      canInstall: yield* cliSetupEnabled(DRIVER_KIND, "install"),
+      canAuthenticate: yield* cliSetupEnabled(DRIVER_KIND, "signIn"),
+    };
     const stampIdentity = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName,
       accentColor,
       continuationGroupKey,
+      setup,
     });
 
     const scopedLimitNames = yield* makeClaudeScopedLimitNames;
@@ -385,7 +393,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       ),
     );
 
+    const auth = setup.canAuthenticate
+      ? yield* makeClaudeCliAuth({
+          instanceId,
+          binaryPath: effectiveConfig.binaryPath,
+          env: yield* makeClaudeEnvironment(effectiveConfig, processEnv),
+          cwd: stateDir,
+          configDir,
+          onChanged: Cache.invalidateAll(capabilitiesProbeCache).pipe(
+            Effect.andThen(snapshot.refresh),
+            Effect.ignore,
+          ),
+        })
+      : undefined;
+
     return {
+      ...(auth ? { auth } : {}),
       instanceId,
       driverKind: DRIVER_KIND,
       continuationIdentity: {

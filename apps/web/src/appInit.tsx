@@ -117,6 +117,7 @@ function startClientAppearance(): void {
 }
 
 function startDocumentTitle(): void {
+  if (isEmbedPath(window.location.pathname)) return;
   appAtomRegistry.subscribe(
     primaryServerConfigAtom,
     (config) => {

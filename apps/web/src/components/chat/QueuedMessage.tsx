@@ -15,6 +15,7 @@ import { GuestMessageName } from "./guestMessageStyle";
 import { TimelineRowTimestamp } from "./TimelineRowParts";
 import { FoldedMessageHeader, useScheduledTaskTitle } from "./FoldedMessageHeader";
 import { SenderThreadButton } from "./SenderThreadButton";
+import { AppSentNote } from "./AppSentNote";
 
 type QueuedRunMessage = Parameters<typeof deriveThreadQueueWorkflowState>[0]["messages"][number];
 
@@ -60,9 +61,7 @@ export function QueuedMessage(props: {
 
   return (
     <>
-      {attribution === "t3code" ? (
-        <p className="me-1 text-2xs text-muted-foreground/70">Sent by T3 Code</p>
-      ) : null}
+      {attribution === "t3code" ? <AppSentNote /> : null}
       {presentation?.guestName === undefined ? null : (
         <GuestMessageName name={presentation.guestName} />
       )}

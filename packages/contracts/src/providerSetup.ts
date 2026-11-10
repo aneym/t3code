@@ -48,6 +48,7 @@ export const ProviderAuthInteraction = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("credentials"),
     id: SetupOperationId,
+    url: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(16_384))),
     fields: Schema.Array(
       Schema.Struct({
         name: SetupOperationId,
@@ -158,6 +159,7 @@ export const ProviderInstallState = Schema.Struct({
   source: Schema.optionalKey(Schema.NullOr(Schema.Literals(["managed", "local"]))),
   canRemove: Schema.Boolean,
   message: Schema.NullOr(Schema.String),
+  download: Schema.optionalKey(Schema.Literals(["fresh", "resumed", "restarted"])),
 });
 export type ProviderInstallState = typeof ProviderInstallState.Type;
 

@@ -12,24 +12,28 @@ export function StandalonePage({ children }: { readonly children: ReactNode }) {
 }
 
 export function StandalonePageHeader({
+  brand = true,
   context,
   title,
   description,
 }: {
+  readonly brand?: boolean;
   readonly context?: ReactNode;
   readonly title: ReactNode;
   readonly description: ReactNode;
 }) {
   return (
     <>
-      <div className="flex items-baseline justify-between gap-3 text-muted-foreground">
-        <span className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
-          <T3Wordmark className="h-3 w-auto shrink-0 text-foreground" aria-hidden />
-          <span className="text-lg font-medium tracking-tight">Code</span>
-        </span>
-        {context ? <span className="text-sm">{context}</span> : null}
-      </div>
-      <h1 className="mt-6 text-xl leading-tight font-semibold">{title}</h1>
+      {brand ? (
+        <div className="mb-6 flex items-baseline justify-between gap-3 text-muted-foreground">
+          <span className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
+            <T3Wordmark className="h-3 w-auto shrink-0 text-foreground" aria-hidden />
+            <span className="text-lg font-medium tracking-tight">Code</span>
+          </span>
+          {context ? <span className="text-sm">{context}</span> : null}
+        </div>
+      ) : null}
+      <h1 className="text-xl leading-tight font-semibold">{title}</h1>
       <p className="mt-2 text-sm text-muted-foreground">{description}</p>
     </>
   );
