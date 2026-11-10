@@ -3,10 +3,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+
+import { cliRefusal } from "../cliRefusal.ts";
 
 export class WorkspaceRootNotExistsError extends Schema.TaggedError<WorkspaceRootNotExistsError>()(
   "WorkspaceRootNotExistsError",
@@ -15,6 +18,8 @@ export class WorkspaceRootNotExistsError extends Schema.TaggedError<WorkspaceRoo
     normalizedWorkspaceRoot: Schema.String,
   },
 ) {
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
   override get message(): string {
     return `Workspace root does not exist: ${this.normalizedWorkspaceRoot}`;
   }
