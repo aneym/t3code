@@ -161,9 +161,10 @@ export function ProviderCliSetupSection({
   let details: ReactNode = null;
   switch (stage.stage) {
     case "notInstalled":
-      description = canInstall
-        ? `Install ${name} on ${environmentLabel} to use it.`
-        : `${name} is not installed on ${environmentLabel}.`;
+      description =
+        canManage && canInstall
+          ? `Install ${name} on ${environmentLabel} to use it.`
+          : `${name} is not installed on ${environmentLabel}.`;
       if (canManage && canInstall)
         control = (
           <Button size="sm" variant="outline" disabled={disabled} onClick={installNow}>
@@ -188,7 +189,7 @@ export function ProviderCliSetupSection({
           </Button>
         );
       details = (
-        <div className="grid gap-2 pb-2">
+        <div className="grid gap-2 pt-1 pb-2">
           <div className="h-1">
             {stage.phase === "downloading" && stage.totalBytes ? (
               <DownloadProgress
@@ -206,9 +207,10 @@ export function ProviderCliSetupSection({
       break;
     }
     case "signedOut":
-      description = canSignIn
-        ? `Sign in to use ${name} here.`
-        : `Sign in to ${name} on ${environmentLabel} to use it.`;
+      description =
+        canManage && canSignIn
+          ? `Sign in to use ${name} here.`
+          : `${name} is not signed in on ${environmentLabel}.`;
       if (canManage && canSignIn)
         control = (
           <>

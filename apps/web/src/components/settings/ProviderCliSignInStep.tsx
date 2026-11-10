@@ -104,7 +104,7 @@ export function ProviderCliSignInStep({
               type={field.secret ? "password" : "text"}
               autoComplete="off"
               aria-label={field.label}
-              placeholder={field.label}
+              placeholder="Code"
               value={code}
               disabled={disabled}
               maxLength={16_384}

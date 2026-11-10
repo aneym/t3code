@@ -17,7 +17,11 @@ export const layerProviderInstallations = Layer.mergeAll(
 
 const installedVersionChanges = (changes: Stream.Stream<ProviderInstallState>) =>
   changes.pipe(
-    Stream.changesWith((a, b) => a.installedVersion === b.installedVersion),
+    Stream.changesWith(
+      (a, b) =>
+        a.installedVersion === b.installedVersion &&
+        (b.phase !== "succeeded" || a.phase === "succeeded"),
+    ),
     Stream.drop(1),
   );
 
