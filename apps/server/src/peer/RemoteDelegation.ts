@@ -38,7 +38,7 @@ import {
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { delegatedChildDefaultModel } from "../mcp/delegatedChildModel.ts";
+import { delegatedChildDefaultModel, remoteChildOptions } from "../mcp/delegatedChildModel.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -217,11 +217,12 @@ const make = Effect.gen(function* () {
           message: "Pass target.model from orchestrator_capabilities with this environmentId.",
         });
       }
-      const options =
-        target.options ??
-        (instanceId === inherited.instanceId && model === inherited.model
-          ? inherited.options
-          : undefined);
+      const options = remoteChildOptions(
+        delegatedChildModel,
+        { instanceId, model },
+        inherited,
+        target.options,
+      );
       // Omitted modes are left to the other side, which caps them by the link's access.
       const runtimeMode =
         input.runtimeMode === undefined || input.runtimeMode === "inherit"
