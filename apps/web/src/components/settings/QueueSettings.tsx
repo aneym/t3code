@@ -68,6 +68,13 @@ export function QueueSettings() {
             "Let a person's MCP client, such as the t3 CLI or an app you approved, approve or decline a thread's permission requests. Agents can never decide them.",
         },
         {
+          key: "liveThreadFeed",
+          searchId: "live-thread-feed",
+          label: "Live thread feed",
+          description:
+            "Stream Claude replies while they are written. MCP thread reads mark partial replies as streaming.",
+        },
+        {
           key: "hostLinkEnabled",
           searchId: "host-link",
           label: "Host app link",
@@ -84,6 +91,7 @@ export function QueueSettings() {
           | "headlessSubagentStreaming"
           | "mcpEventsEnabled"
           | "mcpClientApprovals"
+          | "liveThreadFeed"
           | "hostLinkEnabled";
         return (
           <SettingsRow

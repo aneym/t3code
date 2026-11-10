@@ -25,13 +25,14 @@ import {
 
 const FINGERPRINT_CHARS = 32;
 
-const sendIdentity = Effect.fn("OrchestratorMcpService.sendIdentity")(function* (input: {
+export const sendIdentity = Effect.fn("OrchestratorMcpService.sendIdentity")(function* (input: {
   readonly crypto: Crypto.Crypto;
   readonly scope: McpInvocationScope;
   readonly threadId: OrchestratorMcpThreadSendInput["threadId"];
   readonly requestKey: string;
   readonly mode: string;
   readonly message: string;
+  readonly operation?: string;
 }) {
   const digest = yield* input.crypto
     .digest("SHA-256", new TextEncoder().encode(`${input.mode}\n${input.message}`))
@@ -39,7 +40,7 @@ const sendIdentity = Effect.fn("OrchestratorMcpService.sendIdentity")(function* 
   const key = [
     "mcp",
     encodeURIComponent(requestPrincipal(input.scope)),
-    "thread-send",
+    input.operation ?? "thread-send",
     encodeURIComponent(input.threadId),
     encodeURIComponent(input.requestKey),
   ].join(":");

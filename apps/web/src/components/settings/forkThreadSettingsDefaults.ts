@@ -9,6 +9,7 @@ export const forkThreadSettingsDefaults = {
   headlessSubagentStreaming: DEFAULT_UNIFIED_SETTINGS.headlessSubagentStreaming,
   mcpEventsEnabled: DEFAULT_UNIFIED_SETTINGS.mcpEventsEnabled,
   mcpClientApprovals: DEFAULT_UNIFIED_SETTINGS.mcpClientApprovals,
+  liveThreadFeed: DEFAULT_UNIFIED_SETTINGS.liveThreadFeed,
   hostLinkEnabled: DEFAULT_UNIFIED_SETTINGS.hostLinkEnabled,
 };
 
@@ -37,6 +38,9 @@ export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyAr
       : null,
     settings.mcpClientApprovals !== forkThreadSettingsDefaults.mcpClientApprovals
       ? "Approvals from MCP clients"
+      : null,
+    settings.liveThreadFeed !== forkThreadSettingsDefaults.liveThreadFeed
+      ? "Live thread feed"
       : null,
     settings.hostLinkEnabled !== forkThreadSettingsDefaults.hostLinkEnabled
       ? "Host app link"
