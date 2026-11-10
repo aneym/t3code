@@ -9,6 +9,7 @@ import time
 from contextlib import closing
 from pathlib import Path
 
+from .compact_headroom import headroom, refusal
 from .install_backup_retention import inventory
 from .install_restore_copy import RecoveryRequired, checksum, identity, restore
 from .install_storage import EXTERNAL, backup_roots
@@ -151,6 +152,9 @@ def run_step(run, backup, record, *, temp_root=TEMP_ROOT, timeout=TIMEOUT_S):
     temp_root.mkdir(mode=0o700, exist_ok=True)
     record["before"] = header(db)
     record["space"] = space(run, db, database_bytes(db), temp_root)
+    record["space"]["walHeadroom"] = headroom(db)
+    if not record["space"]["walHeadroom"]["passes"]:
+        return skip(record, refusal(record["space"]["walHeadroom"]))
     if not record["space"]["live"]["passes"]:
         return skip(record, "database volume would fall under its free-space floor")
     if not record["space"]["temp"]["passes"]:
