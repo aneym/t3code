@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { ChatAttachmentId } from "./chatAttachment.ts";
 import { MessageSender } from "./messageSender.ts";
 import { QuietNoteFields } from "./threadNote.ts";
 import {
@@ -38,6 +39,16 @@ export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
     Schema.Literal(true).annotate({
       description: "A reply still being written: `text` is partial and grows.",
     }),
+  ),
+  attachments: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: ChatAttachmentId,
+        type: Schema.String,
+        name: Schema.String,
+        mimeType: Schema.String,
+      }),
+    ),
   ),
   updatedAt: IsoDateTime,
 });

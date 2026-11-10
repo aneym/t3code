@@ -756,7 +756,7 @@ function timelineItem(input: {
     text: text === null ? null : text.slice(offset, end),
     textTruncated,
     nextTextOffset: textTruncated ? end : null,
-    ...(input.feed ? threadReadFeedFields(item) : {}),
+    ...(input.feed ? threadReadFeedFields(item, message) : {}),
     updatedAt: DateTime.formatIso(item.updatedAt),
   };
 }

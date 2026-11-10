@@ -13,6 +13,8 @@ import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readThread, unavailable } from "../../threadAccess.ts";
+import { isThreadManagementError, threadManagementFailure } from "../../threadManagementFailure.ts";
+import { attachmentSendRetry } from "./sendRetry.ts";
 import { AttachmentToolkit } from "./tools.ts";
 
 export function resolveAttachmentReferences(
@@ -90,12 +92,26 @@ export const layer = McpToolAccess.toLayer(
                 code: "invalid_request",
                 message: "Unarchive the target thread before sending attachments.",
               });
-            const attachments = yield* resolveAttachmentReferences(
-              input.attachments,
-              projection.messages.flatMap((message) => message.attachments),
-            );
-            const commandId = yield* newCommandId();
-            const messageId = MessageId.make(commandId);
+            const mode = input.mode ?? "queue";
+            const retry =
+              input.clientRequestId === undefined
+                ? undefined
+                : yield* attachmentSendRetry({
+                    threadId: projection.thread.id,
+                    clientRequestId: input.clientRequestId,
+                    mode,
+                    message: input.message ?? "",
+                    attachments: input.attachments,
+                    messages: projection.messages,
+                  });
+            const attachments =
+              retry?.sent ??
+              (yield* resolveAttachmentReferences(
+                input.attachments,
+                projection.messages.flatMap((message) => message.attachments),
+              ));
+            const commandId = retry?.commandId ?? (yield* newCommandId());
+            const messageId = retry?.messageId ?? MessageId.make(commandId);
             const result = yield* ThreadMessageIntake.sendToThread({
               projectId: projection.thread.projectId,
               threadId: projection.thread.id,
@@ -104,7 +120,7 @@ export const layer = McpToolAccess.toLayer(
               ...mcpMessageSender(scope),
               text: input.message ?? "",
               attachments,
-              mode: input.mode ?? "queue",
+              mode,
               createdBy: "agent",
               creationSource: "mcp",
             }).pipe(
@@ -114,7 +130,9 @@ export const layer = McpToolAccess.toLayer(
                       code: "orchestration_error",
                       message: error.message,
                     })
-                  : unavailable(),
+                  : retry !== undefined && isThreadManagementError(error)
+                    ? threadManagementFailure(error)
+                    : unavailable(),
               ),
             );
             return {
@@ -125,6 +143,16 @@ export const layer = McpToolAccess.toLayer(
               delivery: result.delivery,
               ...(result.holdReason === undefined ? {} : { holdReason: result.holdReason }),
               ...(result.next === undefined ? {} : { next: result.next }),
+              ...(retry === undefined
+                ? {}
+                : {
+                    clientRequestId: input.clientRequestId,
+                    receipt: {
+                      commandId,
+                      sequence: result.dispatch.sequence,
+                      replayed: result.dispatch.replayed === true,
+                    },
+                  }),
             };
           }),
       ),
