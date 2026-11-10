@@ -4,11 +4,25 @@ import {
   serviceUnitFileName,
 } from "../serviceConnectorUnit.ts";
 import type * as Duration from "effect/Duration";
-const BOOT_SERVICE_NAME = "t3code";
+export const BOOT_SERVICE_NAME_ENV = "T3CODE_SERVICE_NAME";
+const BOOT_SERVICE_CUSTOM_NAME = process.env[BOOT_SERVICE_NAME_ENV]?.trim() || undefined;
+if (
+  BOOT_SERVICE_CUSTOM_NAME !== undefined &&
+  !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(BOOT_SERVICE_CUSTOM_NAME)
+) {
+  throw new Error(`${BOOT_SERVICE_NAME_ENV} must be letters, digits, dots, dashes or underscores.`);
+}
+const BOOT_SERVICE_NAME = BOOT_SERVICE_CUSTOM_NAME ?? "t3code";
 export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 // `.service` suffix keeps the label distinct from the desktop app's bundle id
 // (com.t3tools.t3code), so launchd and TCC records never collide.
-export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
+export const BOOT_SERVICE_LAUNCHD_LABEL = BOOT_SERVICE_CUSTOM_NAME ?? "com.t3tools.t3code.service";
+const customNameUnitLines = BOOT_SERVICE_CUSTOM_NAME
+  ? [`Environment=${BOOT_SERVICE_NAME_ENV}=${BOOT_SERVICE_CUSTOM_NAME}`]
+  : [];
+const customNamePlistLines = BOOT_SERVICE_CUSTOM_NAME
+  ? [`    <key>${BOOT_SERVICE_NAME_ENV}</key>`, `    <string>${BOOT_SERVICE_CUSTOM_NAME}</string>`]
+  : [];
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
@@ -76,6 +90,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${quoteSystemdValue(serviceUnitFileName(plan.unitPath))}`,
     `Environment=${CONNECTOR_UNIT_PATH_ENV}=${quoteSystemdValue(plan.connectorUnitPath ?? connectorUnitPath(plan.unitPath))}`,
+    ...customNameUnitLines,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark the stop before it signals the server.
     // Past TimeoutStopSec, systemd SIGKILLs the cgroup.
@@ -134,6 +149,7 @@ export function renderBootServicePlist(
     `    <string>${escapeXmlText(serviceUnitFileName(plan.unitPath))}</string>`,
     `    <key>${CONNECTOR_UNIT_PATH_ENV}</key>`,
     `    <string>${escapeXmlText(plan.connectorUnitPath ?? connectorUnitPath(plan.unitPath))}</string>`,
+    ...customNamePlistLines,
     `  </dict>`,
     `  <key>WorkingDirectory</key>`,
     `  <string>${escapeXmlText(options.homeDir)}</string>`,

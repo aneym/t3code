@@ -18,7 +18,8 @@ import * as BootService from "../cloud/bootService.ts";
 import { prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { repointLauncher, resolveLauncherPath, resolveNewestVersion, runUpdate } from "./update.ts";
+import { resolveNewestVersion } from "./releaseIndex.ts";
+import { repointLauncher, resolveLauncherPath, runUpdate } from "./update.ts";
 
 // lsof listing one process, so prune sees a process list in which no runtime is running.
 const unrelatedLsof = ProcessRunner.ProcessRunner.of({
