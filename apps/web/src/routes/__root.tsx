@@ -118,15 +118,22 @@ export const Route = createRootRoute({
 });
 
 function RootRouteNotFoundView() {
+  const embedded = useLocation({ select: (location) => isEmbedPath(location.pathname) });
   return (
     <main className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-6">
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">
         <h1 className="text-lg font-medium text-foreground">Page not found</h1>
-        <p className="text-sm text-muted-foreground">
-          This link doesn't point to a page in {APP_DISPLAY_NAME}. Go home to choose a project or
-          start a thread.
-        </p>
-        <Button render={<Link to="/" replace />}>Go home</Button>
+        {embedded ? (
+          <p className="text-sm text-muted-foreground">This link doesn't point to a chat.</p>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">
+              This link doesn't point to a page in {APP_DISPLAY_NAME}. Go home to choose a project
+              or start a thread.
+            </p>
+            <Button render={<Link to="/" replace />}>Go home</Button>
+          </>
+        )}
       </div>
     </main>
   );
@@ -304,7 +311,7 @@ const MAX_ERROR_CAUSE_DEPTH = 5;
 // Use only pathname to keep query tokens off the clipboard.
 function errorReport(error: unknown, pathname: string): string {
   const lines = [
-    `${APP_DISPLAY_NAME} ${APP_VERSION}`,
+    `${isEmbedPath(pathname) ? "Version" : APP_DISPLAY_NAME} ${APP_VERSION}`,
     `Path: ${pathname}`,
     `Time: ${new Date().toISOString()}`,
     "",

@@ -137,6 +137,7 @@ export function ProviderModelsSection({
 }: ProviderModelsSectionProps) {
   const [input, setInput] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+  const canAdd = canManageCustomModels && driverKind !== "antigravity";
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
@@ -184,7 +185,7 @@ export function ProviderModelsSection({
     builtInModels.length > 0 && builtInModels.every((model) => hiddenModels.includes(model.slug));
 
   const handleAdd = () => {
-    if (!canManageCustomModels || driverKind === "antigravity") return;
+    if (!canAdd) return;
     const normalized = normalizeCustomModelSlug(input);
     if (!normalized) {
       setError("Enter a model slug.");
@@ -317,7 +318,7 @@ export function ProviderModelsSection({
           />
         ) : null}
         <div className="flex items-center gap-2">
-          {builtInModels.length > 0 ? (
+          {builtInModels.length > 0 && canWritePreferences ? (
             <Button
               type="button"
               size="xs"
@@ -340,7 +341,7 @@ export function ProviderModelsSection({
             {hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}
           </span>
         </div>
-        {driverKind !== "antigravity" && !isAdding ? (
+        {canAdd && !isAdding ? (
           <Button
             type="button"
             size="xs"
@@ -399,7 +400,7 @@ export function ProviderModelsSection({
         })}
       </div>
 
-      {driverKind === "antigravity" || !canManageCustomModels ? null : isAdding ? (
+      {!canAdd ? null : isAdding ? (
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
           <Input
             id={`provider-instance-${instanceId}-custom-model`}
