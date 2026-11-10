@@ -15,9 +15,9 @@ import * as Schema from "effect/Schema";
 
 import {
   BOOT_SERVICE_LAUNCHD_LABEL,
-  BOOT_SERVICE_PLIST_FILE,
   BOOT_SERVICE_UNIT_FILE,
   bootServiceBaseDirOf,
+  bootServiceUnitPath,
 } from "./cloud/bootServiceRender.ts";
 import { ServiceLauncherHostProcess } from "./cloud/serviceLauncherClient.ts";
 import {
@@ -129,10 +129,7 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
     const homeDir = yield* HostProcess.HomeDirectory;
     const fs = yield* FileSystem.FileSystem;
     const runner = yield* ProcessRunner.ProcessRunner;
-    const unitPath =
-      platform === "darwin"
-        ? NodePath.join(homeDir, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE)
-        : NodePath.join(homeDir, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
+    const unitPath = bootServiceUnitPath(NodePath.join, platform, homeDir);
     const baseDir = bootServiceBaseDirOf(yield* fs.readFileString(unitPath));
     if (
       baseDir === undefined ||

@@ -29,6 +29,14 @@ const customNamePlistLines = BOOT_SERVICE_CUSTOM_NAME
   ? [`    <key>${BOOT_SERVICE_NAME_ENV}</key>`, `    <string>${BOOT_SERVICE_CUSTOM_NAME}</string>`]
   : [];
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
+export const bootServiceUnitPath = (
+  join: (...parts: ReadonlyArray<string>) => string,
+  platform: NodeJS.Platform,
+  homeDir: string,
+) =>
+  platform === "darwin"
+    ? join(homeDir, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE)
+    : join(homeDir, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
 
