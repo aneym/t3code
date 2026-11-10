@@ -1,3 +1,4 @@
+import { appNameRefusal } from "@t3tools/shared/appName";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -28,6 +29,13 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
     readonly rejectRunningServer?: boolean;
   },
 ) {
+  const appNameProblem = yield* appNameRefusal;
+  if (appNameProblem !== null) {
+    return yield* Effect.sync(() => {
+      process.stderr.write(`${appNameProblem}\n`);
+      return process.exit(1);
+    });
+  }
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveServerConfig(flags, logLevel, options);
   const run = runServer.pipe(Effect.provideService(ServerConfig.ServerConfig, config));

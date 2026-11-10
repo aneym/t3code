@@ -8,6 +8,7 @@ import {
   type ChatGptTransferredProfile,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
+import { appName } from "@t3tools/shared/appName";
 import { codexCallbackUrl } from "@t3tools/shared/codexAuthHandoff";
 import { hashTelemetryId } from "@t3tools/shared/telemetryId";
 import * as Clock from "effect/Clock";
@@ -17,7 +18,7 @@ import { openAiUserId } from "../telemetry/Identify.ts";
 import * as Crypto from "effect/Crypto";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
-import { codexAuthCallbackPage, codexAuthReturnUrl } from "./CodexAuthCallbackPage.ts";
+import { codexAuthReturnUrl, sendCodexAuthCallbackPage } from "./CodexAuthCallbackPage.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -471,6 +472,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     const returnUrl =
       codexAuthReturnUrl(context.returnUrl) ?? codexAuthReturnUrl(options.defaultReturnUrl);
     const pageNonce = NodeCrypto.randomBytes(24).toString("base64url");
+    const name = yield* appName;
     const callback = Promise.withResolvers<{ url: URL; response?: NodeHttp.ServerResponse }>();
     const clientCallback = context.callbackMode === "client";
     let used = false;
@@ -528,7 +530,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
               ? { prompt: "consent" }
               : {}),
           }
-        : { agent_name_hint: "T3 Code" }),
+        : { agent_name_hint: name }),
       ext_agent_host_id: hostId,
       response_type: "code",
       redirect_uri: redirectUri,
@@ -711,15 +713,11 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
                 return;
               }
               response.once("close", resolve);
-              response
-                .writeHead(200, {
-                  "content-type": "text/html; charset=utf-8",
-                  "cache-control": "no-store",
-                  "referrer-policy": "no-referrer",
-                  "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${pageNonce}'; base-uri 'none'; frame-ancestors 'none'`,
-                  "x-content-type-options": "nosniff",
-                })
-                .end(codexAuthCallbackPage(Exit.isSuccess(result), returnUrl, pageNonce), resolve);
+              sendCodexAuthCallbackPage(
+                response,
+                { success: Exit.isSuccess(result), returnUrl, nonce: pageNonce, name },
+                resolve,
+              );
             }),
         ),
       ),
