@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
+import { agentHomeSealing } from "./AgentHomeSealing.ts";
 import { lanesUnder, readLaneText, type createLaneReader } from "./AgentLaneFiles.ts";
 
 const agentFile = async (root: string, handle: string) => {
@@ -91,6 +92,7 @@ export const homeFromDocument = (
       false,
     ),
     office: binding(t3Field(doc, "office"), false),
+    ...(agentHomeSealing(doc) === "sealed" ? { sealed: true } : {}),
   });
 export const isLaneThread = async (root: string, threadId: string) => {
   const lanes = NodePath.join(root, "..", "lanes");

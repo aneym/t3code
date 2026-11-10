@@ -34,6 +34,7 @@ export const AgentHome = Schema.Struct({
   binding: Schema.NullOr(AgentHomeBinding),
   previous: Schema.NullOr(AgentHomeBinding),
   office: Schema.optionalKey(Schema.NullOr(AgentHomeBinding)),
+  sealed: Schema.optionalKey(Schema.Literal(true)),
 });
 export type AgentHome = typeof AgentHome.Type;
 

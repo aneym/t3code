@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { parseDocument, readDocumentText } from "./AgentHomeFiles.ts";
+import { agentHomeSealing } from "./AgentHomeSealing.ts";
 
 export interface SealedAgentHome {
   readonly home: string;
@@ -49,14 +50,19 @@ export const sealedAgentHomeFor = async (cwd: string | null): Promise<SealedAgen
     );
   });
   if (text === null) return null;
-  const sealed = (() => {
+  const doc = (() => {
     try {
-      return parseDocument(text).sealed;
+      return parseDocument(text);
     } catch {
       throw new Error(
         `${home}/agent.json is not valid JSON, so T3 Code can't tell whether this agent home is sealed.`,
       );
     }
   })();
-  return sealed === true ? { home, mcpServers: await readMcpServers(home) } : null;
+  const sealing = agentHomeSealing(doc);
+  if (sealing === "invalid")
+    throw new Error(
+      `${home}/agent.json has a "sealed" value that is not true or false, so T3 Code can't tell whether this agent home is sealed.`,
+    );
+  return sealing === "sealed" ? { home, mcpServers: await readMcpServers(home) } : null;
 };
