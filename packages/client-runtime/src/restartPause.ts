@@ -36,5 +36,5 @@ export function restartPauseLabel(runs: ReadonlyArray<RestartRun>) {
   const source = runs.findLast((run) => paused.has(run.id));
   if (source === undefined) return null;
   const successor = runs.find((run) => run.restartContinuationOfRunId === source.id);
-  return `Turn ${source.ordinal} paused by a T3 Code update${successor === undefined ? "" : ` · continued in turn ${successor.ordinal}`}`;
+  return `Turn ${source.ordinal} paused by an update${successor === undefined ? "" : ` · continued in turn ${successor.ordinal}`}`;
 }

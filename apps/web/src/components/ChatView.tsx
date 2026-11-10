@@ -2762,7 +2762,7 @@ export default function ChatView(props: ChatViewProps) {
         : serverConfig === null
           ? "Side chats are not ready yet. Try again in a moment."
           : serverConfig.environment.capabilities.sideChats !== true
-            ? "Update this environment's T3 Code server to use side chats."
+            ? "Update this environment's server to use side chats."
             : sideChatsOffered && !isServerThread
               ? "Side chats start after the first message."
               : sideChat.available &&
@@ -3163,7 +3163,7 @@ export default function ChatView(props: ChatViewProps) {
           <HeldSendNotice
             threadKey={routeThreadKey}
             held={heldSend}
-            label={activeEnvironment?.label ?? "T3"}
+            label={activeEnvironment?.label ?? "the server"}
             onRetry={retryHeldSendNow}
           />
         ) : null}

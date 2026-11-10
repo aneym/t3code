@@ -10,11 +10,13 @@
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
+    <title>T3 Code (Beta)</title>
     <script>
       (() => {
         if (location.pathname.startsWith("/embed/")) {
           document.documentElement.dataset.embed = "true";
-          document.querySelector('link[rel="icon"]').href = "data:,";
+          document.querySelector("[rel=icon]").href = "/embed-icon.svg";
+          document.querySelector("[rel=manifest]").remove();
           document.title = "Chat";
         }
         const LIGHT_BACKGROUND = "#ffffff";
@@ -118,11 +120,7 @@
           "system",
           "light",
           "dark",
-          "t3-chat",
-          "grove",
-          "ocean",
-          "ember",
-          "iris",
+          ...Object.keys(BUILT_IN_THEME_PALETTES),
           "t3-chat-dark",
           "t3-grove",
           "t3-ocean",
@@ -131,7 +129,7 @@
         ];
         const setThemeColor = (color) => {
           for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
-            meta.setAttribute("content", color);
+            meta.content = color;
           }
         };
 
@@ -419,7 +417,7 @@
         height: 96px;
       }
 
-      html[data-embed="true"] #boot-shell-card {
+      html[data-embed] #boot-shell-card {
         display: none;
       }
 
@@ -658,7 +656,6 @@
         white-space: nowrap;
       }
     </style>
-    <title>T3 Code (Beta)</title>
   </head>
   <body>
     <div id="root">

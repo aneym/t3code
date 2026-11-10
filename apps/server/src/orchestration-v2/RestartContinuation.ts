@@ -393,8 +393,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
           source: { kind: "system" },
           outcome: "updated",
           summary: note.settled
-            ? "T3 Code restarted and stopped background work"
-            : "T3 Code restarted and resumed this turn",
+            ? "The app restarted and stopped background work"
+            : "The app restarted and resumed this turn",
           detail: text,
         },
         ...(replayUnacceptedPrompt && sourceMessage?.context !== undefined
