@@ -1,3 +1,4 @@
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { CommandId, ThreadOrganizeRefusalReason } from "@t3tools/contracts";
 
@@ -11,6 +12,8 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
   },
 ) {
   override get message(): string {
+    if (Predicate.isTagged(this.cause, "RuntimePolicySealedAgentHomeError"))
+      return (this.cause as Error).message;
     return `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`;
   }
 }
