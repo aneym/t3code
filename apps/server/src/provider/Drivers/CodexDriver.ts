@@ -12,6 +12,8 @@ import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneratio
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerConfig from "../../config.ts";
+import { makeCodexCliAuth } from "../cliSetup/codexCliAuth.ts";
+import { cliSetupEnabled } from "../cliSetup/cliSetupSwitches.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
@@ -361,7 +363,21 @@ export const CodexDriver: ProviderDriver<
           ),
         );
 
+    const auth = (yield* cliSetupEnabled(DRIVER_KIND, "signIn"))
+      ? yield* makeCodexCliAuth({
+          instanceId,
+          binaryPath: effectiveConfig.binaryPath,
+          env: config.homePath.trim()
+            ? { ...processEnv, CODEX_HOME: homeLayout.sharedHomePath }
+            : processEnv,
+          cwd: (yield* ServerConfig.ServerConfig).stateDir,
+          codexHome: homeLayout.sharedHomePath,
+          refresh: snapshot.refresh,
+        })
+      : undefined;
+
     return {
+      ...(auth ? { auth } : {}),
       instanceId,
       driverKind: DRIVER_KIND,
       continuationIdentity,

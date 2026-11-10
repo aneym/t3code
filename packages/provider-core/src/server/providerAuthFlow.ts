@@ -289,10 +289,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
                 yield* publish(flow, {
                   phase: "waiting",
                   interaction,
-                  authorizationUrl:
-                    interaction.type === "browser" || interaction.type === "deviceCode"
-                      ? interaction.url
-                      : null,
+                  authorizationUrl: "url" in interaction ? (interaction.url ?? null) : null,
                   message: "Complete sign-in to continue.",
                 });
               }),

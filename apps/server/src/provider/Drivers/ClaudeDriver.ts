@@ -58,8 +58,11 @@ import {
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
+  makeClaudeEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
+import { makeClaudeCliAuth } from "../cliSetup/claudeCliAuth.ts";
+import { cliSetupEnabled } from "../cliSetup/cliSetupSwitches.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -385,7 +388,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       ),
     );
 
+    const auth = (yield* cliSetupEnabled(DRIVER_KIND, "signIn"))
+      ? yield* makeClaudeCliAuth({
+          instanceId,
+          binaryPath: effectiveConfig.binaryPath,
+          env: yield* makeClaudeEnvironment(effectiveConfig, processEnv),
+          cwd: stateDir,
+          configDir,
+          onChanged: Cache.invalidateAll(capabilitiesProbeCache).pipe(
+            Effect.andThen(snapshot.refresh),
+            Effect.ignore,
+          ),
+        })
+      : undefined;
+
     return {
+      ...(auth ? { auth } : {}),
       instanceId,
       driverKind: DRIVER_KIND,
       continuationIdentity: {
