@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 
 import type { ShellEnvironmentPatch } from "@t3tools/contracts";
 import * as HostProcess from "./HostProcess.ts";
+import { APPLE_GIT_PLACEHOLDER, locateDeveloperToolsGit } from "./appleGitPlaceholder.ts";
 import * as Context from "effect/Context";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
@@ -752,27 +753,10 @@ export function npmShimExecutable(
 
 export type XcodeGitLocator = (env: NodeJS.ProcessEnv) => string | undefined;
 
-// xcrun honors DEVELOPER_DIR and the `xcode-select` choice, as the shim does.
-function locateXcodeGitWithXcrun(env: NodeJS.ProcessEnv): string | undefined {
-  try {
-    const located = NodeChildProcess.execFileSync("/usr/bin/xcrun", ["--find", "git"], {
-      encoding: "utf8",
-      env,
-      timeout: 5_000,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return NodePath.isAbsolute(located) ? located : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export const XcodeGitLocation = Context.Reference<XcodeGitLocator>(
   "@t3tools/shared/shell/XcodeGitLocation",
-  { defaultValue: () => locateXcodeGitWithXcrun },
+  { defaultValue: () => locateDeveloperToolsGit },
 );
-
-const MACOS_GIT_SHIM = "/usr/bin/git";
 
 /**
  * Skip the xcrun shim's per-spawn lookup only when git resolves to /usr/bin/git.
@@ -803,7 +787,9 @@ const resolveMacosGit = Effect.fnUntraced(function* (
     return cached.resolvedPath ?? "git";
   }
   const located =
-    resolveExecutable("git", "darwin", env) === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
+    resolveExecutable("git", "darwin", env) === APPLE_GIT_PLACEHOLDER
+      ? locateXcodeGit(env)
+      : undefined;
   const realGit =
     located !== undefined && resolveExecutable(located, "darwin", env) !== undefined
       ? located
