@@ -30,6 +30,15 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     searchTerms: ["note notes back office agent message silent quiet context no turn"],
   },
   {
+    id: "child-completion-notes",
+    title: "Quiet child completions",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: [
+      "delegate delegated child subagent completion result wake note quiet clean gaps awaited",
+    ],
+  },
+  {
     id: "headless-child-threads",
     title: "Headless child threads",
     to: "/settings/chat",

@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type DelegatedTaskOutcome,
   type EnvironmentId,
   NodeId,
   OrchestratorMcpFailure,
@@ -28,6 +29,8 @@ import type * as Tool from "effect/ai/Tool";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import {
+  awaitedFor,
+  reportedOutcomeOf,
   resolveInteractionMode,
   resolveRuntimeMode,
   taskPrompt,
@@ -43,6 +46,7 @@ import { forkParked } from "../serverActivation.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as RemoteWorktreeTask from "./RemoteWorktreeTask.ts";
+import { isFinal, isModeRefusal, isTerminal, terminalStatus } from "./RemoteFollowRules.ts";
 
 /** How long one follow of a remote task waits on its thread there before checking again. */
 const FOLLOW_WAIT_MS = 10 * 60 * 1_000;
@@ -100,22 +104,6 @@ export class RemoteDelegation extends Context.Service<
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/peer/RemoteDelegation") {}
-
-/** The other side refused because the thread there runs above this caller's modes. */
-const isModeRefusal = (error: OrchestratorMcpFailure) =>
-  error.code === "runtime_mode_escalation_denied" ||
-  error.code === "interaction_mode_escalation_denied";
-
-/**
- * Refusals that following again cannot change: the link was revoked, expired
- * or forgotten, or the thread or run there is gone. Anything else (the other
- * machine asleep, a dropped route) is worth retrying.
- */
-const isFinal = (error: OrchestratorMcpFailure) =>
-  error.code === "capability_denied" ||
-  error.code === "thread_not_found" ||
-  error.code === "thread_deleted" ||
-  error.code === "run_not_found";
 
 const make = Effect.gen(function* () {
   const followRetry = yield* FollowRetrySchedule;
@@ -218,7 +206,9 @@ const make = Effect.gen(function* () {
       const { target } = input;
       const inherited = parent.thread.modelSelection;
       const instanceId = target.providerInstanceId ?? inherited.instanceId;
-      const { delegatedChildModel } = yield* settings.getSettings.pipe(Effect.orDie);
+      const { delegatedChildModel, childCompletionNotes } = yield* settings.getSettings.pipe(
+        Effect.orDie,
+      );
       const model =
         target.model ?? delegatedChildDefaultModel(delegatedChildModel, instanceId, inherited);
       if (model === undefined) {
@@ -249,7 +239,7 @@ const make = Effect.gen(function* () {
       );
       // One key for the launch there and the record here, so a retry finds both.
       const key = input.clientRequestId ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
-      const task = taskPrompt(input);
+      const task = taskPrompt(input, childCompletionNotes);
       const { launched, worktreeBase } = yield* worktrees.launch(
         scope,
         target.environmentId,
@@ -299,6 +289,7 @@ const make = Effect.gen(function* () {
           modelSelection: launched.modelSelection,
           remoteChild,
           completionWake: input.mode === "wait" ? "settled_only" : "always",
+          ...awaitedFor(input),
         })
         .pipe(
           // The cause goes to the log; the caller learns only that recording failed.
@@ -362,6 +353,7 @@ const make = Effect.gen(function* () {
     result: string,
     stoppedThere: "ran-out" | "stopped" | undefined,
     stopCount?: number,
+    reportedOutcome?: DelegatedTaskOutcome,
   ) {
     const attempt = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     yield* threads
@@ -374,6 +366,7 @@ const make = Effect.gen(function* () {
         result,
         ...(stoppedThere === undefined ? {} : { stoppedThere }),
         ...(stopCount === undefined ? {} : { stopCount }),
+        ...reportedOutcomeOf({ reportedOutcome }),
       })
       .pipe(
         Effect.catch((error) =>
@@ -624,7 +617,15 @@ const make = Effect.gen(function* () {
     };
     const reply = yield* lastReply(scope, remote, resultRun.runId, resultRun.status === "failed");
     const result = yield* worktrees.withWork(scope, remote, thread, taskId, reply ?? noReply);
-    yield* complete(parentThreadId, taskId, terminalStatus(resultRun.status), result, "ran-out");
+    yield* complete(
+      parentThreadId,
+      taskId,
+      terminalStatus(resultRun.status),
+      result,
+      "ran-out",
+      undefined,
+      waited.resultRun?.reportedOutcome,
+    );
     return yield* settled(parentThreadId, taskId);
   });
 
@@ -776,16 +777,6 @@ const make = Effect.gen(function* () {
 
   return RemoteDelegation.of({ delegate, cancel, start });
 });
-
-const isTerminal = (status: string) =>
-  status === "completed" ||
-  status === "failed" ||
-  status === "cancelled" ||
-  status === "interrupted" ||
-  status === "rolled_back";
-
-const terminalStatus = (status: string): "completed" | "failed" | "cancelled" | "interrupted" =>
-  status === "completed" || status === "failed" || status === "interrupted" ? status : "cancelled";
 
 export const layer = Layer.effect(RemoteDelegation, make).pipe(
   Layer.provide(RemoteWorktreeTask.layer),

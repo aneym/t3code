@@ -1,4 +1,7 @@
-import { delegatedTaskTerminalStatus } from "./DelegatedTaskStatus.ts";
+import {
+  delegatedTaskTerminalStatus,
+  isTerminalDelegatedTaskStatus,
+} from "./DelegatedTaskStatus.ts";
 import { delegatedRestartPending } from "./DelegatedRestartPending.ts";
 import { delegatedChildWorkspace } from "./DelegatedChildWorkspace.ts";
 import { resumeOnReopen } from "./RestartQueuedRuns.ts";
@@ -183,6 +186,13 @@ import {
   type GuestShareCommand,
 } from "./GuestShareDecider.ts";
 import { quietNoteEvents } from "./ThreadNote.ts";
+import {
+  awaitedOf,
+  makeCompletionNotePlanner,
+  withReportedOutcome,
+} from "./DelegatedCompletionNote.ts";
+import { runOutcomeEvent } from "./RunOutcomeReport.ts";
+import { delegatedCompletionWakeDetail } from "./DelegatedCompletionWakeText.ts";
 import { delegatedTasksEffect, pendingThreadTitleGenerationEffect } from "./PendingEffects.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { withCommandMetrics } from "../observability/Metrics.ts";
@@ -491,6 +501,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.parentThreadId;
     case "secret_request.record":
     case "link_request.record":
+    case "run.outcome.report":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -581,39 +592,6 @@ function legacyPullRequestLink(
       ...(existing?.endedWatch && { endedWatch: existing.endedWatch }),
     },
     existing?.watch,
-  );
-}
-
-const DELEGATED_RESULT_INLINE_BYTES = 16_000;
-
-function delegatedCompletionWakeDetail(
-  taskIds: ReadonlyArray<string>,
-  tasks: ReadonlyArray<OrchestrationV2Subagent>,
-): string {
-  let remainingBytes = DELEGATED_RESULT_INLINE_BYTES;
-  return taskIds
-    .map((taskId) => {
-      const task = tasks.find((candidate) => candidate.id === taskId);
-      const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
-      if (task?.result != null) {
-        const detail = `${label}:\n${task.result}`;
-        const bytes = Buffer.byteLength(detail);
-        if (bytes <= remainingBytes) {
-          remainingBytes -= bytes;
-          return detail;
-        }
-      }
-      return `${label}. Use task_status with taskId ${taskId} to read the result.`;
-    })
-    .join("\n\n");
-}
-
-function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]): boolean {
-  return (
-    status === "completed" ||
-    status === "failed" ||
-    status === "cancelled" ||
-    status === "interrupted"
   );
 }
 
@@ -776,6 +754,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const eventSink = yield* EventSinkV2;
   const commandReceipts = yield* CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
+  const planCompletionNote = yield* makeCompletionNotePlanner;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
@@ -7665,6 +7644,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         title: command.title ?? null,
         model: command.modelSelection.model,
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
+        ...awaitedOf(command),
         status: "running",
         result: null,
         startedAt: now,
@@ -8080,6 +8060,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         title: command.title ?? null,
         model: command.modelSelection.model,
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
+        ...awaitedOf(command),
         status: "running",
         result: null,
         startedAt: now,
@@ -8207,14 +8188,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     }
     const now = yield* DateTime.now;
-    const updatedTask: OrchestrationV2Subagent = {
-      ...task,
-      remoteChild,
-      status: command.status,
-      result: command.result,
-      completedAt: now,
-      updatedAt: now,
-    };
+    const updatedTask = withReportedOutcome(
+      {
+        ...task,
+        remoteChild,
+        status: command.status,
+        result: command.result,
+        completedAt: now,
+        updatedAt: now,
+      },
+      command.reportedOutcome,
+    );
     const parentRun =
       task.runId === null
         ? undefined
@@ -8236,6 +8220,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: plan.task,
     });
+    for (const event of "note" in plan ? plan.note : []) yield* emitEvent(event);
     if (plan.parentRun !== undefined) {
       yield* emitEvent({
         type: "run.updated",
@@ -11985,7 +11970,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly parentProjection: Pick<
       OrchestrationV2ThreadProjection,
       "thread" | "messages" | "runs" | "subagents" | "providerTurns"
-    >;
+    > &
+      Partial<Pick<OrchestrationV2ThreadProjection, "turnItems">>;
     readonly parentRun: OrchestrationV2Run | undefined;
     readonly task: OrchestrationV2Subagent;
     readonly updatedTask: OrchestrationV2Subagent;
@@ -12036,6 +12022,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         offer: false,
       };
     }
+    const note = yield* mapDelegatedCompletionError(planCompletionNote(input));
+    if (note !== undefined) return note;
 
     const delivery = cohort?.delivery ?? null;
     const deliveryRun = completionDeliveryRun(input.parentProjection, delivery);
@@ -12323,14 +12311,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const parentTurnItem = parentProjection.turnItems.find(
         (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
       );
-      const updatedTask: OrchestrationV2Subagent = {
-        ...task,
-        providerThreadId: childRun.providerThreadId,
-        status: terminalStatus,
-        result: result.text,
-        completedAt: now,
-        updatedAt: now,
-      };
+      const updatedTask = withReportedOutcome(
+        {
+          ...task,
+          providerThreadId: childRun.providerThreadId,
+          status: terminalStatus,
+          result: result.text,
+          completedAt: now,
+          updatedAt: now,
+        },
+        childRun.reportedOutcome,
+      );
       const completionPlan = yield* planDelegatedCompletionDelivery({
         parentProjection,
         parentRun,
@@ -12376,6 +12367,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: completionPlan.task,
         },
+        ...("note" in completionPlan ? completionPlan.note : []),
         ...(completionPlan.parentRun === undefined
           ? []
           : [
@@ -13194,6 +13186,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "secret_request.record":
         yield* dispatchSecretRequestRecord(command, events);
+        break;
+      case "run.outcome.report":
+        yield* emit(events, command)(yield* runOutcomeEvent(projectionStore, command));
         break;
       case "link_request.record":
         yield* dispatchLinkRequestRecord(command, events, effects);

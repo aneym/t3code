@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { OrchestratorMcpThreadTimelineItem } from "./orchestratorMcpTimeline.ts";
 import { OrchestratorMcpThreadRun } from "./orchestratorMcpThreadRun.ts";
+import { ThreadWaitResultRun } from "./threadWaitResultRun.ts";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { AuthMcpClientAccess } from "./auth.ts";
@@ -328,8 +329,7 @@ export const OrchestratorMcpThreadWaitResult = Schema.Struct({
   status: OrchestratorMcpThreadStatus,
   timedOut: Schema.Boolean,
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
-  /** With untilDelegatedWorkSettled, once settled: the run whose reply is the thread's result. */
-  resultRun: Schema.optional(Schema.Struct({ runId: RunId, status: OrchestrationV2RunStatus })),
+  resultRun: Schema.optional(ThreadWaitResultRun),
 });
 export type OrchestratorMcpThreadWaitResult = typeof OrchestratorMcpThreadWaitResult.Type;
 

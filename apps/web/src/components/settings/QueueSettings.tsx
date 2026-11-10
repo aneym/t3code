@@ -40,6 +40,13 @@ export function QueueSettings() {
             "Let agents post notes that show in a thread without starting a turn. The thread's next turn reads them as context.",
         },
         {
+          key: "childCompletionNotes",
+          searchId: "child-completion-notes",
+          label: "Quiet child completions",
+          description:
+            "A delegated child that reports a clean result while its siblings still run posts it as a note instead of starting a turn. Failures, gaps, awaited children and the last child still wake the lead.",
+        },
+        {
           key: "headlessSubagentStreaming",
           searchId: "headless-child-threads",
           label: "Headless child threads",
@@ -66,6 +73,7 @@ export function QueueSettings() {
           | "queueSendAll"
           | "settleIdleChildren"
           | "quietThreadNotes"
+          | "childCompletionNotes"
           | "headlessSubagentStreaming"
           | "mcpEventsEnabled"
           | "hostLinkEnabled";

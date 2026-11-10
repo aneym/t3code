@@ -19,3 +19,12 @@ export function delegatedTaskTerminalStatus(
       return null;
   }
 }
+
+export function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]): boolean {
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "interrupted"
+  );
+}

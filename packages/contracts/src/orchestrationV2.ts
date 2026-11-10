@@ -109,6 +109,12 @@ import {
   OrchestrationV2AppThreadLineage,
 } from "./orchestrationV2Lineage.ts";
 import { ProviderPermissionDenial } from "./providerPermissionDenial.ts";
+import { OrchestrationV2RemoteTaskChild } from "./orchestrationV2RemoteTaskChild.ts";
+import {
+  AwaitedFields,
+  ReportedOutcomeFields,
+  RunOutcomeReportCommand,
+} from "./delegatedTaskOutcome.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
 export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
@@ -697,6 +703,7 @@ export const OrchestrationV2Run = Schema.Struct({
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  ...ReportedOutcomeFields,
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -847,30 +854,6 @@ export type OrchestrationV2SubagentWorkflow = typeof OrchestrationV2SubagentWork
  */
 const DedupedBodyMarker = Schema.optionalKey(Schema.Literal(true));
 
-/**
- * Where an app-owned task runs when it runs in a linked environment instead
- * of in a child thread here: that environment and the ordinary thread it runs
- * as there. Such a task has no `childThreadId`.
- */
-export const OrchestrationV2RemoteTaskChild = Schema.Struct({
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-  label: Schema.String,
-  /** The run there that carries the task; absent on tasks recorded before it was kept. */
-  runId: Schema.optional(RunId),
-  /**
-   * Nothing is left to stop there: a stop reached it, was refused for good, or the thread
-   * or link is gone. A run ending there by itself sets it too, unless the task here was
-   * cancelled or stopped and still owes a stop, which its follower keeps sending across
-   * restarts. `false`: a Stop here owes one to a task that already had its result.
-   */
-  stoppedThere: Schema.optional(Schema.Boolean),
-  /** Stops owed once the task had its result; the count lands each there once. */
-  stopCount: Schema.optional(NonNegativeInt),
-  worktreeBase: Schema.optional(TrimmedNonEmptyString),
-});
-export type OrchestrationV2RemoteTaskChild = typeof OrchestrationV2RemoteTaskChild.Type;
-
 export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
@@ -890,6 +873,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
+  ...AwaitedFields,
+  ...ReportedOutcomeFields,
   status: Schema.Literals([
     "idle",
     "pending",
@@ -3269,6 +3254,7 @@ export const OrchestrationV2Command = Schema.Union([
     workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
     projectId: Schema.optional(ProjectId),
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+    ...AwaitedFields,
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
@@ -3379,6 +3365,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     modelSelection: ModelSelection,
     remoteChild: OrchestrationV2RemoteTaskChild,
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+    ...AwaitedFields,
   }),
   /**
    * Completes a delegated task that ran in a linked environment, with what its
@@ -3402,6 +3389,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     stoppedThere: Schema.optional(Schema.Literals(["ran-out", "stopped"])),
     /** The stop generation this report acknowledges; absent for the original unnumbered stop. */
     stopCount: Schema.optional(NonNegativeInt),
+    ...ReportedOutcomeFields,
   }),
   /**
    * Owes a stop to the thread there of a remote task that already has its result, as Stop on
@@ -3504,6 +3492,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
       }),
     ),
   }),
+  RunOutcomeReportCommand,
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
 

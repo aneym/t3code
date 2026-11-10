@@ -12,7 +12,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 const NOTE_LIMIT = 20;
-const NOTE_CHARS = 2_000;
+export const NOTE_CHARS = 2_000;
 
 interface NoteRow {
   readonly text: string | null;
