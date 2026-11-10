@@ -1,7 +1,6 @@
 import {
   isOrchestrationV2WorkActive,
   type DelegatedTaskOutcome,
-  type OrchestrationV2Run,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
@@ -12,13 +11,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { quietNoteEvents } from "./ThreadNote.ts";
 import { NOTE_CHARS } from "./ThreadNoteContext.ts";
-
-const LEAD_BUSY: ReadonlyArray<OrchestrationV2Run["status"]> = [
-  "preparing",
-  "starting",
-  "running",
-  "waiting",
-];
 
 export const withReportedOutcome = (
   task: OrchestrationV2Subagent,
@@ -31,7 +23,7 @@ export const withReportedOutcome = (
 function completionLandsAsNote(input: {
   readonly enabled: boolean;
   readonly task: OrchestrationV2Subagent;
-  readonly lead: Pick<OrchestrationV2ThreadProjection, "runs" | "subagents">;
+  readonly lead: Pick<OrchestrationV2ThreadProjection, "subagents">;
   readonly childAsks: boolean;
 }): boolean {
   const { task } = input;
@@ -41,7 +33,6 @@ function completionLandsAsNote(input: {
     task.status === "completed" &&
     task.reportedOutcome === "clean" &&
     task.awaited !== true &&
-    !input.lead.runs.some((run) => LEAD_BUSY.includes(run.status)) &&
     input.lead.subagents.some(
       (other) =>
         other.id !== task.id &&
@@ -66,10 +57,7 @@ export const makeCompletionNotePlanner = Effect.gen(function* () {
   const projectionStore = yield* ProjectionStoreV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   return Effect.fn("Orchestrator.planCompletionNote")(function* (input: {
-    readonly parentProjection: Pick<
-      OrchestrationV2ThreadProjection,
-      "thread" | "runs" | "subagents"
-    > &
+    readonly parentProjection: Pick<OrchestrationV2ThreadProjection, "thread" | "subagents"> &
       Partial<Pick<OrchestrationV2ThreadProjection, "turnItems">>;
     readonly updatedTask: OrchestrationV2Subagent;
     readonly now: DateTime.Utc;

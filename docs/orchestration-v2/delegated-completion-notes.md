@@ -22,16 +22,17 @@ A completion becomes a quiet note only when all of these hold:
 - the task is not `awaited` (`delegate_task` `awaited: true`, or any
   `mode: "wait"` task, so one that outlives its wait still wakes);
 - the child has no pending runtime request;
-- the parent has no run preparing, starting, running or waiting;
 - another async app-owned child of the parent has no result and is still
   working. A child waiting on its own children has no result yet, so it counts.
 
 The note is a server-created user message with no run, sent as the child thread.
 The task's delivery is marked `delivered` in the same commit, so a restart
 neither repeats nor loses it, and the parent's next turn reads it through the
-quiet-note context. Everything else keeps the upstream wake. Requiring an idle
-parent means a note is always read at the next run's start; a busy parent keeps
-the steer or queued-run delivery.
+quiet-note context. Everything else keeps the upstream wake. The parent may be
+idle or mid-turn: a run reads the notes created since the previous run started,
+so a note written during a turn reaches the turn after it, and the note never
+starts or steers a run of its own. The last child out wakes the parent, which
+queues behind a turn in progress as upstream does.
 
 A follow-up through `t3_thread_send` copies the task row, so it keeps `awaited`
 and needs a fresh `task_outcome`.
