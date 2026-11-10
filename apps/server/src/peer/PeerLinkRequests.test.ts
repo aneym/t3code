@@ -33,6 +33,7 @@ import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import { toolkitRegistration } from "../mcp/mcpServer/toolkitRegistration.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -85,7 +86,7 @@ const NoTools = Toolkit.make(
 );
 const serveBox = servePeer(
   box,
-  McpHttpServer.toolkitRegistration(
+  toolkitRegistration(
     NoTools,
     McpToolAccess.toLayer(NoTools, { noop: McpToolAccess.reads(() => Effect.succeed({})) }),
   ),
@@ -304,12 +305,15 @@ const seedThread = (
     });
   });
 
-const cardOf = (a: Laptop) =>
+const cardsOf = (a: Laptop) =>
   a.orchestrator
     .getThreadProjection(threadId)
     .pipe(
-      Effect.map((projection) => projection.turnItems.find((item) => item.type === "link_request")),
+      Effect.map((projection) =>
+        projection.turnItems.filter((item) => item.type === "link_request"),
+      ),
     );
+const cardOf = (a: Laptop) => cardsOf(a).pipe(Effect.map((cards) => cards[0]));
 
 /** The open card the agent's call left, as the user's client sees it. */
 const pendingCard = (a: Laptop) =>
@@ -559,9 +563,7 @@ it.live("a retry of a pending request returns pending and shows no second card",
       const first = yield* a.call({ url: b.url, clientRequestId: "link-box" });
       const retried = yield* a.call({ url: b.url, clientRequestId: "link-box" });
       expect(retried.structuredContent).toEqual(first.structuredContent);
-      const cards = (yield* a.orchestrator.getThreadProjection(threadId)).turnItems.filter(
-        (item) => item.type === "link_request",
-      );
+      const cards = yield* cardsOf(a);
       expect(cards).toHaveLength(1);
     }),
   ),
@@ -582,9 +584,7 @@ it.live("a new MCP credential reusing a clientRequestId gets a card of its own",
       );
       expect(later.structuredContent).toMatchObject({ status: "pending" });
       expect(later.structuredContent).not.toEqual(first.structuredContent);
-      const cards = (yield* a.orchestrator.getThreadProjection(threadId)).turnItems.filter(
-        (item) => item.type === "link_request",
-      );
+      const cards = yield* cardsOf(a);
       expect(cards).toHaveLength(2);
     }),
   ),
@@ -671,9 +671,7 @@ it.live("a request that read the run before Stop shows no card once Stop lands",
       });
       const late = yield* recordPendingCard(a, "after-stop").pipe(Effect.flip);
       expect(String(late.cause)).toContain("not active");
-      const cards = (yield* a.orchestrator.getThreadProjection(threadId)).turnItems.filter(
-        (item) => item.type === "link_request",
-      );
+      const cards = yield* cardsOf(a);
       expect(cards.map((card) => card.id)).toEqual([open.id]);
     }),
   ),

@@ -61,6 +61,13 @@ export function QueueSettings() {
             "Let agents subscribe threads to MCP servers' events. A verified event wakes the thread or queues into its turn.",
         },
         {
+          key: "mcpClientApprovals",
+          searchId: "mcp-client-approvals",
+          label: "Approvals from MCP clients",
+          description:
+            "Let a person's MCP client, such as the t3 CLI or an app you approved, approve or decline a thread's permission requests. Agents can never decide them.",
+        },
+        {
           key: "hostLinkEnabled",
           searchId: "host-link",
           label: "Host app link",
@@ -76,6 +83,7 @@ export function QueueSettings() {
           | "childCompletionNotes"
           | "headlessSubagentStreaming"
           | "mcpEventsEnabled"
+          | "mcpClientApprovals"
           | "hostLinkEnabled";
         return (
           <SettingsRow

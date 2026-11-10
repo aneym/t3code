@@ -53,6 +53,13 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     searchTerms: ["mcp events subscribe webhook trigger wake thread rails"],
   },
   {
+    id: "mcp-client-approvals",
+    title: "Approvals from MCP clients",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["mcp client cli phone rails approve decline permission request remote"],
+  },
+  {
     id: "host-link",
     title: "Host app link",
     to: "/settings/chat",
