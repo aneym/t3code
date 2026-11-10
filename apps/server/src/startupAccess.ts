@@ -4,14 +4,16 @@ import * as NodeOS from "node:os";
 import { isPrivateNetworkHost, isSharedAddressSpaceHost } from "@t3tools/shared/hostClassification";
 import { QrCode } from "@t3tools/shared/qrCode";
 import { buildPairingAppLink } from "@t3tools/shared/remote";
+import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import { startupPairingOff } from "./startupPairingSwitch.ts";
 
-export interface HeadlessServeAccessInfo {
+interface HeadlessServeAccessInfo {
   readonly connectionString: string;
   readonly token: string;
   readonly pairingUrl: string;
@@ -181,7 +183,7 @@ export const renderTerminalQrCode = (value: string, margin = 2): string => {
   return rows.join("\n");
 };
 
-export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): string =>
+const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): string =>
   [
     "T3 Code server is ready.",
     `Connection string: ${accessInfo.connectionString}`,
@@ -193,7 +195,7 @@ export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): 
     "",
   ].join("\n");
 
-export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
+const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const httpServer = yield* HttpServer.HttpServer;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -209,4 +211,10 @@ export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessI
     token: issued.credential,
     pairingUrl: buildPairingUrl(connectionString, issued.credential),
   } satisfies HeadlessServeAccessInfo;
+});
+
+export const announceHeadlessServeAccess = Effect.fn("announceHeadlessServeAccess")(function* () {
+  if (startupPairingOff) return;
+  const accessInfo = yield* issueHeadlessServeAccessInfo();
+  yield* Console.log(formatHeadlessServeOutput(accessInfo));
 });

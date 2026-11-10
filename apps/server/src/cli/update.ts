@@ -31,12 +31,12 @@ import {
 } from "../cloud/pinnedRuntime.ts";
 import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import { managedUpdateRefusal } from "../policy/managedUpdates.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveNewestVersion } from "./releaseIndex.ts";
 import { createUpdateProgress } from "./updateProgress.ts";
+import { refuseUpdate } from "./updateRefusal.ts";
 import * as CliService from "./service.ts";
 
 export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
@@ -188,27 +188,25 @@ export const updateCommand = Command.make("update", {
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
+      const channel = Option.getOrUndefined(flags.channel);
+      const requestedVersion = Option.getOrUndefined(flags.version);
+      yield* refuseUpdate({ channel, requestedVersion });
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
       return yield* runUpdate({
         baseDir: config.baseDir,
         logsDir: config.logsDir,
         serverRuntimeStatePath: config.serverRuntimeStatePath,
-        channel: Option.getOrUndefined(flags.channel),
-        requestedVersion: Option.getOrUndefined(flags.version),
+        channel,
+        requestedVersion,
         allowDowngrade: flags.allowDowngrade,
         assumeYes: flags.yes,
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(
-            CliService.layer(config),
-            ProcessRunner.layer,
-            FetchHttpClient.layer,
-            ManagedPolicy.layer,
-          ),
+          Layer.mergeAll(CliService.layer(config), ProcessRunner.layer, FetchHttpClient.layer),
         ),
       );
-    }),
+    }).pipe(Effect.provide(ManagedPolicy.layer)),
   ),
 );
 
@@ -272,17 +270,10 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const environment = yield* HostProcess.Environment;
   const httpClient = yield* HttpClient.HttpClient;
   const service = yield* BootService.BootService;
-  const policy = yield* ManagedPolicy.ManagedPolicy;
+  yield* refuseUpdate(input);
 
   const currentVersion = packageJson.version;
   const channel = input.channel ?? cliReleaseChannelOf(currentVersion);
-  const refusal = managedUpdateRefusal(
-    policy.document,
-    input.requestedVersion === undefined ? channel : cliReleaseChannelOf(input.requestedVersion),
-  );
-  if (refusal !== undefined) {
-    return yield* new CliUpdateError({ reason: refusal });
-  }
   if (input.requestedVersion !== undefined && !isExactServiceVersion(input.requestedVersion)) {
     return yield* new CliUpdateError({
       reason: `'${input.requestedVersion}' is not an exact t3 version.`,

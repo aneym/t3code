@@ -91,6 +91,10 @@
       "types": "./src/editor.ts",
       "import": "./src/editor.ts"
     },
+    "./appleGitPlaceholder": {
+      "types": "./src/appleGitPlaceholder.ts",
+      "import": "./src/appleGitPlaceholder.ts"
+    },
     "./shell": {
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"

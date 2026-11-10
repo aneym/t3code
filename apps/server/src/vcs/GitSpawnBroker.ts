@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 import type * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as AppleGitPlaceholderGate from "./AppleGitPlaceholderGate.ts";
 
 type ExitResult = readonly [code: number | null, signal: string | null];
 type OutputQueue = Queue.Queue<Uint8Array, PlatformError.PlatformError | Cause.Done>;
@@ -55,13 +56,6 @@ const isBrokerCommand = (command: ChildProcess.Command): command is ChildProcess
   command.options.stderr === undefined &&
   command.options.additionalFds === undefined &&
   command.options.detached !== false;
-
-const resolveEnv = (options: ChildProcess.CommandOptions) => {
-  const merged = options.extendEnv
-    ? { ...process.env, ...options.env }
-    : (options.env ?? process.env);
-  return Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== undefined));
-};
 
 const makeBroker = (launch: {
   readonly executable: string;
@@ -210,7 +204,7 @@ const makeBroker = (launch: {
           command: command.command,
           args: command.args,
           cwd: options.cwd,
-          env: resolveEnv(options),
+          env: AppleGitPlaceholderGate.commandEnv(options),
         });
         return Deferred.await(job.spawned);
       }),
@@ -255,7 +249,7 @@ const makeBroker = (launch: {
   return { ready, spawn, shutdown };
 };
 
-export const layer = Layer.effect(
+const brokerLayer = Layer.effect(
   ChildProcessSpawner.ChildProcessSpawner,
   Effect.gen(function* () {
     const upstream = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -280,5 +274,7 @@ export const layer = Layer.effect(
     );
   }),
 );
+
+export const layer = AppleGitPlaceholderGate.layer.pipe(Layer.provide(brokerLayer));
 
 export const layerNode = layer.pipe(Layer.provideMerge(NodeServices.layer));

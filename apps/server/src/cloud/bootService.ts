@@ -43,24 +43,20 @@ import {
 } from "./serviceProtocol.ts";
 
 export {
-  BOOT_SERVICE_UNIT_FILE,
-  BOOT_SERVICE_LAUNCHD_LABEL,
-  BOOT_SERVICE_PLIST_FILE,
   BOOT_SERVICE_LOG_FILE,
   bootServiceBaseDirOf,
   bootServiceProgramOf,
   renderBootServiceUnit,
   renderBootServicePlist,
   type BootServicePlan,
-  type BootServiceStep,
 } from "./bootServiceRender.ts";
 import {
   BOOT_SERVICE_UNIT_FILE,
   BOOT_SERVICE_LAUNCHD_LABEL,
-  BOOT_SERVICE_PLIST_FILE,
   BOOT_SERVICE_LOG_FILE,
   BOOT_SERVICE_UNIT_ENV,
   bootServiceBaseDirOf,
+  bootServiceUnitPath,
   renderBootServiceUnit,
   renderBootServicePlist,
   type BootServicePlan,
@@ -87,13 +83,7 @@ function systemdManager(input: {
   readonly path: Path.Path;
   readonly homeDir: string;
 }): BootServiceManager {
-  const unitPath = input.path.join(
-    input.homeDir,
-    ".config",
-    "systemd",
-    "user",
-    BOOT_SERVICE_UNIT_FILE,
-  );
+  const unitPath = bootServiceUnitPath(input.path.join, "linux", input.homeDir);
   const prepareActivation = [
     {
       step: "reloading systemd user units",
@@ -165,12 +155,7 @@ function launchdManager(input: {
   readonly uid: number;
   readonly environmentPath: string;
 }): BootServiceManager {
-  const unitPath = input.path.join(
-    input.homeDir,
-    "Library",
-    "LaunchAgents",
-    BOOT_SERVICE_PLIST_FILE,
-  );
+  const unitPath = bootServiceUnitPath(input.path.join, "darwin", input.homeDir);
   const domainTarget = `gui/${input.uid}`;
   const serviceTarget = `${domainTarget}/${BOOT_SERVICE_LAUNCHD_LABEL}`;
   // Unloaded jobs may reject bootout/enable. Bootstrap starts RunAtLoad/KeepAlive jobs; kickstart would restart them.
@@ -599,6 +584,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     readonly start?: boolean;
   }) {
     const manager = yield* requireManager;
+    yield* requireUnitsServeHome({ fs, path, unitPath, baseDir: input.baseDir });
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
