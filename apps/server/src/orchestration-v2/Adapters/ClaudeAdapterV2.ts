@@ -159,6 +159,7 @@ import {
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import * as GitStandIn from "../../vcs/GitStandIn.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ThreadSessionRestarts from "../ThreadSessionRestarts.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -966,13 +967,12 @@ export const layerQueryRunner: Layer.Layer<
           );
           // Send MCP credentials over stdin to keep them out of SDK argv and inherited command environments.
           const { mcpServers, ...sdkOptions } = input.options;
-          // Jobs the agent starts inherit the thread, so port discovery can attribute their servers.
           const queryOptions = {
             ...sdkOptions,
-            env: {
+            env: yield* GitStandIn.environment({
               ...(sdkOptions.env ?? hostEnvironment),
               [PortScanner.AGENT_THREAD_ENV]: input.threadId,
-            },
+            }),
           };
           // The SDK can prepend a scope wrapper to native binaries; script entries run through node.
           const binaryPath = queryOptions.pathToClaudeCodeExecutable;

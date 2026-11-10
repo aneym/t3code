@@ -35,7 +35,7 @@ import {
   formatCodexModelName,
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { codexAppServerArgsFor, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -494,7 +494,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   const environment = yield* codexProcessEnvironment(input);
   const spawnCommand = yield* resolveSpawnCommand(
     input.binaryPath,
-    codexAppServerArgs(input.launchArgs),
+    yield* codexAppServerArgsFor(input.launchArgs, environment),
     { env: environment, extendEnv: true },
   );
   const child = yield* spawner
@@ -611,7 +611,6 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   } satisfies CodexAppServerProviderSnapshot;
 });
 
-// Old CLIs can exit before initialize reports the version needed for compatibility advice.
 const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
   function* (input: {
     readonly binaryPath: string;
