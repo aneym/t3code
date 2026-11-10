@@ -367,10 +367,9 @@ export interface OrchestratorV2Shape {
     OrchestratorV2Error
   >;
   readonly countThreads: () => Effect.Effect<number, OrchestratorV2Error>;
-  readonly listActiveShellIndex: () => Effect.Effect<
-    ReadonlyArray<ActiveShellIndexEntry>,
-    OrchestratorV2Error
-  >;
+  readonly listActiveShellIndex: (options?: {
+    readonly liveness?: boolean;
+  }) => Effect.Effect<ReadonlyArray<ActiveShellIndexEntry>, OrchestratorV2Error>;
   readonly listOlderSettledThreads: (
     query: OlderSettledThreadsQuery,
   ) => Effect.Effect<OlderSettledThreadsListing, OrchestratorV2Error>;
@@ -11451,7 +11450,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return undefined;
   });
 
-  /** Writes a parent's app-owned task, and sets its node and turn items to the task's status. */
   const writeAppOwnedTask = Effect.fn("Orchestrator.writeAppOwnedTask")(function* (input: {
     readonly command: Extract<
       OrchestrationV2ServerCommand,
@@ -13901,8 +13899,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     countThreads: Effect.fn("OrchestratorV2.countThreads")(function () {
       return projectionStore.countThreads().pipe(Effect.mapError(shellProjectionError));
     }),
-    listActiveShellIndex: Effect.fn("OrchestratorV2.listActiveShellIndex")(function () {
-      return projectionStore.listActiveShellIndex().pipe(Effect.mapError(shellProjectionError));
+    listActiveShellIndex: Effect.fn("OrchestratorV2.listActiveShellIndex")(function (options) {
+      return projectionStore
+        .listActiveShellIndex(options)
+        .pipe(Effect.mapError(shellProjectionError));
     }),
     listOlderSettledThreads: Effect.fn("OrchestratorV2.listOlderSettledThreads")(function (query) {
       return projectionStore

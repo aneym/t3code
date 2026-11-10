@@ -12,6 +12,7 @@ import ProjectPinOrderToPinnedAt from "./ForkMigrations/006_ProjectPinOrderToPin
 import McpEventsSubscriptions from "./ForkMigrations/007_McpEventsSubscriptions.ts";
 import HostLinkLanes from "./ForkMigrations/008_HostLinkLanes.ts";
 import ThreadPlacements from "./ForkMigrations/009_ThreadPlacements.ts";
+import TurnItemTimelineCoverIndex from "./ForkMigrations/010_TurnItemTimelineCoverIndex.ts";
 
 const run = Migrator.make({});
 const loader = Migrator.fromRecord({
@@ -24,6 +25,7 @@ const loader = Migrator.fromRecord({
   "7_McpEventsSubscriptions": McpEventsSubscriptions,
   "8_HostLinkLanes": HostLinkLanes,
   "9_ThreadPlacements": ThreadPlacements,
+  "10_TurnItemTimelineCoverIndex": TurnItemTimelineCoverIndex,
 });
 
 export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {
