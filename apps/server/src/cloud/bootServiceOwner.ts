@@ -2,8 +2,10 @@ import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
+import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 
+import { cliRefusal } from "../cliRefusal.ts";
 import { connectorUnitPath } from "../serviceConnectorUnit.ts";
 import { bootServiceBaseDirOf } from "./bootServiceRender.ts";
 
@@ -15,8 +17,11 @@ export class BootServiceOtherHomeError extends Schema.TaggedError<BootServiceOth
     baseDir: Schema.String,
   },
 ) {
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
   override get message(): string {
-    return `Refusing to change ${this.unitPath}: it belongs to the T3 home ${this.installedBaseDir ?? "(unknown)"}, not ${this.baseDir}.`;
+    const owner = this.installedBaseDir ?? "another T3 home";
+    return `Refusing to change ${this.unitPath}: it serves the T3 home ${owner}, not ${this.baseDir}. Run the command with --base-dir ${owner} to manage it, or set T3CODE_SERVICE_NAME to give ${this.baseDir} its own service.`;
   }
 }
 

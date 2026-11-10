@@ -10,13 +10,13 @@ import {
 import { selfUpdateOffPlistLines, selfUpdateOffUnitLines } from "./selfUpdateSwitch.ts";
 import type * as Duration from "effect/Duration";
 export const BOOT_SERVICE_NAME_ENV = "T3CODE_SERVICE_NAME";
-const BOOT_SERVICE_CUSTOM_NAME = process.env[BOOT_SERVICE_NAME_ENV]?.trim() || undefined;
-if (
-  BOOT_SERVICE_CUSTOM_NAME !== undefined &&
-  !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(BOOT_SERVICE_CUSTOM_NAME)
-) {
-  throw new Error(`${BOOT_SERVICE_NAME_ENV} must be letters, digits, dots, dashes or underscores.`);
-}
+const requestedServiceName = process.env[BOOT_SERVICE_NAME_ENV]?.trim() || undefined;
+export const bootServiceNameProblem =
+  requestedServiceName === undefined || /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(requestedServiceName)
+    ? undefined
+    : `${BOOT_SERVICE_NAME_ENV} is "${requestedServiceName}"; use letters, digits, dots, dashes or underscores, starting with a letter or digit.`;
+const BOOT_SERVICE_CUSTOM_NAME =
+  bootServiceNameProblem === undefined ? requestedServiceName : undefined;
 const BOOT_SERVICE_NAME = BOOT_SERVICE_CUSTOM_NAME ?? "t3code";
 export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 // `.service` suffix keeps the label distinct from the desktop app's bundle id

@@ -22,34 +22,53 @@ const DRIVERS_BY_NAME: ReadonlyMap<string, ProviderDriverKind> = new Map(
   ]),
 );
 
-const invalid = (message: string) =>
-  Effect.fail(
-    new Config.ConfigError(new Schema.SchemaError(new SchemaIssue.InvalidValue({ message }))),
-  );
+type ParsedAllowlist =
+  | { readonly drivers: ReadonlySet<ProviderDriverKind> }
+  | { readonly problem: string };
 
-const parseAllowlist = (value: string) => {
+const parseAllowlist = (value: string): ParsedAllowlist => {
   const names = value
     .split(",")
     .map((name) => name.trim())
     .filter((name) => name.length > 0);
   if (names.length === 0) {
-    return invalid("T3CODE_PROVIDERS names no provider. Unset it to allow every provider.");
+    return { problem: "T3CODE_PROVIDERS names no provider. Unset it to allow every provider." };
   }
   const drivers = new Set<ProviderDriverKind>();
   for (const name of names) {
     const driver = DRIVERS_BY_NAME.get(nameKey(name));
     if (driver === undefined) {
       const known = BUILT_IN_DRIVERS.map((entry) => entry.driverKind).join(", ");
-      return invalid(`T3CODE_PROVIDERS names "${name}", which is not a provider. Known: ${known}.`);
+      return {
+        problem: `T3CODE_PROVIDERS names "${name}", which is not a provider. Known: ${known}.`,
+      };
     }
     drivers.add(driver);
   }
-  return Effect.succeed<ReadonlySet<ProviderDriverKind>>(drivers);
+  return { drivers };
+};
+
+export const providerAllowlistProblem = (value: string): string | undefined => {
+  const parsed = parseAllowlist(value);
+  return "problem" in parsed ? parsed.problem : undefined;
 };
 
 export const providerAllowlistConfig: Config.Config<ProviderAllowlist> = Config.String(
   "T3CODE_PROVIDERS",
-).pipe(Config.mapEffect(parseAllowlist), Config.option, Config.map(Option.getOrUndefined));
+).pipe(
+  Config.mapEffect((value) => {
+    const parsed = parseAllowlist(value);
+    return "problem" in parsed
+      ? Effect.fail(
+          new Config.ConfigError(
+            new Schema.SchemaError(new SchemaIssue.InvalidValue({ message: parsed.problem })),
+          ),
+        )
+      : Effect.succeed(parsed.drivers);
+  }),
+  Config.option,
+  Config.map(Option.getOrUndefined),
+);
 
 export const limitConfigMap = (
   configMap: ProviderInstanceConfigMap,
