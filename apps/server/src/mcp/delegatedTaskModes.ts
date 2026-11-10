@@ -1,4 +1,5 @@
 import {
+  type DelegatedTaskOutcome,
   type ModelSelection,
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegateTaskInput,
@@ -88,8 +89,20 @@ export function resolveInteractionMode(
 }
 
 /** The task as its child receives it, with the role the caller asked for. */
-export function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
-  return input.role === undefined || input.role === "general"
-    ? input.task
-    : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
+export function taskPrompt(input: OrchestratorMcpDelegateTaskInput, reportOutcome = false): string {
+  const task =
+    input.role === undefined || input.role === "general"
+      ? input.task
+      : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
+  return reportOutcome ? `${task}\n\n${OUTCOME_LINE}` : task;
 }
+
+const OUTCOME_LINE =
+  "Before your final reply, call the T3 tool task_outcome: clean if you did everything the task asked and verified it, gaps if anything is left undone, unverified, blocked or needs your lead's decision.";
+
+export const awaitedFor = (input: OrchestratorMcpDelegateTaskInput) =>
+  input.awaited === true || input.mode === "wait" ? { awaited: true as const } : {};
+
+export const reportedOutcomeOf = (value: {
+  readonly reportedOutcome?: DelegatedTaskOutcome | undefined;
+}) => (value.reportedOutcome === undefined ? {} : { reportedOutcome: value.reportedOutcome });

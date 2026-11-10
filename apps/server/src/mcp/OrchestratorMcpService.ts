@@ -5,8 +5,8 @@ import {
   quietNoteOf,
   secretRequestTurnItemId,
   CommandId,
+  type MessageId,
   type RunId,
-  MessageId,
   type ModelSelection,
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
@@ -99,6 +99,7 @@ import {
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
+import { stableCommandId, stableMessageId, stableThreadId } from "./stableIds.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -122,6 +123,8 @@ import {
   resolveRuntimeMode,
   runtimeModeRank,
   taskPrompt,
+  awaitedFor,
+  reportedOutcomeOf,
 } from "./delegatedTaskModes.ts";
 import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
 import {
@@ -544,60 +547,6 @@ function latestTerminalResultRun(
 function canExposeTaskRunResult(run: OrchestrationV2Run | undefined): run is OrchestrationV2Run {
   return (
     run !== undefined && run.status !== "rolled_back" && isTerminalTaskStatus(taskStatusForRun(run))
-  );
-}
-
-function stablePart(value: string): string {
-  return encodeURIComponent(value);
-}
-
-function stableCommandId(input: {
-  readonly scope: McpInvocationScope;
-  readonly requestKey: string;
-  readonly operation: string;
-  readonly index?: number;
-}): CommandId {
-  return CommandId.make(
-    [
-      "command",
-      "mcp",
-      stablePart(input.scope.requestNamespace),
-      stablePart(input.operation),
-      stablePart(input.requestKey),
-      ...(input.index === undefined ? [] : [String(input.index)]),
-    ].join(":"),
-  );
-}
-
-function stableThreadId(input: {
-  readonly scope: McpInvocationScope;
-  readonly requestKey: string;
-  readonly index: number;
-}): ThreadId {
-  return ThreadId.make(
-    [
-      "thread",
-      "mcp",
-      stablePart(input.scope.requestNamespace),
-      stablePart(input.requestKey),
-      String(input.index),
-    ].join(":"),
-  );
-}
-
-function stableMessageId(input: {
-  readonly scope: McpInvocationScope;
-  readonly requestKey: string;
-  readonly index: number;
-}): MessageId {
-  return MessageId.make(
-    [
-      "message",
-      "mcp",
-      stablePart(input.scope.requestNamespace),
-      stablePart(input.requestKey),
-      String(input.index),
-    ].join(":"),
   );
 }
 
@@ -2136,14 +2085,15 @@ const make = Effect.gen(function* () {
         isRetryOfAcceptedDelegation,
       );
       const providers = yield* loadProviders;
+      const settingsNow = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
       const target = yield* resolveTargetRechecking({
         parent: { thread: { ...parent.thread, projectId: workspace.projectId } },
         target: input.target,
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
-        childModel: (yield* serverSettings.getSettings.pipe(
-          Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
-        )).delegatedChildModel,
+        childModel: settingsNow.delegatedChildModel,
       });
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
@@ -2166,7 +2116,7 @@ const make = Effect.gen(function* () {
           parentThreadId: scope.thread.threadId,
           parentRunId: parentRun.id,
           parentNodeId: parentRun.rootNodeId,
-          task: taskPrompt(input),
+          task: taskPrompt(input, settingsNow.childCompletionNotes),
           ...(input.title === undefined ? {} : { title: input.title }),
           modelSelection: target.modelSelection,
           runtimeMode,
@@ -2176,6 +2126,7 @@ const make = Effect.gen(function* () {
           // delegations deliver through the blocking tool call, so a wake is
           // only needed if the parent settled first (timeout, disconnect).
           completionWake: input.mode === "wait" ? "settled_only" : "always",
+          ...awaitedFor(input),
         })
         .pipe(
           Effect.mapError((error) =>
@@ -2872,7 +2823,11 @@ const make = Effect.gen(function* () {
         ...(result.resultRun === undefined
           ? {}
           : {
-              resultRun: { runId: result.resultRun.id, status: runOutcome(result.resultRun) },
+              resultRun: {
+                runId: result.resultRun.id,
+                status: runOutcome(result.resultRun),
+                ...reportedOutcomeOf(result.resultRun),
+              },
             }),
       } satisfies OrchestratorMcpThreadWaitResult;
     }),

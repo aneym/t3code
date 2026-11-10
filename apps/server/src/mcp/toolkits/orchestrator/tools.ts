@@ -24,6 +24,8 @@ import {
   OrchestratorMcpScheduleTaskResult,
   OrchestratorMcpTaskCancelInput,
   OrchestratorMcpTaskCancelResult,
+  OrchestratorMcpTaskOutcomeInput,
+  OrchestratorMcpTaskOutcomeResult,
   OrchestratorMcpTaskStatusInput,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
@@ -123,6 +125,19 @@ const TaskCancelTool = Tool.make("task_cancel", {
 })
   .annotate(Tool.Title, "Cancel delegated task")
   .annotate(Tool.Destructive, true);
+
+const TaskOutcomeTool = Tool.make("task_outcome", {
+  description:
+    "Delegated children only: before your final reply, report whether the task you were given ended clean or with gaps. Your lead is woken at once for gaps; a clean result can wait as a note until the lead's other children finish.",
+  parameters: OrchestratorMcpTaskOutcomeInput,
+  success: OrchestratorMcpTaskOutcomeResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Report delegated task outcome")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
 
 const WorkflowStopTool = Tool.make("t3_workflow_stop", {
   description:
@@ -358,6 +373,7 @@ export const OrchestratorToolkit = Toolkit.make(
   DelegateTaskTool,
   TaskStatusTool,
   TaskCancelTool,
+  TaskOutcomeTool,
   WorkflowStopTool,
   BackgroundWaitTool,
   ScheduleTaskTool,

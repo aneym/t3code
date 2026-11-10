@@ -10,6 +10,7 @@ export type T3McpToolSummaryAction =
   | "delegate"
   | "task-status"
   | "task-cancel"
+  | "task-outcome"
   | "schedule-run"
   | "schedule-create"
   | "schedule-list"
@@ -146,6 +147,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Cancel", "Canceling", "Requested cancellation of", "a delegated task"],
     "task-cancel",
   ),
+  task_outcome: tool(["Report", "Reporting", "Reported", "the task outcome"], "task-outcome"),
   schedule_task: tool(["Schedule", "Scheduling", "Scheduled", "a task"], "schedule-create"),
   list_scheduled_tasks: tool(["List", "Listing", "Listed", "scheduled tasks"], "schedule-list"),
   update_scheduled_task: tool(

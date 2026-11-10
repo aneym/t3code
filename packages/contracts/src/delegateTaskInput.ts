@@ -43,6 +43,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
         "Default 'async'. 'wait' only if this turn needs the result. A question or approval ends the wait.",
     }),
   ),
+  awaited: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "True if its result should wake you as soon as it ends. Otherwise a clean result waits as a note until your last child ends.",
+    }),
+  ),
   timeoutMs: Schema.optional(Schema.Finite).annotate({
     description: "Mode 'wait' only. Default 10 min. A timeout does not cancel the child.",
   }),

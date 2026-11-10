@@ -1924,13 +1924,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 requested_at = excluded.requested_at,
                 completed_at = excluded.completed_at,
-                payload_json = ${keepRecordedRunField(
-                  keepRecordedRunField(
-                    keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
-                    "$.restartCancelledBackgroundWork",
-                  ),
+                payload_json = ${[
+                  "$.delegatedCompletion",
+                  "$.restartCancelledBackgroundWork",
                   "$.retainBlockedCompletionHolds",
-                )}
+                  "$.reportedOutcome",
+                ].reduce(keepRecordedRunField, sql`excluded.payload_json`)}
             `;
               break;
             }
