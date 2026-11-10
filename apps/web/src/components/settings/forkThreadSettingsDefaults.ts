@@ -7,6 +7,7 @@ export const forkThreadSettingsDefaults = {
   quietThreadNotes: DEFAULT_UNIFIED_SETTINGS.quietThreadNotes,
   headlessSubagentStreaming: DEFAULT_UNIFIED_SETTINGS.headlessSubagentStreaming,
   mcpEventsEnabled: DEFAULT_UNIFIED_SETTINGS.mcpEventsEnabled,
+  mcpClientApprovals: DEFAULT_UNIFIED_SETTINGS.mcpClientApprovals,
   hostLinkEnabled: DEFAULT_UNIFIED_SETTINGS.hostLinkEnabled,
 };
 
@@ -29,6 +30,9 @@ export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyAr
       : null,
     settings.mcpEventsEnabled !== forkThreadSettingsDefaults.mcpEventsEnabled
       ? "MCP Events subscriptions"
+      : null,
+    settings.mcpClientApprovals !== forkThreadSettingsDefaults.mcpClientApprovals
+      ? "Approvals from MCP clients"
       : null,
     settings.hostLinkEnabled !== forkThreadSettingsDefaults.hostLinkEnabled
       ? "Host app link"
