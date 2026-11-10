@@ -12,8 +12,11 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
   },
 ) {
   override get message(): string {
-    if (Predicate.isTagged(this.cause, "RuntimePolicySealedAgentHomeError"))
-      return (this.cause as Error).message;
+    if (
+      this.cause instanceof Error &&
+      Predicate.isTagged(this.cause, "RuntimePolicySealedAgentHomeError")
+    )
+      return this.cause.message;
     return `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`;
   }
 }
