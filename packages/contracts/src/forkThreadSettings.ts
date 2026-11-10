@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderOptionSelections } from "./model.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 const DefaultTrue = Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true)));
@@ -9,6 +10,7 @@ const DefaultFalse = Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succe
 export const DelegatedChildModel = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString,
+  options: Schema.optionalKey(ProviderOptionSelections),
 });
 export type DelegatedChildModel = typeof DelegatedChildModel.Type;
 

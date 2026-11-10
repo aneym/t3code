@@ -78,6 +78,6 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     title: "Delegated child model",
     to: "/settings/chat",
     scope: "environment-defaults",
-    searchTerms: ["delegate child subagent task default model inherit opus fable"],
+    searchTerms: ["delegate child subagent task default model effort options inherit opus fable"],
   },
 ];

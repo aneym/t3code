@@ -67,6 +67,7 @@ import { invalidOptionSelections, knownOptions } from "./optionSelections.ts";
 import { providerConstraints } from "./providerConstraints.ts";
 import {
   delegatedChildDefaultModel,
+  delegatedChildOptions,
   type DelegatedChildModelSetting,
 } from "./delegatedChildModel.ts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -1215,26 +1216,13 @@ const make = Effect.gen(function* () {
       }
     }
 
-    const inheritsOptions =
-      instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
-    let options = inheritsOptions
-      ? knownOptions(
-          withLegacyUltracodeEffort(descriptors ?? [], inheritedSelection.options) ?? undefined,
-          descriptors,
-        )
-      : undefined;
-    if (requestedOptions !== undefined) {
-      const selections = new Map(
-        (requestedOptions.length === 0 ? [] : (options ?? [])).map((selection) => [
-          selection.id,
-          selection,
-        ]),
-      );
-      for (const selection of requestedOptions) {
-        selections.set(selection.id, selection);
-      }
-      options = [...selections.values()];
-    }
+    const options = delegatedChildOptions({
+      setting: input.childModel ?? null,
+      selection: { instanceId, model },
+      parent: inheritedSelection,
+      requested: requestedOptions,
+      descriptors,
+    });
     return {
       modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
       supportedRuntimeModes: provider.supportedRuntimeModes,
