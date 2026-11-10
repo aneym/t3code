@@ -136,7 +136,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import { resolveDelegatedTaskWorkspace } from "./delegatedTaskWorkspace.ts";
-import { threadRun } from "./threadRunSummary.ts";
+import { recentThreadRuns } from "./threadRunSummary.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -1088,11 +1088,17 @@ const make = Effect.gen(function* () {
     const records =
       parent === undefined
         ? threadManagement
-            .getProjectThreadRecords(input, ["runs", "runtimeRequests", ...usage])
+            .getProjectThreadRecords(input, [
+              "runs",
+              "runtimeRequests",
+              "providerThreads",
+              ...usage,
+            ])
             .pipe(Effect.map((target) => ({ ...target, contextTransfers: [] })))
         : threadManagement.getProjectThreadRecords(input, [
             "runs",
             "runtimeRequests",
+            "providerThreads",
             "contextTransfers",
             ...usage,
           ]);
@@ -2792,10 +2798,7 @@ const make = Effect.gen(function* () {
           shell,
           yield* Clock.currentTimeMillis,
         ),
-        recentRuns: target.runs
-          .toSorted((left, right) => right.ordinal - left.ordinal)
-          .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
-          .map((run) => threadRun(run, target.providerTurns)),
+        recentRuns: recentThreadRuns(target, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT),
         items: page.map((row) =>
           timelineItem({
             row,

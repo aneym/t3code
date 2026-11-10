@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 
 import { mcpMessageSender } from "./messageSender.ts";
+import { runNativeSessionId } from "./runNativeSession.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import { type McpInvocationScope, threadLinkFor } from "./McpInvocationContext.ts";
@@ -52,7 +53,8 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
   readonly threadManagement: ThreadManagementService.ThreadManagementService["Service"];
   readonly crypto: Crypto.Crypto;
   readonly scope: McpInvocationScope;
-  readonly target: Pick<OrchestrationV2ThreadProjection, "thread">;
+  readonly target: Pick<OrchestrationV2ThreadProjection, "thread"> &
+    Partial<Pick<OrchestrationV2ThreadProjection, "providerThreads">>;
   readonly request: OrchestratorMcpThreadSendInput;
 }) {
   const { threadManagement, scope, target, request } = input;
@@ -120,6 +122,7 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
     runId: result.run.id,
     ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
     status: result.run.status,
+    nativeSessionId: runNativeSessionId(result.run, target.providerThreads ?? []),
     delivery: result.delivery,
     ...(result.holdReason === undefined ? {} : { holdReason: result.holdReason }),
     ...(result.next === undefined ? {} : { next: result.next }),
