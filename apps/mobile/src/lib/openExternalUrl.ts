@@ -8,6 +8,7 @@ const ExternalUrlTarget = Schema.Literals([
   "provider-auth",
   "html-render",
   "mcp-app",
+  "rails-comment",
 ]);
 
 export type ExternalUrlTarget = typeof ExternalUrlTarget.Type;

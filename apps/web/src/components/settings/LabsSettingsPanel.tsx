@@ -13,6 +13,7 @@ import { LegacyFeaturesSection } from "./SettingsPanels";
 import { RemovedLinkedRoutes } from "./RemovedLinkedRoutes";
 import { EmbedModeSettings } from "./EmbedModeSettings";
 import { LaneResultRowsSetting } from "./LaneResultRowsSetting";
+import { RailsCommentCardsSetting } from "./RailsCommentCardsSetting";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
@@ -32,6 +33,7 @@ export function LabsSettingsPanel() {
         <SimlockHostsRow />
         <EmbedModeSettings />
         <LaneResultRowsSetting />
+        <RailsCommentCardsSetting />
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>

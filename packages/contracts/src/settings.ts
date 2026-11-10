@@ -3,7 +3,7 @@ import { CodexFields as ForkCodexFields } from "./forkCodexSettings.ts";
 import * as ForkMcpAppGrants from "./forkMcpAppGrantSettings.ts";
 import * as ForkPreview from "./forkPreviewSettings.ts";
 import * as ForkEmbed from "./forkEmbedSettings.ts";
-import * as ForkLaneResult from "./forkLaneResultSettings.ts";
+import * as ForkRailsNotes from "./forkRailsNoteSettings.ts";
 import * as ForkFollowUp from "./forkFollowUpSettings.ts";
 import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
 import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
@@ -1176,7 +1176,7 @@ export const ServerSettings = Schema.Struct({
   enableAgentBrowserAccess: DefaultTrue,
   ...ForkPreview.Server,
   ...ForkEmbed.Server,
-  ...ForkLaneResult.Server,
+  ...ForkRailsNotes.Server,
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1552,7 +1552,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   ...ForkPreview.ServerPatch,
   ...ForkEmbed.ServerPatch,
-  ...ForkLaneResult.ServerPatch,
+  ...ForkRailsNotes.ServerPatch,
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),

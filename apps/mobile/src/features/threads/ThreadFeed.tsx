@@ -59,7 +59,6 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
-import { laneResultOf } from "@t3tools/client-runtime/lane-result";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
@@ -276,7 +275,7 @@ import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
-import { ThreadLaneResultRow, useLaneResultRows } from "./ThreadLaneResultRow";
+import { type RailsNoteRows, railsNoteRow, useRailsNoteRows } from "./threadRailsNotes";
 import {
   MarkdownImageAvailableWidthContext,
   ThreadMarkdownImage,
@@ -1630,7 +1629,7 @@ function renderFeedEntry(
     readonly threadTitle: string;
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
-    readonly laneResultRows: boolean;
+    readonly railsNoteRows: RailsNoteRows;
   },
 ) {
   const entry = info.item;
@@ -1829,8 +1828,8 @@ function renderFeedEntry(
         />
       );
     }
-    const lane = props.laneResultRows ? laneResultOf(message) : null;
-    if (lane !== null) return <ThreadLaneResultRow lane={lane} tint={iconSubtleColor} />;
+    const railsNote = railsNoteRow(message, props.railsNoteRows, iconSubtleColor);
+    if (railsNote !== null) return railsNote;
     if (isCompactionCommandFeedEntry(entry)) {
       // Stands in for the compaction item until the provider reports it.
       const active = props.unsettledTurnId !== null && message.runId === props.unsettledTurnId;
@@ -2534,7 +2533,7 @@ export const ThreadFeed = memo(function ThreadFeed({
 }: ThreadFeedProps & { readonly ref?: Ref<ThreadFeedHandle> }) {
   const { listRef, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
-  const laneResultRows = useLaneResultRows(props.environmentId);
+  const railsNoteRows = useRailsNoteRows(props.environmentId);
   const guestShare = useThreadGuestShare(props.detailRef);
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
@@ -3532,7 +3531,7 @@ export const ThreadFeed = memo(function ThreadFeed({
         <ThreadMediaVisibility>
           {renderFeedEntry(info, {
             userMessageGrouping: info.item.userMessageGrouping,
-            laneResultRows,
+            railsNoteRows,
             environmentId: props.environmentId,
             connectionState: props.connectionState,
             dispatchingMessageId: props.dispatchingMessageId,
