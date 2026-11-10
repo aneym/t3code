@@ -56,12 +56,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { getServerOwners } from "./telemetry/Identify.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import {
-  formatHeadlessServeOutput,
-  formatHostForUrl,
-  isWildcardHost,
-  issueHeadlessServeAccessInfo,
-} from "./startupAccess.ts";
+import { announceHeadlessServeAccess, formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeStartupError>()(
   "ServerRuntimeStartupError",
@@ -625,11 +620,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         );
         if (serverConfig.startupPresentation === "headless") {
           yield* Effect.logDebug("startup phase: headless access info");
-          const accessInfo = yield* issueHeadlessServeAccessInfo();
-          yield* runStartupPhase(
-            "headless.output",
-            Console.log(formatHeadlessServeOutput(accessInfo)),
-          );
+          yield* runStartupPhase("headless.output", announceHeadlessServeAccess());
         } else {
           yield* Effect.logDebug("startup phase: browser open check");
           const startupBrowserTarget = yield* resolveStartupBrowserTarget;
