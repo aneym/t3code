@@ -49,6 +49,14 @@ function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): vo
   }
 }
 
+function appendUserBinPath(env: NodeJS.ProcessEnv): void {
+  const home = env.HOME?.trim();
+  if (!home) return;
+  const userBin = `${home}/.local/bin`;
+  const entries = (env.PATH ?? "").split(":").filter((entry) => entry.length > 0);
+  if (!entries.includes(userBin)) env.PATH = [...entries, userBin].join(":");
+}
+
 export function hydratePosixHome(
   env: NodeJS.ProcessEnv,
   resolveHomeDir = () => NodeOS.userInfo().homedir,
@@ -98,14 +106,15 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
       }),
     ),
   );
-  if (options?.shellEnvironmentPrepared === true) return;
-  yield* Effect.sync(() => hydratePosixPath(env, platform)).pipe(
-    Effect.catchDefect((defect) =>
-      Effect.sync(() => {
-        logPathHydrationWarning("Failed to hydrate PATH from the user environment.", defect);
-      }),
-    ),
-  );
+  if (options?.shellEnvironmentPrepared !== true)
+    yield* Effect.sync(() => hydratePosixPath(env, platform)).pipe(
+      Effect.catchDefect((defect) =>
+        Effect.sync(() => {
+          logPathHydrationWarning("Failed to hydrate PATH from the user environment.", defect);
+        }),
+      ),
+    );
+  appendUserBinPath(env);
 });
 
 export const expandHomePath = Effect.fn(function* (input: string) {
