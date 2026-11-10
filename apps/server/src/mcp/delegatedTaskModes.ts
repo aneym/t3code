@@ -89,7 +89,7 @@ export function resolveInteractionMode(
 }
 
 /** The task as its child receives it, with the role the caller asked for. */
-export function taskPrompt(input: OrchestratorMcpDelegateTaskInput, reportOutcome = false): string {
+export function taskPrompt(input: OrchestratorMcpDelegateTaskInput, reportOutcome = true): string {
   const task =
     input.role === undefined || input.role === "general"
       ? input.task

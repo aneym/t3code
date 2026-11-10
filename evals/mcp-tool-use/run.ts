@@ -918,7 +918,7 @@ export const buildMessages = (sample: Sample) => {
           }),
           userText,
         );
-  const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole }, true);
+  const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   push("user", text(role === "delegated-child" ? childPrompt() : resolveSecretPrompt(prompt)));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
