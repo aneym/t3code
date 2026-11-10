@@ -1,5 +1,6 @@
 import { awaitSecretAnswer, reenterSecretCard } from "./SecretRequestWait.ts";
 import { threadSettlement } from "./threadSettlement.ts";
+import { listThreadPage } from "./ThreadListPage.ts";
 import {
   messageSender,
   quietNoteOf,
@@ -146,7 +147,6 @@ const TASK_WAKE_EVENTS = [
   { thread: "child", eventType: "provider-thread.updated" },
   { thread: "child", eventType: "runtime-request.updated" },
 ] as const;
-const DEFAULT_THREAD_LIST_LIMIT = 50;
 const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
 const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
@@ -2654,52 +2654,19 @@ const make = Effect.gen(function* () {
       const projectId = input.allProjects
         ? null
         : yield* resolveProjectTarget(parent, input.projectId);
-      const projectThreads = yield* threadManagement
-        .listProjectThreads({
-          projectId: projectId ?? undefined,
-          includeSubagents: input.includeSubagents === true || input.onlySubagents === true,
-        })
-        .pipe(
-          Effect.mapError((error) =>
-            failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`),
-          ),
-        );
       const nowMs = yield* Clock.currentTimeMillis;
-      // An empty list is no filter: clients that fill every optional field send `[]`.
-      const statuses =
-        input.statuses === undefined || input.statuses.length === 0
-          ? null
-          : new Set(input.statuses);
-      const titleContains = input.titleContains?.toLocaleLowerCase();
-      const filtered = projectThreads
-        .filter(
-          (thread) => statuses === null || statuses.has(thread.activityRunStatus ?? thread.status),
-        )
-        .filter(
-          (thread) =>
-            input.settled === undefined || threadSettlement(thread).settled === input.settled,
-        )
-        .filter(
-          (thread) => input.snoozed === undefined || isSnoozed(thread, nowMs) === input.snoozed,
-        )
-        .filter(
-          (thread) =>
-            titleContains === undefined || thread.title.toLocaleLowerCase().includes(titleContains),
-        )
-        .filter(
-          (thread) =>
-            input.onlySubagents !== true || thread.lineage.relationshipToParent === "subagent",
-        );
-      const cursor = input.cursor ?? 0;
-      const limit = input.limit ?? DEFAULT_THREAD_LIST_LIMIT;
-      const page = filtered.slice(cursor, cursor + limit);
-      const nextCursor = cursor + page.length < filtered.length ? cursor + page.length : null;
+      const listed = yield* listThreadPage(threadManagement, input, projectId, nowMs).pipe(
+        Effect.mapError((error) =>
+          failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`),
+        ),
+      );
+      const end = listed.cursor + listed.threads.length;
       return {
         projectId,
         currentThreadId: parent?.thread.id ?? null,
-        threads: page.map((shell) => listItemFromShell(scope, shell, nowMs)),
-        nextCursor,
-        total: filtered.length,
+        threads: listed.threads.map((shell) => listItemFromShell(scope, shell, nowMs)),
+        nextCursor: end < listed.total ? end : null,
+        total: listed.total,
       } satisfies OrchestratorMcpThreadListResult;
     }),
     readThread: Effect.fn("OrchestratorMcpService.readThread")(function* (scope, input) {
