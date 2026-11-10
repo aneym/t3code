@@ -19,7 +19,7 @@ import {
 } from "effect/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import { toolkitRegistration } from "../mcp/mcpServer/toolkitRegistration.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
 import * as PeerLinks from "./PeerLinks.ts";
@@ -72,7 +72,7 @@ const probeHandlers = McpToolAccess.toLayer(ProbeToolkit, {
 });
 
 const serveB = (descriptor: ExecutionEnvironmentDescriptor) =>
-  servePeer(descriptor, McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers));
+  servePeer(descriptor, toolkitRegistration(ProbeToolkit, probeHandlers));
 
 /** Environment A, which links to B. */
 const makeA = (
@@ -317,8 +317,8 @@ it.effect("never sends a link's token to an address that stops answering as that
     Effect.gen(function* () {
       const b = yield* serveB(box);
       const a = yield* makeA(laptop);
-      const pairing = yield* b.auth.issuePairingCredential();
-      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+      const code = (yield* b.auth.issuePairingCredential()).credential;
+      yield* a.links.link({ url: b.url, pairingCode: code, access: "auto" });
       yield* probe(a);
       expect((yield* Ref.get(b.bearers)).length).toBeGreaterThan(0);
 
@@ -338,8 +338,8 @@ it.effect("reads one stored link without asking the peer", () =>
     Effect.gen(function* () {
       const b = yield* serveB(box);
       const a = yield* makeA(laptop);
-      const pairing = yield* b.auth.issuePairingCredential();
-      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+      const code = (yield* b.auth.issuePairingCredential()).credential;
+      yield* a.links.link({ url: b.url, pairingCode: code, access: "auto" });
       yield* Ref.set(b.probes, 0);
 
       const stored = yield* a.links.get(box.environmentId);
@@ -355,8 +355,8 @@ it.effect("tells the agent to link again once the peer revokes the link or it ex
     Effect.gen(function* () {
       const b = yield* serveB(box);
       const a = yield* makeA(laptop);
-      const pairing = yield* b.auth.issuePairingCredential();
-      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+      const code = (yield* b.auth.issuePairingCredential()).credential;
+      yield* a.links.link({ url: b.url, pairingCode: code, access: "auto" });
       yield* probe(a);
 
       const [session] = yield* linkedSessions(b);

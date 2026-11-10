@@ -367,7 +367,7 @@ export default defineConfig({
         },
       },
       {
-        files: ["apps/server/src/mcp/McpHttpServer.ts"],
+        files: ["apps/server/src/mcp/mcpServer/**"],
         rules: { "t3code/no-raw-mcp-registration": "off" },
       },
       {
