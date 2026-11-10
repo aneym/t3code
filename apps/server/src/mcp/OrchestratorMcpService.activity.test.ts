@@ -132,6 +132,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     ],
     visibleTurnItems: [],
     runtimeRequests: [],
+    providerThreads: [],
     messages: [],
     contextTransfers: [],
     subagents: [],
