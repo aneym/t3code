@@ -1,4 +1,5 @@
 import {
+  type OrchestrationV2RuntimeRequest,
   OrchestratorMcpFailure,
   type ProviderApprovalDecision,
   type ProviderUserInputAnswers,
@@ -18,6 +19,9 @@ const DEFAULT_OFFERED: ReadonlyArray<ProviderApprovalDecision> = [
   "acceptForSession",
   "accept",
 ];
+
+const dismissible = (request: OrchestrationV2RuntimeRequest) =>
+  request.kind === "user_input" && request.responseCapability.type === "message";
 
 const invalid = (message: string) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message });
@@ -76,15 +80,15 @@ const loadPending = Effect.fn("mcp.pendingRequest.load")(function* (
 export const list = Effect.fn("mcp.pendingRequest.list")(function* (threadId?: ThreadId) {
   const approvals = (yield* approvalAccess()) === "person";
   const { projection } = yield* readThread(threadId, ["runtimeRequests"]);
+  const pending = projection.runtimeRequests.filter(
+    (request) =>
+      request.status === "pending" &&
+      (request.kind === "user_input" ||
+        (approvals && request.kind !== "dynamic_tool_call" && request.kind !== "auth_refresh")),
+  );
   return {
-    requestIds: projection.runtimeRequests
-      .filter(
-        (request) =>
-          request.status === "pending" &&
-          (request.kind === "user_input" ||
-            (approvals && request.kind !== "dynamic_tool_call" && request.kind !== "auth_refresh")),
-      )
-      .map((request) => request.id),
+    requestIds: pending.map((request) => request.id),
+    dismissibleRequestIds: pending.filter(dismissible).map((request) => request.id),
   };
 });
 
@@ -93,9 +97,9 @@ export const read = Effect.fn("mcp.pendingRequest.read")(function* (
   requestId: RuntimeRequestId,
 ) {
   const approvals = (yield* approvalAccess()) === "person";
-  const { item } = yield* loadPending(threadId, requestId, approvals);
+  const { item, request } = yield* loadPending(threadId, requestId, approvals);
   return item.type === "user_input_request"
-    ? { requestId, questions: item.questions }
+    ? { requestId, questions: item.questions, dismissible: dismissible(request) }
     : {
         requestId,
         kind: "approval" as const,

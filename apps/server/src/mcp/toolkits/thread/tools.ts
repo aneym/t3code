@@ -143,7 +143,7 @@ const question = Schema.Struct({
 const PendingRequestTool = Tool.make("t3_pending_request", {
   ...commandTool,
   description:
-    "Pending questions in a thread, and its permission requests for a person's MCP client. Omit `threadId` for this thread. list: their ids. read: one by `requestId`. respond: answer a question with `answers`, or decide a permission request with `decision`; agents cannot decide permission requests. dismiss: close a question without answering, where the thread allows it.",
+    "Pending questions in a thread, and its permission requests for a person's MCP client. Omit `threadId` for this thread. list: their ids. read: one by `requestId`. respond: answer a question with `answers`, or decide a permission request with `decision`; agents cannot decide permission requests. dismiss: close a question without answering, only when it is dismissible.",
   parameters: Schema.Struct({
     action: Schema.Literals(["list", "read", "respond", "dismiss"]),
     environmentId: OrchestratorMcpEnvironmentTarget,
@@ -153,8 +153,15 @@ const PendingRequestTool = Tool.make("t3_pending_request", {
     decision: Schema.optional(Schema.Literals(["accept", "decline", "acceptForSession"])),
   }),
   success: Schema.Union([
-    Schema.Struct({ requestIds: Schema.Array(RuntimeRequestId) }),
-    Schema.Struct({ requestId: RuntimeRequestId, questions: Schema.Array(question) }),
+    Schema.Struct({
+      requestIds: Schema.Array(RuntimeRequestId),
+      dismissibleRequestIds: Schema.Array(RuntimeRequestId),
+    }),
+    Schema.Struct({
+      requestId: RuntimeRequestId,
+      questions: Schema.Array(question),
+      dismissible: Schema.Boolean,
+    }),
     Schema.Struct({
       requestId: RuntimeRequestId,
       kind: Schema.Literal("approval"),
