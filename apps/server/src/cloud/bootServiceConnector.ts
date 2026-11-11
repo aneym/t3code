@@ -2,14 +2,14 @@ import { connectorUnitPath, serviceUnitFileName } from "../serviceConnectorUnit.
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { type BootServiceManager } from "./bootService.ts";
 import {
   BOOT_SERVICE_LAUNCHD_LABEL,
   BOOT_SERVICE_PLIST_FILE,
   BOOT_SERVICE_UNIT_FILE,
-  type BootServiceManager,
   type BootServicePlan,
   type BootServiceStep,
-} from "./bootService.ts";
+} from "./bootServiceRender.ts";
 
 export function connectorServiceManager(
   manager: BootServiceManager,

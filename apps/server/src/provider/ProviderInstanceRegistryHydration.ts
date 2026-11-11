@@ -9,6 +9,7 @@ import {
   ServerSettings,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import type * as Config from "effect/Config";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -20,6 +21,7 @@ import * as ManagedProviders from "../policy/managedProviders.ts";
 import * as Settings from "../serverSettings.ts";
 import * as SecretResolver from "../secrets/SecretResolver.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "./builtInDrivers.ts";
+import * as ProviderAllowlist from "./providerAllowlist.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
@@ -122,7 +124,10 @@ export const seedDevReplayInstance = Effect.fn(
   });
 });
 
-const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettings>) =>
+const layerSettingsWatcher = (
+  settingsChanges: Stream.Stream<ServerSettings>,
+  limit: (configMap: ProviderInstanceConfigMap) => ProviderInstanceConfigMap,
+) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
@@ -133,7 +138,7 @@ const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettings>) =>
           // older than the seed. A failed current read must leave the registry intact.
           serverSettings.getSettings.pipe(
             Effect.flatMap((current) =>
-              mutator.reconcile(deriveProviderInstanceConfigMap(current)),
+              mutator.reconcile(limit(deriveProviderInstanceConfigMap(current))),
             ),
             Effect.catchCause((cause) =>
               Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
@@ -148,10 +153,18 @@ const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettings>) =>
 export const layer: Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry
   | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
-  never,
+  Config.ConfigError,
   ProviderInstanceRegistryHydrationEnv
 > = Layer.unwrap(
   Effect.gen(function* () {
+    const allowlist = yield* ProviderAllowlist.providerAllowlistConfig;
+    const devServer = (yield* ServerConfig.ServerConfig).devUrl !== undefined;
+    const limit = (configMap: ProviderInstanceConfigMap) =>
+      ProviderAllowlist.limitConfigMap(
+        configMap,
+        allowlist,
+        (instanceId) => devServer && instanceId === DEV_REPLAY_INSTANCE_ID,
+      );
     const serverSettings = yield* Settings.ServerSettingsService;
     yield* seedDevReplayInstance().pipe(
       Effect.catchCause((cause) => Effect.logWarning("Dev replay agent unavailable", cause)),
@@ -164,7 +177,7 @@ export const layer: Layer.Layer<
     const initialConfigMap =
       initialSettings === undefined
         ? ({} as ProviderInstanceConfigMap)
-        : deriveProviderInstanceConfigMap(initialSettings);
+        : limit(deriveProviderInstanceConfigMap(initialSettings));
 
     // Drivers launch from the host environment, minus launch overrides a policy ignores.
     const hostEnvironment = ManagedProviders.providerHostEnvironment(
@@ -186,11 +199,11 @@ export const layer: Layer.Layer<
       Layer.provide(SecretResolver.layer),
     );
 
-    return layerSettingsWatcher(settingsChanges).pipe(Layer.provideMerge(layerMutable));
+    return layerSettingsWatcher(settingsChanges, limit).pipe(Layer.provideMerge(layerMutable));
   }),
 ) as Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry
   | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
-  never,
+  Config.ConfigError,
   ProviderInstanceRegistryHydrationEnv
 >;

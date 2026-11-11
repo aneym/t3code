@@ -17,6 +17,8 @@ import { hostLinkCommand } from "./cli/hostLink.ts";
 import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
 import { pairCommand } from "./cli/pair.ts";
+import { reportCliRefusals } from "./cliRefusal.ts";
+import { requireValidEnvironmentValues } from "./environmentValueCheck.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { extendConnectionAttemptTimeout, keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
 import { stopOnHangup } from "./hangupStop.ts";
@@ -36,8 +38,12 @@ import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
 import { connectCommand, statusCommand, upCommand } from "./cli/up.ts";
+import * as AppleGitPlaceholderGate from "./vcs/AppleGitPlaceholderGate.ts";
 
-const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
+const layerCliRuntime = Layer.mergeAll(
+  AppleGitPlaceholderGate.layer.pipe(Layer.provideMerge(NodeServices.layer)),
+  NetService.layer,
+);
 
 const connectPublicConfigMissingMessage =
   "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
@@ -115,7 +121,9 @@ export function runCli() {
   stopOnHangup();
   extendConnectionAttemptTimeout();
   keepOutboundFetchOnHttp1();
-  Command.run(cli, { version: packageJson.version }).pipe(
+  requireValidEnvironmentValues.pipe(
+    Effect.andThen(Command.run(cli, { version: packageJson.version })),
+    reportCliRefusals,
     Effect.scoped,
     Effect.provide(layerCliRuntime),
     NodeRuntime.runMain,
