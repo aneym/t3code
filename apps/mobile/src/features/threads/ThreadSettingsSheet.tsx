@@ -19,11 +19,10 @@ import type {
   ProviderOptionDescriptor,
   ProviderOptionSelection,
   RuntimeMode,
-  ServerSettings,
   ThreadId,
 } from "@t3tools/contracts";
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
-import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
   getProviderOptionCurrentLabel,
@@ -113,6 +112,7 @@ import {
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
+import { useModelFavoriteToggle } from "./useModelFavoriteToggle";
 import {
   compatibleRuntimeModeForChoices,
   runtimeModeChoicesForSupportedModes,
@@ -300,6 +300,7 @@ type ThreadSettingsSessionValue = {
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly favoriteKeys: ReadonlySet<string>;
   readonly favoritesLoaded: boolean;
+  readonly favoritesWritable: boolean;
   readonly toggleFavorite: (option: ModelOption) => void;
   readonly toggleHidden: (option: ModelOption) => void;
   readonly pendingHiddenKeys: ReadonlySet<string>;
@@ -334,7 +335,6 @@ const ThreadSettingsSessionContext = createContext<ThreadSettingsSessionValue | 
 function ThreadSettingsSessionProvider(
   props: ThreadSettingsSessionProps & { readonly children: ReactNode },
 ) {
-  const registry = use(RegistryContext);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const configs = useAtomValue(environmentServerConfigsAtom);
   const config = props.environmentId ? configs.get(props.environmentId) : undefined;
@@ -345,9 +345,6 @@ function ThreadSettingsSessionProvider(
   const connectionGeneration = connection?.phase === "connected" ? connection.generation : null;
   const [manageHidden, setManageHidden] = useState(false);
   const pendingHidden = useRef(new Set<string>());
-  const pendingFavorites = useRef(
-    new Map<string, { favorite: boolean; settings: ServerSettings; pending: boolean }>(),
-  );
   const [pendingHiddenKeys, setPendingHiddenKeys] = useState<ReadonlySet<string>>(() => new Set());
   const providerGroups =
     manageHidden && config
@@ -395,66 +392,11 @@ function ThreadSettingsSessionProvider(
   const favoriteKeys = new Set(
     modelFavorites.map((favorite) => modelFavoriteKey(favorite.provider, favorite.model)),
   );
-  const toggleFavorite = async (option: ModelOption) => {
-    const environmentId = props.environmentId;
-    if (!favoritesLoaded || !environmentId) return;
-    const currentSettings = registry.get(environmentServerConfigsAtom).get(environmentId)?.settings;
-    if (!currentSettings) return;
-    const favorites = resolveModelPreferences(currentSettings, {
-      favorites: legacyFavorites,
-    }).favorites;
-    const key = JSON.stringify([
-      environmentId,
-      option.selection.instanceId,
-      option.selection.model,
-    ]);
-    const previous = pendingFavorites.current.get(key);
-    const previousFavorite =
-      previous && (previous.pending || previous.settings.favorites === currentSettings.favorites)
-        ? previous.favorite
-        : favorites.some(
-            (favorite) =>
-              favorite.provider === option.selection.instanceId &&
-              favorite.model === option.selection.model,
-          );
-    const pending = { favorite: !previousFavorite, settings: currentSettings, pending: true };
-    pendingFavorites.current.set(key, pending);
-    void Haptics.selectionAsync();
-    const result = await saveSettings({
-      environmentId: environmentId,
-      input: {
-        patch: {
-          setModelFavorites: [
-            {
-              provider: option.selection.instanceId,
-              model: option.selection.model,
-              favorite: pending.favorite,
-            },
-          ],
-          ...(currentSettings.favorites === null ? { migrateModelPreferences: { favorites } } : {}),
-        },
-      },
-    });
-    if (
-      AsyncResult.isSuccess(result) &&
-      registry.get(environmentServerConfigsAtom).get(environmentId)?.settings.favorites ===
-        currentSettings.favorites
-    ) {
-      pending.pending = false;
-    }
-    if (pending.pending && pendingFavorites.current.get(key) === pending) {
-      if (
-        previous &&
-        !previous.pending &&
-        registry.get(environmentServerConfigsAtom).get(environmentId)?.settings.favorites ===
-          previous.settings.favorites
-      ) {
-        pendingFavorites.current.set(key, previous);
-      } else {
-        pendingFavorites.current.delete(key);
-      }
-    }
-  };
+  const { favoritesWritable, toggleFavorite } = useModelFavoriteToggle({
+    environmentId: props.environmentId,
+    favoritesLoaded,
+    legacyFavorites,
+  });
   const toggleHidden = (option: ModelOption) => {
     if (
       !settings ||
@@ -623,6 +565,7 @@ function ThreadSettingsSessionProvider(
     reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
     favoriteKeys,
     favoritesLoaded,
+    favoritesWritable,
     providerExpansionOverrides,
     hasLegacyModels,
     pendingModel,
@@ -709,6 +652,7 @@ function ThreadSettingsModelListRow(props: {
       onPress={onPress}
       isFavorite={session.favoriteKeys.has(props.option.key)}
       favoritesLoaded={session.favoritesLoaded}
+      favoritesWritable={session.favoritesWritable}
       onToggleFavorite={() => session.toggleFavorite(props.option)}
       onToggleHidden={
         session.manageHidden && props.option.canHide

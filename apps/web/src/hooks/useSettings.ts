@@ -20,11 +20,7 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import {
-  isAtomCommandInterrupted,
-  runAtomCommand,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { isAtomCommandInterrupted, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   filterSharedServerPatch,
   splitSharedServerPatch,
@@ -53,6 +49,7 @@ import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
+import { settingsSaveFailureMessage, useReportedSettingsSave } from "./useReportedSettingsSave";
 import {
   environmentSession,
   environmentSessionStatesAtom,
@@ -436,23 +433,27 @@ export function useUpdateEnvironmentModelPreferences(environmentId: EnvironmentI
   const settings = useAtomValue(
     environmentId ? serverEnvironment.settingsValueAtom(environmentId) : noEnvironmentSettingsAtom,
   );
-  const save = useAtomCommand(serverEnvironment.updateSettings, "model preferences update");
+  const save = useReportedSettingsSave("model preferences update");
   return async (patch: ServerSettingsPatch) => {
     if (!environmentId || !settings) return;
+    const title = patch.setModelFavorites ? "Favorite not saved" : "Model preferences not saved";
     let prepared: ServerSettingsPatch;
     try {
       prepared = await prepareModelPreferencesPatch(settings, patch);
     } catch {
-      toastManager.add({
-        type: "error",
-        title: "Model preferences not saved",
-        description: "Could not load saved model preferences. Try again.",
-      });
+      warnModelPreferencesUnloaded(title);
       return;
     }
-    return save({ environmentId, input: { patch: prepared } });
+    return save({ environmentId, input: { patch: prepared } }, title);
   };
 }
+
+const warnModelPreferencesUnloaded = (title: string) =>
+  toastManager.add({
+    type: "error",
+    title,
+    description: "Could not load saved model preferences. Try again.",
+  });
 
 /** Send the desired state so two clients adding a favorite do not cancel each other. */
 export function useToggleEnvironmentModelFavorite(environmentId: EnvironmentId | null) {
@@ -470,11 +471,7 @@ export function useToggleEnvironmentModelFavorite(environmentId: EnvironmentId |
       try {
         await ensureClientSettingsHydrated();
       } catch {
-        toastManager.add({
-          type: "error",
-          title: "Favorites not saved",
-          description: "Could not load saved model preferences. Try again.",
-        });
+        warnModelPreferencesUnloaded("Favorite not saved");
         return;
       }
     }
@@ -587,22 +584,8 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
     label: "server settings update",
     reportFailure: false,
   });
+  const persistServerSettings = useReportedSettingsSave("server settings update");
   const { environments } = useEnvironments();
-  const persistServerSettings = async (request: Parameters<typeof persist>[0]) => {
-    const result = await persist(request);
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const label =
-        environments.find((environment) => environment.environmentId === request.environmentId)
-          ?.label ?? request.environmentId;
-      const error = squashAtomCommandFailure(result);
-      toastManager.add({
-        type: "error",
-        title: "Setting not saved",
-        description: `Could not save on ${label}: ${error instanceof Error ? error.message : "The save failed. Try reconnecting and saving again."}`,
-      });
-    }
-    return result;
-  };
   const sharedSettingsSyncTargetIds = useSharedSettingsSyncTargetIds(true);
   const updateSettings = (patch: UnifiedSettingsPatch) => {
     const { serverPatch, clientPatch } = splitPatch(patch);
@@ -689,11 +672,9 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
             })),
           ).then((outcomes) => {
             const failures = outcomes.flatMap(({ label, result }) => {
-              if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
-              const error = squashAtomCommandFailure(result);
-              return [
-                `Could not save on ${label}: ${error instanceof Error ? error.message : "The save failed. Try reconnecting and saving again."}`,
-              ];
+              return result._tag !== "Failure" || isAtomCommandInterrupted(result)
+                ? []
+                : [settingsSaveFailureMessage(label, result)];
             });
             if (failures.length === 0) return;
             const saved = outcomes

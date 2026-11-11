@@ -32,8 +32,10 @@ export const ModelListRow = memo(function ModelListRow(props: {
   unavailable?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
-  onToggleFavorite: (instanceId: ProviderInstanceId, slug: string) => void;
+  onToggleFavorite: ((instanceId: ProviderInstanceId, slug: string) => void) | null;
 }) {
+  const favoriteLabel = props.isFavorite ? "Remove from favorites" : "Add to favorites";
+  const favoriteBlocked = props.onToggleFavorite === null;
   const model = {
     slug: props.slug,
     name: props.name,
@@ -110,13 +112,14 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 className="-mr-1 shrink-0"
                 onClick={(event) => {
                   event.stopPropagation();
-                  props.onToggleFavorite(props.instanceId, props.slug);
+                  props.onToggleFavorite?.(props.instanceId, props.slug);
                 }}
                 onKeyDown={(event) => {
                   event.stopPropagation();
                 }}
                 disabled={Boolean(props.disabledReason)}
-                aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+                aria-disabled={favoriteBlocked || undefined}
+                aria-label={favoriteLabel}
               >
                 <StarIcon
                   className={cn(
@@ -130,7 +133,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
             }
           />
           <TooltipPopup side="top" align="center">
-            {props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+            {favoriteBlocked
+              ? "This connection can't change settings here, so favorites are read-only."
+              : favoriteLabel}
           </TooltipPopup>
         </Tooltip>
         {/* Last, and always reserved, so stars and the check keep fixed columns. */}
