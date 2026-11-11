@@ -25,6 +25,7 @@ import {
   threadKey,
   threadRefsEqual,
 } from "./entities.ts";
+import { isSubagentDelegation, isSubagentThread } from "./threadRelationships.ts";
 
 const EMPTY_THREADS: ReadonlyArray<OrchestrationV2ThreadShell> = Object.freeze([]);
 const EMPTY_SCOPED_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
@@ -55,10 +56,9 @@ const isChildRunLive = (
       thread.status === "waiting";
 
 /**
- * Whether a thread shows under its parent rather than in thread lists: a
- * subagent, a side chat, or a task a linked environment delegated here whose parent the
- * client lists (`delegatedUnderParent`, by thread key). A task whose parent
- * the client cannot list stays in the lists, so its work is never out of reach.
+ * Whether a thread shows under its parent rather than in thread lists: a subagent,
+ * a side chat, or a remote subagent task whose parent the client lists
+ * (`delegatedUnderParent`). Threads an agent launched list on their own.
  */
 export function isShownUnderParent(
   ref: ScopedThreadRef,
@@ -75,7 +75,7 @@ function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentReq
   if (
     kind === undefined ||
     kind === "auth_refresh" ||
-    (thread.lineage.relationshipToParent !== "subagent" && thread.delegatedFrom === undefined) ||
+    !isSubagentThread(thread) ||
     isProviderNativeSubagentThread(thread) ||
     !isChildRunLive(thread)
   ) {
@@ -293,7 +293,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     for (const runsIn of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       for (const thread of get(environmentThreadsAtom(runsIn))) {
         const from = thread.delegatedFrom;
-        if (from === undefined || from.environmentId === runsIn) continue;
+        if (!isSubagentDelegation(from) || from.environmentId === runsIn) continue;
         const task = { runsIn, thread, parentThreadId: from.threadId };
         const tasks = tasksByDelegator.get(from.environmentId);
         if (tasks === undefined) tasksByDelegator.set(from.environmentId, [task]);
@@ -427,8 +427,8 @@ export function createEnvironmentThreadShellAtoms(input: {
   });
 
   // Child approvals and questions are hidden with their sidebar rows. Read their
-  // shell summaries, without subscribing to every child transcript. A task
-  // delegated to a linked environment is a child too, with its own subagents.
+  // shell summaries, without subscribing to every child transcript. A remote
+  // subagent task is a child too, with its own subagents.
   const childThreadInputsAtomFamily = Atom.family((key: string) => {
     let previous: ReadonlyArray<EnvironmentThreadShell> = [];
     return Atom.make((get) => {
@@ -453,7 +453,7 @@ export function createEnvironmentThreadShellAtoms(input: {
             (thread.lineage.relationshipToParent === "subagent" || thread.lineage.sideChat === true)
           ) {
             addChild({ environmentId, threadId: parent }, environmentId, thread);
-          } else if (thread.delegatedFrom !== undefined) {
+          } else if (isSubagentDelegation(thread.delegatedFrom)) {
             addChild(thread.delegatedFrom, environmentId, thread);
           }
         }
@@ -611,7 +611,7 @@ export function createEnvironmentThreadShellAtoms(input: {
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         const parent = thread.delegatedFrom;
         if (
-          parent !== undefined &&
+          isSubagentDelegation(parent) &&
           environmentIds.has(parent.environmentId) &&
           // An archived parent leaves navigation; its task there stays listed on its own.
           get(environmentThreadIndexAtom(parent.environmentId)).get(parent.threadId)?.archivedAt ===

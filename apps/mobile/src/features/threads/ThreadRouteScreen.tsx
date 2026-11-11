@@ -83,7 +83,10 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
-import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
+import {
+  delegatedFromLabel,
+  resolveMergeBackTargetThreadId,
+} from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
 import { threadEnvironment } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
@@ -536,9 +539,8 @@ function ThreadRouteContent(
   const headerSubtitle = [
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
-    // A linked environment's delegated task names its parent; other linked work its origin.
     delegatedFrom !== null
-      ? `Subagent of ${delegatedFromThread?.title ?? delegatedFrom.title}`
+      ? `${delegatedFromLabel(delegatedFrom)} ${delegatedFromThread?.title ?? delegatedFrom.title}`
       : selectedThread?.linkOrigin
         ? `From ${selectedThread.linkOrigin.label}`
         : null,

@@ -88,6 +88,10 @@ import {
   threadSupportsProviderHandoff,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
+import {
+  delegatedFromLabel,
+  isSubagentThread,
+} from "@t3tools/client-runtime/state/thread-relationships";
 import { ThreadRestartNotices } from "./chat/ThreadRestartNotices";
 import { restartPauseLabel } from "@t3tools/client-runtime/restart-pause";
 import {
@@ -849,14 +853,12 @@ export default function ChatView(props: ChatViewProps) {
           messages: serverProjection.messages,
           parentSubagents: workflowOpeningParentProjection?.projection.subagents ?? null,
         });
-  // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = activeThread?.delegatedFrom ?? null;
   const delegatedFromEnvironment = useEnvironment(delegatedFrom?.environmentId ?? null);
   const delegatedFromRef =
     delegatedFrom === null
       ? null
       : scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
-  // The title it had at delegation, until this client sees the parent itself.
   const delegatedFromThread = useQuietThreadShell(delegatedFromRef);
   const sideChatParentRef =
     activeThread?.lineage.sideChat === true && activeThread.lineage.parentThreadId !== null
@@ -867,7 +869,7 @@ export default function ChatView(props: ChatViewProps) {
     if (sideChatParentRef !== null) {
       return {
         title: sideChatParent?.title ?? "Parent thread",
-        sideChat: true,
+        label: "Context from" as const,
         // Embedded, the parent is the view around it.
         ...(embedded
           ? {}
@@ -884,6 +886,7 @@ export default function ChatView(props: ChatViewProps) {
     if (parentSubagentThreadRef !== null) {
       return {
         title: parentSubagentThread?.title ?? "Parent thread",
+        label: "Subagent of" as const,
         open: (): void => {
           void navigate({
             to: "/$environmentId/$threadId",
@@ -896,8 +899,8 @@ export default function ChatView(props: ChatViewProps) {
     const parentRef = delegatedFromRef;
     return {
       title: delegatedFromThread?.title ?? delegatedFrom.title,
+      label: delegatedFromLabel(delegatedFrom),
       environmentLabel: delegatedFromEnvironment?.label ?? activeThread?.linkOrigin?.label ?? "",
-      // Only an environment this client is connected to can open the parent.
       ...(delegatedFromEnvironment === null
         ? {}
         : {
@@ -2730,15 +2733,13 @@ export default function ChatView(props: ChatViewProps) {
   }, [embedded, toggleRightPanelStable, toggleRightPanelMaximizedStable]);
 
   usePasteToFocusComposer(embedded ? null : activeThreadId, composerRef);
-  // A delegated task is a remote thread's subagent.
-  const isSubagentThread =
-    activeThread?.lineage.relationshipToParent === "subagent" || delegatedFrom !== null;
+  const isSubagent = activeThread !== undefined && isSubagentThread(activeThread);
   // Side chats do not nest or start from subagents, and older servers would fork a listed thread.
   const sideChatsOffered =
     !embedded &&
     canOperateThread &&
     activeThread?.lineage.sideChat !== true &&
-    !isSubagentThread &&
+    !isSubagent &&
     serverConfig?.environment.capabilities.sideChats === true;
   const sideChat = useSideChat({
     threadRef: sideChatsOffered && isServerThread ? activeThreadRef : null,
@@ -2755,7 +2756,7 @@ export default function ChatView(props: ChatViewProps) {
   const sideChatDisabledReason =
     activeThread?.lineage.sideChat === true
       ? "Side chats cannot start side chats."
-      : isSubagentThread
+      : isSubagent
         ? "Subagent threads cannot start side chats."
         : serverConfig === null
           ? "Side chats are not ready yet. Try again in a moment."
