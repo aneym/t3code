@@ -3,6 +3,8 @@ import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 export const mcpMessageSender = (scope: McpInvocationScope): MessageSender => {
   if (scope.thread !== undefined) return { senderThreadId: scope.thread.threadId };
+  if (scope.client?.ownerCli === true && scope.client.sender !== undefined)
+    return { senderThreadId: scope.client.sender.threadId };
   const sender = scope.client?.linked === true ? scope.client.sender : undefined;
   return sender === undefined
     ? {}

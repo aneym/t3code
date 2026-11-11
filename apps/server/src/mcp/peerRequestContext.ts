@@ -1,8 +1,10 @@
 import {
+  EnvironmentId,
   FORWARDED_SENDER_HEADER,
   ForwardedThreadSender,
   ProviderInteractionMode,
   RuntimeMode,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -31,6 +33,11 @@ const withModeLimit = (
 };
 
 const decodeSender = Schema.decodeUnknownOption(Schema.fromJsonString(ForwardedThreadSender));
+const decodeOwnerCliSender = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ threadId: ThreadId, environmentId: Schema.optional(EnvironmentId) }),
+  ),
+);
 
 export const withPeerRequestContext = (
   invocation: McpInvocationScope,
@@ -40,6 +47,18 @@ export const withPeerRequestContext = (
   if (limited === undefined || limited.client === undefined) return limited;
   let client = limited.client;
   const header = request.headers[FORWARDED_SENDER_HEADER];
+  if (client.ownerCli === true && header !== undefined) {
+    const sender = decodeOwnerCliSender(header);
+    if (
+      Option.isSome(sender) &&
+      (sender.value.environmentId ?? invocation.environmentId) === invocation.environmentId
+    ) {
+      client = {
+        ...client,
+        sender: { threadId: sender.value.threadId, environmentId: invocation.environmentId },
+      };
+    }
+  }
   if (client.linked === true && header !== undefined) {
     const sender = decodeSender(header);
     const peer = client.peer;
