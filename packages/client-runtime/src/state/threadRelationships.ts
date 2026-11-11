@@ -1,5 +1,6 @@
 import {
   isOrchestrationV2WorkActive,
+  type OrchestrationV2DelegatedFrom,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type ThreadId,
@@ -31,6 +32,12 @@ export interface ThreadRelationshipWalkRow {
   readonly fromThreadId: ThreadId;
   readonly depth: number;
   readonly edge: ThreadRelationshipEdge;
+}
+
+export function delegatedFromLabel(
+  delegatedFrom: OrchestrationV2DelegatedFrom,
+): "Subagent of" | "Started by" {
+  return delegatedFrom.relationship === "subagent" ? "Subagent of" : "Started by";
 }
 
 export function resolveMergeBackTargetThreadId(

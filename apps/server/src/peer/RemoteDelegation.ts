@@ -256,11 +256,11 @@ const make = Effect.gen(function* () {
           ...(interactionMode === undefined ? {} : { interactionMode }),
           message: task,
           clientRequestId: `delegate:${scope.thread.threadId}:${key}`,
-          // The thread there shows it is this thread's subagent, with a way back.
           delegatedFrom: {
             environmentId: hereId,
             threadId: parent.thread.id,
             title: parent.thread.title,
+            relationship: "subagent",
           },
         },
       );
