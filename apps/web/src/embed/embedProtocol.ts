@@ -76,7 +76,7 @@ const MAX_THEME_VARS = 256;
 const MAX_VALUE_LENGTH = 200;
 const VAR_NAME = /^--[a-z0-9-]{1,64}$/;
 const CLEAR_THREAD = /^[A-Za-z0-9:._-]{1,128}$/;
-const MAX_ITEM_LENGTH = 200;
+const MAX_ITEM_LENGTH = 4096;
 const UNSAFE_VALUE = /[;{}<>\\]|url\(|expression\(|@import/i;
 
 export function isEmbedPath(pathname: string): boolean {
