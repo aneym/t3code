@@ -38,7 +38,11 @@ import {
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { delegatedChildDefaultModel, remoteChildOptions } from "../mcp/delegatedChildModel.ts";
+import {
+  delegatedChildDefaultModel,
+  guardChildModel,
+  remoteChildOptions,
+} from "../mcp/delegatedChildModel.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -206,9 +210,8 @@ const make = Effect.gen(function* () {
       const { target } = input;
       const inherited = parent.thread.modelSelection;
       const instanceId = target.providerInstanceId ?? inherited.instanceId;
-      const { delegatedChildModel, childCompletionNotes } = yield* settings.getSettings.pipe(
-        Effect.orDie,
-      );
+      const current = yield* settings.getSettings.pipe(Effect.orDie);
+      const { delegatedChildModel, childCompletionNotes } = current;
       const model =
         target.model ?? delegatedChildDefaultModel(delegatedChildModel, instanceId, inherited);
       if (model === undefined) {
@@ -217,13 +220,13 @@ const make = Effect.gen(function* () {
           message: "Pass target.model from orchestrator_capabilities with this environmentId.",
         });
       }
+      yield* guardChildModel(current, model, input.role);
       const options = remoteChildOptions(
         delegatedChildModel,
         { instanceId, model },
         inherited,
         target.options,
       );
-      // Omitted modes are left to the other side, which caps them by the link's access.
       const runtimeMode =
         input.runtimeMode === undefined || input.runtimeMode === "inherit"
           ? undefined
@@ -238,7 +241,6 @@ const make = Effect.gen(function* () {
         parent.thread.projectId,
         target.projectId,
       );
-      // One key for the launch there and the record here, so a retry finds both.
       const key = input.clientRequestId ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
       const task = taskPrompt(input, childCompletionNotes);
       const { launched, worktreeBase } = yield* worktrees.launch(
