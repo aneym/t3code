@@ -16,6 +16,7 @@ import {
   setEmbedKClears,
   startEmbedClear,
 } from "./embedClear";
+import { applyEmbedAudienceMessage } from "./embedAudience";
 import { applyEmbedComposerMessage, embedControlsKey, toggleEmbedControls } from "./embedComposer";
 import { applyEmbedSendResult, setEmbedHostSend } from "./embedHostSend";
 import {
@@ -23,6 +24,7 @@ import {
   EMBED_KEY_MESSAGE,
   isEmbedPath,
   pressedHostChord,
+  readEmbedAudienceMessage,
   readEmbedClearMessage,
   readEmbedComposerMessage,
   readEmbedHostSendMessage,
@@ -103,6 +105,8 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       if (composer !== null) applyEmbedComposerMessage(composer);
       const hostSend = readEmbedHostSendMessage(event.data);
       if (hostSend !== null) setEmbedHostSend(hostSend.on);
+      const audience = readEmbedAudienceMessage(event.data);
+      if (audience !== null) applyEmbedAudienceMessage(audience);
       const sendResult = readEmbedSendResultMessage(event.data);
       if (sendResult !== null) applyEmbedSendResult(sendResult);
       applyEmbedLinksMessage(event.data);

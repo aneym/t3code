@@ -1,10 +1,15 @@
+import type { AgentAudience } from "@t3tools/client-runtime/agent-audience";
+import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+
 import type { TimelineEntry } from "../session-logic";
+import { embedAgentAudience, useEmbedAgentMessagesShown } from "./embedAudience";
 import { useEmbedHostConnected } from "./embedHost";
 import { foldNoteRuns } from "./embedNoteRuns";
 import { isEmbedLaunchBrief, isEmbedPersonMessage } from "./embedQuietMessages";
 import { useEmbedSeenMark } from "./embedSeen";
 
 const asPerson = new WeakMap<TimelineEntry, TimelineEntry>();
+const NO_AUDIENCE: AgentAudience = { items: new Set(), runs: new Set() };
 
 function personEntry(entry: TimelineEntry & { readonly kind: "message" }): TimelineEntry {
   const known = asPerson.get(entry);
@@ -14,21 +19,34 @@ function personEntry(entry: TimelineEntry & { readonly kind: "message" }): Timel
   return mine;
 }
 
+export type EmbedTimeline = {
+  readonly entries: ReadonlyArray<TimelineEntry>;
+  readonly audience: AgentAudience;
+  readonly agentsShown: boolean;
+};
+
 export function useEmbedTimeline(
   threadId: string | null,
   entries: ReadonlyArray<TimelineEntry>,
-): ReadonlyArray<TimelineEntry> {
+  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+): EmbedTimeline {
   const embedThreadId = useEmbedHostConnected() ? threadId : null;
+  const agentsShown = useEmbedAgentMessagesShown();
   useEmbedSeenMark(embedThreadId);
-  if (embedThreadId === null) return entries;
-  const shown = entries.flatMap((entry) =>
-    entry.kind !== "message"
-      ? [entry]
-      : isEmbedLaunchBrief(entry.message, embedThreadId)
-        ? []
-        : isEmbedPersonMessage(entry.message)
-          ? [personEntry(entry)]
-          : [entry],
+  if (embedThreadId === null) return { entries, audience: NO_AUDIENCE, agentsShown };
+  const kept = entries.filter(
+    (entry) => entry.kind !== "message" || !isEmbedLaunchBrief(entry.message, embedThreadId),
   );
-  return foldNoteRuns(shown);
+  const audience = embedAgentAudience(kept, items, embedThreadId);
+  const shown = kept.flatMap((entry) =>
+    audience.items.has(entry.id)
+      ? agentsShown
+        ? [entry]
+        : []
+      : entry.kind === "message" && isEmbedPersonMessage(entry.message)
+        ? [personEntry(entry)]
+        : [entry],
+  );
+  const muted = agentsShown ? audience.items : NO_AUDIENCE.items;
+  return { entries: foldNoteRuns(shown, muted), audience, agentsShown };
 }
