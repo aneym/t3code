@@ -25,17 +25,20 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { HostLinkCoalescer } from "./HostLinkCoalescer.ts";
 import { type HostLinkConnection, makeHostLinkConnection } from "./HostLinkConnection.ts";
 import { type HostLinkThreadEvent, makeHostLinkEventMapper } from "./hostLinkEvents.ts";
+import { makePeerHealthTracker } from "./hostLinkPeerHealth.ts";
 import { readHostLinkToken } from "./hostLinkToken.ts";
 import * as LaneStore from "./HostLinkLaneStore.ts";
 
 const RECONCILE_EVERY = "60 seconds";
 const COALESCE_EVERY = "250 millis";
+const PEER_CHECK_EVERY = "30 seconds";
 
 const decodeInbound = Schema.decodeUnknownOption(HostLinkInboundFrame);
 const isMcpFailure = Schema.is(OrchestratorMcpFailure);
@@ -63,6 +66,7 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const peerLinks = yield* PeerLinks.PeerLinks;
   const context = yield* Effect.context<
     SqlClient.SqlClient | ThreadManagementService.ThreadManagementService
   >();
@@ -79,6 +83,7 @@ const make = Effect.gen(function* () {
   const nextSeq = () => ++seq;
   let connectionKey = "";
   const coalescer = new HostLinkCoalescer((frame) => connection?.sendEvent(frame));
+  const peerHealth = makePeerHealthTracker();
 
   const laneList = () => [...lanes].map(([threadId, value]) => ({ threadId, lane: value.lane }));
 
@@ -183,6 +188,7 @@ const make = Effect.gen(function* () {
         environmentId,
         bootId,
         lanes: laneList(),
+        peers: peerHealth.snapshot(),
       }),
       onFrame,
     });
@@ -206,7 +212,28 @@ const make = Effect.gen(function* () {
       Effect.catchCause((cause) => Effect.logWarning("Host link event feed stopped", { cause })),
     ),
   );
+  const checkPeers = Effect.gen(function* () {
+    if (connection === null) return;
+    const links = (yield* peerLinks.enabled) ? yield* peerLinks.list : [];
+    const at = DateTime.formatIso(yield* DateTime.now);
+    const changes = peerHealth.observe(
+      links.map((link) => ({
+        environmentId: link.environmentId,
+        label: link.label,
+        status: link.status,
+      })),
+      at,
+    );
+    if (changes.length > 0) coalescer.flush();
+    for (const change of changes) {
+      connection?.sendEvent({ ...change, threadId: null, lane: null });
+    }
+  }).pipe(
+    Effect.catchCause((cause) => Effect.logWarning("Host link peer check failed", { cause })),
+  );
+
   yield* forkParked(Stream.runForEach(settings.streamChanges, () => reconcile));
+  yield* forkParked(checkPeers.pipe(Effect.repeat(Schedule.spaced(PEER_CHECK_EVERY))));
   yield* forkParked(reconcile.pipe(Effect.repeat(Schedule.spaced(RECONCILE_EVERY))));
   yield* forkParked(
     Effect.sync(() => coalescer.flush()).pipe(Effect.repeat(Schedule.spaced(COALESCE_EVERY))),
@@ -233,6 +260,7 @@ const make = Effect.gen(function* () {
           lane: value.lane,
           boundAt: value.boundAt,
         })),
+      peers: peerHealth.snapshot(),
     };
   });
 
