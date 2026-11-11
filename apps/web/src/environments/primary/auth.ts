@@ -473,6 +473,11 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
     });
 }
 
+export function forgetServerAuthSession() {
+  bootstrapPromise = null;
+  resolvedAuthenticatedGateState = null;
+}
+
 export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = null;

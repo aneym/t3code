@@ -1,5 +1,6 @@
 export {
   createServerPairingCredential,
+  forgetServerAuthSession,
   peekPairingTokenFromUrl,
   PrimaryEnvironmentPairingCredentialRejectedError,
   PrimaryEnvironmentRequestError,
