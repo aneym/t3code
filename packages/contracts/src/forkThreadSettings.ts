@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { OrchestratorMcpTaskRole } from "./delegateTaskInput.ts";
 import { ProviderOptionSelections } from "./model.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -13,6 +14,12 @@ export const DelegatedChildModel = Schema.Struct({
   options: Schema.optionalKey(ProviderOptionSelections),
 });
 export type DelegatedChildModel = typeof DelegatedChildModel.Type;
+
+export const ChildModelRule = Schema.Struct({
+  model: TrimmedNonEmptyString,
+  roles: Schema.optionalKey(Schema.Array(OrchestratorMcpTaskRole)),
+});
+export type ChildModelRule = typeof ChildModelRule.Type;
 
 export const ForkThreadSettingsFields = {
   retainAutomationPlacement: DefaultTrue,
@@ -32,6 +39,10 @@ export const ForkThreadSettingsFields = {
   delegatedChildModel: Schema.NullOr(DelegatedChildModel).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  childModelGuard: DefaultFalse,
+  childModelAllow: Schema.Array(ChildModelRule).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 };
 
 export const ForkThreadSettingsPatchFields = {
@@ -50,4 +61,6 @@ export const ForkThreadSettingsPatchFields = {
   hostLinkEnabled: Schema.optionalKey(Schema.Boolean),
   hostLinkUrl: Schema.optionalKey(Schema.String),
   delegatedChildModel: Schema.optionalKey(Schema.NullOr(DelegatedChildModel)),
+  childModelGuard: Schema.optionalKey(Schema.Boolean),
+  childModelAllow: Schema.optionalKey(Schema.Array(ChildModelRule)),
 };

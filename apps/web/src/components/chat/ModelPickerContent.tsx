@@ -47,10 +47,8 @@ import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../../keybindings";
-import {
-  useEnvironmentModelPreferences,
-  useToggleEnvironmentModelFavorite,
-} from "~/hooks/useSettings";
+import { useEnvironmentModelPreferences } from "~/hooks/useSettings";
+import { useWritableModelFavoriteToggle } from "~/hooks/useWritableModelFavoriteToggle";
 import { announce } from "~/lib/announce";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
@@ -455,7 +453,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
-  const toggleFavorite = useToggleEnvironmentModelFavorite(props.environmentId);
+  const toggleFavorite = useWritableModelFavoriteToggle(props.environmentId);
 
   const focusSearchInput = () => {
     searchInputRef.current?.focus({ preventScroll: true });
@@ -1032,8 +1030,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 if (!model) {
                   return null;
                 }
-                const disabledReason =
-                  getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
                 return (
                   <ModelListRow
                     key={modelKey}
@@ -1058,7 +1054,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     showNewBadge={model.badge === "new"}
                     unavailable={model.isUnavailable === true}
                     jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
-                    disabledReason={disabledReason}
+                    disabledReason={getModelDisabledReason?.(model.instanceId, model.slug) ?? null}
                     onToggleFavorite={toggleFavorite}
                   />
                 );

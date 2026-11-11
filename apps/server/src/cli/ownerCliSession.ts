@@ -102,24 +102,31 @@ const mint = Effect.fn("cli.owner.session.mint")(function* (
 const revoke = (config: ServerConfig.ServerConfig["Service"], sessionId: AuthSessionId) =>
   withAuth(config, (auth) => auth.revokeSession(sessionId)).pipe(Effect.ignore({ log: true }));
 
-const openSession = (endpoint: string, token: string, command: string) =>
+const openSession = (
+  endpoint: string,
+  token: string,
+  command: string,
+  headers: Readonly<Record<string, string>> | undefined,
+) =>
   mcpToolSession({
     endpoint,
     clientName: `t3-${command}-cli`,
     authorization: `Bearer ${token}`,
+    ...(headers === undefined ? {} : { headers }),
   });
 
 export const openOwnerCliSession = Effect.fn("cli.owner.session.open")(function* (
   config: ServerConfig.ServerConfig["Service"],
   endpoint: string,
   command: string,
+  headers?: Readonly<Record<string, string>>,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cachePath = path.join(config.secretsDir, CACHE_FILE_NAME);
   const cached = yield* readCredential(cachePath);
   if (Option.isSome(cached) && (yield* isUsable(cached.value))) {
-    const session = yield* openSession(endpoint, cached.value.token, command).pipe(
+    const session = yield* openSession(endpoint, cached.value.token, command, headers).pipe(
       Effect.asSome,
       Effect.catchTags({
         AcpMcpBridgeError: (error) =>
@@ -146,5 +153,5 @@ export const openOwnerCliSession = Effect.fn("cli.owner.session.open")(function*
   if (Option.isSome(replaced) && replaced.value !== credential.sessionId) {
     yield* revoke(config, replaced.value);
   }
-  return yield* openSession(endpoint, credential.token, command);
+  return yield* openSession(endpoint, credential.token, command, headers);
 });

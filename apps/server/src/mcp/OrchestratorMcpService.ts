@@ -69,6 +69,7 @@ import {
   delegatedChildDefaultModel,
   delegatedChildOptions,
   type DelegatedChildModelSetting,
+  guardChildModel,
 } from "./delegatedChildModel.ts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
@@ -2013,6 +2014,7 @@ const make = Effect.gen(function* () {
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
         childModel: settingsNow.delegatedChildModel,
       });
+      yield* guardChildModel(settingsNow, target.modelSelection.model, input.role);
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
         input.runtimeMode,
@@ -2022,9 +2024,6 @@ const make = Effect.gen(function* () {
         parent.thread.interactionMode,
         input.interactionMode,
       );
-      // ThreadManagementService.dispatch is the chokepoint for this command
-      // type's own enablement check, using the same command id and its
-      // receipt-replay exemption, so no separate assert runs here.
       const result = yield* threadManagement
         .dispatch({
           type: "delegated_task.request",
