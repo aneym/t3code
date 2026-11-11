@@ -81,6 +81,13 @@ export function QueueSettings() {
           description:
             "Push turns, messages, steps and thread ends of threads with a host lane to the linked host app. Link one with `t3 host-link set`.",
         },
+        {
+          key: "childModelGuard",
+          searchId: "child-model-guard",
+          label: "Child model rules",
+          description:
+            'Refuse a delegated task whose model is not allowed for its role, before the child starts. Rules are childModelAllow in settings.json, such as [{"model": "claude-opus-5-5"}, {"model": "claude-fable-*", "roles": ["review"]}]. With no rules, any model runs.',
+        },
       ].map(({ key, searchId, label, description }) => {
         const settingKey = key as
           | "batchQueuedMessages"
@@ -92,7 +99,8 @@ export function QueueSettings() {
           | "mcpEventsEnabled"
           | "mcpClientApprovals"
           | "liveThreadFeed"
-          | "hostLinkEnabled";
+          | "hostLinkEnabled"
+          | "childModelGuard";
         return (
           <SettingsRow
             key={key}
