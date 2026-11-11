@@ -94,4 +94,11 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     scope: "environment-defaults",
     searchTerms: ["delegate child subagent task default model effort options inherit opus fable"],
   },
+  {
+    id: "child-model-guard",
+    title: "Child model rules",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["delegate child subagent task model role allow deny refuse opus fable review"],
+  },
 ];
