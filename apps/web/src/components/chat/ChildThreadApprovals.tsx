@@ -7,6 +7,9 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useState } from "react";
+import { useEmbedAgentMessagesShown } from "../../embed/embedAudience";
+import { useEmbedHostConnected } from "../../embed/embedHost";
+import { cn } from "../../lib/utils";
 import { useEnvironmentScope } from "../../state/session";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -77,9 +80,13 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
 
 export function ChildThreadApprovals({ threadRef }: { threadRef: ScopedThreadRef | null }) {
   const approvals = useAtomValue(childThreadApprovalsAtom(threadRef));
-  if (approvals.length === 0) return null;
+  const embedded = useEmbedHostConnected();
+  const agentsShown = useEmbedAgentMessagesShown();
+  if (approvals.length === 0 || (embedded && !agentsShown)) return null;
   return (
-    <div className="mb-2 flex max-h-80 flex-col gap-2 overflow-auto">
+    <div
+      className={cn("mb-2 flex max-h-80 flex-col gap-2 overflow-auto", embedded && "opacity-60")}
+    >
       {approvals.map((entry) => (
         <ChildApproval
           key={JSON.stringify([

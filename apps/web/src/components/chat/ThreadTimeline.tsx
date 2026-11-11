@@ -1,5 +1,6 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { type ComponentProps, useLayoutEffect } from "react";
+import { mutedRowsCss } from "../../embed/embedAudience";
 import { embedLiveRunId, useEmbedClearedEntries } from "../../embed/embedClear";
 import { isEmbedPath } from "../../embed/embedProtocol";
 import { useIncrementalTimelineEntries } from "../../hooks/useIncrementalTimelineEntries";
@@ -59,22 +60,36 @@ export function ThreadTimeline({
     rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries });
   }, [activeThreadKey, detailLoading, entries]);
   const embedPage = isEmbedPath(window.location.pathname);
-  const embedEntries = useEmbedTimeline(threadDetailRef?.threadId ?? null, displayedEntries);
-  const cleared = useEmbedClearedEntries(
-    embedEntries,
-    embedLiveRunId(timelineProps.runningRunId ?? null, timelineProps.latestRun),
-    embedPage,
-  );
+  const embed = useEmbedTimeline(threadDetailRef?.threadId ?? null, displayedEntries);
+  const liveRunId = embedLiveRunId(timelineProps.runningRunId ?? null, timelineProps.latestRun);
+  const cleared = useEmbedClearedEntries(embed.entries, liveRunId, embedPage);
+  const mutedCss = embed.agentsShown
+    ? mutedRowsCss(embed.audience.items, embed.audience.runs, liveRunId)
+    : "";
+  const liveHidden = !embed.agentsShown && liveRunId !== null && embed.audience.runs.has(liveRunId);
   const timeline = (
     <MessagesTimeline
       {...timelineProps}
+      {...(liveHidden
+        ? {
+            isWorking: false,
+            runlessWorkActive: false,
+            runningRunId: null,
+            activeTurnStartedAt: null,
+            announcedRun: null,
+          }
+        : {})}
       hideEmptyPlaceholder={timelineProps.hideEmptyPlaceholder === true || cleared.hidden > 0}
       timelineEntries={cleared.shown}
     />
   );
   if (!embedPage) return timeline;
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      data-embed-audience={embed.agentsShown ? "shown" : "hidden"}
+    >
+      {mutedCss === "" ? null : <style>{mutedCss}</style>}
       <EmbedShowEarlier hidden={cleared.hidden} />
       <div className="relative min-h-0 flex-1">{timeline}</div>
     </div>

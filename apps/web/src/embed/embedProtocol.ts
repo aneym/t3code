@@ -14,6 +14,7 @@ export const EMBED_LINK_ASK_MESSAGE = "t3-embed/link-ask";
 const EMBED_HOST_SEND_MESSAGE = "t3-embed/host-send";
 export const EMBED_SEND_MESSAGE = "t3-embed/send";
 const EMBED_SEND_RESULT_MESSAGE = "t3-embed/send-result";
+const EMBED_AUDIENCE_MESSAGE = "t3-embed/audience";
 
 export type EmbedSendWhen = "queue" | "steer";
 
@@ -235,6 +236,11 @@ export function normalizeEmbedOrigins(entries: ReadonlyArray<string>): ReadonlyS
 export function readEmbedHostSendMessage(data: unknown): { readonly on: boolean } | null {
   const message = readMessage(data, EMBED_HOST_SEND_MESSAGE);
   return message === null ? null : { on: message.on === true };
+}
+
+export function readEmbedAudienceMessage(data: unknown): { readonly shown: boolean } | null {
+  const message = readMessage(data, EMBED_AUDIENCE_MESSAGE);
+  return message === null ? null : { shown: message.shown === true };
 }
 
 const SEND_REQUEST_ID = /^[A-Za-z0-9_-]{8,100}$/;
