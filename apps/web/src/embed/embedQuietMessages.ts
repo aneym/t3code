@@ -1,3 +1,4 @@
+import { systemSender } from "@t3tools/client-runtime/agent-audience";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { mcpEventOfMessage } from "@t3tools/contracts";
 
@@ -31,7 +32,7 @@ export function isEmbedLaunchBrief(message: ChatMessage, threadId: string): bool
 }
 
 type SentMessage = Parameters<typeof resolveUserMessagePresentation>[0] &
-  Pick<ChatMessage, "senderThreadId"> & { readonly quietNote?: true | undefined };
+  Parameters<typeof systemSender>[0] & { readonly quietNote?: true | undefined };
 
 export function isEmbedPersonMessage(message: SentMessage): boolean {
   return (
@@ -40,6 +41,7 @@ export function isEmbedPersonMessage(message: SentMessage): boolean {
     message.createdBy === "agent" &&
     message.creationSource === "mcp" &&
     message.senderThreadId === undefined &&
+    systemSender(message) === null &&
     resolveUserMessagePresentation(message).attribution === "agent" &&
     !HANDOFF_HEAD.test(message.text)
   );
@@ -48,6 +50,12 @@ export function isEmbedPersonMessage(message: SentMessage): boolean {
 export function embedQuietLine(message: ChatMessage): EmbedQuietLine | null {
   if (message.role !== "user") return null;
   if (message.quietNote === true) return { kind: "note", summary: firstLine(message.text) };
+  const sender = systemSender(message);
+  if (sender !== null) {
+    const event = mcpEventOfMessage(message);
+    const summary = event ? mcpEventLabel(event) : firstLine(message.text);
+    return { kind: "agent", from: sender, summary };
+  }
   if (message.createdBy === "system") {
     const event = mcpEventOfMessage(message);
     return { kind: "event", summary: event ? mcpEventLabel(event) : firstLine(message.text) };
