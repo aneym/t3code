@@ -6,6 +6,23 @@ import type * as SqlClient from "effect/sql/SqlClient";
 const BOOTSTRAP_PREFIX_WHITESPACE =
   "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
 
+const BRIDGE_OPEN = "<rails-desk";
+const BRIDGE_CLOSE_SQL = "char(10) || '</rails-desk>' || char(10) || char(10)";
+const BRIDGE_CLOSE_LENGTH = "\n</rails-desk>\n\n".length;
+const bridgeCloseAt = (payload: string) =>
+  `instr(json_extract(${payload}, '$.text'), ${BRIDGE_CLOSE_SQL})`;
+
+const bridgedPersonMessage = (payload: string) => `(
+  substr(json_extract(${payload}, '$.text'), 1, ${BRIDGE_OPEN.length}) = '${BRIDGE_OPEN}'
+  AND ${bridgeCloseAt(payload)} > 0
+)`;
+
+const searchTextExpression = (payload: string) => `(CASE
+  WHEN ${bridgedPersonMessage(payload)}
+    THEN substr(json_extract(${payload}, '$.text'), ${bridgeCloseAt(payload)} + ${BRIDGE_CLOSE_LENGTH})
+  ELSE json_extract(${payload}, '$.text')
+END)`;
+
 export const nonPlaceholderMessageCondition = (sql: SqlClient.SqlClient, row = "messages") =>
   sql.literal(`
   CASE
@@ -30,6 +47,11 @@ export const indexedMessageCondition = (sql: SqlClient.SqlClient, row = "message
       ${row}.role = 'user'
       AND COALESCE(json_extract(${row}.payload_json, '$.createdBy'), 'user') = 'user'
     )
+    OR (
+      ${row}.role = 'user'
+      AND json_extract(${row}.payload_json, '$.createdBy') = 'agent'
+      AND ${bridgedPersonMessage(`${row}.payload_json`)}
+    )
   )
   AND NOT EXISTS (
     SELECT 1 FROM orchestration_v2_projection_threads AS subagent_threads
@@ -47,7 +69,10 @@ export const indexedMessageCondition = (sql: SqlClient.SqlClient, row = "message
  * JSON column.
  */
 export const indexedMessageText = (sql: SqlClient.SqlClient, payload: string) =>
-  sql.literal(`replace(replace(json_extract(${payload}, '$.text'), '’', ''''), '‘', '''')`);
+  sql.literal(`replace(replace(${searchTextExpression(payload)}, '’', ''''), '‘', '''')`);
+
+export const messageSearchText = (sql: SqlClient.SqlClient, payload = "messages.payload_json") =>
+  sql.literal(searchTextExpression(payload));
 
 export const createMessageSearchTriggers = Effect.fn("MessageSearchIndex.createTriggers")(
   function* (sql: SqlClient.SqlClient) {
