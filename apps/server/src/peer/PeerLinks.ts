@@ -1,3 +1,4 @@
+import { makePeerLinkRenewal } from "./PeerLinkRenewal.ts";
 import { makePeerSignIn } from "./PeerSignIn.ts";
 import {
   AuthMcpClientAccess,
@@ -24,11 +25,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
-import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { peerOrigin } from "./peerOrigin.ts";
 
 /**
  * How long a peer's descriptor may take before a route counts as unreachable.
@@ -86,6 +88,8 @@ export class PeerLinks extends Context.Service<
       environmentId: EnvironmentId,
       outcome: { readonly error: string | null },
     ) => Effect.Effect<void>;
+    readonly renew: (environmentId: EnvironmentId) => Effect.Effect<PeerLink, PeerLinkError>;
+    readonly renewDue: Effect.Effect<void>;
   }
 >()("t3/peer/PeerLinks") {}
 
@@ -100,6 +104,8 @@ interface PeerLinkRow {
   readonly last_reached_at: string | null;
   readonly last_error: string | null;
   readonly fenced: number;
+  readonly renewed_at: string | null;
+  readonly renewal_error: string | null;
 }
 
 const decodeUrls = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -120,36 +126,6 @@ const failStorage = (cause: unknown) =>
       ),
     ),
   );
-
-/**
- * The base URL a peer is reached at, normalised to its origin. The pairing
- * code and then the link's token travel to it, so plain http is accepted only
- * where the network already encrypts: this machine, or a Tailscale address.
- */
-const peerOrigin = (url: string) => {
-  const parsed = URL.parse(url);
-  if (parsed === null || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
-    return Effect.fail(
-      new PeerLinkError({
-        reason: "unreachable",
-        message: `${url} is not an http or https address.`,
-      }),
-    );
-  }
-  if (
-    parsed.protocol === "http:" &&
-    !isLocalLoopbackHost(parsed.hostname) &&
-    !isTailnetHost(parsed.hostname)
-  ) {
-    return Effect.fail(
-      new PeerLinkError({
-        reason: "unreachable",
-        message: `${url} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
-      }),
-    );
-  }
-  return Effect.succeed(parsed.origin);
-};
 
 /** Whether a peer holds a linked agent to its limits and keeps its work within its link. */
 const linkLimitsHold = (peer: { readonly capabilities: ExecutionEnvironmentCapabilities }) =>
@@ -206,6 +182,8 @@ const make = Effect.gen(function* () {
       expiresAt: DateTime.makeUnsafe(row.fenced === 1 ? row.expires_at : row.linked_at),
       lastReachedAt: row.last_reached_at === null ? null : DateTime.makeUnsafe(row.last_reached_at),
       lastError: row.last_error,
+      ...(row.renewed_at === null ? {} : { renewedAt: DateTime.makeUnsafe(row.renewed_at) }),
+      ...(row.renewal_error === null ? {} : { renewalError: row.renewal_error }),
     } satisfies PeerLink;
   }, Effect.catch(failStorage));
 
@@ -347,7 +325,9 @@ const make = Effect.gen(function* () {
           linked_at = excluded.linked_at,
           expires_at = excluded.expires_at,
           last_reached_at = excluded.last_reached_at,
-          last_error = NULL
+          last_error = NULL,
+          renewed_at = NULL,
+          renewal_error = NULL
       `.pipe(Effect.catch(failStorage));
       return previous;
     }).pipe(Effect.onError(() => secrets.remove(secretName).pipe(Effect.ignore)));
@@ -485,16 +465,29 @@ const make = Effect.gen(function* () {
       Effect.ignoreCause({ log: true }),
     );
 
+  const stored = Effect.flatMap(readRows, (rows) => Effect.forEach(rows, toLink));
+  const renewal = makePeerLinkRenewal({
+    sql,
+    secrets,
+    crypto,
+    httpClient: peerHttpClient,
+    enabled,
+    disabledMessage: LINKED_ENVIRONMENTS_OFF,
+    get,
+    stored,
+    resolve,
+  });
   return PeerLinks.of({
     enabled,
     link,
     describe: describeUrl,
     list,
-    stored: Effect.flatMap(readRows, (rows) => Effect.forEach(rows, toLink)),
+    stored,
     get,
     unlink,
     resolve,
     recordOutcome,
+    ...renewal,
   });
 });
 

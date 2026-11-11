@@ -13,6 +13,7 @@ import McpEventsSubscriptions from "./ForkMigrations/007_McpEventsSubscriptions.
 import HostLinkLanes from "./ForkMigrations/008_HostLinkLanes.ts";
 import ThreadPlacements from "./ForkMigrations/009_ThreadPlacements.ts";
 import TurnItemTimelineCoverIndex from "./ForkMigrations/010_TurnItemTimelineCoverIndex.ts";
+import PeerLinkRenewal from "./ForkMigrations/012_PeerLinkRenewal.ts";
 
 const run = Migrator.make({});
 const loader = Migrator.fromRecord({
@@ -26,6 +27,7 @@ const loader = Migrator.fromRecord({
   "8_HostLinkLanes": HostLinkLanes,
   "9_ThreadPlacements": ThreadPlacements,
   "10_TurnItemTimelineCoverIndex": TurnItemTimelineCoverIndex,
+  "12_PeerLinkRenewal": PeerLinkRenewal,
 });
 
 export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {

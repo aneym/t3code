@@ -36,6 +36,7 @@ export const ForkThreadSettingsFields = {
   mcpEventsCallbackBaseUrl: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   hostLinkEnabled: DefaultFalse,
   hostLinkUrl: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  peerLinkRenewalEnabled: DefaultFalse,
   delegatedChildModel: Schema.NullOr(DelegatedChildModel).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -60,6 +61,7 @@ export const ForkThreadSettingsPatchFields = {
   mcpEventsCallbackBaseUrl: Schema.optionalKey(Schema.String),
   hostLinkEnabled: Schema.optionalKey(Schema.Boolean),
   hostLinkUrl: Schema.optionalKey(Schema.String),
+  peerLinkRenewalEnabled: Schema.optionalKey(Schema.Boolean),
   delegatedChildModel: Schema.optionalKey(Schema.NullOr(DelegatedChildModel)),
   childModelGuard: Schema.optionalKey(Schema.Boolean),
   childModelAllow: Schema.optionalKey(Schema.Array(ChildModelRule)),

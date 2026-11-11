@@ -11,6 +11,7 @@ export const forkThreadSettingsDefaults = {
   mcpClientApprovals: DEFAULT_UNIFIED_SETTINGS.mcpClientApprovals,
   liveThreadFeed: DEFAULT_UNIFIED_SETTINGS.liveThreadFeed,
   hostLinkEnabled: DEFAULT_UNIFIED_SETTINGS.hostLinkEnabled,
+  peerLinkRenewalEnabled: DEFAULT_UNIFIED_SETTINGS.peerLinkRenewalEnabled,
 };
 
 export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyArray<string> {
@@ -44,6 +45,9 @@ export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyAr
       : null,
     settings.hostLinkEnabled !== forkThreadSettingsDefaults.hostLinkEnabled
       ? "Host app link"
+      : null,
+    settings.peerLinkRenewalEnabled !== forkThreadSettingsDefaults.peerLinkRenewalEnabled
+      ? "Renew links without a code"
       : null,
   ].filter((label) => label !== null);
 }

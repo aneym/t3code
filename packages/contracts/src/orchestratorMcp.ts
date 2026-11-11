@@ -10,7 +10,6 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { AuthMcpClientAccess } from "./auth.ts";
 import {
   EnvironmentId,
-  IsoDateTime,
   NodeId,
   NonNegativeInt,
   PositiveInt,
@@ -397,27 +396,6 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 
-export const OrchestratorMcpEnvironmentLink = Schema.Struct({
-  environmentId: EnvironmentId,
-  label: Schema.String,
-  /** Whether it answered just now. An expired link must be linked again there. */
-  status: Schema.Literals(["reachable", "unreachable", "expired"]),
-  /** The most the linked environment lets this one's agents do there. */
-  access: AuthMcpClientAccess,
-  expiresAt: IsoDateTime,
-  lastError: Schema.NullOr(Schema.String),
-});
-export type OrchestratorMcpEnvironmentLink = typeof OrchestratorMcpEnvironmentLink.Type;
-
-export const OrchestratorMcpEnvironmentLinksResult = Schema.Struct({
-  environmentId: EnvironmentId,
-  links: Schema.Array(OrchestratorMcpEnvironmentLink),
-  /** What to do when the machine the user means is not among `links`. */
-  notListed: Schema.String,
-});
-export type OrchestratorMcpEnvironmentLinksResult =
-  typeof OrchestratorMcpEnvironmentLinksResult.Type;
-
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   parentThreadId: Schema.NullOr(ThreadId),
   inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
@@ -531,21 +509,6 @@ export const OrchestratorMcpEnvironmentLinkResult = Schema.Union([
   }),
 ]);
 export type OrchestratorMcpEnvironmentLinkResult = typeof OrchestratorMcpEnvironmentLinkResult.Type;
-
-export const OrchestratorMcpEnvironmentUnlinkInput = Schema.Struct({
-  environmentId: EnvironmentId.annotate({
-    description: "The linked environment to forget, from t3_environment_links.",
-  }),
-});
-export type OrchestratorMcpEnvironmentUnlinkInput =
-  typeof OrchestratorMcpEnvironmentUnlinkInput.Type;
-
-export const OrchestratorMcpEnvironmentUnlinkResult = Schema.Struct({
-  environmentId: EnvironmentId,
-  removed: Schema.Boolean,
-});
-export type OrchestratorMcpEnvironmentUnlinkResult =
-  typeof OrchestratorMcpEnvironmentUnlinkResult.Type;
 
 export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFailure>()(
   "OrchestratorMcpFailure",
