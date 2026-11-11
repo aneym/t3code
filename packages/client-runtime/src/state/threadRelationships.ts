@@ -34,10 +34,25 @@ export interface ThreadRelationshipWalkRow {
   readonly edge: ThreadRelationshipEdge;
 }
 
+export function isSubagentDelegation(
+  delegatedFrom: OrchestrationV2DelegatedFrom | null | undefined,
+): delegatedFrom is OrchestrationV2DelegatedFrom {
+  return delegatedFrom?.relationship === "subagent";
+}
+
+export function isSubagentThread(thread: {
+  readonly lineage: Pick<OrchestrationV2ThreadShell["lineage"], "relationshipToParent">;
+  readonly delegatedFrom?: OrchestrationV2DelegatedFrom | null | undefined;
+}): boolean {
+  return (
+    thread.lineage.relationshipToParent === "subagent" || isSubagentDelegation(thread.delegatedFrom)
+  );
+}
+
 export function delegatedFromLabel(
   delegatedFrom: OrchestrationV2DelegatedFrom,
 ): "Subagent of" | "Started by" {
-  return delegatedFrom.relationship === "subagent" ? "Subagent of" : "Started by";
+  return isSubagentDelegation(delegatedFrom) ? "Subagent of" : "Started by";
 }
 
 export function resolveMergeBackTargetThreadId(

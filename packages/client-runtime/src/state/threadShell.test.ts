@@ -321,7 +321,12 @@ describe("v2 thread shell lists", () => {
       creationSource: "mcp" as const,
       status: "running" as const,
       activityRunStatus: "running" as const,
-      delegatedFrom: { environmentId, threadId: parent.id, title: parent.title },
+      delegatedFrom: {
+        environmentId,
+        threadId: parent.id,
+        title: parent.title,
+        relationship: "subagent" as const,
+      },
     };
     const helper = {
       ...task,
@@ -376,11 +381,8 @@ describe("v2 thread shell lists", () => {
     expect(registry.get(threads.threadShellAtom(parentRef))?.pendingSubagentRequest).toBeNull();
     expect(registry.get(inputs).map((thread) => thread.id)).toEqual([helper.id]);
 
-    // A task whose parent is gone there is listed on its own, as is one whose
-    // parent's environment is switched off.
     registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [] });
     expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
-    // Archiving the parent here leaves the task there unarchived, so it is listed on its own.
     registry.set(snapshotAtom(environmentId), {
       ...v2ShellSnapshot,
       threads: [{ ...parent, archivedAt: v2Now }],
@@ -416,15 +418,24 @@ describe("v2 thread shell lists", () => {
       ...v2ThreadShell,
       ...running,
       id: ThreadId.make("remote-task"),
-      delegatedFrom: { environmentId, threadId: root.id, title: root.title },
+      delegatedFrom: {
+        environmentId,
+        threadId: root.id,
+        title: root.title,
+        relationship: "subagent" as const,
+      },
     };
     const nestedTask = {
       ...v2ThreadShell,
       ...running,
       id: ThreadId.make("third-task"),
-      delegatedFrom: { environmentId: remoteEnvironmentId, threadId: task.id, title: task.title },
+      delegatedFrom: {
+        environmentId: remoteEnvironmentId,
+        threadId: task.id,
+        title: task.title,
+        relationship: "subagent" as const,
+      },
     };
-    // A task the middle one delegates back to the root's own environment.
     const returningTask = {
       ...nestedTask,
       id: ThreadId.make("returning-task"),

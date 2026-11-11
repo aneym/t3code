@@ -88,7 +88,10 @@ import {
   threadSupportsProviderHandoff,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
-import { delegatedFromLabel } from "@t3tools/client-runtime/state/thread-relationships";
+import {
+  delegatedFromLabel,
+  isSubagentThread,
+} from "@t3tools/client-runtime/state/thread-relationships";
 import { ThreadRestartNotices } from "./chat/ThreadRestartNotices";
 import { restartPauseLabel } from "@t3tools/client-runtime/restart-pause";
 import {
@@ -2730,15 +2733,13 @@ export default function ChatView(props: ChatViewProps) {
   }, [embedded, toggleRightPanelStable, toggleRightPanelMaximizedStable]);
 
   usePasteToFocusComposer(embedded ? null : activeThreadId, composerRef);
-  // A delegated task is a remote thread's subagent.
-  const isSubagentThread =
-    activeThread?.lineage.relationshipToParent === "subagent" || delegatedFrom !== null;
+  const isSubagent = activeThread !== undefined && isSubagentThread(activeThread);
   // Side chats do not nest or start from subagents, and older servers would fork a listed thread.
   const sideChatsOffered =
     !embedded &&
     canOperateThread &&
     activeThread?.lineage.sideChat !== true &&
-    !isSubagentThread &&
+    !isSubagent &&
     serverConfig?.environment.capabilities.sideChats === true;
   const sideChat = useSideChat({
     threadRef: sideChatsOffered && isServerThread ? activeThreadRef : null,
@@ -2755,7 +2756,7 @@ export default function ChatView(props: ChatViewProps) {
   const sideChatDisabledReason =
     activeThread?.lineage.sideChat === true
       ? "Side chats cannot start side chats."
-      : isSubagentThread
+      : isSubagent
         ? "Subagent threads cannot start side chats."
         : serverConfig === null
           ? "Side chats are not ready yet. Try again in a moment."
