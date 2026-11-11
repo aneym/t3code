@@ -113,6 +113,7 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
   command: string,
   flags: { readonly baseDir: Option.Option<string> },
   run: (tools: OwnerMcpTools) => Effect.Effect<A, E, R>,
+  headers?: Readonly<Record<string, string>>,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
@@ -122,7 +123,12 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
       return yield* new McpServerNotRunningError({ baseDir: config.baseDir });
     }
     const origin = runtimeState.value.origin;
-    const session = yield* openOwnerCliSession(config, new URL("/mcp", origin).href, command).pipe(
+    const session = yield* openOwnerCliSession(
+      config,
+      new URL("/mcp", origin).href,
+      command,
+      headers,
+    ).pipe(
       Effect.catchTags({
         AcpMcpBridgeError: (cause) => Effect.fail(classifyBridgeError(cause, origin)),
         CliDatabaseMissingError: (cause) =>

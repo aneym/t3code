@@ -77,6 +77,17 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
           messageId: clientMessageId(request.composerIds.messageId),
         };
 
+  const ownerCliSender = scope.client?.ownerCli === true ? scope.client.sender : undefined;
+  if (ownerCliSender !== undefined) {
+    const shell = yield* threadManagement
+      .getThreadShell(ownerCliSender.threadId)
+      .pipe(Effect.mapError(threadManagementFailure));
+    if (shell === null || shell.deletedAt !== null)
+      return yield* failure(
+        "invalid_request",
+        `Sender thread ${ownerCliSender.threadId} was not found in this environment.`,
+      );
+  }
   const send = {
     projectId: target.thread.projectId,
     commandId,

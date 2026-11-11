@@ -1,7 +1,9 @@
 import {
+  FORWARDED_SENDER_HEADER,
   OrchestratorMcpClientRequestId,
   OrchestratorMcpThreadSendResult,
 } from "@t3tools/contracts";
+import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -42,6 +44,41 @@ const resolveRequestId = Effect.fn("cli.thread.requestId")(function* (
   return generated;
 });
 
+const agentThreadEnvironment = Config.all({
+  threadId: Config.String("T3_THREAD_ID").pipe(Config.option),
+  environmentId: Config.String("T3_ENVIRONMENT_ID").pipe(Config.option),
+});
+
+const encodeSender = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({ threadId: Schema.String, environmentId: Schema.optional(Schema.String) }),
+  ),
+);
+
+const resolveSenderHeaders = Effect.fn("cli.thread.sender")(function* (flags: {
+  readonly from: Option.Option<string>;
+  readonly asOwner: boolean;
+}) {
+  if (flags.asOwner && Option.isSome(flags.from)) {
+    return yield* new ThreadUsageError({ detail: "Pass --from or --as-owner, not both." });
+  }
+  if (flags.asOwner) return undefined;
+  const sender = Option.isSome(flags.from)
+    ? { threadId: yield* decodeThreadId(flags.from.value) }
+    : yield* agentThreadEnvironment.pipe(
+        Effect.map(({ threadId, environmentId }) =>
+          Option.isNone(threadId) || threadId.value.trim().length === 0
+            ? undefined
+            : {
+                threadId: threadId.value.trim(),
+                ...(Option.isSome(environmentId) ? { environmentId: environmentId.value } : {}),
+              },
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
+  return sender === undefined ? undefined : { [FORWARDED_SENDER_HEADER]: encodeSender(sender) };
+});
+
 const receiptText = (sent: OrchestratorMcpThreadSendResult) =>
   sent.receipt === undefined
     ? ""
@@ -68,6 +105,18 @@ export const threadSendCommand = Command.make("send", {
     ),
     Flag.optional,
   ),
+  from: Flag.String("from").pipe(
+    Flag.withDescription(
+      "Thread the message comes from, so clients show it as agent traffic. Defaults to T3_THREAD_ID, which T3 Code sets for the agents it runs.",
+    ),
+    Flag.optional,
+  ),
+  asOwner: Flag.Boolean("as-owner").pipe(
+    Flag.withDescription(
+      "Send it as the person's own words, with no sending thread, even when T3_THREAD_ID is set.",
+    ),
+    Flag.withDefault(false),
+  ),
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
@@ -78,6 +127,7 @@ export const threadSendCommand = Command.make("send", {
     Effect.gen(function* () {
       const threadId = yield* decodeThreadId(flags.thread);
       const message = yield* readMessageArgument(flags.message);
+      const senderHeaders = yield* resolveSenderHeaders(flags);
       const clientRequestId = yield* resolveRequestId(flags.requestId);
       yield* withOwnerMcpTools(
         "thread",
@@ -111,6 +161,7 @@ export const threadSendCommand = Command.make("send", {
           }
           yield* flags.json ? printJson(sent) : Console.log(deliveryText(sent));
         }),
+        senderHeaders,
       );
     }).pipe(reportThreadErrors),
   ),
