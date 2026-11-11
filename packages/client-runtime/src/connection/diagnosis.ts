@@ -115,6 +115,8 @@ function headline(
       return "This device's clock is off";
     case "not_linked":
       return `${host} is not linked to your ${names.connectAccount}`;
+    case "signed_out":
+      return `${host} signed this device out`;
     case "relay_error":
       return `${connect} returned an error`;
     case "tunnel_pending":
@@ -176,6 +178,8 @@ function steps(
       return [`Connect this device to the internet. ${app} reconnects on its own.`];
     case "outdated":
       return [`Update ${names.app} on ${host}.`];
+    case "signed_out":
+      return [`Pair this device with ${host} again.`];
     case "clock_skew":
       return [`Turn on automatic date and time on this device and on ${host}, then retry.`];
     case "not_linked":
@@ -255,6 +259,7 @@ function helpSection(
       return "the-clock-is-off";
     case "not_linked":
     case "tunnel_not_enabled":
+    case "signed_out":
       return "sign-in-account-or-link-problems";
     case "relay_error":
       return "t3-connect-returned-an-error";

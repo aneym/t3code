@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -13,7 +14,7 @@ import type {
   ConnectionAttemptStage,
   PreparedConnection,
 } from "./model.ts";
-import { ConnectionTransientError } from "./model.ts";
+import { ConnectionBlockedError, ConnectionTransientError } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import {
   connectionRoutes,
@@ -22,6 +23,7 @@ import {
   sendsTokenInClear,
   usableRoutes,
 } from "./routes.ts";
+import { fetchRemoteSessionState } from "../authorization/remote.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
@@ -175,6 +177,31 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  const sessionEnded = (prepared: PreparedConnection, error: ConnectionAttemptError) =>
+    prepared.target._tag !== "PrimaryConnectionTarget" || prepared.httpAuthorization !== null
+      ? Effect.fail(error)
+      : fetchRemoteSessionState({
+          httpBaseUrl: prepared.httpBaseUrl,
+          timeoutMs: ROUTE_CHECK_TIMEOUT_MS,
+        }).pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, { cache: "no-store" }),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.option,
+          Effect.flatMap((session) =>
+            Option.isSome(session) && !session.value.authenticated
+              ? Effect.fail(
+                  new ConnectionBlockedError({
+                    reason: "authentication",
+                    detail: "The host ended this browser's session.",
+                    hop: "server",
+                    via: "direct",
+                    failureCause: "signed_out",
+                  }),
+                )
+              : Effect.fail(error),
+          ),
+        );
+
   const checkHost = (prepared: PreparedConnection) =>
     fetchDescriptor(prepared.httpBaseUrl, prepared.environmentId).pipe(
       Effect.catch((error): Effect.Effect<HostCheck> =>
@@ -202,9 +229,16 @@ export const make = Effect.gen(function* () {
       Effect.fnUntraced(function* (route) {
         const prepared = yield* resolver.prepare(routeEntry(entry, route));
         yield* reportProgress({ stage: "opening", prepared });
-        const session = yield* sessions.connect(prepared);
-        yield* reportProgress({ stage: "synchronizing", prepared });
-        yield* session.ready;
+        const session = yield* Effect.gen(function* () {
+          const opened = yield* sessions.connect(prepared);
+          yield* reportProgress({ stage: "synchronizing", prepared });
+          yield* opened.ready;
+          return opened;
+        }).pipe(
+          Effect.catchTags({
+            ConnectionTransientError: (error) => sessionEnded(prepared, error),
+          }),
+        );
         // The server closes a socket when its session expires, unless the same key renewed it.
         if (prepared.httpAuthorization?._tag === "Dpop") {
           yield* remote
