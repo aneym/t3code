@@ -243,9 +243,13 @@ export function readEmbedHostSendMessage(data: unknown): { readonly on: boolean 
   return message === null ? null : { on: message.on === true };
 }
 
-export function readEmbedAudienceMessage(data: unknown): { readonly shown: boolean } | null {
+export function readEmbedAudienceMessage(
+  data: unknown,
+): { readonly shown: boolean; readonly replies: boolean } | null {
   const message = readMessage(data, EMBED_AUDIENCE_MESSAGE);
-  return message === null ? null : { shown: message.shown === true };
+  return message === null
+    ? null
+    : { shown: message.shown === true, replies: message.replies === true };
 }
 
 const SEND_REQUEST_ID = /^[A-Za-z0-9_-]{8,100}$/;

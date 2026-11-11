@@ -86,7 +86,11 @@ export function railsAskTo(
   return typeof input.to === "string" ? input.to : null;
 }
 
-export function agentAudience(items: ReadonlyArray<AudienceItem>, threadId: string): AgentAudience {
+export function agentAudience(
+  items: ReadonlyArray<AudienceItem>,
+  threadId: string,
+  replies = false,
+): AgentAudience {
   const firstOfRun = new Map<string, boolean>();
   const fromAgents = new Set<string>();
   for (const item of items) {
@@ -100,7 +104,9 @@ export function agentAudience(items: ReadonlyArray<AudienceItem>, threadId: stri
     if (sent.agents) fromAgents.add(item.id);
     if (sent.runId !== null && !firstOfRun.has(sent.runId)) firstOfRun.set(sent.runId, sent.agents);
   }
-  const runs = new Set([...firstOfRun].filter(([, agents]) => agents).map(([runId]) => runId));
+  const runs = new Set(
+    replies ? [] : [...firstOfRun].filter(([, agents]) => agents).map(([runId]) => runId),
+  );
   const hidden = new Set<string>();
   for (const item of items) {
     if (item.kind === "request" || (item.kind === "ask" && item.to === RAILS_OWNER)) continue;

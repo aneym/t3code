@@ -11,6 +11,7 @@ import type { TimelineEntry } from "../session-logic";
 const STORAGE_KEY = "t3code:embed-agent-messages";
 
 let shown = false;
+let replies = false;
 const listeners = new Set<() => void>();
 
 function stored(): boolean {
@@ -33,11 +34,26 @@ function keep(next: boolean): void {
   }
 }
 
-export function applyEmbedAudienceMessage(message: { readonly shown: boolean }): void {
+export function applyEmbedAudienceMessage(message: {
+  readonly shown: boolean;
+  readonly replies: boolean;
+}): void {
   keep(message.shown);
-  if (shown === message.shown) return;
+  if (shown === message.shown && replies === message.replies) return;
   shown = message.shown;
+  replies = message.replies;
   for (const listener of listeners) listener();
+}
+
+export function useEmbedAgentReplies(): boolean {
+  return useSyncExternalStore(
+    (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    () => replies,
+    () => false,
+  );
 }
 
 export function useEmbedAgentMessagesShown(): boolean {
@@ -92,11 +108,13 @@ export function embedAgentAudience(
   entries: ReadonlyArray<TimelineEntry>,
   items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   threadId: string,
+  agentReplies: boolean,
 ) {
   const inputs = toolInputs(items);
   return agentAudience(
     entries.map((entry) => audienceItem(entry, inputs)),
     threadId,
+    agentReplies,
   );
 }
 

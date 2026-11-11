@@ -2,7 +2,11 @@ import type { AgentAudience } from "@t3tools/client-runtime/agent-audience";
 import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 
 import type { TimelineEntry } from "../session-logic";
-import { embedAgentAudience, useEmbedAgentMessagesShown } from "./embedAudience";
+import {
+  embedAgentAudience,
+  useEmbedAgentMessagesShown,
+  useEmbedAgentReplies,
+} from "./embedAudience";
 import { useEmbedHostConnected } from "./embedHost";
 import { foldNoteRuns } from "./embedNoteRuns";
 import { isEmbedLaunchBrief, isEmbedPersonMessage } from "./embedQuietMessages";
@@ -32,12 +36,13 @@ export function useEmbedTimeline(
 ): EmbedTimeline {
   const embedThreadId = useEmbedHostConnected() ? threadId : null;
   const agentsShown = useEmbedAgentMessagesShown();
+  const agentReplies = useEmbedAgentReplies();
   useEmbedSeenMark(embedThreadId);
   if (embedThreadId === null) return { entries, audience: NO_AUDIENCE, agentsShown };
   const kept = entries.filter(
     (entry) => entry.kind !== "message" || !isEmbedLaunchBrief(entry.message, embedThreadId),
   );
-  const audience = embedAgentAudience(kept, items, embedThreadId);
+  const audience = embedAgentAudience(kept, items, embedThreadId, agentReplies);
   const shown = kept.flatMap((entry) =>
     audience.items.has(entry.id)
       ? agentsShown
