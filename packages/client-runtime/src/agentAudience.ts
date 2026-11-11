@@ -10,6 +10,12 @@ export type AudienceMessage = {
 export type AudienceItem =
   | { readonly kind: "message"; readonly id: string; readonly message: AudienceMessage }
   | { readonly kind: "request"; readonly id: string }
+  | {
+      readonly kind: "ask";
+      readonly id: string;
+      readonly runId: string | null;
+      readonly to: string | null;
+    }
   | { readonly kind: "run"; readonly id: string; readonly runId: string | null };
 
 export type AgentAudience = {
@@ -20,6 +26,8 @@ export type AgentAudience = {
 const THREAD_SEND = /:thread-send:[^:]+:([^:]+):[0-9a-f]{32}$/;
 const FOR_PERSON = /^(chat-note-|chat-yes-|rails-comment-|rails-one-comment-)/;
 const FROM_AGENTS = /^(rails-lane-|lane-start-)/;
+const RAILS_ASK_CARD = "ui://rails/question";
+const RAILS_OWNER = "owner";
 const HANDOFF = /^Handed over from [^\n]{1,80}?\. The person asked /;
 
 function decoded(value: string): string | null {
@@ -47,6 +55,15 @@ function messageFromAgents(message: AudienceMessage, threadId: string): boolean 
   );
 }
 
+export function railsAskTo(
+  app: { readonly tool: string; readonly resourceUri: string },
+  input: unknown,
+): string | null {
+  if (app.tool !== "ask" || app.resourceUri !== RAILS_ASK_CARD) return null;
+  if (typeof input !== "object" || input === null || !("to" in input)) return null;
+  return typeof input.to === "string" ? input.to : null;
+}
+
 export function agentAudience(items: ReadonlyArray<AudienceItem>, threadId: string): AgentAudience {
   const firstOfRun = new Map<string, boolean>();
   const fromAgents = new Set<string>();
@@ -60,7 +77,11 @@ export function agentAudience(items: ReadonlyArray<AudienceItem>, threadId: stri
   const runs = new Set([...firstOfRun].filter(([, agents]) => agents).map(([runId]) => runId));
   const hidden = new Set<string>();
   for (const item of items) {
-    if (item.kind === "request") continue;
+    if (item.kind === "request" || (item.kind === "ask" && item.to === RAILS_OWNER)) continue;
+    if (item.kind === "ask" && item.to !== null) {
+      hidden.add(item.id);
+      continue;
+    }
     if (item.kind === "message" && item.message.role === "user") {
       if (fromAgents.has(item.id)) hidden.add(item.id);
       continue;

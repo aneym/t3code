@@ -1,4 +1,9 @@
-import { type AudienceItem, agentAudience } from "@t3tools/client-runtime/agent-audience";
+import {
+  type AudienceItem,
+  agentAudience,
+  railsAskTo,
+} from "@t3tools/client-runtime/agent-audience";
+import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import { useSyncExternalStore } from "react";
 
 import type { TimelineEntry } from "../session-logic";
@@ -46,7 +51,7 @@ export function useEmbedAgentMessagesShown(): boolean {
   );
 }
 
-function audienceItem(entry: TimelineEntry): AudienceItem {
+function audienceItem(entry: TimelineEntry, inputs: ReadonlyMap<string, unknown>): AudienceItem {
   switch (entry.kind) {
     case "message":
       return { kind: "message", id: entry.id, message: entry.message };
@@ -57,15 +62,37 @@ function audienceItem(entry: TimelineEntry): AudienceItem {
     case "proposed-plan":
       return { kind: "run", id: entry.id, runId: entry.proposedPlan.runId };
     case "html-render":
-    case "mcp-app":
       return { kind: "run", id: entry.id, runId: entry.runId };
+    case "mcp-app":
+      return {
+        kind: "ask",
+        id: entry.id,
+        runId: entry.runId,
+        to: railsAskTo(entry.mcpApp, inputs.get(entry.id)),
+      };
     case "event":
       return { kind: "run", id: entry.id, runId: entry.projectedItem.item.runId ?? null };
   }
 }
 
-export function embedAgentAudience(entries: ReadonlyArray<TimelineEntry>, threadId: string) {
-  return agentAudience(entries.map(audienceItem), threadId);
+function toolInputs(
+  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+): ReadonlyMap<string, unknown> {
+  return new Map(
+    items.flatMap(({ item }) => (item.type === "dynamic_tool" ? [[item.id, item.input]] : [])),
+  );
+}
+
+export function embedAgentAudience(
+  entries: ReadonlyArray<TimelineEntry>,
+  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  threadId: string,
+) {
+  const inputs = toolInputs(items);
+  return agentAudience(
+    entries.map((entry) => audienceItem(entry, inputs)),
+    threadId,
+  );
 }
 
 const ROW_PREFIXES = ["", "work-live:", "work-toggle:", "summary:", "assistant-meta:"];

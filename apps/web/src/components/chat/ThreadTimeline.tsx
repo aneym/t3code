@@ -60,7 +60,11 @@ export function ThreadTimeline({
     rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries });
   }, [activeThreadKey, detailLoading, entries]);
   const embedPage = isEmbedPath(window.location.pathname);
-  const embed = useEmbedTimeline(threadDetailRef?.threadId ?? null, displayedEntries);
+  const embed = useEmbedTimeline(
+    threadDetailRef?.threadId ?? null,
+    displayedEntries,
+    visibleTurnItems,
+  );
   const liveRunId = embedLiveRunId(timelineProps.runningRunId ?? null, timelineProps.latestRun);
   const cleared = useEmbedClearedEntries(embed.entries, liveRunId, embedPage);
   const mutedCss = embed.agentsShown
