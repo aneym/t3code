@@ -818,11 +818,11 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       expect(delegated.link).toBe(
         `<t3-thread://v2/${box.environmentId}/${delegated.remoteChild.threadId}>`,
       );
-      // ...naming the parent here, so the thread there links back to it.
       expect(yield* Ref.get(thread.delegatedFrom)).toEqual({
         environmentId: laptop.environmentId,
         threadId: parentThreadId,
         title: "Laptop parent",
+        relationship: "subagent",
       });
       // A retry with the same key launches nothing new and records nothing new.
       const retried = yield* delegateToBox(a);

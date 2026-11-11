@@ -12,7 +12,12 @@ export type AudienceMessage = {
 export type AudienceItem =
   | { readonly kind: "message"; readonly id: string; readonly message: AudienceMessage }
   | { readonly kind: "request"; readonly id: string }
-  | { readonly kind: "notice"; readonly id: string; readonly runId: string | null }
+  | {
+      readonly kind: "notice";
+      readonly id: string;
+      readonly runId: string | null;
+      readonly fromSystem?: true | undefined;
+    }
   | {
       readonly kind: "ask";
       readonly id: string;
@@ -86,13 +91,17 @@ export function railsAskTo(
   return typeof input.to === "string" ? input.to : null;
 }
 
-export function agentAudience(items: ReadonlyArray<AudienceItem>, threadId: string): AgentAudience {
+export function agentAudience(
+  items: ReadonlyArray<AudienceItem>,
+  threadId: string,
+  replies = false,
+): AgentAudience {
   const firstOfRun = new Map<string, boolean>();
   const fromAgents = new Set<string>();
   for (const item of items) {
     const sent =
       item.kind === "notice"
-        ? { agents: true, runId: item.runId }
+        ? { agents: item.fromSystem !== true, runId: item.runId }
         : item.kind === "message" && item.message.role === "user"
           ? { agents: messageFromAgents(item.message, threadId), runId: item.message.runId }
           : null;
@@ -100,7 +109,9 @@ export function agentAudience(items: ReadonlyArray<AudienceItem>, threadId: stri
     if (sent.agents) fromAgents.add(item.id);
     if (sent.runId !== null && !firstOfRun.has(sent.runId)) firstOfRun.set(sent.runId, sent.agents);
   }
-  const runs = new Set([...firstOfRun].filter(([, agents]) => agents).map(([runId]) => runId));
+  const runs = new Set(
+    replies ? [] : [...firstOfRun].filter(([, agents]) => agents).map(([runId]) => runId),
+  );
   const hidden = new Set<string>();
   for (const item of items) {
     if (item.kind === "request" || (item.kind === "ask" && item.to === RAILS_OWNER)) continue;

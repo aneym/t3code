@@ -158,14 +158,12 @@ export type OrchestrationV2LinkOrigin = typeof OrchestrationV2LinkOrigin.Type;
 export const linkOriginIsFenced = (origin: OrchestrationV2LinkOrigin) =>
   origin.access !== "full-access";
 
-/**
- * The thread in a linked environment that delegated this one, when it did:
- * this thread is that parent's subagent, run here instead of there.
- */
+/** The thread that started this one; `relationship` marks a delegated task. */
 export const OrchestrationV2DelegatedFrom = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
   title: Schema.String,
+  relationship: Schema.optional(Schema.Literal("subagent")),
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
 
@@ -2875,7 +2873,7 @@ export const OrchestrationV2Command = Schema.Union([
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
     /** Only the server sets this; a client's thread.create never carries one. */
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
-    /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
+    /** Only the server sets this, with `linkOrigin`. */
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
     importedNativeThread: Schema.optional(
       Schema.Struct({

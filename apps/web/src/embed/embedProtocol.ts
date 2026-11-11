@@ -76,7 +76,7 @@ const MAX_THEME_VARS = 256;
 const MAX_VALUE_LENGTH = 200;
 const VAR_NAME = /^--[a-z0-9-]{1,64}$/;
 const CLEAR_THREAD = /^[A-Za-z0-9:._-]{1,128}$/;
-const MAX_ITEM_LENGTH = 200;
+const MAX_ITEM_LENGTH = 4096;
 const UNSAFE_VALUE = /[;{}<>\\]|url\(|expression\(|@import/i;
 
 export function isEmbedPath(pathname: string): boolean {
@@ -243,9 +243,13 @@ export function readEmbedHostSendMessage(data: unknown): { readonly on: boolean 
   return message === null ? null : { on: message.on === true };
 }
 
-export function readEmbedAudienceMessage(data: unknown): { readonly shown: boolean } | null {
+export function readEmbedAudienceMessage(
+  data: unknown,
+): { readonly shown: boolean; readonly replies: boolean } | null {
   const message = readMessage(data, EMBED_AUDIENCE_MESSAGE);
-  return message === null ? null : { shown: message.shown === true };
+  return message === null
+    ? null
+    : { shown: message.shown === true, replies: message.replies === true };
 }
 
 const SEND_REQUEST_ID = /^[A-Za-z0-9_-]{8,100}$/;
