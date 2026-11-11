@@ -48,6 +48,17 @@ import {
 } from "../startupAccess.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
+import {
+  DevServerNotProxiableError,
+  IncompatibleServerProtocolError,
+  MagicDnsNameMissingError,
+  NoRunningServerError,
+  ServePortOccupiedError,
+  ServesOtherEnvironmentError,
+  TailscaleServeFailedError,
+  TailscaleServeNotEnabledError,
+  TailscaleUnavailableError,
+} from "./pairRefusals.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
@@ -60,105 +71,11 @@ export type PairStateVariant = "userdata" | "dev";
 // Only devUrl's presence selects dev state; its value is unused.
 const DEV_VARIANT_PLACEHOLDER_URL = new URL("http://localhost");
 
-export class NoRunningServerError extends Schema.TaggedError<NoRunningServerError>()(
-  "NoRunningServerError",
-  {
-    checkedStatePaths: Schema.Array(Schema.String),
-    inLinkedWorktree: Schema.Boolean,
-  },
-) {
-  override get message(): string {
-    return [
-      "No running T3 Code server found.",
-      ...this.checkedStatePaths.map((statePath) => `  checked ${statePath}`),
-      ...(this.inLinkedWorktree
-        ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
-        : []),
-      "Start one with `npx t3 serve`, or connect this machine with T3 Connect: `npx t3 connect`.",
-    ].join("\n");
-  }
-}
-
-export class IncompatibleServerProtocolError extends Schema.TaggedError<IncompatibleServerProtocolError>()(
-  "IncompatibleServerProtocolError",
-  { serverVersion: Schema.String, serverProtocolVersion: Schema.Number },
-) {
-  override get message(): string {
-    return [
-      `The running T3 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
-      `Pair with the matching CLI instead: \`npx t3@${this.serverVersion} pair\`.`,
-    ].join("\n");
-  }
-}
-
-export class TailscaleUnavailableError extends Schema.TaggedError<TailscaleUnavailableError>()(
-  "TailscaleUnavailableError",
-  { cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return "Could not talk to Tailscale. Is tailscaled running? Try `tailscale status`.";
-  }
-}
-
-export class MagicDnsNameMissingError extends Schema.TaggedError<MagicDnsNameMissingError>()(
-  "MagicDnsNameMissingError",
-  {},
-) {
-  override get message(): string {
-    return "This machine has no MagicDNS name. Run `tailscale up` and enable MagicDNS.";
-  }
-}
-
-export class TailscaleServeNotEnabledError extends Schema.TaggedError<TailscaleServeNotEnabledError>()(
-  "TailscaleServeNotEnabledError",
-  {},
-) {
-  override get message(): string {
-    return "Tailscale Serve is not enabled on your tailnet. Enable HTTPS certificates at https://login.tailscale.com/admin/dns, then run this command again.";
-  }
-}
-
-export class ServesOtherEnvironmentError extends Schema.TaggedError<ServesOtherEnvironmentError>()(
-  "ServesOtherEnvironmentError",
-  { servePort: Schema.Number },
-) {
-  override get message(): string {
-    return `Tailscale Serve on HTTPS port ${String(this.servePort)} already fronts a different T3 Code server. Pass --tailscale-serve-port to publish this one on another port.`;
-  }
-}
-
-export class TailscaleServeFailedError extends Schema.TaggedError<TailscaleServeFailedError>()(
-  "TailscaleServeFailedError",
-  { servePort: Schema.Number, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `tailscale serve failed for HTTPS port ${String(this.servePort)}. Run \`tailscale serve --https=${String(this.servePort)} --bg <local-url>\` by hand to see why.`;
-  }
-}
-
-export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupiedError>()(
-  "ServePortOccupiedError",
-  { servePort: Schema.Number },
-) {
-  override get message(): string {
-    return `HTTPS port ${String(this.servePort)} on the tailnet already serves something that is not a T3 Code server. Pass --tailscale-serve-port to publish this one on another port.`;
-  }
-}
-
 const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
   state.devUrl ??
   resolveHeadlessConnectionString(state.host, state.port, {
     privateNetworkOnly: state.privateNetworkOnly,
   });
-
-export class DevServerNotProxiableError extends Schema.TaggedError<DevServerNotProxiableError>()(
-  "DevServerNotProxiableError",
-  { devUrl: Schema.String },
-) {
-  override get message(): string {
-    return `Tailscale Serve can only proxy plain-HTTP local targets, and this dev server runs at ${this.devUrl}. Pair without --tailscale instead.`;
-  }
-}
 
 const isDevServerNotProxiableError = Schema.is(DevServerNotProxiableError);
 

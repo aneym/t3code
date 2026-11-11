@@ -22,7 +22,7 @@ export class ProviderAdapterRegistryLookupError extends Schema.TaggedError<Provi
   },
 ) {
   override get message(): string {
-    return `No orchestration provider adapter is registered for ${this.instanceId}.`;
+    return `The ${this.instanceId} provider isn't available here. Choose another provider to continue.`;
   }
 }
 

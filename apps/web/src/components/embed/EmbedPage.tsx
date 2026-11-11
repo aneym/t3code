@@ -3,6 +3,7 @@ import type { ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
 import { useBlocker } from "@tanstack/react-router";
 import { useState, type CSSProperties, type ReactNode } from "react";
 
+import { startEmbedAudience } from "../../embed/embedAudience";
 import { startEmbedControls } from "../../embed/embedComposer";
 import { placeEmbedHost, type EmbedHostSpot } from "../../embed/embedHost";
 import { isEmbedPath, normalizeEmbedOrigins, readEmbedScheme } from "../../embed/embedProtocol";
@@ -90,6 +91,7 @@ export function EmbedPage({
 }) {
   useState(applyInitialScheme);
   useState(startEmbedControls);
+  useState(startEmbedAudience);
   const settings = useAtomValue(primaryServerConfigAtom)?.settings ?? null;
   const target = threadId === null ? null : resolveThreadRouteTarget({ environmentId, threadId });
   useEmbedDocumentTitle(authenticated && target?.kind === "server" ? target.threadRef : null);

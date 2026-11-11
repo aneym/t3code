@@ -33,7 +33,7 @@ import {
   persistServerRuntimeState,
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
-import { DevServerNotProxiableError, resolveTailscaleLocalTarget } from "./pair.ts";
+import { resolveTailscaleLocalTarget } from "./pair.ts";
 
 import packageJson from "../../package.json" with { type: "json" };
 import { buildPairingAppLink } from "@t3tools/shared/remote";
@@ -65,7 +65,7 @@ describe("pair tailscale local target", () => {
   it("rejects HTTPS dev URLs, which tailscale serve cannot proxy", () => {
     expect(
       resolveTailscaleLocalTarget({ ...baseState, devUrl: "https://localhost:5733/" }),
-    ).toBeInstanceOf(DevServerNotProxiableError);
+    ).toMatchObject({ _tag: "DevServerNotProxiableError" });
   });
 });
 

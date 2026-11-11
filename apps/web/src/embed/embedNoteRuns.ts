@@ -21,7 +21,10 @@ function headOf(first: MessageEntry, run: ReadonlyArray<ChatMessage>): MessageEn
   return entry;
 }
 
-export function foldNoteRuns(entries: ReadonlyArray<TimelineEntry>): ReadonlyArray<TimelineEntry> {
+export function foldNoteRuns(
+  entries: ReadonlyArray<TimelineEntry>,
+  muted: ReadonlySet<string>,
+): ReadonlyArray<TimelineEntry> {
   const out: TimelineEntry[] = [];
   let at = 0;
   while (at < entries.length) {
@@ -32,7 +35,7 @@ export function foldNoteRuns(entries: ReadonlyArray<TimelineEntry>): ReadonlyArr
       continue;
     }
     let end = at + 1;
-    while (isNote(entries[end])) end += 1;
+    while (isNote(entries[end]) && muted.has(entries[end]!.id) === muted.has(entry.id)) end += 1;
     const run = entries.slice(at, end).map((e) => (e as MessageEntry).message);
     out.push(run.length < 2 ? entry : headOf(entry, run));
     at = end;

@@ -16,12 +16,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
+import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { cliRefusal } from "../cliRefusal.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 
 import * as ServerConfig from "../config.ts";
@@ -114,6 +116,8 @@ export class ProjectTitleEmptyError extends Schema.TaggedError<ProjectTitleEmpty
     title: Schema.String,
   },
 ) {
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
   override get message(): string {
     return "Project title cannot be empty.";
   }
@@ -126,6 +130,8 @@ export class ProjectIdentifierEmptyError extends Schema.TaggedError<ProjectIdent
     identifier: Schema.String,
   },
 ) {
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
   override get message(): string {
     return "Project identifier cannot be empty.";
   }
@@ -141,6 +147,8 @@ export class ProjectNotFoundError extends Schema.TaggedError<ProjectNotFoundErro
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
   override get message(): string {
     return `No active project found for '${this.identifier}'.`;
   }
@@ -154,6 +162,8 @@ export class ProjectAlreadyExistsError extends Schema.TaggedError<ProjectAlready
     workspaceRoot: Schema.String,
   },
 ) {
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
   override get message(): string {
     return `An active project already exists for '${this.workspaceRoot}'.`;
   }

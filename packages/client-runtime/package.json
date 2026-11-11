@@ -67,6 +67,10 @@
       "types": "./src/railsComment.ts",
       "default": "./src/railsComment.ts"
     },
+    "./agent-audience": {
+      "types": "./src/agentAudience.ts",
+      "default": "./src/agentAudience.ts"
+    },
     "./user-message": {
       "types": "./src/userMessage.ts",
       "default": "./src/userMessage.ts"
