@@ -15,11 +15,12 @@ def release_entries(runs_root, versions):
     entries = []
     for version in sorted(set(versions)):
         root = Path(runs_root) / version
-        for path in sorted({*root.glob("*/assembly.json"), *root.glob("assembly.json")}):
+        paths = sorted({*root.glob("*/assembly.json"), *root.glob("assembly.json")})
+        shipped = [path for path in paths if (path.parent / "final-receipt.json").is_file()]
+        for path in (shipped or paths)[-1:]:
             assembly = json.loads(path.read_text())
             for name, sha in zip(assembly.get("topics", []), assembly.get("topicShas", [])):
                 entries.append({"label": f"{version} {name}", "any": [sha, assembly["head"]]})
-            break
     return entries
 
 
