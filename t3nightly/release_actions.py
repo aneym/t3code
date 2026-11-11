@@ -29,6 +29,7 @@ from .release_seed_remotes import seed
 from .release_advisory import fast_advisory
 from .release_transport import command, git_tree, prepare_remote, remote_worker, require, transfer
 from .release_windows import WINDOWS_STAGES, run_windows
+from .assembly_lineage import delivered_entries, missing, refusal, release_entries
 
 
 def checksums(config):
@@ -156,6 +157,10 @@ def fast_assemble(config, log):
     else:
         git_tree(config.repo, tree, base, log)
     try:
+        lineage = [*delivered_entries(), *release_entries(config.home / ".t3nightly/runs", ready["oldReleases"].values())]
+        if gaps := missing(tree, ready["topicShas"], lineage):
+            log.write(refusal(gaps) + "\n")
+            return 4
         for name, sha in zip(config.topic.split(","), ready["topicShas"]):
             message = f"Merge {name} at {sha}\n\nCo-Authored-By: Claude Code <noreply@anthropic.com>"
             require(["git", "-C", str(tree), "merge", "--no-ff", "-m", message, sha], log)
