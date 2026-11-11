@@ -12,7 +12,12 @@ export type AudienceMessage = {
 export type AudienceItem =
   | { readonly kind: "message"; readonly id: string; readonly message: AudienceMessage }
   | { readonly kind: "request"; readonly id: string }
-  | { readonly kind: "notice"; readonly id: string; readonly runId: string | null }
+  | {
+      readonly kind: "notice";
+      readonly id: string;
+      readonly runId: string | null;
+      readonly fromSystem?: true | undefined;
+    }
   | {
       readonly kind: "ask";
       readonly id: string;
@@ -92,7 +97,7 @@ export function agentAudience(items: ReadonlyArray<AudienceItem>, threadId: stri
   for (const item of items) {
     const sent =
       item.kind === "notice"
-        ? { agents: true, runId: item.runId }
+        ? { agents: item.fromSystem !== true, runId: item.runId }
         : item.kind === "message" && item.message.role === "user"
           ? { agents: messageFromAgents(item.message, threadId), runId: item.message.runId }
           : null;

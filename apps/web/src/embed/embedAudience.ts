@@ -59,11 +59,18 @@ function audienceItem(entry: TimelineEntry, inputs: ReadonlyMap<string, unknown>
       if (entry.entry.requestKind !== undefined || entry.entry.questionAnswer !== undefined) {
         return { kind: "request", id: entry.id };
       }
-      return {
-        kind: entry.entry.itemType === "notification" ? "notice" : "run",
-        id: entry.id,
-        runId: entry.entry.runId ?? null,
-      };
+      if (entry.entry.itemType === "notification") {
+        const notice = entry.entry.projectedItem?.item ?? entry.entry.structuredPayload;
+        return {
+          kind: "notice",
+          id: entry.id,
+          runId: entry.entry.runId ?? null,
+          ...(notice?.type === "notification" && notice.source.kind === "system"
+            ? { fromSystem: true as const }
+            : {}),
+        };
+      }
+      return { kind: "run", id: entry.id, runId: entry.entry.runId ?? null };
     case "proposed-plan":
       return { kind: "run", id: entry.id, runId: entry.proposedPlan.runId };
     case "html-render":
