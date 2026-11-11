@@ -5,11 +5,14 @@ export type AudienceMessage = {
   readonly runId: string | null;
   readonly senderThreadId?: string | undefined;
   readonly quietNote?: true | undefined;
+  readonly scheduledTaskId?: string | undefined;
+  readonly mcpEvent?: object | undefined;
 };
 
 export type AudienceItem =
   | { readonly kind: "message"; readonly id: string; readonly message: AudienceMessage }
   | { readonly kind: "request"; readonly id: string }
+  | { readonly kind: "notice"; readonly id: string; readonly runId: string | null }
   | {
       readonly kind: "ask";
       readonly id: string;
@@ -26,6 +29,10 @@ export type AgentAudience = {
 const THREAD_SEND = /:thread-send:[^:]+:([^:]+):[0-9a-f]{32}$/;
 const FOR_PERSON = /^(chat-note-|chat-yes-|rails-comment-|rails-one-comment-)/;
 const FROM_AGENTS = /^(rails-lane-|lane-start-)/;
+const SCHEDULED_PROMPT = /^scheduled-task-message:/;
+const MCP_EVENT = /^message:mcp-events:/;
+const RAILS_SENDS = /^fork-note-/;
+const AGENT_SENDS = /^(t3fr-|office-digest-)/;
 const RAILS_ASK_CARD = "ui://rails/question";
 const RAILS_OWNER = "owner";
 const HANDOFF = /^Handed over from [^\n]{1,80}?\. The person asked /;
@@ -43,6 +50,20 @@ function threadSendRequestId(messageId: string): string | null {
   return sent ? decoded(sent[1]!) : null;
 }
 
+export function systemSender(
+  message: Pick<AudienceMessage, "id" | "role" | "senderThreadId" | "scheduledTaskId" | "mcpEvent">,
+): string | null {
+  if (message.role !== "user" || message.senderThreadId !== undefined) return null;
+  if (message.scheduledTaskId !== undefined || SCHEDULED_PROMPT.test(message.id)) {
+    return "a scheduled task";
+  }
+  if (message.mcpEvent !== undefined || MCP_EVENT.test(message.id)) return "T3";
+  const sent = threadSendRequestId(message.id);
+  if (sent === null) return null;
+  if (RAILS_SENDS.test(sent)) return "Rails";
+  return AGENT_SENDS.test(sent) ? "another agent" : null;
+}
+
 function messageFromAgents(message: AudienceMessage, threadId: string): boolean {
   if (message.role !== "user") return false;
   const sent = threadSendRequestId(message.id);
@@ -51,7 +72,8 @@ function messageFromAgents(message: AudienceMessage, threadId: string): boolean 
   return (
     (message.senderThreadId !== undefined && message.senderThreadId !== threadId) ||
     message.quietNote === true ||
-    HANDOFF.test(message.text)
+    HANDOFF.test(message.text) ||
+    systemSender(message) !== null
   );
 }
 
@@ -68,11 +90,15 @@ export function agentAudience(items: ReadonlyArray<AudienceItem>, threadId: stri
   const firstOfRun = new Map<string, boolean>();
   const fromAgents = new Set<string>();
   for (const item of items) {
-    if (item.kind !== "message" || item.message.role !== "user") continue;
-    const agents = messageFromAgents(item.message, threadId);
-    if (agents) fromAgents.add(item.id);
-    const runId = item.message.runId;
-    if (runId !== null && !firstOfRun.has(runId)) firstOfRun.set(runId, agents);
+    const sent =
+      item.kind === "notice"
+        ? { agents: true, runId: item.runId }
+        : item.kind === "message" && item.message.role === "user"
+          ? { agents: messageFromAgents(item.message, threadId), runId: item.message.runId }
+          : null;
+    if (sent === null) continue;
+    if (sent.agents) fromAgents.add(item.id);
+    if (sent.runId !== null && !firstOfRun.has(sent.runId)) firstOfRun.set(sent.runId, sent.agents);
   }
   const runs = new Set([...firstOfRun].filter(([, agents]) => agents).map(([runId]) => runId));
   const hidden = new Set<string>();
@@ -82,7 +108,7 @@ export function agentAudience(items: ReadonlyArray<AudienceItem>, threadId: stri
       hidden.add(item.id);
       continue;
     }
-    if (item.kind === "message" && item.message.role === "user") {
+    if (item.kind === "notice" || (item.kind === "message" && item.message.role === "user")) {
       if (fromAgents.has(item.id)) hidden.add(item.id);
       continue;
     }

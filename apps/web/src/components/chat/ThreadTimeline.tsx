@@ -3,6 +3,7 @@ import { type ComponentProps, useLayoutEffect } from "react";
 import { mutedRowsCss } from "../../embed/embedAudience";
 import { embedLiveRunId, useEmbedClearedEntries } from "../../embed/embedClear";
 import { isEmbedPath } from "../../embed/embedProtocol";
+import { useEmbedRevealTarget } from "../../embed/embedReveal";
 import { useIncrementalTimelineEntries } from "../../hooks/useIncrementalTimelineEntries";
 import type { TimelineEntriesInput, TimelineEntry } from "../../session-logic";
 import { useTimelineVisibleTurnItems } from "../../state/entities";
@@ -60,6 +61,7 @@ export function ThreadTimeline({
     rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries });
   }, [activeThreadKey, detailLoading, entries]);
   const embedPage = isEmbedPath(window.location.pathname);
+  useEmbedRevealTarget(timelineProps.listRef, embedPage);
   const embed = useEmbedTimeline(
     threadDetailRef?.threadId ?? null,
     displayedEntries,
