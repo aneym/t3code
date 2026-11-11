@@ -15,6 +15,8 @@ const EMBED_HOST_SEND_MESSAGE = "t3-embed/host-send";
 export const EMBED_SEND_MESSAGE = "t3-embed/send";
 const EMBED_SEND_RESULT_MESSAGE = "t3-embed/send-result";
 const EMBED_AUDIENCE_MESSAGE = "t3-embed/audience";
+const EMBED_REVEAL_MESSAGE = "t3-embed/reveal";
+export const EMBED_REVEALED_MESSAGE = "t3-embed/revealed";
 
 export type EmbedSendWhen = "queue" | "steer";
 
@@ -30,8 +32,11 @@ export type EmbedThemeMessage = {
   readonly vars: Readonly<Record<string, string>>;
 };
 
+export type EmbedRevealRequest = { readonly requestId: string; readonly id: string };
+
 export type EmbedOutboundMessage =
   | { readonly type: typeof EMBED_READY_MESSAGE; readonly threadId: string }
+  | (EmbedRevealRequest & { readonly type: typeof EMBED_REVEALED_MESSAGE; readonly found: boolean })
   | { readonly type: typeof EMBED_KEY_MESSAGE; readonly key: string }
   | { readonly type: typeof EMBED_OPEN_MESSAGE; readonly url: string; readonly tab?: true }
   | { readonly type: typeof EMBED_LINK_ASK_MESSAGE; readonly urls: ReadonlyArray<string> }
@@ -244,6 +249,15 @@ export function readEmbedAudienceMessage(data: unknown): { readonly shown: boole
 }
 
 const SEND_REQUEST_ID = /^[A-Za-z0-9_-]{8,100}$/;
+
+export function readEmbedRevealMessage(data: unknown): EmbedRevealRequest | null {
+  const message = readMessage(data, EMBED_REVEAL_MESSAGE);
+  if (message === null) return null;
+  const { requestId, id } = message;
+  if (typeof requestId !== "string" || !SEND_REQUEST_ID.test(requestId)) return null;
+  if (typeof id !== "string" || id.length === 0 || id.length > MAX_ITEM_LENGTH) return null;
+  return { requestId, id };
+}
 const MAX_REFUSAL_LENGTH = 400;
 
 export function readEmbedSendResultMessage(data: unknown): EmbedSendOutcome | null {

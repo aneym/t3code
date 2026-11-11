@@ -17,6 +17,7 @@ import {
   startEmbedClear,
 } from "./embedClear";
 import { applyEmbedAudienceMessage } from "./embedAudience";
+import { revealEmbedRow } from "./embedReveal";
 import { applyEmbedComposerMessage, embedControlsKey, toggleEmbedControls } from "./embedComposer";
 import { applyEmbedSendResult, setEmbedHostSend } from "./embedHostSend";
 import {
@@ -29,6 +30,7 @@ import {
   readEmbedComposerMessage,
   readEmbedHostSendMessage,
   readEmbedKeysMessage,
+  readEmbedRevealMessage,
   readEmbedSendResultMessage,
   readEmbedThemeMessage,
   reservedEmbedChord,
@@ -107,6 +109,8 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       if (hostSend !== null) setEmbedHostSend(hostSend.on);
       const audience = readEmbedAudienceMessage(event.data);
       if (audience !== null) applyEmbedAudienceMessage(audience);
+      const reveal = readEmbedRevealMessage(event.data);
+      if (reveal !== null) revealEmbedRow(reveal);
       const sendResult = readEmbedSendResultMessage(event.data);
       if (sendResult !== null) applyEmbedSendResult(sendResult);
       applyEmbedLinksMessage(event.data);
