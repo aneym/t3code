@@ -17,6 +17,7 @@ import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.t
 import * as ServerLogger from "../serverLogger.ts";
 import * as BrowserTraceCollector from "./BrowserTraceCollector.ts";
 import * as HeapAttribution from "./HeapAttribution.ts";
+import * as TraceSampling from "./TraceSampling.ts";
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
@@ -68,7 +69,7 @@ export const layer = Layer.unwrap(
           maxBytes: config.traceMaxBytes,
           maxFiles: config.traceMaxFiles,
           batchWindowMs: config.traceBatchWindowMs,
-          sink,
+          sink: yield* TraceSampling.sampledServerSink(sink),
           ...(delegate ? { delegate } : {}),
         });
 

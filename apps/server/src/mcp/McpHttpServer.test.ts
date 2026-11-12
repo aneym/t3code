@@ -27,7 +27,7 @@ import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/http
 
 import * as ProjectService from "../project/ProjectService.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as McpOAuth from "../auth/McpOAuth.ts";
+import * as McpClientAuthentication from "../auth/McpClientAuthentication.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
@@ -984,7 +984,7 @@ it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected cr
       });
       yield* HttpRouter.serve(
         layerMcpTransport.pipe(
-          Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+          Layer.provide(McpClientAuthentication.layerMcpClientAuthenticator),
           Layer.provide(ServerSettings.layerTest()),
         ),
         { disableListenLog: true, disableLogger: true },

@@ -141,6 +141,7 @@ import * as McpEventsService from "./mcpEvents/McpEventsService.ts";
 import * as HostLinkService from "./hostLink/HostLinkService.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
+import * as McpClientAuthentication from "./auth/McpClientAuthentication.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
 import {
@@ -736,7 +737,7 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(McpOrchestrationServices.layer),
-    Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+    Layer.provide(McpClientAuthentication.layerMcpClientAuthenticator),
   ),
   Layer.effectDiscard(AgentRouting.start),
 ).pipe(

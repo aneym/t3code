@@ -29,12 +29,9 @@ import * as McpOAuthCodes from "./McpOAuthCodes.ts";
 import * as Schema from "effect/Schema";
 import { HttpServerRequest } from "effect/http";
 
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { McpClientAuthenticator } from "../mcp/McpAuthMiddleware.ts";
-import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
-import { type McpOAuthUrls, requestUrls } from "./mcpOAuthMetadata.ts";
+import { type McpOAuthUrls } from "./mcpOAuthMetadata.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
   base64UrlDecodeUtf8,
@@ -524,48 +521,3 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(McpOAuth, make).pipe(Layer.provide(McpOAuthCodes.layer));
-
-export const layerMcpClientAuthenticator = Layer.effect(
-  McpClientAuthenticator,
-  Effect.gen(function* () {
-    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const environment = yield* ServerEnvironment.ServerEnvironment;
-    const environmentId = yield* environment.getEnvironmentId;
-    return McpClientAuthenticator.of({
-      authenticate: Effect.fn("McpClientAuthenticator.authenticate")(function (request) {
-        return environmentAuth.authenticateMcpClient(request).pipe(
-          Effect.flatMap((client) =>
-            Clock.currentTimeMillis.pipe(
-              Effect.map((issuedAt): McpInvocationContext.McpInvocationScope => ({
-                environmentId,
-                requestNamespace: `client:${client.sessionId}`,
-                thread: undefined,
-                client: {
-                  sessionId: client.sessionId,
-                  label: client.label,
-                  access: client.access,
-                  linked: client.peerLink,
-                  peer: client.peer,
-                  ...(client.peerLink ? {} : { webOrigin: requestUrls(request).issuer }),
-                  ownerCli: client.ownerCli,
-                },
-                capabilities: new Set<McpInvocationContext.McpCapability>([
-                  "orchestration",
-                  "worktree",
-                  "pull-requests",
-                ]),
-                issuedAt,
-              })),
-            ),
-          ),
-          Effect.catch((error) =>
-            (EnvironmentAuth.isServerAuthCredentialError(error)
-              ? Effect.void
-              : Effect.logWarning("MCP client authentication failed.", { cause: error })
-            ).pipe(Effect.as(undefined)),
-          ),
-        );
-      }),
-    });
-  }),
-);
