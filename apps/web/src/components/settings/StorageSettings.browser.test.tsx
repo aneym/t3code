@@ -110,6 +110,7 @@ function setup() {
       worktreeOrphans: false,
       worktreeAcceptPushed: false,
       threadHistoryAfterDays: null,
+      pruneEventLog: false,
     },
     projectSettingsOverrides: {},
   };
