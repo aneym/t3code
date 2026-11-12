@@ -10,7 +10,6 @@ import {
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
-import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   memo,
@@ -50,15 +49,14 @@ import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../../keybindings";
-import {
-  useEnvironmentModelPreferences,
-  useToggleEnvironmentModelFavorite,
-} from "~/hooks/useSettings";
+import { useEnvironmentModelPreferences } from "~/hooks/useSettings";
+import { useWritableModelFavoriteToggle } from "~/hooks/useWritableModelFavoriteToggle";
 import { announce } from "~/lib/announce";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
+import { useOpenProviderSettings } from "./useOpenProviderSettings";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
@@ -209,7 +207,7 @@ function ModelPickerProviderNotices({
   onRequestClose: (() => void) | undefined;
   onOpenProviderSetup: ((instanceId: ProviderInstanceId) => void) | undefined;
 }) {
-  const navigate = useNavigate();
+  const openPanel = useOpenProviderSettings();
   return (
     <>
       {setupEntries.length > 0 ? (
@@ -243,7 +241,7 @@ function ModelPickerProviderNotices({
           <InlineButton
             onClick={() => {
               onRequestClose?.();
-              void navigate({ to: "/settings/providers" });
+              openPanel();
             }}
           >
             Provider settings
@@ -458,7 +456,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
-  const toggleFavorite = useToggleEnvironmentModelFavorite(props.environmentId);
+  const toggleFavorite = useWritableModelFavoriteToggle(props.environmentId);
 
   const focusSearchInput = () => {
     searchInputRef.current?.focus({ preventScroll: true });
@@ -1035,8 +1033,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 if (!model) {
                   return null;
                 }
-                const disabledReason =
-                  getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
                 return (
                   <ModelListRow
                     key={modelKey}
@@ -1061,7 +1057,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     showNewBadge={model.badge === "new"}
                     unavailable={model.isUnavailable === true}
                     jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
-                    disabledReason={disabledReason}
+                    disabledReason={getModelDisabledReason?.(model.instanceId, model.slug) ?? null}
                     onToggleFavorite={toggleFavorite}
                   />
                 );

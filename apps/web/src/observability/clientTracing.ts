@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -14,7 +15,7 @@ import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer"
 import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
 
-const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
+const DEFAULT_EXPORT_INTERVAL_MS = 10_000;
 interface NavigatorUserAgentData {
   readonly platform: string;
   readonly mobile: boolean;
@@ -68,10 +69,29 @@ const layerDelegateRuntime = Layer.mergeAll(
   Layer.succeed(HttpClient.TracerDisabledWhen, () => true),
 );
 
-let activeRuntime: ManagedRuntime.ManagedRuntime<never, never> | null = null;
+let activeRuntime: ManagedRuntime.ManagedRuntime<OtlpExporter.Flusher, never> | null = null;
 let activeScope: Scope.Closeable | null = null;
 let activeConfigKey: string | null = null;
 let pendingConfiguration = Promise.resolve();
+let flushesOnHide = false;
+
+const flushClientTraces = () => {
+  void activeRuntime?.runPromise(
+    Effect.gen(function* () {
+      const flusher = yield* OtlpExporter.Flusher;
+      yield* flusher.flush;
+    }),
+  );
+};
+
+function flushWhenHidden(): void {
+  if (flushesOnHide || typeof document === "undefined") return;
+  flushesOnHide = true;
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushClientTraces();
+  });
+  window.addEventListener("pagehide", flushClientTraces);
+}
 
 export function configureClientTracing(): Promise<void> {
   if (activeConfigKey !== null) {
@@ -133,6 +153,7 @@ async function applyClientTracingConfig(): Promise<void> {
   ClientTracer.setDelegate(delegateResult.value);
   activeRuntime = runtime;
   activeScope = scope;
+  flushWhenHidden();
 }
 
 async function disposeTracerRuntime(
