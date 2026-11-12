@@ -8,6 +8,10 @@ export interface CommandRunWindow {
   readonly runIds: ReadonlyArray<RunId>;
 }
 
+export const recentAndOpenRuns = { runWindow: { runIds: [] } } satisfies {
+  readonly runWindow: CommandRunWindow;
+};
+
 export const readCommandRunWindow = (
   sql: SqlClient.SqlClient,
   threadId: ThreadId,
