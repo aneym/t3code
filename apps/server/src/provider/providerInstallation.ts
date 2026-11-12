@@ -18,6 +18,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { CliInstallations } from "./cliSetup/CliInstallations.ts";
+import type { CliInstallationError } from "./cliSetup/cliInstallRunner.ts";
+import { cliSetupEnabled } from "./cliSetup/cliSetupSwitches.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
@@ -27,6 +30,7 @@ import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 
 const ANTIGRAVITY = ProviderDriverKind.make("antigravity");
+const CODEX = ProviderDriverKind.make("codex");
 const hasBinaryPath = Schema.is(Schema.Struct({ binaryPath: Schema.String }));
 const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
 const decodeAntigravitySettings = Schema.decodeUnknownEffect(AntigravitySettings);
@@ -52,6 +56,7 @@ export class ProviderInstallation extends Context.Service<
 const make = Effect.fn("makeProviderInstallation")(function* () {
   const antigravityInstallation = yield* AntigravityInstallation.AntigravityInstallation;
   const codexInstallation = yield* CodexInstallation.CodexInstallation;
+  const cliInstallations = yield* CliInstallations;
   const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const settings = yield* ServerSettings.ServerSettingsService;
@@ -83,7 +88,22 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
     managedOnly = false,
   ) {
     const instance = yield* instances.getInstance(instanceId);
-    const isCodex = instance?.driverKind === ProviderDriverKind.make("codex");
+    const isCodex = instance?.driverKind === CODEX;
+    const cli = instance ? cliInstallations.runnerFor(instance.driverKind) : undefined;
+    if (instance && cli) {
+      const config = (yield* readEntries(instanceId, operation))[instanceId]?.config;
+      const managed = isCodex && (yield* decodeCodexSettings(config ?? {}).pipe(Effect.option));
+      const isManaged = managed && managed._tag === "Some" && managed.value.setupMode === "managed";
+      if (!isManaged) {
+        if (!(yield* cliSetupEnabled(instance.driverKind, "install")))
+          return yield* new ProviderSetupError({
+            instanceId,
+            operation,
+            detail: "Installation is not available for this provider here.",
+          });
+        return { installation: cli, driver: instance.driverKind };
+      }
+    }
     if (instance?.driverKind !== ANTIGRAVITY && !isCodex) {
       return yield* new ProviderSetupError({
         instanceId,
@@ -110,7 +130,7 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
       return yield* new ProviderSetupError({
         instanceId,
         operation,
-        detail: "Choose managed setup to install Codex in T3 Code.",
+        detail: "Choose managed setup to install Codex.",
       });
     }
     if (managedOnly && config.binaryPath && (!isCodex || config.binaryPath !== "codex")) {
@@ -118,7 +138,7 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
         instanceId,
         operation,
         detail:
-          "This instance uses a custom executable. Clear its binary path to manage installation in T3 Code.",
+          "This instance uses a custom executable. Clear its binary path to manage installation here.",
       });
     }
     return { installation, driver: instance.driverKind };
@@ -129,7 +149,8 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
     (
       error:
         | AntigravityInstallation.AntigravityInstallationError
-        | CodexInstallation.CodexInstallationError,
+        | CodexInstallation.CodexInstallationError
+        | CliInstallationError,
     ) =>
       new ProviderSetupError({ instanceId, operation: error.operation, detail: error.detail });
 
