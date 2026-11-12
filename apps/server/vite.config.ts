@@ -126,6 +126,7 @@ export default mergeConfig(
         js: "#!/usr/bin/env node\n",
       },
       define: {
+        __T3CODE_PRODUCTION_BUILD__: "true",
         __T3CODE_BUILD_CHANNEL__: JSON.stringify(cliBuildChannel),
         __T3CODE_TELEMETRY_CHANNEL__: JSON.stringify(telemetryChannel),
         __T3CODE_BUILD_RELAY_URL__: JSON.stringify(repoEnv.T3CODE_RELAY_URL?.trim() ?? ""),

@@ -6,11 +6,14 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
 import { rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
+import { logRpc } from "./RequestLog.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 // Trace queries and dashboards depend on these labels, including deviations from method prefixes.
 const RPC_AGGREGATES = {
+  [WS_METHODS.agentsSubscribeHomes]: "agents",
+  [WS_METHODS.agentsBind]: "agents",
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: "orchestration",
@@ -55,6 +58,11 @@ const RPC_AGGREGATES = {
   [WS_METHODS.providerInstallCancel]: "provider",
   [WS_METHODS.providerInstallSubscribe]: "provider",
   [WS_METHODS.providerInstallRemove]: "provider",
+  [WS_METHODS.serverListForkReleases]: "server",
+  [WS_METHODS.serverAbortRestart]: "server",
+  [WS_METHODS.serverImportRestartHandoff]: "server",
+  [WS_METHODS.serverGetRestartStatus]: "server",
+  [WS_METHODS.serverPrepareRestart]: "server",
   [WS_METHODS.serverUpdateServer]: "server",
   [WS_METHODS.serverUpdateServerWithProgress]: "server",
   [WS_METHODS.serverCommitDesktopUpdate]: "server",
@@ -62,12 +70,15 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverRemoveKeybinding]: "server",
   [WS_METHODS.serverRunStorageCleanup]: "server",
   [WS_METHODS.serverGetStorageCleanupReport]: "server",
+  [WS_METHODS.serverReadStorageCleanupReport]: "server",
   [WS_METHODS.serverGetDatabaseStorage]: "server",
   [WS_METHODS.serverReclaimDatabaseSpace]: "server",
   [WS_METHODS.peerLinksList]: "peerLinks",
   [WS_METHODS.peerLinksLink]: "peerLinks",
   [WS_METHODS.peerLinksUnlink]: "peerLinks",
+  [WS_METHODS.peerLinksRenew]: "peerLinks",
   [WS_METHODS.peerLinksAnswerRequest]: "peerLinks",
+  [WS_METHODS.peerLinksPairClient]: "peerLinks",
   [WS_METHODS.serverUpdateSettings]: "server",
   [WS_METHODS.serverSearchAcpRegistry]: "server",
   [WS_METHODS.serverPrepareAcpRegistryAgent]: "server",
@@ -213,6 +224,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.previewReportProfiles]: "preview",
   [WS_METHODS.previewReportStatus]: "preview",
   [WS_METHODS.subscribePreviewEvents]: "preview",
+  [WS_METHODS.desktopBrowserCommands]: "preview",
+  [WS_METHODS.desktopBrowserEvents]: "preview",
   [WS_METHODS.subscribeDiscoveredLocalServers]: "preview",
   [WS_METHODS.previewStopLocalServer]: "preview",
   [WS_METHODS.deviceConfigure]: "device",
@@ -250,8 +263,11 @@ export class RpcInstrumentation extends RpcMiddleware.Service<RpcInstrumentation
 
 export const rpcInstrumentationLayer = Layer.succeed(RpcInstrumentation)((effect, { rpc }) => {
   const method = rpc._tag;
-  const measured = effect.pipe(
-    withMetrics({ counter: rpcRequestsTotal, timer: rpcRequestDuration, attributes: { method } }),
+  const measured = logRpc(
+    method,
+    effect.pipe(
+      withMetrics({ counter: rpcRequestsTotal, timer: rpcRequestDuration, attributes: { method } }),
+    ),
   );
 
   if (RPC_METHODS_WITH_TRACING_DISABLED.has(method)) {

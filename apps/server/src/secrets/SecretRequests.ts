@@ -1,3 +1,6 @@
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
+import { withServerAdmission } from "../serverHandoffBarrier.ts";
+import { secretOwnerChain } from "../orchestration-v2/SecretRequestRecord.ts";
 // Answers stay in the secret store behind one-use refs; orchestration records only request status.
 // Consuming tools keep values out of transcripts, projections, clients and model context.
 // A `file` request instead moves its value to an owner-only file for the agent's own shell.
@@ -72,6 +75,7 @@ export class SecretRequests extends Context.Service<
 >()("t3/secrets/SecretRequests") {}
 
 const make = Effect.gen(function* () {
+  const outbox = yield* EffectOutbox.EffectOutboxV2;
   const store = yield* ServerSecretStore.ServerSecretStore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -128,8 +132,41 @@ const make = Effect.gen(function* () {
       if (item.secretStatus !== "pending") {
         return yield* new SecretRequestError({ reason: "already_answered" });
       }
-      const run = records.runs.find((candidate) => candidate.id === item.runId);
-      if (run === undefined || ThreadManagementService.isTerminalRunStatus(run.status)) {
+      const chainRuns = records.runs.filter((candidate) =>
+        secretOwnerChain(records.runs, candidate.id).has(item.runId!),
+      );
+      const live = chainRuns.some(
+        (candidate) => !ThreadManagementService.isTerminalRunStatus(candidate.status),
+      );
+      if (!live) {
+        const handoffs = yield* outbox.restartHandoffs.pipe(
+          Effect.mapError((cause) => new SecretRequestError({ reason: "load_failed", cause })),
+        );
+        const awaitingRestart = handoffs.some(
+          ({ request }) =>
+            request.type === "provider-runtime.restart-handoff" &&
+            request.handoff.drained === true &&
+            request.handoff.runIds.some((runId) => chainRuns.some((run) => run.id === runId)),
+        );
+        if (!awaitingRestart) {
+          yield* threadManagement
+            .dispatch({
+              type: "secret_request.record",
+              commandId: CommandId.make(`secret-request:${item.id}:cancelled`),
+              threadId: input.threadId,
+              runId: item.runId,
+              nodeId: item.nodeId,
+              turnItemId: item.id,
+              label: item.label,
+              reason: item.reason,
+              secretStatus: "cancelled",
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) => new SecretRequestError({ reason: "record_failed", cause }),
+              ),
+            );
+        }
         return yield* new SecretRequestError({ reason: "agent_stopped" });
       }
       const secret =
@@ -201,6 +238,8 @@ const make = Effect.gen(function* () {
         return yield* new SecretRequestError({ reason: "agent_stopped" });
       }
     },
+    (effect) =>
+      withServerAdmission(effect, Effect.fail(new SecretRequestError({ reason: "restarting" }))),
   );
 
   const savedRef: SecretRequests["Service"]["savedRef"] = Effect.fn("SecretRequests.savedRef")(

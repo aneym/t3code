@@ -23,6 +23,14 @@ export const orchestrationCommandDuration = Metric.timer("t3_orchestration_comma
   description: "Orchestration command handling duration, excluding thread dispatch lock wait.",
 });
 
+export const dispatchGateWait = Metric.timer("t3_dispatch_gate_wait", {
+  description: "Time a command or outbox claim waited for the dispatch gate, by type.",
+});
+
+export const dispatchGateHold = Metric.timer("t3_dispatch_gate_hold", {
+  description: "Time a command or outbox claim held the dispatch gate, by type.",
+});
+
 export const orchestrationEffectClaimsTotal = Metric.counter(
   "t3_orchestration_effect_claims_total",
   {

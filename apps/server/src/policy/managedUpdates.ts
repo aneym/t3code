@@ -5,6 +5,8 @@ import {
 } from "@t3tools/contracts";
 import type { CliReleaseChannel } from "@t3tools/shared/cliRelease";
 
+import { SELF_UPDATE_OFF_MESSAGE, selfUpdateOff } from "../cloud/selfUpdateSwitch.ts";
+
 /**
  * The update mirror the policy sends updates to, or `undefined` for the public releases. It wins
  * over the environment, which a user can set.
@@ -25,6 +27,7 @@ export function managedUpdateRefusal(
   document: ManagedPolicyDocument | undefined,
   targetChannel?: CliReleaseChannel,
 ): string | undefined {
+  if (selfUpdateOff) return SELF_UPDATE_OFF_MESSAGE;
   const updates = document?.limits?.updates;
   if (document === undefined || updates === undefined) return undefined;
   if (updates.mode === "off") return managedUpdatesMessage(document.organization);
