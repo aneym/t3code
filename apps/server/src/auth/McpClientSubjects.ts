@@ -1,10 +1,16 @@
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import {
+  AuthDiagnosticsReadScope,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+} from "@t3tools/contracts";
 import type { VerifiedSession } from "./SessionStore.ts";
 import type { AuthMcpClientAccess, AuthSessionId, PeerIdentity } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 
 const MCP_CLIENT_SUBJECT = "mcp-client";
 const OWNER_CLI_SUBJECT = "mcp-client-owner-cli";
+export const HOST_DAEMON_SUBJECT = "host-daemon";
+export const HostDaemonScopes = [AuthOrchestrationReadScope, AuthDiagnosticsReadScope] as const;
 
 export interface McpClientSession {
   readonly sessionId: AuthSessionId;
@@ -18,6 +24,15 @@ export interface McpClientSession {
 
 export const isMcpClientSubject = (subject: string) =>
   subject === MCP_CLIENT_SUBJECT || subject === OWNER_CLI_SUBJECT;
+
+const isHostDaemonSession = (session: VerifiedSession) =>
+  session.subject === HOST_DAEMON_SUBJECT &&
+  session.method === "bearer-access-token" &&
+  session.scopes.every((scope) => (HostDaemonScopes as ReadonlyArray<string>).includes(scope));
+
+export const isAcceptedOnMcp = (session: VerifiedSession) =>
+  (isMcpClientSubject(session.subject) && session.method === "bearer-access-token") ||
+  isHostDaemonSession(session);
 
 const isOwnerCliSubject = (subject: string) => subject === OWNER_CLI_SUBJECT;
 
