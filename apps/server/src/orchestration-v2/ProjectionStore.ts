@@ -32,6 +32,7 @@ import {
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
+import { makeThreadRecordSeeks, type SettledRecordFilter } from "./ThreadRecordSeeks.ts";
 import { inheritsForkConversation } from "./ForkConversationInheritance.ts";
 import {
   type CommandRunWindow,
@@ -363,27 +364,17 @@ export interface ProjectionRuntimeResponseContext {
   readonly session: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
 }
 
-export interface ProjectionRecordFilter {
+export interface ProjectionRecordFilter extends SettledRecordFilter {
   readonly messageRoles?: ReadonlyArray<OrchestrationV2ConversationMessage["role"]>;
   readonly monitorNotificationsOnly?: boolean;
-  readonly turnItemRunId?: RunId;
   readonly messageIds?: ReadonlyArray<MessageId>;
   readonly messageRunIds?: ReadonlyArray<RunId>;
-  readonly turnItemRunIds?: ReadonlyArray<RunId | null>;
-  readonly turnItemNodeIds?: ReadonlyArray<NodeId>;
   readonly runIds?: ReadonlyArray<RunId>;
   readonly subagentIds?: ReadonlyArray<NodeId>;
   readonly subagentRunIds?: ReadonlyArray<RunId>;
   readonly nodeIds?: ReadonlyArray<NodeId>;
-  readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
   readonly turnItemStatuses?: ReadonlyArray<OrchestrationV2TurnItem["status"]>;
-  readonly omitSettledLeafNodes?: boolean;
   readonly runWindow?: CommandRunWindow;
-  /**
-   * Skips ended subagents whose completion was acknowledged, delivered or disposed, unless their
-   * run is active or `except` names them.
-   */
-  readonly omitSettledSubagents?: true | { readonly except: ReadonlyArray<NodeId> };
 }
 
 export type ProjectionRecordField = Exclude<
@@ -1775,6 +1766,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
   ProjectionStoreV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const seeks = makeThreadRecordSeeks(sql);
 
     const inlineWorkOutput = sql`item.type = 'dynamic_tool' AND (
       item.payload_json LIKE '%htmlRender%' OR item.payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
@@ -2966,7 +2958,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? yield* sql<PayloadRow>`
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
-                WHERE thread_id = ${threadId}
+                ${seeks.turnItemsWhere(threadId, filter)}
                   ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
                   ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
                   ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
@@ -3206,22 +3198,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_nodes AS node
-            WHERE node.thread_id = ${threadId}
+            WHERE ${seeks.nodesWhere(threadId, filter)}
               ${filter?.nodeIds === undefined ? sql`` : sql`AND node.node_id IN (SELECT value FROM json_each(${encodeIdList(filter.nodeIds)}))`}
-              ${
-                filter?.omitSettledLeafNodes === true
-                  ? sql`AND NOT (
-                      node.kind IN ('tool_call', 'assistant_message', 'reasoning')
-                      AND node.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
-                      AND node.run_id IS NOT NULL
-                      AND NOT EXISTS (
-                        SELECT 1 FROM orchestration_v2_projection_runs AS run
-                        WHERE run.run_id = node.run_id
-                          AND run.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
-                      )
-                    )`
-                  : sql``
-              }
               ${inCommandRunWindow(sql, runWindow)}
             ORDER BY COALESCE(node.started_at, ''), node.node_id ASC
               `
@@ -3249,24 +3227,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id = ${threadId}
               ${filter?.subagentIds === undefined ? sql`` : sql`AND subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentIds)}))`}
               ${filter?.subagentRunIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentRunIds)}))`}
-              ${
-                filter?.omitSettledSubagents !== undefined
-                  ? sql`AND (${
-                      filter.omitSettledSubagents === true
-                        ? sql`0`
-                        : sql`subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.omitSettledSubagents.except)}))`
-                    } OR NOT (
-                      subagent.status IN ('completed', 'failed', 'cancelled', 'interrupted')
-                      AND COALESCE(subagent.completion_delivery_state, '')
-                        IN ('acknowledged', 'delivered', 'disposed')
-                      AND NOT EXISTS (
-                        SELECT 1 FROM orchestration_v2_projection_runs AS run
-                        WHERE run.run_id = subagent.run_id
-                          AND run.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
-                      )
-                    ))`
-                  : sql``
-              }
+              ${seeks.subagentsSettledFilter(threadId, filter)}
             ORDER BY COALESCE(started_at, ''), subagent_id ASC
           `
               : sql<PayloadRow>`
@@ -3312,12 +3273,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                  FROM orchestration_v2_projection_nodes
                  WHERE thread_id = ${threadId}
                )
-               OR provider_thread_id IN (
-                 SELECT provider_thread_id
-                 FROM orchestration_v2_projection_subagents
-                 WHERE thread_id = ${threadId}
-                   AND provider_thread_id IS NOT NULL
-               )
+               OR ${seeks.subagentProviderThreads(threadId, filter)}
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `
               : sql<PayloadRow>`
@@ -3474,7 +3430,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_context_transfers
-            WHERE source_thread_id = ${threadId} OR target_thread_id = ${threadId}
+            WHERE ${seeks.contextTransfersWhere(threadId, filter)}
             ORDER BY rowid ASC
           `
               : sql<PayloadRow>`
