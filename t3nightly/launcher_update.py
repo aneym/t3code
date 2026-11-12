@@ -36,7 +36,7 @@ def swap(run, bearer, version, downgrade=False):
     if result.get("targetVersion") != version or result.get("method") != "boot-service" or not result.get("updateId"):
         raise ValueError("self-update returned no exact launcher update identity")
     run.step("launcher-request-update", target=version, update_id=result["updateId"])
-    run.report["hotSwap"]["rollbackUpdate" if downgrade else "update"] = result
+    run.report.setdefault("hotSwap", {})["rollbackUpdate" if downgrade else "update"] = result
     wait_version(run, version, result["updateId"])
     return result
 

@@ -51,7 +51,10 @@ def prove(run, version, baseline=None, *, rollback=False):
     model = baseline["model"] if baseline else args.chat_model
     nonce = "t3-install-" + uuid.uuid4().hex
     command = [str(run.runtime(version)), "thread", "start", "--provider", provider, "--model", model, "--title", "Installer chat proof", str(args.chat_project), f"Reply with exactly {nonce} and nothing else. Do not use tools.", "--json", "--base-dir", str(run.home)]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=args.chat_timeout, check=False)
+    except subprocess.TimeoutExpired:
+        raise TimeoutError("real chat submission deadline exceeded") from None
     if result.returncode:
         raise ValueError("real chat submission failed")
     submitted = json.loads(result.stdout)
