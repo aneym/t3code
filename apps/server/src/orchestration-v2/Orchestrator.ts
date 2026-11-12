@@ -905,6 +905,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return withId;
       });
 
+  const projectionFailure = (threadId: ThreadId) => (cause: unknown) =>
+    new OrchestratorProjectionError({ threadId, cause });
+
   const readCommandProjection = (threadId: ThreadId, windowed = false) =>
     readCommandRecords(
       projectionStore,
@@ -920,7 +923,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         visibleTurnItems: [],
         updatedAt: records.thread.updatedAt,
       })),
-      Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+      Effect.mapError(projectionFailure(threadId)),
     );
 
   // Command reads omit settled tasks, but a completion notice counts its whole cohort.
@@ -937,7 +940,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           })
           .pipe(
             Effect.map((records) => records.subagents),
-            Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+            Effect.mapError(projectionFailure(threadId)),
           );
 
   const readHandoffItems = (threadId: ThreadId, runIds?: ReadonlyArray<RunId | null>) =>
@@ -949,7 +952,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
       .pipe(
         Effect.map((records) => records.turnItems),
-        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+        Effect.mapError(projectionFailure(threadId)),
       );
 
   const readInheritedItems = (thread: OrchestrationV2AppThread) =>
@@ -959,10 +962,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   /** Includes tombstones, which still reserve their id. */
   const findThread = (threadId: ThreadId) =>
-    projectionStore.getThread(threadId).pipe(
-      Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
-      Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
-    );
+    projectionStore
+      .getThread(threadId)
+      .pipe(
+        Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+        Effect.mapError(projectionFailure(threadId)),
+      );
 
   /** Side chats live inside their parent, so deleting the parent deletes them too. */
   const liveSideChatIds = Effect.fn("Orchestrator.liveSideChatIds")(
@@ -988,8 +993,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       return sideChatIds;
     },
-    (effect, threadId) =>
-      effect.pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+    (effect, threadId) => effect.pipe(Effect.mapError(projectionFailure(threadId))),
   );
 
   const getProjectionWithPendingEvents =
@@ -4229,10 +4233,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (runtimeModeCeiling === undefined) return;
     const runtimeModes = new Map<ThreadId, RuntimeMode>();
     for (const threadId of threadsStartingWork(events)) {
-      const thread = yield* projectionStore.getThread(threadId).pipe(
-        Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
-        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
-      );
+      const thread = yield* projectionStore
+        .getThread(threadId)
+        .pipe(
+          Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+          Effect.mapError(projectionFailure(threadId)),
+        );
       if (thread !== null) runtimeModes.set(threadId, thread.runtimeMode);
     }
     const refusal = runtimeModeCeilingRefusal(
@@ -9728,9 +9734,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   const subagentCount = (threadId: ThreadId) =>
-    projectionStore
-      .getSubagentCount(threadId)
-      .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+    projectionStore.getSubagentCount(threadId).pipe(Effect.mapError(projectionFailure(threadId)));
 
   const loadProjectionForCommand = <K extends ProjectionRecordField>(
     command: OrchestrationV2Command,
@@ -11023,7 +11027,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         "nodes",
         "providerThreads",
         "providerTurns",
-        "messages",
         "attempts",
         "turnItems",
         "subagents",
@@ -11081,9 +11084,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     const now = yield* DateTime.now;
-    const completionMessage = projection.messages.find(
-      (candidate) => candidate.id === run.userMessageId,
-    );
+    const { messages } = yield* loadProjectionForCommand(command, ["messages"], {
+      messageRunIds: [run.id],
+    });
+    const completionMessage =
+      messages.find((candidate) => candidate.id === run.userMessageId) ??
+      (yield* loadProjectionForCommand(command, ["messages"], { messageIds: [run.userMessageId] }))
+        .messages[0];
     const completionCohortRunId = completionMessage?.delegatedCompletion?.parentRunId ?? run.id;
     const stopRemainingWork = () =>
       command.holdQueue === true
@@ -11099,7 +11106,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               yield* disposeDelegatedCompletionCohort({
                 command,
                 events,
-                projection: yield* getProjectionWithPendingEvents(command.threadId, events),
+                projection: yield* getProjectionWithPendingEvents(command.threadId, events, true),
                 parentRunId,
                 disposition: "stopped",
                 now,
@@ -11367,7 +11374,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: interruptRequestItem,
       });
       yield* stopRemainingWork();
-      yield* settleInterruptedRun({ command, projection, providerTurn, events, effects, now });
+      yield* settleInterruptedRun({
+        command,
+        projection: { ...projection, messages },
+        providerTurn,
+        events,
+        effects,
+        now,
+      });
       yield* settleBackgroundWork({
         command,
         events,
@@ -13280,7 +13294,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const threadId = commandThreadId(command);
       const shell = yield* projectionStore
         .getThreadShell(threadId)
-        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        .pipe(Effect.mapError(projectionFailure(threadId)));
       if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
     }
 
@@ -13454,9 +13468,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     commandThreadId,
     mayStartFollowup: mayStartSubagentFollowup,
     parentThreadId: (threadId) =>
-      appOwnedSubagentParentThreadId(threadId).pipe(
-        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
-      ),
+      appOwnedSubagentParentThreadId(threadId).pipe(Effect.mapError(projectionFailure(threadId))),
     outbox: effectOutbox,
     locks: threadDispatch,
   });
@@ -13796,18 +13808,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       function (threadId, cursor, throughEntryId, conversationOnly, workMode) {
         return projectionStore
           .getThreadHistoryPage(threadId, cursor, throughEntryId, conversationOnly, workMode)
-          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+          .pipe(Effect.mapError(projectionFailure(threadId)));
       },
     ),
     getTimelinePage: Effect.fn("OrchestratorV2.getTimelinePage")(function (threadId, options) {
       return projectionStore
         .getTimelinePage(threadId, options)
-        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        .pipe(Effect.mapError(projectionFailure(threadId)));
     }),
     getMessageCount: Effect.fn("OrchestratorV2.getMessageCount")(function (threadId) {
       return projectionStore
         .getMessageCount(threadId)
-        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        .pipe(Effect.mapError(projectionFailure(threadId)));
     }),
     getTurnItem: Effect.fn("OrchestratorV2.getTurnItem")(function (input) {
       return projectionStore
@@ -13822,29 +13834,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       function (threadId, fields, filter) {
         return projectionStore
           .getThreadRecords(threadId, fields, filter)
-          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+          .pipe(Effect.mapError(projectionFailure(threadId)));
       },
     ),
     getThreadProjection: Effect.fn("OrchestratorV2.getThreadProjection")(function (threadId) {
       return projectionStore
         .getThreadProjection(threadId)
-        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        .pipe(Effect.mapError(projectionFailure(threadId)));
     }),
     getCheckpointContext: Effect.fn("OrchestratorV2.getCheckpointContext")(function (threadId) {
       return projectionStore
         .getCheckpointContext(threadId)
-        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        .pipe(Effect.mapError(projectionFailure(threadId)));
     }),
     getThreadSnapshot: Effect.fn("OrchestratorV2.getThreadSnapshot")(function (threadId) {
       return projectionStore
         .getThreadSnapshot(threadId)
-        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        .pipe(Effect.mapError(projectionFailure(threadId)));
     }),
     getThreadSnapshotWindow: Effect.fn("OrchestratorV2.getThreadSnapshotWindow")(
       function (threadId, options) {
         return projectionStore
           .getThreadSnapshotWindow(threadId, options)
-          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+          .pipe(Effect.mapError(projectionFailure(threadId)));
       },
     ),
     getShellSnapshot: Effect.fn("OrchestratorV2.getShellSnapshot")(function (options) {
@@ -13881,7 +13893,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     getThreadShell: Effect.fn("OrchestratorV2.getThreadShell")(function (threadId) {
       return projectionStore
         .getThreadShell(threadId)
-        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        .pipe(Effect.mapError(projectionFailure(threadId)));
     }),
     findGuestShareThreadId: Effect.fn("OrchestratorV2.findGuestShareThreadId")(function (shareId) {
       return projectionStore
@@ -13891,7 +13903,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     getThreadEventSequence: Effect.fn("OrchestratorV2.getThreadEventSequence")(function (threadId) {
       return eventSink
         .latestSequence({ threadId })
-        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        .pipe(Effect.mapError(projectionFailure(threadId)));
     }),
     streamStoredEvents: eventSink
       .stream()
