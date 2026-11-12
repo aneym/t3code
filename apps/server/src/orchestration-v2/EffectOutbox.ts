@@ -9,11 +9,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
-import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { makeRestartGate } from "./RestartGate.ts";
+import { makeRestartGate, type RestartGateShape } from "./RestartGate.ts";
 import { forkParked } from "../serverActivation.ts";
 import { claimableCandidatePredicate } from "./EffectOutboxClaims.ts";
 import { type EffectRow, encodeRequest, rowToEffect } from "./EffectOutboxRows.ts";
@@ -31,21 +30,14 @@ import {
 } from "./EffectOutboxModel.ts";
 const PRUNE_BATCH_SIZE = 500;
 
-export interface EffectOutboxV2Shape {
-  readonly withDispatch: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+export interface EffectOutboxV2Shape extends RestartGateShape {
   readonly withTransaction: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | EffectOutboxError, R>;
-  readonly awaitRestartReopen: Effect.Effect<void>;
-  readonly abortRestart: (epoch: string) => Effect.Effect<void>;
   readonly runningEffects: Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
   readonly unsettledEffects: (
     effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>,
   ) => Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
-  readonly restartPrepared: Effect.Effect<string | undefined>;
-  readonly prepareRestart: (epoch: string) => Effect.Effect<void>;
-  readonly restartDraining: Effect.Effect<string | undefined>;
-  readonly drainForRestart: (epoch: string) => Effect.Effect<void, never, Scope.Scope>;
   readonly serializeRestartPrepare: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E, R>;
@@ -362,7 +354,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           cancellationSignals.set(row.effect_id, Deferred.makeUnsafe<void>());
           return Option.some(claimed);
         },
-        gate.withDispatch,
+        gate.withClaim,
         Effect.mapError((cause) => new EffectOutboxError({ operation: "claim", cause })),
       ),
       nextClaimableAt: Effect.gen(function* () {

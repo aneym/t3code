@@ -65,7 +65,8 @@ it("uses the thread provider for stale background work without provider threads"
           runRecoveryOnce: Effect.succeed(false),
         }),
         Layer.mock(EffectOutbox.EffectOutboxV2)({
-          withDispatch: (effect) => effect,
+          admit: (_label, _mode, effect) => effect,
+          withCommit: (effect) => effect,
           restartPrepared: Effect.sync(() => undefined),
           restartHandoffs: Effect.succeed([]),
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),

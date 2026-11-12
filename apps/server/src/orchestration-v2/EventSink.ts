@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { markGatePhase } from "./DispatchGateRecord.ts";
 import { mergeRunField } from "./EventSinkRunFieldMerge.ts";
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
@@ -690,6 +691,7 @@ const layerBase: Layer.Layer<
         }),
         (result) =>
           Effect.gen(function* () {
+            yield* markGatePhase("publish");
             yield* effectOutbox.signalCancellations(result.cancelledEffectIds);
             if (result.committed && input.effects.length > 0) {
               yield* effectOutbox.notifyAvailable(input.effects.length);
@@ -872,51 +874,23 @@ const layerBase: Layer.Layer<
       );
     };
 
+    const writeError =
+      (input: { readonly events: ReadonlyArray<unknown>; readonly commandId?: CommandId }) =>
+      (cause: unknown) =>
+        new EventSinkWriteError({
+          eventCount: input.events.length,
+          ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+          cause,
+        });
+
     return EventSinkV2.of({
       write: (input) =>
-        writeEffect({ ...input, effects: [] }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new EventSinkWriteError({
-                eventCount: input.events.length,
-                ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                cause,
-              }),
-          ),
-        ),
-      writeWithEffects: (input) =>
-        writeEffect(input).pipe(
-          Effect.mapError(
-            (cause) =>
-              new EventSinkWriteError({
-                eventCount: input.events.length,
-                ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                cause,
-              }),
-          ),
-        ),
+        writeEffect({ ...input, effects: [] }).pipe(Effect.mapError(writeError(input))),
+      writeWithEffects: (input) => writeEffect(input).pipe(Effect.mapError(writeError(input))),
       writeIfRunCurrent: (input) =>
-        writeIfRunCurrentEffect(input).pipe(
-          Effect.mapError(
-            (cause) =>
-              new EventSinkWriteError({
-                eventCount: input.events.length,
-                ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                cause,
-              }),
-          ),
-        ),
+        writeIfRunCurrentEffect(input).pipe(Effect.mapError(writeError(input))),
       writeIfProviderThreadOwner: (input) =>
-        writeIfProviderThreadOwnerEffect(input).pipe(
-          Effect.mapError(
-            (cause) =>
-              new EventSinkWriteError({
-                eventCount: input.events.length,
-                ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                cause,
-              }),
-          ),
-        ),
+        writeIfProviderThreadOwnerEffect(input).pipe(Effect.mapError(writeError(input))),
       writeIfProviderThreadUnchanged: (input) =>
         writeIfProviderThreadUnchangedEffect(input).pipe(
           Effect.mapError(

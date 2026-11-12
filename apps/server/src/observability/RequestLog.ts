@@ -1,17 +1,15 @@
-import { makeAsyncRotatingFileSink } from "@t3tools/shared/logging";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Schedule from "effect/Schedule";
 import { HttpRouter, HttpServerRequest } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
+import { makeNdjsonLogWriter } from "./NdjsonLogWriter.ts";
 
 type Fields = Record<string, string | number | boolean>;
 
@@ -27,8 +25,6 @@ const CurrentRequest = Context.Reference<CurrentRequestEntry | undefined>(
 
 const SIGNED_PREFIXES = ["/api/assets", "/api/hooks", "/api/attachments/upload"];
 const OPAQUE_SEGMENT = /^[A-Za-z0-9_~.%=-]{24,}$/;
-const MAX_BUFFER_BYTES = 1024 * 1024;
-const FLUSH_EVERY = "1 second";
 
 const routeOf = (url: string) => {
   const queryIndex = url.indexOf("?");
@@ -80,16 +76,26 @@ export const noteMcpCaller = (caller: {
 
 export const noteTool = (tool: string) => note({ tool });
 
+export const noteDispatchGate = Effect.fnUntraced(function* (waitMs: number, holdMs: number) {
+  const entry = yield* CurrentRequest;
+  if (entry === undefined) return;
+  const { gw, gh } = entry.fields;
+  entry.fields.gw = (typeof gw === "number" ? gw : 0) + waitMs;
+  entry.fields.gh = (typeof gh === "number" ? gh : 0) + holdMs;
+});
+
 export const logRpc = <A, E, R>(method: string, effect: Effect.Effect<A, E, R>) =>
   Effect.flatMap(Effect.service(CurrentRequest), (entry) =>
     entry === undefined
       ? effect
-      : Effect.flatMap(Clock.currentTimeMillis, (startedAt) =>
-          effect.pipe(
+      : Effect.flatMap(Clock.currentTimeMillis, (startedAt) => {
+          const rpcEntry = { fields: { ...entry.fields }, write: entry.write };
+          return effect.pipe(
+            Effect.provideService(CurrentRequest, rpcEntry),
             Effect.onExit((exit) =>
               Effect.map(Clock.currentTimeMillis, (endedAt) =>
                 entry.write({
-                  ...entry.fields,
+                  ...rpcEntry.fields,
                   k: "rpc",
                   rpc: method,
                   end: Exit.isSuccess(exit)
@@ -101,8 +107,8 @@ export const logRpc = <A, E, R>(method: string, effect: Effect.Effect<A, E, R>) 
                 }),
               ),
             ),
-          ),
-        ),
+          );
+        }),
   );
 
 const makeWriter = Effect.gen(function* () {
@@ -112,37 +118,10 @@ const makeWriter = Effect.gen(function* () {
     Effect.map((bytes) => Math.max(64 * 1024, bytes)),
     Effect.orElseSucceed(() => 8 * 1024 * 1024),
   );
-  const sink = yield* makeAsyncRotatingFileSink({
+  return yield* makeNdjsonLogWriter({
     filePath: path.join(config.logsDir, "server.requests.ndjson"),
     maxBytes,
-    maxFiles: 2,
   });
-  let buffer: Array<string> = [];
-  let bufferBytes = 0;
-  let dropped = 0;
-  const flush = Effect.suspend(() => {
-    if (dropped > 0) {
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
-      buffer.push(`${JSON.stringify({ k: "dropped", n: dropped })}\n`);
-      dropped = 0;
-    }
-    if (buffer.length === 0) return Effect.void;
-    const chunk = buffer.join("");
-    buffer = [];
-    bufferBytes = 0;
-    return sink.write(chunk).pipe(Effect.ignore);
-  });
-  yield* flush.pipe(Effect.repeat(Schedule.spaced(FLUSH_EVERY)), Effect.forkScoped);
-  yield* Effect.addFinalizer(() => flush);
-  return (fields: Fields) => {
-    const line = `${JSON.stringify({ t: DateTime.formatIso(DateTime.nowUnsafe()), ...fields })}\n`;
-    if (bufferBytes + line.length > MAX_BUFFER_BYTES) {
-      dropped += 1;
-      return;
-    }
-    buffer.push(line);
-    bufferBytes += line.length;
-  };
 });
 
 export const layer = Layer.unwrap(
