@@ -117,37 +117,39 @@ export const makeGateRecorder = Effect.gen(function* () {
       ]);
     });
 
-  const record =
-    (base: GateLabel, lock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>) =>
-    <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-      Effect.flatMap(
-        Effect.zip(Clock.currentTimeMillis, Effect.service(CurrentGateHolders)),
-        ([since, outer]) => {
-          const parent = outer.at(-1)?.label;
-          const label: GateLabel =
-            parent === undefined ? base : { ...parent, type: `${parent.type}:${base.type}` };
-          const waiter: Waiter = { label, since };
-          waiters.add(waiter);
-          const held = Effect.flatMap(Clock.currentTimeMillis, (acquiredAt) => {
-            waiters.delete(waiter);
-            const holder: Holder = {
-              label,
-              waitMs: acquiredAt - since,
-              acquiredAt,
-              phaseMs: {},
-              phase: undefined,
-              phaseAt: acquiredAt,
-              stuckAt: undefined,
-            };
-            holders.add(holder);
-            return effect.pipe(
-              Effect.provideService(CurrentGateHolders, [...outer, holder]),
-              Effect.ensuring(release(holder, parent === undefined)),
-            );
-          });
-          return lock(held).pipe(Effect.ensuring(Effect.sync(() => waiters.delete(waiter))));
-        },
-      );
+  const record = <A, E, R, B, E2, R2>(
+    base: GateLabel,
+    lock: (held: Effect.Effect<A, E, R>) => Effect.Effect<B, E2, R2>,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<B, E2, R2> =>
+    Effect.flatMap(
+      Effect.zip(Clock.currentTimeMillis, Effect.service(CurrentGateHolders)),
+      ([since, outer]) => {
+        const parent = outer.at(-1)?.label;
+        const label: GateLabel =
+          parent === undefined ? base : { ...parent, type: `${parent.type}:${base.type}` };
+        const waiter: Waiter = { label, since };
+        waiters.add(waiter);
+        const held = Effect.flatMap(Clock.currentTimeMillis, (acquiredAt) => {
+          waiters.delete(waiter);
+          const holder: Holder = {
+            label,
+            waitMs: acquiredAt - since,
+            acquiredAt,
+            phaseMs: {},
+            phase: undefined,
+            phaseAt: acquiredAt,
+            stuckAt: undefined,
+          };
+          holders.add(holder);
+          return effect.pipe(
+            Effect.provideService(CurrentGateHolders, [...outer, holder]),
+            Effect.ensuring(release(holder, parent === undefined)),
+          );
+        });
+        return lock(held).pipe(Effect.ensuring(Effect.sync(() => waiters.delete(waiter))));
+      },
+    );
 
   return { record };
 });

@@ -33,7 +33,6 @@ import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
-  ThreadOrganizeRefusalReason,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -509,29 +508,3 @@ export const OrchestratorMcpEnvironmentLinkResult = Schema.Union([
   }),
 ]);
 export type OrchestratorMcpEnvironmentLinkResult = typeof OrchestratorMcpEnvironmentLinkResult.Type;
-
-export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFailure>()(
-  "OrchestratorMcpFailure",
-  {
-    code: Schema.Literals([
-      ...ThreadOrganizeRefusalReason.literals,
-      "capability_denied",
-      "parent_not_active",
-      "provider_unavailable",
-      "model_unavailable",
-      "runtime_mode_escalation_denied",
-      "interaction_mode_escalation_denied",
-      "task_not_found",
-      "task_not_cancellable",
-      "thread_not_found",
-      "run_not_found",
-      "thread_not_sendable",
-      "thread_not_interruptible",
-      "invalid_request",
-      "orchestration_error",
-      "thread_credential_required",
-      "target_required",
-    ]),
-    message: Schema.String,
-  },
-) {}

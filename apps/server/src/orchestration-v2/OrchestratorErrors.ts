@@ -9,6 +9,7 @@ import {
 import * as Schema from "effect/Schema";
 import {
   OrchestratorCommandRejectedError,
+  OrchestratorDispatchBusyError,
   OrchestratorDispatchError,
 } from "./OrchestratorDispatchError.ts";
 import { OrchestratorProviderAdapterError } from "./ThreadSessionTransitions.ts";
@@ -116,6 +117,7 @@ export class OrchestratorRuntimeModeAboveCeilingError extends Schema.TaggedError
 
 export const OrchestratorV2Error = Schema.Union([
   OrchestratorDispatchError,
+  OrchestratorDispatchBusyError,
   OrchestratorThreadAlreadyExistsError,
   OrchestratorCommandRejectedError,
   OrchestratorProjectionError,
