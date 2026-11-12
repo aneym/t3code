@@ -1,0 +1,48 @@
+import * as Schema from "effect/Schema";
+
+import { CommandId, MessageId, NodeId, NonNegativeInt, RunId, ThreadId } from "./baseSchemas.ts";
+import { OrchestrationV2RunStatus } from "./orchestrationV2.ts";
+import { ThreadSendDelivery } from "./threadSendDelivery.ts";
+import {
+  OrchestratorMcpClientRequestId,
+  OrchestratorMcpEnvironmentTarget,
+  OrchestratorMcpPrompt,
+} from "./orchestratorMcp.ts";
+
+export const OrchestratorMcpThreadSendInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
+  threadId: ThreadId,
+  message: OrchestratorMcpPrompt,
+  mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart", "note"])),
+  clientRequestId: Schema.optional(
+    OrchestratorMcpClientRequestId.annotate({
+      description:
+        "Reuse it to retry this exact send after a timeout: the message is delivered once and a retry returns the same receipt. A key belongs to one thread: reusing it for another message or mode there is refused.",
+    }),
+  ),
+  composerIds: Schema.optional(Schema.Struct({ commandId: CommandId, messageId: MessageId })),
+});
+export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
+
+export const OrchestratorMcpThreadSendReceipt = Schema.Struct({
+  commandId: CommandId,
+  sequence: NonNegativeInt,
+  replayed: Schema.Boolean.annotate({
+    description: "True when this call matched a send that was already accepted.",
+  }),
+});
+export type OrchestratorMcpThreadSendReceipt = typeof OrchestratorMcpThreadSendReceipt.Type;
+
+export const OrchestratorMcpThreadSendResult = Schema.Struct({
+  threadId: ThreadId,
+  link: Schema.optional(Schema.String),
+  messageId: MessageId,
+  runId: Schema.optional(RunId),
+  taskId: Schema.optional(NodeId),
+  status: Schema.optional(OrchestrationV2RunStatus),
+  nativeSessionId: Schema.optional(Schema.NullOr(Schema.String)),
+  ...ThreadSendDelivery.fields,
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  receipt: Schema.optional(OrchestratorMcpThreadSendReceipt),
+});
+export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;

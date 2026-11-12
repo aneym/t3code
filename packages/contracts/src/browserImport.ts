@@ -31,6 +31,7 @@ export type BrowserImportUnavailableReason = typeof BrowserImportUnavailableReas
 export const BrowserImportFailureReason = Schema.Literals([
   ...BrowserImportUnavailableReason.literals,
   "keychainUnavailable",
+  "isolatedInstance",
   "unknownSource",
   "unknownSourceProfile",
   "sessionUnavailable",
@@ -89,6 +90,7 @@ const BROWSER_IMPORT_UNAVAILABLE_COPY: Readonly<Record<BrowserImportUnavailableR
 
 export const BROWSER_IMPORT_FAILURE_COPY: Readonly<Record<BrowserImportFailureReason, string>> = {
   ...BROWSER_IMPORT_UNAVAILABLE_COPY,
+  isolatedInstance: "Browser-import keyring access is disabled in isolated desktop instances.",
   keychainUnavailable:
     "The system keyring could not be accessed. Make sure your desktop keyring is running and unlocked, then retry.",
   unknownSource: "That browser is no longer available to import from.",
