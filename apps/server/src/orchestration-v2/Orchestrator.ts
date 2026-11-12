@@ -1285,10 +1285,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const view = yield* readCommandProjection(threadId, true);
         const latest = latestExecutedRun(view.runs);
         const ended = latest?.id === options.endedRunId ? latest : undefined;
-        if (ended?.status === "completed") {
-          for (const runId of yield* readMissedCompletionDeliveries(projectionStore, threadId, view))
-            yield* offerDelegatedCompletionDelivery(threadId, runId);
-        }
+        const missed =
+          ended?.status === "completed"
+            ? yield* readMissedCompletionDeliveries(projectionStore, threadId, view)
+            : [];
+        for (const runId of missed) yield* offerDelegatedCompletionDelivery(threadId, runId);
         const held = view.runs.filter(
           (run) =>
             !(run.queueHoldReason === "blocked" && worktreeSetupPending(view)) &&
