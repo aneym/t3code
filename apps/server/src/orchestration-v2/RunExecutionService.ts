@@ -1,5 +1,3 @@
-import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
   CommandId,
@@ -41,9 +39,10 @@ import * as Stream from "effect/Stream";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
-import * as ServerSettings from "../serverSettings.ts";
+import type * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
+import * as HeadlessThreadStreaming from "./HeadlessThreadStreaming.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
@@ -622,9 +621,9 @@ export const layer: Layer.Layer<
     const scope = yield* Effect.scope;
     const checkpointService = yield* CheckpointService.CheckpointServiceV2;
     const eventSink = yield* EventSink.EventSinkV2;
+    const headlessStreaming = yield* HeadlessThreadStreaming.HeadlessThreadStreaming;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
-    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
     const previewAgentActivity = yield* PreviewAgentActivity.PreviewAgentActivity;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
@@ -954,14 +953,8 @@ export const layer: Layer.Layer<
           failure,
           threadDisposition: "reusable",
         });
-        const responseStreamingMode = yield* Effect.gen(function* () {
-          const responseStreamingMode = yield* serverSettings.getSettings.pipe(
-            Effect.map(
-              (settings) =>
-                resolveProjectSettings(settings, input.appThread.projectId).settings
-                  .responseStreamingMode,
-            ),
-          );
+        const filterAssistantEvent = yield* Effect.gen(function* () {
+          const filterAssistantEvent = yield* headlessStreaming.makeFilter(input.appThread);
           // Side chats share the parent's worktree; a snapshot would capture the parent's edits.
           yield* (
             input.appThread.lineage.sideChat === true
@@ -971,6 +964,7 @@ export const layer: Layer.Layer<
                   ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
                 })
           ).pipe(
+            Effect.timeout("30 seconds"),
             Effect.catchCauseIf(
               (cause) => !Cause.hasInterruptsOnly(cause),
               (_cause) =>
@@ -986,7 +980,7 @@ export const layer: Layer.Layer<
           ) {
             return null;
           }
-          return responseStreamingMode;
+          return filterAssistantEvent;
         }).pipe(
           Effect.catchCause((cause) =>
             Effect.gen(function* () {
@@ -1030,7 +1024,7 @@ export const layer: Layer.Layer<
               }),
           ),
         );
-        if (responseStreamingMode === null) {
+        if (filterAssistantEvent === null) {
           return;
         }
         const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
@@ -1912,7 +1906,7 @@ export const layer: Layer.Layer<
               }),
             ))
           : input.session.startTurn(turnInput);
-        yield* Effect.andThen(shouldStart, startTurn).pipe(
+        yield* Effect.andThen(shouldStart, startTurn.pipe(Effect.timeout("60 seconds"))).pipe(
           // Wait for acceptance so abandoned startup cannot leave a refresher
           // on the already-detached ingestion fiber.
           Effect.tap(() =>
@@ -1973,7 +1967,7 @@ export const layer: Layer.Layer<
       }),
     } satisfies RunExecutionServiceV2Shape);
   }),
-);
+).pipe(Layer.provide(HeadlessThreadStreaming.layer));
 
 /**
  * Clients send Stop without a reason; server callers acting for an agent
