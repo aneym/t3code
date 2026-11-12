@@ -92,6 +92,7 @@ import {
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS, type RecordingInputOptions } from "./RecordingInput.ts";
+import * as RemoteDeviceSession from "./RemoteDeviceSession.ts";
 
 export type PreviewNavStatus =
   | { kind: "Idle" }
@@ -132,7 +133,6 @@ const ZOOM_EPSILON = 0.001;
 const RECORDING_ARM_GRACE_MS = 10_000;
 const PICTURE_IN_PICTURE_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
 const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
-// Cold guests can reject capturePage with UnknownVizError or stall; bound each attempt.
 const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
 const CAPTURE_PAGE_RETRY_DELAY_MS = 120;
 const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
@@ -1515,7 +1515,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         !isPreviewEditingShortcut(input, hostPlatform) || !holdsKeyboardFocus(contents),
       );
     };
-    // Popups inherit Electron's unrestricted window handler; block nested popups to bound the chain.
     const windowCreated = (window: Electron.BrowserWindow): void => {
       window.webContents.setIgnoreMenuShortcuts(true);
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -1635,7 +1634,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.ipc.on(PAGE_UNHANDLED_SHORTCUT_CHANNEL, pageUnhandledShortcut);
         detachPasskeys = passkeys.attachGuest(wc);
         wc.setWindowOpenHandler((details) => {
-          const action = previewWindowOpenAction(details);
+          const action = RemoteDeviceSession.isGuarded(wc.session)
+            ? "deny"
+            : previewWindowOpenAction(details);
           if (action === "popup") {
             return { action: "allow", overrideBrowserWindowOptions: POPUP_WINDOW_OPTIONS };
           }
@@ -1953,7 +1954,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       return yield* new PreviewTabNotFoundError({ tabId });
     }
     const { state: registered, pendingUrl } = registration.value;
-    // Concurrent actions targeted the previous guest; reconcile this one with committed zoom and mute.
     yield* assertTabZoom(tabId);
     yield* assertTabAudioMuted(tabId).pipe(Effect.ignore);
     runFork(restoreControlSession(tabId, wc));
@@ -1967,6 +1967,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const latestNavStatus = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.navStatus;
     if (
       pendingUrl &&
+      !RemoteDeviceSession.isGuarded(wc.session) &&
       latestNavStatus?.kind === "Loading" &&
       latestNavStatus.url === pendingUrl &&
       wc.getURL() !== pendingUrl

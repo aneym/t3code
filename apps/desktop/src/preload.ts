@@ -115,6 +115,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL) === true,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   getClientPlatform: () => clientPlatform,
+  getDeviceName: () => ipcRenderer.sendSync(IpcChannels.GET_DEVICE_NAME_CHANNEL) as string,
   setNotificationBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, badge),
   onNotificationBadgeClear: (listener) => {
@@ -323,6 +324,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   downloadUpdate: () => ipcRenderer.invoke(IpcChannels.UPDATE_DOWNLOAD_CHANNEL),
   installUpdate: (expectedVersion) =>
     ipcRenderer.invoke(IpcChannels.UPDATE_INSTALL_CHANNEL, expectedVersion),
+  installDesktopVersion: (version) =>
+    ipcRenderer.invoke(IpcChannels.UPDATE_INSTALL_VERSION_CHANNEL, version),
   cliCommand: {
     getState: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_GET_STATE_CHANNEL),
     install: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_INSTALL_CHANNEL),
@@ -517,5 +520,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
     },
+  },
+  desktopBrowser: {
+    onEvent: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, line: unknown) => {
+        if (typeof line === "string") listener(line);
+      };
+      ipcRenderer.on(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, handler);
+    },
+    sendCommand: (line) => ipcRenderer.invoke(IpcChannels.DESKTOP_BROWSER_COMMAND_CHANNEL, line),
   },
 } satisfies DesktopBridge);

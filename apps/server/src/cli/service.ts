@@ -17,6 +17,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveEntryPath } from "./invocation.ts";
+import { requireServiceServesHome } from "./serviceHomeGuard.ts";
 
 export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
   BootService.layer({
@@ -223,7 +224,9 @@ function formatServiceStatus(
 const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E, R>(
   flags: { readonly baseDir: Parameters<typeof resolveCliAuthConfig>[0]["baseDir"] },
   run: Effect.Effect<A, E, R>,
+  options?: { readonly ownsUnit: true },
 ) {
+  if (options?.ownsUnit) yield* requireServiceServesHome(flags.baseDir);
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
   return yield* run.pipe(Effect.provide(Layer.merge(layer(config), ServerConfig.layer(config))));
@@ -257,6 +260,7 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
           yield* Console.log("Run `t3 up` to choose how your other devices reach it.");
         }
       }),
+      { ownsUnit: true },
     ),
   ),
 );
@@ -280,6 +284,7 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
         }
         yield* Console.log(formatServiceChange(result));
       }),
+      { ownsUnit: true },
     ),
   ),
 );
@@ -339,6 +344,7 @@ const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).
           removed ? "Removed the T3 Code service." : "T3 Code service is not installed.",
         );
       }),
+      { ownsUnit: true },
     ),
   ),
 );

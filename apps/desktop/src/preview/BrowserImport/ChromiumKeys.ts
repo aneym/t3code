@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { isDesktopIsolated } from "../../app/desktopIsolation.ts";
 import { LinuxBrowserSecretPath } from "./LinuxBrowserSecret.ts";
 
 const KEY_SALT = "saltysalt";
@@ -20,6 +21,7 @@ const LINUX_KEY_ITERATIONS = 1;
 const LINUX_FALLBACK_PASSPHRASE = "peanuts";
 
 export const ChromiumKeyFailure = Schema.Literals([
+  "isolatedInstance",
   "needsKeychainApproval",
   "keychainItemMissing",
   "keychainUnavailable",
@@ -33,6 +35,9 @@ export class ChromiumKeyError extends Schema.TaggedError<ChromiumKeyError>()("Ch
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
+    if (this.reason === "isolatedInstance") {
+      return "Browser-import keyring access is disabled in isolated desktop instances.";
+    }
     return `Could not obtain the Chromium cookie key: ${this.reason}.`;
   }
 }
@@ -54,6 +59,7 @@ const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function
   service: string,
   account: string,
 ) {
+  if (isDesktopIsolated()) return yield* new ChromiumKeyError({ reason: "isolatedInstance" });
   // Loading the macOS binding at startup can prevent other platforms from opening.
   const Keyring = yield* Effect.tryPromise({
     try: () => import("@napi-rs/keyring"),
@@ -80,6 +86,7 @@ const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function
 export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(function* (
   application: string,
 ) {
+  if (isDesktopIsolated()) return yield* new ChromiumKeyError({ reason: "isolatedInstance" });
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -163,6 +170,7 @@ export const decodeWindowsWrappedKey = Effect.fn("ChromiumKeys.decodeWindowsWrap
 export const unwrapWindowsDpapiKey = Effect.fn("ChromiumKeys.unwrapWindowsDpapiKey")(function* (
   wrapped: Buffer,
 ) {
+  if (isDesktopIsolated()) return yield* new ChromiumKeyError({ reason: "isolatedInstance" });
   const environment = yield* HostProcess.Environment;
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -220,6 +228,7 @@ export const unwrapWindowsDpapiKey = Effect.fn("ChromiumKeys.unwrapWindowsDpapiK
 export const readWindowsKey = Effect.fn("ChromiumKeys.readWindowsKey")(function* (
   localStatePath: string,
 ) {
+  if (isDesktopIsolated()) return yield* new ChromiumKeyError({ reason: "isolatedInstance" });
   const fileSystem = yield* FileSystem.FileSystem;
   const contents = yield* fileSystem
     .readFileString(localStatePath)
@@ -241,6 +250,7 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
   ChromiumKeyError,
   ChildProcessSpawner.ChildProcessSpawner
 > {
+  if (isDesktopIsolated()) return yield* new ChromiumKeyError({ reason: "isolatedInstance" });
   if (request.platform === "darwin") {
     if (!request.keychainService || !request.keychainAccount) {
       return yield* new ChromiumKeyError({ reason: "unsupportedPlatform" });
