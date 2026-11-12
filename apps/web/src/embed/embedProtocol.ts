@@ -18,10 +18,30 @@ const EMBED_AUDIENCE_MESSAGE = "t3-embed/audience";
 const EMBED_REVEAL_MESSAGE = "t3-embed/reveal";
 export const EMBED_REVEALED_MESSAGE = "t3-embed/revealed";
 export const EMBED_PENDING_SEND_ACTION_MESSAGE = "t3-embed/pending-send-action";
+export const EMBED_SEND_MARK_MESSAGE = "t3-embed/send-mark";
 
 export type EmbedPendingSendAction = "retry" | "discard";
 
 export type EmbedSendWhen = "queue" | "steer";
+
+export type EmbedSendMilestone = "enter" | "drawn" | "accepted" | "turnStarted" | "word";
+
+export type EmbedSendFailure =
+  | "rejected"
+  | "connection"
+  | "interrupted"
+  | "host-refused"
+  | "host-unanswered"
+  | "host-unavailable";
+
+export type EmbedSendMark =
+  | { readonly mark: EmbedSendMilestone; readonly messageId: string }
+  | { readonly mark: "failed"; readonly messageId: string; readonly reason: EmbedSendFailure }
+  | {
+      readonly mark: "uploads";
+      readonly messageId: string | null;
+      readonly state: "busy" | "idle";
+    };
 
 export type EmbedSendOutcome =
   | { readonly requestId: string; readonly outcome: "sent" | "held" }
@@ -39,6 +59,11 @@ export type EmbedRevealRequest = { readonly requestId: string; readonly id: stri
 
 export type EmbedOutboundMessage =
   | { readonly type: typeof EMBED_READY_MESSAGE; readonly threadId: string }
+  | (EmbedSendMark & {
+      readonly type: typeof EMBED_SEND_MARK_MESSAGE;
+      readonly thread: string;
+      readonly at: number;
+    })
   | (EmbedRevealRequest & { readonly type: typeof EMBED_REVEALED_MESSAGE; readonly found: boolean })
   | { readonly type: typeof EMBED_KEY_MESSAGE; readonly key: string }
   | { readonly type: typeof EMBED_OPEN_MESSAGE; readonly url: string; readonly tab?: true }

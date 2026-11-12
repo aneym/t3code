@@ -71,6 +71,7 @@ import { newMessageId, newThreadId, randomUUID } from "~/lib/utils";
 import { heldIdsFor, holdSend, releaseHeldSend } from "./heldSendStore";
 import { holdOrSendThroughHost, sendComposerThroughHost } from "../../embed/embedComposerSend";
 import { isEmbedHostSendOn } from "../../embed/embedHostSend";
+import { embedSendEnter, embedSendFailed } from "../../embed/embedSendMarks";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -921,7 +922,7 @@ export function useComposerSend(input: ComposerSendInput) {
       composerEnvironmentContextsSnapshot.length === 0 &&
       messageTextForSend.trim() !== "";
     const heldIds = isServerThread ? heldIdsFor(routeThreadKey, messageTextForSend) : null;
-    const messageIdForSend = heldIds?.messageId ?? newMessageId();
+    const messageIdForSend = embedSendEnter(threadIdForSend, heldIds?.messageId ?? newMessageId());
     const commandIdForSend = heldIds?.commandId ?? CommandId.make(randomUUID());
     if (plainText && heldIds?.hostUnanswered !== true && isEmbedHostSendOn()) {
       sendInFlightRef.current = true;
@@ -1270,8 +1271,6 @@ export function useComposerSend(input: ComposerSendInput) {
           ? { inputIntent: "steer" as const }
           : {}),
     };
-    // After leaving the thread during an upload, its previews were already released and the
-    // message is never shown, so tracking them would keep them alive past the thread.
     if (currentRouteThreadKeyRef.current === routeThreadKey) {
       optimisticBlobPreviews.track(optimisticMessage);
     } else {
@@ -1503,7 +1502,7 @@ export function useComposerSend(input: ComposerSendInput) {
       }
     }
 
-    if (failure !== null) {
+    if (embedSendFailed(messageIdForSend, failure)) {
       if (isLocalDraftThread && draftId && draftThread) {
         restoreFailedDraftThread(
           draftId,
