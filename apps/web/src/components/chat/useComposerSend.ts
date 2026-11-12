@@ -923,32 +923,29 @@ export function useComposerSend(input: ComposerSendInput) {
     const heldIds = isServerThread ? heldIdsFor(routeThreadKey, messageTextForSend) : null;
     const messageIdForSend = heldIds?.messageId ?? newMessageId();
     const commandIdForSend = heldIds?.commandId ?? CommandId.make(randomUUID());
-    let hostModelSaved = false;
     if (plainText && heldIds?.hostUnanswered !== true && isEmbedHostSendOn()) {
       sendInFlightRef.current = true;
-      const saved = await persistThreadSettingsForNextTurn({
-        threadId: threadIdForSend,
-        createdAt: new Date().toISOString(),
-        runtimeMode,
-        interactionMode: sendInteractionMode,
-        modelSelection: ctxSelectedModelSelection,
+      const hostSend = await sendComposerThroughHost({
+        routeThreadKey,
+        thread: threadIdForSend,
+        composerDraftTarget,
+        promptRef,
+        composerRef,
+        text: messageTextForSend,
+        ids: { messageId: messageIdForSend, commandId: commandIdForSend },
+        steer: turnDispatchMode === "steer",
+        save: () =>
+          persistThreadSettingsForNextTurn({
+            threadId: threadIdForSend,
+            createdAt: new Date().toISOString(),
+            runtimeMode,
+            interactionMode: sendInteractionMode,
+            modelSelection: ctxSelectedModelSelection,
+          }).then((saved) => saved._tag === "Success"),
       });
       sendInFlightRef.current = false;
-      hostModelSaved = saved._tag === "Success";
+      if (hostSend !== null) return hostSend.done;
     }
-    const hostSend = hostModelSaved
-      ? sendComposerThroughHost({
-          routeThreadKey,
-          thread: threadIdForSend,
-          composerDraftTarget,
-          promptRef,
-          composerRef,
-          text: messageTextForSend,
-          ids: { messageId: messageIdForSend, commandId: commandIdForSend },
-          steer: turnDispatchMode === "steer",
-        })
-      : null;
-    if (hostSend !== null) return hostSend;
     const buildOutgoingMessageContext = (attachmentIds: ReadonlyArray<string>) =>
       buildMessageContext({
         terminalContexts: composerTerminalContextsSnapshot,

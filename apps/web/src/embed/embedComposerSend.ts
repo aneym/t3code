@@ -76,25 +76,33 @@ function handToHost(
   });
 }
 
-function hand(
-  input: ComposerTarget,
-  text: string,
-  ids: Ids,
-  when: EmbedSendWhen,
-): Promise<EmbedSendSettled> | null {
+function onLateClear(input: ComposerTarget, text: string) {
   const { routeThreadKey, composerDraftTarget: target, promptRef } = input;
-  const sent = handToHost(input.thread, text, ids, when, (late) => {
+  return (late: EmbedSendOutcome) => {
     if (late.outcome === "refused") return;
     if (draftStore().getComposerDraft(target)?.prompt.trim() === text.trim()) {
       draftStore().clearComposerContent(target);
       if (promptRef.current.trim() === text.trim()) promptRef.current = "";
     }
     releaseHeldSend(routeThreadKey);
-  });
-  if (sent === null) return null;
-  promptRef.current = "";
-  draftStore().clearComposerContent(target);
+  };
+}
+
+function clearComposer(input: ComposerTarget): void {
+  input.promptRef.current = "";
+  draftStore().clearComposerContent(input.composerDraftTarget);
   input.composerRef.current?.resetCursorState();
+}
+
+function hand(
+  input: ComposerTarget,
+  text: string,
+  ids: Ids,
+  when: EmbedSendWhen,
+): Promise<EmbedSendSettled> | null {
+  const sent = handToHost(input.thread, text, ids, when, onLateClear(input, text));
+  if (sent === null) return null;
+  clearComposer(input);
   return sent;
 }
 
@@ -105,29 +113,56 @@ function putBack(input: ComposerTarget, text: string): boolean {
   return true;
 }
 
-export function sendComposerThroughHost(
-  input: ComposerTarget & { readonly text: string; readonly ids: Ids; readonly steer: boolean },
-): Promise<void> | null {
-  const sent = hand(input, input.text, input.ids, input.steer ? "steer" : "queue");
-  if (sent === null) return null;
-  return sent.then((result) => {
-    if (result.outcome !== "unanswered") {
-      releaseHeldSend(input.routeThreadKey);
-      return;
-    }
-    dropLocalSends(input.thread, [input.ids.messageId]);
-    if (putBack(input, input.text)) {
-      holdUnansweredSend(input.routeThreadKey, input.text, input.ids);
-      return;
-    }
-    toastManager.add({
-      ...stackedThreadToast({
-        type: "warning",
-        title: "Not sent",
-        description: `${NO_ANSWER} ${input.text.trim().slice(0, 200)}`,
-      }),
-      id: `embed-host-not-sent:${input.ids.messageId}`,
-    });
+export async function sendComposerThroughHost(
+  input: ComposerTarget & {
+    readonly text: string;
+    readonly ids: Ids;
+    readonly steer: boolean;
+    readonly save: () => Promise<boolean>;
+  },
+): Promise<{ readonly done: Promise<void> } | null> {
+  const { thread, text, ids } = input;
+  const when = input.steer ? "steer" : "queue";
+  trackLocalSend(thread, {
+    requestId: randomUUID(),
+    text: text.trim(),
+    state: "sending",
+    reason: null,
+    ...ids,
+    when,
+    since: Date.now(),
+  });
+  clearComposer(input);
+  const saved = await input.save().catch(() => false);
+  const sent = saved ? handToHost(thread, text, ids, when, onLateClear(input, text)) : null;
+  if (sent === null) {
+    dropLocalSends(thread, [ids.messageId]);
+    putBack(input, text);
+    return null;
+  }
+  return { done: sent.then((result) => settleComposerSend(input, result)) };
+}
+
+function settleComposerSend(
+  input: ComposerTarget & { readonly text: string; readonly ids: Ids },
+  result: EmbedSendSettled,
+): void {
+  if (result.outcome !== "unanswered") {
+    releaseHeldSend(input.routeThreadKey);
+    return;
+  }
+  dropLocalSends(input.thread, [input.ids.messageId]);
+  if (putBack(input, input.text)) {
+    holdUnansweredSend(input.routeThreadKey, input.text, input.ids);
+    return;
+  }
+  toastManager.add({
+    ...stackedThreadToast({
+      type: "warning",
+      title: "Not sent",
+      description: `${NO_ANSWER} ${input.text.trim().slice(0, 200)}`,
+    }),
+    id: `embed-host-not-sent:${input.ids.messageId}`,
   });
 }
 
