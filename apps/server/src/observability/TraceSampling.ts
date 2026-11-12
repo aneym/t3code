@@ -8,9 +8,12 @@ const minChildSpanMs = Config.Number("T3CODE_TRACE_MIN_CHILD_SPAN_MS").pipe(
   Config.withDefault(DEFAULT_MIN_CHILD_SPAN_MS),
 );
 
+const isRequestSpan = (record: TraceRecord) =>
+  record.parentSpanId === undefined || record.kind === "server" || record.name.startsWith("ws.");
+
 const keepsRecord = (record: TraceRecord, minMs: number) =>
   record.type !== "effect-span" ||
-  record.parentSpanId === undefined ||
+  isRequestSpan(record) ||
   record.exit._tag !== "Success" ||
   record.durationMs >= minMs;
 
