@@ -183,7 +183,6 @@ async function main() {
   const dir = path.join(t3Home(), "runtime", "versions", version);
   if (!isComplete(dir)) await install(dir, key);
 
-  // Service IPC and signals must reach the child; terminal Ctrl-C already does, so do not forward SIGINT twice.
   const ipc = process.send !== undefined;
   const child = spawn(
     path.join(dir, process.platform === "win32" ? "t3.exe" : "t3"),
@@ -199,8 +198,12 @@ async function main() {
     child.on("message", (message) => process.connected && process.send(message));
     process.on("disconnect", () => child.connected && child.disconnect());
   }
+  let hardStop;
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-    process.on(signal, () => (ipc || signal !== "SIGINT") && child.kill(signal));
+    process.on(signal, () => {
+      child.kill(signal);
+      hardStop ??= setTimeout(() => child.kill("SIGKILL"), 75_000);
+    });
   }
   child.on("error", (error) => fail(executableError(key, error.message)));
   child.on("exit", (code, signal) =>

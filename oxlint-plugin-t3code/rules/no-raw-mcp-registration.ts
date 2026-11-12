@@ -22,10 +22,10 @@ const SERVICE_REGISTRATIONS = new Set([
 const TEST_FILE_PATTERN = /\.(?:test|spec)\.[cm]?[jt]sx?$/u;
 
 const HOW =
-  "Build the handlers with McpToolAccess.toLayer and register them through McpHttpServer's toolkitRegistration.";
+  "Build the handlers with McpToolAccess.toLayer and register them through mcpServer/toolkitRegistration.ts.";
 const registrationMessage = (name: string) =>
   `${name} registers on /mcp without the access checks McpToolAccess declares. ${HOW}`;
-const importMessage = `Only McpHttpServer may use Effect's McpServer: a registration anywhere else skips the access checks McpToolAccess declares. ${HOW}`;
+const importMessage = `Only apps/server/src/mcp/mcpServer may use Effect's McpServer: a registration anywhere else skips the access checks McpToolAccess declares. ${HOW}`;
 const testImportMessage =
   'Tests import McpServer only as `import { McpServer } from "effect/ai"`, so a registration on it is reported.';
 
