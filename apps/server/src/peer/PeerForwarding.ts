@@ -8,7 +8,9 @@ import {
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadWaitInput,
   OrchestratorMcpThreadWaitResult,
+  peerLinkRenewalState,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -263,6 +265,7 @@ const make = Effect.gen(function* () {
             new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
         ),
       );
+      const now = yield* Clock.currentTimeMillis;
       return {
         environmentId: scope.environmentId,
         links: listed.map((link) => ({
@@ -272,6 +275,11 @@ const make = Effect.gen(function* () {
           access: link.access,
           expiresAt: DateTime.formatIso(link.expiresAt),
           lastError: link.lastError,
+          renewal: peerLinkRenewalState(link, now),
+          ...(link.renewedAt === undefined
+            ? {}
+            : { renewedAt: DateTime.formatIso(link.renewedAt) }),
+          ...(link.renewalError === undefined ? {} : { renewalError: link.renewalError }),
         })),
         notListed: NOT_LISTED,
       };

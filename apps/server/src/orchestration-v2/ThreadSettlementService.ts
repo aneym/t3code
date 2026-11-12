@@ -1,6 +1,10 @@
 import { isAutoSettlementCandidate } from "./AutoSettlementPolicy.ts";
 import { makeChildSettlementSweep } from "./ChildThreadSettlement.ts";
-import { autoSettlementConfigured, autoSettlementSettingsKey } from "./ThreadSettlementSettings.ts";
+import {
+  autoSettlementConfigured,
+  autoSettlementSettingsKey,
+  sweepCoalesceMs,
+} from "./ThreadSettlementSettings.ts";
 import {
   backgroundWorkHoldsCompletion,
   turnItemUpdateCanEndBackgroundWork,
@@ -207,6 +211,7 @@ export const make = Effect.gen(function* () {
   const settleActionRunAt = new Map<ThreadId, number>();
 
   const settleIdleChildren = yield* makeChildSettlementSweep(orchestrator.dispatch);
+  const coalesceMs = yield* sweepCoalesceMs;
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
@@ -230,7 +235,6 @@ export const make = Effect.gen(function* () {
       isAutoSettlementCandidate(thread, nowMs, agentMainThreads),
     );
 
-    // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.
     const settleThread = Effect.fnUntraced(
       function* (
         thread: (typeof candidates)[number],
@@ -349,7 +353,6 @@ export const make = Effect.gen(function* () {
     };
     const groups = Map.groupBy(lookupCandidates, lookupKey);
 
-    // wouldSettle and pullRequestFor run per lookup group; the git and pull request reads they make carry the spans.
     const wouldSettle = Effect.fnUntraced(function* (
       group: ReadonlyArray<(typeof lookupCandidates)[number]>,
       pullRequest: SettlementPullRequest,
@@ -500,7 +503,12 @@ export const make = Effect.gen(function* () {
       if (state === "running") threadSweepStates.set(threadId, "rerun");
       if (state !== undefined) return Effect.void;
       threadSweepStates.set(threadId, "queued");
-      return sweepThread(threadId).pipe(FiberSet.run(threadSweeps), Effect.asVoid);
+      const wait = coalesceMs > 0 ? Effect.sleep(coalesceMs) : Effect.void;
+      return wait.pipe(
+        Effect.andThen(sweepThread(threadId)),
+        FiberSet.run(threadSweeps),
+        Effect.asVoid,
+      );
     });
 
   // Skip settle scripts in shared checkouts where other threads may still work.

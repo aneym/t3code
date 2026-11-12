@@ -2,7 +2,6 @@ import { awaitSecretAnswer, reenterSecretCard } from "./SecretRequestWait.ts";
 import { threadSettlement } from "./threadSettlement.ts";
 import { listThreadPage } from "./ThreadListPage.ts";
 import {
-  messageSender,
   quietNoteOf,
   secretRequestTurnItemId,
   CommandId,
@@ -113,6 +112,7 @@ import * as NewThreadModelSelection from "../provider/NewThreadModelSelection.ts
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { threadReadFeedFields } from "./threadReadFeed.ts";
+import { threadReadOrigin } from "./threadReadOrigin.ts";
 import { turnItemText } from "./turnItemText.ts";
 import { scheduledTaskSummary } from "./scheduledTaskSummary.ts";
 import {
@@ -698,9 +698,7 @@ function timelineItem(input: {
     ...(item.type === "subagent" ? { subagentId: item.subagentId } : {}),
     runId: item.runId,
     messageId,
-    createdBy: message?.createdBy ?? null,
-    creationSource: message?.creationSource ?? null,
-    ...messageSender(message),
+    ...threadReadOrigin(message),
     ...quietNoteOf(item),
     type: item.type,
     status: item.status,

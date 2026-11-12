@@ -70,6 +70,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId, randomUUID } from "~/lib/utils";
 import { heldIdsFor, holdSend, releaseHeldSend } from "./heldSendStore";
 import { holdOrSendThroughHost, sendComposerThroughHost } from "../../embed/embedComposerSend";
+import { isEmbedHostSendOn } from "../../embed/embedHostSend";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -264,6 +265,7 @@ interface ComposerSendInput {
     branch?: string;
     runtimeMode: RuntimeMode;
     interactionMode: ProviderInteractionMode;
+    modelSelection?: ModelSelection;
   }) => Promise<AtomCommandResult<void, unknown>>;
 }
 
@@ -921,19 +923,31 @@ export function useComposerSend(input: ComposerSendInput) {
     const heldIds = isServerThread ? heldIdsFor(routeThreadKey, messageTextForSend) : null;
     const messageIdForSend = heldIds?.messageId ?? newMessageId();
     const commandIdForSend = heldIds?.commandId ?? CommandId.make(randomUUID());
-    const hostSend =
-      plainText && heldIds?.hostUnanswered !== true
-        ? sendComposerThroughHost({
-            routeThreadKey,
-            thread: threadIdForSend,
-            composerDraftTarget,
-            promptRef,
-            composerRef,
-            text: messageTextForSend,
-            ids: { messageId: messageIdForSend, commandId: commandIdForSend },
-            steer: turnDispatchMode === "steer",
-          })
-        : null;
+    let hostModelSaved = false;
+    if (plainText && heldIds?.hostUnanswered !== true && isEmbedHostSendOn()) {
+      sendInFlightRef.current = true;
+      const saved = await persistThreadSettingsForNextTurn({
+        threadId: threadIdForSend,
+        createdAt: new Date().toISOString(),
+        runtimeMode,
+        interactionMode: sendInteractionMode,
+        modelSelection: ctxSelectedModelSelection,
+      });
+      sendInFlightRef.current = false;
+      hostModelSaved = saved._tag === "Success";
+    }
+    const hostSend = hostModelSaved
+      ? sendComposerThroughHost({
+          routeThreadKey,
+          thread: threadIdForSend,
+          composerDraftTarget,
+          promptRef,
+          composerRef,
+          text: messageTextForSend,
+          ids: { messageId: messageIdForSend, commandId: commandIdForSend },
+          steer: turnDispatchMode === "steer",
+        })
+      : null;
     if (hostSend !== null) return hostSend;
     const buildOutgoingMessageContext = (attachmentIds: ReadonlyArray<string>) =>
       buildMessageContext({

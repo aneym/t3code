@@ -31,6 +31,7 @@ import {
 } from "./threadCommon.ts";
 import { finishRun, readFullText, readLatestMessages } from "./threadRun.ts";
 import { threadSendCommand } from "./threadSend.ts";
+import { threadMessageOrigin } from "./threadMessageOrigin.ts";
 import { threadConfigureCommand } from "./threadConfigure.ts";
 import { threadUpdateCommand } from "./threadUpdate.ts";
 import { resolveProject } from "./threadProject.ts";
@@ -419,6 +420,7 @@ const threadShowCommand = Command.make("show", {
               Effect.map((text) => ({
                 role: item.type === "user_message" ? "user" : "assistant",
                 runId: item.runId,
+                ...threadMessageOrigin(item),
                 text,
               })),
             ),
