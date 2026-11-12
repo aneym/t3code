@@ -24,6 +24,8 @@ import {
   completionDeliveryRun,
   completionDeliveryMessage,
   readCompletionDeliveries,
+  readCompletionDeliveryOffer,
+  readMissedCompletionDeliveries,
   completionQueueBlocked,
 } from "./CompletionDeliveryPolicy.ts";
 import {
@@ -1058,36 +1060,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const offerDelegatedCompletionDelivery =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
     Effect.fnUntraced(function* (threadId: ThreadId, parentRunId: RunId) {
-      const projection = yield* projectionStore.getThreadRecords(
-        threadId,
-        ["runs", "messages", "providerTurns", "providerThreads"],
-        { messageRoles: ["user"] },
-      );
-      const parentRun = projection.runs.find((candidate) => candidate.id === parentRunId);
-      const cohort = parentRun?.delegatedCompletion;
-      const delivery = cohort?.delivery;
-      if (
-        parentRun === undefined ||
-        cohort?.disposition !== "open" ||
-        delivery === null ||
-        delivery === undefined ||
-        delivery.taskIds.length === 0 ||
-        projection.thread.archivedAt !== null ||
-        projection.thread.deletedAt !== null ||
-        (completionDeliveryMessage(projection, delivery) !== undefined &&
-          !isUndeliveredMailboxSteer(projection, delivery.messageId))
-      ) {
-        return;
-      }
-      const providerThread =
-        parentRun.providerThreadId === null
-          ? undefined
-          : projection.providerThreads.find(
-              (candidate) => candidate.id === parentRun.providerThreadId,
-            );
-      if (providerThread === undefined) {
-        return;
-      }
+      const offer = yield* readCompletionDeliveryOffer(projectionStore, threadId, parentRunId);
+      if (offer === undefined) return;
+      const { delivery, providerThread } = offer;
       yield* continuationRequests.offer({
         threadId,
         providerThreadId: providerThread.id,
@@ -1307,14 +1282,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (!(yield* queueAdvanceAdmitted(effectOutbox, readCommandProjection(threadId), options)))
         return;
       if (options?.endedRunId !== undefined) {
-        const view = yield* readCommandProjection(threadId);
+        const view = yield* readCommandProjection(threadId, true);
         const latest = latestExecutedRun(view.runs);
         const ended = latest?.id === options.endedRunId ? latest : undefined;
-        for (const run of ended?.status === "completed" ? view.runs : []) {
-          const delivery = run.delegatedCompletion?.delivery;
-          if (delivery != null && completionDeliveryMessage(view, delivery) === undefined) {
-            yield* offerDelegatedCompletionDelivery(threadId, run.id);
-          }
+        if (ended?.status === "completed") {
+          for (const runId of yield* readMissedCompletionDeliveries(projectionStore, threadId, view))
+            yield* offerDelegatedCompletionDelivery(threadId, runId);
         }
         const held = view.runs.filter(
           (run) =>
