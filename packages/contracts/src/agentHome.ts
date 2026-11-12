@@ -1,0 +1,68 @@
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+
+export const AGENT_HOME_HANDLE_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+export const AgentHandle = TrimmedNonEmptyString.check(Schema.isPattern(AGENT_HOME_HANDLE_PATTERN));
+export type AgentHandle = typeof AgentHandle.Type;
+
+export const AgentHomeBinding = Schema.Struct({
+  threadId: ThreadId,
+  environmentId: Schema.NullOr(EnvironmentId),
+  host: Schema.NullOr(Schema.String),
+  at: Schema.NullOr(Schema.String),
+  by: Schema.NullOr(Schema.String),
+});
+export type AgentHomeBinding = typeof AgentHomeBinding.Type;
+
+export const AgentLane = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  threadId: ThreadId,
+  host: Schema.NullOr(Schema.String),
+});
+export type AgentLane = typeof AgentLane.Type;
+
+export const AgentHome = Schema.Struct({
+  handle: AgentHandle,
+  workspaceRoot: TrimmedNonEmptyString,
+  displayName: Schema.NullOr(Schema.String),
+  role: Schema.NullOr(Schema.String),
+  faceUrl: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  projects: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  lanes: Schema.Array(AgentLane).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  binding: Schema.NullOr(AgentHomeBinding),
+  previous: Schema.NullOr(AgentHomeBinding),
+  office: Schema.optionalKey(Schema.NullOr(AgentHomeBinding)),
+  sealed: Schema.optionalKey(Schema.Literal(true)),
+});
+export type AgentHome = typeof AgentHome.Type;
+
+export const AgentHomesSnapshot = Schema.Struct({
+  homes: Schema.Array(AgentHome),
+});
+export type AgentHomesSnapshot = typeof AgentHomesSnapshot.Type;
+
+export const AgentBindInput = Schema.Struct({
+  handle: AgentHandle,
+  threadId: Schema.optional(Schema.NullOr(ThreadId)),
+  projects: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  threadEnvironmentId: Schema.optional(EnvironmentId),
+  host: Schema.optional(TrimmedNonEmptyString),
+  by: Schema.optional(TrimmedNonEmptyString),
+  onlyIfUnbound: Schema.optional(Schema.Boolean),
+  office: Schema.optional(Schema.Boolean),
+});
+export type AgentBindInput = typeof AgentBindInput.Type;
+
+export const AgentBindResult = Schema.Struct({
+  home: AgentHome,
+  changed: Schema.Boolean,
+});
+export type AgentBindResult = typeof AgentBindResult.Type;
+
+export class AgentHomeError extends Schema.TaggedError<AgentHomeError>()("AgentHomeError", {
+  message: Schema.String,
+  handle: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Defect()),
+}) {}
