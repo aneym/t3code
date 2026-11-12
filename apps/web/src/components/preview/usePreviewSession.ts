@@ -14,8 +14,11 @@ import {
   readThreadPreviewState,
   reconcilePreviewServerSessions,
 } from "~/previewStateStore";
+import { admitsPreviewValue } from "~/browser/previewTrustEpoch";
+import { environmentCatalog } from "~/connection/catalog";
 import { isElectron } from "~/env";
 import { previewEnvironment } from "~/state/preview";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 class PreviewSessionThreadKeyParseError extends Schema.TaggedError<PreviewSessionThreadKeyParseError>()(
   "PreviewSessionThreadKeyParseError",
@@ -58,6 +61,7 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
 
     const applyLatestEvent = (result: Atom.Type<typeof eventsAtom>) => {
       if (!AsyncResult.isSuccess(result) || result.value.threadId !== threadRef.threadId) return;
+      if (!admitsPreviewValue(threadRef.environmentId, result.value)) return;
       const currentEpoch = readThreadPreviewState(threadRef).serverEpoch;
       if (currentEpoch !== null && currentEpoch !== result.value.serverEpoch) {
         get.refresh(sessionsAtom);
@@ -101,7 +105,8 @@ const inactiveAtom = Atom.make(() => undefined);
 // Discover background tabs without listing every thread at startup. Keep each
 // sync while the thread has tabs so later events still arrive while chat is
 // absent, then release it so closed previews stop costing a list and a fan-out.
-const desktopHostedPreviewSyncAtom = Atom.family((environmentId: EnvironmentId) => {
+const desktopHostedPreviewSyncAtom = Atom.family((key: string) => {
+  const [environmentId, device] = key.split("\u0000") as [EnvironmentId, string];
   const eventsAtom = previewEnvironment.events({ environmentId, input: {} });
   return Atom.make((get) => {
     const releaseByThreadId = new Map<string, () => void>();
@@ -112,6 +117,11 @@ const desktopHostedPreviewSyncAtom = Atom.family((environmentId: EnvironmentId) 
       eventsAtom,
       (result) => {
         if (!AsyncResult.isSuccess(result) || result.value.type === "closed") return;
+        if (
+          device !== "" &&
+          !("snapshot" in result.value && result.value.snapshot.device === device)
+        )
+          return;
         const threadId = result.value.threadId;
         if (releaseByThreadId.has(threadId)) return;
         const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)));
@@ -136,13 +146,27 @@ const desktopHostedPreviewSyncAtom = Atom.family((environmentId: EnvironmentId) 
       },
       { immediate: true },
     );
-  }).pipe(Atom.withLabel(`preview:desktop-hosted-sync:${environmentId}`));
+  }).pipe(Atom.withLabel(`preview:desktop-hosted-sync:${key}`));
 });
+
+const remoteDeviceTabSyncAtom = Atom.family((device: string) =>
+  Atom.make((get) => {
+    const primary = get(primaryEnvironmentIdAtom);
+    for (const [environmentId, entry] of get(environmentCatalog.catalogValueAtom).entries) {
+      if (entry.enabled && environmentId !== primary)
+        get(desktopHostedPreviewSyncAtom(`${environmentId}\u0000${device}`));
+    }
+  }).pipe(Atom.withLabel(`preview:remote-device-tab-sync:${device}`)),
+);
 
 export function useDesktopHostedPreviewSessions(environmentId: EnvironmentId | null): void {
   useAtomValue(
     isElectron && environmentId !== null
-      ? desktopHostedPreviewSyncAtom(environmentId)
+      ? desktopHostedPreviewSyncAtom(`${environmentId}\u0000`)
       : inactiveAtom,
   );
+}
+
+export function useRemoteDeviceTabSessions(device: string | null): void {
+  useAtomValue(isElectron && device !== null ? remoteDeviceTabSyncAtom(device) : inactiveAtom);
 }

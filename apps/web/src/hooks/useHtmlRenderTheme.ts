@@ -2,6 +2,7 @@ import { HTML_RENDER_DEFAULT_FONTS, htmlRenderTheme } from "@t3tools/shared/html
 import { useSyncExternalStore } from "react";
 
 import { appearanceFontStack } from "../appearanceFonts";
+import { useEmbedTheme } from "../embed/embedTheme";
 import {
   getStandardThemeColors,
   getThemeColorsForMode,
@@ -35,16 +36,23 @@ export function useHtmlRenderTheme() {
     () => resolveActiveThemeColors(theme, themeHalves, resolvedTheme),
     () => getStandardThemeColors(resolvedTheme),
   );
+  const embedTheme = useEmbedTheme();
   const sans = useClientSettings((settings) => settings.fontFamilySans);
   const mono = useClientSettings((settings) => settings.fontFamilyCode);
-  return htmlRenderTheme(
+  const shown = htmlRenderTheme(
     Object.fromEntries(
-      Object.entries(colors).map(([role, color]) => [role, themeColorToHex(color) ?? color]),
+      Object.entries(embedTheme?.colors ?? colors).map(([role, color]) => [
+        role,
+        themeColorToHex(color) ?? color,
+      ]),
     ) as typeof colors,
-    resolvedTheme,
+    embedTheme?.scheme ?? resolvedTheme,
     {
       sans: appearanceFontStack(sans, HTML_RENDER_DEFAULT_FONTS.sans),
       mono: appearanceFontStack(mono, HTML_RENDER_DEFAULT_FONTS.mono),
     },
   );
+  return embedTheme === null
+    ? shown
+    : { ...shown, variables: { ...shown.variables, ...embedTheme.overrides } };
 }

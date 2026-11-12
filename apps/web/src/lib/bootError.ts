@@ -1,5 +1,7 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 
+import { inEmbedPage } from "../embed/embedProtocol";
+
 const FALLBACK_TRIAGE_COMMAND = "npx t3 triage";
 const DOWNLOAD_URL = "https://t3.codes/download";
 const ISSUE_URL = "https://github.com/pingdotgg/t3code/issues/new";
@@ -262,6 +264,7 @@ export function showBootError(error: unknown) {
   const bridge = window.desktopBridge;
   const environment = readEnvironment(bridge);
   const offline = !bridge && navigator.onLine === false;
+  const embedded = inEmbedPage();
 
   const status = element("span", { className: "boot-error-sr" });
   status.setAttribute("aria-live", "polite");
@@ -274,7 +277,9 @@ export function showBootError(error: unknown) {
   };
 
   const message = element("div", {}, [
-    element("h1", { textContent: "T3 Code failed to start" }),
+    element("h1", {
+      textContent: embedded ? "This chat failed to start" : "T3 Code failed to start",
+    }),
     element("p", {
       textContent: offline
         ? "This browser appears to be offline. Check the connection, then reload."
@@ -364,22 +369,27 @@ export function showBootError(error: unknown) {
           ),
         ]
       : []),
-    element("div", {}, [
-      element("p", {
-        textContent:
-          "Run this on the computer that runs T3 Code. Your agent can check the local logs and help you file a bug report.",
-      }),
-      element("div", { id: "boot-error-command" }, [command, copyCommand]),
-    ]),
+    ...(embedded
+      ? []
+      : [
+          element("div", {}, [
+            element("p", {
+              textContent:
+                "Run this on the computer that runs T3 Code. Your agent can check the local logs and help you file a bug report.",
+            }),
+            element("div", { id: "boot-error-command" }, [command, copyCommand]),
+          ]),
+        ]),
     element("div", {}, [
       details,
       element("p", {
         textContent: "Details may include local file paths and names. Check before sharing.",
       }),
-      element("div", { id: "boot-error-report" }, [
-        copyDetails,
-        link(issue.href, "File a bug report on GitHub"),
-      ]),
+      element(
+        "div",
+        { id: "boot-error-report" },
+        embedded ? [copyDetails] : [copyDetails, link(issue.href, "File a bug report on GitHub")],
+      ),
     ]),
   ]);
 

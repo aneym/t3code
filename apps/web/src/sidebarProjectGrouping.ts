@@ -45,6 +45,8 @@ export interface SidebarProjectSnapshot extends Project {
   memberProjects: readonly SidebarProjectGroupMember[];
   memberProjectRefs: readonly ScopedProjectRef[];
   remoteEnvironmentLabels: readonly string[];
+  pinOrder: string | null;
+  pinnedAt: string | null;
   pinned: boolean;
   archived: boolean;
 }
@@ -200,6 +202,8 @@ export function buildSidebarProjectSnapshots(input: {
       memberProjects: members,
       memberProjectRefs: group.memberProjectRefs,
       remoteEnvironmentLabels,
+      pinOrder: group.pinOrder,
+      pinnedAt: group.pinnedAt,
       pinned: group.pinned,
       archived: group.archived,
     };

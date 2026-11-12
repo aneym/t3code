@@ -1,3 +1,4 @@
+import { useAgentMainThreadMenu } from "../components/agents/agentMainThreadMenu";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
@@ -47,6 +48,7 @@ import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
+import { useRestartThreadSession } from "./useRestartThreadSession";
 import { canTurnThreadIntoProject, useThreadActions } from "./useThreadActions";
 
 function failureToast(title: string, error: unknown) {
@@ -65,8 +67,10 @@ export function useThreadActionMenu(input: {
   readonly onStartRename: () => void;
   readonly onFind?: ((threadRef: ScopedThreadRef) => void) | undefined;
   readonly canShareWithGuest: boolean;
+  readonly agentPin?: { readonly label: string; readonly onToggle: () => void };
 }) {
-  const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest } = input;
+  const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest, agentPin } = input;
+  const agentMainThreadMenu = useAgentMainThreadMenu();
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -93,6 +97,7 @@ export function useThreadActionMenu(input: {
     reportFailure: false,
   });
   const handleNewThread = useNewThreadHandler();
+  const restartThreadSession = useRestartThreadSession();
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -152,11 +157,23 @@ export function useThreadActionMenu(input: {
         supports,
         snoozePresets,
         canShareWithGuest,
+        agentMainThreads: agentMainThreadMenu.options(thread),
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
       });
-      const clicked = await settlePromise(() => api.contextMenu.show(items, position));
+      const menuItems = agentPin
+        ? [{ id: "agent-pin" as const, label: agentPin.label }, ...items]
+        : items;
+      const clicked = await settlePromise(() => api.contextMenu.show(menuItems, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
       const action: ThreadActionMenuId = clicked.value;
+      if (action.startsWith("agent-main:")) {
+        await agentMainThreadMenu.assign(action.slice("agent-main:".length), thread);
+        return;
+      }
+      if (action === "agent-pin") {
+        agentPin?.onToggle();
+        return;
+      }
       if (
         threadActionRequiresOperate(action) &&
         !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
@@ -226,6 +243,11 @@ export function useThreadActionMenu(input: {
           }
           return;
         }
+        case "restart-session":
+          await restartThreadSession(threadRef).catch((error: unknown) =>
+            failureToast("Failed to restart agent session", error),
+          );
+          return;
         case "settle":
           await reportFailure("Failed to settle thread", () => settleThread(threadRef));
           return;

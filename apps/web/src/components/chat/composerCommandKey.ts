@@ -20,6 +20,7 @@ import { type PendingUserInput } from "../../session-logic";
 import { type PreviewAnnotationPayload } from "@t3tools/contracts";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { composerTargetKey } from "../../composerDraftStore";
+import { isEmbedClearCommand } from "../../embed/embedProtocol";
 import {
   type ComposerListEdit,
   listContinuationForEnter,
@@ -214,7 +215,9 @@ export function composerCommandKeyHandler(input: {
     }
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive =
-      !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
+      !isLiteralPendingAnswer &&
+      !isEmbedClearCommand(promptRef.current) &&
+      (composerMenuOpenRef.current || trigger !== null);
     if (key === "Escape") {
       if (event.isComposing || event.keyCode === 229) return false;
       if (!menuIsActive && promptSuggestion !== null && promptRef.current.length === 0) {
