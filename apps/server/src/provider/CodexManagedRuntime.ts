@@ -12,6 +12,7 @@ import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 import { COMMAND_TIMEOUT_MS } from "./CodexManagedTokenProtocol.ts";
 import { materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
+import { codexBaseUrl } from "./codexBaseUrl.ts";
 
 export interface CodexEffectiveRuntime {
   readonly config: CodexSettings;
@@ -19,11 +20,11 @@ export interface CodexEffectiveRuntime {
   readonly revision: string;
 }
 const decodeSettings = Schema.decodeSync(CodexSettings);
-const managedCodexLaunchArgs = (command: string, args: ReadonlyArray<string>) =>
+const managedCodexLaunchArgs = (command: string, args: ReadonlyArray<string>, baseUrl: string) =>
   [
     'model_provider="openai_token_sharing"',
     // Codex persists this provider ID in rollouts and needs it unchanged to resume.
-    `model_providers.openai_token_sharing={name="OpenAI Token Sharing",base_url="https://api.openai.com/v1",model_catalog_url="https://api.openai.com/v1/models",wire_api="responses",requires_openai_auth=false,supports_websockets=false,auth={command=${JSON.stringify(command)},args=${JSON.stringify(args)},timeout_ms=${COMMAND_TIMEOUT_MS},refresh_interval_ms=0}}`,
+    `model_providers.openai_token_sharing={name="OpenAI Token Sharing",base_url=${JSON.stringify(baseUrl)},model_catalog_url=${JSON.stringify(`${baseUrl}/models`)},wire_api="responses",requires_openai_auth=false,supports_websockets=false,auth={command=${JSON.stringify(command)},args=${JSON.stringify(args)},timeout_ms=${COMMAND_TIMEOUT_MS},refresh_interval_ms=0}}`,
     "features.api_key_model_discovery=true",
     "features.multi_agent=false",
     "features.multi_agent_v2=false",
@@ -128,7 +129,11 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
         setupMode: "managed",
         binaryPath: executable.executablePath,
         homePath,
-        launchArgs: managedCodexLaunchArgs(invocation.command, authArgs),
+        launchArgs: managedCodexLaunchArgs(
+          invocation.command,
+          authArgs,
+          codexBaseUrl(options.config.baseUrl),
+        ),
       }),
       environment,
       revision: profileKey,

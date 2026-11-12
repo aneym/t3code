@@ -7,7 +7,6 @@ import {
 import { cliArchiveTarCommand, parseChecksums } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -25,12 +24,14 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as NodeCrypto from "node:crypto";
 import * as ServerConfig from "../config.ts";
 import { selectManagedRelease } from "./managedRelease.ts";
 import * as ModelManifest from "./ModelManifest.ts";
+import { probeLocalCodex, runCodexCommand } from "./CodexLocalProbe.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 
 const DRIVER = ProviderDriverKind.make("codex");
@@ -182,12 +183,16 @@ const isRunning = (state: ProviderInstallState) =>
 export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function* (
   options: CodexInstallationOptions,
 ) {
+  const probeContext = Context.omit(Tracer.ParentSpan)(
+    yield* Effect.context<
+      FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+    >(),
+  );
   const manifestService = yield* ModelManifest.ModelManifest;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
   const http = yield* HttpClient.HttpClient;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serviceScope = yield* Effect.scope;
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
@@ -385,9 +390,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         );
       return executable;
     },
-    Effect.mapError(
-      wrapFailure("resolve", "Codex is not installed in T3 Code. Install it to continue."),
-    ),
+    Effect.mapError(wrapFailure("resolve", "Codex is not installed. Install it to continue.")),
   );
   const acquire = Effect.fn("CodexInstallation.acquire")(function* () {
     return yield* Effect.acquireRelease(
@@ -406,113 +409,20 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         }),
     );
   });
-  const runCommand = Effect.fn("CodexInstallation.runCommand")(function* (
-    command: string,
-    args: ReadonlyArray<string>,
-  ) {
-    const resolved = yield* resolveSpawnCommand(command, args).pipe(
-      Effect.provideService(HostProcess.Platform, platform),
+  const runCommand = (command: string, args: ReadonlyArray<string>) =>
+    runCodexCommand(command, args).pipe(
+      Effect.provide(probeContext),
+      Effect.mapError((cause) =>
+        typeof cause === "number"
+          ? installationError("verify", "Could not unpack or start the downloaded Codex package.")
+          : cause,
+      ),
     );
-    const child = yield* spawner.spawn(
-      ChildProcess.make(resolved.command, resolved.args, { shell: resolved.shell }),
-    );
-    const [output, , exitCode] = yield* Effect.all(
-      [
-        child.stdout.pipe(Stream.decodeText(), Stream.mkString),
-        child.stderr.pipe(Stream.runDrain),
-        child.exitCode,
-      ],
-      { concurrency: "unbounded" },
-    );
-    if (exitCode !== 0)
-      return yield* installationError(
-        "verify",
-        "Could not unpack or start the downloaded Codex package.",
-      );
-    return output;
-  }, Effect.scoped);
-  // Native Codex needs its adjacent host; launchers resolve their own payloads.
-  const hasCodeModeHost = Effect.fn("CodexInstallation.hasCodeModeHost")(
-    function* (realExecutablePath: string) {
-      if (/^(?:volta-shim|mise|aqua-proxy)(?:\.exe)?$/iu.test(path.basename(realExecutablePath)))
-        return true;
-      if (platform === "win32") {
-        if (path.extname(realExecutablePath).toLowerCase() !== ".exe") return true;
-        for (const extension of [".bunx", ".shim"]) {
-          const marker = yield* fs
-            .stat(realExecutablePath.slice(0, -4) + extension)
-            .pipe(Effect.option);
-          if (
-            Option.isSome(marker) &&
-            marker.value.type === "File" &&
-            Number(marker.value.size) > 0
-          )
-            return true;
-        }
-      } else {
-        const header = yield* fs.open(realExecutablePath, { flag: "r" }).pipe(
-          Effect.flatMap((file) => file.readAlloc(2)),
-          Effect.orElseSucceed(() => Option.none()),
-        );
-        if (Option.isSome(header) && header.value[0] === 0x23 && header.value[1] === 0x21)
-          return true;
-      }
-      const info = yield* fs.stat(
-        path.join(
-          path.dirname(realExecutablePath),
-          `codex-code-mode-host${platform === "win32" ? ".exe" : ""}`,
-        ),
-      );
-      return (
-        info.type === "File" &&
-        Number(info.size) > 0 &&
-        (platform === "win32" || (info.mode & 0o111) !== 0)
-      );
-    },
-    Effect.scoped,
-    Effect.orElseSucceed(() => false),
-  );
-  const localCache = new Map<string, { fingerprint: string; executable: CodexExecutable | null }>();
   const resolveLocal = Effect.fn("CodexInstallation.resolveLocal")(
     function* () {
-      const executablePath = yield* resolveCommandPath("codex", { env: environment }).pipe(
-        Effect.provideService(HostProcess.Platform, platform),
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
+      const executable = yield* probeLocalCodex(managedDirectory).pipe(
+        Effect.provide(probeContext),
       );
-      if (executablePath === null) return null;
-      // Keep launcher symlinks intact: version-manager shims dispatch by their invoked name.
-      const realExecutablePath = yield* fs.realPath(executablePath);
-      const realManaged = yield* fs.realPath(managedDirectory).pipe(Effect.option);
-      if (
-        realExecutablePath.startsWith(
-          `${Option.getOrElse(realManaged, () => managedDirectory)}${path.sep}`,
-        )
-      )
-        return null;
-      if (!(yield* hasCodeModeHost(realExecutablePath))) return null;
-      const info = yield* fs.stat(executablePath);
-      const fingerprint = `${realExecutablePath}:${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}:${Option.getOrUndefined(info.ino)}`;
-      const cached = localCache.get(executablePath);
-      const executable =
-        cached?.fingerprint === fingerprint
-          ? cached.executable
-          : yield* Effect.gen(function* () {
-              const output = yield* runCommand(executablePath, ["--version"]);
-              const version = /^codex-cli (\d+\.\d+\.\d+)$/u.exec(output.trim())?.[1];
-              if (!version) return null;
-              yield* runCommand(executablePath, ["app-server", "--help"]);
-              return {
-                executablePath,
-                source: "local",
-                version,
-                managedVersionDirectory: null,
-              } satisfies CodexExecutable;
-            }).pipe(
-              Effect.timeout("5 seconds"),
-              Effect.orElseSucceed(() => null),
-            );
-      localCache.set(executablePath, { fingerprint, executable });
       if (!executable) return null;
       const advisory = yield* compatibility(executable.version);
       return advisory?.status === "supported" ? executable : null;
