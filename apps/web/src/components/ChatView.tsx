@@ -309,6 +309,9 @@ import {
   shouldShowThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
+import { EmbedPendingSends } from "./chat/EmbedPendingSends";
+import { usePendingGuestMessageFollow } from "./chat/usePendingGuestMessageFollow";
+import { useEmbedPendingSendCount } from "../embed/embedPendingSends";
 import { HeldSendNotice } from "./chat/HeldSendNotice";
 import { releaseHeldSend, retryHeldSend, useHeldSendStore } from "./chat/heldSendStore";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
@@ -3009,34 +3012,12 @@ export default function ChatView(props: ChatViewProps) {
   const onComposerResumeStable = useStableCallback(onResume);
   const onComposerCompactContextStable = useStableCallback(onCompactContext);
   // Read from the projection the footer renders, so the scroll below sees the new message.
-  const pendingGuestMessageIds =
-    serverProjection?.thread.guestShare?.messages.flatMap((message) =>
-      message.status === "pending" ? [message.id] : [],
-    ) ?? [];
-  const pendingGuestMessageCount = pendingGuestMessageIds.length;
-  const pendingGuestMessageKey = pendingGuestMessageIds.join(",");
-  const previousPendingGuestMessagesRef = useRef({
-    threadKey: routeThreadKey,
-    key: pendingGuestMessageKey,
+  const pendingGuestMessageCount = usePendingGuestMessageFollow({
+    guestMessages: serverProjection?.thread.guestShare?.messages,
+    routeThreadKey,
+    liveFollowEnabled: timelineLiveFollowEnabled,
+    scrollToEnd,
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the timeline list to the end when a new pending guest message joins its footer
-  useEffect(() => {
-    const previous = previousPendingGuestMessagesRef.current;
-    previousPendingGuestMessagesRef.current = {
-      threadKey: routeThreadKey,
-      key: pendingGuestMessageKey,
-    };
-    // Opening another thread is not a new message; its own scroll position wins.
-    if (previous.threadKey !== routeThreadKey) return;
-    // Pending guest messages sit in the list footer, which the list does not follow on its own.
-    // The follow flag reflects the owner's position before the footer grew; a live measure may not.
-    // Any new id counts, even when another one was resolved in the same update.
-    const previousIds = new Set(previous.key.split(","));
-    const hasNewMessage = pendingGuestMessageKey
-      .split(",")
-      .some((id) => id !== "" && !previousIds.has(id));
-    if (hasNewMessage && timelineLiveFollowEnabled) scrollToEnd(true);
-  }, [routeThreadKey, pendingGuestMessageKey, timelineLiveFollowEnabled, scrollToEnd]);
   const queuedRunsControl =
     isServerThread && activeThread ? (
       <>
@@ -3127,6 +3108,7 @@ export default function ChatView(props: ChatViewProps) {
       .join(" · ") || null;
   // The end of the timeline holds the thread's present and next turns: what it is doing now,
   // its lifecycle status, guest messages awaiting you, then your queued messages.
+  const pendingHostSendCount = useEmbedPendingSendCount(serverProjection?.thread.id ?? null);
   const restartRuns = serverProjection?.runs;
   const restartPause = restartRuns === undefined ? null : restartPauseLabel(restartRuns);
   const timelineFooter =
@@ -3136,6 +3118,7 @@ export default function ChatView(props: ChatViewProps) {
     threadStatusLine === null &&
     pendingGuestMessageCount === 0 &&
     !hasQueuedTurns &&
+    pendingHostSendCount === 0 &&
     !(heldSendShown && !heldSendDelivered) ? null : (
       <>
         <ThreadRestartNotices
@@ -3160,6 +3143,14 @@ export default function ChatView(props: ChatViewProps) {
           />
         ) : null}
         {hasQueuedTurns ? queuedRunsControl : null}
+        {pendingHostSendCount > 0 && serverProjection ? (
+          <EmbedPendingSends
+            thread={serverProjection.thread.id}
+            messages={serverProjection.messages}
+            composerRef={composerRef}
+            composerDraftTarget={composerDraftTarget}
+          />
+        ) : null}
         {heldSendShown && !heldSendDelivered ? (
           <HeldSendNotice
             threadKey={routeThreadKey}
