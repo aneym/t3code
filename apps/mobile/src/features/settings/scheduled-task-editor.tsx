@@ -1,3 +1,4 @@
+import { comparePinnedProjects } from "@t3tools/client-runtime/state/project-pins";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -61,9 +62,11 @@ export function useScheduledTaskEditor() {
               member.project.environmentId === environmentId && member.project.id === project.id,
           ),
         ) ??
-        environmentProjects.find(
-          (project) => project.pinnedAt != null && project.archivedAt == null,
-        ) ??
+        environmentProjects
+          .filter((project) => project.pinnedAt != null && project.archivedAt == null)
+          .sort((left, right) =>
+            comparePinnedProjects({ ...left, key: left.id }, { ...right, key: right.id }),
+          )[0] ??
         environmentProjects.find((project) => project.archivedAt == null);
       return createDraft(
         project?.id ?? null,
