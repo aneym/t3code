@@ -271,6 +271,11 @@ import {
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
+import {
+  captureQueueDrainSnooze,
+  queueDrainSnoozeSuperseded,
+  type QueueDrainSnooze,
+} from "./QueueDrainSnooze.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -404,6 +409,10 @@ export interface OrchestratorV2Shape {
   readonly getThreadEventSequence: (
     threadId: ThreadId,
   ) => Effect.Effect<number, OrchestratorV2Error>;
+  readonly captureQueueDrainSnooze: (
+    threadId: ThreadId,
+    request: { readonly afterSequence: number; readonly requestedAt: string },
+  ) => Effect.Effect<QueueDrainSnooze, OrchestratorV2Error>;
   readonly streamStoredEvents: Stream.Stream<OrchestrationV2StoredEvent, OrchestratorV2Error>;
   readonly streamStoredEventsFrom: (input?: {
     readonly threadId?: ThreadId;
@@ -3240,79 +3249,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           reason: "thread_has_queued_run",
         });
       }
-      if (command.whenQueueDrains !== undefined) {
-        const { afterSequence, requestedAt } = command.whenQueueDrains;
-        const requestedMs = Date.parse(requestedAt);
-        const { messages: userMessages } = yield* loadProjectionForCommand(command, ["messages"], {
-          turnItemTypes: [],
-          messageRoles: ["user"],
+      if (
+        command.whenQueueDrains !== undefined &&
+        (yield* queueDrainSnoozeSuperseded(
+          { eventSink, projectionStore },
+          command.threadId,
+          command.whenQueueDrains,
+        ).pipe(mapDispatchError(command)))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} was organized or sent new work after the snooze was requested, so the deferred snooze was dropped.`,
+          reason: "snooze_superseded",
         });
-        const organizedSince = yield* Stream.mergeAll(
-          (
-            [
-              "thread.snoozed",
-              "thread.unsnoozed",
-              "thread.settled",
-              "thread.unsettled",
-              "thread.pinned",
-              "thread.unpinned",
-              "thread.archived",
-              "thread.unarchived",
-            ] as const
-          ).map((eventType) =>
-            eventSink.read({ threadId: command.threadId, afterSequence, eventType }),
-          ),
-          { concurrency: 1 },
-        ).pipe(
-          Stream.filter((stored) => !stored.commandId?.startsWith("server:snooze-after-queue:")),
-          Stream.runHead,
-          mapDispatchError(command),
-        );
-        const sentMessages = userMessages.filter(
-          (message) =>
-            message.notification === undefined && message.delegatedCompletion === undefined,
-        );
-        const tiedMessageIds = new Set(
-          sentMessages
-            .filter((message) => DateTime.toEpochMillis(message.createdAt) === requestedMs)
-            .map((message) => message.id),
-        );
-        const tiedMessageIdsSeenBefore =
-          tiedMessageIds.size === 0
-            ? new Set<string>()
-            : yield* eventSink
-                .read({
-                  threadId: command.threadId,
-                  afterSequence: 0,
-                  eventType: "message.updated",
-                })
-                .pipe(
-                  Stream.takeWhile((stored) => stored.sequence <= afterSequence),
-                  Stream.runFold(
-                    () => new Set<string>(),
-                    (seen, stored) =>
-                      stored.event.type === "message.updated" &&
-                      tiedMessageIds.has(stored.event.payload.id)
-                        ? seen.add(stored.event.payload.id)
-                        : seen,
-                  ),
-                  mapDispatchError(command),
-                );
-        const tiedMessageSentSince = [...tiedMessageIds].some(
-          (id) => !tiedMessageIdsSeenBefore.has(id),
-        );
-        if (
-          sentMessages.some((message) => DateTime.toEpochMillis(message.createdAt) > requestedMs) ||
-          tiedMessageSentSince ||
-          Option.isSome(organizedSince)
-        ) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: `Thread ${command.threadId} was organized or sent new work after the snooze was requested, so the deferred snooze was dropped.`,
-            reason: "snooze_superseded",
-          });
-        }
       }
       snoozedUntil = parsedSnoozedUntil.value;
     }
@@ -13900,6 +13850,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .findGuestShareThreadId(shareId)
         .pipe(Effect.mapError(shellProjectionError));
     }),
+    captureQueueDrainSnooze: Effect.fn("OrchestratorV2.captureQueueDrainSnooze")(
+      function (threadId, request) {
+        return captureQueueDrainSnooze({ eventSink, projectionStore }, threadId, request).pipe(
+          Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+        );
+      },
+    ),
     getThreadEventSequence: Effect.fn("OrchestratorV2.getThreadEventSequence")(function (threadId) {
       return eventSink
         .latestSequence({ threadId })
