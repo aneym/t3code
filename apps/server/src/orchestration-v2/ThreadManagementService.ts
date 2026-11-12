@@ -1,4 +1,12 @@
 import { restartWaitEvents } from "./RestartWaitEvents.ts";
+import {
+  isQueuedRunRefusal,
+  queueDrainSnoozeCommandId,
+  type QueueDrainSnooze,
+  untilQueueDrainSnoozeOrganized,
+  withDeferredSnoozeCommand,
+  withoutLatestDeferredSnooze,
+} from "./QueueDrainSnooze.ts";
 import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
 import { awaitServerFreeze } from "../serverHandoffBarrier.ts";
 import { makeSettlementCommands } from "./ThreadSettlementCommands.ts";
@@ -872,8 +880,7 @@ const make = Effect.gen(function* () {
     function* (input: {
       readonly projectId: ProjectId;
       readonly threadId: ThreadId;
-      readonly afterSequence: number;
-      readonly requestedAt: string;
+      readonly whenQueueDrains: QueueDrainSnooze;
       readonly commandId: CommandId;
       readonly snoozedUntil: string;
     }) {
@@ -897,18 +904,13 @@ const make = Effect.gen(function* () {
         if ((yield* Ref.get(latestDeferredSnooze)).get(input.threadId) !== input.commandId) return;
         const applied = yield* dispatch({
           type: "thread.snooze",
-          commandId: CommandId.make(`server:snooze-after-queue:${input.commandId}:${attempt}`),
+          commandId: queueDrainSnoozeCommandId(input.commandId, attempt),
           threadId: input.threadId,
           snoozedUntil: input.snoozedUntil,
-          whenQueueDrains: { afterSequence: input.afterSequence, requestedAt: input.requestedAt },
+          whenQueueDrains: input.whenQueueDrains,
         }).pipe(
           Effect.as(true),
-          Effect.catchIf(
-            (error) =>
-              error._tag === "OrchestratorDispatchError" &&
-              error.reason === "thread_has_queued_run",
-            () => Effect.succeed(false),
-          ),
+          Effect.catchIf(isQueuedRunRefusal, () => Effect.succeed(false)),
         );
         if (applied) return;
       }
@@ -928,13 +930,7 @@ const make = Effect.gen(function* () {
       commandId: input.commandId,
       threadId: input.threadId,
       snoozedUntil: input.snoozedUntil,
-    }).pipe(
-      Effect.catchIf(
-        (error) =>
-          error._tag === "OrchestratorDispatchError" && error.reason === "thread_has_queued_run",
-        () => Effect.succeed(null),
-      ),
-    );
+    }).pipe(Effect.catchIf(isQueuedRunRefusal, () => Effect.succeed(null)));
     if (result !== null) {
       return { sequence: result.sequence, ...(result.replayed ? { replayed: true as const } : {}) };
     }
@@ -950,29 +946,30 @@ const make = Effect.gen(function* () {
     yield* Ref.update(latestDeferredSnooze, (latest) =>
       new Map(latest).set(shell.id, input.commandId),
     );
-    yield* Ref.update(deferredSnoozeCommands, (commands) => {
-      const next = new Map(commands).set(input.commandId, input.threadId);
-      for (const [oldest] of next) {
-        if (next.size <= 1000) break;
-        next.delete(oldest);
-      }
-      return next;
-    });
+    yield* Ref.update(deferredSnoozeCommands, (commands) =>
+      withDeferredSnoozeCommand(commands, input.commandId, input.threadId),
+    );
     yield* snoozeAfterQueue({
       projectId: shell.projectId,
       threadId: shell.id,
-      afterSequence,
-      requestedAt,
+      whenQueueDrains: yield* orchestrator.captureQueueDrainSnooze(shell.id, {
+        afterSequence,
+        requestedAt,
+      }),
       commandId: input.commandId,
       snoozedUntil: input.snoozedUntil,
     }).pipe(
+      Effect.raceFirst(
+        untilQueueDrainSnoozeOrganized(
+          orchestrator.streamStoredEventsFrom,
+          shell.id,
+          afterSequence,
+        ),
+      ),
       Effect.ensuring(
-        Ref.update(latestDeferredSnooze, (latest) => {
-          if (latest.get(shell.id) !== input.commandId) return latest;
-          const next = new Map(latest);
-          next.delete(shell.id);
-          return next;
-        }),
+        Ref.update(latestDeferredSnooze, (latest) =>
+          withoutLatestDeferredSnooze(latest, shell.id, input.commandId),
+        ),
       ),
       Effect.ignoreCause({ log: true }),
       Effect.forkIn(layerScope),
