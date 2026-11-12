@@ -15,8 +15,9 @@ const TASK_ID = "bk6xreeye";
 const makeTaskFile = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "claude-task-output-" });
-  const tasks = path.join(root, "-private-tmp-project", SESSION_ID, "tasks");
+  const temp = yield* fileSystem.makeTempDirectoryScoped({ prefix: "claude-task-output-" });
+  const root = path.join(temp, "-private-tmp-project");
+  const tasks = path.join(root, SESSION_ID, "tasks");
   return { root, tasks, file: path.join(tasks, `${TASK_ID}.output`) };
 });
 
@@ -110,7 +111,8 @@ describe("claudeTaskOutputRoot", () => {
     () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
-        const user = `claude-${process.getuid?.()}`;
+        const user = `claude-${process.getuid?.()}/${process.cwd().replace(/[^a-zA-Z0-9]/g, "-")}`;
+        const work = `claude-${process.getuid?.()}/-work-project`;
         const root = (
           environment: Record<string, string>,
           platform: NodeJS.Platform,
@@ -130,11 +132,11 @@ describe("claudeTaskOutputRoot", () => {
         );
         assert.equal(
           root({ TMPDIR: "tmp" }, "linux", "/work/project"),
-          `/work/project/tmp/${user}`,
+          `/work/project/tmp/${work}`,
         );
         assert.equal(
           root({ CLAUDE_CODE_TMPDIR: "../claude" }, "darwin", "/work/project"),
-          `/work/claude/${user}`,
+          `/work/claude/${work}`,
         );
       }).pipe(Effect.provide(NodeServices.layer)),
   );
