@@ -152,6 +152,8 @@ export interface EnvironmentThreadShell {
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly lineage: OrchestrationV2ThreadShell["lineage"];
+  readonly automationTaskId?: OrchestrationV2ThreadShell["automationTaskId"];
+  readonly automationPlacementAt?: string | null | undefined;
   readonly forkedFrom: OrchestrationV2ThreadShell["forkedFrom"];
   readonly linkOrigin: OrchestrationV2ThreadShell["linkOrigin"] | null;
   /** The thread in a linked environment that delegated this one, if one did. */
@@ -302,6 +304,11 @@ export function presentThreadShell(
     linkedPullRequest: thread.linkedPullRequest ?? null,
     branchPullRequest: thread.branchPullRequest ?? null,
     lineage: thread.lineage,
+    automationTaskId: thread.automationTaskId,
+    automationPlacementAt:
+      thread.automationPlacementAt == null
+        ? thread.automationPlacementAt
+        : iso(thread.automationPlacementAt),
     forkedFrom: thread.forkedFrom,
     linkOrigin: thread.linkOrigin ?? null,
     delegatedFrom: thread.delegatedFrom ?? null,
