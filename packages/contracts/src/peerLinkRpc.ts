@@ -10,6 +10,7 @@ import {
   PeerLinkPairClientResult,
   PeerLinkRemoveInput,
   PeerLinkRemoveResult,
+  PeerLinkRenewInput,
   PeerLinkRequestAnswerInput,
   PeerLinkRequestError,
   PeerLinkSummary,
@@ -21,6 +22,7 @@ export const PEER_LINK_WS_METHODS = {
   peerLinksUnlink: "peerLinks.unlink",
   peerLinksAnswerRequest: "peerLinks.answerRequest",
   peerLinksPairClient: "peerLinks.pairClient",
+  peerLinksRenew: "peerLinks.renew",
 } as const;
 
 const PeerLinkRpcError = Schema.Union([PeerLinkError, EnvironmentAuthorizationError]);
@@ -48,6 +50,11 @@ export const PeerLinkRpcs = [
   Rpc.make(PEER_LINK_WS_METHODS.peerLinksPairClient, {
     payload: PeerLinkPairClientInput,
     success: PeerLinkPairClientResult,
+    error: PeerLinkRpcError,
+  }),
+  Rpc.make(PEER_LINK_WS_METHODS.peerLinksRenew, {
+    payload: PeerLinkRenewInput,
+    success: PeerLink,
     error: PeerLinkRpcError,
   }),
 ] as const;

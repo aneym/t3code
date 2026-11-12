@@ -40,6 +40,21 @@ export const HostLinkStatusInput = Schema.Struct({
 });
 export type HostLinkStatusInput = typeof HostLinkStatusInput.Type;
 
+export const HostLinkPeerState = Schema.Literals(["up", "down"]);
+export type HostLinkPeerState = typeof HostLinkPeerState.Type;
+
+export const HostLinkPeerDownReason = Schema.Literals(["unreachable", "expired"]);
+export type HostLinkPeerDownReason = typeof HostLinkPeerDownReason.Type;
+
+export const HostLinkPeerHealth = Schema.Struct({
+  environmentId: Schema.String,
+  label: Schema.String,
+  state: HostLinkPeerState,
+  reason: Schema.NullOr(HostLinkPeerDownReason),
+  since: Schema.String,
+});
+export type HostLinkPeerHealth = typeof HostLinkPeerHealth.Type;
+
 export const HostLinkStatus = Schema.Struct({
   enabled: Schema.Boolean,
   url: Schema.String,
@@ -50,6 +65,7 @@ export const HostLinkStatus = Schema.Struct({
   reconnects: Schema.Number,
   unacked: Schema.Number,
   lanes: Schema.Array(HostLinkLaneBinding),
+  peers: Schema.Array(HostLinkPeerHealth),
 });
 export type HostLinkStatus = typeof HostLinkStatus.Type;
 
@@ -60,6 +76,8 @@ export const HostLinkEventKind = Schema.Literals([
   "done",
   "ended",
   "reopened",
+  "peer_down",
+  "peer_up",
 ]);
 export type HostLinkEventKind = typeof HostLinkEventKind.Type;
 

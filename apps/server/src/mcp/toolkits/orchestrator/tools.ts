@@ -8,6 +8,8 @@ import {
   OrchestratorMcpEnvironmentLinksResult,
   OrchestratorMcpEnvironmentUnlinkInput,
   OrchestratorMcpEnvironmentUnlinkResult,
+  OrchestratorMcpEnvironmentRenewInput,
+  OrchestratorMcpEnvironmentRenewResult,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
   OrchestratorMcpDelegateTaskInput,
@@ -368,6 +370,20 @@ const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
   .annotate(Tool.Idempotent, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
 
+const EnvironmentRenewTool = Tool.make("t3_environment_renew", {
+  description:
+    "Renew a link for 30 more days without a pairing code, in its last 7 days. Links renew on their own; use this to retry a `due` or `refused` renewal. Expired: link it again with `t3_environment_link`.",
+  parameters: OrchestratorMcpEnvironmentRenewInput,
+  success: OrchestratorMcpEnvironmentRenewResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: linkingDependencies,
+})
+  .annotate(Tool.Title, "Renew a linked environment")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
+
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
@@ -390,4 +406,5 @@ export const OrchestratorToolkit = Toolkit.make(
   EnvironmentLinksTool,
   EnvironmentLinkTool,
   EnvironmentUnlinkTool,
+  EnvironmentRenewTool,
 );

@@ -2,6 +2,7 @@ import {
   type PeerLinkCreateInput,
   type PeerLinkPairClientInput,
   type PeerLinkRemoveInput,
+  type PeerLinkRenewInput,
   type PeerLinkRequestAnswerInput,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -27,5 +28,7 @@ export const make = Effect.gen(function* () {
       ),
     [WS_METHODS.peerLinksPairClient]: ({ environmentId }: PeerLinkPairClientInput) =>
       pairing.pairClient(environmentId),
+    [WS_METHODS.peerLinksRenew]: ({ environmentId }: PeerLinkRenewInput) =>
+      peerLinks.renew(environmentId),
   };
 });

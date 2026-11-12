@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as AgentDelegation from "../../agentDelegation.ts";
 import { withRecordedPlacement } from "../../../peer/AgentPlacement.ts";
 import { OrchestratorToolkit } from "./tools.ts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
@@ -223,6 +224,20 @@ const handlers = {
           ),
         );
       return { environmentId, removed };
+    }),
+  ),
+  t3_environment_renew: McpToolAccess.writesEnvironment(({ environmentId }) =>
+    Effect.gen(function* () {
+      const links = yield* PeerLinks.PeerLinks;
+      const renewed = yield* links
+        .renew(environmentId)
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+          ),
+        );
+      return { environmentId, expiresAt: DateTime.formatIso(renewed.expiresAt) };
     }),
   ),
   t3_thread_interrupt: McpToolAccess.writesThreads(
