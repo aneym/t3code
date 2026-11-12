@@ -1963,7 +1963,8 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       };
       const executionCount = yield* Ref.make(0);
       const layerOutbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
-        withDispatch: (effect) => effect,
+        admit: (_label, _mode, effect) => effect,
+        withCommit: (effect) => effect,
         restartPrepared: Effect.sync(() => undefined),
         claimNext: () => Effect.succeedSome(claimedEffect),
         get: () =>

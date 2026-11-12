@@ -135,6 +135,7 @@ import * as AuthUpkeep from "./auth/authUpkeep.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as CodexManagedTokenBroker from "./provider/CodexManagedTokenBroker.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
+import * as CpuProfileRoute from "./diagnostics/cpuProfileRoute.ts";
 import * as McpEventsService from "./mcpEvents/McpEventsService.ts";
 import * as HostLinkService from "./hostLink/HostLinkService.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
@@ -311,7 +312,7 @@ const layerRelayClient = Layer.unwrap(
     const policy = yield* ManagedPolicy.ManagedPolicy;
     const layerCloudflared = RelayClient.layerCloudflared({ baseDir: config.baseDir });
     if (ManagedLimits.allowsConnect(policy)) return layerCloudflared;
-    // The connector only carries T3 Connect, so a policy without Connect never installs one.
+    // The connector only carries Connect, so a policy without it never installs one.
     const refused = Effect.fn("RelayClient.installRefusedByPolicy")(function* () {
       return yield* new RelayClient.RelayClientInstallError({
         reason: "managed_by_policy",
@@ -335,7 +336,7 @@ const layerRelayClient = Layer.unwrap(
 const layerHttpServer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    // Before binding: a host the policy does not allow must never listen, not even briefly.
+    // Before binding: a host the policy forbids must never listen, even briefly.
     const policy = yield* ManagedPolicy.ManagedPolicy;
     const bindHost = yield* ManagedLimits.checkServerReachability(policy, {
       authPolicy: EnvironmentAuthPolicy.resolveServerAuthPolicy(config),
@@ -344,7 +345,7 @@ const layerHttpServer = Layer.unwrap(
       privateNetworkOnly: config.privateNetworkOnly,
     });
     const hotSwap = hotSwapContext() !== undefined;
-    // A hot-swap candidate binds loopback:0; the launcher's ingress owns config.port and its routes.
+    // A hot-swap candidate binds loopback:0; the launcher's ingress owns config.port.
     if (!hotSwap) {
       yield* ManagedLimits.closeTailscaleServeTo(policy, { host: bindHost, port: config.port });
     }
@@ -701,7 +702,7 @@ const layerRuntimeDependencies = AgentHomes.layer.pipe(
   Layer.provideMerge(layerResourceDiagnostics),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(TriageService.layer.pipe(Layer.provide(GitVcsDriver.layer))),
-  // Layers memoize by reference, so this is the same policy the settings layer reads.
+  // Layers memoize by reference: this is the policy the settings layer reads.
   Layer.provideMerge(AnalyticsService.layer.pipe(Layer.provide(ManagedPolicy.layer))),
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(RemoteOpenTargets.layer),
@@ -724,6 +725,7 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
+    CpuProfileRoute.layer,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     PeerServices.routeLayer,
@@ -830,8 +832,8 @@ const layerMakeServer = Layer.unwrap(
           ),
           Effect.asVoid,
         );
-        // Trials own cleanup immediately after the old server exits, retaining tunnels for commit/rollback unless explicitly stopped.
-        // Other runtimes wait for activation so failed standbys cannot tear down active tunnels.
+        // Trials clean up once the old server exits, keeping tunnels for commit/rollback unless stopped.
+        // Others wait for activation so a failed standby cannot drop active tunnels.
         const cleanupBeforeActivation = yield* pendingServiceUpdateExists;
         if (cleanupBeforeActivation) {
           yield* Effect.addFinalizer(() => releaseManagedTunnel);
@@ -881,7 +883,7 @@ const layerMakeServer = Layer.unwrap(
                   ),
                 )
               : false;
-            // Recover reads so this fiber still registers and consumes recovery requests.
+            // Recover reads so this fiber still registers and takes recovery requests.
             const desiredCliLinkMode = wantsCliLink
               ? yield* CloudCliState.readCliDesiredLinkMode.pipe(
                   Effect.catch((cause) =>
@@ -891,7 +893,7 @@ const layerMakeServer = Layer.unwrap(
                   ),
                 )
               : null;
-            // Publish-only links must not expose the host through old managed configs.
+            // Publish-only links must not expose the host via old managed configs.
             const startedConfirmed =
               desiredCliLinkMode === "publish_only"
                 ? false
@@ -941,7 +943,7 @@ const layerMakeServer = Layer.unwrap(
                     }).pipe(Effect.as({ status: "unavailable" as const })),
               ),
             );
-            // Jitter registrations so update waves do not hit the relay simultaneously.
+            // Jitter registrations so update waves do not hit the relay at once.
             if (!startedConfirmed && desiredCliLinkMode !== "publish_only") {
               const jitter = yield* Random.nextIntBetween(
                 0,

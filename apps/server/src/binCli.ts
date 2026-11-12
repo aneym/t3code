@@ -1,4 +1,5 @@
 import { agentCommand } from "./cli/agent.ts";
+import { debugCommand } from "./cli/debug.ts";
 import { doctorCommand } from "./cli/doctor.ts";
 import { policyCommand } from "./cli/policy.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -108,6 +109,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       servicePreflightCommand,
       themeCommand,
       traceCommand,
+      debugCommand,
       doctorCommand,
       policyCommand,
       triageCommand,

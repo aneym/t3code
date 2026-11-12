@@ -123,6 +123,10 @@
       "types": "./src/FairMutex.ts",
       "import": "./src/FairMutex.ts"
     },
+    "./FairRwLock": {
+      "types": "./src/FairRwLock.ts",
+      "import": "./src/FairRwLock.ts"
+    },
     "./KeyedLock": {
       "types": "./src/KeyedLock.ts",
       "import": "./src/KeyedLock.ts"

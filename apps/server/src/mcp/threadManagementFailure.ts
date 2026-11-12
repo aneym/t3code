@@ -1,5 +1,8 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+
+import { OrchestratorDispatchBusyError } from "../orchestration-v2/OrchestratorDispatchError.ts";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 
@@ -16,7 +19,20 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const isDispatchBusy = Schema.is(OrchestratorDispatchBusyError);
+
+export function dispatchBusyFailure(error: unknown): OrchestratorMcpFailure | undefined {
+  for (let value = error, depth = 0; depth < 6; depth += 1) {
+    if (isDispatchBusy(value)) return failure("busy", value.message);
+    if (!Predicate.isObject(value) || !("cause" in value)) return undefined;
+    value = value.cause;
+  }
+  return undefined;
+}
+
 export function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
+  const busy = dispatchBusyFailure(error);
+  if (busy !== undefined) return busy;
   if (!isThreadManagementError(error)) return failure("orchestration_error", errorMessage(error));
   switch (error._tag) {
     case "ThreadManagementThreadNotFoundError":

@@ -4,6 +4,7 @@ import { HttpRouter, HttpServerRequest } from "effect/http";
 import { descriptorDuringRecovery } from "./serviceChildTransport.ts";
 
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import { boundDispatchAdmission } from "./orchestration-v2/DispatchAdmissionBound.ts";
 
 export const layerCommandReadiness = HttpRouter.middleware(
   (httpEffect) =>
@@ -17,7 +18,10 @@ export const layerCommandReadiness = HttpRouter.middleware(
       )
         return yield* httpEffect;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
-      return yield* startup.awaitCommandReady.pipe(Effect.orDie, Effect.andThen(httpEffect));
+      return yield* startup.awaitCommandReady.pipe(
+        Effect.orDie,
+        Effect.andThen(boundDispatchAdmission(httpEffect)),
+      );
     }),
   { global: true },
 );

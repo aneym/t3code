@@ -34,3 +34,17 @@ export class OrchestratorCommandRejectedError extends Schema.TaggedError<Orchest
     return `Orchestration command ${this.commandType} (${this.commandId}) was rejected before commit.`;
   }
 }
+
+export class OrchestratorDispatchBusyError extends Schema.TaggedError<OrchestratorDispatchBusyError>()(
+  "OrchestratorDispatchBusyError",
+  {
+    commandId: CommandId,
+    commandType: Schema.String,
+    waitedMs: Schema.Number,
+    retryAfterMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `The server is busy and did not start this command within ${Math.round(this.waitedMs / 1000)} seconds, so nothing was saved. Retry in a few seconds.`;
+  }
+}

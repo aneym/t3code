@@ -17,6 +17,7 @@ import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingEr
 import { type McpInvocationScope, threadLinkFor } from "./McpInvocationContext.ts";
 import { requestPrincipal } from "./ownerCliSession.ts";
 import {
+  dispatchBusyFailure,
   errorMessage,
   failure,
   isThreadManagementError,
@@ -105,7 +106,7 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
       : threadManagement.sendToThread({ ...send, mode })
   ).pipe(
     Effect.mapError((error) =>
-      isThreadManagementError(error)
+      isThreadManagementError(error) || dispatchBusyFailure(error) !== undefined
         ? threadManagementFailure(error)
         : failure(
             "orchestration_error",
