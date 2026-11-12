@@ -13351,16 +13351,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ? cause.message
                     : String(cause),
             })
-            .pipe(
-              Effect.mapError(
-                (receiptCause) =>
-                  new OrchestratorDispatchError({
-                    commandId: command.commandId,
-                    commandType: command.type,
-                    cause: receiptCause,
-                  }),
-              ),
-            );
+            .pipe(effectOutbox.withCommit, mapDispatchError(command));
           if (
             command.type === "queued-run.edit" &&
             receipt.status === "rejected" &&
@@ -13393,7 +13384,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           error: null,
         });
         return { resultSequence: sequence, inserted };
-      }).pipe(mapDispatchError(command));
+      }).pipe(effectOutbox.withCommit, mapDispatchError(command));
       return {
         sequence: resultSequence,
         storedEvents: [],
@@ -13417,8 +13408,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { updateDelegatedCompletionOnlyRunId: plan.updateDelegatedCompletionOnlyRunId }),
       })
-      .pipe(mapDispatchError(command));
+      .pipe(effectOutbox.withCommit, mapDispatchError(command));
     yield* markGatePhase("after");
+    const receiptThreadId = committed.receipt.threadId;
+    if (!committed.committed && receiptThreadId !== commandThreadId(command))
+      return yield* new OrchestratorCommandIdConflictError({
+        commandId: command.commandId,
+        commandType: command.type,
+        receiptThreadId,
+        commandThreadId: commandThreadId(command),
+      });
 
     if (committed.receipt.status === "rejected") {
       return yield* new OrchestratorCommandPreviouslyRejectedError({

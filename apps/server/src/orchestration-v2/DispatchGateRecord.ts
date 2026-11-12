@@ -118,14 +118,17 @@ export const makeGateRecorder = Effect.gen(function* () {
     });
 
   const record =
-    (label: GateLabel, lock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>) =>
+    (base: GateLabel, lock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-      Effect.flatMap(Clock.currentTimeMillis, (since) => {
-        const waiter: Waiter = { label, since };
-        waiters.add(waiter);
-        const held = Effect.flatMap(
-          Effect.zip(Clock.currentTimeMillis, Effect.service(CurrentGateHolders)),
-          ([acquiredAt, outer]) => {
+      Effect.flatMap(
+        Effect.zip(Clock.currentTimeMillis, Effect.service(CurrentGateHolders)),
+        ([since, outer]) => {
+          const parent = outer.at(-1)?.label;
+          const label: GateLabel =
+            parent === undefined ? base : { ...parent, type: `${parent.type}:${base.type}` };
+          const waiter: Waiter = { label, since };
+          waiters.add(waiter);
+          const held = Effect.flatMap(Clock.currentTimeMillis, (acquiredAt) => {
             waiters.delete(waiter);
             const holder: Holder = {
               label,
@@ -139,12 +142,12 @@ export const makeGateRecorder = Effect.gen(function* () {
             holders.add(holder);
             return effect.pipe(
               Effect.provideService(CurrentGateHolders, [...outer, holder]),
-              Effect.ensuring(release(holder, outer.length === 0)),
+              Effect.ensuring(release(holder, parent === undefined)),
             );
-          },
-        );
-        return lock(held).pipe(Effect.ensuring(Effect.sync(() => waiters.delete(waiter))));
-      });
+          });
+          return lock(held).pipe(Effect.ensuring(Effect.sync(() => waiters.delete(waiter))));
+        },
+      );
 
   return { record };
 });
