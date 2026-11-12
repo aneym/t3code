@@ -13,6 +13,7 @@ import {
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
 } from "../ChatView.logic";
+import { useEmbedSendMarks } from "../../embed/useEmbedSendMarks";
 import { useEmbedTimeline } from "../../embed/useEmbedTimeline";
 import { EmbedShowEarlier } from "../embed/EmbedShowEarlier";
 import { MessagesTimeline } from "./MessagesTimeline";
@@ -67,6 +68,11 @@ export function ThreadTimeline({
     threadDetailRef?.threadId ?? null,
     displayedEntries,
     visibleTurnItems,
+  );
+  useEmbedSendMarks(
+    threadDetailRef?.threadId ?? null,
+    visibleTurnItems,
+    timelineProps.latestRun ?? null,
   );
   const liveRunId = embedLiveRunId(timelineProps.runningRunId ?? null, timelineProps.latestRun);
   const cleared = useEmbedClearedEntries(embed.entries, liveRunId, embedPage);

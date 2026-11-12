@@ -21,6 +21,7 @@ import { revealEmbedRow } from "./embedReveal";
 import { applyEmbedComposerMessage, embedControlsKey, toggleEmbedControls } from "./embedComposer";
 import { applyEmbedSendResult, setEmbedHostSend } from "./embedHostSend";
 import { applyEmbedPendingSendsMessage } from "./embedPendingSends";
+import { watchEmbedUploads } from "./embedUploads";
 import {
   EMBED_COMPOSER_FOCUS_MESSAGE,
   EMBED_KEY_MESSAGE,
@@ -84,6 +85,7 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
     const channel = channelForSpot({ origin, framed });
     const disconnect = connectEmbedHost(channel);
     const stopClear = threadId === null ? null : startEmbedClear(threadId);
+    const stopUploads = threadId === null ? null : watchEmbedUploads(threadId);
     let focused = false;
     const reportFocus = () => {
       const next = composerFocused();
@@ -166,6 +168,7 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       window.removeEventListener("focus", onFocusChange);
       window.removeEventListener("blur", onFocusChange);
       stopClear?.();
+      stopUploads?.();
       disconnect();
     };
   }, [origin, framed, threadId]);

@@ -17,6 +17,7 @@ import {
   trackLocalSend,
 } from "./embedPendingSends";
 import type { EmbedSendOutcome, EmbedSendWhen } from "./embedProtocol";
+import { embedSendEnter, failEmbedSend } from "./embedSendMarks";
 
 interface ComposerTarget {
   readonly routeThreadKey: string;
@@ -38,6 +39,7 @@ const draftStore = useComposerDraftStore.getState;
 
 function followLate(thread: string, messageId: string, late: EmbedSendOutcome): void {
   if (late.outcome === "refused") {
+    failEmbedSend(messageId, "host-refused");
     return settleLocalSend(thread, messageId, { state: "failed", reason: late.message });
   }
   if (late.outcome === "held") return settleLocalSend(thread, messageId, { state: "waiting" });
@@ -151,6 +153,7 @@ function settleComposerSend(
     releaseHeldSend(input.routeThreadKey);
     return;
   }
+  failEmbedSend(input.ids.messageId, "host-unanswered");
   dropLocalSends(input.thread, [input.ids.messageId]);
   if (putBack(input, input.text)) {
     holdUnansweredSend(input.routeThreadKey, input.text, input.ids);
@@ -174,10 +177,15 @@ export async function holdOrSendThroughHost(
   const plain =
     promptAtSend.trim() !== "" && !(draft && composerDraftHasUserContent({ ...draft, prompt: "" }));
   const ids = { messageId: newMessageId(), commandId: CommandId.make(randomUUID()) };
+  if (plain) embedSendEnter(input.thread, ids.messageId);
   const sent = plain ? hand(input, promptAtSend, ids, "queue") : null;
-  if (sent === null) return holdSend(routeThreadKey, promptAtSend);
+  if (sent === null) {
+    failEmbedSend(ids.messageId, "host-unavailable");
+    return holdSend(routeThreadKey, promptAtSend);
+  }
   const result = await sent;
   if (result.outcome === "sent" || result.outcome === "held") return;
+  if (result.outcome === "unanswered") failEmbedSend(ids.messageId, "host-unanswered");
   dropLocalSends(input.thread, [ids.messageId]);
   putBack(input, promptAtSend);
   holdSend(routeThreadKey, promptAtSend, ids);
