@@ -131,6 +131,11 @@ import {
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import {
+  commandNeedsFullHistory,
+  readCommandRecords,
+  windowsCommandProjection,
+} from "./CommandProjectionRead.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
   derivePendingBackgroundWork,
@@ -899,44 +904,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return withId;
       });
 
-  const readCommandProjection = (threadId: ThreadId) =>
-    projectionStore
-      .getThreadRecords(
-        threadId,
-        [
-          "runs",
-          "attempts",
-          "nodes",
-          "subagents",
-          "providerSessions",
-          "providerThreads",
-          "providerTurns",
-          "runtimeRequests",
-          "messages",
-          "turnItems",
-          "checkpointScopes",
-          "contextTransfers",
-        ],
-        {
-          turnItemTypes: ["user_message", "error", "run_interrupt_request"],
-          messageRoles: ["user"],
-          omitSettledLeafNodes: true,
-          // Commands here read only undelivered or active tasks; a dispatcher thread keeps
-          // thousands of delivered ones, each carrying its full prompt.
-          omitSettledSubagents: true,
-        },
-      )
-      .pipe(
-        Effect.map((records): OrchestrationV2ThreadProjection => ({
-          ...records,
-          checkpoints: [],
-          plans: [],
-          contextHandoffs: [],
-          visibleTurnItems: [],
-          updatedAt: records.thread.updatedAt,
-        })),
-        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
-      );
+  const readCommandProjection = (threadId: ThreadId, windowed = false) =>
+    readCommandRecords(
+      projectionStore,
+      threadId,
+      (ordinal) => idAllocator.derive.run({ threadId, ordinal }),
+      windowed,
+    ).pipe(
+      Effect.map((records): OrchestrationV2ThreadProjection => ({
+        ...records,
+        checkpoints: [],
+        plans: [],
+        contextHandoffs: [],
+        visibleTurnItems: [],
+        updatedAt: records.thread.updatedAt,
+      })),
+      Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+    );
 
   // Command reads omit settled tasks, but a completion notice counts its whole cohort.
   const notificationTasks = (
@@ -1012,9 +996,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.fnUntraced(function* (
       threadId: ThreadId,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      windowed = false,
     ) {
       const pending = (yield* Ref.get(events)).filter((event) => event.threadId === threadId);
-      const stored = yield* Effect.option(readCommandProjection(threadId));
+      const stored = yield* Effect.option(readCommandProjection(threadId, windowed));
       let projection: OrchestrationV2ThreadProjection;
       if (Option.isSome(stored)) {
         projection = stored.value;
@@ -5275,7 +5260,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
-    let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    const windowed = windowsCommandProjection(command);
+    let projection = yield* getProjectionWithPendingEvents(command.threadId, events, windowed);
+    if (windowed && commandNeedsFullHistory(projection, command.modelSelection))
+      projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
       const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -5418,7 +5406,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : now,
         updatedAt: now,
       };
-      yield* emit(
+      const event = yield* emit(
         events,
         command,
       )({
@@ -5428,7 +5416,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: thread,
       });
-      projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      projection = applyToProjection(projection, event);
     }
     // Background wakes and delegated completions continue work the user already snoozed, so
     // only a message someone actually sent ends the snooze.
@@ -5446,7 +5434,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         snoozedAt: null,
         updatedAt: now,
       };
-      yield* emit(
+      const event = yield* emit(
         events,
         command,
       )({
@@ -5456,7 +5444,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: thread,
       });
-      projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      projection = applyToProjection(projection, event);
     }
     const userMessages = projection.messages.filter((message) => message.role === "user");
     const onlyMaintenanceHistory =
@@ -5476,7 +5464,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         titleRegeneration: { requestId: command.commandId, startedAt: now },
         updatedAt: now,
       };
-      yield* emit(
+      const event = yield* emit(
         events,
         command,
       )({
@@ -5493,7 +5481,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageId: command.messageId,
         }),
       ]);
-      projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      projection = applyToProjection(projection, event);
     }
     const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
     let dispatchMode = resolveMessageDispatchIntent(

@@ -32,6 +32,13 @@ import {
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
+import { inheritsForkConversation } from "./ForkConversationInheritance.ts";
+import {
+  type CommandRunWindow,
+  inCommandRunWindow,
+  inCommandRunWindowAttempts,
+  readCommandRunWindow,
+} from "./CommandRunWindow.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -371,32 +378,13 @@ export interface ProjectionRecordFilter {
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
   readonly turnItemStatuses?: ReadonlyArray<OrchestrationV2TurnItem["status"]>;
   readonly omitSettledLeafNodes?: boolean;
+  readonly runWindow?: CommandRunWindow;
   /**
    * Skips ended subagents whose completion was acknowledged, delivered or disposed, unless their
    * run is active or `except` names them.
    */
   readonly omitSettledSubagents?: true | { readonly except: ReadonlyArray<NodeId> };
 }
-
-// A fork inherits its source's history before it has messages of its own,
-// unless a portable handoff's budget left none of that history to deliver.
-const inheritsForkConversation = ({
-  thread,
-  contextTransfers,
-  contextHandoffs,
-}: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers" | "contextHandoffs">) => {
-  if (thread.forkedFrom?.type !== "run") return false;
-  const resolution = contextTransfers.find(
-    (transfer) => transfer.type === "fork" && transfer.targetThreadId === thread.id,
-  )?.resolution;
-  return (
-    resolution?.strategy !== "portable_context" ||
-    contextHandoffs.some(
-      (handoff) =>
-        handoff.id === resolution.contextHandoffId && (handoff.history?.messages.length ?? 0) > 0,
-    )
-  );
-};
 
 export type ProjectionRecordField = Exclude<
   keyof OrchestrationV2ThreadProjection,
@@ -2953,6 +2941,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         if (!threadRow) {
           return yield* new ProjectionStoreThreadNotFoundError({ threadId });
         }
+        const runWindow = yield* readCommandRunWindow(
+          sql,
+          threadId,
+          window === undefined ? filter?.runWindow : undefined,
+        );
 
         type WindowPayloadRow = PayloadRow & {
           readonly work_last_id?: string | null;
@@ -2979,6 +2972,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
                   ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}
                   ${filter?.turnItemRunIds === undefined ? sql`` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`}
+                  ${inCommandRunWindow(sql, runWindow)}
                 ORDER BY ordinal ASC, turn_item_id ASC
               `
               : yield* sql<PayloadRow>`
@@ -3167,6 +3161,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             FROM orchestration_v2_projection_runs
             WHERE thread_id = ${threadId}
               ${filter?.runIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.runIds)}))`}
+              ${inCommandRunWindow(sql, runWindow)}
             ORDER BY ordinal ASC
           `
               : sql<PayloadRow>`
@@ -3194,7 +3189,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_run_attempts
-            WHERE thread_id = ${threadId}
+            WHERE thread_id = ${threadId} ${inCommandRunWindow(sql, runWindow)}
             ORDER BY run_id ASC, attempt_ordinal ASC
           `
               : sql<PayloadRow>`
@@ -3227,6 +3222,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     )`
                   : sql``
               }
+              ${inCommandRunWindow(sql, runWindow)}
             ORDER BY COALESCE(node.started_at, ''), node.node_id ASC
               `
               : sql<PayloadRow & { readonly position: number }>`
@@ -3339,7 +3335,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_provider_turns
-            WHERE thread_id = ${threadId}
+            WHERE thread_id = ${threadId} ${inCommandRunWindowAttempts(sql, runWindow)}
             ORDER BY provider_thread_id ASC, ordinal ASC
           `
               : sql<PayloadRow>`
@@ -3379,6 +3375,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ${filter?.messageRoles === undefined ? sql`` : sql`AND role IN (SELECT value FROM json_each(${encodeIdList(filter.messageRoles)}))`}
                   ${filter?.monitorNotificationsOnly === true ? sql`AND json_extract(payload_json, '$.notification.source.kind') = 'monitor'` : sql``}
                   ${filter?.messageRunIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.messageRunIds)}))`}
+                  ${inCommandRunWindow(sql, runWindow)}
                 ORDER BY created_at ASC, message_id ASC
               `
               : sql<PayloadRow>`
