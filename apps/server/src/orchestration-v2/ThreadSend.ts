@@ -108,6 +108,13 @@ export class ThreadManagementSendConflictError extends Schema.TaggedError<Thread
   }
 }
 
+const isSameSend = (
+  message: Pick<OrchestrationV2ConversationMessage, "id" | "text" | "delegatedCompletion">,
+  input: Pick<ThreadSendInput, "messageId" | "text">,
+) =>
+  message.id === input.messageId &&
+  (message.delegatedCompletion !== undefined || message.text.trim() === input.text.trim());
+
 type SendDispatchMode = Extract<
   OrchestrationV2Command,
   { readonly type: "message.dispatch" }
@@ -240,7 +247,7 @@ export const makeSendToThread = <LoadError, DispatchError>(
       const recorded = yield* deps.loadRecords(input, ["messages"], {
         messageIds: [input.messageId],
       });
-      if (!recorded.messages.some((candidate) => candidate.id === input.messageId)) {
+      if (!recorded.messages.some((candidate) => isSameSend(candidate, input))) {
         return yield* conflict();
       }
       dispatchMode = replayDispatchMode(input);
@@ -281,7 +288,8 @@ export const makeSendToThread = <LoadError, DispatchError>(
       turnItemTypes: ["user_message"],
     });
     const message = projection.messages.find((candidate) => candidate.id === input.messageId);
-    if (message === undefined && dispatched.replayed === true) return yield* conflict();
+    if (dispatched.replayed === true && (message === undefined || !isSameSend(message, input)))
+      return yield* conflict();
     const run =
       message?.runId === null || message?.runId === undefined
         ? undefined
@@ -371,7 +379,10 @@ export const makeNoteToThread = <LoadError, DispatchError, SendError>(
       messageIds: [input.messageId],
     });
     const message = messages.find((candidate) => candidate.id === input.messageId);
-    if (message?.quietNote !== true) {
+    if (
+      message?.quietNote !== true ||
+      (dispatched.replayed === true && !isSameSend(message, input))
+    ) {
       return yield* new ThreadManagementSendConflictError({
         threadId: input.threadId,
         commandId: input.commandId,
