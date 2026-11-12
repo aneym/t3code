@@ -982,6 +982,7 @@ const writeReplayTaskOutputFiles = Effect.fn("ClaudeReplay.writeTaskOutputFiles"
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const tmpRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "claude-replay-tasks-" });
+  yield* fileSystem.makeDirectory(path.join(tmpRoot, "claude-home"));
   const frames = transcript.entries.flatMap((entry) =>
     entry.type === "emit_inbound" && typeof entry.frame === "object" && entry.frame !== null
       ? [entry.frame as Record<string, unknown>]
@@ -1041,7 +1042,11 @@ function layerClaudeProviderAdapterRegistryReplay(
             {
               instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
               displayName: undefined,
-              environment: [{ name: "CLAUDE_CODE_TMPDIR", value: tmpRoot, sensitive: false }],
+              environment: [
+                { name: "CLAUDE_CODE_TMPDIR", value: tmpRoot, sensitive: false },
+                { name: "CLAUDE_CONFIG_DIR", value: `${tmpRoot}/claude-home`, sensitive: false },
+                { name: "ENABLE_TOOL_SEARCH", value: "true", sensitive: false },
+              ],
               enabled: true,
               config: DEFAULT_CLAUDE_SETTINGS,
             },
