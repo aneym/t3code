@@ -144,6 +144,7 @@ without a sign-in:
 id=$(t3 thread start . "Find why the tests are slow")
 t3 thread send "$id" "Now fix it" --wait
 t3 thread show "$id"
+t3 thread update "$id" --title "Investigate slow tests"
 t3 thread list
 ```
 
@@ -152,6 +153,11 @@ its repository; a project id also works. A new thread uses the project's
 default model and permission mode, and runs in the project folder unless you
 pass `--worktree <base-branch>`. `send` never interrupts: a busy thread gets
 the message as its next turn. Pass `-` as the message to read it from stdin.
+
+Run by an agent inside T3 Code, `send` marks the message as coming from that
+agent's thread, so it reads as agent traffic rather than your own words.
+`--from <thread>` names the sending thread yourself, and `--as-owner` sends it
+as yours.
 
 `--wait` prints the agent's reply. It exits 1 when the run fails or stops, and
 2 when the agent waits for an answer you give in the app. Add `--json` for a

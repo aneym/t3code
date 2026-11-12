@@ -597,7 +597,7 @@ orchestration_error
   `apps/server/src/mcp/ThreadMetadataMcpService.ts`
 - Tool definitions and handlers:
   `apps/server/src/mcp/toolkits/orchestrator/`
-- HTTP registration and authentication:
+- MCP HTTP entry (registration, auth):
   `apps/server/src/mcp/McpHttpServer.ts`
 - Credential lifecycle: `apps/server/src/mcp/McpSessionRegistry.ts`
 - Provider injection:
