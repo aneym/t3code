@@ -12,6 +12,7 @@ import { searchableSetting } from "./settingsSearch";
 import { LegacyFeaturesSection } from "./SettingsPanels";
 import { RemovedLinkedRoutes } from "./RemovedLinkedRoutes";
 import { EmbedModeSettings } from "./EmbedModeSettings";
+import { AppCardSettings } from "./AppCardSettings";
 import { LaneResultRowsSetting } from "./LaneResultRowsSetting";
 import { RailsCommentCardsSetting } from "./RailsCommentCardsSetting";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -32,6 +33,7 @@ export function LabsSettingsPanel() {
         <RemovedLinkedRoutes />
         <SimlockHostsRow />
         <EmbedModeSettings />
+        <AppCardSettings />
         <LaneResultRowsSetting />
         <RailsCommentCardsSetting />
       </SettingsSection>

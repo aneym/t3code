@@ -5,6 +5,7 @@ import type * as Types from "effect/Types";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
+import { noteMcpCaller } from "../observability/RequestLog.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -140,6 +141,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const asked = withPeerRequestContext(invocation, request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
+    yield* noteMcpCaller(limited);
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     return yield* httpEffect.pipe(

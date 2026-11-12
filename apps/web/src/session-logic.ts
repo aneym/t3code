@@ -28,6 +28,7 @@ import {
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
+import type { McpAppCardReference } from "@t3tools/shared/mcpAppCard";
 import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import {
   contextCompactionLabel,
@@ -144,6 +145,13 @@ export type TimelineEntry = (
       readonly itemId: TurnItemId;
       readonly revision: string;
       readonly mcpApp: McpAppReference;
+    }
+  | {
+      readonly id: string;
+      readonly kind: "app-card";
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly card: McpAppCardReference;
     }
   | {
       readonly id: string;

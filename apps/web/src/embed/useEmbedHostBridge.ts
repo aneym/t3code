@@ -20,6 +20,7 @@ import { applyEmbedAudienceMessage } from "./embedAudience";
 import { revealEmbedRow } from "./embedReveal";
 import { applyEmbedComposerMessage, embedControlsKey, toggleEmbedControls } from "./embedComposer";
 import { applyEmbedSendResult, setEmbedHostSend } from "./embedHostSend";
+import { applyEmbedPendingSendsMessage } from "./embedPendingSends";
 import {
   EMBED_COMPOSER_FOCUS_MESSAGE,
   EMBED_KEY_MESSAGE,
@@ -114,6 +115,7 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       const sendResult = readEmbedSendResultMessage(event.data);
       if (sendResult !== null) applyEmbedSendResult(sendResult);
       applyEmbedLinksMessage(event.data);
+      applyEmbedPendingSendsMessage(event.data);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       const controlsKey = embedControlsKey();

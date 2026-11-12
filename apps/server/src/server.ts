@@ -26,6 +26,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerHttp from "./http.ts";
+import * as RequestLog from "./observability/RequestLog.ts";
 import {
   guardHttpResponseWriteErrors,
   rejectRequestsUntilServing,
@@ -138,6 +139,7 @@ import * as McpEventsService from "./mcpEvents/McpEventsService.ts";
 import * as HostLinkService from "./hostLink/HostLinkService.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
+import * as McpClientAuthentication from "./auth/McpClientAuthentication.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
 import {
@@ -733,7 +735,7 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(McpOrchestrationServices.layer),
-    Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+    Layer.provide(McpClientAuthentication.layerMcpClientAuthenticator),
   ),
   Layer.effectDiscard(AgentRouting.start),
 ).pipe(
@@ -743,7 +745,6 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(AgentRouting.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   Layer.provide(PeerLinkRequests.layer),
   Layer.provide(Layer.merge(McpEventsService.layer, HostLinkService.layer)),
-  // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
   Layer.provide(layerPullRequestService),
   // The same activity instance RunExecutionService reports to, by layer memoization.
   Layer.provide(ServerBrowserRuntime.layer),
@@ -756,6 +757,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(layerEmbedFrameAncestors),
   Layer.provide(ServerHttp.layerBrowserApiCors),
   Layer.provide(ServerHttp.layerHttpCompression),
+  Layer.provide(RequestLog.layer),
 );
 
 const layerMakeServer = Layer.unwrap(

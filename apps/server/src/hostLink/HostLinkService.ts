@@ -35,10 +35,10 @@ import { type HostLinkThreadEvent, makeHostLinkEventMapper } from "./hostLinkEve
 import { makePeerHealthTracker } from "./hostLinkPeerHealth.ts";
 import { readHostLinkToken } from "./hostLinkToken.ts";
 import * as LaneStore from "./HostLinkLaneStore.ts";
+import { peerCheckSchedule } from "../peer/peerDescriptorCache.ts";
 
 const RECONCILE_EVERY = "60 seconds";
 const COALESCE_EVERY = "250 millis";
-const PEER_CHECK_EVERY = "30 seconds";
 
 const decodeInbound = Schema.decodeUnknownOption(HostLinkInboundFrame);
 const isMcpFailure = Schema.is(OrchestratorMcpFailure);
@@ -233,7 +233,7 @@ const make = Effect.gen(function* () {
   );
 
   yield* forkParked(Stream.runForEach(settings.streamChanges, () => reconcile));
-  yield* forkParked(checkPeers.pipe(Effect.repeat(Schedule.spaced(PEER_CHECK_EVERY))));
+  yield* forkParked(checkPeers.pipe(Effect.repeat(yield* peerCheckSchedule)));
   yield* forkParked(reconcile.pipe(Effect.repeat(Schedule.spaced(RECONCILE_EVERY))));
   yield* forkParked(
     Effect.sync(() => coalescer.flush()).pipe(Effect.repeat(Schedule.spaced(COALESCE_EVERY))),

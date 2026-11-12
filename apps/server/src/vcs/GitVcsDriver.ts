@@ -1,5 +1,3 @@
-import * as NodeBuffer from "node:buffer";
-
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -43,6 +41,12 @@ import {
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
 import { checkpointCommitEnv } from "./checkpointCommitEnv.ts";
+import {
+  checkpointIndexSeedPath,
+  keepCheckpointIndexSeed,
+  makeIndexFlagScan,
+  seedScratchIndex,
+} from "./checkpointIndexSeed.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -906,6 +910,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const indexId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
       const commitEnv = yield* checkpointCommitEnv(tempIndexPath);
+      let seedPath: string | undefined;
 
       const cleanupTempIndex = Effect.forEach(
         [tempIndexPath, `${tempIndexPath}.lock`],
@@ -931,6 +936,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           sparseCheckout = /--(?:\[no-\])?sparse\b/.test(`${help.stdout}${help.stderr}`);
         }
         if (headExists) {
+          const seedFrom = (source: string) =>
+            seedScratchIndex({
+              fileSystem,
+              source,
+              scratch: tempIndexPath,
+              resetToHead: execute({
+                operation,
+                cwd: input.cwd,
+                args: [...indexConfig, "read-tree", "--reset", "HEAD"],
+                env: commitEnv,
+              }),
+            });
           const reusedIndex = yield* Effect.gen(function* () {
             const userIndexPath =
               indexPath ??
@@ -939,25 +956,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 cwd: input.cwd,
                 args: ["rev-parse", "--path-format=absolute", "--git-path", "index"],
               })).stdout.trim();
-            const { mtime } = yield* fileSystem.stat(userIndexPath);
-            if (Option.isNone(mtime)) return false;
-            // Stay below the source timestamp even if Date rounded up, preserving Git's racy check.
-            const indexTime = Math.floor((mtime.value.getTime() - 1) / 1000);
-            if (indexTime <= 0) return false;
-            yield* fileSystem.copyFile(userIndexPath, tempIndexPath);
-            yield* execute({
-              operation,
-              cwd: input.cwd,
-              args: [...indexConfig, "read-tree", "--reset", "HEAD"],
-              env: commitEnv,
-            });
-            // read-tree can rewrite the index, so restore its racy timestamp afterward.
-            yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
-            let specialFlags = false;
-            let recordStart = true;
-            let skipped = false;
-            let skippedRecord: Uint8Array[] = [];
-            const skippedPaths: string[] = [];
+            if (!sparseCheckout) {
+              seedPath = checkpointIndexSeedPath(path, userIndexPath);
+              if (yield* seedFrom(seedPath).pipe(Effect.orElseSucceed(() => false))) return true;
+              yield* cleanupTempIndex;
+            }
+            if (!(yield* seedFrom(userIndexPath))) return false;
+            const scan = makeIndexFlagScan(sparseCheckout);
             yield* vcsProcess.run({
               operation,
               command: "git",
@@ -966,39 +971,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               env: commitEnv,
               maxOutputBytes: 4_096,
               outputMode: "truncate",
-              // Only tags and sparse skip-worktree paths matter; scan NUL-delimited records.
-              onStdoutChunk: (chunk) => {
-                let start = 0;
-                while (start < chunk.length) {
-                  const end = chunk.indexOf(0, start);
-                  if (recordStart) {
-                    const tag = chunk[start]!;
-                    skipped = tag === 83;
-                    if ((tag >= 97 && tag <= 122) || (!sparseCheckout && tag === 83)) {
-                      specialFlags = true;
-                    }
-                  }
-                  if (skipped && sparseCheckout) {
-                    skippedRecord.push(
-                      Buffer.from(chunk.subarray(start, end === -1 ? undefined : end)),
-                    );
-                    if (end !== -1) {
-                      const record = Buffer.concat(skippedRecord);
-                      if (record.at(-1) !== 47) {
-                        const name = record.subarray(2);
-                        if (!NodeBuffer.isUtf8(name)) specialFlags = true;
-                        else skippedPaths.push(name.toString("utf8"));
-                      }
-                      skippedRecord = [];
-                    }
-                  }
-                  recordStart = end !== -1;
-                  if (!recordStart) break;
-                  start = end + 1;
-                }
-              },
+              onStdoutChunk: scan.onStdoutChunk,
             });
-            if (skippedPaths.length > 0 && !specialFlags) {
+            const { skippedPaths } = scan.state;
+            if (skippedPaths.length > 0 && !scan.state.specialFlags) {
               const selected = yield* execute({
                 operation,
                 cwd: input.cwd,
@@ -1008,10 +984,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 maxOutputBytes: 1,
                 outputMode: "truncate",
               });
-              specialFlags = selected.stdout.length > 0 || selected.stdoutTruncated;
+              scan.state.specialFlags = selected.stdout.length > 0 || selected.stdoutTruncated;
             }
             // Sparse Git clears skip-worktree for present files. Manual flags still need a reset.
-            return !specialFlags;
+            return !scan.state.specialFlags;
           }).pipe(Effect.orElseSucceed(() => false));
           if (!reusedIndex) {
             if (sparseCheckout) {
@@ -1225,6 +1201,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           cwd: input.cwd,
           args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
         });
+        if (seedPath !== undefined) {
+          yield* keepCheckpointIndexSeed(fileSystem, tempIndexPath, seedPath);
+        }
       }).pipe(Effect.ensuring(cleanupTempIndex));
     }),
 
