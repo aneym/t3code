@@ -1,3 +1,4 @@
+import { resolveServerHotSwapCapability } from "./ServerHotSwapCapability.ts";
 import {
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
@@ -241,6 +242,11 @@ export const make = Effect.gen(function* () {
       secretSourceCheck: true,
       projectWorktreeCleanup: true,
       settledWorktreeCleanup: true,
+      worktreeRequireIntegrated: true,
+      worktreeContentIntegration: true,
+      worktreeDisposableIgnoredPaths: true,
+      worktreeOrphans: true,
+      worktreeAcceptPushed: true,
       worktreesDirectory: true,
       ...(hostPlatform === "darwin" ? { fastWorktreeCheckout: true } : {}),
       threadAutoSettlementScope: true,
@@ -282,6 +288,7 @@ export const make = Effect.gen(function* () {
       voiceTranscription: isSpeechPlatformSupported(hostPlatform, hostArchitecture, hostLibc),
       cloudVoiceTranscription: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
+      ...(yield* resolveServerHotSwapCapability(serverSelfUpdate, serverConfig.baseDir)),
       ...(serverInstallation === null ? {} : { serverInstallation }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
         ? { serverSelfUpdateProgress: true }
