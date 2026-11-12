@@ -11,6 +11,7 @@ export type ModelRowProps = {
   readonly onPress: () => void;
   readonly isFavorite: boolean;
   readonly favoritesLoaded: boolean;
+  readonly favoritesWritable: boolean;
   readonly onToggleFavorite: () => void;
   readonly onToggleHidden?: () => void;
   readonly hiddenUpdatePending?: boolean;
@@ -119,10 +120,21 @@ export function ModelRowContent(
         accessibilityLabel={`${props.isFavorite ? "Remove from" : "Add to"} favorites: ${
           props.option.providerLabel
         }, ${props.option.label}`}
+        accessibilityHint={
+          props.favoritesWritable
+            ? undefined
+            : "This connection can't change settings here, so favorites are read-only."
+        }
         accessibilityRole="button"
-        accessibilityState={{ disabled: !props.favoritesLoaded, selected: props.isFavorite }}
-        className="min-h-11 min-w-11 items-center justify-center"
-        disabled={!props.favoritesLoaded}
+        accessibilityState={{
+          disabled: !props.favoritesLoaded || !props.favoritesWritable,
+          selected: props.isFavorite,
+        }}
+        className={cn(
+          "min-h-11 min-w-11 items-center justify-center",
+          !props.favoritesWritable && "opacity-40",
+        )}
+        disabled={!props.favoritesLoaded || !props.favoritesWritable}
         onPress={props.onToggleFavorite}
       >
         <SymbolView
