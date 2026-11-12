@@ -8,10 +8,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
+import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { cliRefusal } from "../cliRefusal.ts";
 import { HOST_DAEMON_SUBJECT, HostDaemonScopes } from "../auth/McpClientSubjects.ts";
 import * as ServerConfig from "../config.ts";
 import * as CliAuthRuntime from "./cliAuthRuntime.ts";
@@ -33,6 +35,8 @@ export class DaemonTokenRevokedError extends Schema.TaggedError<DaemonTokenRevok
   "DaemonTokenRevokedError",
   { name: Schema.String, sessionId: Schema.String },
 ) {
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
   override get message(): string {
     return `Session ${this.sessionId} for daemon ${this.name} was revoked. Run again with --reissue to mint a new one.`;
   }
