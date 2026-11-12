@@ -110,6 +110,10 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
         // Opening the database migrates it.
         yield* Effect.void.pipe(Effect.provide(Sqlite.layerFromPath(dbPath)));
+        yield* fs.writeFileString(
+          path.join(baseDir, "userdata", "settings.json"),
+          JSON.stringify({ storageCleanup: { pruneEventLog: true } }),
+        );
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`PRAGMA auto_vacuum = NONE`;

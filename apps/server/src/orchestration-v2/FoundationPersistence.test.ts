@@ -292,6 +292,7 @@ it.effect("paces scheduled compaction while preserving retention state and fixed
     }).pipe(
       Effect.provide(
         DatabaseStorage.layer.pipe(
+          Layer.provide(ServerSettings.layerTest({ storageCleanup: { pruneEventLog: true } })),
           Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "compaction-" })),
           Layer.provide(NodeServices.layer),
         ),
@@ -929,7 +930,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       `;
       assert.deepEqual(
         remaining.map((row) => row.event_id),
-        ["event:foundation-compact:create", "event:foundation-compact:tags-2"],
+        ["event:foundation-compact:create", "event:foundation-compact:item-2"],
       );
 
       const remainingV1 = yield* sql<{ readonly stream_id: string }>`

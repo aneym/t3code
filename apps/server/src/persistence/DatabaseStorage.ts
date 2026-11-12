@@ -46,6 +46,10 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const statusRef = yield* SubscriptionRef.make<DatabaseStorageStatus | null>(null);
+  const pruneEventLog = Effect.gen(function* () {
+    if (Option.isNone(settings)) return false;
+    return (yield* settings.value.getSettings).storageCleanup.pruneEventLog;
+  });
   const historyIdleBefore = Effect.gen(function* () {
     if (Option.isNone(settings)) return Option.none<DateTime.Utc>();
     const afterDays = (yield* settings.value.getSettings).storageCleanup.threadHistoryAfterDays;
@@ -121,12 +125,14 @@ const make = Effect.gen(function* () {
       yield* Effect.sleep((Number(elapsed) / 1_000_000) * 9);
       sliceStarted = yield* Clock.monotonicTimeNanos;
     });
-    const result = yield* maintenance.pruneEventStore(betweenPages);
+    if (yield* pruneEventLog) {
+      const result = yield* maintenance.pruneEventStore(betweenPages);
+      if (result.deletedEventCount > 0 || result.deletedReceiptCount > 0) {
+        yield* Effect.logInfo("Compacted orchestration history", result);
+      }
+    }
     const completedAt = yield* Clock.currentTimeMillis;
     yield* fs.writeFileString(compactedAtPath, String(completedAt)).pipe(Effect.ignore);
-    if (result.deletedEventCount > 0 || result.deletedReceiptCount > 0) {
-      yield* Effect.logInfo("Compacted orchestration history", result);
-    }
     const idleBefore = yield* historyIdleBefore;
     if (Option.isNone(idleBefore)) return;
     const purged = yield* purge.purgeDeletedThreads({

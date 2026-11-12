@@ -10,6 +10,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
+import * as Settings from "../serverSettings.ts";
 import * as DatabaseStorage from "./DatabaseStorage.ts";
 import * as Sqlite from "./Sqlite.ts";
 
@@ -59,6 +60,7 @@ const compactionLayer = (
         pruneEventStore,
       }),
     ),
+    Layer.provide(Settings.layerTest({ storageCleanup: { pruneEventLog: true } })),
     Layer.provide(Sqlite.layerMemory),
   );
 
