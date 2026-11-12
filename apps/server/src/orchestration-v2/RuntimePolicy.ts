@@ -53,9 +53,22 @@ export class RuntimePolicyAboveCeilingError extends Schema.TaggedError<RuntimePo
 
 export const isRuntimePolicyAboveCeilingError = Schema.is(RuntimePolicyAboveCeilingError);
 
+export class RuntimePolicySealedAgentHomeError extends Schema.TaggedError<RuntimePolicySealedAgentHomeError>()(
+  "RuntimePolicySealedAgentHomeError",
+  {
+    threadId: ThreadId,
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
 export const RuntimePolicyV2Error = Schema.Union([
   RuntimePolicyResolveError,
   RuntimePolicyAboveCeilingError,
+  RuntimePolicySealedAgentHomeError,
 ]);
 export type RuntimePolicyV2Error = typeof RuntimePolicyV2Error.Type;
 
@@ -83,7 +96,7 @@ export const layer: Layer.Layer<RuntimePolicyV2> = Layer.succeed(RuntimePolicyV2
     return Effect.succeed({
       runtimeMode: input.thread.runtimeMode,
       interactionMode: input.thread.interactionMode,
-      cwd: input.thread.worktreePath,
+      cwd: input.thread.cwd ?? input.thread.worktreePath,
     });
   }),
 });
@@ -160,6 +173,7 @@ export const layerFromProjectStore: Layer.Layer<
             ? undefined
             : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
         const cwd =
+          input.thread.cwd ??
           input.thread.worktreePath ??
           (yield* projects.get(input.thread.projectId).pipe(
             Effect.mapError(
