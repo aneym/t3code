@@ -23,6 +23,7 @@ import {
   DurationFromString,
   resolveCliAuthConfig,
 } from "./config.ts";
+import { daemonTokenCommand } from "./daemonToken.ts";
 
 const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E>(
   flags: CliAuthLocationFlags,
@@ -250,5 +251,5 @@ const sessionCommand = Command.make("session").pipe(
 
 export const authCommand = Command.make("auth").pipe(
   Command.withDescription("Manage the local auth control plane for headless deployments."),
-  Command.withSubcommands([pairingCommand, sessionCommand]),
+  Command.withSubcommands([pairingCommand, sessionCommand, daemonTokenCommand]),
 );

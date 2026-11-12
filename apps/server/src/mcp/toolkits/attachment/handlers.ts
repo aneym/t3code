@@ -1,3 +1,4 @@
+import { mcpMessageSender } from "../../messageSender.ts";
 import {
   ATTACHMENT_UPLOAD_URL_TTL_MS,
   type ChatAttachment,
@@ -13,6 +14,8 @@ import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readThread, unavailable } from "../../threadAccess.ts";
+import { isThreadManagementError, threadManagementFailure } from "../../threadManagementFailure.ts";
+import { attachmentSendRetry } from "./sendRetry.ts";
 import { AttachmentToolkit } from "./tools.ts";
 
 export function resolveAttachmentReferences(
@@ -85,27 +88,42 @@ export const layer = McpToolAccess.toLayer(
         (input) => [input.threadId],
         (input) =>
           Effect.gen(function* () {
-            const { caller, projection } = yield* readThread(input.threadId, ["messages"]);
+            const scope = yield* McpInvocationContext.McpInvocationContext;
+            const { projection } = yield* readThread(input.threadId, ["messages"]);
             if (projection.thread.archivedAt !== null)
               return yield* new OrchestratorMcpFailure({
                 code: "invalid_request",
                 message: "Unarchive the target thread before sending attachments.",
               });
-            const attachments = yield* resolveAttachmentReferences(
-              input.attachments,
-              projection.messages.flatMap((message) => message.attachments),
-            );
-            const commandId = yield* newCommandId();
-            const messageId = MessageId.make(commandId);
+            const mode = input.mode ?? "queue";
+            const retry =
+              input.clientRequestId === undefined
+                ? undefined
+                : yield* attachmentSendRetry({
+                    threadId: projection.thread.id,
+                    clientRequestId: input.clientRequestId,
+                    mode,
+                    message: input.message ?? "",
+                    attachments: input.attachments,
+                    messages: projection.messages,
+                  });
+            const attachments =
+              retry?.sent ??
+              (yield* resolveAttachmentReferences(
+                input.attachments,
+                projection.messages.flatMap((message) => message.attachments),
+              ));
+            const commandId = retry?.commandId ?? (yield* newCommandId());
+            const messageId = retry?.messageId ?? MessageId.make(commandId);
             const result = yield* ThreadMessageIntake.sendToThread({
               projectId: projection.thread.projectId,
               threadId: projection.thread.id,
               commandId,
               messageId,
-              ...(caller === undefined ? {} : { senderThreadId: caller.id }),
+              ...mcpMessageSender(scope),
               text: input.message ?? "",
               attachments,
-              mode: "auto",
+              mode,
               createdBy: "agent",
               creationSource: "mcp",
             }).pipe(
@@ -115,7 +133,9 @@ export const layer = McpToolAccess.toLayer(
                       code: "orchestration_error",
                       message: error.message,
                     })
-                  : unavailable(),
+                  : retry !== undefined && isThreadManagementError(error)
+                    ? threadManagementFailure(error)
+                    : unavailable(),
               ),
             );
             return {
@@ -123,6 +143,19 @@ export const layer = McpToolAccess.toLayer(
               messageId,
               runId: result.run.id,
               status: result.run.status,
+              delivery: result.delivery,
+              ...(result.holdReason === undefined ? {} : { holdReason: result.holdReason }),
+              ...(result.next === undefined ? {} : { next: result.next }),
+              ...(retry === undefined
+                ? {}
+                : {
+                    clientRequestId: input.clientRequestId,
+                    receipt: {
+                      commandId,
+                      sequence: result.dispatch.sequence,
+                      replayed: result.dispatch.replayed === true,
+                    },
+                  }),
             };
           }),
       ),
