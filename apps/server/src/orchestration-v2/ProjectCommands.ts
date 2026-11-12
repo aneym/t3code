@@ -34,6 +34,7 @@ export interface ProjectMetaUpdateCommand {
   readonly defaultModelSelection?: ModelSelection | null;
   readonly defaultThreadEnvMode?: ThreadEnvMode | null;
   readonly autoPull?: boolean;
+  readonly pinOrder?: string | null;
   readonly faviconPath?: string | null;
   readonly projectIcon?: ProjectIconOverride | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
@@ -207,13 +208,20 @@ export function planProjectCommand(input: {
             ? {}
             : { defaultThreadEnvMode: command.defaultThreadEnvMode }),
           ...(command.autoPull === undefined ? {} : { autoPull: command.autoPull }),
+          ...(command.pinned === false
+            ? { pinOrder: null }
+            : command.pinOrder === undefined
+              ? {}
+              : { pinOrder: command.pinOrder }),
           ...(command.faviconPath === undefined ? {} : { faviconPath: command.faviconPath }),
           ...(command.projectIcon === undefined ? {} : { projectIcon: command.projectIcon }),
           ...(command.scripts === undefined ? {} : { scripts: command.scripts }),
           // Repeating a pin or archive keeps the original time.
-          ...(command.pinned === undefined
-            ? {}
-            : { pinnedAt: command.pinned ? (project.pinnedAt ?? occurredAt) : null }),
+          ...(command.pinned === false || command.pinOrder === null
+            ? { pinnedAt: null }
+            : command.pinned === true || typeof command.pinOrder === "string"
+              ? { pinnedAt: project.pinnedAt ?? occurredAt }
+              : {}),
           ...(command.archived === undefined
             ? {}
             : { archivedAt: command.archived ? (project.archivedAt ?? occurredAt) : null }),

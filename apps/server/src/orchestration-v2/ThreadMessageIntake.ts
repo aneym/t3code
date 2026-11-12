@@ -1,19 +1,25 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
-import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
+import {
+  type ChatAttachment,
+  clientMessageId,
+  type MessageId,
+  type OrchestrationV2Command,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
-import * as Orchestrator from "./Orchestrator.ts";
+import * as OrchestratorErrors from "./OrchestratorErrors.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as ThreadSend from "./ThreadSend.ts";
 
 // These failures precede commitCommand; generic dispatch errors can follow commits and remain ambiguous.
 function dispatchWasNotAccepted(
-  error: Orchestrator.OrchestratorV2Error | ThreadManagement.ThreadManagementError,
+  error: OrchestratorErrors.OrchestratorV2Error | ThreadManagement.ThreadManagementError,
 ) {
   switch (error._tag) {
     case "OrchestratorCommandRejectedError":
@@ -27,12 +33,13 @@ function dispatchWasNotAccepted(
     case "OrchestratorProviderSelectionBusyError":
     case "OrchestratorRuntimeModeAboveCeilingError":
     case "ThreadManagementProviderInstanceDisabledError":
+    case "ThreadManagementSendConflictError":
       return true;
     default:
       return false;
   }
 }
-const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
+const isOrchestratorError = Schema.is(OrchestratorErrors.OrchestratorV2Error);
 const isThreadManagementError = Schema.is(ThreadManagement.ThreadManagementError);
 
 const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")(function* (
@@ -83,12 +90,39 @@ const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments
   return { ...command, attachments: message?.attachments ?? [] };
 });
 
+export const dispatchResult = (result: {
+  readonly sequence: number;
+  readonly replayed?: boolean | undefined;
+  readonly messageId?: MessageId | undefined;
+}) => ({
+  sequence: result.sequence,
+  ...(result.replayed ? { replayed: true } : {}),
+  ...(result.messageId === undefined ? {} : { messageId: result.messageId }),
+});
+
+function withoutServerMarks(
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+) {
+  const { mcpEvent: _mcpEvent, ...rest } = command;
+  return { ...rest, messageId: clientMessageId(rest.messageId) };
+}
+
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
   incoming: OrchestrationV2Command,
 ) {
   const command =
-    incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
+    incoming.type === "message.dispatch"
+      ? yield* withGuestAttachments(withoutServerMarks(incoming))
+      : incoming;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  if (command.type === "thread.snooze" && command.whenQueueDrains === undefined) {
+    const result = yield* threads.snoozeThread(command);
+    return {
+      sequence: result.sequence,
+      storedEvents: [],
+      ...(result.replayed ? { replayed: true as const } : {}),
+    };
+  }
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
     const incomingByQuestionId = command.attachmentsByQuestionId;
@@ -185,6 +219,29 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
           ),
         ),
       ),
+      Effect.tap((result) => {
+        if (command.type !== "message.dispatch" || !result.replayed) return Effect.void;
+        const recorded = result.storedEvents.flatMap(({ event }) =>
+          event.type === "message.updated" && event.payload.role === "user" ? [event.payload] : [],
+        );
+        const message = recorded.find((candidate) => candidate.id === command.messageId);
+        const conflicts =
+          message === undefined
+            ? recorded.length > 0
+            : message.delegatedCompletion === undefined &&
+              message.text.trim() !== command.text.trim();
+        return conflicts
+          ? Effect.fail(
+              new ThreadSend.ThreadManagementSendConflictError({
+                threadId: command.threadId,
+                commandId: command.commandId,
+              }),
+            )
+          : Effect.void;
+      }),
+      Effect.map((result) =>
+        command.type === "message.dispatch" ? { ...result, messageId: command.messageId } : result,
+      ),
       Effect.tapError((error) =>
         dispatchWasNotAccepted(error)
           ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
@@ -194,7 +251,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
 });
 
 export const sendToThread = Effect.fn("ThreadMessageIntake.sendToThread")(function* (
-  input: ThreadManagement.ThreadManagementSendInput,
+  input: ThreadSend.ThreadSendInput,
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const claimed = yield* AttachmentClaims.claimPendingAttachments(input);
