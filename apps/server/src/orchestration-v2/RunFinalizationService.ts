@@ -1,4 +1,5 @@
 import { CheckpointScopeId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
@@ -56,6 +57,7 @@ const make = Effect.gen(function* () {
   const checkpointCapture = yield* CheckpointCapture.CheckpointCaptureServiceV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const observer = yield* RunFinalizationObserver;
+  const scope = yield* Effect.scope;
 
   const finalize: RunFinalizationService["Service"]["finalize"] = Effect.fn(
     "RunFinalizationService.finalize",
@@ -76,15 +78,16 @@ const make = Effect.gen(function* () {
       );
     const cwd = projection.checkpointScopes.find((scope) => scope.id === input.scopeId)?.cwd;
     if (cwd !== undefined) {
-      // Retrying a display refresh after the checkpoint is durable blocks the next turn.
       yield* observer.refresh({ cwd, threadId: input.threadId, runId: input.runId }).pipe(
-        Effect.catchTags({
-          RunFinalizationRefreshError: (cause) =>
-            Effect.logWarning("Failed to refresh workspace after checkpoint capture", {
-              ...input,
-              cause,
-            }),
-        }),
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.void
+            : Effect.logWarning("Failed to refresh workspace after checkpoint capture", {
+                ...input,
+                cause,
+              }),
+        ),
+        Effect.forkIn(scope, { startImmediately: true }),
       );
     }
   });
