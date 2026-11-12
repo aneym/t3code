@@ -1,3 +1,4 @@
+import { AuthMcpClientRegistration } from "./mcpClientRegistration.ts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -20,7 +21,6 @@ import {
   AuthMcpApprovalRedirect,
   AuthMcpAuthorizationRequest,
   AuthMcpAuthorizationServerMetadata,
-  AuthMcpClientRegistration,
   AuthMcpProtectedResourceMetadata,
   AuthMcpRegisteredClient,
   AuthMcpRegistrationError,
@@ -74,7 +74,7 @@ import {
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadTranscript,
 } from "./orchestrationV2.ts";
-import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
+import { Project, ProjectMutation, ProjectMutationError, ProjectSnapshot } from "./project.ts";
 import {
   PullRequestDiffInput,
   PullRequestDiffResult,
@@ -97,8 +97,7 @@ const OptionalBearerHeaders = Schema.Struct({
 });
 
 const OrchestrationProtocolHeaders = Schema.Struct({
-  authorization: Schema.optionalKey(Schema.String),
-  dpop: Schema.optionalKey(Schema.String),
+  ...OptionalBearerHeaders.fields,
   [ORCHESTRATION_PROTOCOL_HEADER]: Schema.Literal(ORCHESTRATION_PROTOCOL_VERSION_TEXT),
 });
 
@@ -390,6 +389,7 @@ const EnvironmentOrchestrationThreadSnapshotErrors = [
   EnvironmentInternalError,
 ] as const;
 const EnvironmentProjectMutationErrors = [
+  ProjectMutationError.annotate({ httpApiStatus: 400 }),
   EnvironmentRequestInvalidError,
   EnvironmentScopeRequiredError,
   EnvironmentInternalError,
@@ -444,7 +444,6 @@ export const EnvironmentConnectReachabilityCause = Schema.Literals([
 ]);
 export type EnvironmentConnectReachabilityCause = typeof EnvironmentConnectReachabilityCause.Type;
 
-/** Whether other devices can reach this environment through its T3 Connect tunnel. */
 export const EnvironmentConnectReachability = Schema.Union([
   Schema.Struct({
     status: Schema.Literal("reachable"),

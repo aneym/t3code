@@ -19,8 +19,41 @@ export const PeerLink = Schema.Struct({
   expiresAt: Schema.DateTimeUtc,
   lastReachedAt: Schema.NullOr(Schema.DateTimeUtc),
   lastError: Schema.NullOr(Schema.String),
+  renewedAt: Schema.optionalKey(Schema.DateTimeUtc),
+  renewalError: Schema.optionalKey(Schema.String),
 });
 export type PeerLink = typeof PeerLink.Type;
+
+export const PEER_LINK_RENEWAL_WINDOW_DAYS = 7;
+
+export const PeerLinkRenewalState = Schema.Literals(["not_due", "due", "refused", "expired"]);
+export type PeerLinkRenewalState = typeof PeerLinkRenewalState.Type;
+
+export const peerLinkRenewsFromMs = (link: Pick<PeerLink, "expiresAt">) =>
+  link.expiresAt.epochMilliseconds - PEER_LINK_RENEWAL_WINDOW_DAYS * 86_400_000;
+
+export const peerLinkRenewalState = (
+  link: Pick<PeerLink, "expiresAt" | "renewalError">,
+  nowMs: number,
+): PeerLinkRenewalState =>
+  link.expiresAt.epochMilliseconds <= nowMs
+    ? "expired"
+    : link.renewalError !== undefined
+      ? "refused"
+      : nowMs >= peerLinkRenewsFromMs(link)
+        ? "due"
+        : "not_due";
+
+export const PEER_LINK_RENEWAL_PATH = "/api/peer/link-renewal";
+
+export const PeerLinkRenewedToken = Schema.Struct({
+  token: TrimmedNonEmptyString,
+  expiresAt: Schema.DateTimeUtc,
+});
+export type PeerLinkRenewedToken = typeof PeerLinkRenewedToken.Type;
+
+export const PeerLinkRenewInput = Schema.Struct({ environmentId: EnvironmentId });
+export type PeerLinkRenewInput = typeof PeerLinkRenewInput.Type;
 
 /** Whether a link can be used now, as worked out when it is listed. */
 export const PeerLinkStatus = Schema.Literals(["reachable", "unreachable", "expired"]);
@@ -68,6 +101,7 @@ export class PeerLinkError extends Schema.TaggedError<PeerLinkError>()("PeerLink
     "unknown_link",
     "storage",
     "disabled",
+    "not_due",
   ]),
   message: Schema.String,
   cause: Schema.optionalKey(Schema.Defect()),
@@ -129,3 +163,17 @@ export class PeerLinkRequestError extends Schema.TaggedError<PeerLinkRequestErro
     return PEER_LINK_REQUEST_FAILURE_MESSAGES[this.reason];
   }
 }
+
+export const PEER_CLIENT_PAIRING_PATH = "/api/peer/client-pairing";
+
+export const PeerClientPairingCredential = Schema.Struct({
+  credential: TrimmedNonEmptyString,
+  expiresAt: Schema.DateTimeUtc,
+});
+export type PeerClientPairingCredential = typeof PeerClientPairingCredential.Type;
+
+export const PeerLinkPairClientInput = Schema.Struct({ environmentId: EnvironmentId });
+export type PeerLinkPairClientInput = typeof PeerLinkPairClientInput.Type;
+
+export const PeerLinkPairClientResult = Schema.Struct({ pairingUrl: TrimmedNonEmptyString });
+export type PeerLinkPairClientResult = typeof PeerLinkPairClientResult.Type;
