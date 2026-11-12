@@ -6,6 +6,7 @@ import { acceptedJsonSchema, advertisedJsonSchema } from "../advertisedJsonSchem
 import { decodeAsAdvertised, validateAdvertisedParameters } from "../advertisedParameters.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolAccess from "../McpToolAccess.ts";
+import { noteTool } from "../../observability/RequestLog.ts";
 import { withToolAnalytics } from "./toolAnalytics.ts";
 
 const withAdvertisedParameters = Effect.fn("McpHttpServer.withAdvertisedSchemas")(function* <
@@ -30,10 +31,13 @@ const withAdvertisedParameters = Effect.fn("McpHttpServer.withAdvertisedSchemas"
         tool,
         annotations: McpInvocationContext.gateByToolProfile(tool.name, options.annotations),
         handle: (payload) =>
-          validateAdvertisedParameters(
-            tool.name,
-            original === undefined ? tool.inputSchema : acceptedJsonSchema(original),
-            payload,
+          Effect.andThen(
+            noteTool(tool.name),
+            validateAdvertisedParameters(
+              tool.name,
+              original === undefined ? tool.inputSchema : acceptedJsonSchema(original),
+              payload,
+            ),
           ).pipe(Effect.andThen(() => options.handle(payload))),
       });
     }),

@@ -5,6 +5,7 @@ import {
   EnvironmentHttpApi,
   EnvironmentId,
   type ExecutionEnvironmentCapabilities,
+  type ExecutionEnvironmentDescriptor,
   type PeerLink,
   type PeerLinkCreateInput,
   PeerLinkError,
@@ -30,6 +31,7 @@ import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { makePeerDescriptorCache } from "./peerDescriptorCache.ts";
 import { peerOrigin } from "./peerOrigin.ts";
 
 /**
@@ -162,13 +164,14 @@ const make = Effect.gen(function* () {
 
   const signIn = makePeerSignIn(clientFor, crypto, environment);
 
-  /** The environment answering at `origin`, or nothing when it does not answer as T3 Code. */
-  const describe = (origin: string) =>
+  const descriptors = yield* makePeerDescriptorCache<ExecutionEnvironmentDescriptor>();
+  const describe = descriptors.cached((origin) =>
     clientFor(origin).pipe(
       Effect.flatMap((client) => client.metadata.descriptor()),
       Effect.timeout(probeTimeout(origin)),
       Effect.option,
-    );
+    ),
+  );
 
   const toLink = Effect.fn("PeerLinks.toLink")(function* (row: PeerLinkRow) {
     return {
@@ -448,7 +451,10 @@ const make = Effect.gen(function* () {
   );
 
   const recordOutcome: PeerLinks["Service"]["recordOutcome"] = (environmentId, outcome) =>
-    DateTime.now.pipe(
+    Effect.andThen(
+      outcome.error === null ? Effect.void : descriptors.forget(environmentId),
+      DateTime.now,
+    ).pipe(
       Effect.flatMap((now) =>
         outcome.error === null
           ? sql`

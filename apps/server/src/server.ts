@@ -26,6 +26,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerHttp from "./http.ts";
+import * as RequestLog from "./observability/RequestLog.ts";
 import {
   guardHttpResponseWriteErrors,
   rejectRequestsUntilServing,
@@ -743,7 +744,6 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(AgentRouting.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   Layer.provide(PeerLinkRequests.layer),
   Layer.provide(Layer.merge(McpEventsService.layer, HostLinkService.layer)),
-  // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
   Layer.provide(layerPullRequestService),
   // The same activity instance RunExecutionService reports to, by layer memoization.
   Layer.provide(ServerBrowserRuntime.layer),
@@ -756,6 +756,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(layerEmbedFrameAncestors),
   Layer.provide(ServerHttp.layerBrowserApiCors),
   Layer.provide(ServerHttp.layerHttpCompression),
+  Layer.provide(RequestLog.layer),
 );
 
 const layerMakeServer = Layer.unwrap(

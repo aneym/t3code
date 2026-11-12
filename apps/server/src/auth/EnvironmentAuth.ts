@@ -54,6 +54,7 @@ import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { noteSession } from "../observability/RequestLog.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -1236,7 +1237,10 @@ export const make = Effect.gen(function* () {
   const authenticateHttpRequest: EnvironmentAuth["Service"]["authenticateHttpRequest"] = (
     request,
   ) =>
-    authenticateRequest(request).pipe(Effect.withSpan("EnvironmentAuth.authenticateHttpRequest"));
+    authenticateRequest(request).pipe(
+      Effect.tap(noteSession),
+      Effect.withSpan("EnvironmentAuth.authenticateHttpRequest"),
+    );
 
   const authenticateWebSocketUpgrade: EnvironmentAuth["Service"]["authenticateWebSocketUpgrade"] =
     Effect.fn("EnvironmentAuth.authenticateWebSocketUpgrade")(function* (request, use) {
@@ -1256,9 +1260,6 @@ export const make = Effect.gen(function* () {
             });
           }
           if (session.proofKeyThumbprint) {
-            // WebSocket clients cannot set headers, so the proof travels in the query.
-            // The proof hashes the ticket; consuming its jti prevents replay after first use.
-            // Only encrypted transport prevents an active interceptor from racing that use.
             const proof = request.headers.dpop ?? (query.dpop && Redacted.value(query.dpop));
             if (!proof) {
               return yield* new ServerAuthInvalidCredentialError({
@@ -1290,7 +1291,7 @@ export const make = Effect.gen(function* () {
       }
 
       return yield* authenticateRequest(request);
-    });
+    }, Effect.tap(noteSession));
 
   const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (request) => {
     const token = parseBearerToken(request);

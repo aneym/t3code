@@ -6,6 +6,7 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
 import { rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
+import { logRpc } from "./RequestLog.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
@@ -252,8 +253,11 @@ export class RpcInstrumentation extends RpcMiddleware.Service<RpcInstrumentation
 
 export const rpcInstrumentationLayer = Layer.succeed(RpcInstrumentation)((effect, { rpc }) => {
   const method = rpc._tag;
-  const measured = effect.pipe(
-    withMetrics({ counter: rpcRequestsTotal, timer: rpcRequestDuration, attributes: { method } }),
+  const measured = logRpc(
+    method,
+    effect.pipe(
+      withMetrics({ counter: rpcRequestsTotal, timer: rpcRequestDuration, attributes: { method } }),
+    ),
   );
 
   if (RPC_METHODS_WITH_TRACING_DISABLED.has(method)) {
