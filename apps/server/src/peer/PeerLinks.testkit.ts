@@ -18,6 +18,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as AuthHttp from "../auth/http.ts";
+import * as McpClientAuthentication from "../auth/McpClientAuthentication.ts";
 import * as McpOAuth from "../auth/McpOAuth.ts";
 import * as McpOAuthHttp from "../auth/mcpOAuthHttp.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -112,7 +113,7 @@ export const servePeer = <E, R>(
             resolve: () => Effect.succeed(undefined),
           }),
         ),
-        Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+        Layer.provide(McpClientAuthentication.layerMcpClientAuthenticator),
       ),
     ).pipe(
       Layer.provide(layerRecordBearers),

@@ -1,6 +1,7 @@
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import type { VerifiedSession } from "./SessionStore.ts";
 import type { AuthMcpClientAccess, AuthSessionId, PeerIdentity } from "@t3tools/contracts";
+import type * as DateTime from "effect/DateTime";
 
 const MCP_CLIENT_SUBJECT = "mcp-client";
 const OWNER_CLI_SUBJECT = "mcp-client-owner-cli";
@@ -12,6 +13,7 @@ export interface McpClientSession {
   readonly peerLink: boolean;
   readonly peer?: PeerIdentity | undefined;
   readonly ownerCli: boolean;
+  readonly expiresAt?: DateTime.DateTime | undefined;
 }
 
 export const isMcpClientSubject = (subject: string) =>
@@ -31,4 +33,5 @@ export const mcpClientSession = (session: VerifiedSession): McpClientSession => 
   peerLink: session.peerLink === true,
   ownerCli: isOwnerCliSubject(session.subject),
   peer: session.peer,
+  expiresAt: session.expiresAt,
 });
