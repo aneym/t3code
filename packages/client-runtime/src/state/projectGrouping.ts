@@ -1,3 +1,4 @@
+import { comparePinnedProjects } from "./projectPins.ts";
 import { scopedProjectKey, scopeProjectRef } from "../environment/scoped.ts";
 import {
   repositoryGroupingDisplayNameOf,
@@ -12,6 +13,7 @@ import type { EnvironmentProject } from "./models.ts";
 import { normalizeProjectPathForComparison } from "./projects.ts";
 
 const SCRATCH_PROJECT_SCOPE_KEY = "\0no-project";
+const RAILS_AGENT_HOME_PATTERN = /\/\.agent-rails\/agents\/([a-z0-9][a-z0-9-]*)\/?$/;
 
 export interface ProjectGroupingSettings {
   readonly sidebarProjectGroupingMode: SidebarProjectGroupingMode;
@@ -126,6 +128,11 @@ function deriveRepositoryScopedKey(
     : `${canonicalKey}::${relativeProjectPath}`;
 }
 
+function deriveRailsAgentHomeKey(project: Pick<EnvironmentProject, "workspaceRoot">) {
+  const handle = RAILS_AGENT_HOME_PATTERN.exec(project.workspaceRoot)?.[1];
+  return handle === undefined ? null : `rails-agent:${handle}`;
+}
+
 function deriveLogicalProjectKey(
   project: Pick<
     EnvironmentProject,
@@ -144,6 +151,7 @@ function deriveLogicalProjectKey(
 
   return (
     deriveRepositoryScopedKey(project, groupingMode) ??
+    deriveRailsAgentHomeKey(project) ??
     derivePhysicalProjectKey(project) ??
     scopedProjectKey(scopeProjectRef(project.environmentId, project.id))
   );
@@ -242,6 +250,8 @@ export interface ProjectGroup<TProject extends EnvironmentProject = EnvironmentP
   readonly representative: TProject;
   readonly members: ReadonlyArray<ProjectGroupMember<TProject>>;
   readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
+  readonly pinOrder: string | null;
+  readonly pinnedAt: string | null;
   /** Clients write every member together. When members still disagree, the project stays visible. */
   readonly pinned: boolean;
   readonly archived: boolean;
@@ -249,10 +259,27 @@ export interface ProjectGroup<TProject extends EnvironmentProject = EnvironmentP
 
 /** The groups a project picker offers: archived groups left out, pinned ones first. */
 export function pickableProjectGroups<
-  TGroup extends { readonly pinned: boolean; readonly archived: boolean },
+  TGroup extends {
+    readonly key?: string;
+    readonly projectKey?: string;
+    readonly pinOrder: string | null;
+    readonly pinnedAt: string | null;
+    readonly pinned: boolean;
+    readonly archived: boolean;
+  },
 >(groups: ReadonlyArray<TGroup>): TGroup[] {
   const open = groups.filter((group) => !group.archived);
-  return [...open.filter((group) => group.pinned), ...open.filter((group) => !group.pinned)];
+  return [
+    ...open
+      .filter((group) => group.pinned)
+      .sort((left, right) =>
+        comparePinnedProjects(
+          { ...left, key: left.key ?? left.projectKey ?? "" },
+          { ...right, key: right.key ?? right.projectKey ?? "" },
+        ),
+      ),
+    ...open.filter((group) => !group.pinned),
+  ];
 }
 
 function projectFreshnessTime(project: EnvironmentProject): number {
@@ -374,6 +401,14 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
       representative,
       members,
       memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],
+      pinOrder:
+        members
+          .flatMap((member) => (member.project.pinOrder == null ? [] : [member.project.pinOrder]))
+          .sort()[0] ?? null,
+      pinnedAt:
+        members
+          .flatMap((member) => (member.project.pinnedAt == null ? [] : [member.project.pinnedAt]))
+          .sort()[0] ?? null,
       pinned: members.some((member) => member.project.pinnedAt != null),
       archived: members.every((member) => member.project.archivedAt != null),
     };
