@@ -9,6 +9,8 @@ export type ThreadActionMenuId =
   | "project-settings"
   | "pin"
   | "unpin"
+  | "agent-main"
+  | `agent-main:${string}`
   | "settle"
   | "unsettle"
   | "auto-settle"
@@ -20,6 +22,7 @@ export type ThreadActionMenuId =
   | "rename"
   | "regenerate-title"
   | "mark-unread"
+  | "restart-session"
   | "share-guest"
   | "copy"
   | "copy-path"
@@ -27,7 +30,8 @@ export type ThreadActionMenuId =
   | "copy-thread"
   | "copy-thread-id"
   | "archive"
-  | "delete";
+  | "delete"
+  | "agent-pin";
 
 export type DraftActionMenuId =
   | "copy"
@@ -93,6 +97,11 @@ export interface ThreadActionMenuState {
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
   /** Guest links need their own grant, so the caller checks it instead of `canOperate`. */
   readonly canShareWithGuest?: boolean;
+  readonly agentMainThreads?: ReadonlyArray<{
+    readonly handle: string;
+    readonly name: string;
+    readonly isCurrent: boolean;
+  }>;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
 }
@@ -101,6 +110,7 @@ export interface ThreadActionMenuState {
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
     "find",
+    "agent-pin",
     "new-thread-on-branch",
     "project-settings",
     "mark-unread",
@@ -136,6 +146,7 @@ export function buildThreadActionMenuItems(
             : { id: "pin" as const, label: "Pin thread", icon: "pin" },
         ]
       : []),
+    ...agentMainThreadMenuItems(state.agentMainThreads ?? []),
     ...(state.supports.settlement
       ? [
           state.isSettled
@@ -179,6 +190,12 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+    {
+      id: "restart-session",
+      label: "Restart agent session",
+      icon: "rotate-ccw",
+      disabled: state.isRunning,
+    },
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
       : []),
@@ -266,4 +283,27 @@ export function buildThreadActionMenuItems(
             }
           : item,
       );
+}
+
+function agentMainThreadMenuItems(
+  agents: NonNullable<ThreadActionMenuState["agentMainThreads"]>,
+): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
+  const item = (agent: (typeof agents)[number], label: string) => ({
+    id: `agent-main:${agent.handle}` as const,
+    label: agent.isCurrent ? `Unbind ${agent.name}'s main thread` : label,
+    checked: agent.isCurrent,
+  });
+  if (agents.length === 1) {
+    const [agent] = agents;
+    return agent ? [{ ...item(agent, `Make this ${agent.name}'s main thread`), icon: "pin" }] : [];
+  }
+  if (agents.length === 0) return [];
+  return [
+    {
+      id: "agent-main",
+      label: "Make this an agent's main thread",
+      icon: "pin",
+      children: agents.map((agent) => item(agent, agent.name)),
+    },
+  ];
 }

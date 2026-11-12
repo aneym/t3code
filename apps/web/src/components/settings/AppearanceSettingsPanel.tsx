@@ -35,6 +35,7 @@ import { searchableSetting } from "./settingsSearch";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
+import { UltracodeRainbowSetting } from "./UltracodeRainbowSetting";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
@@ -323,6 +324,7 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+        <UltracodeRainbowSetting />
         <SettingsRow
           {...searchableSetting("math-rendering")}
           description="Typeset LaTeX math, such as $x^2$ or \[x^2\], in messages and Markdown previews. The composer keeps TeX source editable."
@@ -478,6 +480,87 @@ export function AppearanceSettingsPanel() {
             }
           />
         </AdvancedSettings>
+      </SettingsSection>
+
+      <SettingsSection id="thread-rows" title="Thread rows">
+        <SettingsRow
+          {...searchableSetting("sidebar-thread-machine")}
+          description="Show which machine each thread is running on. Hidden details remain in the row hover card."
+          resetAction={
+            settings.sidebarThreadShowMachine !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowMachine ? (
+              <SettingResetButton
+                label="machine visibility"
+                onClick={() =>
+                  updateSettings({
+                    sidebarThreadShowMachine: DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowMachine,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarThreadShowMachine}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarThreadShowMachine: Boolean(checked) })
+              }
+              aria-label="Show machine in thread rows"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-thread-agent")}
+          description="Show the current agent and handoff history. Hidden details remain in the row hover card."
+          resetAction={
+            settings.sidebarThreadShowAgent !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowAgent ? (
+              <SettingResetButton
+                label="agent visibility"
+                onClick={() =>
+                  updateSettings({
+                    sidebarThreadShowAgent: DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowAgent,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarThreadShowAgent}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarThreadShowAgent: Boolean(checked) })
+              }
+              aria-label="Show agent in thread rows"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-thread-status-text")}
+          description="Show status labels and working time beside the status icon. Hidden details remain in the row hover card."
+          resetAction={
+            settings.sidebarThreadShowStatusText !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowStatusText ? (
+              <SettingResetButton
+                label="status text visibility"
+                onClick={() =>
+                  updateSettings({
+                    sidebarThreadShowStatusText:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarThreadShowStatusText,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarThreadShowStatusText}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarThreadShowStatusText: Boolean(checked) })
+              }
+              aria-label="Show status text and working time"
+            />
+          }
+        />
       </SettingsSection>
 
       <TypographySection />

@@ -4,7 +4,10 @@ import { useAtomValue } from "@effect/atom-react";
 import type { ServerProvider } from "@t3tools/contracts";
 import { CircleCheckIcon, DownloadIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useState, type CSSProperties } from "react";
+import * as Schema from "effect/Schema";
 
+import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
 import { primaryServerProvidersAtom } from "../../state/server";
 import {
   getProviderUpdateSidebarPillView,
@@ -14,6 +17,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 // Matches the pill's `duration-180` class.
 const PROVIDER_UPDATE_PILL_EXIT_MS = 180;
+const dismissedNoticeKeysSchema = Schema.Array(Schema.String);
+const emptyDismissedNoticeKeys: ReadonlyArray<string> = [];
 
 const PROVIDER_UPDATE_PILL_STYLES = {
   loading:
@@ -45,7 +50,13 @@ function latestProviderCheckedAt(
 export function SidebarProviderUpdatePill() {
   const navigate = useNavigate();
   const providers = useAtomValue(primaryServerProvidersAtom);
-  const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const environmentId = useAtomValue(primaryEnvironmentIdAtom);
+  const [savedDismissedKeys, setSavedDismissedKeys] = useLocalStorage(
+    `t3code:provider-update-notices:v1:${environmentId ?? "pending"}`,
+    emptyDismissedNoticeKeys,
+    dismissedNoticeKeysSchema,
+  );
+  const dismissedKeys = new Set(savedDismissedKeys);
   const [renderedView, setRenderedView] = useState<ProviderUpdateSidebarPillView | null>(null);
   const [pendingView, setPendingView] = useState<ProviderUpdateSidebarPillView | null>(null);
   const [exitingKey, setExitingKey] = useState<string | null>(null);
@@ -99,11 +110,15 @@ export function SidebarProviderUpdatePill() {
     }
   }
 
-  const exitAfterVisible = useEffectEvent((key: string) => startExit(key, null, key));
+  const exitAfterVisible = useEffectEvent((key: string) =>
+    startExit(key, null, displayedView?.dismissalKey ?? key),
+  );
 
   const finishExit = useEffectEvent(() => {
     if (dismissAfterExitKey !== null) {
-      setDismissedKeys((previous) => new Set(previous).add(dismissAfterExitKey));
+      setSavedDismissedKeys((previous) =>
+        [...new Set([...previous, dismissAfterExitKey])].slice(-100),
+      );
     }
     setRenderedView(pendingView);
     setPendingView(null);
@@ -196,7 +211,13 @@ export function SidebarProviderUpdatePill() {
                 type="button"
                 aria-label="Dismiss provider update notice"
                 className="relative z-[1] mr-1 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-70 outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                onClick={() => startExit(displayedView.key, null, displayedView.key)}
+                onClick={() =>
+                  startExit(
+                    displayedView.key,
+                    null,
+                    displayedView.dismissalKey ?? displayedView.key,
+                  )
+                }
               >
                 <XIcon className="size-3.5 shrink-0" />
               </button>

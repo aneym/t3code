@@ -1,10 +1,24 @@
-import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type {
+  ClientSettings,
+  ConfirmDialogOptions,
+  ContextMenuItem,
+  LocalApi,
+} from "@t3tools/contracts";
 
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
+import { openThroughEmbedHost } from "./embed/embedHost";
+import { markFollowUpDefaultApplied, migrateFollowUpDefault } from "./followUpDefault";
 
 let cachedApi: LocalApi | undefined;
+
+async function writeClientSettings(settings: ClientSettings): Promise<void> {
+  if (window.desktopBridge) {
+    return window.desktopBridge.setClientSettings(settings);
+  }
+  writeBrowserClientSettings(settings);
+}
 
 export function createLocalApi(): LocalApi {
   return {
@@ -19,6 +33,7 @@ export function createLocalApi(): LocalApi {
     },
     shell: {
       openExternal: async (url) => {
+        if (openThroughEmbedHost(url)) return;
         if (window.desktopBridge) {
           const opened = await window.desktopBridge.openExternal(url);
           if (!opened) {
@@ -58,17 +73,15 @@ export function createLocalApi(): LocalApi {
     },
     persistence: {
       getClientSettings: async () => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.getClientSettings();
-        }
-        return readBrowserClientSettings();
+        const stored = window.desktopBridge
+          ? await window.desktopBridge.getClientSettings()
+          : readBrowserClientSettings();
+        const migrated = stored && migrateFollowUpDefault(stored);
+        if (!migrated) return stored;
+        await writeClientSettings(migrated);
+        return migrated;
       },
-      setClientSettings: async (settings) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.setClientSettings(settings);
-        }
-        writeBrowserClientSettings(settings);
-      },
+      setClientSettings: (settings) => writeClientSettings(markFollowUpDefaultApplied(settings)),
     },
   };
 }

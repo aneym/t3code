@@ -4,6 +4,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { recordVisitForThread } from "~/browserHistoryStore";
+import { openThroughEmbedHost } from "~/embed/embedHost";
 import { readLocalApi } from "~/localApi";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -31,6 +32,7 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
 ) => Promise<void> {
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   return async (url, options = {}) => {
+    if (openThroughEmbedHost(url)) return;
     const targetThreadRef = options.threadRef ?? threadRef;
     const target = resolveLinkTarget({
       url,
