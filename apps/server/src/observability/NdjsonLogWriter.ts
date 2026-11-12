@@ -1,0 +1,46 @@
+import { makeAsyncRotatingFileSink } from "@t3tools/shared/logging";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
+
+export type NdjsonFields = Record<string, unknown>;
+
+const MAX_BUFFER_BYTES = 1024 * 1024;
+const FLUSH_EVERY = "1 second";
+
+export const makeNdjsonLogWriter = Effect.fnUntraced(function* (options: {
+  readonly filePath: string;
+  readonly maxBytes: number;
+}) {
+  const sink = yield* makeAsyncRotatingFileSink({
+    filePath: options.filePath,
+    maxBytes: options.maxBytes,
+    maxFiles: 2,
+  });
+  let buffer: Array<string> = [];
+  let bufferBytes = 0;
+  let dropped = 0;
+  const flush = Effect.suspend(() => {
+    if (dropped > 0) {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      buffer.push(`${JSON.stringify({ k: "dropped", n: dropped })}\n`);
+      dropped = 0;
+    }
+    if (buffer.length === 0) return Effect.void;
+    const chunk = buffer.join("");
+    buffer = [];
+    bufferBytes = 0;
+    return sink.write(chunk).pipe(Effect.ignore);
+  });
+  yield* flush.pipe(Effect.repeat(Schedule.spaced(FLUSH_EVERY)), Effect.forkScoped);
+  yield* Effect.addFinalizer(() => flush);
+  return (fields: NdjsonFields) => {
+    const line = `${JSON.stringify({ t: DateTime.formatIso(DateTime.nowUnsafe()), ...fields })}\n`;
+    if (bufferBytes + line.length > MAX_BUFFER_BYTES) {
+      dropped += 1;
+      return;
+    }
+    buffer.push(line);
+    bufferBytes += line.length;
+  };
+});

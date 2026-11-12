@@ -31,9 +31,10 @@ export function makeCommandDispatchAdmission<A, E, R, P>(options: {
     withServerAdmission(options.execute(command, sideChatIds));
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
   const dispatch = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+    const label = { type: command.type, thread: options.commandThreadId(command) };
     const execution = options.locks.withLock(
-      options.commandThreadId(command),
-      options.outbox.withDispatch(execute(command)),
+      label.thread,
+      options.outbox.withDispatch(label, execute(command)),
     );
     // A parent's lock comes before its side chats' locks, so a delete cascade and a side chat
     // fork or command never interleave. A fork from a side chat or onto an existing thread would
@@ -69,7 +70,7 @@ export function makeCommandDispatchAdmission<A, E, R, P>(options: {
             Effect.flatMap((sideChatIds) =>
               sideChatIds.reduce(
                 (locked, sideChatId) => options.locks.withLock(sideChatId, locked),
-                options.outbox.withDispatch(execute(command, sideChatIds)),
+                options.outbox.withDispatch(label, execute(command, sideChatIds)),
               ),
             ),
           ),

@@ -18,6 +18,7 @@ import {
 } from "./OrchestratorDispatchError.ts";
 import { withPullRequestWatch } from "./ThreadPullRequestWatch.ts";
 import { makeCommandDispatchAdmission } from "./CommandDispatchAdmission.ts";
+import { markGatePhase } from "./DispatchGateRecord.ts";
 import { readRejection, tagRejection } from "./RejectionReason.ts";
 import { makePendingInputQueueRelease, isQueuedInputRelease } from "./PendingInputQueueRelease.ts";
 import {
@@ -13216,6 +13217,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.command_type": command.type,
       "orchestration_v2.thread_id": commandThreadId(command),
     });
+    yield* markGatePhase("decide");
 
     if (
       isQueuedInputRelease(command) &&
@@ -13226,16 +13228,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         storedEvents: [],
       };
 
-    const existingReceipt = yield* commandReceipts.getByCommandId(command.commandId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause,
-          }),
-      ),
-    );
+    const existingReceipt = yield* commandReceipts
+      .getByCommandId(command.commandId)
+      .pipe(mapDispatchError(command));
 
     if (Option.isSome(existingReceipt)) {
       const receipt = existingReceipt.value;
@@ -13398,16 +13393,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           error: null,
         });
         return { resultSequence: sequence, inserted };
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause,
-            }),
-        ),
-      );
+      }).pipe(mapDispatchError(command));
       return {
         sequence: resultSequence,
         storedEvents: [],
@@ -13415,6 +13401,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } satisfies OrchestratorV2DispatchResult;
     }
     const acceptedAt = plan.events.at(-1)?.occurredAt ?? (yield* DateTime.now);
+    yield* markGatePhase("commit");
     const committed = yield* eventSink
       .commitCommand({
         commandId: command.commandId,
@@ -13430,16 +13417,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { updateDelegatedCompletionOnlyRunId: plan.updateDelegatedCompletionOnlyRunId }),
       })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause,
-            }),
-        ),
-      );
+      .pipe(mapDispatchError(command));
+    yield* markGatePhase("after");
 
     if (committed.receipt.status === "rejected") {
       return yield* new OrchestratorCommandPreviouslyRejectedError({
