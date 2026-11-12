@@ -1,4 +1,6 @@
 import {
+  type ForwardedThreadSender,
+  type PeerIdentity,
   type AuthMcpClientAccess,
   type EnvironmentId,
   McpCapabilityUnavailableError,
@@ -11,6 +13,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import { McpSchema } from "effect/ai";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
@@ -41,6 +44,9 @@ export interface McpClientCaller {
    * session as `linkOrigin`, and it changes only that work (`linkOrigin.ts`).
    */
   readonly linked?: boolean | undefined;
+  readonly peer?: PeerIdentity | undefined;
+  readonly sender?: (ForwardedThreadSender & { readonly environmentLabel?: string }) | undefined;
+  readonly ownerCli?: boolean | undefined;
   /**
    * Narrower modes the client asked for on this request (`T3-Mode-Limit`):
    * another environment passing on the limits of the agent it calls for.
@@ -141,6 +147,7 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
+  readonly toolAllowlist?: ReadonlySet<string>;
 }
 
 /**
@@ -180,6 +187,25 @@ export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.linkedEnvironments !== false;
+};
+
+const allowedByToolProfile = (toolName: string): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.toolAllowlist === undefined || scope.toolAllowlist.has(toolName);
+};
+
+export const gateByToolProfile = (
+  toolName: string,
+  annotations: Context.Context<never>,
+): Context.Context<never> => {
+  const enabledWhen = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);
+  return Context.add(
+    annotations,
+    McpSchema.EnabledWhen,
+    (client) =>
+      allowedByToolProfile(toolName) && (enabledWhen === undefined || enabledWhen(client)),
+  );
 };
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"

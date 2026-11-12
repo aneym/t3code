@@ -1,5 +1,8 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import * as AgentDelegation from "../../agentDelegation.ts";
+import { withRecordedPlacement } from "../../../peer/AgentPlacement.ts";
 import { OrchestratorToolkit } from "./tools.ts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
@@ -11,6 +14,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
+import { reportTaskOutcome } from "../../taskOutcome.ts";
 
 const handlers = {
   orchestrator_capabilities: McpToolAccess.reads((input) =>
@@ -20,18 +24,16 @@ const handlers = {
       return yield* service.capabilities(scope, input);
     }),
   ),
-  delegate_task: McpToolAccess.actsAsCaller((input) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.delegateTask(scope, input);
-    }),
-  ),
+  delegate_task: McpToolAccess.actsAsCaller(AgentDelegation.delegate),
   task_status: McpToolAccess.actsAsCaller(({ taskId }) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.taskStatus(scope, taskId);
+      const status = yield* service.taskStatus(scope, taskId);
+      return yield* withRecordedPlacement(
+        status.remoteChild?.threadId ?? status.childThreadId,
+        status,
+      );
     }),
   ),
   task_cancel: McpToolAccess.actsAsCaller((input) =>
@@ -41,6 +43,7 @@ const handlers = {
       return yield* service.cancelTask(scope, input);
     }),
   ),
+  task_outcome: McpToolAccess.actsAsCaller(reportTaskOutcome),
   t3_workflow_stop: McpToolAccess.writesThreads(
     (input) => [input.threadId],
     (input) =>
@@ -61,10 +64,19 @@ const handlers = {
         );
       }),
   ),
-  t3_background_wait: McpToolAccess.actsAsCaller((input) =>
+  t3_background_wait: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
-      const { scope, threads } = yield* readCaller();
+      const { scope, threads, caller: shell } = yield* readCaller();
       const caller = yield* McpInvocationContext.requireThreadScope(scope, "t3_background_wait");
+      if (
+        shell?.archivedAt !== null ||
+        shell.providerInstanceId !== caller.thread.providerInstanceId
+      ) {
+        return yield* new OrchestratorMcpFailure({
+          code: "parent_not_active",
+          message: "The calling provider no longer owns this thread.",
+        });
+      }
       return yield* threads
         .awaitBackgroundTasks({
           threadId: caller.thread.threadId,
@@ -158,7 +170,7 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.readThread(scope, input);
+      return yield* withRecordedPlacement(input.threadId, yield* service.readThread(scope, input));
     }),
   ),
   t3_thread_update: McpToolAccess.writesThreads(
@@ -223,6 +235,20 @@ const handlers = {
           ),
         );
       return { environmentId, removed };
+    }),
+  ),
+  t3_environment_renew: McpToolAccess.writesEnvironment(({ environmentId }) =>
+    Effect.gen(function* () {
+      const links = yield* PeerLinks.PeerLinks;
+      const renewed = yield* links
+        .renew(environmentId)
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+          ),
+        );
+      return { environmentId, expiresAt: DateTime.formatIso(renewed.expiresAt) };
     }),
   ),
   t3_thread_interrupt: McpToolAccess.writesThreads(

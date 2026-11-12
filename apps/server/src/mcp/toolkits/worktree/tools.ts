@@ -4,17 +4,22 @@ import {
   OrchestratorMcpFailure,
   VcsListRefsInput,
   VcsListRefsResult,
+  WorktreeMcpExportInput,
+  WorktreeMcpExportResult,
   WorktreeMcpHandoffInput,
   WorktreeMcpHandoffResult,
   WorktreeMcpStatusResult,
   ThreadId,
 } from "@t3tools/contracts";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as WorktreeExportService from "../../WorktreeExportService.ts";
 import * as WorktreeMcpService from "../../WorktreeMcpService.ts";
 
 const dependencies = [
@@ -82,8 +87,27 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
+const WorktreeExportTool = Tool.make("t3_worktree_export", {
+  description:
+    "Bundle a thread's worktree branch past `bases`, for delegate_task to bring a linked environment's child back. Not for agents.",
+  parameters: WorktreeMcpExportInput,
+  success: WorktreeMcpExportResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    GitVcsDriver.GitVcsDriver,
+    FileSystem.FileSystem,
+    WorktreeExportService.WorktreeExportService,
+  ],
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false);
+
 export const WorktreeToolkit = Toolkit.make(
   WorktreeHandoffTool,
   WorktreeStatusTool,
   WorktreeListTool,
+  WorktreeExportTool,
 );

@@ -1,0 +1,108 @@
+import { AgentBindResult, AgentHomesSnapshot } from "@t3tools/contracts";
+import * as Console from "effect/Console";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { Argument, Command, Flag } from "effect/cli";
+import { baseDirFlag } from "./config.ts";
+import {
+  McpServerNotRunningError,
+  McpServerUnreachableError,
+  McpToolFailedError,
+  reportCliErrors,
+  printJson,
+  withOwnerMcpTools,
+} from "./ownerMcpTools.ts";
+const reportErrors = reportCliErrors(
+  Schema.is(
+    Schema.Union([McpServerNotRunningError, McpServerUnreachableError, McpToolFailedError]),
+  ),
+);
+const list = Command.make("list", {
+  baseDir: baseDirFlag,
+  json: Flag.Boolean("json").pipe(Flag.withDefault(false)),
+}).pipe(
+  Command.withHandler((flags) =>
+    withOwnerMcpTools("agent", flags, (tools) =>
+      Effect.gen(function* () {
+        const result = yield* tools.call("t3_agent_list", {}, AgentHomesSnapshot);
+        yield* flags.json
+          ? printJson(result)
+          : Console.log(
+              result.homes
+                .map(
+                  (home) =>
+                    `${home.handle}\t${home.displayName ?? home.handle}\t${home.binding?.threadId ?? "unbound"}\t${home.office?.threadId ?? "-"}`,
+                )
+                .join("\n"),
+            );
+      }),
+    ).pipe(reportErrors),
+  ),
+);
+const bind = Command.make("bind", {
+  baseDir: baseDirFlag,
+  agent: Argument.String("agent"),
+  thread: Argument.String("thread").pipe(Argument.optional),
+  projects: Flag.String("projects").pipe(Flag.optional),
+  environment: Flag.String("environment").pipe(Flag.optional),
+  host: Flag.String("host").pipe(Flag.optional),
+  by: Flag.String("by").pipe(Flag.optional),
+  unbind: Flag.Boolean("unbind").pipe(Flag.withDefault(false)),
+  onlyIfUnbound: Flag.Boolean("if-unbound").pipe(Flag.withDefault(false)),
+  office: Flag.Boolean("office").pipe(
+    Flag.withDescription("Bind the thread as the agent's office, next to its main thread."),
+    Flag.withDefault(false),
+  ),
+  json: Flag.Boolean("json").pipe(Flag.withDefault(false)),
+}).pipe(
+  Command.withHandler((flags) =>
+    withOwnerMcpTools("agent", flags, (tools) =>
+      Effect.gen(function* () {
+        if (flags.unbind && Option.isSome(flags.thread)) {
+          const snapshot = yield* tools.call("t3_agent_list", {}, AgentHomesSnapshot);
+          const home = snapshot.homes.find((entry) => entry.handle === flags.agent);
+          if ((flags.office ? home?.office : home?.binding)?.threadId !== flags.thread.value)
+            return yield* new McpToolFailedError({
+              tool: "t3_agent_bind",
+              detail: "Cannot unbind: the given thread is not the agent home’s current binding.",
+            });
+        }
+        const result = yield* tools.call(
+          "t3_agent_bind",
+          {
+            handle: flags.agent,
+            ...Option.match(flags.thread, {
+              onNone: () => (flags.unbind ? { threadId: null } : {}),
+              onSome: (threadId) => ({ threadId: flags.unbind ? null : threadId }),
+            }),
+            ...Option.match(flags.projects, {
+              onNone: () => ({}),
+              onSome: (projects) => ({
+                projects: projects
+                  .split(",")
+                  .map((name) => name.trim())
+                  .filter(Boolean),
+              }),
+            }),
+            onlyIfUnbound: flags.onlyIfUnbound,
+            ...(flags.office ? { office: true } : {}),
+            ...Option.match(flags.environment, {
+              onNone: () => ({}),
+              onSome: (threadEnvironmentId) => ({ threadEnvironmentId }),
+            }),
+            ...Option.match(flags.host, { onNone: () => ({}), onSome: (host) => ({ host }) }),
+            ...Option.match(flags.by, { onNone: () => ({}), onSome: (by) => ({ by }) }),
+          },
+          AgentBindResult,
+        );
+        yield* flags.json
+          ? printJson(result)
+          : Console.log(
+              `${result.home.handle}: ${result.home.binding?.threadId ?? "unbound"} office=${result.home.office?.threadId ?? "-"} projects=${result.home.projects.join(",") || "-"} (${result.changed ? "updated" : "unchanged"})`,
+            );
+      }),
+    ).pipe(reportErrors),
+  ),
+);
+export const agentCommand = Command.make("agent").pipe(Command.withSubcommands([list, bind]));

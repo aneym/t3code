@@ -1,4 +1,8 @@
-import { MIN_SCHEDULED_TASK_INTERVAL_MS, type ScheduledTaskSchedule } from "@t3tools/contracts";
+import {
+  MIN_SCHEDULED_TASK_INTERVAL_MS,
+  type ScheduledTask,
+  type ScheduledTaskSchedule,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
@@ -79,4 +83,18 @@ export function isMissedFixedTimeRun(
 ): boolean {
   if (schedule.type !== "fixed_time") return false;
   return DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt) > MISSED_FIXED_TIME_GRACE_MS;
+}
+
+export function isOnceScheduleRearmed(
+  task: ScheduledTask | null,
+  schedule: ScheduledTaskSchedule,
+): boolean {
+  return (
+    task !== null &&
+    !task.enabled &&
+    task.schedule.type === "once" &&
+    (task.runCount > 0 || task.lastRunStatus === "running") &&
+    schedule.type === "once" &&
+    !isSameSchedule(task.schedule, schedule)
+  );
 }
