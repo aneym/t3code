@@ -111,6 +111,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   secretSourceCheck: Schema.optionalKey(Schema.Boolean),
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   settledWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
+  worktreeRequireIntegrated: Schema.optionalKey(Schema.Boolean),
+  worktreeContentIntegration: Schema.optionalKey(Schema.Boolean),
+  worktreeDisposableIgnoredPaths: Schema.optionalKey(Schema.Boolean),
+  worktreeOrphans: Schema.optionalKey(Schema.Boolean),
+  worktreeAcceptPushed: Schema.optionalKey(Schema.Boolean),
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
   /** Sent by macOS servers, which honor the fastWorktreeCheckout setting. */
   fastWorktreeCheckout: Schema.optionalKey(Schema.Boolean),
@@ -147,6 +152,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadPullRequestWatch: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
   serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
+  serverHotSwap: Schema.optionalKey(Schema.Boolean),
   /** Server answers server.getNpmRelease using its configured npm registry. */
   npmReleaseLookup: Schema.optionalKey(Schema.Boolean),
   /** Manual commands must update this install, not the host's default global prefix. */
@@ -204,8 +210,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
+const ScopableEnvironmentId = EnvironmentId.check(Schema.isPattern(/^[^:]+$/));
+
 export const ExecutionEnvironmentDescriptor = Schema.Struct({
-  environmentId: EnvironmentId,
+  environmentId: ScopableEnvironmentId,
   label: TrimmedNonEmptyString,
   platform: ExecutionEnvironmentPlatform,
   serverVersion: TrimmedNonEmptyString,

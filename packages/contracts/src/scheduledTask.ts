@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   CommandId,
@@ -64,7 +65,7 @@ function isIsoWithOffset(value: string): boolean {
 }
 
 // Checked by filter, not pattern, to keep the MCP tool schema small.
-const ScheduledTaskOnceSchedule = Schema.Struct({
+const CanonicalScheduledTaskOnceSchedule = Schema.Struct({
   type: Schema.Literal("once"),
   runAt: TrimmedNonEmptyString.check(
     Schema.makeFilter(
@@ -72,6 +73,19 @@ const ScheduledTaskOnceSchedule = Schema.Struct({
     ),
   ),
 });
+
+const ScheduledTaskOnceSchedule = Schema.Union([
+  CanonicalScheduledTaskOnceSchedule,
+  Schema.Struct({ type: Schema.Literal("once"), at: IsoDateTime }).pipe(
+    Schema.decodeTo(
+      CanonicalScheduledTaskOnceSchedule,
+      SchemaTransformation.transform({
+        decode: (schedule) => ({ type: "once" as const, runAt: schedule.at }),
+        encode: (schedule) => ({ type: "once" as const, at: schedule.runAt }),
+      }),
+    ),
+  ),
+]);
 
 const ScheduledTaskWebhookSignatureFields = {
   header: TrimmedNonEmptyString.annotate({
