@@ -21,10 +21,14 @@ import * as ProcessRunner from "../processRunner.ts";
 const AGENT_SLICE = "app-t3code-agents.slice";
 // Owns every agent slice and competes with the server's unit or scope under app.slice.
 const AGENTS_PARENT_SLICE = "app-t3code.slice";
-// Low weights yield CPU and disk to the server under contention, where the user manager
-// has those controllers: current systemd delegates cpu, rarely io. TasksMax keeps agents
-// below logind's 33% per-user task limit, leaving forks for the server.
-const AGENTS_PARENT_PROPERTIES = ["CPUWeight=10", "IOWeight=10", "TasksMax=25%"];
+const DEFAULT_AGENTS_WEIGHT = 100;
+
+function agentsParentProperties(weightSetting: string | undefined) {
+  const parsed = Number(weightSetting);
+  const weight =
+    Number.isInteger(parsed) && parsed >= 1 && parsed <= 10_000 ? parsed : DEFAULT_AGENTS_WEIGHT;
+  return [`CPUWeight=${weight}`, `IOWeight=${weight}`, "TasksMax=25%"];
+}
 
 export function ownedAgentSlice(stateDir: string): string {
   const hash = NodeCrypto.createHash("sha256").update(stateDir).digest("hex").slice(0, 12);
@@ -200,7 +204,10 @@ export const make = Effect.gen(function* () {
       });
       const limits = agentSliceMemoryLimits(NodeOS.totalmem());
       yield* setProperties(AGENT_SLICE, [`MemoryHigh=${limits.high}`, `MemoryMax=${limits.max}`]);
-      yield* setProperties(AGENTS_PARENT_SLICE, AGENTS_PARENT_PROPERTIES);
+      yield* setProperties(
+        AGENTS_PARENT_SLICE,
+        agentsParentProperties(hostEnvironment.T3CODE_AGENT_SLICE_WEIGHT),
+      );
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
         ...limits,
