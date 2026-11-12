@@ -2029,6 +2029,7 @@ export default function ChatView(props: ChatViewProps) {
     branch?: string;
     runtimeMode: RuntimeMode;
     interactionMode: ProviderInteractionMode;
+    modelSelection?: ModelSelection;
   }): Promise<AtomCommandResult<void, unknown>> => {
     if (!serverThread) {
       return AsyncResult.success(undefined);
@@ -2037,6 +2038,7 @@ export default function ChatView(props: ChatViewProps) {
     let result: AtomCommandResult<void, unknown> = AsyncResult.success(undefined);
     const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
       currentModelSelection: serverThread.modelSelection,
+      ...(input.modelSelection ? { nextModelSelection: input.modelSelection } : {}),
       currentBranch: serverThread.branch,
       ...(input.branch ? { nextBranch: input.branch } : {}),
     });
