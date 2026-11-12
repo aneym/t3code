@@ -1,4 +1,9 @@
-import { type PeerLinkSummary, WS_METHODS } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type PeerLinkSummary,
+  peerLinkRenewalState,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -29,6 +34,24 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
       tag: WS_METHODS.peerLinksUnlink,
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
+    }),
+    renew: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:peer-links:renew",
+      tag: WS_METHODS.peerLinksRenew,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.environmentId]),
+      },
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
+    }),
+    pairClient: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:peer-links:pair-client",
+      tag: WS_METHODS.peerLinksPairClient,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.environmentId]),
+      },
     }),
     // An agent's link card. One answer per card at a time.
     answerRequest: createEnvironmentRpcCommand(runtime, {
@@ -66,4 +89,39 @@ export function peerLinkHealth(link: PeerLinkSummary, now: DateTime.Utc): PeerLi
   if (link.lastError !== null) return { kind: "failing", detail: link.lastError };
   const days = Math.ceil(Duration.toDays(DateTime.distance(now, link.expiresAt)));
   return { kind: "reachable", expiresInDays: days <= EXPIRY_WARNING_DAYS ? days : null };
+}
+
+const isoDate = (at: DateTime.Utc) => DateTime.formatIso(at).slice(0, 10);
+
+export function peerLinkRenewalNote(link: PeerLinkSummary, now: DateTime.Utc): string | null {
+  const state = peerLinkRenewalState(link, now.epochMilliseconds);
+  if (state === "refused") return `Renewal refused: ${link.renewalError}`;
+  if (state === "due") return `Renews on its own before ${isoDate(link.expiresAt)}.`;
+  if (state === "expired" || link.renewedAt === undefined) return null;
+  return `Renewed ${isoDate(link.renewedAt)}. Expires ${isoDate(link.expiresAt)}.`;
+}
+
+export interface LinkedRoutePlan {
+  readonly join: ReadonlyArray<PeerLinkSummary>;
+  readonly removed: ReadonlyArray<PeerLinkSummary>;
+  readonly newlySeen: ReadonlyArray<EnvironmentId>;
+}
+
+export function linkedRoutePlan(
+  links: ReadonlyArray<PeerLinkSummary>,
+  knownEnvironmentIds: ReadonlySet<EnvironmentId>,
+  seenEnvironmentIds: ReadonlySet<EnvironmentId>,
+): LinkedRoutePlan {
+  const offered = links.filter(
+    (link) =>
+      link.access === "full-access" && link.status === "reachable" && link.lastError === null,
+  );
+  const missing = offered.filter((link) => !knownEnvironmentIds.has(link.environmentId));
+  return {
+    join: missing.filter((link) => !seenEnvironmentIds.has(link.environmentId)),
+    removed: missing.filter((link) => seenEnvironmentIds.has(link.environmentId)),
+    newlySeen: offered
+      .map((link) => link.environmentId)
+      .filter((id) => knownEnvironmentIds.has(id) && !seenEnvironmentIds.has(id)),
+  };
 }

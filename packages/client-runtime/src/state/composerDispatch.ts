@@ -1,3 +1,5 @@
+import type { MessageId, OrchestrationV2ComposerSubmit } from "@t3tools/contracts";
+
 export type ComposerDispatchMode = "auto" | "queue" | "steer" | "restart";
 export type ActiveTurnComposerAction = Exclude<ComposerDispatchMode, "auto">;
 
@@ -48,4 +50,22 @@ export function alternateComposerDispatchAction(
     alternateModifier: true,
     ...(activeTurnDefault === undefined ? {} : { activeTurnDefault }),
   }) as ActiveTurnComposerAction;
+}
+
+const STILL_WRITING = new Set(["pending", "running", "waiting"]);
+
+export function composerSubmitStamp(
+  rows: ReadonlyArray<{
+    readonly item: {
+      readonly type: string;
+      readonly status: string;
+      readonly messageId?: MessageId;
+    };
+  }>,
+): OrchestrationV2ComposerSubmit {
+  const newest = rows.findLast((row) => row.item.type === "assistant_message")?.item;
+  return {
+    displayedAssistantMessageId:
+      newest === undefined || STILL_WRITING.has(newest.status) ? null : (newest.messageId ?? null),
+  };
 }

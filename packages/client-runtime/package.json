@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./restart-pause": {
+      "types": "./src/restartPause.ts",
+      "default": "./src/restartPause.ts"
+    },
+    "./scheduled-task-once": {
+      "types": "./src/scheduledTaskOnce.ts",
+      "default": "./src/scheduledTaskOnce.ts"
+    },
     "./assembly-highlighting": {
       "types": "./src/assemblyHighlighting.ts",
       "default": "./src/assemblyHighlighting.ts"
@@ -59,13 +67,21 @@
       "types": "./src/worktreeSetup.ts",
       "default": "./src/worktreeSetup.ts"
     },
-    "./load-balancing": {
-      "types": "./src/load-balancing.ts",
-      "default": "./src/load-balancing.ts"
-    },
     "./project-favicon-cache": {
       "types": "./src/projectFaviconCache.ts",
       "default": "./src/projectFaviconCache.ts"
+    },
+    "./lane-result": {
+      "types": "./src/laneResult.ts",
+      "default": "./src/laneResult.ts"
+    },
+    "./rails-comment": {
+      "types": "./src/railsComment.ts",
+      "default": "./src/railsComment.ts"
+    },
+    "./agent-audience": {
+      "types": "./src/agentAudience.ts",
+      "default": "./src/agentAudience.ts"
     },
     "./user-message": {
       "types": "./src/userMessage.ts",
@@ -347,9 +363,17 @@
       "types": "./src/state/subagentRuntime.ts",
       "default": "./src/state/subagentRuntime.ts"
     },
+    "./state/project-pins": {
+      "types": "./src/state/projectPins.ts",
+      "default": "./src/state/projectPins.ts"
+    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
+    },
+    "./state/unreachable-environments": {
+      "types": "./src/state/unreachableEnvironments.ts",
+      "default": "./src/state/unreachableEnvironments.ts"
     },
     "./state/thread-inbox": {
       "types": "./src/state/threadInbox.ts",
@@ -510,6 +534,10 @@
     "./mcp-apps": {
       "types": "./src/mcpApps/host.ts",
       "default": "./src/mcpApps/host.ts"
+    },
+    "./mcp-apps/tool-consent": {
+      "types": "./src/mcpApps/toolConsent.ts",
+      "default": "./src/mcpApps/toolConsent.ts"
     },
     "./state/mcp-apps": {
       "types": "./src/state/mcpApps.ts",

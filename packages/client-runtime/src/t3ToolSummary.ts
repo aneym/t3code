@@ -198,6 +198,9 @@ export function summarizeT3ToolCalls(
     case "background-wait":
       label = phrase("Updated", "update", `background waits ${times}`);
       break;
+    case "task-outcome":
+      label = phrase("Reported", "report", "the task outcome");
+      break;
     case "task-cancel":
       label = phrase(
         "Requested cancellation of",
@@ -253,6 +256,9 @@ export function summarizeT3ToolCalls(
     case "thread-organize":
       label = phrase("Organized", "organize", `threads ${times}`);
       break;
+    case "thread-restart":
+      label = phrase("Restarted", "restart", quantity(countEntities(threadIds), "agent session"));
+      break;
     case "thread-update":
       label = phrase("Updated", "update", quantity(countEntities(threadIds), "thread"));
       break;
@@ -279,6 +285,9 @@ export function summarizeT3ToolCalls(
         "cancel",
         quantity(countEntities(entityIds("queuedRunId")), "queued run"),
       );
+      break;
+    case "queue-resume":
+      label = phrase("Resumed", "resume", quantity(countEntities(threadIds), "held queue"));
       break;
     case "queue-reorder":
       label = phrase(
