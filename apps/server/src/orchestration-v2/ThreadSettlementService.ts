@@ -188,6 +188,10 @@ export class ThreadSettlementServiceV2 extends Context.Service<
   }
 >()("t3/orchestration-v2/ThreadSettlementService/ThreadSettlementServiceV2") {}
 
+export const SweepCoalesceMs = Context.Reference("t3/ThreadSettlement/SweepCoalesceMs", {
+  defaultValue: () => 250,
+});
+
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -207,6 +211,7 @@ export const make = Effect.gen(function* () {
   const settleActionRunAt = new Map<ThreadId, number>();
 
   const settleIdleChildren = yield* makeChildSettlementSweep(orchestrator.dispatch);
+  const coalesceMs = yield* SweepCoalesceMs;
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
@@ -225,12 +230,10 @@ export const make = Effect.gen(function* () {
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     const agentMainThreads = yield* Effect.promise(() => readAgentMainThreads(environmentId));
-    // Merge events resweep all candidates because unlinked threads settle through branch lookup.
     const candidates = threads.filter((thread) =>
       isAutoSettlementCandidate(thread, nowMs, agentMainThreads),
     );
 
-    // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.
     const settleThread = Effect.fnUntraced(
       function* (
         thread: (typeof candidates)[number],
@@ -349,7 +352,6 @@ export const make = Effect.gen(function* () {
     };
     const groups = Map.groupBy(lookupCandidates, lookupKey);
 
-    // wouldSettle and pullRequestFor run per lookup group; the git and pull request reads they make carry the spans.
     const wouldSettle = Effect.fnUntraced(function* (
       group: ReadonlyArray<(typeof lookupCandidates)[number]>,
       pullRequest: SettlementPullRequest,
@@ -478,7 +480,6 @@ export const make = Effect.gen(function* () {
   const fullSweeps = yield* makeDrainableWorker(() => runSweep(null));
   const threadSweeps = yield* FiberSet.make<void>();
   const threadSweepSlots = yield* Semaphore.make(8);
-  // One sweep per thread at a time; events during a running sweep coalesce into one more pass.
   const threadSweepStates = new Map<ThreadId, "queued" | "running" | "rerun">();
   const sweepThread = (
     threadId: ThreadId,
@@ -500,7 +501,12 @@ export const make = Effect.gen(function* () {
       if (state === "running") threadSweepStates.set(threadId, "rerun");
       if (state !== undefined) return Effect.void;
       threadSweepStates.set(threadId, "queued");
-      return sweepThread(threadId).pipe(FiberSet.run(threadSweeps), Effect.asVoid);
+      const wait = coalesceMs > 0 ? Effect.sleep(coalesceMs) : Effect.void;
+      return wait.pipe(
+        Effect.andThen(sweepThread(threadId)),
+        FiberSet.run(threadSweeps),
+        Effect.asVoid,
+      );
     });
 
   // Skip settle scripts in shared checkouts where other threads may still work.

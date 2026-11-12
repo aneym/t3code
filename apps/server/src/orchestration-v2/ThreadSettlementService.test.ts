@@ -248,7 +248,6 @@ describe("resolveAutoSettlementAt", () => {
         autoSettleKeepPullRequests: true,
       }),
     ).toBeNull();
-    // The open link outranks a merged lookup, so only inactivity can settle it.
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({
         ...input,
@@ -732,7 +731,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     }),
     layer: Layer.effect(
       ThreadSettlementService.ThreadSettlementServiceV2,
-      ThreadSettlementService.make,
+      ThreadSettlementService.make.pipe(
+        Effect.provideService(ThreadSettlementService.SweepCoalesceMs, 0),
+      ),
     ).pipe(Layer.provide(layerDependencies)),
   };
 });
@@ -1108,7 +1109,6 @@ describe("ThreadSettlementServiceV2 worker", () => {
           );
           yield* Deferred.succeed(releaseSlowLookup, undefined);
           yield* reactor.drain;
-          // The startup sweep, the first per-thread sweep, and one coalesced rerun.
           assert.strictEqual(yield* Ref.get(branchLookupCount), 3);
         }).pipe(Effect.provide(fixture.layer));
       }),
