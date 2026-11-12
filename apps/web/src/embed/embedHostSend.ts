@@ -11,6 +11,10 @@ export function setEmbedHostSend(on: boolean): void {
   hostSends = on;
 }
 
+export function isEmbedHostSendOn(): boolean {
+  return hostSends;
+}
+
 export function applyEmbedSendResult(result: EmbedSendOutcome): void {
   const commandId = waiting.get(result.requestId)?.commandId;
   if (commandId === undefined) return;
