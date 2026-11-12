@@ -19,6 +19,7 @@ import * as CloudLink from "../cloud/CloudLink.ts";
 import { agentApprovalAppUrlConfig } from "../cloud/publicConfig.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpOAuth from "./McpOAuth.ts";
+import * as McpOAuthMetadata from "./mcpOAuthMetadata.ts";
 import { renderErrorPage } from "./mcpOAuthHtml.ts";
 
 const APPROVAL_PAGE_PATH = "/connect-agent";
@@ -40,7 +41,7 @@ const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
   ),
 );
 
-const requestUrls = Effect.map(HttpServerRequest.HttpServerRequest, McpOAuth.requestUrls);
+const requestUrls = Effect.map(HttpServerRequest.HttpServerRequest, McpOAuthMetadata.requestUrls);
 const decodeAuthorizationRequest = Schema.decodeEffect(AuthMcpAuthorizationRequest);
 
 /**
@@ -92,13 +93,13 @@ export const layer = HttpApiBuilder.group(
         Effect.orElseSucceed(Option.none),
       );
     const protectedResource = () =>
-      requestUrls.pipe(Effect.map(McpOAuth.protectedResourceMetadata));
+      requestUrls.pipe(Effect.map(McpOAuthMetadata.protectedResourceMetadata));
 
     return handlers
       .handle("protectedResource", protectedResource)
       .handle("mcpProtectedResource", protectedResource)
       .handle("authorizationServer", () =>
-        requestUrls.pipe(Effect.map(McpOAuth.authorizationServerMetadata)),
+        requestUrls.pipe(Effect.map(McpOAuthMetadata.authorizationServerMetadata)),
       )
       .handle("register", ({ payload }) =>
         oauth.register(payload).pipe(
