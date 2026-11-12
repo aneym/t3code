@@ -3146,6 +3146,7 @@ export default function ChatView(props: ChatViewProps) {
             thread={serverProjection.thread.id}
             messages={serverProjection.messages}
             composerRef={composerRef}
+            composerDraftTarget={composerDraftTarget}
           />
         ) : null}
         {heldSendShown && !heldSendDelivered ? (

@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { useEffect } from "react";
 
 import type { ComposerHandleRef } from "../../composerHandleContext";
+import { type ComposerThreadTarget, useComposerDraftStore } from "../../composerDraftStore";
 import { retryLocalSend } from "../../embed/embedComposerSend";
 import {
   actOnHostPendingSend,
@@ -88,6 +89,7 @@ export function EmbedPendingSends(props: {
   readonly thread: string;
   readonly messages: ReadonlyArray<CommittedMessage>;
   readonly composerRef: ComposerHandleRef;
+  readonly composerDraftTarget: ComposerThreadTarget;
 }) {
   const local = useEmbedLocalSends(props.thread);
   const host = useEmbedHostPendingSends(props.thread);
@@ -100,9 +102,12 @@ export function EmbedPendingSends(props: {
   const shownLocal = local.filter((send) => !delivered.includes(send));
   const shownHost = host.filter((send) => !deliveredIn(props.messages, send));
   if (shownLocal.length === 0 && shownHost.length === 0) return null;
-  const edit = (text: string) => {
-    props.composerRef.current?.insertTextAtEnd(text, { ensureLeadingBoundary: true });
-    props.composerRef.current?.focusAtEnd();
+  const edit = (text: string, release: () => void) => {
+    const drafts = useComposerDraftStore.getState();
+    const current = drafts.getComposerDraft(props.composerDraftTarget)?.prompt.trimEnd() ?? "";
+    drafts.setPrompt(props.composerDraftTarget, current === "" ? text : `${current}\n\n${text}`);
+    release();
+    requestAnimationFrame(() => props.composerRef.current?.focusAtEnd());
   };
   return (
     <ol
@@ -115,10 +120,9 @@ export function EmbedPendingSends(props: {
           key={send.requestId}
           send={send}
           onRetry={() => actOnHostPendingSend(props.thread, send.requestId, "retry")}
-          onEdit={() => {
-            edit(send.text);
-            actOnHostPendingSend(props.thread, send.requestId, "discard");
-          }}
+          onEdit={() =>
+            edit(send.text, () => actOnHostPendingSend(props.thread, send.requestId, "discard"))
+          }
           onDiscard={() => actOnHostPendingSend(props.thread, send.requestId, "discard")}
         />
       ))}
@@ -127,10 +131,7 @@ export function EmbedPendingSends(props: {
           key={send.messageId}
           send={send}
           onRetry={() => retryLocalSend(props.thread, send.messageId)}
-          onEdit={() => {
-            edit(send.text);
-            dropLocalSends(props.thread, [send.messageId]);
-          }}
+          onEdit={() => edit(send.text, () => dropLocalSends(props.thread, [send.messageId]))}
           onDiscard={() => dropLocalSends(props.thread, [send.messageId])}
         />
       ))}
