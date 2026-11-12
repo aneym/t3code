@@ -17,7 +17,7 @@ import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
 const FAVICON_CACHE_CAPACITY = 512;
 const FAVICON_POSITIVE_CACHE_TTL = Duration.minutes(10);
-const FAVICON_NEGATIVE_CACHE_TTL = Duration.minutes(1);
+const FAVICON_NEGATIVE_CACHE_TTL = Duration.minutes(10);
 
 function faviconCacheKey(cwd: string, faviconPath?: string): string {
   return `${faviconPath ?? ""}\0${cwd}`;
@@ -43,6 +43,13 @@ const FAVICON_CANDIDATES = [
   "public/favicon.svg",
   "public/favicon.ico",
   "public/favicon.png",
+  "public/icon.svg",
+  "apps/web/public/favicon.svg",
+  "apps/web/public/favicon.ico",
+  "apps/web/public/favicon.png",
+  "apps/web/public/icon.svg",
+  "web/public/favicon.svg",
+  "frontend/public/favicon.svg",
   "app/favicon.ico",
   "app/favicon.png",
   "app/icon.svg",
