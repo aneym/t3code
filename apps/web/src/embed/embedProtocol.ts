@@ -17,6 +17,9 @@ const EMBED_SEND_RESULT_MESSAGE = "t3-embed/send-result";
 const EMBED_AUDIENCE_MESSAGE = "t3-embed/audience";
 const EMBED_REVEAL_MESSAGE = "t3-embed/reveal";
 export const EMBED_REVEALED_MESSAGE = "t3-embed/revealed";
+export const EMBED_PENDING_SEND_ACTION_MESSAGE = "t3-embed/pending-send-action";
+
+export type EmbedPendingSendAction = "retry" | "discard";
 
 export type EmbedSendWhen = "queue" | "steer";
 
@@ -48,6 +51,12 @@ export type EmbedOutboundMessage =
     }
   | { readonly type: typeof EMBED_COMPOSER_FOCUS_MESSAGE; readonly focused: boolean }
   | { readonly type: typeof EMBED_CONTROLS_MESSAGE; readonly shown: boolean }
+  | {
+      readonly type: typeof EMBED_PENDING_SEND_ACTION_MESSAGE;
+      readonly thread: string;
+      readonly requestId: string;
+      readonly action: EmbedPendingSendAction;
+    }
   | {
       readonly type: typeof EMBED_SEND_MESSAGE;
       readonly thread: string;
