@@ -40,7 +40,7 @@ function followLate(thread: string, messageId: string, late: EmbedSendOutcome): 
   if (late.outcome === "refused") {
     return settleLocalSend(thread, messageId, { state: "failed", reason: late.message });
   }
-  if (late.outcome === "held") return dropLocalSends(thread, [messageId]);
+  if (late.outcome === "held") return settleLocalSend(thread, messageId, { state: "waiting" });
   settleLocalSend(thread, messageId, { state: "sending" });
 }
 
