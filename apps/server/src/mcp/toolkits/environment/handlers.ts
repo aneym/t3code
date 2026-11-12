@@ -1,5 +1,16 @@
-import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts";
+import {
+  OrchestratorMcpFailure,
+  scoreAgentPlacement,
+  type ServerSettings,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
+import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
+import { repositoryIdentityKeys } from "../../../project/RepositoryIdentityKeys.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import { isProviderAvailable, resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as Settings from "../../../serverSettings.ts";
@@ -10,6 +21,10 @@ import { EnvironmentToolkit } from "./tools.ts";
 
 export function preferences(settings: ServerSettings) {
   const {
+    agentLoadBalancingEnabled,
+    agentLoadBalancingWeights,
+    agentPlacementPinnedEnvironmentId,
+    agentPlacementHealthLine,
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
@@ -18,6 +33,10 @@ export function preferences(settings: ServerSettings) {
   } = settings;
   const characters = Array.from(sourceControlWritingStyle.customInstructions);
   return {
+    agentLoadBalancingEnabled,
+    agentLoadBalancingWeights,
+    agentPlacementPinnedEnvironmentId,
+    agentPlacementHealthLine,
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
@@ -41,16 +60,85 @@ const access = Effect.gen(function* () {
   return { ...context, descriptor, settings: yield* Settings.ServerSettingsService };
 });
 export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
-  t3_environment_read: McpToolAccess.reads(() =>
+  t3_environment_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const { descriptor, settings } = yield* access;
       const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
+      const resources = yield* Effect.serviceOption(HostResources.HostResources);
+      const providers = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+      let placementProjectId = input.projectId;
+      const wanted = new Set([
+        ...(input.placementRepositoryKey === undefined ? [] : [input.placementRepositoryKey]),
+        ...(input.placementRepositoryKeys ?? []),
+      ]);
+      if (
+        input.placementRepositoryKey !== undefined ||
+        input.placementRepositoryKeys !== undefined
+      ) {
+        placementProjectId = undefined;
+        const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
+        if (Option.isSome(projects)) {
+          const matches = [];
+          let cursor: number | null = 0;
+          let pages = 0;
+          while (cursor !== null && pages++ < 10) {
+            const page: Effect.Success<
+              ReturnType<ProjectService.ProjectService["Service"]["listPage"]>
+            > = yield* projects.value
+              .listPage({ cursor, limit: 100 })
+              .pipe(Effect.mapError(unavailable));
+            matches.push(
+              ...page.projects.filter((project) =>
+                repositoryIdentityKeys(project.repositoryIdentity).some((key) => wanted.has(key)),
+              ),
+            );
+            cursor = page.nextCursor;
+          }
+          if (cursor === null && matches.length === 1) placementProjectId = matches[0]?.id;
+        }
+      }
+      const hostResources = Option.isSome(resources) ? yield* resources.value.read : null;
       return {
+        ...(placementProjectId === undefined ? {} : { placementProjectId }),
+        placementHealthLine: current.agentPlacementHealthLine,
+        placementHealth: scoreAgentPlacement({
+          environmentId: descriptor.environmentId,
+          label: descriptor.label,
+          resources: hostResources,
+          weight: current.agentLoadBalancingWeights[descriptor.environmentId] ?? 50,
+          line: current.agentPlacementHealthLine,
+          now: DateTime.toEpochMillis(yield* DateTime.now),
+        }),
         environmentId: descriptor.environmentId,
         label: descriptor.label,
         serverVersion: descriptor.serverVersion,
         platform: descriptor.platform,
         preferences: preferences(current),
+        hostResources,
+        ...(input.includePlacementProviders !== true
+          ? {}
+          : {
+              placementProviders: (Option.isSome(providers)
+                ? yield* providers.value.getProviders
+                : []
+              ).map((provider) => ({
+                instanceId: provider.instanceId,
+                driver: provider.driver,
+                enabled:
+                  isProviderAvailable(provider) &&
+                  provider.enabled &&
+                  provider.installed &&
+                  provider.status !== "error" &&
+                  provider.status !== "disabled" &&
+                  provider.auth.status !== "unauthenticated" &&
+                  resolveProjectProviderInstanceEnabled(
+                    current,
+                    placementProjectId ?? null,
+                    provider.instanceId,
+                  ),
+                models: provider.models.map((model) => model.slug),
+              })),
+            }),
       };
     }),
   ),

@@ -1,4 +1,9 @@
-import { AuthMcpClientAccess, EnvironmentId, type PeerLinkSummary } from "@t3tools/contracts";
+import {
+  AuthMcpClientAccess,
+  EnvironmentId,
+  type PeerLinkSummary,
+  peerLinkRenewalState,
+} from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -19,6 +24,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { authLocationFlags, type CliAuthLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { environmentShowCommand } from "./environmentShow.ts";
 
 /**
  * Links live in this environment's database and secret store, so these
@@ -72,13 +78,16 @@ const encodeLinks = Schema.encodeEffect(
   Schema.fromJsonString(Schema.Array(Schema.toEncoded(Schema.Unknown))),
 );
 
-const formatLinks = (links: ReadonlyArray<PeerLinkSummary>) =>
+const formatRenewal = (link: PeerLinkSummary, nowMs: number) =>
+  `renewal ${peerLinkRenewalState(link, nowMs)}${link.renewedAt === undefined ? "" : `, renewed ${DateTime.formatIso(link.renewedAt)}`}${link.renewalError === undefined ? "" : `\n  renewal refused: ${link.renewalError}`}`;
+
+const formatLinks = (links: ReadonlyArray<PeerLinkSummary>, nowMs: number) =>
   links.length === 0
     ? "No linked environments.\n"
     : `${links
         .map(
           (link) =>
-            `${link.label} (${link.environmentId})\n  ${link.status}, access ${link.access}, expires ${DateTime.formatIso(link.expiresAt)}\n  ${link.urls.join(", ")}${link.lastError === null ? "" : `\n  last error: ${link.lastError}`}`,
+            `${link.label} (${link.environmentId})\n  ${link.status}, access ${link.access}, expires ${DateTime.formatIso(link.expiresAt)}, ${formatRenewal(link, nowMs)}\n  ${link.urls.join(", ")}${link.lastError === null ? "" : `\n  last error: ${link.lastError}`}`,
         )
         .join("\n\n")}\n`;
 
@@ -131,7 +140,12 @@ const environmentListCommand = Command.make("list", { ...authLocationFlags, json
       (links) =>
         Effect.gen(function* () {
           const listed = yield* links.list;
-          yield* Console.log(flags.json ? `${yield* encodeLinks(listed)}\n` : formatLinks(listed));
+          const now = yield* DateTime.now;
+          yield* Console.log(
+            flags.json
+              ? `${yield* encodeLinks(listed)}\n`
+              : formatLinks(listed, now.epochMilliseconds),
+          );
         }),
       { quietLogs: flags.json },
     ),
@@ -161,11 +175,34 @@ const environmentUnlinkCommand = Command.make("unlink", {
   ),
 );
 
+const environmentRenewCommand = Command.make("renew", {
+  ...authLocationFlags,
+  environmentId: Argument.String("environment-id").pipe(
+    Argument.withDescription("The linked environment's id, from `t3 environment list`."),
+  ),
+}).pipe(
+  Command.withDescription(
+    "Renew a link for 30 more days without a pairing code. Works only in its last 7 days, and only when the other environment allows renewal. Links renew on their own while the server runs.",
+  ),
+  Command.withHandler((flags) =>
+    runWithPeerLinks(flags, (links) =>
+      Effect.gen(function* () {
+        const renewed = yield* links.renew(EnvironmentId.make(flags.environmentId));
+        yield* Console.log(
+          `Renewed ${renewed.label} (${renewed.environmentId}) until ${DateTime.formatIso(renewed.expiresAt)}.\n`,
+        );
+      }),
+    ),
+  ),
+);
+
 export const environmentCommand = Command.make("environment").pipe(
   Command.withDescription("Link other T3 Code environments, so agents here can work there."),
   Command.withSubcommands([
+    environmentShowCommand,
     environmentLinkCommand,
     environmentListCommand,
     environmentUnlinkCommand,
+    environmentRenewCommand,
   ]),
 );
