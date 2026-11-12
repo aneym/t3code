@@ -348,10 +348,7 @@ export default defineConfig({
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: false }] },
       },
       {
-        files: [
-          "packages/client-runtime/src/state/runtime.ts",
-          "packages/client-runtime/src/state/vcsAction.ts",
-        ],
+        files: ["packages/client-runtime/src/state/commandPermissions.ts"],
         rules: {
           "t3code/no-rpc-permission-bypass": [
             "error",
@@ -392,7 +389,7 @@ export default defineConfig({
         },
       },
       {
-        files: ["apps/server/src/mcp/McpHttpServer.ts"],
+        files: ["apps/server/src/mcp/mcpServer/**"],
         rules: { "t3code/no-raw-mcp-registration": "off" },
       },
       {
