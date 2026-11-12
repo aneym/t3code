@@ -15,6 +15,7 @@ export interface ThreadQueueRowControls {
 
 export function resolveThreadQueueRowControls(input: {
   readonly busy: boolean;
+  readonly isBackgroundResult?: boolean;
   readonly canPromoteToSteer: boolean;
   readonly canSendNow: boolean;
   /** Something else holds the composer, such as an open question. */
@@ -24,11 +25,11 @@ export function resolveThreadQueueRowControls(input: {
   readonly isGuestMessage?: boolean;
   readonly text: string;
 }): ThreadQueueRowControls {
-  const mutationEnabled = !input.busy;
+  const mutationEnabled = !input.busy && input.isBackgroundResult !== true;
   const isEditing = input.isEditing === true;
 
   return {
-    canDismiss: !input.busy,
+    canDismiss: mutationEnabled,
     // Re-opening the row already in the composer would reload it and throw
     // away whatever has been typed since.
     canEdit:
