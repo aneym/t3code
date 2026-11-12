@@ -17,9 +17,6 @@ from .release_uplink import UPLINK_KBPS, UPLINK_NODES, WINDOW, UplinkGate, parse
 from .release_run_binding import bind_remote_runs
 from .run_retention import finish_runs
 
-LIVE_NODES = {"IM", "IL", "S", "F", "LM", "LR", "H", "AS", "W", "FW"}
-
-
 def remote_engine():
     engine = Path(__file__).resolve().parent
     commit = subprocess.run(["git", "-C", str(engine), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
@@ -77,11 +74,9 @@ def drive_fast(args):
     timeline = Timeline(args.run / "timeline.jsonl")
     inputs = {"version": args.version, "topic": args.topic,
               "remoteRun": args.remote_run, "remoteTools": args.remote_tools, "dryRun": args.dry_run,
-              "rehearseOnly": args.rehearse_only, "overrideReason": args.override_reason,
+              "overrideReason": args.override_reason,
               **({"deferredHosts": {host: args.defer_reason for host in args.defer_host}} if args.defer_host else {}),
               **({"advisoryWorkers": args.advisory_workers} if args.advisory_workers != 4 else {}),
-              **({"rehearsalDrainS": args.rehearsal_drain_s} if args.rehearsal_drain_s != 45 else {}),
-              **({"startupBusyOk": True} if args.startup_busy_ok else {}),
               **({"linuxHost": args.linux_host} if args.linux_host != "ax42" else {})}
     binding = args.run / "fast-inputs.json"
     try:
@@ -99,7 +94,7 @@ def drive_fast(args):
     advisory = {node.id for node in graph if not node.gating}
     blocked = set(existing.get("blocked", []))
     done, failed, running = set(), (set(existing.get("failed", [])) - blocked) & advisory, {}
-    pending = {node.id: node for node in graph if not (args.rehearse_only and (node.id in LIVE_NODES or stage_action(node.id) == "install"))}
+    pending = {node.id: node for node in graph}
     recorded = set(existing.get("recorded", [])) - set(existing.get("failed", []))
     completed_at = existing.get("releaseSeconds")
     uplink = UplinkGate(args.uplink_window, args.dry_run, existing.get("uplinkHeldSeconds", 0.0))
@@ -229,10 +224,8 @@ def drive_fast(args):
         uplink.pause(running, len(done) + len(failed))
     gating_failures = failed & {node.id for node in graph if node.gating}
     print(json.dumps({"done": sorted(done), "failed": sorted(failed), "releaseSeconds": completed_at, "uplinkHeldSeconds": round(uplink.seconds, 3),
-                      "dryRun": args.dry_run, "rehearseOnly": args.rehearse_only, "gatingFailures": sorted(gating_failures),
+                      "dryRun": args.dry_run, "gatingFailures": sorted(gating_failures),
                       **({"deferredHosts": inputs["deferredHosts"]} if "deferredHosts" in inputs else {})}))
-    if args.rehearse_only:
-        return 1 if gating_failures else 0
     return 1 if gating_failures or completed_at is None or completed_at >= 900 else 0
 
 
@@ -245,14 +238,11 @@ def main(argv):
     parser.add_argument("--refresh-reason", default="")
     parser.add_argument("--plan", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--rehearse-only", action="store_true")
     parser.add_argument("--override-reason", default="")
     parser.add_argument("--coordinator", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--run", type=Path)
     parser.add_argument("--remote-run")
     parser.add_argument("--advisory-workers", type=int, default=4, help="maximum parallel advisory suite workers (default: 4)")
-    parser.add_argument("--rehearsal-drain-s", type=int, choices=range(30, 61), default=45)
-    parser.add_argument("--startup-busy-ok", action="store_true", help="window flag: hot-swap startup samples may run on a busy host (item 9)")
     parser.add_argument("--remote-tools")
     parser.add_argument("--linux-host", default="ax42", choices=(*LINUX_TARGETS, "pc-wsl"), help="shared Linux artifact builder (default: ax42)")
     parser.add_argument("--defer-host", action="append", default=[], choices=tuple(LINUX_TARGETS), help="skip a Linux host for this release (repeatable): no readiness probe, sandbox proofs or install")
@@ -313,8 +303,8 @@ def main(argv):
         coordinator = args.run / f"coordinator-{attempt}"
     command = [sys.executable, str(Path(__file__).resolve().with_name("release")),
                "--fast", "--version", args.version, "--topic", args.topic,
-               "--run", str(args.run), "--remote-run", args.remote_run, "--advisory-workers", str(args.advisory_workers), "--rehearsal-drain-s", str(args.rehearsal_drain_s), *(["--startup-busy-ok"] if args.startup_busy_ok else []),
-               "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, "--uplink-window", args.uplink_window, "--coordinator", *defer_argv(args), *(["--rehearse-only"] if args.rehearse_only else [])]
+               "--run", str(args.run), "--remote-run", args.remote_run, "--advisory-workers", str(args.advisory_workers),
+               "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, "--uplink-window", args.uplink_window, "--coordinator", *defer_argv(args)]
     spec = {"label": f"com.agent-rails.t3fast-{args.version}-coordinator-{coordinator.name}", "host": "studio",
             "command": command, "budget": sum(node.budget * HANG_GUARD + wait_cap(node) + TERM_GRACE_S + 5 for node in graph) + 60,
             "resourceWaitCapSeconds": RESOURCE_WAIT_CAP_S,

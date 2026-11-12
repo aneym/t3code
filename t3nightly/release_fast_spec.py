@@ -14,7 +14,7 @@ def stage_spec(node, args):
     tools = str(Path(__file__).resolve().parent) if node.host == "studio" else args.remote_tools
     python = sys.executable if node.host == "studio" else "python3"
     command = [python, f"{tools}/release-fast-stage", "--stage", node.id, "--host", node.host,
-               "--version", args.version, "--topic", args.topic, "--run", root, "--advisory-workers", str(args.advisory_workers), "--rehearsal-drain-s", str(args.rehearsal_drain_s), *(["--startup-busy-ok"] if args.startup_busy_ok else []),
+               "--version", args.version, "--topic", args.topic, "--run", root, "--advisory-workers", str(args.advisory_workers),
                "--remote-run", args.remote_run, "--remote-tools", args.remote_tools, *(["--linux-host", args.linux_host] if args.linux_host != "ax42" else []), "--base", args.base, "--override-reason", args.override_reason, *defer_argv(args)]
     install = stage_action(node.id) == "install"
     return {"label": f"com.agent-rails.t3fast-{args.version}-{node.id}",

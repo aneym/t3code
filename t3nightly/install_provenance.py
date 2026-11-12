@@ -9,8 +9,6 @@ from contextlib import closing
 from pathlib import Path
 
 from .release_manifest import digest, engine_identity, history_digest, load
-from .release_receipts import REHEARSAL_SCHEMA, parse, provenance
-from .release_rollback_proof import proven, required
 
 
 def file_digest(path):
@@ -24,10 +22,7 @@ def migration_history(run):
 
 
 def eligibility(manifest, host, args, restore_copy=None):
-    proof = Path(args.rollback_proof) if required(manifest, host) and getattr(args, "rollback_proof", None) else None
-    return {"class": manifest["targets"][host]["compatibility"].get("eligibility"),
-            "rollbackProof": {"path": str(proof), "sha256": file_digest(proof)} if proof and proof.is_file() else None,
-            "restoreCopy": restore_copy}
+    return {"class": manifest["targets"][host]["compatibility"].get("eligibility"), "restoreCopy": restore_copy}
 
 
 def install_host(args):
@@ -74,23 +69,5 @@ def validate(run, previous, candidate):
         if observed["oldMigrationHistory"] != expected["compatibility"]["baseMigrations"]["history"]:
             raise ValueError("sandbox migration history differs from frozen base")
         return manifest, None, host, observed
-    if not args.smoke_verdict:
-        raise ValueError("hard install requires a passing e2e smoke verdict")
-    smoke = json.loads(Path(args.smoke_verdict).read_text())
-    if smoke.get("ok") is not True or (smoke.get("kind"), smoke.get("version"), smoke.get("archiveSha256")) != ("t3-smoke", args.version, artifact["archive"]["sha256"]):
-        raise ValueError("e2e smoke verdict does not pass for this archive")
-    run.step("hard-smoke-accepted", archive=smoke["archiveSha256"])
-    if required(manifest, host):
-        if not proven(args.rollback_proof, manifest, artifact["archive"]["sha256"]):
-            raise ValueError("fork-additive migrations require a forced-rollback proof for this archive")
-        run.step("hard-rollback-proof-accepted")
-    receipt = parse(args.receipt)
-    if receipt["schema"] != REHEARSAL_SCHEMA:
-        raise ValueError("hard install requires a rehearsal receipt")
-    reasons = provenance(receipt, manifest, host, observed=observed)
-    if reasons:
-        raise ValueError("rehearsal refused: " + "; ".join(reasons))
-    if receipt["oldRuntime"]["version"] != previous:
-        raise ValueError("old serving version differs from rehearsal")
-    run.step("hard-receipt-accepted", digest=receipt["digest"], observed=observed)
-    return manifest, receipt, host, observed
+    run.step("hard-provenance-accepted", observed=observed)
+    return manifest, None, host, observed

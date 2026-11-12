@@ -18,8 +18,7 @@ class InstallCommand:
 
 
 def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, artifact_manifest,
-                          receipt, receipt_host, install_receipt, state_dir, chat_project,
-                          smoke_verdict, rollback_proof, override_reason="", launcher_artifact=None,
+                          receipt_host, install_receipt, state_dir, chat_project, override_reason="", launcher_artifact=None,
                           connector_artifact=None, home=None, drain_s=None, handoff_stop=None, compact_db=None):
     home = Path.home() if home is None else Path(home)
     state, env, prefix = Path(state_dir), None, []
@@ -29,10 +28,9 @@ def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, a
         env = {**os.environ, "AGENT_LANE": "t3-nightly", "AGENT_THREAD_ID": "mcp:a2795f2f-43aa-40c5-890c-98de1291379a"}
         prefix = ["ionice", "-c3"]
     words = [*prefix, sys.executable, str(Path(tools) / "install"), "--seamless", "--rpc-tree", str(rpc_tree), "--version", version, "--assets", str(assets),
-             "--manifest", str(manifest), "--artifact-manifest", str(artifact_manifest), "--receipt", str(receipt),
+             "--manifest", str(manifest), "--artifact-manifest", str(artifact_manifest),
              "--receipt-host", receipt_host, "--install-receipt", str(install_receipt), "--state-dir", str(state),
-             "--chat-project", str(chat_project), "--load-max", "64", "--health-s", "300", "--override-reason", override_reason,
-             "--smoke-verdict", str(smoke_verdict), "--rollback-proof", str(rollback_proof)]
+             "--chat-project", str(chat_project), "--load-max", "64", "--health-s", "300", "--override-reason", override_reason]
     if host != "studio":
         words.extend(["--service-label", "t3code.service"])
     if host == "ax42":
@@ -61,11 +59,10 @@ def fast_install(config, log):
         host=config.host, version=config.version, tools=config.tools,
         rpc_tree=config.tree("mac-cli" if config.host == "studio" else "linux-cli"),
         assets=config.build_out(), manifest=config.manifest, artifact_manifest=config.artifact(),
-        receipt=config.receipt("rehearsal"), receipt_host=config.host,
+        receipt_host=config.host,
         install_receipt=config.receipt("install"), state_dir=config.install_state(),
         chat_project=config.chat_project(), override_reason=config.override_reason,
-        smoke_verdict=config.run / f"e2e-{config.host}" / "smoke-verdict.json",
-        rollback_proof=config.receipt("rollback-proof"), home=config.home, compact_db=config.compact_db or None,
+        home=config.home, compact_db=config.compact_db or None,
         handoff_stop=True if config.compact_db else None,
         **{artifacts[index].removeprefix("--").replace("-", "_"): artifacts[index + 1] for index in range(0, len(artifacts), 2)},
     )
@@ -80,4 +77,4 @@ def fast_install(config, log):
     if code and outcome in SUCCESS_OUTCOMES:
         outcome = "failed"
     (config.outcome()).write_text(json.dumps({"outcome": outcome, "installerExit": code, "retryable": receipt.get("retryable") is True}) + "\n")
-    return 0
+    return 0 if outcome in SUCCESS_OUTCOMES else 1

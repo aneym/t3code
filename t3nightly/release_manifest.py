@@ -316,7 +316,6 @@ def compatibility(tree, base, head):
         "connectionOnlyFiles": connection,
         "upstreamTag": {"base": base_tag, "candidate": head_tag, "newlyMerged": rebased},
         "persistedState": "fork-additive" if additive else "compatible" if not (migrations or persisted) else "unproved",
-        "rollbackProof": "required" if additive else "not-required",
         "binaryRollback": not reasons,
         "fastPath": {"eligible": not reasons, "reasons": reasons},
     }

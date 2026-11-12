@@ -1,7 +1,7 @@
 import json
 import subprocess
 
-from .release_config import CHAT_PROJECT, SEEDS
+from .release_config import CHAT_PROJECT
 from .release_manifest import migration_identity
 from .release_targets import LINUX_TARGETS
 from .serving_assembly import serving_assembly_head
@@ -13,7 +13,7 @@ REMOTE_PROBE = r'''
 import json, os, shutil, sqlite3, sys, urllib.request
 from contextlib import closing
 from pathlib import Path
-tools, seeds, version, chat, remote_run, host = sys.argv[1:7]
+tools, version, chat, remote_run, host = sys.argv[1:6]
 home = Path.home()
 row = {"disk": shutil.disk_usage("/").free, "load": os.getloadavg()[0], "cpus": os.cpu_count()}
 try:
@@ -43,14 +43,6 @@ try:
         row["liveHistory"] = history_digest(connection.execute("SELECT migration_id, name FROM effect_sql_migrations"))
 except Exception:
     pass
-row["seedHistories"] = {}
-for path in sorted((home / seeds).glob("*.sqlite")):
-    try:
-        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as connection:
-            from t3nightly.release_manifest import history_digest
-            row["seedHistories"][path.stem] = history_digest(connection.execute("SELECT migration_id, name FROM effect_sql_migrations"))
-    except Exception:
-        row["seedHistories"][path.stem] = None
 versions = home / ".t3/runtime/versions"
 row["runtimes"] = sorted(path.name for path in versions.iterdir() if (path / "t3").is_file()) if versions.is_dir() else []
 row["held"] = (home / ".t3nightly" / f"hold-install{version.rsplit('.', 1)[1]}").exists()
@@ -69,7 +61,7 @@ def serving_head(config, version, host):
 
 
 def remote_probe(config, log, host="ax42"):
-    words = [*ssh_argv(LINUX_TARGETS[host], '-oConnectTimeout=5'), "python3", "-", config.remote_tools, SEEDS, config.version, CHAT_PROJECT, config.remote_run, host]
+    words = [*ssh_argv(LINUX_TARGETS[host], '-oConnectTimeout=5'), "python3", "-", config.remote_tools, config.version, CHAT_PROJECT, config.remote_run, host]
     try:
         result = subprocess.run(words, input=REMOTE_PROBE, capture_output=True, text=True, timeout=25, check=False)
         if result.returncode:
@@ -110,7 +102,6 @@ def probe_host(config, log, host, value, *, require_result=False):
     value["checks"][f"{host}-engine"] = remote.get("engine") == value["engine"]["digest"]
     checks = value["hostChecks"][host] = {
         "reachable": bool(remote),
-        "seed": bool(history and remote.get("seedHistories", {}).get(history) == history),
         "old-runtime": bool(old) and old in remote.get("runtimes", []),
         "not-held": remote.get("held") is False,
         "disk": remote.get("disk", 0) >= REMOTE_FLOOR,

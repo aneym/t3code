@@ -2,13 +2,9 @@ import hashlib
 import json
 import os
 import shutil
-import socket
-import sqlite3
 import subprocess
 import sys
-import uuid
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
 from pathlib import Path
 
 from .release_assemble import assemble, stamp
@@ -19,12 +15,11 @@ from .release_install import fast_install
 from .release_linux import prepare_dependencies, require_host_ready, stage_linux
 from .release_targets import LINUX_TARGETS, stage_action, stage_target
 from .release_land_receipts import publish as publish_landings
-from .release_manifest import digest, eligible, freeze, history_digest, load
+from .release_manifest import digest, eligible, freeze
 from .release_outputs import deferred_hosts, fast_evidence
 from .release_publish_stage import stage_payload, validate as validate_staged
 from .release_ownership import ownership
 from .release_readiness import readiness
-from .release_rollback_proof import fast_rollback_proof, required
 from .release_seed_remotes import seed
 from .release_advisory import fast_advisory
 from .release_transport import command, git_tree, prepare_remote, remote_worker, require, transfer
@@ -178,67 +173,6 @@ def fast_assemble(config, log):
         ownership("release", tree, log)
 
 
-def fast_prepare(config, log):
-    require_host_ready(config)
-    head = json.loads((config.run / "assembly.json").read_text())["head"]
-    prepare_dependencies(config, head, log, fast_tree)
-    manifest = load(config.manifest)
-    old = manifest["targets"][config.host]["oldRelease"]
-    runtime = config.home / ".t3/runtime/versions" / old
-    history = manifest["targets"][config.host]["compatibility"]["baseMigrations"]["history"]
-    seed_path = config.seed(history)
-    with closing(sqlite3.connect(f"file:{seed_path}?mode=ro", uri=True)) as connection:
-        if history_digest(connection.execute("SELECT migration_id, name FROM effect_sql_migrations")) != history:
-            raise ValueError(f"seed {seed_path} does not carry the base migration history")
-    if not (runtime / "t3").is_file():
-        raise ValueError(f"old runtime missing: {runtime}")
-    root = (config.sandbox_root() if (config.run / f"sandbox-{config.host}.json").exists()
-            else _allocate_sandbox(config))
-    if root.exists():
-        raise ValueError(f"rehearsal sandbox already allocated: {root}")
-    clone = root / "old-runtime" / old if sys.platform == "darwin" else runtime
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    plan = {"oldRuntime": str(clone), "seed": str(seed_path), "home": str(root / "home"), "evidence": str(root / "evidence"),
-            "rollbackRoot": str(root.with_name(f"{root.name}-rollback")),
-            "label": f"t3-rehearsal-fast-{config.number}-{config.host}-{uuid.uuid4().hex[:8]}", "port": port, "oldRelease": old}
-    (config.run / f"sandbox-{config.host}.json").write_text(json.dumps(plan, indent=2) + "\n")
-    root.mkdir(parents=True, mode=0o700)
-    (root / "sandbox-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
-    if sys.platform == "darwin":
-        clone.parent.mkdir(mode=0o700)
-        subprocess.run(["cp", "-c", "-R", str(runtime), str(clone)], check=True, timeout=120)
-    log.write(json.dumps(plan) + "\n")
-    return 0
-
-
-def _allocate_sandbox(config):
-    return (config.home / ".t3nightly" / f"rehearsal-fast-{config.number}-{config.host}-{uuid.uuid4().hex[:12]}").resolve()
-
-
-def fast_rehearse(config, log):
-    plan = json.loads((config.run / f"sandbox-{config.host}.json").read_text())
-    code = command([sys.executable, str(config.tools / "rehearse"), "--old-runtime", plan["oldRuntime"], "--candidate-manifest", str(config.manifest),
-                    "--assets", str(config.build_out()), "--artifact-manifest", str(config.artifact()), "--seed", plan["seed"],
-                    "--home", plan["home"], "--evidence", plan["evidence"], "--label", plan["label"], "--port", str(plan["port"]),
-                    "--target-host", config.host, "--provider-binary", str(config.home / ".local/bin/claude"), "--health-s", "300",
-                    "--hot-swap", "--rehearsal-drain-s", str(config.rehearsal_drain_s), *(["--startup-busy-ok"] if config.startup_busy_ok else []), "--rpc-tree", str(config.tree("mac-cli" if config.host == "studio" else "linux-cli")),
-                    *config.service_artifacts(), *config.target_artifacts()], log)
-    config.receipt("rehearsal").parent.mkdir(parents=True, exist_ok=True)
-    if (Path(plan["evidence"]) / "retention.json").is_file():
-        shutil.copyfile(Path(plan["evidence"]) / "retention.json", config.receipt("rehearsal-retention"))
-    if not code:
-        shutil.copyfile(Path(plan["evidence"]) / "rehearsal-receipt.json", config.receipt("rehearsal"))
-    return code
-
-
-def fast_e2e(config, log):
-    tree = config.tree("mac-cli" if config.host == "studio" else "linux-cli")
-    return command([sys.executable, str(config.tools / "smoke"), "--archive", str(config.build_out() / config.archive()),
-                    "--version", config.version, "--out", str(config.run / f"e2e-{config.host}"), "--tree", str(tree)], log)
-
-
 def fast_swap(config, log):
     archive = config.run / "desktop" / f"T3-Code-{config.version}-arm64.zip"
     code = command([sys.executable, str(config.tools / "desktop-swap"), str(archive), "--fast-evidence", str(config.run), "--override-reason", config.override_reason], log)
@@ -261,8 +195,7 @@ def fast_publish(config, log):
             continue
         own, local = config.on(host), config.run / host
         local.mkdir(exist_ok=True)
-        proof = (own.receipt("rollback-proof"),) if required(load(config.manifest), host) else ()
-        for path in (own.manifest, own.receipt("rehearsal"), own.receipt("install"), *proof):
+        for path in (own.manifest, own.receipt("install")):
             transfer(f"{address}:{path}", str(local) + "/", log)
         if host != config.build_host:
             shutil.copy2(source / remote.artifact().name, local / remote.artifact().name)
@@ -323,15 +256,8 @@ def run_fast_action(stage, config, log):
         return stage_payload(config, stage, log)
     if stage == "stage-linux":
         return stage_linux(config, target, log)
-    if stage == "prepare":
-        return fast_prepare(config, log)
-    if stage == "rehearse":
-        return fast_rehearse(config, log)
-    if stage == "e2e":
-        return fast_e2e(config, log)
-    if stage == "rollback-proof":
-        return fast_rollback_proof(config, log)
     if stage == "install":
+        prepare_dependencies(config, head, log, fast_tree)
         return fast_install(config, log)
     if stage == "S":
         return fast_swap(config, log)

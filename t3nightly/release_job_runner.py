@@ -151,7 +151,7 @@ def _run(directory, check_cancelled):
                 if spec.get("result"):
                     result_path = Path(spec["result"])
                     result = json.loads(result_path.read_text())
-                    outcome = result["outcome"] if code == 0 else "failed"
+                    outcome = result["outcome"] if code == 0 or result["outcome"] in ("rolled-back", "failed") else "failed"
                     evidence.append(str(result_path))
                 if outcome not in spec.get("outcomes", ["passed", "failed"]):
                     raise ValueError(f"invalid stage outcome: {outcome}")

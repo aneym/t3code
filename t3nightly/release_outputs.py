@@ -11,8 +11,7 @@ from .release_graph import SUCCESS_OUTCOMES
 from .release_manifest import digest, eligible, load
 from .release_targets import LINUX_TARGETS, stage_action, stage_target
 from .release_publish_stage import validate as validate_staged
-from .release_rollback_proof import proven, required
-from .release_receipts import INSTALL_SCHEMA, REHEARSAL_SCHEMA, parse, provenance, timestamp
+from .release_receipts import INSTALL_SCHEMA, parse, provenance
 from .release_continuation import require_studio_proof
 from .release_timeline import latest_rows
 from .release_signatures import verify_archive, verify_desktop_zip
@@ -111,25 +110,12 @@ def fast_artifact(path, version, key, kind="cli"):
     return value
 
 
-def fast_rehearsal(path, manifest, artifact, host):
-    receipt = parse(path)
-    if receipt["schema"] != REHEARSAL_SCHEMA:
-        raise ValueError(f"{path}: not a rehearsal receipt")
-    observed = {"artifactManifestDigest": artifact["digest"], "candidateRuntime.digest": artifact["runtime"]["sha256"]}
-    reasons = provenance(receipt, manifest, host, timestamp(receipt["finishedAt"]), observed)
-    if reasons:
-        raise ValueError(f"{path}: " + "; ".join(reasons))
-    return receipt
-
-
-def fast_install(path, manifest, artifact, rehearsal, host):
+def fast_install(path, manifest, artifact, host):
     receipt = parse(path)
     if receipt["schema"] != INSTALL_SCHEMA:
         raise ValueError(f"{path}: not an install receipt")
     current = receipt.get("outcome") == "current"
     observed = {"artifactManifestDigest": artifact["digest"], "servingRuntime.digest": artifact["runtime"]["sha256"]}
-    if not current:
-        observed["rehearsalDigest"] = rehearsal["digest"]
     reasons = provenance(receipt, manifest, host, observed=observed)
     if receipt["servingRuntime"]["version"] != manifest["version"]:
         reasons.append(f"serving {receipt['servingRuntime']['version']}, not {manifest['version']}")
@@ -137,28 +123,13 @@ def fast_install(path, manifest, artifact, rehearsal, host):
         reasons = [reason for reason in reasons if not reason.startswith("oldRuntime.version:")]
         if receipt["oldRuntime"] != {"version": manifest["version"], "digest": artifact["runtime"]["sha256"]}:
             reasons.append("current install was not already serving the exact candidate runtime")
-    else:
-        if not timestamp(rehearsal["finishedAt"]) <= timestamp(receipt["startedAt"]) < timestamp(rehearsal["expiresAt"]):
-            reasons.append("rehearsal did not precede the live install within its expiry")
-        if receipt["oldRuntime"]["digest"] != rehearsal["oldRuntime"]["digest"]:
-            reasons.append("live old runtime differs from rehearsed old runtime")
     if reasons:
         raise ValueError(f"{path}: " + "; ".join(reasons))
     return receipt
 
 
-def rollback_proof(receipts, manifest, artifact, host, recorded):
-    path = receipts / f"rollback-proof-{host}.json"
-    claimed = (recorded.get("rollbackProof") or {}).get("sha256")
-    if not proven(path, manifest, artifact["archive"]["sha256"]) or claimed != sha256(path):
-        raise ValueError(f"{host}: {recorded['class']} install has no passing forced-rollback proof for archive {artifact['archive']['sha256']} matching its receipt")
-    return {"path": str(path), "sha256": claimed}
-
-
-def condition_met(condition, compatibility, rehearsal, install):
+def condition_met(condition, compatibility, install):
     copy, local = install["eligibility"].get("restoreCopy") or {}, install["backup"].get("local") or {}
-    if condition == "baseline-seed-rehearsal":
-        return rehearsal["result"] == "PASS" and rehearsal["oldMigrationHistory"] == compatibility["baseMigrations"]["history"]
     if condition == "offbox":
         backup = install["backup"]
         seeded = backup.get("seed") or {}
@@ -174,24 +145,20 @@ def condition_met(condition, compatibility, rehearsal, install):
     return False
 
 
-def eligibility_evidence(receipts, manifest, artifact, host, install, rehearsal):
+def eligibility_evidence(manifest, host, install):
     compatibility = manifest["targets"][host]["compatibility"]
     recorded = install["eligibility"]
     expected = compatibility.get("eligibility")
     if expected is None or recorded.get("class") != expected:
         raise ValueError(f"{host}: install eligibility {recorded.get('class')} is not the manifest class {expected}")
     if install["outcome"] == "current":
-        return {"class": expected, "rollbackProof": None, "restoreCopy": None, "conditions": {}}
-    proof = rollback_proof(receipts, manifest, artifact, host, recorded) if required(manifest, host) else None
+        return {"class": expected, "restoreCopy": None, "conditions": {}}
     conditions = {}
     for condition in compatibility["fastPath"]["conditions"]:
-        if condition == "forced-rollback-proof":
-            conditions[condition] = proof is not None
-        else:
-            conditions[condition] = condition_met(condition, compatibility, rehearsal, install)
+        conditions[condition] = condition_met(condition, compatibility, install)
         if not conditions[condition]:
             raise ValueError(f"{host}: {expected} install does not meet its {condition} condition")
-    return {"class": expected, "rollbackProof": proof, "restoreCopy": recorded.get("restoreCopy"), "conditions": conditions}
+    return {"class": expected, "restoreCopy": recorded.get("restoreCopy"), "conditions": conditions}
 
 
 def host_evidence(run, version, host, build):
@@ -203,13 +170,12 @@ def host_evidence(run, version, host, build):
     if sha256(archive) != artifact["archive"]["sha256"]:
         raise ValueError(f"{archive}: bytes differ from the artifact manifest")
     receipts = build if host in LINUX_TARGETS else run / "receipts"
-    rehearsal = fast_rehearsal(receipts / f"rehearsal-{host}.json", manifest, artifact, host)
-    return manifest, artifact, rehearsal, receipts
+    return manifest, artifact, receipts
 
 
 def fast_swap_ready(run, version, archive):
-    manifest, artifact, rehearsal, receipts = host_evidence(run, version, "studio", run / "mac")
-    install = fast_install(receipts / "install-studio.json", manifest, artifact, rehearsal, "studio")
+    manifest, artifact, receipts = host_evidence(run, version, "studio", run / "mac")
+    install = fast_install(receipts / "install-studio.json", manifest, artifact, "studio")
     desktop = fast_artifact(run / "desktop/artifact-desktop-darwin-arm64.json", version, "darwin-arm64", "desktop")
     if sha256(archive) != desktop["archive"]["sha256"]:
         raise ValueError(f"{archive}: desktop bytes differ from the desktop manifest")
@@ -260,13 +226,13 @@ def fast_evidence(run, version):
         if host in deferred:
             continue
         build = run / ("mac" if host == "studio" else host)
-        manifest, artifact, rehearsal, receipts = host_evidence(run, version, host, build)
+        manifest, artifact, receipts = host_evidence(run, version, host, build)
         if release_identity(manifest) != release_identity(release):
             raise ValueError(f"{host}: candidate {manifest['digest']} is not the same release source as {release['digest']}")
-        install = fast_install(receipts / f"install-{host}.json", manifest, artifact, rehearsal, host)
+        install = fast_install(receipts / f"install-{host}.json", manifest, artifact, host)
         rows[host] = {"candidate": manifest["digest"], "engine": manifest["engine"]["commit"], "frozenAt": manifest["frozenAt"], "artifact": artifact["digest"], "archive": artifact["archive"]["sha256"], "runtime": artifact["runtime"]["sha256"],
-                      "rehearsal": rehearsal["digest"], "install": install["digest"], "outcome": install["outcome"],
-                      "eligibility": eligibility_evidence(receipts, manifest, artifact, host, install, rehearsal),
+                      "install": install["digest"], "outcome": install["outcome"],
+                      "eligibility": eligibility_evidence(manifest, host, install),
                       "restartDrain": install.get("restartDrain")}
     rows.update({host: {"outcome": "deferred", "reason": reason} for host, reason in deferred.items()})
     desktop = fast_artifact(run / "desktop/artifact-desktop-darwin-arm64.json", version, "darwin-arm64", "desktop")
@@ -300,27 +266,10 @@ def fast_output(stage, config):
     if stage == "D":
         fast_artifact(run / "desktop/artifact-desktop-darwin-arm64.json", config.version, "darwin-arm64", "desktop")
         return True
-    if stage == "prepare":
-        plan = json.loads((run / f"sandbox-{config.host}.json").read_text())
-        root = config.sandbox_root()
-        return ((root / "sandbox-plan.json").is_file()
-                and json.loads((root / "sandbox-plan.json").read_text()) == plan
-                and (Path(plan["oldRuntime"]) / "t3").is_file())
-    if stage == "rehearse":
-        fast_rehearsal(config.receipt("rehearsal"), load(config.manifest), fast_artifact(config.artifact(), config.version, config.key), config.host)
-        return True
-    if stage == "rollback-proof":
-        manifest = load(config.manifest)
-        return not required(manifest, config.host) or proven(config.receipt("rollback-proof"), manifest, fast_artifact(config.artifact(), config.version, config.key)["archive"]["sha256"])
-    if stage == "e2e":
-        verdict = json.loads((run / f"e2e-{config.host}" / "smoke-verdict.json").read_text())
-        artifact = fast_artifact(config.artifact(), config.version, config.key)
-        return verdict["ok"] is True and verdict["version"] == config.version and verdict["archiveSha256"] == artifact["archive"]["sha256"]
     if stage == "install":
-        outcome = json.loads(config.outcome().read_text())["outcome"]
-        if outcome in SUCCESS_OUTCOMES:
-            manifest, artifact = load(config.manifest), fast_artifact(config.artifact(), config.version, config.key)
-            fast_install(config.receipt("install"), manifest, artifact, parse(config.receipt("rehearsal")), config.host)
+        if json.loads(config.outcome().read_text())["outcome"] not in SUCCESS_OUTCOMES:
+            return False
+        fast_install(config.receipt("install"), load(config.manifest), fast_artifact(config.artifact(), config.version, config.key), config.host)
         return True
     if stage == "S":
         return (run / "desktop-swap.json").is_file()

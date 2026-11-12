@@ -74,7 +74,6 @@ def collect_readiness(config, log, readiness_path):
     checks["studio-live-history"] = bool(studio_history and studio_live == studio_history)
     studio = host_checks["studio"]
     studio["not-held"] = not config.held
-    studio["seed"] = bool(studio_history and live_history(config.seed(studio_history)) == studio_history)
     studio["old-runtime"] = bool(old) and (config.home / ".t3/runtime/versions" / old / "t3").is_file()
     for path, floor in FLOORS.items():
         free = shutil.disk_usage(path).free

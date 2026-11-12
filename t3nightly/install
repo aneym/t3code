@@ -48,8 +48,6 @@ def parse():
     parser.add_argument("--settle-s", type=int, default=60)
     parser.add_argument("--allow-downgrade", action="store_true")
     parser.add_argument("--check-only", action="store_true")
-    parser.add_argument("--smoke-verdict")
-    parser.add_argument("--rollback-proof")
     parser.add_argument("--snapshot-mib-s", type=float, default=32)
     parser.add_argument("--snapshot-max-s", type=int, default=1200)
     parser.add_argument("--prepare-only", action="store_true")
@@ -61,7 +59,6 @@ def parse():
     parser.add_argument("--restart-probe", action="store_true")
     parser.add_argument("--drain-proof", action="store_true")
     parser.add_argument("--hard", action="store_true")
-    parser.add_argument("--receipt", default="")
     parser.add_argument("--manifest", default="")
     parser.add_argument("--artifact-manifest", default="")
     parser.add_argument("--install-receipt", default="")
@@ -103,8 +100,8 @@ def parse():
         parser.error("--drain-s must be between 0 and 300")
     if args.hard and (args.seamless or args.wait or args.check_only or args.prepare_only):
         parser.error("--hard cannot be combined with --seamless, --wait, --check-only or --prepare-only")
-    if args.hard and (not args.manifest or not args.artifact_manifest or not args.chat_project or (not args.receipt and not args.rehearsal)):
-        parser.error("--hard requires --manifest, --artifact-manifest, --chat-project and --receipt (or isolated --rehearsal)")
+    if args.hard and not (args.manifest and args.artifact_manifest and args.chat_project):
+        parser.error("--hard requires --manifest, --artifact-manifest and --chat-project")
     if args.rehearsal and not (args.hard or args.seamless):
         parser.error("--rehearsal requires --hard or --seamless")
     if (args.inject != "none" or args.rollback_fallback_proof) and not (args.rehearsal and args.seamless):
@@ -128,8 +125,8 @@ def parse():
             preflight_connector(SimpleNamespace(args=args, service_label=args.service_label))
         except ValueError as error:
             parser.error(str(error))
-    if args.seamless and not all((args.manifest, args.artifact_manifest, args.chat_project, args.rpc_tree, args.receipt or args.rehearsal)):
-        parser.error("--seamless requires --manifest, --artifact-manifest, --chat-project, --rpc-tree and --receipt (or --rehearsal)")
+    if args.seamless and not all((args.manifest, args.artifact_manifest, args.chat_project, args.rpc_tree)):
+        parser.error("--seamless requires --manifest, --artifact-manifest, --chat-project and --rpc-tree")
     if args.offbox:
         if not (args.hard or args.seamless):
             parser.error("--offbox requires --hard or --seamless")

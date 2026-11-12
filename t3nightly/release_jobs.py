@@ -148,7 +148,7 @@ class HostJobs:
         return f"{root}/jobs/{node.id}"
 
     def stage_inputs(self, node):
-        if self.dry_run or node.host == "studio" or (node.id != "L" and stage_action(node.id) != "prepare"):
+        if self.dry_run or node.host == "studio" or (node.id != "L" and stage_action(node.id) != "install"):
             return
         names = ("candidate.json", "assembly.json", "candidate.bundle", "readiness.json")
         subprocess.run(["rsync", "-a", "--partial", "--timeout=20", *rsync_cap(), "-e", shlex.join(ssh_argv(None, "-oConnectTimeout=5")),
