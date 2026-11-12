@@ -1,5 +1,6 @@
 import type { ApplicationStoredEvent, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -11,7 +12,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-const ENTRY_TTL_MS = 5_000;
+const DEFAULT_ENTRY_TTL_MS = 5_000;
 const MAX_THREADS = 512;
 const MAX_KEYS_PER_THREAD = 32;
 const UNCACHED_RECORD_FIELDS: ReadonlySet<string> = new Set(["messages", "turnItems"]);
@@ -57,50 +58,57 @@ const entriesFor = (
   return next;
 };
 
-export const layer: Layer.Layer<ThreadReadCache> = Layer.sync(ThreadReadCache, () => {
-  const versions = new Map<ThreadId, number>();
-  const threads = new Map<ThreadId, ThreadEntries>();
-  const read = Effect.fn("ThreadReadCache.read")(function* <A, E>(
-    threadId: ThreadId,
-    key: string,
-    load: Effect.Effect<A, E>,
-    keep: (value: A) => boolean,
-  ) {
-    const now = yield* Clock.currentTimeMillis;
-    const owner = entriesFor(threads, threadId, versions.get(threadId) ?? 0);
-    const hit = owner.keys.get(key);
-    if (hit !== undefined && hit.expiresAt > now) {
-      return yield* Deferred.await(hit.result as Deferred.Deferred<A, E>);
-    }
-    if (owner.keys.size >= MAX_KEYS_PER_THREAD) owner.keys.clear();
-    const result = yield* Deferred.make<A, E>();
-    const entry: Entry = {
-      expiresAt: now + ENTRY_TTL_MS,
-      result: result as Deferred.Deferred<unknown, unknown>,
-    };
-    owner.keys.set(key, entry);
-    yield* load.pipe(
-      Effect.exit,
-      Effect.tap((exit) =>
-        Effect.sync(() => {
-          if (Exit.isSuccess(exit) && keep(exit.value)) return;
-          if (owner.keys.get(key) === entry) owner.keys.delete(key);
-        }),
-      ),
-      Effect.flatMap((exit) => Deferred.done(result, exit)),
-      Effect.forkDetach,
+export const layer: Layer.Layer<ThreadReadCache> = Layer.effect(
+  ThreadReadCache,
+  Effect.gen(function* () {
+    const ttlMs = yield* Config.Int("T3CODE_THREAD_READ_CACHE_TTL_MS").pipe(
+      Effect.orElseSucceed(() => DEFAULT_ENTRY_TTL_MS),
     );
-    return yield* Deferred.await(result);
-  });
-  const invalidate = (threadIds: Iterable<ThreadId>) =>
-    Effect.sync(() => {
-      for (const threadId of threadIds) {
-        versions.set(threadId, (versions.get(threadId) ?? 0) + 1);
-        threads.delete(threadId);
+    const versions = new Map<ThreadId, number>();
+    const threads = new Map<ThreadId, ThreadEntries>();
+    const read = Effect.fn("ThreadReadCache.read")(function* <A, E>(
+      threadId: ThreadId,
+      key: string,
+      load: Effect.Effect<A, E>,
+      keep: (value: A) => boolean,
+    ) {
+      if (ttlMs <= 0) return yield* load;
+      const now = yield* Clock.currentTimeMillis;
+      const owner = entriesFor(threads, threadId, versions.get(threadId) ?? 0);
+      const hit = owner.keys.get(key);
+      if (hit !== undefined && hit.expiresAt > now) {
+        return yield* Deferred.await(hit.result as Deferred.Deferred<A, E>);
       }
+      if (owner.keys.size >= MAX_KEYS_PER_THREAD) owner.keys.clear();
+      const result = yield* Deferred.make<A, E>();
+      const entry: Entry = {
+        expiresAt: now + ttlMs,
+        result: result as Deferred.Deferred<unknown, unknown>,
+      };
+      owner.keys.set(key, entry);
+      yield* load.pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            if (Exit.isSuccess(exit) && keep(exit.value)) return;
+            if (owner.keys.get(key) === entry) owner.keys.delete(key);
+          }),
+        ),
+        Effect.flatMap((exit) => Deferred.done(result, exit)),
+        Effect.forkDetach,
+      );
+      return yield* Deferred.await(result);
     });
-  return { read, invalidate };
-});
+    const invalidate = (threadIds: Iterable<ThreadId>) =>
+      Effect.sync(() => {
+        for (const threadId of threadIds) {
+          versions.set(threadId, (versions.get(threadId) ?? 0) + 1);
+          threads.delete(threadId);
+        }
+      });
+    return { read, invalidate };
+  }),
+);
 
 const committedThreadIds = (events: ReadonlyArray<ApplicationStoredEvent>) =>
   new Set(events.flatMap((stored) => ("event" in stored ? [stored.event.threadId] : [])));

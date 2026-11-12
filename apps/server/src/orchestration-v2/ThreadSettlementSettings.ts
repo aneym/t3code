@@ -1,3 +1,18 @@
+import * as Config from "effect/Config";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+
+export const SweepCoalesceMs = Context.Reference("t3/ThreadSettlement/SweepCoalesceMs", {
+  defaultValue: () => 250,
+});
+
+export const sweepCoalesceMs = Effect.gen(function* () {
+  const fallback = yield* SweepCoalesceMs;
+  return yield* Config.Int("T3CODE_SETTLEMENT_COALESCE_MS").pipe(
+    Effect.orElseSucceed(() => fallback),
+  );
+});
+
 /** @internal Exported for tests. */
 export function autoSettlementSettingsKey(
   settings: import("@t3tools/contracts").ServerSettings,

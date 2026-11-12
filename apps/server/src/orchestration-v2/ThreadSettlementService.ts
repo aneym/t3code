@@ -1,6 +1,10 @@
 import { isAutoSettlementCandidate } from "./AutoSettlementPolicy.ts";
 import { makeChildSettlementSweep } from "./ChildThreadSettlement.ts";
-import { autoSettlementConfigured, autoSettlementSettingsKey } from "./ThreadSettlementSettings.ts";
+import {
+  autoSettlementConfigured,
+  autoSettlementSettingsKey,
+  sweepCoalesceMs,
+} from "./ThreadSettlementSettings.ts";
 import {
   backgroundWorkHoldsCompletion,
   turnItemUpdateCanEndBackgroundWork,
@@ -188,10 +192,6 @@ export class ThreadSettlementServiceV2 extends Context.Service<
   }
 >()("t3/orchestration-v2/ThreadSettlementService/ThreadSettlementServiceV2") {}
 
-export const SweepCoalesceMs = Context.Reference("t3/ThreadSettlement/SweepCoalesceMs", {
-  defaultValue: () => 250,
-});
-
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -211,7 +211,7 @@ export const make = Effect.gen(function* () {
   const settleActionRunAt = new Map<ThreadId, number>();
 
   const settleIdleChildren = yield* makeChildSettlementSweep(orchestrator.dispatch);
-  const coalesceMs = yield* SweepCoalesceMs;
+  const coalesceMs = yield* sweepCoalesceMs;
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
@@ -230,6 +230,7 @@ export const make = Effect.gen(function* () {
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     const agentMainThreads = yield* Effect.promise(() => readAgentMainThreads(environmentId));
+    // Merge events resweep all candidates because unlinked threads settle through branch lookup.
     const candidates = threads.filter((thread) =>
       isAutoSettlementCandidate(thread, nowMs, agentMainThreads),
     );
@@ -480,6 +481,7 @@ export const make = Effect.gen(function* () {
   const fullSweeps = yield* makeDrainableWorker(() => runSweep(null));
   const threadSweeps = yield* FiberSet.make<void>();
   const threadSweepSlots = yield* Semaphore.make(8);
+  // One sweep per thread at a time; events during a running sweep coalesce into one more pass.
   const threadSweepStates = new Map<ThreadId, "queued" | "running" | "rerun">();
   const sweepThread = (
     threadId: ThreadId,

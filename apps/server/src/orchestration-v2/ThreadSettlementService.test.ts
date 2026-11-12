@@ -42,7 +42,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as SettlementPolicy from "./AutoSettlementPolicy.ts";
 import * as ThreadSettlementService from "./ThreadSettlementService.ts";
-import { autoSettlementSettingsKey } from "./ThreadSettlementSettings.ts";
+import { autoSettlementSettingsKey, SweepCoalesceMs } from "./ThreadSettlementSettings.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -731,9 +731,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     }),
     layer: Layer.effect(
       ThreadSettlementService.ThreadSettlementServiceV2,
-      ThreadSettlementService.make.pipe(
-        Effect.provideService(ThreadSettlementService.SweepCoalesceMs, 0),
-      ),
+      ThreadSettlementService.make.pipe(Effect.provideService(SweepCoalesceMs, 0)),
     ).pipe(Layer.provide(layerDependencies)),
   };
 });
@@ -1109,6 +1107,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
           );
           yield* Deferred.succeed(releaseSlowLookup, undefined);
           yield* reactor.drain;
+          // The startup sweep, the first per-thread sweep, and one coalesced rerun.
           assert.strictEqual(yield* Ref.get(branchLookupCount), 3);
         }).pipe(Effect.provide(fixture.layer));
       }),
