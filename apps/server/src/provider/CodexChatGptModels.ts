@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { mapCodexModelCapabilities } from "./CodexProvider.ts";
+import { OPENAI_API_BASE_URL } from "./codexBaseUrl.ts";
 
 export class ChatGptCatalogError extends Schema.TaggedError<ChatGptCatalogError>()(
   "ChatGptCatalogError",
@@ -33,12 +34,11 @@ const Catalog = Schema.Struct({
 export const chatGptModels = Effect.fn("chatGptModels")(function* (
   accessToken: string,
   nativeModels: ReadonlyArray<ServerProviderModel>,
+  baseUrl: string = OPENAI_API_BASE_URL,
 ) {
   const http = yield* HttpClient.HttpClient;
   const response = yield* http.execute(
-    HttpClientRequest.get("https://api.openai.com/v1/models").pipe(
-      HttpClientRequest.bearerToken(accessToken),
-    ),
+    HttpClientRequest.get(`${baseUrl}/models`).pipe(HttpClientRequest.bearerToken(accessToken)),
   );
   if (response.status !== 200) return yield* new ChatGptCatalogError({ status: response.status });
   const catalog = yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Catalog)));

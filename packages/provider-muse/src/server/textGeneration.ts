@@ -1,5 +1,4 @@
 import {
-  DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
   MUSE_DEFAULT_MODEL,
   type ModelSelection,
   type ServerProviderModel,
@@ -232,8 +231,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
       selectedModel && selectedModel !== MUSE_DEFAULT_MODEL ? selectedModel : catalogModel?.slug;
     const reasoningEffort = resolveMuseReasoningEffort(
       catalogModel?.capabilities ?? museModelCapabilities(),
-      getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort") ??
-        DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+      getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort") ?? "low",
     );
     const jsonSchema = yield* encodeJson(toJsonSchemaObject(input.outputSchema)).pipe(
       Effect.mapError(
@@ -277,7 +275,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
           new TextGenerationError({
             operation,
             detail:
-              "Muse Code text generation failed. Check Muse login and availability on this T3 server host.",
+              "Muse Code text generation failed. Check Muse login and availability on the server host.",
             cause,
           }),
       ),

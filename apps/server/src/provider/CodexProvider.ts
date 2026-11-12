@@ -35,7 +35,7 @@ import {
   formatCodexModelName,
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { codexAppServerArgsFor, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -211,8 +211,8 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
   return account.email;
 }
 
-export function codexDefaultReasoningEffortOverride(model: string): "medium" | undefined {
-  return codexModelFamily(model) === "gpt-6-astra" ? "medium" : undefined;
+export function codexDefaultReasoningEffortOverride(model: string): "high" | undefined {
+  return /^gpt-6(?:[.-]|$)/.test(codexModelFamily(model)) ? "high" : undefined;
 }
 
 export function mapCodexModelCapabilities(
@@ -534,7 +534,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   const environment = yield* codexProcessEnvironment(input);
   const spawnCommand = yield* resolveSpawnCommand(
     input.binaryPath,
-    codexAppServerArgs(input.launchArgs),
+    yield* codexAppServerArgsFor(input.launchArgs, environment),
     { env: environment, extendEnv: true },
   );
   const child = yield* spawner
@@ -670,7 +670,6 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   } satisfies CodexAppServerProviderSnapshot;
 });
 
-// Old CLIs can exit before initialize reports the version needed for compatibility advice.
 const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
   function* (input: {
     readonly binaryPath: string;
@@ -739,7 +738,7 @@ const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvid
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Codex is disabled in T3 Code settings.",
+        message: "Codex is turned off in settings.",
       },
     });
   }
@@ -839,7 +838,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Codex is disabled in T3 Code settings.",
+        message: "Codex is turned off in settings.",
       },
     });
   }
@@ -847,7 +846,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const probeResult = yield* probe({
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
-    launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
+    launchArgs: resolveCodexLaunchArgs(codexSettings, resolvedEnvironment),
     cwd: process.cwd(),
     environment: resolvedEnvironment,
     ...(managedAuth ? { skipNativeUsage: true } : {}),
