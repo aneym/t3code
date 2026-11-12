@@ -1950,7 +1950,7 @@ export const layerWsRpc = (
                   Effect.tap((result) =>
                     result.replayed ? Effect.void : recordClientCommandAnalytics(command),
                   ),
-                  Effect.map((result) => ({ sequence: result.sequence })),
+                  Effect.map(ThreadMessageIntake.dispatchResult),
                   Effect.mapError((cause) => {
                     const detail = userFacingDispatchErrorMessage(cause);
                     return new OrchestrationV2DispatchCommandError({
