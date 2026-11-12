@@ -4,7 +4,9 @@ import { Children, memo, useState, type ReactNode } from "react";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
+import { useEmbedRailsLink } from "../../embed/embedLinks";
 import { cn } from "../../lib/utils";
+import { EmbedRailsLinkChip } from "../embed/EmbedRailsLink";
 import { sourceControlIcon } from "../../sourceControlPresentation";
 
 // Inline-level and selectable: triple-click selection stops at block-level and select-none boxes.
@@ -68,13 +70,19 @@ function breakableExternalLinkText(text: string): ReactNode[] {
 
 export function MarkdownExternalLinkContent({
   host,
+  href,
   plainText,
   children,
 }: {
   host: string;
+  href?: string | undefined;
   plainText: string | null;
   children: ReactNode;
 }) {
+  const railsLink = useEmbedRailsLink(href);
+  if (railsLink !== null && href) {
+    return <EmbedRailsLinkChip href={href} link={railsLink} label={plainText} />;
+  }
   if (plainText) {
     const leadingLength = leadingExternalLinkTextLength(plainText);
     return (

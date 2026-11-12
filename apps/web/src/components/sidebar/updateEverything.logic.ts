@@ -7,7 +7,11 @@ import {
   type ServerConfig,
   type ServerSelfUpdateCapability,
 } from "@t3tools/contracts";
-import { cliReleaseChannelOf, desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
+import {
+  cliReleaseChannelOf,
+  desktopUpdateChannelOf,
+  isCliForkVersion,
+} from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 
 import {
@@ -115,9 +119,14 @@ export function collectServerUpdateTargets(
     const serverVersion = config.environment.serverVersion;
     if (
       selfUpdate !== "desktop-managed" &&
-      cliReleaseChannelOf(serverVersion) !== cliReleaseChannelOf(targetVersion)
+      (cliReleaseChannelOf(serverVersion) !== cliReleaseChannelOf(targetVersion) ||
+        isCliForkVersion(serverVersion) !== isCliForkVersion(targetVersion))
     ) {
-      skip(`on the ${cliReleaseChannelOf(serverVersion)} channel`);
+      skip(
+        isCliForkVersion(serverVersion) !== isCliForkVersion(targetVersion)
+          ? "on a different release"
+          : `on the ${cliReleaseChannelOf(serverVersion)} channel`,
+      );
       continue;
     }
     const target: ServerUpdateTarget = {

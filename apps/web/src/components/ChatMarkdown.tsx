@@ -616,7 +616,6 @@ function useChatMarkdownState({
           error.resource._tag === "media-file" &&
           environmentId !== null
         ) {
-          // The connection may resolve while the media lookup is pending.
           const target = readPreparedConnection(environmentId)?.target ?? null;
           if (
             target !== null &&
@@ -1164,7 +1163,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const threadLink = href ? parseThreadLinkHref(href) : null;
     if (threadLink) {
       const written = hastPlainTextDeep(node);
-      // An autolink's text is its own URL, which is no label.
       const label = written && parseThreadLinkHref(written) === null ? written : null;
       return environmentId ? (
         <MarkdownThreadLink environmentId={environmentId} link={threadLink} label={label} />
@@ -1349,7 +1347,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
           }}
         >
           {faviconHost && hasText && !isPullRequestAutolink ? (
-            <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
+            <MarkdownExternalLinkContent
+              host={faviconHost}
+              href={href}
+              plainText={plainHastText(node)}
+            >
               {linkChildren}
             </MarkdownExternalLinkContent>
           ) : (

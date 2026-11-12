@@ -1,5 +1,9 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { type ComponentProps, useLayoutEffect } from "react";
+import { mutedRowsCss } from "../../embed/embedAudience";
+import { embedLiveRunId, useEmbedClearedEntries } from "../../embed/embedClear";
+import { isEmbedPath } from "../../embed/embedProtocol";
+import { useEmbedRevealTarget } from "../../embed/embedReveal";
 import { useIncrementalTimelineEntries } from "../../hooks/useIncrementalTimelineEntries";
 import type { TimelineEntriesInput, TimelineEntry } from "../../session-logic";
 import { useTimelineVisibleTurnItems } from "../../state/entities";
@@ -9,7 +13,11 @@ import {
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
 } from "../ChatView.logic";
+import { useEmbedSendMarks } from "../../embed/useEmbedSendMarks";
+import { useEmbedTimeline } from "../../embed/useEmbedTimeline";
+import { EmbedShowEarlier } from "../embed/EmbedShowEarlier";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { useAppCardTimelineEntries } from "./useAppCardTimelineEntries";
 
 /**
  * The timeline with the streamed text. ChatView reads the thread through its quiet
@@ -54,5 +62,53 @@ export function ThreadTimeline({
     }
     rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries });
   }, [activeThreadKey, detailLoading, entries]);
-  return <MessagesTimeline {...timelineProps} timelineEntries={displayedEntries} />;
+  const embedPage = isEmbedPath(window.location.pathname);
+  useEmbedRevealTarget(timelineProps.listRef, embedPage);
+  const embed = useEmbedTimeline(
+    threadDetailRef?.threadId ?? null,
+    displayedEntries,
+    visibleTurnItems,
+  );
+  useEmbedSendMarks(
+    threadDetailRef?.threadId ?? null,
+    visibleTurnItems,
+    timelineProps.latestRun ?? null,
+  );
+  const liveRunId = embedLiveRunId(timelineProps.runningRunId ?? null, timelineProps.latestRun);
+  const cleared = useEmbedClearedEntries(embed.entries, liveRunId, embedPage);
+  const mutedCss = embed.agentsShown
+    ? mutedRowsCss(embed.audience.items, embed.audience.runs, liveRunId)
+    : "";
+  const liveHidden = !embed.agentsShown && liveRunId !== null && embed.audience.runs.has(liveRunId);
+  const shownEntries = useAppCardTimelineEntries(
+    cleared.shown,
+    timelineProps.activeThreadEnvironmentId,
+  );
+  const timeline = (
+    <MessagesTimeline
+      {...timelineProps}
+      {...(liveHidden
+        ? {
+            isWorking: false,
+            runlessWorkActive: false,
+            runningRunId: null,
+            activeTurnStartedAt: null,
+            announcedRun: null,
+          }
+        : {})}
+      hideEmptyPlaceholder={timelineProps.hideEmptyPlaceholder === true || cleared.hidden > 0}
+      timelineEntries={shownEntries}
+    />
+  );
+  if (!embedPage) return timeline;
+  return (
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      data-embed-audience={embed.agentsShown ? "shown" : "hidden"}
+    >
+      {mutedCss === "" ? null : <style>{mutedCss}</style>}
+      <EmbedShowEarlier hidden={cleared.hidden} />
+      <div className="relative min-h-0 flex-1">{timeline}</div>
+    </div>
+  );
 }

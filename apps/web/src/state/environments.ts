@@ -99,6 +99,10 @@ export function useRelayEnvironmentDiscovery(): Discovery.RelayEnvironmentDiscov
   return useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
 }
 
+export function useEnvironmentIds() {
+  return useAtomValue(environmentSummaries.environmentIdsAtom);
+}
+
 export function useEnvironmentIdentities() {
   return useAtomValue(environmentSummaries.identitiesAtom);
 }
