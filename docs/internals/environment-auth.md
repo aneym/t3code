@@ -61,7 +61,16 @@ declared as reads in [McpToolAccess](../../apps/server/src/mcp/McpToolAccess.ts)
 where every tool must declare who may call it to compile. Any other grant adds
 `orchestration:operate` and a signed ceiling. Only `/mcp` accepts these sessions. Every other HTTP and WebSocket
 path rejects that subject, because the RPC surface would let the agent act
-above its ceiling. Inside MCP the credential sets the limits and tool
+above its ceiling.
+
+One subject is admitted on both doors: `host-daemon`, minted only by
+`t3 auth daemon-token` on the host, so it needs the base dir's database and
+signing secret. It carries exactly `orchestration:read` and `diagnostics:read`,
+maps to read-only on `/mcp`, and is refused there if its row holds any other
+scope. Writes fail at execution through the usual scope checks. Read-only
+OAuth grants stay off `/ws` because that would widen a browser approval from
+MCP read tools to every `orchestration:read` RPC; a subject only the host admin
+can mint keeps that approval meaning what it says. Inside MCP the credential sets the limits and tool
 parameters only pick targets; see
 [threadAccess](../../apps/server/src/mcp/threadAccess.ts).
 

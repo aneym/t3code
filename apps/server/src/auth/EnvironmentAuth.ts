@@ -40,6 +40,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import {
+  isAcceptedOnMcp,
   isMcpClientSubject,
   mcpClientSession,
   mcpClientSubject,
@@ -1298,7 +1299,7 @@ export const make = Effect.gen(function* () {
     return sessions.verify(token).pipe(
       mapSessionVerificationErrors,
       Effect.flatMap((session) =>
-        isMcpClientSubject(session.subject) && session.method === "bearer-access-token"
+        isAcceptedOnMcp(session)
           ? Effect.succeed(mcpClientSession(session))
           : Effect.fail(
               new ServerAuthInvalidCredentialError({

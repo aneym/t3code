@@ -34,10 +34,8 @@ browser link and a short code. Open the link on any device, confirm the code
 matches, and approve. The CLI continues on its own, so you do not need to forward
 an OAuth callback port.
 
-T3 Connect renews access credentials when needed without disconnecting a healthy
-connection. Pull request diffs and provider settings keep working after the
-previous credential expires. A failed renewal affects that request; it does not
-disconnect an otherwise healthy conversation.
+T3 Connect renews access credentials as needed without dropping a healthy
+connection; a failed renewal fails only that request.
 
 ### Scripts and agents
 
@@ -416,8 +414,7 @@ management, and T3 Connect management can each be granted separately. New
 pairings without `--scope` include all of them. Existing clients keep the
 permissions they paired with and can stay connected after an update, but newly
 separated features may require pairing again with the permissions they need.
-Older clients may show controls that the server denies. Create a fresh pairing
-link to change a client's permissions.
+Older clients may show controls that the server denies.
 
 `filesystem:read` allows browsing host files, opening workspace files, and viewing
 local changes. Add `filesystem:write` to allow editing files or saving plans to
@@ -432,20 +429,17 @@ shows that it was removed from T3 Connect. To link it again, turn on
 `t3 connect link` on a command-line host and then restart T3 Code there. A
 command-line host that released its tunnel when it last stopped may link itself
 again on its next start; run `t3 connect unlink` on that host to keep it off.
-Removing an environment from a device's connection settings only forgets it on
-that device and doesn't change your T3 Connect account. A device keeps a saved
-environment after it's deregistered until you remove it from that device.
+Removing an environment from a device's connection settings only forgets it
+there; a device keeps a deregistered environment until you remove it.
 
 When idle tunnel cleanup is enabled, T3 Connect removes a linked environment's
-tunnel after it stays offline for several minutes. The environment stays linked
+tunnel after it stays offline for five to ten minutes. The environment stays linked
 and keeps the same address. When the host starts again or wakes, T3 Connect
-creates a replacement tunnel on its own. You do not need to pair again. Cleanup
-usually runs five to ten minutes after the tunnel goes down.
+creates a replacement tunnel on its own. You do not need to pair again.
 
 T3 Connect also removes the tunnel of an environment running an older version of
-T3 Code once it has been offline for seven days. That environment shows a message
-asking you to update. Start T3 Code on that computer and update it to the latest
-version; it reconnects at the same address without pairing again.
+T3 Code once it has been offline for seven days, and asks you to update. Update
+T3 Code on that computer; it reconnects at the same address without pairing.
 
 On a command-line host, `t3 connect unlink` disables exposure while retaining
 your login; `t3 connect logout` also clears that login. Background-service
@@ -453,6 +447,19 @@ your login; `t3 connect logout` also clears that login. Background-service
 
 Treat pairing URLs and authorization codes as passwords. Do not include them in
 screenshots, logs, or bug reports.
+
+### Host daemons
+
+A local service that only reads from the host gets its own session:
+
+```sh
+npx t3 auth daemon-token my-feed
+```
+
+This writes `secrets/daemon-my-feed.json` under the T3 home, readable only by
+you, without printing the token. The session is read-only on the WebSocket and
+`/mcp`, lasts 90 days, and revokes like any other. Run the command daily to
+renew it with 14 days left; after a revoke it refuses until `--reissue`.
 
 ## T3 Connect troubleshooting
 
