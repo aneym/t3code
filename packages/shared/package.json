@@ -523,6 +523,10 @@
       "types": "./src/mcpApp.ts",
       "import": "./src/mcpApp.ts"
     },
+    "./mcpAppCard": {
+      "types": "./src/mcpAppCard.ts",
+      "import": "./src/mcpAppCard.ts"
+    },
     "./atomicWrite": {
       "types": "./src/atomicWrite.ts",
       "import": "./src/atomicWrite.ts"

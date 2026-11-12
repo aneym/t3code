@@ -127,6 +127,7 @@ import {
   HtmlRenderTimelineRow,
   McpAppTimelineRow,
 } from "./TimelineAssistantRows";
+import { AppCardTimelineRow } from "./AppCardTimelineRow";
 import { V2EventTimelineRow } from "./TimelineV2EventRow";
 import { startTimelinePositionRestore } from "./useTimelinePositionRestore";
 import {
@@ -1452,7 +1453,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   return (
     <div
       className={cn(
-        isWorkLogRow || isSubagentGroup
+        isWorkLogRow || isSubagentGroup || row.kind === "app-card"
           ? undefined
           : row.kind === "turn-fold" || row.kind === "working"
             ? "pb-1.5"
@@ -1515,6 +1516,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "html-render" ? <HtmlRenderTimelineRow row={row} /> : null}
       {row.kind === "mcp-app" ? <McpAppTimelineRow row={row} /> : null}
+      {row.kind === "app-card" ? <AppCardTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
       {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
