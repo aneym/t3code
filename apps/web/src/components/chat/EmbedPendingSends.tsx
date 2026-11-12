@@ -48,6 +48,7 @@ function PendingSendRow(props: {
       aria-label={`${STATE_LABEL[props.send.state]}: your message`}
       data-pending-send={props.send.state}
       data-pending-message-id={props.send.messageId ?? undefined}
+      data-message-id={props.send.messageId ?? undefined}
     >
       <div
         className={cn(
