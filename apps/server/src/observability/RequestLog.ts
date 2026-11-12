@@ -135,7 +135,6 @@ const makeWriter = Effect.gen(function* () {
   yield* flush.pipe(Effect.repeat(Schedule.spaced(FLUSH_EVERY)), Effect.forkScoped);
   yield* Effect.addFinalizer(() => flush);
   return (fields: Fields) => {
-    // @effect-diagnostics-next-line preferSchemaOverJson:off
     const line = `${JSON.stringify({ t: DateTime.formatIso(DateTime.nowUnsafe()), ...fields })}\n`;
     if (bufferBytes + line.length > MAX_BUFFER_BYTES) {
       dropped += 1;

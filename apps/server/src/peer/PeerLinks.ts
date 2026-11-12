@@ -164,14 +164,14 @@ const make = Effect.gen(function* () {
 
   const signIn = makePeerSignIn(clientFor, crypto, environment);
 
-  const descriptors = yield* makePeerDescriptorCache<ExecutionEnvironmentDescriptor>();
-  const describe = descriptors.cached((origin) =>
+  const describe = (origin: string) =>
     clientFor(origin).pipe(
       Effect.flatMap((client) => client.metadata.descriptor()),
       Effect.timeout(probeTimeout(origin)),
       Effect.option,
-    ),
-  );
+    );
+  const descriptors = yield* makePeerDescriptorCache<ExecutionEnvironmentDescriptor>();
+  const describeHealthy = descriptors.cached(describe);
 
   const toLink = Effect.fn("PeerLinks.toLink")(function* (row: PeerLinkRow) {
     return {
@@ -353,7 +353,7 @@ const make = Effect.gen(function* () {
     DateTime.isLessThanOrEqualTo(link.expiresAt, now)
       ? Effect.succeed<PeerLinkStatus>("expired")
       : Effect.findFirst(link.urls, (url) =>
-          describe(url).pipe(
+          describeHealthy(url).pipe(
             Effect.map(
               (found) => Option.isSome(found) && found.value.environmentId === link.environmentId,
             ),
