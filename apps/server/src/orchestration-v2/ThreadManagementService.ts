@@ -504,6 +504,11 @@ function latestRestartContinuation(
   return current;
 }
 
+const loadErrorFor =
+  ({ projectId, threadId }: { readonly projectId: ProjectId; readonly threadId: ThreadId }) =>
+  (cause: unknown) =>
+    new ThreadManagementProjectionLoadError({ projectId, threadId, cause });
+
 export function latestActiveRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | undefined {
@@ -711,14 +716,7 @@ const make = Effect.gen(function* () {
   ) =>
     ensureProjectionTranscript(input.threadId).pipe(
       Effect.andThen(orchestrator.getThreadRecords(input.threadId, fields, filter)),
-      Effect.mapError(
-        (cause) =>
-          new ThreadManagementProjectionLoadError({
-            projectId: input.projectId,
-            threadId: input.threadId,
-            cause,
-          }),
-      ),
+      Effect.mapError(loadErrorFor(input)),
       Effect.filterOrFail(
         (projection) =>
           projection.thread.projectId === input.projectId && projection.thread.deletedAt === null,
@@ -759,12 +757,7 @@ const make = Effect.gen(function* () {
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = Effect.fn(
     "ThreadManagementService.waitForThread",
   )(function* (input) {
-    const loadError = (cause: unknown) =>
-      new ThreadManagementProjectionLoadError({
-        projectId: input.projectId,
-        threadId: input.threadId,
-        cause,
-      });
+    const loadError = loadErrorFor(input);
     // Taken before the first read, so a run update between that read and
     // the subscription below still replays.
     const afterSequence = yield* orchestrator
@@ -983,7 +976,9 @@ const make = Effect.gen(function* () {
   const interruptThread: ThreadManagementServiceShape["interruptThread"] = Effect.fn(
     "ThreadManagementService.interruptThread",
   )(function* (input) {
-    const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
+    const target = yield* getProjectThreadRecords(input, ["runs"], {
+      runWindow: { runIds: input.runId === undefined ? [] : [input.runId] },
+    });
     const explicitRun =
       input.runId === undefined
         ? undefined
