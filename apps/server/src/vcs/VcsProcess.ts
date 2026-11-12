@@ -404,4 +404,6 @@ export const make = Effect.gen(function* () {
   return VcsProcess.of({ run });
 });
 
-export const layer = Layer.effect(VcsProcess, make).pipe(Layer.provide(ProcessRunner.layer));
+export const layer = Layer.effect(VcsProcess, make).pipe(
+  Layer.provide(Layer.fresh(ProcessRunner.layer)),
+);
