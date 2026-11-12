@@ -3,6 +3,7 @@ import { CodexFields as ForkCodexFields } from "./forkCodexSettings.ts";
 import * as ForkMcpAppGrants from "./forkMcpAppGrantSettings.ts";
 import * as ForkPreview from "./forkPreviewSettings.ts";
 import * as ForkEmbed from "./forkEmbedSettings.ts";
+import * as ForkAppCards from "./forkAppCardSettings.ts";
 import * as ForkRailsNotes from "./forkRailsNoteSettings.ts";
 import * as ForkFollowUp from "./forkFollowUpSettings.ts";
 import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
@@ -1177,6 +1178,7 @@ export const ServerSettings = Schema.Struct({
   ...ForkPreview.Server,
   ...ForkEmbed.Server,
   ...ForkRailsNotes.Server,
+  ...ForkAppCards.Server,
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1553,6 +1555,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ...ForkPreview.ServerPatch,
   ...ForkEmbed.ServerPatch,
   ...ForkRailsNotes.ServerPatch,
+  ...ForkAppCards.ServerPatch,
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),

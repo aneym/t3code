@@ -11,6 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { MCP_APP_MAX_HTML_BYTES, MCP_APP_RESOURCE_SCHEME } from "@t3tools/shared/mcpApp";
+import { MCP_APP_CARD_OUTPUT_KEY, mcpAppCardFromMeta } from "@t3tools/shared/mcpAppCard";
 
 function field(value: unknown, key: string): unknown {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -154,7 +155,10 @@ export function codexMcpToolOutput(item: {
         : item.result.content;
 
   if (item.error === null || item.error === undefined) {
-    return resultOutput;
+    const card = mcpAppCardFromMeta(field(item.result, "_meta"));
+    return card === undefined
+      ? resultOutput
+      : { [MCP_APP_CARD_OUTPUT_KEY]: card, result: resultOutput };
   }
   return resultOutput === undefined
     ? { error: item.error.message }

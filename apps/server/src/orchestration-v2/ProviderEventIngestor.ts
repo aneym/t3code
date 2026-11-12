@@ -41,8 +41,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
-import { boundFileChangeForStorage } from "./WireProjection.ts";
+import { prepareTurnItemForStorage } from "./turnItemForStorage.ts";
 
 export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
@@ -658,9 +657,7 @@ export const layer: Layer.Layer<
                 yield* makeDomainEvent(input, {
                   type: "turn-item.updated",
                   threadId: input.event.turnItem.threadId,
-                  payload: boundFileChangeForStorage(
-                    stripUnservedToolOutputImageBytes(input.event.turnItem),
-                  ),
+                  payload: prepareTurnItemForStorage(input.event.turnItem),
                   runId: input.event.turnItem.runId,
                   nodeId: input.event.turnItem.nodeId,
                 }),

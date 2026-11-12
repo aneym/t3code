@@ -16,6 +16,7 @@ import {
 import { useEmbedTimeline } from "../../embed/useEmbedTimeline";
 import { EmbedShowEarlier } from "../embed/EmbedShowEarlier";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { useAppCardTimelineEntries } from "./useAppCardTimelineEntries";
 
 /**
  * The timeline with the streamed text. ChatView reads the thread through its quiet
@@ -73,6 +74,10 @@ export function ThreadTimeline({
     ? mutedRowsCss(embed.audience.items, embed.audience.runs, liveRunId)
     : "";
   const liveHidden = !embed.agentsShown && liveRunId !== null && embed.audience.runs.has(liveRunId);
+  const shownEntries = useAppCardTimelineEntries(
+    cleared.shown,
+    timelineProps.activeThreadEnvironmentId,
+  );
   const timeline = (
     <MessagesTimeline
       {...timelineProps}
@@ -86,7 +91,7 @@ export function ThreadTimeline({
           }
         : {})}
       hideEmptyPlaceholder={timelineProps.hideEmptyPlaceholder === true || cleared.hidden > 0}
-      timelineEntries={cleared.shown}
+      timelineEntries={shownEntries}
     />
   );
   if (!embedPage) return timeline;
