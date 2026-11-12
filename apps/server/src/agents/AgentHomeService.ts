@@ -23,6 +23,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import {
   homeFromDocument,
+  homesGeneration,
   isLaneThread,
   parseDocument,
   readDocumentText,
@@ -59,27 +60,36 @@ export const layer = Layer.effect(
     const snapshots = yield* SubscriptionRef.make<AgentHomesSnapshot>({ homes: [] });
     const refreshLock = yield* Semaphore.make(1);
     const locks = new Map<string, Semaphore.Semaphore>();
+    let snapshotGeneration: number | undefined;
     const refresh = Effect.fn("AgentHomeService.refresh")(function* () {
+      const generation = homesGeneration(root);
       const snapshot = yield* Effect.tryPromise({
         try: () => readHomes(root, readLanes, isLocalHost),
         catch: (cause) => new AgentHomeError({ message: "Unable to read agent homes", cause }),
-      });
+      }).pipe(Effect.tapError(() => Effect.sync(() => (snapshotGeneration = undefined))));
       const current = yield* SubscriptionRef.get(snapshots);
       if (!Equal.equals(snapshot, current)) yield* SubscriptionRef.set(snapshots, snapshot);
+      snapshotGeneration = generation;
       return snapshot;
     });
-    const list = refreshLock.withPermit(refresh());
-    yield* list.pipe(Effect.catch((error) => Effect.logWarning(error.message)));
+    const reload = refreshLock.withPermit(refresh());
+    const list = Effect.suspend(() => {
+      const generation = homesGeneration(root);
+      return generation !== undefined && generation === snapshotGeneration
+        ? SubscriptionRef.get(snapshots)
+        : reload;
+    });
     yield* Effect.acquireRelease(
       Effect.sync(() =>
         watchHomes(root, () => {
           Effect.runForkWith(context)(
-            list.pipe(Effect.catch((error) => Effect.logWarning(error.message))),
+            reload.pipe(Effect.catch((error) => Effect.logWarning(error.message))),
           );
         }),
       ),
       (close) => Effect.sync(close),
     );
+    yield* reload.pipe(Effect.catch((error) => Effect.logWarning(error.message)));
     const setPin = Effect.fn("AgentHomeService.setPin")(function* (
       threadId: ThreadId,
       pinned: boolean,
@@ -192,7 +202,7 @@ export const layer = Layer.effect(
               yield* setPin(threadId, false).pipe(
                 Effect.catch((error) => Effect.logWarning(error.message)),
               );
-            const updated = (yield* list).homes.find((entry) => entry.handle === input.handle);
+            const updated = (yield* reload).homes.find((entry) => entry.handle === input.handle);
             if (!updated) return yield* fail("Agent home disappeared after binding");
             return { home: updated, changed: true };
           }
@@ -321,7 +331,7 @@ export const layer = Layer.effect(
               yield* setPin(threadId, true).pipe(warn);
             yield* reveal(input.handle).pipe(warn);
           }
-          const snapshot = yield* list;
+          const snapshot = yield* reload;
           const updated = snapshot.homes.find((entry) => entry.handle === input.handle);
           if (!updated)
             return yield* new AgentHomeError({ message: "Agent home disappeared after binding" });
