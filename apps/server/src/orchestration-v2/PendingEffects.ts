@@ -1,5 +1,5 @@
 import type { CommandId, MessageId, ThreadId } from "@t3tools/contracts";
-import type { PendingOrchestrationEffectV2 } from "./EffectOutboxModel.ts";
+import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 
 export function delegatedTasksEffect(
   type: "delegated-tasks.stop" | "delegated-tasks.resume",

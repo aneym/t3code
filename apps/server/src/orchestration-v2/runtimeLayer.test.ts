@@ -6479,7 +6479,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           threadId,
         })
         .pipe(Effect.flip);
-      assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(error, OrchestratorDispatch.OrchestratorDispatchError);
       assert.equal(
         error.cause,
         `Thread ${threadId} has running delegated tasks. Wait for them or cancel them before archiving.`,

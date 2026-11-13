@@ -24,17 +24,9 @@ export function queuedRunsInDeliveryOrder(
         Number(automaticCompletionMessageIds.has(right.userMessageId)) -
         Number(automaticCompletionMessageIds.has(left.userMessageId));
       return (
-        Number(right.restartContinuationOfRunId !== undefined) -
-          Number(left.restartContinuationOfRunId !== undefined) ||
         deliveryPriority ||
         (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
         left.ordinal - right.ordinal
       );
     });
-}
-
-export function nextQueuedRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
-): OrchestrationV2Run | undefined {
-  return queuedRunsInDeliveryOrder(projection).find((run) => run.queueHeld !== true);
 }

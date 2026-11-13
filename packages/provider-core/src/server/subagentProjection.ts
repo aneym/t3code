@@ -191,15 +191,7 @@ export function withExecutedModelNote(
 
 export function subagentResultForRun(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns">,
-  run: Pick<
-    OrchestrationV2Run,
-    | "id"
-    | "status"
-    | "restartDeclined"
-    | "restartHandoffPending"
-    | "activeAttemptId"
-    | "modelSelection"
-  >,
+  run: OrchestrationV2Run,
 ): {
   readonly text: string;
   readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
@@ -241,24 +233,17 @@ export function subagentResultForRun(
     failure !== undefined && turnItem !== null && turnItem.ordinal < failure.ordinal
       ? (message?.text ?? turnItem.text)
       : undefined;
-  const failureText =
-    failure?.type === "error"
+  const text =
+    (failure?.type === "error"
       ? reportBeforeFailure === undefined
         ? failure.failure.message
         : `${failure.failure.message}\n\nLast assistant message before the run failed:\n\n${reportBeforeFailure}`
-      : undefined;
-  const output = message?.text ?? turnItem?.text;
-  const fallback =
-    run.status === "completed"
+      : undefined) ??
+    message?.text ??
+    turnItem?.text ??
+    (run.status === "completed"
       ? "Child task completed without an assistant result."
-      : `Child task ended with status ${run.status}.`;
-  const text =
-    run.status === "completed" ||
-    (run.restartDeclined === undefined && run.restartHandoffPending !== false)
-      ? (failureText ?? output ?? fallback)
-      : [failureText, output, "Child task stopped by a T3 Code update; resend to continue."]
-          .filter((text): text is string => text !== undefined && text.length > 0)
-          .join("\n\n");
+      : `Child task ended with status ${run.status}.`);
   const executedModel = latestProviderTurnForAttempt(
     projection.providerTurns,
     run.activeAttemptId,

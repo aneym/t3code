@@ -20,7 +20,6 @@ import {
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
-import * as EffectOutboxModel from "./EffectOutboxModel.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -29,9 +28,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { executeRestartEffect, settleRestartEffect } from "./RestartEffectExecution.ts";
+import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as ThreadSessionRestarts from "./ThreadSessionRestarts.ts";
 
 const isProviderTurnControlError = Schema.is(ProviderTurnControlService.ProviderTurnControlError);
@@ -64,9 +61,8 @@ function isNonRetryableProviderTurnControlFailure(effectType: string, errorText:
 }
 
 export interface OrchestrationEffectExecutorV2Shape {
-  readonly settled?: (effect: EffectOutboxModel.OrchestrationEffectV2) => Effect.Effect<void>;
   readonly execute: (
-    effect: EffectOutboxModel.OrchestrationEffectV2,
+    effect: EffectOutbox.OrchestrationEffectV2,
     options?: { readonly willRetry: boolean },
   ) => Effect.Effect<void, OrchestrationEffectExecutionError>;
 }
@@ -88,8 +84,6 @@ export const layerExecutor: Layer.Layer<
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
   | ServerSettings.ServerSettingsService
-  | EventSink.EventSinkV2
-  | IdAllocator.IdAllocatorV2
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
@@ -103,16 +97,8 @@ export const layerExecutor: Layer.Layer<
     const threadTitleRegeneration =
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
-    const restartContext = yield* Effect.context<
-      | ThreadManagementService.ThreadManagementService
-      | ServerSettings.ServerSettingsService
-      | EventSink.EventSinkV2
-      | IdAllocator.IdAllocatorV2
-    >();
+    const settings = yield* ServerSettings.ServerSettingsService;
     return OrchestrationEffectExecutorV2.of({
-      settled: Effect.fn("OrchestrationEffectExecutorV2.settled")((effect) =>
-        settleRestartEffect(effect).pipe(Effect.provideContext(restartContext), Effect.ignore),
-      ),
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
         const executionFailed = (cause: unknown) =>
@@ -122,13 +108,19 @@ export const layerExecutor: Layer.Layer<
             cause,
           });
         switch (effect.request.type) {
-          case "provider-runtime.restart-handoff":
-          case "provider-runtime.restart-reapproval":
-          case "provider-runtime.continue":
-            return executeRestartEffect(effect, willRetry).pipe(
-              Effect.provideContext(restartContext),
+          case "provider-runtime.continue": {
+            const sourceRunId = effect.request.sourceRunId;
+            return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
+              Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+              Effect.provideService(ServerSettings.ServerSettingsService, settings),
+              Effect.tapError(() =>
+                willRetry
+                  ? Effect.void
+                  : threads.recoverDelegatedTask(effect.threadId, { sourceRunId }),
+              ),
               Effect.mapError(executionFailed),
             );
+          }
           case "provider-session.detach":
             if (effect.request.detail === THREAD_SESSION_RESTART_REASON) {
               ThreadSessionRestarts.expectThreadSessionRestartReport(effect.threadId);
@@ -640,7 +632,7 @@ export const layerExecutor: Layer.Layer<
 const DELEGATED_TASKS_STOP_TIMEOUT = Duration.seconds(30);
 
 const boundExecution =
-  (effect: EffectOutboxModel.OrchestrationEffectV2) =>
+  (effect: EffectOutbox.OrchestrationEffectV2) =>
   (execution: Effect.Effect<void, OrchestrationEffectExecutionError>) =>
     effect.request.type.startsWith("delegated-tasks.")
       ? execution.pipe(
@@ -717,7 +709,7 @@ export const layerWithOptions = (
           ),
         );
       const requeueClaim = (
-        effect: EffectOutboxModel.OrchestrationEffectV2,
+        effect: EffectOutbox.OrchestrationEffectV2,
         cause: Cause.Cause<unknown>,
       ) =>
         Cause.hasInterruptsOnly(cause)
@@ -750,7 +742,7 @@ export const layerWithOptions = (
                 ),
               );
       const terminalizeClaim = (
-        effect: EffectOutboxModel.OrchestrationEffectV2,
+        effect: EffectOutbox.OrchestrationEffectV2,
         cause: Cause.Cause<unknown>,
       ) => {
         if (Cause.hasInterruptsOnly(cause)) return Effect.void;
@@ -788,10 +780,10 @@ export const layerWithOptions = (
           );
       };
       const recoverPostSuccessSettlement = (
-        effect: EffectOutboxModel.OrchestrationEffectV2,
+        effect: EffectOutbox.OrchestrationEffectV2,
         cause: Cause.Cause<unknown>,
       ) =>
-        EffectOutboxModel.REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS.some(
+        EffectOutbox.REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS.some(
           (effectType) => effectType === effect.request.type,
         )
           ? requeueClaim(effect, cause)
@@ -859,7 +851,6 @@ export const layerWithOptions = (
                   cause: "The worker no longer owns the effect lease.",
                 });
               }
-              yield* executor.settled?.(effect) ?? Effect.void;
               return true;
             }).pipe(Effect.onError((cause) => recoverPostSuccessSettlement(effect, cause)));
           }
@@ -897,8 +888,6 @@ export const layerWithOptions = (
               cause: "The worker no longer owns the effect lease.",
             });
           }
-          if (nonRetryable || effect.attemptCount >= maxAttempts)
-            yield* executor.settled?.(effect) ?? Effect.void;
           return true;
         },
         (effect, _filter?: ClaimFilter) =>

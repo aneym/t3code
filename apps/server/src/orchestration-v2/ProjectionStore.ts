@@ -4764,7 +4764,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
                 SELECT thread_id FROM orchestration_v2_projection_runs
                 WHERE status IN ('preparing', 'starting', 'running', 'waiting')
-                  OR json_extract(payload_json, '$.restartHandoffPending') IS 1
                 UNION
                 SELECT thread_id FROM orchestration_v2_projection_runs
                 WHERE status = 'queued'
@@ -5163,7 +5162,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE run.thread_id = ${threadId}
                 AND (
                   run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
-                  OR json_extract(run.payload_json, '$.restartHandoffPending') IS 1
                   OR run.run_id = (
                     SELECT latest.run_id FROM orchestration_v2_projection_runs AS latest
                     WHERE latest.thread_id = ${threadId}
