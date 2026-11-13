@@ -17,6 +17,7 @@ TARGETS = {"studio": ("darwin", "arm64"), **{host: ("linux", "x64") for host in 
 MIGRATIONS_FILE = "apps/server/src/persistence/Migrations.ts"
 MIGRATION_PATHS = (MIGRATIONS_FILE, "apps/server/src/persistence/Migrations/")
 PERSISTED_STATE_PATHS = ("apps/server/src/persistence/",)
+TEST_ONLY = re.compile(r"(?:^|/)__tests__/|\.test\.[^/]+$")
 NIGHTLY_TAGS = "v*-nightly.*"
 VERSION = re.compile(r"(\d+\.\d+\.\d+-nightly\.\d+\.\d+)\.aneym\.\d+")
 ENTRY = re.compile(r"\[(\d+),\s*\"([^\"]+)\",\s*(Migration\d+)\]")
@@ -292,8 +293,9 @@ def fork_additive(tree, base, head, paths, old, new):
 
 def compatibility(tree, base, head):
     changed = git(tree, "diff", "--name-only", base, head).splitlines()
-    migrations = [path for path in changed if path.startswith(MIGRATION_PATHS)]
-    persisted = [path for path in changed if path.startswith(PERSISTED_STATE_PATHS) and path not in migrations]
+    source = [path for path in changed if not TEST_ONLY.search(path)]
+    migrations = [path for path in source if path.startswith(MIGRATION_PATHS)]
+    persisted = [path for path in source if path.startswith(PERSISTED_STATE_PATHS) and path not in migrations]
     connection = [path for path in persisted if ast_same(tree, base, head, path, "pragma")]
     persisted = [path for path in persisted if path not in connection]
     old, new = migration_identity(tree, base), migration_identity(tree, head)
