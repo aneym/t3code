@@ -14,6 +14,7 @@ from t3nightly.install_assets import serve_assets
 from t3nightly.install_payload_gc import payload_lifecycle
 
 from t3nightly.install_policy import DEFAULT_DRAIN_S
+from t3nightly.install_land_gate import DEFAULT_WAIT_S as LAND_WAIT_S, MAX_WAIT_S as LAND_MAX_S
 from t3nightly.install_protected import DEFAULT_WAIT_S as PROTECTED_WAIT_S, MAX_WAIT_S as PROTECTED_MAX_S
 
 FORK_BASE_URL = "https://github.com/aneym/t3code/releases/download"
@@ -55,7 +56,9 @@ def parse():
     parser.add_argument("--override-reason", default="")
     parser.add_argument("--install-window", default="", help="allowed UTC windows, HH:MM-HH:MM[,HH:MM-HH:MM]; default per host (ax102 03:00-05:00); outside them a live install needs --override-reason")
     parser.add_argument("--protected-thread", action="append", default=None, help="thread whose active run holds the install before the drain; repeat; replaces the default Rails chat and back office; 'none' for no protected threads")
-    parser.add_argument("--protected-wait-s", type=int, default=PROTECTED_WAIT_S, help="bound on the wait for protected threads to finish their runs; past it the install aborts, nothing stopped")
+    parser.add_argument("--protected-wait-s", type=int, default=PROTECTED_WAIT_S, help="bound on the wait for protected threads to finish their runs, also extending the drain at the stop; past it the install aborts, nothing stopped")
+    parser.add_argument("--land-lock", action="append", default=None, help="flock file glob held while a rails-one land runs on this host; repeat; replaces the defaults; 'none' for no land gate")
+    parser.add_argument("--land-wait-s", type=int, default=LAND_WAIT_S, help="bound on the wait for held land locks before the copy, the drain and the stop; past it the install aborts, nothing stopped")
     parser.add_argument("--connector-artifact", default="")
     parser.add_argument("--launcher-artifact", default="")
     parser.add_argument("--live-home", action="append", default=[])
@@ -98,6 +101,8 @@ def parse():
         parser.error("--drain-s must be between 0 and 300")
     if not 0 <= args.protected_wait_s <= PROTECTED_MAX_S:
         parser.error(f"--protected-wait-s must be between 0 and {PROTECTED_MAX_S}")
+    if not 0 <= args.land_wait_s <= LAND_MAX_S:
+        parser.error(f"--land-wait-s must be between 0 and {LAND_MAX_S}")
     if args.install_window:
         from t3nightly.install_policy import parse_windows
 

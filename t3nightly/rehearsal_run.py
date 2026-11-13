@@ -110,6 +110,12 @@ class Rehearsal:
                     command.extend(["--" + name.replace("_", "-"), getattr(self.args, name)])
         if getattr(self.args, "protect_held_turn", False):
             command.extend(["--protected-thread", self.workload.work["active-turn"]["threadId"], "--protected-wait-s", str(self.args.protected_wait_s)])
+        for thread in getattr(self.args, "protected_thread", None) or ():
+            command.extend(["--protected-thread", thread, "--protected-wait-s", str(self.args.protected_wait_s)])
+        if (self.engine / "install_land_gate.py").is_file():
+            for pattern in getattr(self.args, "land_lock", None) or ["none"]:
+                command.extend(["--land-lock", pattern])
+            command.extend(["--land-wait-s", str(getattr(self.args, "land_wait_s", 60))])
         if self.args.verdict:
             command.extend(["--verdict", str(self.args.verdict)])
         installer_home = Path.home() if (self.engine / "install_hard.py").is_file() else sandbox.os_home
