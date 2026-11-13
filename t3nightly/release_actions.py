@@ -24,8 +24,8 @@ from .release_seed_remotes import seed
 from .release_advisory import fast_advisory
 from .release_transport import command, git_tree, prepare_remote, remote_worker, require, transfer
 from .release_windows import WINDOWS_STAGES, run_windows
-from .assembly_lineage import missing, refusal
-from .release_ledger import LedgerRefusal, fetch_candidate, lineage, publish_candidate, read as read_ledger, record_installed, require_releases
+from .assembly_lineage import missing, refusal, required, targets
+from .release_ledger import LedgerRefusal, fetch_candidate, publish_candidate, read as read_ledger, record_installed, require_releases
 
 
 def checksums(config):
@@ -160,7 +160,9 @@ def fast_assemble(config, log):
     else:
         git_tree(config.repo, tree, base, log)
     try:
-        if gaps := missing(tree, ready["topicShas"], lineage(ledger)):
+        entries, scope = required(tree, ledger, targets(ready))
+        log.write(f"assembly lineage scope {scope}\n")
+        if gaps := missing(tree, ready["topicShas"], entries):
             log.write(refusal(gaps) + "\n")
             return 4
         for name, sha in zip(config.topic.split(","), ready["topicShas"]):
