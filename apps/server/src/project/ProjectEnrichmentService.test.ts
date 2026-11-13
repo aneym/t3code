@@ -295,7 +295,7 @@ it.effect(
           "example.test/v1/widgets",
         );
 
-        yield* TestClock.adjust(Duration.seconds(61));
+        yield* TestClock.adjust(Duration.seconds(301));
 
         const expired = yield* service.getAvailable("/widgets");
         assert.equal(
@@ -348,7 +348,7 @@ it.effect("does not let a lookup invalidated mid-flight replace a newer last ide
 
       yield* Deferred.succeed(releaseFirst, undefined);
       yield* Fiber.join(firstLookup);
-      yield* TestClock.adjust(Duration.seconds(61));
+      yield* TestClock.adjust(Duration.seconds(301));
 
       const expired = yield* service.peek("/widgets");
       assert.equal(expired.repositoryIdentity?.canonicalKey, "example.test/v2/widgets");

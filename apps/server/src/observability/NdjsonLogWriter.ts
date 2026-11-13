@@ -1,7 +1,7 @@
 import { makeAsyncRotatingFileSink } from "@t3tools/shared/logging";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Schedule from "effect/Schedule";
+import * as Latch from "effect/Latch";
 
 export type NdjsonFields = Record<string, unknown>;
 
@@ -31,10 +31,18 @@ export const makeNdjsonLogWriter = Effect.fnUntraced(function* (options: {
     bufferBytes = 0;
     return sink.write(chunk).pipe(Effect.ignore);
   });
-  yield* flush.pipe(Effect.repeat(Schedule.spaced(FLUSH_EVERY)), Effect.forkScoped);
+  const pending = yield* Latch.make(false);
+  yield* pending.await.pipe(
+    Effect.andThen(Effect.sleep(FLUSH_EVERY)),
+    Effect.andThen(Effect.sync(() => pending.closeUnsafe())),
+    Effect.andThen(flush),
+    Effect.forever,
+    Effect.forkScoped,
+  );
   yield* Effect.addFinalizer(() => flush);
   return (fields: NdjsonFields) => {
     const line = `${JSON.stringify({ t: DateTime.formatIso(DateTime.nowUnsafe()), ...fields })}\n`;
+    pending.openUnsafe();
     if (bufferBytes + line.length > MAX_BUFFER_BYTES) {
       dropped += 1;
       return;

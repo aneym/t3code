@@ -158,7 +158,7 @@ it.effect("does not sign in to whatever took over a dead server's port", () =>
       baseDir,
     ]).pipe(Effect.flip);
 
-    assert.strictEqual(error._tag, "ThreadServerNotRunningError");
+    assert.strictEqual(error._tag, "McpServerNotRunningError");
     assert.strictEqual(session.mock.calls.length, 0);
   }).pipe(
     Effect.scoped,

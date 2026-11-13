@@ -58,7 +58,7 @@ effectIt.effect("hydrates PATH when the desktop handoff is absent", () =>
         );
 
         assert.equal(probe.mock.calls.length, 1);
-        assert.equal(env.PATH, "/opt/tools/bin:/usr/bin");
+        assert.equal(env.PATH, `/opt/tools/bin:/usr/bin:${NodeOS.userInfo().homedir}/.local/bin`);
       }),
     (probe) => Effect.sync(() => probe.mockRestore()),
   ),
@@ -86,7 +86,7 @@ effectIt.effect("waits longer for a login shell that times out at startup", () =
           Effect.provide(NodeServices.layer),
         );
 
-        assert.equal(env.PATH, "/opt/tools/bin:/usr/bin");
+        assert.equal(env.PATH, `/opt/tools/bin:/usr/bin:${NodeOS.userInfo().homedir}/.local/bin`);
       }),
     (probe) => Effect.sync(() => probe.mockRestore()),
   ),
@@ -111,7 +111,7 @@ effectIt.effect("waits longer for only one hung login shell", () =>
 
         const timeouts = probe.mock.calls.map(([, , options]) => options?.timeout);
         assert.equal(timeouts.filter((timeout) => (timeout ?? 0) > 5_000).length, 1);
-        assert.equal(env.PATH, "/usr/bin");
+        assert.equal(env.PATH, `/usr/bin:${NodeOS.userInfo().homedir}/.local/bin`);
       }),
     (probe) => Effect.sync(() => probe.mockRestore()),
   ),

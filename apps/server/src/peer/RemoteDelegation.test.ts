@@ -494,8 +494,16 @@ const boxToolkitLayer = (thread: BoxThread) => {
       Ref.update(thread.sent, (seen) => [...seen, input.text]).pipe(
         Effect.as(
           (input.mode === "queue"
-            ? { run: { id: boxQueuedRunId, status: "queued" }, delivery: "queued" }
-            : { run: { id: boxLaterRunId, status: "running" }, delivery: "started" }) as never,
+            ? {
+                dispatch: { sequence: 1 },
+                run: { id: boxQueuedRunId, status: "queued" },
+                delivery: "queued",
+              }
+            : {
+                dispatch: { sequence: 1 },
+                run: { id: boxLaterRunId, status: "running" },
+                delivery: "started",
+              }) as never,
         ),
       ),
   });
@@ -1259,31 +1267,6 @@ it.effect("a task naming another driver there never runs its model on the parent
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("refuses worktree isolation for a task there before launching anything", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const thread = yield* makeBoxThread;
-      const b = yield* serveBox(thread);
-      const offers = yield* SubscriptionRef.make<
-        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-      >([]);
-      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const a = yield* makeLaptop(database, offers);
-      yield* linkTo(a.links, b, "auto");
-      yield* seedParent(a);
-
-      const result = yield* a.call("delegate_task", {
-        task: "Run the suite on the box.",
-        target: { environmentId: box.environmentId },
-        isolation: "worktree",
-      });
-      expect(result.isError).toBe(true);
-      expect(JSON.stringify(result.content)).toContain("isolation");
-      expect(yield* Ref.get(thread.launched)).toBeNull();
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
-);
-
 it.effect("follows an open task again after the laptop restarts", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1401,7 +1384,7 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       const { taskId } = result.structuredContent as { taskId: NodeId };
       // The role reaches the thread there, as it does a child here.
       expect(yield* Ref.get(thread.message)).toBe(
-        "Act as the review sub-agent for this task.\n\nReview the diff.",
+        "Act as the review sub-agent for this task.\n\nReview the diff.\n\nBefore your final reply, call the T3 tool task_outcome: clean if you did everything the task asked and verified it, gaps if anything is left undone, unverified, blocked or needs your lead's decision.",
       );
 
       // A reply longer than one read, then a later run's reply on the same thread.

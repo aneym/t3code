@@ -76,6 +76,16 @@ import {
 } from "./server.ts";
 import { applyServerConfigProjection } from "./serverConfigProjection.ts";
 
+vi.mock("./commandPermissions.ts", async () => {
+  const Effect = await import("effect/Effect");
+  const { RpcPermissionGuard } = await import("../rpc/client.ts");
+  const permissions = { requiredScopes: () => [], authorize: () => Effect.void };
+  return {
+    createCommandPermissions: () => permissions,
+    provideCommandPermissions: () => Effect.provideService(RpcPermissionGuard, permissions),
+  };
+});
+
 const CONFIG = {
   availableEditors: [],
   issues: [],
@@ -1262,14 +1272,12 @@ describe("server state projection", () => {
       fetched,
     );
     expect(merged.providers[0]?.workspaceSnapshots).toEqual([claudeA]);
-    // An unchanged answer keeps the cache, so config readers do not re-render.
     expect(
       record(fetched, claude, false, [
         provider(claude, [JSON.parse(JSON.stringify(claudeA)) as typeof claudeA]),
       ]),
     ).toBe(fetched);
 
-    // Health checks and usage updates leave the snapshot in place.
     expect(
       withFetchedWorkspaceSnapshots(
         configWith(true, [
@@ -1279,7 +1287,6 @@ describe("server state projection", () => {
       ).providers[0]?.workspaceSnapshots,
     ).toEqual([claudeA]);
 
-    // New provider-wide commands, such as a live session's, retire the old snapshot.
     expect(
       withFetchedWorkspaceSnapshots(
         configWith(true, [provider(claude, undefined, [{ name: "live" }])]),
@@ -1287,7 +1294,6 @@ describe("server state projection", () => {
       ).providers[0]?.workspaceSnapshots,
     ).toBeUndefined();
 
-    // A catalog digest stands for the lists: loading them keeps the snapshot, a new digest retires it.
     const digested = (catalogDigest: string, slashCommands: ReadonlyArray<{ name: string }> = []) =>
       ({ ...provider(claude, undefined, slashCommands), catalogDigest }) as ReturnType<
         typeof provider
@@ -1304,11 +1310,9 @@ describe("server state projection", () => {
     expect(snapshotsFor(digested("d1", [{ name: "loaded" }]))).toEqual([claudeA]);
     expect(snapshotsFor(digested("d2"))).toBeUndefined();
 
-    // Older servers send every snapshot and every drop; their config stands.
     const legacy = configWith(false, [provider(claude)]);
     expect(withFetchedWorkspaceSnapshots(legacy, fetched)).toBe(legacy);
 
-    // A fresh scan drops the cwd's other provider snapshots, as the server does.
     expect(record(fetched, claude, true, [])).toEqual([]);
   });
 

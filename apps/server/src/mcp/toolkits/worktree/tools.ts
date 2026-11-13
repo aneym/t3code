@@ -100,7 +100,7 @@ const WorktreeExportTool = Tool.make("t3_worktree_export", {
     FileSystem.FileSystem,
   ],
 })
-  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false);
 
 export const WorktreeToolkit = Toolkit.make(

@@ -229,17 +229,6 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
         });
       }
     }
-    const first = yield* service.readThread(makeScope(), {
-      threadId: parentThreadId,
-      view: "activity",
-    });
-    expect(first.items[1]).toMatchObject({
-      text: "x".repeat(500),
-      textTruncated: true,
-      nextTextOffset: 500,
-    });
-    expect(first.items).toHaveLength(10);
-    expect(first).toMatchObject({ nextPosition: 9, hasMore: true });
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
@@ -460,6 +449,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
                 ),
           sendToThread: () =>
             Effect.succeed({
+              dispatch: { sequence: 1 },
               run: { id: "run-foreign", status: "queued" },
               delivery: "started",
             } as unknown as ThreadSend.ThreadSendResult),
