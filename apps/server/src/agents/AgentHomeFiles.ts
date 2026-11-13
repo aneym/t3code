@@ -7,6 +7,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 import { agentHomeSealing } from "./AgentHomeSealing.ts";
+import type { LaneIndex, LaneThread } from "./AgentLaneFiles.ts";
 
 const watched = new Map<string, { count: number; generation: number }>();
 const bump = (root: string) => {
@@ -70,12 +71,17 @@ export const homeFromDocument = (
   handle: string,
   doc: Record<string, unknown>,
   strict = false,
+  lanes: ReadonlyArray<LaneThread> = [],
 ): AgentHome =>
   decodeHome({
     handle,
     workspaceRoot: NodePath.join(root, handle),
     displayName: text(doc.display_name),
     role: text(doc.role),
+    projects: Array.isArray(doc.projects)
+      ? doc.projects.filter((name): name is string => typeof name === "string")
+      : [],
+    lanes,
     binding: binding(doc.t3, strict),
     previous: binding(
       typeof doc.t3 === "object" && doc.t3 !== null ? t3Field(doc, "previous") : doc.t3_previous,
@@ -106,18 +112,26 @@ export const isLaneThread = async (root: string, threadId: string) => {
   );
   return owners.includes(true);
 };
-export const readHomes = async (root: string, strict = false) => {
+export const readHomes = async (
+  root: string,
+  strict = false,
+  laneIndex: LaneIndex = async () => () => [],
+) => {
   const entries = await NodeFSP.readdir(root, { withFileTypes: true }).catch(
     (error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return [];
       throw error;
     },
   );
+  const lanesUnder = await laneIndex();
   const homes: AgentHome[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !AGENT_HOME_HANDLE_PATTERN.test(entry.name)) continue;
     try {
-      homes.push(homeFromDocument(root, entry.name, await readDocument(root, entry.name), strict));
+      const doc = await readDocument(root, entry.name);
+      homes.push(
+        homeFromDocument(root, entry.name, doc, strict, lanesUnder(text(doc.lane) ?? entry.name)),
+      );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
       console.warn(
