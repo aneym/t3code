@@ -303,7 +303,8 @@ def compatibility(tree, base, head):
     base_tag, head_tag = newest_tag(tree, base), newest_tag(tree, head)
     rebased = git(tree, "tag", "--merged", head, "--no-merged", base, "-l", NIGHTLY_TAGS).split()
     reasons = []
-    if not additive and (migrations or old["history"] != new["history"] or old["content"] != new["content"]):
+    forked = [path for path in source if path.startswith(FORK_MIGRATIONS)]
+    if not additive and (migrations or forked or old["history"] != new["history"] or old["content"] != new["content"]):
         reasons.append("migrations-changed")
     if persisted and not additive:
         reasons.append("persisted-state-changed")
