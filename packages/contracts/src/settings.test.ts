@@ -58,6 +58,7 @@ describe("storage cleanup settings", () => {
       worktreeOrphans: false,
       worktreeAcceptPushed: false,
       threadHistoryAfterDays: null,
+      pruneEventLog: false,
     });
   });
 

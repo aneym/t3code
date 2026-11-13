@@ -24,6 +24,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { recentAndOpenRuns } from "./CommandRunWindow.ts";
 import type * as Orchestrator from "./Orchestrator.ts";
 import { threadSendHint } from "./ThreadSendHint.ts";
 import type {
@@ -108,12 +109,21 @@ export class ThreadManagementSendConflictError extends Schema.TaggedError<Thread
   }
 }
 
+const isSameSend = (
+  message: Pick<OrchestrationV2ConversationMessage, "id" | "text" | "delegatedCompletion">,
+  input: Pick<ThreadSendInput, "messageId" | "text">,
+) =>
+  message.id === input.messageId &&
+  (message.delegatedCompletion !== undefined || message.text.trim() === input.text.trim());
+
 type SendDispatchMode = Extract<
   OrchestrationV2Command,
   { readonly type: "message.dispatch" }
 >["dispatchMode"];
 
 type SendTarget = Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns">;
+
+const liveRunFields = ["runs", "providerTurns", "providerThreads"] as const;
 
 function latestSteerableRun(projection: SendTarget): OrchestrationV2Run | undefined {
   return projection.runs
@@ -196,7 +206,7 @@ export const makeSendToThread = <LoadError, DispatchError>(
     let recoveredUnacceptedRun = false;
     const stuck = yield* unacceptedRun(input, target);
     if (stuck !== undefined) {
-      target = yield* deps.loadRecords(input, ["runs", "providerTurns", "providerThreads"]);
+      target = yield* deps.loadRecords(input, liveRunFields, recentAndOpenRuns);
       if (yield* deps.hasReceipt(input.commandId)) return replayDispatchMode(input);
       if ((yield* unacceptedRun(input, target))?.id === stuck.id) {
         yield* deps.dispatch({
@@ -207,7 +217,7 @@ export const makeSendToThread = <LoadError, DispatchError>(
           reason: "Replaced a run whose provider turn never started.",
         });
         recoveredUnacceptedRun = true;
-        target = yield* deps.loadRecords(input, ["runs", "providerTurns", "providerThreads"]);
+        target = yield* deps.loadRecords(input, liveRunFields, recentAndOpenRuns);
       }
     }
     const steerableRun = latestSteerableRun(target);
@@ -240,16 +250,24 @@ export const makeSendToThread = <LoadError, DispatchError>(
       const recorded = yield* deps.loadRecords(input, ["messages"], {
         messageIds: [input.messageId],
       });
-      if (!recorded.messages.some((candidate) => candidate.id === input.messageId)) {
+      if (!recorded.messages.some((candidate) => isSameSend(candidate, input))) {
         return yield* conflict();
       }
       dispatchMode = replayDispatchMode(input);
     } else {
-      const loaded = yield* deps.loadRecords(input, ["runs", "providerTurns", "providerThreads"]);
-      if (loaded.thread.archivedAt !== null) {
+      const loaded =
+        input.mode === "queue"
+          ? undefined
+          : yield* deps.loadRecords(input, liveRunFields, recentAndOpenRuns);
+      const { thread } = loaded ?? (yield* deps.loadRecords(input, []));
+      if (thread.archivedAt !== null) {
         return yield* new ThreadManagementThreadArchivedError({ threadId: input.threadId });
       }
-      dispatchMode = yield* resolveDispatchMode(input, loaded).pipe(
+      dispatchMode = yield* (
+        loaded === undefined
+          ? Effect.succeed(replayDispatchMode(input))
+          : resolveDispatchMode(input, loaded)
+      ).pipe(
         Effect.catch((error) =>
           deps
             .hasReceipt(input.commandId)
@@ -276,32 +294,38 @@ export const makeSendToThread = <LoadError, DispatchError>(
       createdBy: input.createdBy,
       creationSource: input.creationSource,
     });
-    const projection = yield* deps.loadRecords(input, ["runs", "messages", "turnItems"], {
+    const { thread, messages } = yield* deps.loadRecords(input, ["messages"], {
       messageIds: [input.messageId],
+    });
+    const message = messages.find((candidate) => candidate.id === input.messageId);
+    if (dispatched.replayed === true && (message === undefined || !isSameSend(message, input)))
+      return yield* conflict();
+    const runId = message?.runId ?? null;
+    const unprojected = () =>
+      new ThreadManagementDurableRunProjectionError({
+        threadId: input.threadId,
+        messageId: input.messageId,
+      });
+    if (message === undefined || runId === null) return yield* unprojected();
+    const { runs, turnItems } = yield* deps.loadRecords(input, ["runs", "turnItems"], {
+      runIds: [runId],
+      turnItemRunId: runId,
       turnItemTypes: ["user_message"],
     });
-    const message = projection.messages.find((candidate) => candidate.id === input.messageId);
-    if (message === undefined && dispatched.replayed === true) return yield* conflict();
-    const run =
-      message?.runId === null || message?.runId === undefined
-        ? undefined
-        : projection.runs.find((candidate) => candidate.id === message.runId);
+    const projection = { thread, runs, messages, turnItems };
+    const run = runs.find((candidate) => candidate.id === runId);
     const turnItem =
-      projection.turnItems.find(
+      turnItems.find(
         (
           candidate,
         ): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> =>
           candidate.type === "user_message" && candidate.messageId === input.messageId,
       ) ?? null;
     if (
-      message === undefined ||
       run === undefined ||
       (turnItem === null && run.status !== "queued" && dispatched.replayed !== true)
     ) {
-      return yield* new ThreadManagementDurableRunProjectionError({
-        threadId: input.threadId,
-        messageId: input.messageId,
-      });
+      return yield* unprojected();
     }
     const delivery: ThreadSendResult["delivery"] =
       run.status === "queued" && run.queueHeld === true
@@ -371,7 +395,10 @@ export const makeNoteToThread = <LoadError, DispatchError, SendError>(
       messageIds: [input.messageId],
     });
     const message = messages.find((candidate) => candidate.id === input.messageId);
-    if (message?.quietNote !== true) {
+    if (
+      message?.quietNote !== true ||
+      (dispatched.replayed === true && !isSameSend(message, input))
+    ) {
       return yield* new ThreadManagementSendConflictError({
         threadId: input.threadId,
         commandId: input.commandId,

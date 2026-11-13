@@ -21,8 +21,8 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as HistoryRetention from "./HistoryRetention.ts";
-import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 
 const database = SqlitePersistence.layerMemory;
 const stores = Layer.mergeAll(
@@ -33,7 +33,7 @@ const stores = Layer.mergeAll(
 const layerTest = Layer.mergeAll(
   stores,
   EventSink.layer.pipe(Layer.provide(stores)),
-  ProjectionMaintenance.layer.pipe(Layer.provide(stores)),
+  ProjectionReplay.layer.pipe(Layer.provide(stores)),
   HistoryRetention.layer.pipe(Layer.provide(database)),
 );
 
@@ -241,7 +241,7 @@ it.effect(
     Effect.gen(function* () {
       const sink = yield* EventSink.EventSinkV2;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       const retention = yield* HistoryRetention.HistoryRetention;
       const sql = yield* SqlClient.SqlClient;
       const now = yield* DateTime.now;

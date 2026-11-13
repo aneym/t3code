@@ -13,6 +13,7 @@ import {
   OrchestrationV2DelegatedCompletionRef,
 } from "./delegatedCompletionDelivery.ts";
 import { RestartRunState } from "./restartRunState.ts";
+import { QueueDrainSnooze } from "./queueDrainSnooze.ts";
 import { QueueHoldState, QueueHoldStateJson } from "./queueHoldReason.ts";
 import { OrchestrationV2ProviderFailureClass } from "./providerFailureClass.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
@@ -2916,9 +2917,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
-    whenQueueDrains: Schema.optional(
-      Schema.Struct({ afterSequence: NonNegativeInt, requestedAt: IsoDateTime }),
-    ),
+    whenQueueDrains: Schema.optional(QueueDrainSnooze),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),
