@@ -24,10 +24,11 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
-import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpToolkitRegistration from "./mcpServer/toolkitRegistration.ts";
+import * as McpTransport from "./mcpServer/transport.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const adapter = {
@@ -140,8 +141,8 @@ const renameRacingTheUser = (threadId: ThreadId, userRaises: boolean) =>
       Effect.provideService(McpInvocationContext.McpInvocationContext, supervisedClient),
       Effect.provideService(McpSchema.McpServerClient, mcpClient),
       Effect.provide(
-        McpHttpServer.toolkitRegistration(RenameToolkit, handlers).pipe(
-          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        McpToolkitRegistration.toolkitRegistration(RenameToolkit, handlers).pipe(
+          Layer.provideMerge(McpTransport.layerInProcessMcpServer),
         ),
       ),
     );

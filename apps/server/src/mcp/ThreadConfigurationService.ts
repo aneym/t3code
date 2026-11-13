@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -114,7 +114,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
     const orchestrator = yield* Effect.serviceOption(Orchestrator.OrchestratorMcpService);
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return ThreadConfigurationService.of({
       configure: Effect.fn("ThreadConfigurationService.configureRequest")((scope, input) =>
         configure(scope, input).pipe(
@@ -128,7 +128,7 @@ export const layer = Layer.effect(
                   orchestrator.value,
                 )
               : effect,
-          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
         ),
       ),
     });

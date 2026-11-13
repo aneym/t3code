@@ -49,6 +49,11 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
+import { layerToolSearch } from "./mcpServer/toolSearch.ts";
+import { toolkitRegistration } from "./mcpServer/toolkitRegistration.ts";
+import { MAX_SNAPSHOT_TEXT_BYTES } from "./mcpServer/previewSnapshotTool.ts";
+import { McpClientAuthenticator } from "./McpAuthMiddleware.ts";
+import { layerInProcessMcpServer, layerMcpTransport } from "./mcpServer/transport.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -88,14 +93,14 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 const layerTest = McpHttpServer.layerPreviewToolkit.pipe(
-  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+  Layer.provideMerge(layerInProcessMcpServer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provideMerge(PreviewAutomationBroker.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const layerPullRequestsTest = McpHttpServer.layerPullRequestsToolkit.pipe(
-  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+  Layer.provideMerge(layerInProcessMcpServer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provide(
     Layer.mergeAll(
@@ -233,7 +238,7 @@ it.effect.each([
     }).pipe(
       Effect.provide(
         McpHttpServer.layerDeviceToolkit.pipe(
-          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provideMerge(layerInProcessMcpServer),
           Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
           Layer.provide(
             Layer.mock(DeviceService.DeviceService)({
@@ -287,7 +292,7 @@ const layerRecordingTools = (calls: Array<unknown>) => {
       ),
     ),
   );
-  return McpHttpServer.toolkitRegistration(
+  return toolkitRegistration(
     RecordingToolkit,
     McpToolAccess.toLayer(RecordingToolkit, {
       delegate_task: record,
@@ -297,7 +302,7 @@ const layerRecordingTools = (calls: Array<unknown>) => {
       t3_thread_launch: record,
     }),
   ).pipe(
-    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+    Layer.provideMerge(layerInProcessMcpServer),
     Layer.provide(
       Layer.mergeAll(
         McpToolAccessTestkit.liveThreadsLayer,
@@ -793,7 +798,7 @@ it.effect("bounds large ARIA trees without dropping every server locator", () =>
       expect(metadata.accessibilityTree.length).toBeLessThan(accessibilityTree.length);
       const body = result.content[1];
       expect(Buffer.byteLength(body?.type === "text" ? body.text : "", "utf8")).toBeLessThanOrEqual(
-        McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
+        MAX_SNAPSHOT_TEXT_BYTES,
       );
     }),
   ).pipe(Effect.provide(layerTest)),
@@ -840,9 +845,7 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
       });
       expect(text?.type).toBe("text");
       const body = text?.type === "text" ? text.text : "";
-      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
-        McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
-      );
+      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(MAX_SNAPSHOT_TEXT_BYTES);
       const parsed = decodeJsonText(body) as {
         readonly accessibilityTree?: unknown;
         readonly visibleText: string;
@@ -882,9 +885,7 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
 
       const [, text] = snapshot.content;
       const body = text?.type === "text" ? text.text : "";
-      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
-        McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
-      );
+      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(MAX_SNAPSHOT_TEXT_BYTES);
       const parsed = decodeJsonText(body) as {
         readonly title: string;
         readonly consoleEntries: ReadonlyArray<{ readonly text: string }>;
@@ -924,9 +925,7 @@ it.effect("bounds page text made of wide characters before dropping locators", (
 
       const [, text, notice] = snapshot.content;
       const body = text?.type === "text" ? text.text : "";
-      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
-        McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
-      );
+      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(MAX_SNAPSHOT_TEXT_BYTES);
       const parsed = decodeJsonText(body) as {
         readonly visibleText: string;
         readonly interactiveElements: ReadonlyArray<unknown>;
@@ -956,7 +955,7 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
         capabilities: new Set(["orchestration"]),
         issuedAt: 1,
       };
-      const layerServer = McpHttpServer.layerMcpTransport(Layer.empty).pipe(
+      const layerServer = layerMcpTransport(Layer.empty).pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
@@ -1038,8 +1037,8 @@ it.effect("answers 2026-07-28 discovery and keeps 2025-06-18 as the initialize f
           success: Schema.Struct({ ok: Schema.Boolean }),
         }),
       );
-      const layerServer = McpHttpServer.layerMcpTransport(
-        McpHttpServer.toolkitRegistration(
+      const layerServer = layerMcpTransport(
+        toolkitRegistration(
           ProbeToolkit,
           McpToolAccess.toLayer(ProbeToolkit, {
             probe: McpToolAccess.reads(() => Effect.succeed({ ok: true })),
@@ -1168,8 +1167,8 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           dependencies: [McpInvocationContext.McpInvocationContext],
         }),
       );
-      const serverLayer = McpHttpServer.layerMcpTransport(
-        McpHttpServer.toolkitRegistration(
+      const serverLayer = layerMcpTransport(
+        toolkitRegistration(
           ProbeToolkit,
           McpToolAccess.toLayer(ProbeToolkit, {
             probe: McpToolAccess.reads(() =>
@@ -1193,7 +1192,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           }),
         ),
         Layer.provide(
-          Layer.succeed(McpHttpServer.McpClientAuthenticator, {
+          Layer.succeed(McpClientAuthenticator, {
             authenticate: (request) =>
               Effect.succeed(
                 request.headers.authorization === `Bearer ${clientToken}` ? clientScope : undefined,
@@ -1318,7 +1317,7 @@ it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected cr
         client: { deviceType: "bot" },
       });
       yield* HttpRouter.serve(
-        McpHttpServer.layerMcpTransport(Layer.empty).pipe(
+        layerMcpTransport(Layer.empty).pipe(
           Layer.provide(McpOAuth.layerMcpClientAuthenticator),
           Layer.provide(ServerSettings.layerTest()),
         ),
@@ -1419,8 +1418,8 @@ it.effect("hides tools for links and refuses another environment while the beta 
       );
       const settingsContext = yield* Layer.build(ServerSettings.layerTest());
       const settings = Context.get(settingsContext, ServerSettings.ServerSettingsService);
-      const serverLayer = McpHttpServer.layerMcpTransport(
-        McpHttpServer.toolkitRegistration(
+      const serverLayer = layerMcpTransport(
+        toolkitRegistration(
           LinksToolkit,
           McpToolAccess.toLayer(LinksToolkit, {
             links: McpToolAccess.reads(() => Effect.succeed({ links: 0 })),
@@ -1531,9 +1530,7 @@ it.effect("lists pull request watch tools only to threads that are not delegated
         ["parentToken", scopeFor("parentToken", false)],
         ["childToken", scopeFor("childToken", true)],
       ]);
-      const serverLayer = McpHttpServer.layerMcpTransport(
-        McpHttpServer.layerPullRequestsToolkit,
-      ).pipe(
+      const serverLayer = layerMcpTransport(McpHttpServer.layerPullRequestsToolkit).pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
@@ -1630,8 +1627,8 @@ it.effect(
             ],
           }),
         );
-        const serverLayer = McpHttpServer.layerMcpTransport(
-          McpHttpServer.toolkitRegistration(
+        const serverLayer = layerMcpTransport(
+          toolkitRegistration(
             StartsToolkit,
             McpToolAccess.toLayer(StartsToolkit, {
               starts: McpToolAccess.startsThreads(
@@ -1651,7 +1648,7 @@ it.effect(
             }),
           ),
           Layer.provide(
-            Layer.succeed(McpHttpServer.McpClientAuthenticator, {
+            Layer.succeed(McpClientAuthenticator, {
               authenticate: (request) =>
                 Effect.succeed(
                   request.headers.authorization === `Bearer ${clientToken}`
@@ -1776,9 +1773,9 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         tool("schedule_task", "Schedules a task."),
       );
       const reads = McpToolAccess.reads(() => Effect.succeed({}));
-      const serverLayer = McpHttpServer.layerMcpTransport(
+      const serverLayer = layerMcpTransport(
         Layer.mergeAll(
-          McpHttpServer.toolkitRegistration(
+          toolkitRegistration(
             OptionalToolkit,
             McpToolAccess.toLayer(OptionalToolkit, {
               delegate_task: reads,
@@ -1786,7 +1783,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               schedule_task: reads,
             }),
           ),
-          McpHttpServer.layerToolSearch,
+          layerToolSearch,
         ),
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),

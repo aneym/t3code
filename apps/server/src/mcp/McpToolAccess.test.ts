@@ -15,13 +15,14 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
-import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
+import * as McpToolkitRegistration from "./mcpServer/toolkitRegistration.ts";
+import * as McpTransport from "./mcpServer/transport.ts";
+import { OrchestratorProjectionError } from "../orchestration-v2/OrchestratorErrors.ts";
 
 const supervisedThreadId = ThreadId.make("thread:supervised");
 const planThreadId = ThreadId.make("thread:plan");
@@ -174,7 +175,7 @@ export const refusedAtCompileTime = () => {
   // @ts-expect-error a handlers layer built outside McpToolAccess
   McpToolAccess.HandlersLayer.make(Layer.empty);
   // @effect-diagnostics-next-line anyUnknownInErrorContext:off
-  McpHttpServer.toolkitRegistration(
+  McpToolkitRegistration.toolkitRegistration(
     ProbeToolkit,
     // @ts-expect-error a handlers layer that skipped `McpToolAccess.toLayer`
     ProbeToolkit.toLayer({
@@ -191,8 +192,8 @@ export const refusedAtCompileTime = () => {
 };
 
 const probeServer = (threads: Layer.Layer<ThreadManagement.ThreadManagementService>) =>
-  McpHttpServer.toolkitRegistration(ProbeToolkit, layerProbeHandlers).pipe(
-    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+  McpToolkitRegistration.toolkitRegistration(ProbeToolkit, layerProbeHandlers).pipe(
+    Layer.provideMerge(McpTransport.layerInProcessMcpServer),
     Layer.provideMerge(threads),
   );
 
@@ -381,7 +382,7 @@ const LinkedProbeToolkit = Toolkit.make(
 const ranHere = <P extends object>(params: P) =>
   Effect.succeed({ ran: "environmentId" in params ? "saw environmentId" : "here" });
 
-const linkedProbeServer = McpHttpServer.toolkitRegistration(
+const linkedProbeServer = McpToolkitRegistration.toolkitRegistration(
   LinkedProbeToolkit,
   McpToolAccess.toLayer(LinkedProbeToolkit, {
     reads: McpToolAccess.reads(ranHere),
@@ -392,7 +393,7 @@ const linkedProbeServer = McpHttpServer.toolkitRegistration(
     writes_environment: McpToolAccess.writesEnvironment(ranHere),
   }),
 ).pipe(
-  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+  Layer.provideMerge(McpTransport.layerInProcessMcpServer),
   Layer.provideMerge(
     Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),

@@ -44,7 +44,6 @@ const bind = Command.make("bind", {
   baseDir: baseDirFlag,
   agent: Argument.String("agent"),
   thread: Argument.String("thread").pipe(Argument.optional),
-  projects: Flag.String("projects").pipe(Flag.optional),
   environment: Flag.String("environment").pipe(Flag.optional),
   host: Flag.String("host").pipe(Flag.optional),
   by: Flag.String("by").pipe(Flag.optional),
@@ -76,15 +75,6 @@ const bind = Command.make("bind", {
               onNone: () => (flags.unbind ? { threadId: null } : {}),
               onSome: (threadId) => ({ threadId: flags.unbind ? null : threadId }),
             }),
-            ...Option.match(flags.projects, {
-              onNone: () => ({}),
-              onSome: (projects) => ({
-                projects: projects
-                  .split(",")
-                  .map((name) => name.trim())
-                  .filter(Boolean),
-              }),
-            }),
             onlyIfUnbound: flags.onlyIfUnbound,
             ...(flags.office ? { office: true } : {}),
             ...Option.match(flags.environment, {
@@ -99,7 +89,7 @@ const bind = Command.make("bind", {
         yield* flags.json
           ? printJson(result)
           : Console.log(
-              `${result.home.handle}: ${result.home.binding?.threadId ?? "unbound"} office=${result.home.office?.threadId ?? "-"} projects=${result.home.projects.join(",") || "-"} (${result.changed ? "updated" : "unchanged"})`,
+              `${result.home.handle}: ${result.home.binding?.threadId ?? "unbound"} office=${result.home.office?.threadId ?? "-"} (${result.changed ? "updated" : "unchanged"})`,
             );
       }),
     ).pipe(reportErrors),

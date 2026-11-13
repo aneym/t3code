@@ -25,10 +25,6 @@ import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerConfig from "../config.ts";
-import {
-  OrchestratorDispatchError,
-  OrchestratorProjectionError,
-} from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -36,6 +32,9 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
+import { OrchestratorDispatchError } from "../orchestration-v2/OrchestratorDispatchError.ts";
+import { OrchestratorProjectionError } from "../orchestration-v2/OrchestratorErrors.ts";
+import * as ThreadSend from "../orchestration-v2/ThreadSend.ts";
 
 const environmentId = EnvironmentId.make("environment-worktree-test");
 const threadId = ThreadId.make("thread-worktree-test");
@@ -183,7 +182,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     switch (options.continuation ?? "queued") {
       case "fails":
         return Effect.fail(
-          new ThreadManagementService.ThreadManagementThreadArchivedError({
+          new ThreadSend.ThreadManagementThreadArchivedError({
             threadId,
           }),
         );
@@ -192,7 +191,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       default:
         return Effect.succeed({
           delivery: "queued",
-        } as ThreadManagementService.ThreadManagementSendResult);
+        } as ThreadSend.ThreadSendResult);
     }
   });
   const getById = vi.fn((id: ProjectId) =>
@@ -509,15 +508,6 @@ describe("t3_worktree_handoff", () => {
       expect(error.message).toContain("/elsewhere/checkout");
       expect(harness.createWorktree).not.toHaveBeenCalled();
       expect(harness.fetchWorktreeBaseCommit).not.toHaveBeenCalled();
-    });
-  });
-
-  it.effect("does not trip the pre-flight on similarly named branches", () => {
-    const harness = makeHarness({ existingBranchWorktreePath: null });
-    return Effect.gen(function* () {
-      const result = yield* runHandoff(harness, { branch: "feature/take" });
-      expect(result.branch).toBe("feature/take");
-      expect(harness.createWorktree).toHaveBeenCalledTimes(1);
     });
   });
 

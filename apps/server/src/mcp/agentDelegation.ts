@@ -40,9 +40,8 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
     clientRequestId: input.clientRequestId,
     ...(input.isolation !== "worktree"
       ? { localOnlyReason: "Shared isolation keeps the parent's workspace." }
-      : input.target?.projectId !== undefined ||
-          (input.baseRef !== undefined && !input.baseRef.startsWith("origin/"))
-        ? { localOnlyReason: "The caller pinned the task's project." }
+      : input.baseRef !== undefined && !input.baseRef.startsWith("origin/")
+        ? { localOnlyReason: "The task's base reference is local to this environment." }
         : {}),
   });
   if (selected === undefined) return yield* service.delegateTask(scope, input);

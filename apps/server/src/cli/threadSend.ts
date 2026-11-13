@@ -5,7 +5,7 @@ import {
 } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -23,7 +23,7 @@ import {
   threadArgument,
   waitFlag,
 } from "./threadCommon.ts";
-import { finishRun } from "./threadRun.ts";
+import { finishRun, threadIsIdle } from "./threadRun.ts";
 import { ThreadQueueHeldError } from "./ThreadQueueHeldError.ts";
 
 const decodeRequestId = Schema.decodeUnknownEffect(OrchestratorMcpClientRequestId);
@@ -36,8 +36,8 @@ const resolveRequestId = Effect.fn("cli.thread.requestId")(function* (
       Effect.mapError(() => new ThreadUsageError({ detail: "--request-id is not a valid key." })),
     );
   }
-  const crypto = yield* Crypto.Crypto;
-  const generated = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+  const crypto = yield* SecureRandom.SecureRandom;
+  const generated = yield* crypto.uuidV4().pipe(Effect.orDie);
   yield* Console.error(
     `Request id ${generated}. If this times out, rerun with --request-id ${generated} to deliver once.`,
   );
@@ -133,6 +133,7 @@ export const threadSendCommand = Command.make("send", {
         "thread",
         flags,
         Effect.fn("cli.thread.send")(function* (tools) {
+          const followWakes = flags.wait ? yield* threadIsIdle(tools, threadId) : false;
           const sent = yield* tools.call(
             "t3_thread_send",
             { threadId, message, mode: flags.mode, clientRequestId },
@@ -156,6 +157,7 @@ export const threadSendCommand = Command.make("send", {
               threadId,
               runId: sent.runId,
               json: flags.json,
+              followWakes,
               extra: { clientRequestId, receipt: sent.receipt },
             });
           }

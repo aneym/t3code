@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   FORWARDED_SENDER_HEADER,
   ForwardedThreadSender,
+  OrchestrationV2LinkedSender,
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
@@ -9,7 +10,11 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
-import { MODE_LIMIT_HEADER, type McpInvocationScope } from "./McpInvocationContext.ts";
+import {
+  MODE_LIMIT_HEADER,
+  type McpInvocationScope,
+  SENDER_THREAD_HEADER,
+} from "./McpInvocationContext.ts";
 
 const decodeModeLimit = Schema.decodeUnknownOption(
   Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
@@ -32,6 +37,34 @@ const withModeLimit = (
     : { ...invocation, client: { ...invocation.client, narrowedTo: limit.value } };
 };
 
+const decodeSenderThread = Schema.decodeUnknownOption(OrchestrationV2LinkedSender);
+
+/** Records the thread a linked environment calls for; a malformed header only loses the name. */
+const withSenderThread = (
+  invocation: McpInvocationScope,
+  request: HttpServerRequest.HttpServerRequest,
+): McpInvocationScope => {
+  const header = request.headers[SENDER_THREAD_HEADER];
+  if (header === undefined || invocation.client?.linked !== true) return invocation;
+  const [environmentId, threadId, title, ...rest] = header.trim().split("/");
+  if (environmentId === undefined || threadId === undefined || title === undefined)
+    return invocation;
+  if (rest.length > 0) return invocation;
+  let decoded: Option.Option<OrchestrationV2LinkedSender>;
+  try {
+    decoded = decodeSenderThread({
+      environmentId: decodeURIComponent(environmentId),
+      threadId: decodeURIComponent(threadId),
+      title: decodeURIComponent(title),
+    });
+  } catch {
+    return invocation;
+  }
+  return Option.isNone(decoded)
+    ? invocation
+    : { ...invocation, client: { ...invocation.client, senderThread: decoded.value } };
+};
+
 const decodeSender = Schema.decodeUnknownOption(Schema.fromJsonString(ForwardedThreadSender));
 const decodeOwnerCliSender = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -43,7 +76,7 @@ export const withPeerRequestContext = (
   invocation: McpInvocationScope,
   request: HttpServerRequest.HttpServerRequest,
 ) => {
-  const limited = withModeLimit(invocation, request);
+  const limited = withModeLimit(withSenderThread(invocation, request), request);
   if (limited === undefined || limited.client === undefined) return limited;
   let client = limited.client;
   const header = request.headers[FORWARDED_SENDER_HEADER];

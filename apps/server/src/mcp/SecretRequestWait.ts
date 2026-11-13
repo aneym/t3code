@@ -3,6 +3,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestratorMcpRequestSecretInput,
   type OrchestratorMcpRequestSecretResult,
+  SECRET_REQUEST_UNSAVED_NOTE,
   type RunId,
   type ThreadId,
   type TurnItemId,
@@ -108,7 +109,7 @@ export const awaitSecretAnswer = Effect.fn("SecretRequestWait.awaitSecretAnswer"
     yield* Effect.annotateCurrentSpan({ "secret_request.status": status });
     yield* Metrics.increment(Metrics.secretRequestsTotal, { status });
     if (status === "restarting") return { status, clientRequestId: input.key };
-    if (status !== "saved") return { status };
+    if (status !== "saved") return { status, note: SECRET_REQUEST_UNSAVED_NOTE[status] };
     if (input.request.delivery === "file") {
       const file = yield* secrets
         .saveToFile(input)
