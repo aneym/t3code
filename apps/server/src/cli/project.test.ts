@@ -159,7 +159,7 @@ it.effect.each(["snapshot", "mutation"] as const)(
         const isMutation = init?.method === "POST";
         if (isMutation) mutations++;
         else snapshotRequests++;
-        if (slowRequest === "mutation" ? isMutation : !isMutation && snapshotRequests === 2) {
+        if (slowRequest === "mutation" ? isMutation : !isMutation && snapshotRequests === 1) {
           requestReceived.resolve();
           await releaseResponse.promise;
         }
@@ -188,7 +188,7 @@ it.effect.each(["snapshot", "mutation"] as const)(
       releaseResponse.resolve();
       yield* Fiber.join(add);
 
-      assert.equal(snapshotRequests, 2);
+      assert.equal(snapshotRequests, 1);
       assert.equal(mutations, 1);
       assert.deepEqual((yield* readProjects(baseDir)).projects, []);
     }).pipe(Effect.provide(NodeServices.layer)),
