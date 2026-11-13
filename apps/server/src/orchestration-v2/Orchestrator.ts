@@ -1300,9 +1300,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return withId;
       });
 
-  // Detaching kills background work running inside the provider process.
-  // Probe even with an empty roster: Claude's native subagents never reach
-  // pendingBackgroundTasks. Sessions shared across threads probe per thread.
   const sessionHasBackgroundWork = Effect.fn("Orchestrator.sessionHasBackgroundWork")(function* (
     detaching: OrchestrationV2ThreadProjection["providerSessions"][number],
     providerThreads: OrchestrationV2ThreadProjection["providerThreads"],
@@ -6958,7 +6955,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (dispatchMode.type === "queue_after_active" ||
       (dispatchMode.type === "start_immediately" &&
         command.createdBy === "agent" &&
-        command.restartContinuationOfRunId === undefined)
+        command.restartContinuationOfRunId === undefined &&
+        command.usageLimitContinuationOfRunId === undefined &&
+        command.manualContinuationOfRunId === undefined)
         ? nextQueuedRun(projection)
         : undefined);
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
