@@ -19,12 +19,12 @@ permissions:
 
 jobs:
   collect-targets:
-    if: github.repository == 'pingdotgg/t3code'
     name: Collect PR targets
     # Most comments are not recheck commands; skip them before a runner starts.
     if: >-
-      github.event_name != 'issue_comment' ||
-      (github.event.issue.pull_request && contains(github.event.comment.body, '/recheck-vouch'))
+      github.repository == 'pingdotgg/t3code' &&
+      (github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request && contains(github.event.comment.body, '/recheck-vouch')))
     runs-on: ubuntu-24.04
     outputs:
       targets: ${{ steps.collect.outputs.targets }}
@@ -70,7 +70,7 @@ jobs:
   label:
     name: Label PR ${{ matrix.target.number }}
     needs: collect-targets
-    if: ${{ github.repository == 'pingdotgg/t3code' && (needs.collect-targets.outputs.targets != '[]') }}
+    if: ${{ needs.collect-targets.outputs.targets != '[]' }}
     runs-on: ubuntu-24.04
     concurrency:
       group: pr-vouch-${{ matrix.target.number }}

@@ -4,6 +4,7 @@
 
 - [Install T3 Code](./user/install.md)
 - [Messages and context](./user/composer.md)
+- [Queue holds](./user/queue-holds.md)
 - [Working with threads](./user/thread-sidebar.md)
 - [Permission modes](./user/permission-modes.md)
 - [Terminal history](./user/terminal.md)
