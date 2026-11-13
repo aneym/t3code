@@ -67,6 +67,10 @@
       "types": "./src/projectFaviconCache.ts",
       "default": "./src/projectFaviconCache.ts"
     },
+    "./rails-voice": {
+      "types": "./src/railsVoice.ts",
+      "default": "./src/railsVoice.ts"
+    },
     "./agent-audience": {
       "types": "./src/agentAudience.ts",
       "default": "./src/agentAudience.ts"

@@ -16,6 +16,7 @@ import {
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
+import { type RailsVoiceMemo, railsVoiceMemo } from "./railsVoice.ts";
 
 /** The working row while T3 Code's own compaction runs. */
 export const IDLE_COMPACTING_LABELS = {
@@ -76,6 +77,7 @@ export function resolveUserMessagePresentation(message: {
   readonly scheduledTaskId: ScheduledTaskId | undefined;
   /** Set when `attribution` is "guest". */
   readonly guestName?: string;
+  readonly voice?: RailsVoiceMemo;
 } {
   if (message.role !== "user") {
     return { text: message.text, attribution: null, scheduledTaskId: undefined };
@@ -108,8 +110,11 @@ export function resolveUserMessagePresentation(message: {
       scheduledTaskId: legacyTaskId === undefined ? undefined : ScheduledTaskId.make(legacyTaskId),
     };
   }
-  const ownText = withoutRailsDeskContext(message.text);
+  const deskless = withoutRailsDeskContext(message.text);
+  const voice = railsVoiceMemo(deskless);
+  const ownText = voice?.text ?? deskless;
   return {
+    ...(voice ? { voice: voice.memo } : {}),
     // The agent needs words to start a turn; people sent only the attachments.
     text: isAttachmentOnlyBootstrapPrompt(ownText) ? "" : ownText,
     attribution:
