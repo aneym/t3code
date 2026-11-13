@@ -1,3 +1,4 @@
+import re
 import shutil
 import subprocess
 import time
@@ -7,6 +8,7 @@ from .io_priority import background_command
 from .offbox_hosts import remote_rsync
 
 SSH = Path(__file__).with_name("offbox-ssh")
+UPDATES = re.compile(r"page updates: (\d+)")
 
 
 def executable():
@@ -25,3 +27,22 @@ def sync(origin, replica, deadline, *, background=False, hang_guard=None):
     return time.monotonic() - started
 
 
+def local_command(origin, replica, *, background=False):
+    command = [executable(), str(origin), str(replica), "-vvv"]
+    return background_command(command) if background else command
+
+
+def page_updates(origin, replica, code, output):
+    if code:
+        raise ValueError(f"sqlite3_rsync {origin} -> {replica} exited {code}: {output.strip()[-300:]}")
+    found = UPDATES.search(output)
+    if not found:
+        raise ValueError(f"sqlite3_rsync {origin} -> {replica} reported no page-update count")
+    return int(found.group(1))
+
+
+def local_sync(origin, replica, deadline):
+    started = time.monotonic()
+    timeout = None if deadline is None else max(0.001, deadline - time.monotonic())
+    result = subprocess.run(local_command(origin, replica), capture_output=True, text=True, timeout=timeout, check=False)
+    return {"pageUpdates": page_updates(origin, replica, result.returncode, result.stdout + result.stderr), "seconds": round(time.monotonic() - started, 3)}

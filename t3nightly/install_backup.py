@@ -9,6 +9,7 @@ import uuid
 from contextlib import closing
 from pathlib import Path
 
+from . import install_predrain as predrain
 from .install_database_copy import copy_rate, database_copy, require_space
 from .install_calibration import rates
 from .install_restore_copy import checksum, estimate, fsync, identity, verify
@@ -34,6 +35,8 @@ def quiescent(run, db):
 
 
 def advisory(run, backup):
+    if (backup.get("local") or {}).get("method") == predrain.METHOD:
+        return
     output = run.state / "backup-quick-check.json"
     log = run.state / "backup-quick-check.log"
     with log.open("ab") as handle:
@@ -85,7 +88,10 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
             target = destination / "statev2.sqlite"
             volume_reason = "APFS capability probe failed; configured-root full copy"
     binary = rollback_gate()
-    if keep_local and not binary:
+    delta = keep_local and not binary and not clone and predrain.available()
+    if delta:
+        prepared = predrain.prepare(run, source, target, size, run.args.offbox_stop_s)
+    elif keep_local and not binary:
         host_rates = rates(run.state, size, source, root=root, clone=clone)
         work = estimate(size, clone=clone, rates=host_rates, check_passes=2 if clone else 1)
         restore_clone = clone and root.stat().st_dev == source.parent.stat().st_dev
@@ -94,8 +100,9 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
         run.step("hard-backup-estimate", stoppedWork=["apfs-clone" if clone else "sqlite-backup", "quick_check", "identity", "sha256"], localRestoreCopy=work, rollback=rollback, estimateSeconds=max(work["totalSeconds"], rollback["totalSeconds"]), budgetSeconds=budget)
         if max(work["totalSeconds"], rollback["totalSeconds"]) > budget:
             raise ValueError(f"local backup or rollback exceeds --offbox-stop-s {budget} estimate; nothing stopped")
-    require_space(run.backups, size)
-    require_space(root, size, clone=clone)
+    if not delta:
+        require_space(run.backups, size)
+        require_space(root, size, clone=clone)
     stop()
     if sys.platform == "darwin":
         quiescent(run, source)
@@ -104,7 +111,10 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
         destination.rmdir()
         run.step("hard-backup", **metadata)
         return metadata
-    if keep_local:
+    if delta:
+        local = {**predrain.take(run, source, target, prepared), "previous": previous, "methodReason": "pre-drain sqlite3_rsync seed and catch-up, stopped delta and verify pass", "volumeDevice": root.stat().st_dev, "backupRoot": str(root)}
+        method = predrain.METHOD
+    elif keep_local:
         deadline = run.stop_deadline
         expected = identity(source, deadline=deadline)
         method = "sqlite-backup"

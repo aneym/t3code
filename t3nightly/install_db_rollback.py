@@ -8,6 +8,7 @@ import time
 import uuid
 from pathlib import Path, PurePosixPath
 
+from . import install_predrain as predrain
 from . import install_restore_copy as restore_copy
 from .db_publish import LOCAL_MARGIN, local_check, publish, wal_bytes
 from .install_offbox import rate, restore_space, schema_state, target
@@ -19,7 +20,8 @@ def recovery_required(backup, db, service, receipt, error):
     local = backup.get("local") if error.backup_path is None else None
     if local:
         path = local["path"]
-        command = [sys.executable, "-B", "-m", "t3nightly.install_restore_copy", "restore", "--receipt", str(receipt), "--db", str(db), "--service", service]
+        module = "t3nightly.install_predrain" if local.get("method") == predrain.METHOD else "t3nightly.install_restore_copy"
+        command = [sys.executable, "-B", "-m", module, "restore", "--receipt", str(receipt), "--db", str(db), "--service", service]
     else:
         path = error.backup_path or backup["remote"]
         command = [sys.executable, "-B", "-m", "t3nightly.install_restore_copy", "restore-offbox", "--source", path, "--db", str(db), "--service", service]
@@ -91,6 +93,9 @@ def rollback_database(run, backup, compatibility):
         run.step("hard-restore-db-skipped", reason="binary-rollback-compatible candidate; schema and migrations match the backup")
         return
     local = backup.get("local")
+    if local and local.get("method") == predrain.METHOD:
+        predrain.pause(run)
+        return predrain.restore(local, run.db.resolve(), run.step, run.stop_deadline)
     if local:
         deadline = run.stop_deadline
         try:

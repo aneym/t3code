@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .identity_snapshot import finish as finish_identities
-from . import install_offbox, install_rollback_retention, install_settings
+from . import install_offbox, install_predrain, install_rollback_retention, install_settings
 from .install_restore_copy import RecoveryRequired
 from .install_db_rollback import recovery_required
 from .install_backup import advisory, capture
@@ -232,6 +232,7 @@ def install(run):
             activate(run, args.version)
             serving(run, args.version, observed["candidateRuntime.digest"])
             served(run)
+            install_predrain.after_restart(run, backup)
             routed = True
             migration_evidence["candidate"] = migration_history(run)
             if restore_class and migration_evidence["candidate"] != compatibility["candidateMigrations"]["history"]:
@@ -345,6 +346,7 @@ def install(run):
                 run.step("advisory-backup-check-failed", error=str(error))
     if getattr(run, "handoff_check", None):
         run.handoff_check(outcome)
+    install_predrain.finish(run, backup)
     moment = datetime.now(timezone.utc).isoformat()
     serving_version = run.server_version() or "unavailable"
     serving_digest = ""
