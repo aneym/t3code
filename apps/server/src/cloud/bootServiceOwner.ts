@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 
 import { cliRefusal } from "../cliRefusal.ts";
 import { connectorUnitPath } from "../serviceConnectorUnit.ts";
-import { bootServiceBaseDirOf } from "./bootServiceRender.ts";
+import { serviceUnitBaseDirOf as bootServiceBaseDirOf } from "./serviceProtocol.ts";
 
 export class BootServiceOtherHomeError extends Schema.TaggedError<BootServiceOtherHomeError>()(
   "BootServiceOtherHomeError",
@@ -25,7 +25,7 @@ export class BootServiceOtherHomeError extends Schema.TaggedError<BootServiceOth
   }
 }
 
-export function unitServesHome(path: Path.Path, unit: string, baseDir: string): boolean {
+function unitServesHome(path: Path.Path, unit: string, baseDir: string): boolean {
   const installedBaseDir = bootServiceBaseDirOf(unit);
   return installedBaseDir !== undefined && path.resolve(installedBaseDir) === path.resolve(baseDir);
 }

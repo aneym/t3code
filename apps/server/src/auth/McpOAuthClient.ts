@@ -1,5 +1,4 @@
 import * as Schema from "effect/Schema";
-import { PeerIdentity } from "@t3tools/contracts";
 
 export const ClientIdPayload = Schema.Struct({
   v: Schema.Literal(1),
@@ -7,7 +6,6 @@ export const ClientIdPayload = Schema.Struct({
   r: Schema.Array(Schema.String),
   /** Registered as another T3 Code environment's peer link. */
   p: Schema.optionalKey(Schema.Literal(1)),
-  e: Schema.optionalKey(PeerIdentity),
 });
 export const decodeClientIdPayload = Schema.decodeUnknownOption(
   Schema.fromJsonString(ClientIdPayload),
@@ -18,5 +16,4 @@ export interface McpOAuthClient {
   readonly name: string;
   readonly redirectUris: ReadonlyArray<string>;
   readonly peerLink: boolean;
-  readonly peer?: PeerIdentity | undefined;
 }

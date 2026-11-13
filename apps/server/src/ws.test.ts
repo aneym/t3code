@@ -4,8 +4,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthAccessReadScope,
-  AuthOrchestrationOperateScope,
-  AuthOrchestrationReadScope,
   AuthSessionId,
   AuthSourceControlWriteScope,
   EnvironmentId,
@@ -17,15 +15,12 @@ import {
   TurnItemId,
   ProviderDriverKind,
   ProviderInstanceId,
-  RunId,
   SourceControlRepositoryError,
   WS_METHODS,
   WsRpcGroup,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
   type AuthAccessStreamEvent,
-  type OrchestrationV2AppThread,
-  type OrchestrationV2DomainEvent,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationProjectShell,
@@ -34,7 +29,6 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
-import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -49,7 +43,6 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
-import * as RpcTest from "effect/rpc/RpcTest";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import { vi } from "vite-plus/test";
@@ -86,6 +79,9 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
+import { PeerClientPairing } from "./peer/PeerClientPairing.ts";
+import { ForkReleases } from "./cloud/forkReleases.ts";
+import { ProviderRuntimeRecoveryService } from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -144,7 +140,6 @@ import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 
-import * as EventStore from "./orchestration-v2/EventStore.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
@@ -823,6 +818,9 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(OtlpEndpointCheck.OtlpEndpointCheck)({}),
   Layer.mock(PairingGrantStore.PairingGrantStore)({}),
   Layer.mock(PeerLinks.PeerLinks)({}),
+  Layer.mock(PeerClientPairing)({}),
+  Layer.mock(ForkReleases)({}),
+  Layer.mock(ProviderRuntimeRecoveryService)({}),
   Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
   Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => undefined }),
   Layer.mock(PreviewManager.PreviewManager)({}),
@@ -2214,237 +2212,4 @@ it.effect.each([
         kinds,
       );
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
-);
-
-const acpDriver = ProviderDriverKind.make("acpRegistry");
-const acpInstanceId = ProviderInstanceId.make("acpRegistry_test");
-const acpProjectId = ProjectId.make("project:acp");
-const acpThreadId = (sessionId: string) =>
-  IdAllocator.deriveThreadFromProviderThread({
-    driver: acpDriver,
-    providerInstanceId: acpInstanceId,
-    nativeThreadId: sessionId,
-  });
-const acpSessionTags = [
-  WS_METHODS.serverListAcpRegistrySessions,
-  WS_METHODS.serverImportAcpRegistrySession,
-] as const;
-const acpSessionRpcs = WsRpcGroup.omit(
-  ...[...WsRpcGroup.requests.keys()].filter(
-    (
-      tag,
-    ): tag is Exclude<
-      keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
-      (typeof acpSessionTags)[number]
-    > => !(acpSessionTags as ReadonlyArray<string>).includes(tag),
-  ),
-);
-const acpStores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provideMerge(SqlitePersistence.layerMemory),
-);
-
-const seedAcpThread = Effect.fn(function* (
-  sessionId: string,
-  state: { readonly imported: boolean; readonly ran: boolean },
-) {
-  const sink = yield* EventSink.EventSinkV2;
-  const now = DateTime.makeUnsafe("2026-10-23T00:00:00.000Z");
-  const threadId = acpThreadId(sessionId);
-  const thread: OrchestrationV2AppThread = {
-    createdBy: "user",
-    creationSource: "web",
-    id: threadId,
-    projectId: acpProjectId,
-    title: sessionId,
-    providerInstanceId: acpInstanceId,
-    modelSelection: { instanceId: acpInstanceId, model: "default" },
-    runtimeMode: "approval-required",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    activeProviderThreadId: null,
-    ...(state.imported ? { historyOrigin: "v1_import" as const } : {}),
-    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-    forkedFrom: null,
-    createdAt: now,
-    updatedAt: now,
-    archivedAt: null,
-    deletedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    lastVisitedAt: null,
-  };
-  const events: Array<OrchestrationV2DomainEvent> = [
-    {
-      id: EventId.make(`${threadId}:created`),
-      type: "thread.created",
-      threadId,
-      occurredAt: now,
-      payload: thread,
-    },
-  ];
-  if (state.ran) {
-    events.push({
-      id: EventId.make(`${threadId}:run`),
-      type: "run.updated",
-      threadId,
-      occurredAt: now,
-      payload: {
-        id: RunId.make(`${threadId}:run`),
-        threadId,
-        ordinal: 1,
-        providerInstanceId: acpInstanceId,
-        modelSelection: thread.modelSelection,
-        providerThreadId: null,
-        userMessageId: MessageId.make(`${threadId}:prompt`),
-        rootNodeId: null,
-        activeAttemptId: null,
-        status: "completed",
-        requestedAt: now,
-        startedAt: now,
-        completedAt: now,
-        checkpointId: null,
-        contextHandoffId: null,
-      },
-    });
-  }
-  yield* sink.write({ events });
-  return threadId;
-});
-
-it.effect("ACP session RPCs list a thread missing its history and repair it on import", () =>
-  Effect.gen(function* () {
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const pending = yield* seedAcpThread("pending", { imported: false, ran: false });
-    const complete = yield* seedAcpThread("complete", { imported: true, ran: false });
-    const ran = yield* seedAcpThread("ran", { imported: false, ran: true });
-    const repaired: Array<ThreadId> = [];
-    const session = (sessionId: string) => ({
-      sessionId,
-      cwd: "/workspace/acp",
-      additionalDirectories: [],
-      title: null,
-      updatedAt: null,
-      importedThreadId: null,
-    });
-    const instance = {
-      driverKind: acpDriver,
-      snapshot: { getSnapshot: Effect.succeed({ nativeSessions: { canLoad: true } }) },
-      acpSessionManagement: {
-        listSessions: () =>
-          Effect.succeed({
-            sessions: ["new", "pending", "complete", "ran"].map(session),
-            nextCursor: null,
-            canLoad: true,
-            canResume: true,
-            canDelete: true,
-          }),
-      },
-    } as unknown as ProviderInstance;
-    const dependencies = Layer.mergeAll(
-      layerUnusedConfigRpcServices,
-      Layer.fresh(layerConfigSources),
-      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
-      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
-      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
-      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
-      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
-      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
-      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
-      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
-      Layer.mock(ProjectService.ProjectService)({
-        getById: () =>
-          Effect.succeedSome({
-            id: acpProjectId,
-            title: "ACP",
-            workspaceRoot: "/workspace/acp",
-            defaultModelSelection: null,
-            scripts: [],
-            createdAt: "2026-10-23T00:00:00.000Z",
-            updatedAt: "2026-10-23T00:00:00.000Z",
-            deletedAt: null,
-          }),
-      }),
-      Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-        getInstance: () => Effect.succeed(instance),
-      }),
-      Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({
-        withSessionMutation: (effect) => effect,
-      }),
-      Layer.mock(ThreadManagement.ThreadManagementService)({
-        getThreadShell: (threadId) =>
-          projections
-            .getThreadShell(threadId)
-            .pipe(
-              Effect.mapError(
-                (cause) => new Orchestrator.OrchestratorProjectionError({ threadId, cause }),
-              ),
-            ),
-      }),
-      // Repairing an existing thread must not launch another one.
-      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-      Layer.mock(AgentSessionImporter.AgentSessionImporter)({
-        importNativeHistory: ({ threadId }) =>
-          Effect.sync(() => repaired.push(threadId)).pipe(Effect.as(1)),
-      }),
-    );
-    const services = AcpRegistrySessions.layer.pipe(Layer.provideMerge(dependencies));
-    const client = yield* RpcTest.makeClient(acpSessionRpcs).pipe(
-      Effect.provide(
-        layerWsRpc(
-          {
-            sessionId: AuthSessionId.make("acp-test"),
-            subject: "acp-test",
-            method: "browser-session-cookie",
-            scopes: [],
-          },
-          {},
-          yield* ServerBrowser.ServerBrowser,
-          () => Effect.void,
-          { secretReferences: true },
-        ).pipe(
-          Layer.provide(services),
-          Layer.merge(
-            RpcAuthorization.layer([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
-          ),
-        ),
-      ),
-    );
-
-    const listed = yield* client[WS_METHODS.serverListAcpRegistrySessions]({
-      instanceId: acpInstanceId,
-      projectId: acpProjectId,
-    });
-    assert.deepEqual(
-      listed.sessions.map(({ sessionId, importedThreadId, nativeHistoryPending }) => [
-        sessionId,
-        importedThreadId,
-        nativeHistoryPending,
-      ]),
-      [
-        ["new", null, undefined],
-        ["pending", pending, true],
-        ["complete", complete, undefined],
-        ["ran", ran, undefined],
-      ],
-    );
-
-    const imported = yield* client[WS_METHODS.serverImportAcpRegistrySession]({
-      instanceId: acpInstanceId,
-      projectId: acpProjectId,
-      sessionId: "pending",
-    });
-    assert.deepEqual(imported, { threadId: pending, imported: true });
-    assert.deepEqual(repaired, [pending]);
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        EventSink.layer.pipe(Layer.provideMerge(acpStores)),
-        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
-        Layer.mock(ServerBrowser.ServerBrowser)({}),
-      ),
-    ),
-    Effect.scoped,
-  ),
 );

@@ -4,15 +4,23 @@ import * as Path from "effect/Path";
 import type { BootServiceManager, BootServicePlan } from "./bootService.ts";
 import { HOT_SWAP_PROTOCOL } from "../serviceLauncherConfig.ts";
 
+export const pinnedLauncherInUse = Effect.fn("bootServiceComparison.pinnedLauncherInUse")(
+  function* (manager: BootServiceManager, baseDir: string) {
+    if (manager.kind === "schtasks") return false;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* fs.exists(path.join(baseDir, "runtime", "launcher-config.json"));
+  },
+);
+
 export const bootServiceUnitCurrent = Effect.fn("bootServiceComparison.current")(function* (
   manager: BootServiceManager,
   unit: string,
   plan: BootServicePlan,
   baseDir: string,
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const expected = (yield* fs.exists(path.join(baseDir, "runtime", "launcher-config.json")))
+  const expected = (yield* pinnedLauncherInUse(manager, baseDir))
     ? {
         ...plan,
         program: [

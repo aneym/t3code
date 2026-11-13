@@ -6,7 +6,7 @@ import {
   PeerLinkRenewedToken,
   peerLinkRenewsFromMs,
 } from "@t3tools/contracts";
-import type * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -27,7 +27,7 @@ interface ResolvedLink {
 export interface PeerLinkRenewalDeps {
   readonly sql: SqlClient.SqlClient;
   readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
-  readonly crypto: Crypto.Crypto;
+  readonly random: SecureRandom.SecureRandom["Service"];
   readonly httpClient: HttpClient.HttpClient;
   readonly enabled: Effect.Effect<boolean>;
   readonly disabledMessage: string;
@@ -54,7 +54,7 @@ const storageError = (cause: unknown) =>
   });
 
 export const makePeerLinkRenewal = (deps: PeerLinkRenewalDeps) => {
-  const { sql, secrets, crypto, httpClient } = deps;
+  const { sql, secrets, random, httpClient } = deps;
 
   const secretNameOf = (environmentId: EnvironmentId) =>
     sql<{ secret_name: string }>`
@@ -163,7 +163,7 @@ export const makePeerLinkRenewal = (deps: PeerLinkRenewalDeps) => {
           ),
       }),
     );
-    const nextSecret = `peer-link-${Hex.encode(yield* crypto.randomBytes(16).pipe(Effect.orDie))}`;
+    const nextSecret = `peer-link-${Hex.encode(yield* random.randomBytes(16))}`;
     yield* secrets
       .set(nextSecret, new TextEncoder().encode(renewed.token))
       .pipe(Effect.mapError(storageError));

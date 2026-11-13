@@ -1,4 +1,4 @@
-import { AuthMcpClientAccess, PeerIdentity } from "@t3tools/contracts";
+import { AuthMcpClientAccess } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -11,7 +11,6 @@ const PendingCode = Schema.Struct({
   clientId: Schema.String,
   clientName: Schema.String,
   peerLink: Schema.Boolean,
-  peer: Schema.optionalKey(PeerIdentity),
   redirectUri: Schema.String,
   codeChallenge: Schema.String,
   resource: Schema.String,

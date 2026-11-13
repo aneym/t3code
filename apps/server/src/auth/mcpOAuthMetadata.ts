@@ -5,7 +5,9 @@ import {
   AuthOrchestrationReadScope,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { HttpServerRequest } from "effect/http";
+import type { HttpServerRequest } from "effect/http";
+
+import { requestUrl } from "../requestUrl.ts";
 
 const MCP_OAUTH_SCOPES = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
 
@@ -15,7 +17,7 @@ export interface McpOAuthUrls {
 }
 
 export const requestUrls = (request: HttpServerRequest.HttpServerRequest): McpOAuthUrls => {
-  const origin = Option.match(HttpServerRequest.toURL(request), {
+  const origin = Option.match(requestUrl(request), {
     onNone: () => "http://localhost",
     onSome: (url) => url.origin,
   });

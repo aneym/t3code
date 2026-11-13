@@ -42,6 +42,8 @@ import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
+import * as McpTransport from "../mcp/mcpServer/transport.ts";
+import * as ThreadSend from "../orchestration-v2/ThreadSend.ts";
 
 const laptop = descriptorOf("environment-laptop", "Laptop");
 const box = descriptorOf("environment-box", "Box");
@@ -51,7 +53,7 @@ const boxRun = RunId.make("run:box-auto");
 
 /** What B's thread service was asked to do. */
 interface Seen {
-  readonly sends: ReadonlyArray<ThreadManagement.ThreadManagementSendInput>;
+  readonly sends: ReadonlyArray<ThreadSend.ThreadSendInput>;
   readonly waits: ReadonlyArray<ThreadManagement.ThreadManagementWaitInput>;
   readonly launches: ReadonlyArray<ThreadLaunch.ThreadLaunchInput>;
   readonly projects: ReadonlyArray<ProjectService.ProjectCreateInput>;
@@ -280,7 +282,7 @@ const makeLaptop = Effect.gen(function* () {
     McpHttpServer.layerThreadToolkit,
   ).pipe(
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
-    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+    Layer.provideMerge(McpTransport.layerInProcessMcpServer),
     Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
     Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
     Layer.provide(
@@ -605,41 +607,6 @@ it.effect("brings a repository to a linked environment, only through full access
       }
       expect((yield* Ref.get(seen)).clones).toHaveLength(1);
       expect((yield* Ref.get(seen)).projects).toHaveLength(1);
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
-);
-
-it.effect("runs any tool that takes a linked environment there", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const seen = yield* Ref.make<Seen>(nothingSeen);
-      const linkSession = yield* Ref.make("");
-      const b = yield* serveBox(seen, linkSession);
-      const a = yield* makeLaptop;
-      yield* linkTo(a.links, b, "auto");
-      yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
-
-      const there = yield* a.call("thread:laptop-full", "t3_thread_configure", {
-        environmentId: box.environmentId,
-        threadId: boxThread,
-      });
-      expect(there.structuredContent).toMatchObject({ threadId: boxThread, runtimeMode: "auto" });
-      const archived = yield* a.call("thread:laptop-full", "t3_thread_organize", {
-        environmentId: box.environmentId,
-        threadId: boxThread,
-        action: "archive",
-      });
-      expect(archived.isError).toBe(false);
-      expect((yield* Ref.get(seen)).stops).toEqual([`thread.archive ${boxThread}`]);
-
-      // This environment's own id keeps the call here.
-      const own = yield* a.call("thread:laptop-full", "t3_thread_configure", {
-        environmentId: laptop.environmentId,
-      });
-      expect(own.structuredContent).toMatchObject({
-        threadId: "thread:laptop-full",
-        runtimeMode: "full-access",
-      });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

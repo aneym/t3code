@@ -52,8 +52,6 @@ const productToken = (userAgent: string | undefined) =>
     ? "-"
     : userAgent.split(" ", 1)[0]!.slice(0, 48);
 
-const shortId = (id: string) => id.slice(0, 12);
-
 const surfaceOf = (url: string) => {
   const queryIndex = url.indexOf("?");
   if (queryIndex === -1) return undefined;
@@ -63,28 +61,6 @@ const surfaceOf = (url: string) => {
 
 const statusOf = (exit: Exit.Exit<{ readonly status: number }, unknown>) =>
   Exit.isSuccess(exit) ? exit.value.status : Cause.hasInterruptsOnly(exit.cause) ? 499 : 500;
-
-const note = Effect.fn("RequestLog.note")(function* (update: Fields) {
-  const entry = yield* currentEntry;
-  if (entry !== undefined) Object.assign(entry.fields, update);
-});
-
-export const noteSession = (session: { readonly sessionId: string; readonly method: string }) =>
-  note({ sid: shortId(session.sessionId), auth: session.method });
-
-export const noteMcpCaller = (caller: {
-  readonly thread: { readonly threadId: string } | undefined;
-  readonly client: { readonly sessionId: string; readonly label: string } | undefined;
-}) =>
-  note(
-    caller.client !== undefined
-      ? { sid: shortId(caller.client.sessionId), client: caller.client.label.slice(0, 48) }
-      : caller.thread !== undefined
-        ? { thread: caller.thread.threadId }
-        : {},
-  );
-
-export const noteTool = (tool: string) => note({ tool });
 
 export const noteDispatchGate = Effect.fnUntraced(function* (waitMs: number, holdMs: number) {
   const entry = yield* currentEntry;

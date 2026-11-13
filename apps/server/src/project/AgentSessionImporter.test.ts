@@ -45,6 +45,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionImporter from "./AgentSessionImporter.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 import * as ProjectService from "./ProjectService.ts";
+import * as OrchestratorErrors from "../orchestration-v2/OrchestratorErrors.ts";
 
 const projectId = ProjectId.make("agent-session-import-project");
 const timestamp = "2026-09-01T10:00:00.000Z";
@@ -250,7 +251,8 @@ const makeImporter = Effect.fn(function* (
                 .getThreadRecords(threadId, fields)
                 .pipe(
                   Effect.mapError(
-                    (cause) => new Orchestrator.OrchestratorProjectionError({ threadId, cause }),
+                    (cause) =>
+                      new OrchestratorErrors.OrchestratorProjectionError({ threadId, cause }),
                   ),
                 ),
           }),
@@ -749,24 +751,6 @@ const importDuringCommand = Effect.fn(function* (
   const page = yield* projections.getTimelinePage(threadId, { view: "messages", limit: 10 });
   return { imported, thread: records.thread, runs: records.runs, items: page.items };
 });
-
-it.effect("keeps a thread edit made while the native history loads", () =>
-  Effect.gen(function* () {
-    const result = yield* importDuringCommand("renamed-during-load", (thread) => [
-      {
-        id: EventId.make(`${thread.id}:renamed`),
-        type: "thread.metadata-updated",
-        threadId: thread.id,
-        occurredAt: now,
-        payload: { ...thread, title: "Renamed" },
-      },
-    ]);
-    expect(result.imported).toBe(1);
-    expect(result.thread.title).toBe("Renamed");
-    expect(result.thread.historyOrigin).toBe("v1_import");
-    expect(result.items).toHaveLength(1);
-  }).pipe(Effect.scoped, Effect.provide(persistence)),
-);
 
 it.effect("skips the native history when a run starts while it loads", () =>
   Effect.gen(function* () {

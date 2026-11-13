@@ -6,13 +6,13 @@ import {
   type AgentBindResult,
   type AgentHomesSnapshot,
 } from "@t3tools/contracts";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
-import * as Stream from "effect/Stream";
-import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as Ref from "effect/Ref";
 import * as NodeOS from "node:os";
 import * as Path from "effect/Path";
 import * as Equal from "effect/Equal";
@@ -23,6 +23,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import {
   homeFromDocument,
+  homesGeneration,
   isLaneThread,
   parseDocument,
   readDocumentText,
@@ -31,13 +32,11 @@ import {
   writeBinding,
   writeOffice,
 } from "./AgentHomeFiles.ts";
-import { createLaneReader, localHostMatcher } from "./AgentLaneFiles.ts";
 
 export class AgentHomeService extends Context.Service<
   AgentHomeService,
   {
     readonly list: Effect.Effect<AgentHomesSnapshot, AgentHomeError>;
-    readonly subscribe: () => Stream.Stream<AgentHomesSnapshot>;
     readonly bind: (input: AgentBindInput) => Effect.Effect<AgentBindResult, AgentHomeError>;
   }
 >()("t3/agents/AgentHomeService") {}
@@ -47,39 +46,49 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const context = yield* Effect.context<never>();
-    const root =
-      process.env.T3CODE_AGENT_HOMES_DIR ?? path.join(NodeOS.homedir(), ".agent-rails", "agents");
+    const defaultRoot = path.join(NodeOS.homedir(), ".agent-rails", "agents");
+    const root = yield* Config.String("T3CODE_AGENT_HOMES_DIR").pipe(
+      Config.withDefault(defaultRoot),
+      Effect.orElseSucceed(() => defaultRoot),
+    );
     const environment = yield* ServerEnvironment;
     const threads = yield* ThreadManagementService;
     const scheduledTasks = yield* ScheduledTaskService;
     const settings = yield* ServerSettingsService;
-    const crypto = yield* Crypto.Crypto;
-    const readLanes = createLaneReader(path.join(root, "..", "lanes"));
-    const isLocalHost = localHostMatcher(NodeOS.hostname());
-    const snapshots = yield* SubscriptionRef.make<AgentHomesSnapshot>({ homes: [] });
+    const crypto = yield* SecureRandom.SecureRandom;
+    const snapshots = yield* Ref.make<AgentHomesSnapshot>({ homes: [] });
     const refreshLock = yield* Semaphore.make(1);
     const locks = new Map<string, Semaphore.Semaphore>();
+    let snapshotGeneration: number | undefined;
     const refresh = Effect.fn("AgentHomeService.refresh")(function* () {
+      const generation = homesGeneration(root);
       const snapshot = yield* Effect.tryPromise({
-        try: () => readHomes(root, readLanes, isLocalHost),
+        try: () => readHomes(root),
         catch: (cause) => new AgentHomeError({ message: "Unable to read agent homes", cause }),
-      });
-      const current = yield* SubscriptionRef.get(snapshots);
-      if (!Equal.equals(snapshot, current)) yield* SubscriptionRef.set(snapshots, snapshot);
+      }).pipe(Effect.tapError(() => Effect.sync(() => (snapshotGeneration = undefined))));
+      const current = yield* Ref.get(snapshots);
+      if (!Equal.equals(snapshot, current)) yield* Ref.set(snapshots, snapshot);
+      snapshotGeneration = generation;
       return snapshot;
     });
-    const list = refreshLock.withPermit(refresh());
-    yield* list.pipe(Effect.catch((error) => Effect.logWarning(error.message)));
+    const reload = refreshLock.withPermit(refresh());
+    const list = Effect.suspend(() => {
+      const generation = homesGeneration(root);
+      return generation !== undefined && generation === snapshotGeneration
+        ? Ref.get(snapshots)
+        : reload;
+    });
     yield* Effect.acquireRelease(
       Effect.sync(() =>
         watchHomes(root, () => {
           Effect.runForkWith(context)(
-            list.pipe(Effect.catch((error) => Effect.logWarning(error.message))),
+            reload.pipe(Effect.catch((error) => Effect.logWarning(error.message))),
           );
         }),
       ),
       (close) => Effect.sync(close),
     );
+    yield* reload.pipe(Effect.catch((error) => Effect.logWarning(error.message)));
     const setPin = Effect.fn("AgentHomeService.setPin")(function* (
       threadId: ThreadId,
       pinned: boolean,
@@ -89,7 +98,7 @@ export const layer = Layer.effect(
       if (pinned && shell.archivedAt !== null) return;
       yield* threads.dispatch({
         type: pinned ? "thread.pin" : "thread.unpin",
-        commandId: CommandId.make(`agent-bind:${yield* crypto.randomUUIDv4()}`),
+        commandId: CommandId.make(`agent-bind:${yield* crypto.uuidV4()}`),
         threadId,
       });
     });
@@ -138,7 +147,6 @@ export const layer = Layer.effect(
           const descriptor = yield* environment.getDescriptor;
           const environmentId = input.threadEnvironmentId ?? descriptor.environmentId;
           const threadId = input.threadId;
-          const projects = input.projects?.map((name) => name.trim()).filter(Boolean);
           const fail = (message: string) => new AgentHomeError({ handle: input.handle, message });
           if (input.office) {
             if (threadId === undefined) return yield* fail("Give the office thread");
@@ -192,17 +200,13 @@ export const layer = Layer.effect(
               yield* setPin(threadId, false).pipe(
                 Effect.catch((error) => Effect.logWarning(error.message)),
               );
-            const updated = (yield* list).homes.find((entry) => entry.handle === input.handle);
+            const updated = (yield* reload).homes.find((entry) => entry.handle === input.handle);
             if (!updated) return yield* fail("Agent home disappeared after binding");
             return { home: updated, changed: true };
           }
-          if (threadId === undefined && projects === undefined)
-            return yield* new AgentHomeError({
-              handle: input.handle,
-              message: "Give a thread, projects, or both",
-            });
+          if (threadId === undefined)
+            return yield* new AgentHomeError({ handle: input.handle, message: "Give a thread" });
           const bindThread =
-            threadId !== undefined &&
             !(threadId === null && home.binding === null) &&
             !(input.onlyIfUnbound && home.binding) &&
             !(
@@ -210,21 +214,8 @@ export const layer = Layer.effect(
               home.binding.threadId === threadId &&
               (home.binding.environmentId === null || home.binding.environmentId === environmentId)
             );
-          const setProjects =
-            projects !== undefined &&
-            (projects.length !== home.projects.length ||
-              projects.some((name, index) => name !== home.projects[index]));
-          if (!bindThread && !setProjects) return { home, changed: false };
-          if (
-            bindThread &&
-            threadId !== null &&
-            (yield* Effect.promise(() => isLaneThread(root, threadId)))
-          )
-            return yield* new AgentHomeError({
-              handle: input.handle,
-              message: "Lane threads cannot be agent main threads",
-            });
-          if (bindThread && threadId !== null && environmentId === descriptor.environmentId) {
+          if (!bindThread) return { home, changed: false };
+          if (threadId !== null && environmentId === descriptor.environmentId) {
             const projection = yield* threads.getThreadRecords(threadId, []).pipe(
               Effect.mapError(
                 () =>
@@ -264,17 +255,13 @@ export const layer = Layer.effect(
                     DateTime.toEpochMillis(shell.automationPlacementAt)));
             if (
               projection.thread.deletedAt !== null ||
-              ((projection.thread.lineage.parentThreadId !== null ||
-                projection.thread.forkedFrom !== null) &&
-                !(
-                  projection.thread.lineage.relationshipToParent === "fork" &&
-                  projection.thread.forkedFrom?.type === "run"
-                )) ||
+              projection.thread.lineage.parentThreadId !== null ||
+              projection.thread.forkedFrom !== null ||
               automationOnly
             )
               return yield* new AgentHomeError({
                 handle: input.handle,
-                message: "Deleted, delegated and automation threads cannot be agent main threads",
+                message: "Subagent, fork and automation threads cannot be agent main threads",
               });
           }
           const at = DateTime.formatIso(yield* DateTime.now).replace(/\.\d{3}Z$/, "Z");
@@ -284,19 +271,16 @@ export const layer = Layer.effect(
                 root,
                 input.handle,
                 doc,
-                bindThread
-                  ? threadId === null
-                    ? null
-                    : {
-                        thread_id: threadId,
-                        environment_id: environmentId,
-                        host: input.host ?? descriptor.label.toLowerCase(),
-                        at,
-                        by: input.by ?? "t3",
-                      }
-                  : undefined,
+                threadId === null
+                  ? null
+                  : {
+                      thread_id: threadId,
+                      environment_id: environmentId,
+                      host: input.host ?? descriptor.label.toLowerCase(),
+                      at,
+                      by: input.by ?? "t3",
+                    },
                 text,
-                setProjects ? projects : undefined,
               ),
             catch: (cause) =>
               new AgentHomeError({
@@ -305,7 +289,7 @@ export const layer = Layer.effect(
                 cause,
               }),
           });
-          if (bindThread && threadId !== null) {
+          if (threadId !== null) {
             const previous = home.binding;
             const warn = Effect.catch((error: { readonly message: string }) =>
               Effect.logWarning(error.message),
@@ -321,7 +305,7 @@ export const layer = Layer.effect(
               yield* setPin(threadId, true).pipe(warn);
             yield* reveal(input.handle).pipe(warn);
           }
-          const snapshot = yield* list;
+          const snapshot = yield* reload;
           const updated = snapshot.homes.find((entry) => entry.handle === input.handle);
           if (!updated)
             return yield* new AgentHomeError({ message: "Agent home disappeared after binding" });
@@ -329,6 +313,6 @@ export const layer = Layer.effect(
         }),
       );
     });
-    return { list, subscribe: () => SubscriptionRef.changes(snapshots), bind };
+    return { list, bind };
   }),
 );

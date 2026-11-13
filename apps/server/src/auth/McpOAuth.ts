@@ -1,17 +1,15 @@
+import { decodeClientIdPayload, type McpOAuthClient } from "./McpOAuthClient.ts";
 import {
   AuthAccessWriteScope,
   type AuthMcpApprovalDecision,
   type AuthMcpAuthorizationRequest,
-  type AuthMcpAuthorizationServerMetadata,
   type AuthMcpClientRegistration,
-  type AuthMcpProtectedResourceMetadata,
   AuthMcpRegistrationError,
   AuthMcpTokenError,
   type AuthMcpTokenRequest,
   type AuthMcpTokenResult,
   type AuthMcpClientAccess,
   type AuthEnvironmentScope,
-  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   MCP_PEER_LINK_SOFTWARE_ID,
   mcpClientScopes,
@@ -28,17 +26,18 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import * as Ref from "effect/Ref";
+import * as McpOAuthCodes from "./McpOAuthCodes.ts";
 import * as Schema from "effect/Schema";
 import { HttpServerRequest } from "effect/http";
 
 import { hostedAppUrlConfig } from "../cloud/publicConfig.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import { McpClientAuthenticator } from "../mcp/McpAuthMiddleware.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as PayloadSigner from "./PayloadSigner.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import { type McpOAuthUrls } from "./mcpOAuthMetadata.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
   base64UrlDecodeUtf8,
@@ -46,7 +45,6 @@ import {
   deriveAuthClientMetadata,
   timingSafeEqualBase64Url,
 } from "./utils.ts";
-import { requestUrl } from "../requestUrl.ts";
 
 // Request-derived origins support loopback, Tailscale and tunnels.
 // Signed client metadata keeps unauthenticated registration stateless.
@@ -60,46 +58,6 @@ const DEFAULT_CLIENT_NAME = "MCP client";
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const CODE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const CODE_VERIFIER_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/;
-
-const MCP_OAUTH_SCOPES = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
-
-export interface McpOAuthUrls {
-  readonly issuer: string;
-  readonly resource: string;
-}
-
-export const requestUrls = (request: HttpServerRequest.HttpServerRequest): McpOAuthUrls => {
-  const origin = Option.match(requestUrl(request), {
-    onNone: () => "http://localhost",
-    onSome: (url) => url.origin,
-  });
-  return { issuer: origin, resource: `${origin}/mcp` };
-};
-
-export const protectedResourceMetadata = (
-  urls: McpOAuthUrls,
-): AuthMcpProtectedResourceMetadata => ({
-  resource: urls.resource,
-  authorization_servers: [urls.issuer],
-  scopes_supported: MCP_OAUTH_SCOPES,
-  bearer_methods_supported: ["header"],
-  resource_name: "T3 Code",
-});
-
-export const authorizationServerMetadata = (
-  urls: McpOAuthUrls,
-): AuthMcpAuthorizationServerMetadata => ({
-  issuer: urls.issuer,
-  authorization_endpoint: `${urls.issuer}/oauth/mcp/authorize`,
-  token_endpoint: `${urls.issuer}/oauth/mcp/token`,
-  registration_endpoint: `${urls.issuer}/oauth/mcp/register`,
-  response_types_supported: ["code"],
-  grant_types_supported: ["authorization_code"],
-  code_challenge_methods_supported: ["S256"],
-  token_endpoint_auth_methods_supported: ["none"],
-  scopes_supported: MCP_OAUTH_SCOPES,
-  authorization_response_iss_parameter_supported: true,
-});
 
 const parseRedirect = (value: string): URL | undefined => {
   // URL.hash misses empty fragments, which RFC 6749 §3.1.2 also forbids.
@@ -138,22 +96,6 @@ const sameResource = (urls: McpOAuthUrls, presented: string | undefined): boolea
   }
 };
 
-const ClientIdPayload = Schema.Struct({
-  v: Schema.Literal(1),
-  n: Schema.String,
-  r: Schema.Array(Schema.String),
-  /** Registered as another T3 Code environment's peer link. */
-  p: Schema.optionalKey(Schema.Literal(1)),
-});
-const decodeClientIdPayload = Schema.decodeUnknownOption(Schema.fromJsonString(ClientIdPayload));
-
-export interface McpOAuthClient {
-  readonly clientId: string;
-  readonly name: string;
-  readonly redirectUris: ReadonlyArray<string>;
-  readonly peerLink: boolean;
-}
-
 export class McpOAuthPageError extends Schema.TaggedError<McpOAuthPageError>()(
   "McpOAuthPageError",
   { description: Schema.String },
@@ -180,17 +122,6 @@ export interface AuthorizationRequest {
   readonly state: Redacted.Redacted<string> | undefined;
   readonly resource: string;
   readonly issuer: string;
-}
-
-interface PendingCode {
-  readonly clientId: string;
-  readonly clientName: string;
-  readonly peerLink: boolean;
-  readonly redirectUri: string;
-  readonly codeChallenge: string;
-  readonly resource: string;
-  readonly access: AuthMcpClientAccess;
-  readonly expiresAtMs: number;
 }
 
 export type ApprovalDecision = Exclude<AuthMcpApprovalDecision, { readonly _tag: "deny" }>;
@@ -266,7 +197,7 @@ const make = Effect.gen(function* () {
   const signer = yield* PayloadSigner.fromSecret(
     yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(Effect.orDie),
   );
-  const codes = yield* Ref.make<ReadonlyMap<string, PendingCode>>(new Map());
+  const codes = yield* McpOAuthCodes.McpOAuthCodes;
 
   const sign = (domain: string, payload: string) => signer.sign(`${domain}.${payload}`);
 
@@ -431,20 +362,30 @@ const make = Effect.gen(function* () {
   ) {
     const now = yield* Clock.currentTimeMillis;
     const code = Buffer.from(yield* random.randomBytes(32)).toString("base64url");
-    yield* Ref.update(codes, (current) => {
-      const next = new Map(Array.from(current).filter(([, pending]) => pending.expiresAtMs > now));
-      next.set(code, {
-        clientId: authorization.client.clientId,
-        clientName: authorization.client.name,
-        peerLink: authorization.client.peerLink,
-        redirectUri: authorization.redirectUri,
-        codeChallenge: authorization.codeChallenge,
-        resource: authorization.resource,
-        access,
-        expiresAtMs: now + AUTHORIZATION_CODE_TTL_MS,
-      });
-      return next;
-    });
+    const codeKey = yield* sign("mcp-authorization-code", code);
+    yield* codes
+      .put(
+        codeKey,
+        {
+          clientId: authorization.client.clientId,
+          clientName: authorization.client.name,
+          peerLink: authorization.client.peerLink,
+          redirectUri: authorization.redirectUri,
+          codeChallenge: authorization.codeChallenge,
+          resource: authorization.resource,
+          access,
+          expiresAtMs: now + AUTHORIZATION_CODE_TTL_MS,
+        },
+        now,
+      )
+      .pipe(
+        Effect.mapError(
+          () =>
+            new McpOAuthPageError({
+              description: "The authorization could not be saved. Try again.",
+            }),
+        ),
+      );
     return code;
   });
 
@@ -523,13 +464,13 @@ const make = Effect.gen(function* () {
         return yield* fail("invalid_client", "The client is unknown.");
       }
       // A presented code is spent even when a later check fails (RFC 6749 §4.1.2).
-      const pending = yield* Ref.modify(codes, (current) => {
-        const found = current.get(code);
-        if (found === undefined) return [undefined, current] as const;
-        const next = new Map(current);
-        next.delete(code);
-        return [found, next] as const;
-      });
+      const pending = yield* codes
+        .take(yield* sign("mcp-authorization-code", code))
+        .pipe(
+          Effect.mapError(() =>
+            fail("invalid_grant", "The authorization code could not be consumed."),
+          ),
+        );
       const now = yield* Clock.currentTimeMillis;
       if (
         pending === undefined ||
@@ -583,10 +524,10 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(McpOAuth, make);
+export const layer = Layer.effect(McpOAuth, make).pipe(Layer.provide(McpOAuthCodes.layer));
 
 export const layerMcpClientAuthenticator = Layer.effect(
-  McpHttpServer.McpClientAuthenticator,
+  McpClientAuthenticator,
   Effect.gen(function* () {
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const environment = yield* ServerEnvironment.ServerEnvironment;
@@ -598,41 +539,40 @@ export const layerMcpClientAuthenticator = Layer.effect(
         ),
       ),
     );
-    return McpHttpServer.McpClientAuthenticator.of({
-      authenticate: Effect.fn("McpHttpServer.McpClientAuthenticator.authenticate")(
-        function (request) {
-          return environmentAuth.authenticateMcpClient(request).pipe(
-            Effect.flatMap((client) =>
-              Clock.currentTimeMillis.pipe(
-                Effect.map((issuedAt): McpInvocationContext.McpInvocationScope => ({
-                  environmentId,
-                  requestNamespace: `client:${client.sessionId}`,
-                  thread: undefined,
-                  client: {
-                    sessionId: client.sessionId,
-                    label: client.label,
-                    access: client.access,
-                    linked: client.peerLink,
-                    ...(client.peerLink ? {} : { hostedAppUrl }),
-                  },
-                  capabilities: new Set<McpInvocationContext.McpCapability>([
-                    "orchestration",
-                    "worktree",
-                    "pull-requests",
-                  ]),
-                  issuedAt,
-                })),
-              ),
+    return McpClientAuthenticator.of({
+      authenticate: Effect.fn("McpClientAuthenticator.authenticate")(function (request) {
+        return environmentAuth.authenticateMcpClient(request).pipe(
+          Effect.flatMap((client) =>
+            Clock.currentTimeMillis.pipe(
+              Effect.map((issuedAt): McpInvocationContext.McpInvocationScope => ({
+                environmentId,
+                requestNamespace: `client:${client.sessionId}`,
+                thread: undefined,
+                client: {
+                  sessionId: client.sessionId,
+                  label: client.label,
+                  access: client.access,
+                  linked: client.peerLink,
+                  ...(client.peerLink ? {} : { hostedAppUrl }),
+                  ownerCli: client.ownerCli,
+                },
+                capabilities: new Set<McpInvocationContext.McpCapability>([
+                  "orchestration",
+                  "worktree",
+                  "pull-requests",
+                ]),
+                issuedAt,
+              })),
             ),
-            Effect.catch((error) =>
-              (EnvironmentAuth.isServerAuthCredentialError(error)
-                ? Effect.void
-                : Effect.logWarning("MCP client authentication failed.", { cause: error })
-              ).pipe(Effect.as(undefined)),
-            ),
-          );
-        },
-      ),
+          ),
+          Effect.catch((error) =>
+            (EnvironmentAuth.isServerAuthCredentialError(error)
+              ? Effect.void
+              : Effect.logWarning("MCP client authentication failed.", { cause: error })
+            ).pipe(Effect.as(undefined)),
+          ),
+        );
+      }),
     });
   }),
 );

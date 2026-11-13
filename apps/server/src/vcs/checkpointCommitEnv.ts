@@ -6,7 +6,6 @@ const CHECKPOINT_EMAIL = "t3code@users.noreply.github.com";
 export const checkpointCommitEnv = (indexFile: string) =>
   appName.pipe(
     Effect.map((name): NodeJS.ProcessEnv => ({
-      ...process.env,
       GIT_INDEX_FILE: indexFile,
       GIT_AUTHOR_NAME: name,
       GIT_AUTHOR_EMAIL: CHECKPOINT_EMAIL,

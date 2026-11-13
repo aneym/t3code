@@ -28,6 +28,7 @@ import {
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { CLOUD_MINT_PUBLIC_KEY, RELAY_ISSUER_SECRET } from "../cloud/config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as McpEventsService from "../mcpEvents/McpEventsService.ts";
 import * as RelayDeliveryProof from "./RelayDeliveryProof.ts";
 import { WEBHOOK_MAX_BODY_BYTES } from "./webhookRoute.ts";
 import * as WebhookRoute from "./webhookRoute.ts";
@@ -81,6 +82,7 @@ const handlerFor = (
       Layer.provide(WebhookRoute.layer),
       Layer.provide(RelayDeliveryProof.layer),
       Layer.provide(Layer.mock(ScheduledTaskService)({ triggerWebhook: trigger })),
+      Layer.provide(Layer.mock(McpEventsService.McpEventsService)({})),
       Layer.provide(
         Layer.mock(ServerSecretStore.ServerSecretStore)({
           get: (name) =>

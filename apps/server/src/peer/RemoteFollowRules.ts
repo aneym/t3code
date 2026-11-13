@@ -13,7 +13,6 @@ export const isModeRefusal = (error: OrchestratorMcpFailure) =>
 export const isFinal = (error: OrchestratorMcpFailure) =>
   error.code === "capability_denied" ||
   error.code === "thread_not_found" ||
-  error.code === "thread_deleted" ||
   error.code === "run_not_found";
 
 export const isTerminal = (status: string) =>
