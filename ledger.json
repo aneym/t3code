@@ -34,6 +34,20 @@
         ]
       ],
       "version": "0.1.7-nightly.20261101.4048.aneym.80"
+    },
+    {
+      "base": "0b7ae264b502a22513b5cff539f81aee1baa34e9",
+      "head": "4f2ee26607dd518b7de833e2a43271cf78da3a35",
+      "kind": "release",
+      "recordedAt": "2026-11-13T00:48:14.770887+00:00",
+      "recordedBy": "ax42",
+      "topics": [
+        [
+          "aneym/integration-82",
+          "efe6e52272e4fad6ad10a238e2795ea3a876458e"
+        ]
+      ],
+      "version": "0.1.7-nightly.20261101.4048.aneym.82"
     }
   ],
   "schema": "t3nightly.release-ledger/1"
