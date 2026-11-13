@@ -11,6 +11,7 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/OrchestratorErrors.ts";
@@ -24,10 +25,23 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
  * hold; the miss only names a live thread the caller could read by its full id.
  */
 export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")(function* (
-  threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getThreadShell">,
+  threads: Pick<
+    ThreadManagement.ThreadManagementService["Service"],
+    "getThreadShell" | "getThreadRecords"
+  >,
   threadId: ThreadId,
   message: string,
 ) {
+  const deletedAt = yield* threads.getThreadRecords(threadId, []).pipe(
+    Effect.map((records) => records.thread.deletedAt),
+    Effect.catchCause(() => Effect.succeed(null)),
+  );
+  if (deletedAt !== null) {
+    return yield* new OrchestratorMcpFailure({
+      code: "thread_deleted",
+      message: `Thread ${threadId} was deleted at ${DateTime.formatIso(deletedAt)}. Drop it from your records or rebind them to a live thread.`,
+    });
+  }
   const prefixed = ThreadId.make(`mcp:${threadId}`);
   const shell = yield* threads.getThreadShell(prefixed).pipe(Effect.orElseSucceed(() => null));
   return yield* new OrchestratorMcpFailure({
