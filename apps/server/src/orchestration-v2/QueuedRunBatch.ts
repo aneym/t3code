@@ -169,7 +169,7 @@ export interface QueuedRunBatchPart {
   readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
 }
 
-function queuedMessageSender(part: QueuedRunBatchPart): string {
+export function queuedMessageSender(part: QueuedRunBatchPart): string {
   if (part.senderThreadId !== undefined) return `an agent in thread ${part.senderThreadId}`;
   return part.createdBy === "user"
     ? `the user (${part.creationSource})`
