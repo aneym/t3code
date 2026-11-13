@@ -20,6 +20,20 @@
         ]
       ],
       "version": "0.1.7-nightly.20261101.4048.aneym.79"
+    },
+    {
+      "base": "3e6f010e622cf5e6b37283c01a38fa9d3ca69c64",
+      "head": "0b7ae264b502a22513b5cff539f81aee1baa34e9",
+      "kind": "release",
+      "recordedAt": "2026-11-13T00:19:09.087211+00:00",
+      "recordedBy": "ax42 seed from git",
+      "topics": [
+        [
+          "aneym/integration-80",
+          "01a0069473ff714fd3c397a09fbb2aafa23ce7e0"
+        ]
+      ],
+      "version": "0.1.7-nightly.20261101.4048.aneym.80"
     }
   ],
   "schema": "t3nightly.release-ledger/1"
