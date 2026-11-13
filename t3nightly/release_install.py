@@ -19,7 +19,8 @@ class InstallCommand:
 
 def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, artifact_manifest,
                           receipt_host, install_receipt, state_dir, chat_project, override_reason="", launcher_artifact=None,
-                          connector_artifact=None, home=None, drain_s=None, compact_db=None):
+                          connector_artifact=None, home=None, drain_s=None, compact_db=None,
+                          install_window="", protected_threads=None, protected_wait_s=None):
     home = Path.home() if home is None else Path(home)
     state, env, prefix = Path(state_dir), None, []
     if host == "ax42":
@@ -46,6 +47,12 @@ def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, a
         if compact_db and host != "studio":
             raise ValueError("compact_db is supported on studio only")
         words.append("--compact-db" if compact_db else "--no-compact-db")
+    if install_window:
+        words.extend(["--install-window", install_window])
+    for thread in protected_threads or ():
+        words.extend(["--protected-thread", thread])
+    if protected_wait_s is not None:
+        words.extend(["--protected-wait-s", str(protected_wait_s)])
     return InstallCommand(words, state, env)
 
 

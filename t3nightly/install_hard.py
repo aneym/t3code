@@ -14,7 +14,7 @@ from .install_restore_copy import RecoveryRequired
 from .install_db_rollback import recovery_required
 from .install_backup import advisory, capture
 from .install_compact import UNSAFE, compact, served
-from .install_drain import drain
+from .install_drain import drain, hold
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_process import serving_process
 from .install_service import service
@@ -216,6 +216,7 @@ def install(run):
             install_settings.current(run)
             outcome = "current"
         else:
+            hold(run, "before-copy")
             staged = run.runtime(previous) if previous == args.version else stage_runtime(run.home, args.version, args.assets)
             if file_digest(staged) != observed["candidateRuntime.digest"]:
                 raise ValueError("staged candidate runtime changed after provenance check")

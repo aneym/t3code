@@ -2,6 +2,8 @@ import sqlite3
 import time
 from contextlib import closing
 
+from .install_protected import ProtectedRunActive, wait
+
 FINISHING = ("preparing", "starting", "running")
 WAITING = ("waiting",)
 POLL_S = 1.0
@@ -16,8 +18,24 @@ def open_runs(db):
     return [{"threadId": thread_id, "runId": run_id, "status": status} for thread_id, run_id, status in rows]
 
 
+def hold(run, phase):
+    try:
+        return wait(run, phase)
+    except ProtectedRunActive as error:
+        active = [row for row in error.record["threads"] if row["state"] != "idle"]
+        run.report["restartDrain"] = {
+            "outcome": "protected-run", "drained": False, "waitedMs": round(error.record["waitedSeconds"] * 1000), "deadlineS": run.args.drain_s,
+            "activeRunIds": [row.get("activeRunId") or row["threadId"] for row in active], "cutRuns": [], "waitingRuns": [],
+            "protected": error.record, "stopRefused": True, "retryable": True, "error": str(error),
+        }
+        run.step("restart-drain", **run.report["restartDrain"])
+        raise
+
+
 def drain(run):
     deadline_s = run.args.drain_s
+    if hasattr(run.args, "protected_wait_s"):
+        hold(run, "before-drain")
     started = time.monotonic()
     run.step("restart-drain-start", deadlineS=deadline_s)
     rows, error = [], None

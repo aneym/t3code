@@ -39,16 +39,45 @@ def refuse_probe(home, port, service, extra=()):
         raise ValueError("restart/rollback/drain proof refused: live home, port or service; use a private home, non-live port and t3-rehearsal-* service")
 
 
-def window(version, *, reason="", host=None, sandbox=False):
+DEFAULT_WINDOWS = ("08:00-08:01", "18:00-18:01")
+HOST_WINDOWS = {"ax102": ("03:00-05:00",)}
+
+
+def parse_windows(spec):
+    windows = []
+    for part in spec.split(","):
+        bounds = [piece.strip() for piece in part.split("-")]
+        try:
+            if len(bounds) != 2:
+                raise ValueError
+            start, end = (datetime.strptime(piece, "%H:%M") for piece in bounds)
+        except ValueError:
+            raise ValueError(f"--install-window {part.strip()!r} is not HH:MM-HH:MM") from None
+        if start == end:
+            raise ValueError(f"--install-window {part.strip()!r} is empty")
+        windows.append((start.hour * 60 + start.minute, end.hour * 60 + end.minute, f"{bounds[0]}-{bounds[1]}Z"))
+    return windows
+
+
+def inside(windows, moment):
+    minute = moment.hour * 60 + moment.minute
+    return any(start <= minute < end if start < end else minute >= start or minute < end for start, end, _ in windows)
+
+
+def window(version, *, reason="", host=None, sandbox=False, spec=""):
     moment = datetime.now(timezone.utc)
     reason = reason.strip()
     if any(char in reason for char in "\r\n\x00"):
         raise ValueError("--override-reason must be a single line")
-    allowed = moment.hour in (8, 18) and moment.minute == 0
-    receipt = {"at": moment.isoformat(), "host": host or platform.node(), "version": version, "windowsUtc": ["08:00Z", "18:00Z"], "isolated": sandbox, "overrideReason": reason or None, "allowed": sandbox or allowed or bool(reason)}
+    host = host or platform.node().split(".")[0]
+    windows = parse_windows(spec or ",".join(HOST_WINDOWS.get(host, DEFAULT_WINDOWS)))
+    allowed = inside(windows, moment)
+    receipt = {"at": moment.isoformat(), "host": host, "version": version, "windowsUtc": [label for _, _, label in windows], "windowSource": "flag" if spec else "host-default",
+               "inWindow": allowed, "isolated": sandbox, "overrideReason": reason or None, "allowed": sandbox or allowed or bool(reason)}
     if not receipt["allowed"]:
-        raise ValueError("live install outside 08:00Z/18:00Z admission windows; requires --override-reason '<text>'")
+        raise ValueError(f"live install on {host} outside its {', '.join(receipt['windowsUtc'])} UTC window; requires --override-reason '<text>'")
     if reason and not sandbox:
+        print(json.dumps({"step": "install-window-override", **receipt}), flush=True)
         STATE.parent.mkdir(parents=True, exist_ok=True)
         line = "\n- Install-window override: " + json.dumps(receipt, separators=(",", ":")) + "\n"
         fd = os.open(STATE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
@@ -71,7 +100,7 @@ def enforce(args):
     state = Path(args.state_dir).expanduser()
     state.mkdir(parents=True, exist_ok=True)
     try:
-        policy = window(args.version, reason=args.override_reason, sandbox=sandbox)
+        policy = window(args.version, reason=args.override_reason, sandbox=sandbox, host=getattr(args, "receipt_host", None), spec=getattr(args, "install_window", ""))
     except ValueError as error:
         (state / "install-window.json").write_text(json.dumps({"allowed": False, "error": str(error), "version": args.version}) + "\n")
         raise
