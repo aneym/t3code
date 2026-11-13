@@ -31,6 +31,8 @@ def main():
     parser.add_argument("--connector-artifact", default="")
     parser.add_argument("--rehearsal-drain-s", type=int, choices=range(30, 301), default=DEFAULT_DRAIN_S)
     parser.add_argument("--live-home", action="append", default=[])
+    parser.add_argument("--protect-held-turn", action="store_true", help="non-release proof: pass the held active turn's thread to install as --protected-thread")
+    parser.add_argument("--protected-wait-s", type=int, default=60, help="with --protect-held-turn, the install's --protected-wait-s")
     parser.add_argument("--offbox", default="", help="non-release proof: back the sandbox database up off-box to HOST:/path")
     parser.add_argument("--offbox-stopped-ship", action="store_true", help="with --offbox, seed from a verified replica and sync only the stopped database")
     args = parser.parse_args()

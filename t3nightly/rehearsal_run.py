@@ -108,6 +108,8 @@ class Rehearsal:
             for name in ("launcher_artifact", "connector_artifact"):
                 if getattr(self.args, name):
                     command.extend(["--" + name.replace("_", "-"), getattr(self.args, name)])
+        if getattr(self.args, "protect_held_turn", False):
+            command.extend(["--protected-thread", self.workload.work["active-turn"]["threadId"], "--protected-wait-s", str(self.args.protected_wait_s)])
         if self.args.verdict:
             command.extend(["--verdict", str(self.args.verdict)])
         installer_home = Path.home() if (self.engine / "install_hard.py").is_file() else sandbox.os_home
@@ -144,7 +146,7 @@ class Rehearsal:
             if self.old_history != self.manifest["targets"][self.args.target_host]["compatibility"]["baseMigrations"]["history"]:
                 raise ValueError("seed migration history differs from candidate base")
             self.mark("prepare", tick)
-            workload = Workload(self.sandbox)
+            workload = self.workload = Workload(self.sandbox)
             self.phase = "baseline"
             tick = time.monotonic()
             baseline = workload.baseline()
