@@ -13,6 +13,9 @@ import ThreadPlacements from "./ForkMigrations/009_ThreadPlacements.ts";
 import TurnItemTimelineCoverIndex from "./ForkMigrations/010_TurnItemTimelineCoverIndex.ts";
 import BridgedMessageSearch from "./ForkMigrations/011_BridgedMessageSearch.ts";
 import PeerLinkRenewal from "./ForkMigrations/012_PeerLinkRenewal.ts";
+import CommandReadIndexes from "./ForkMigrations/013_CommandReadIndexes.ts";
+import MessageThreadRunIndex from "./ForkMigrations/014_MessageThreadRunIndex.ts";
+import RetireRestartHandoffEffects from "./ForkMigrations/015_RetireRestartHandoffEffects.ts";
 
 const run = Migrator.make({});
 const loader = Migrator.fromRecord({
@@ -27,6 +30,9 @@ const loader = Migrator.fromRecord({
   "10_TurnItemTimelineCoverIndex": TurnItemTimelineCoverIndex,
   "11_BridgedMessageSearch": BridgedMessageSearch,
   "12_PeerLinkRenewal": PeerLinkRenewal,
+  "13_CommandReadIndexes": CommandReadIndexes,
+  "14_MessageThreadRunIndex": MessageThreadRunIndex,
+  "15_RetireRestartHandoffEffects": RetireRestartHandoffEffects,
 });
 
 export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {
