@@ -36,9 +36,9 @@ import { makeThreadRecordSeeks, type SettledRecordFilter } from "./ThreadRecordS
 import { inheritsForkConversation } from "./ForkConversationInheritance.ts";
 import {
   type CommandRunWindow,
+  commandRunWindowMessagesWhere,
   inCommandRunWindow,
   inCommandRunWindowAttempts,
-  inCommandRunWindowMessages,
   readCommandRunWindow,
 } from "./CommandRunWindow.ts";
 import type {
@@ -3323,12 +3323,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             : window === undefined
               ? sql<PayloadRow>`
                 SELECT payload_json FROM orchestration_v2_projection_messages
-                WHERE thread_id = ${threadId}
+                WHERE ${commandRunWindowMessagesWhere(sql, threadId, runWindow)}
                   ${filter?.messageIds === undefined ? sql`` : sql`AND message_id IN (SELECT value FROM json_each(${encodeIdList(filter.messageIds)}))`}
                   ${filter?.messageRoles === undefined ? sql`` : sql`AND role IN (SELECT value FROM json_each(${encodeIdList(filter.messageRoles)}))`}
                   ${filter?.monitorNotificationsOnly === true ? sql`AND json_extract(payload_json, '$.notification.source.kind') = 'monitor'` : sql``}
                   ${filter?.messageRunIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.messageRunIds)}))`}
-                  ${inCommandRunWindowMessages(sql, threadId, runWindow)}
                 ORDER BY created_at ASC, message_id ASC
               `
               : sql<PayloadRow>`

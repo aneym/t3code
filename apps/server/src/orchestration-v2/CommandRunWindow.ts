@@ -59,15 +59,19 @@ export const inCommandRunWindowAttempts = (sql: SqlClient.SqlClient, runWindow: 
         SELECT attempt_id FROM orchestration_v2_projection_run_attempts
         WHERE run_id IN (SELECT value FROM json_each(${runWindow}))))`;
 
-export const inCommandRunWindowMessages = (
+export const commandRunWindowMessagesWhere = (
   sql: SqlClient.SqlClient,
   threadId: ThreadId,
   runWindow: string | null,
 ) =>
   runWindow === null
-    ? sql``
-    : sql`AND rowid IN (
+    ? sql`thread_id = ${threadId}`
+    : sql`+thread_id = ${threadId} AND rowid IN (
+        SELECT rowid FROM orchestration_v2_projection_messages
+          INDEXED BY orchestration_v2_projection_messages_thread_run_idx
+        WHERE thread_id = ${threadId} AND run_id IS NULL
+        UNION ALL
         SELECT rowid FROM orchestration_v2_projection_messages
           INDEXED BY orchestration_v2_projection_messages_thread_run_idx
         WHERE thread_id = ${threadId}
-          AND (run_id IS NULL OR run_id IN (SELECT value FROM json_each(${runWindow}))))`;
+          AND run_id IN (SELECT value FROM json_each(${runWindow})))`;
