@@ -182,6 +182,7 @@ export function buildReportInput(args: {
       },
       lastReportedUrl: status.url,
       lastReportedKind: "LoadFailed",
+      lastReportedTitle: status.title,
     };
   }
   return {
