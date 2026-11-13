@@ -159,9 +159,9 @@ const TASK_WAKE_EVENTS = [
   { thread: "child", eventType: "provider-thread.updated" },
   { thread: "child", eventType: "runtime-request.updated" },
 ] as const;
-const DEFAULT_THREAD_READ_LIMIT = 10;
+const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
-const DEFAULT_THREAD_ITEM_MAX_CHARS = 500;
+const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
 // Claude Code saves MCP results over ~25k tokens to a file instead of showing them. Thread JSON
 // runs about 2 chars per token, so a read stops adding items here and reports the rest as more.
 const THREAD_READ_BUDGET_CHARS = 30_000;
