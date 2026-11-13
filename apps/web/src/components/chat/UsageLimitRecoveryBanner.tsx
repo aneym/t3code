@@ -32,7 +32,7 @@ type RecoveryProps = {
   recovery: OrchestrationV2LimitRecovery | null;
   timestampFormat: TimestampFormat;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
-  onContinue: (() => void) | null;
+  onContinue?: (() => void) | null;
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
