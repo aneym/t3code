@@ -19,7 +19,6 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProviderProcesses from "./providerProcesses.ts";
 
-const AGENT_SLICE = "app-t3code-agents.slice";
 // Owns every agent slice and competes with the server's unit or scope under app.slice.
 const AGENTS_PARENT_SLICE = "app-t3code.slice";
 // Low weights yield CPU and disk to the server under contention, where the user manager
@@ -27,9 +26,26 @@ const AGENTS_PARENT_SLICE = "app-t3code.slice";
 // below logind's 33% per-user task limit, leaving forks for the server.
 const AGENTS_PARENT_PROPERTIES = ["CPUWeight=10", "IOWeight=10", "TasksMax=25%"];
 
-export function ownedAgentSlice(stateDir: string): string {
+export interface AgentSlices {
+  readonly root: string;
+  readonly owned: string;
+  readonly parent: string | undefined;
+}
+
+export function agentSlices(stateDir: string, defaultHome: boolean): AgentSlices {
   const hash = NodeCrypto.createHash("sha256").update(stateDir).digest("hex").slice(0, 12);
-  return `app-t3code-agents-${hash}.slice`;
+  if (defaultHome) {
+    return {
+      root: "app-t3code-agents.slice",
+      owned: `app-t3code-agents-${hash}.slice`,
+      parent: AGENTS_PARENT_SLICE,
+    };
+  }
+  return {
+    root: `app-t3code-home-${hash}.slice`,
+    owned: `app-t3code-home-${hash}-agents.slice`,
+    parent: undefined,
+  };
 }
 
 const GiB = 1024 ** 3;
@@ -108,7 +124,12 @@ export const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcess.Environment;
   const { stateDir } = yield* ServerConfig.ServerConfig;
   const { hasOtherLiveOwner } = yield* ProviderProcesses.ProviderProcesses;
-  const ownedSlice = ownedAgentSlice(stateDir);
+  const homeDirectory = yield* HostProcess.HomeDirectory;
+  const slices = agentSlices(
+    stateDir,
+    path.resolve(stateDir) === path.resolve(homeDirectory, ".t3", "userdata"),
+  );
+  const ownedSlice = slices.owned;
   const layerScope = yield* Effect.scope;
 
   const resolve = (command: string, env: NodeJS.ProcessEnv) =>
@@ -171,7 +192,7 @@ export const make = Effect.gen(function* () {
           "--scope",
           "--quiet",
           "--collect",
-          `--slice=${AGENT_SLICE}`,
+          `--slice=${slices.root}`,
           ...options,
           "--",
           "true",
@@ -202,10 +223,11 @@ export const make = Effect.gen(function* () {
         }
       });
       const limits = agentSliceMemoryLimits(NodeOS.totalmem());
-      yield* setProperties(AGENT_SLICE, [`MemoryHigh=${limits.high}`, `MemoryMax=${limits.max}`]);
-      yield* setProperties(AGENTS_PARENT_SLICE, AGENTS_PARENT_PROPERTIES);
+      yield* setProperties(slices.root, [`MemoryHigh=${limits.high}`, `MemoryMax=${limits.max}`]);
+      if (slices.parent !== undefined)
+        yield* setProperties(slices.parent, AGENTS_PARENT_PROPERTIES);
       yield* Effect.logInfo("Agent scopes are on", {
-        slice: AGENT_SLICE,
+        slice: slices.root,
         ...limits,
         oomPolicy: supportsOomPolicy,
       });
@@ -413,7 +435,7 @@ export const make = Effect.gen(function* () {
       const systemdScope: AgentSystemdScope = {
         systemdRun: scope.systemdRun,
         runtimeDir: scope.runtimeDir,
-        slice: survivesRestart === true ? AGENT_SLICE : ownedSlice,
+        slice: survivesRestart === true ? slices.root : ownedSlice,
         unit,
         // Without an owning thread nothing reads the result, so let systemd
         // unload the unit even when it fails.
