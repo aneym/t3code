@@ -371,12 +371,15 @@ export function buildKeybindingCommandOptions(
 export function commandLabel(command: KeybindingCommand): string {
   if (command === "workspace.focusNext") return "Focus Next Workspace Area";
   if (command === "workspace.focusPrevious") return "Focus Previous Workspace Area";
-  if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";
+  if (command === "composer.sendAlternate")
+    return "Composer: Opposite Queue or Steer Action, or Send First Queued When Empty";
+  if (command === "composer.focus") return "Composer: Focus";
   if (command === "composer.sendBackground") return "Composer: Start in Background";
   if (command === "composer.sendAndNewThread") return "Composer: Send and Start New Thread";
   if (command === "composer.dictation") return "Composer: Start or Finish Dictation";
   if (command === "thread.steerQueuedMessage") return "Queue: Send First Queued Message";
   if (command === "thread.editQueuedMessage") return "Queue: Edit Last Queued Message";
+  if (command === "thread.focusQueue") return "Queue: Focus Queued Messages";
   if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread";
   const usageMetric = METRIC_OPTIONS.find((option) => option.command === command);
   if (usageMetric) return `Usage: ${usageMetric.label}`;
