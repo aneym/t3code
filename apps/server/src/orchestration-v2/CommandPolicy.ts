@@ -70,15 +70,6 @@ export function isNativeMaintenanceCommand(message: {
   );
 }
 
-export function isCompactingRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "turnItems">,
-  runId: OrchestrationV2Run["id"],
-): boolean {
-  return projection.turnItems.some(
-    (item) => item.runId === runId && item.type === "compaction" && item.status === "running",
-  );
-}
-
 /**
  * A goal command sent into active work stops that work when it starts or
  * replaces goal work, or ends a goal that is driving the run.
@@ -109,10 +100,7 @@ export function resolveMessageDispatchIntent(
   // Compaction and sign-out cannot accept steers; queue follow-ups.
   const target = projection.runs.find((run) => run.id === mode.targetRunId);
   const targetMessage = projection.messages.find((message) => message.id === target?.userMessageId);
-  if (
-    (targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)) ||
-    isCompactingRun(projection, mode.targetRunId)
-  ) {
+  if (targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)) {
     return { type: "queue_after_active" };
   }
   // A provider that can neither steer nor restart its turn takes the message after the turn.

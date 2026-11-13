@@ -141,7 +141,6 @@ import {
   isActiveRun,
   isNativeMaintenanceCommand,
   resolveMessageDispatchIntent,
-  isCompactingRun,
 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
 import {
@@ -212,6 +211,7 @@ import {
   type OlderSettledThreadsQuery,
   type ShellSnapshotOptions,
 } from "./ProjectionStore.ts";
+import { runIsCompacting } from "./CompactionSteerGuard.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -5560,7 +5560,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const targetMessage = input.projection.messages.find(
       (message) => message.id === targetRun.userMessageId,
     );
-    const compacting = isCompactingRun(input.projection, targetRun.id);
+    const compacting = yield* runIsCompacting(
+      projectionStore,
+      input.command.threadId,
+      targetRun.id,
+      input.projection,
+    );
     if (compacting || (targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage))) {
       return yield* new OrchestratorDispatchError({
         commandId: input.command.commandId,
@@ -6614,8 +6619,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.providerTurns.filter((candidate) => candidate.nodeId === target?.rootNodeId),
         target?.activeAttemptId,
       );
-      // The client may still show a running turn while its completion is being
-      // projected. Preserve the submission as a new turn when steering is too late.
       if (
         target !== undefined &&
         (target.status === "completed" ||
@@ -6630,10 +6633,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         dispatchMode = { type: "start_immediately" };
       }
     }
-    // Stop leaves the run reading as running until its provider stops. A plain
-    // send in that window queues behind the stopped queue instead of steering
-    // text the agent never receives, and like any user send it releases the
-    // hold; an explicit steer still fails below.
+    if (
+      dispatchMode.type === "steer_active" &&
+      (yield* runIsCompacting(
+        projectionStore,
+        command.threadId,
+        dispatchMode.targetRunId,
+        projection,
+      ))
+    ) {
+      dispatchMode = { type: "queue_after_active" };
+    }
     if (
       command.deliveryIntent === "auto" &&
       (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") &&
