@@ -29,6 +29,8 @@ export type EmbedSendRun = { readonly runId: string; readonly status: string };
 const RAN = new Set(["running", "waiting", "completed"]);
 
 const OPEN_MS = 600_000;
+const USER_ROW = '[data-timeline-row-kind="message"][data-message-role="user"]';
+const SCROLL = { capture: true, passive: true } as const;
 const MILESTONES = 5;
 const sends = new Map<string, OpenSend>();
 let observer: MutationObserver | null = null;
@@ -63,6 +65,8 @@ function close(messageId: string): void {
   if (sends.size > 0) return;
   observer?.disconnect();
   observer = null;
+  document.removeEventListener("scroll", schedule, SCROLL);
+  window.removeEventListener("resize", schedule);
   if (frame !== null) cancelAnimationFrame(frame);
   frame = null;
 }
@@ -80,6 +84,30 @@ function painted(selector: string): boolean {
   return row !== null && (row.textContent ?? "").trim() !== "";
 }
 
+function onScreen(row: Element): boolean {
+  if (!row.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
+  let { top, bottom, left, right } = row.getBoundingClientRect();
+  for (let box = row.parentElement; box !== null; box = box.parentElement) {
+    const style = getComputedStyle(box);
+    if (style.overflowX === "visible" && style.overflowY === "visible") continue;
+    const clip = box.getBoundingClientRect();
+    top = Math.max(top, clip.top);
+    bottom = Math.min(bottom, clip.bottom);
+    left = Math.max(left, clip.left);
+    right = Math.min(right, clip.right);
+  }
+  top = Math.max(top, 0);
+  left = Math.max(left, 0);
+  bottom = Math.min(bottom, window.innerHeight);
+  right = Math.min(right, window.innerWidth);
+  return bottom > top && right > left;
+}
+
+function userRowShown(messageId: string): boolean {
+  const row = document.querySelector(`${USER_ROW}[data-message-id="${CSS.escape(messageId)}"]`);
+  return row !== null && (row.textContent ?? "").trim() !== "" && onScreen(row);
+}
+
 function paint(): void {
   frame = null;
   const at = epochNow();
@@ -88,10 +116,7 @@ function paint(): void {
       close(messageId);
       continue;
     }
-    const id = CSS.escape(messageId);
-    if (painted(`[data-message-id="${id}"], [data-pending-message-id="${id}"]`)) {
-      reach(messageId, "drawn", at);
-    }
+    if (!send.posted.has("drawn") && userRowShown(messageId)) reach(messageId, "drawn", at);
     const answer = send.answerId === null ? null : CSS.escape(send.answerId);
     if (
       answer !== null &&
@@ -120,6 +145,8 @@ export function embedSendEnter<T extends string>(thread: string, messageId: T): 
   if (observer === null) {
     observer = new MutationObserver(schedule);
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    document.addEventListener("scroll", schedule, SCROLL);
+    window.addEventListener("resize", schedule);
   }
   schedule();
   return messageId;
