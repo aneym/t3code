@@ -229,7 +229,7 @@ def pause(run):
         run.step("predrain-copy-check-paused", reason="rollback restore runs at foreground priority")
 
 
-def finish(run, backup, stopped=False):
+def finish(run, backup, stopped=False, restored=None):
     local = backup.get("local") or {}
     if local.get("method") != METHOD:
         return
@@ -250,6 +250,9 @@ def finish(run, backup, stopped=False):
     result = run.predrain_check.result
     local.update(quickCheck=result.get("quickCheck", "failed"), sha256=result.get("sha256"), deferredCheck={**result, "joinWaitSeconds": round(time.monotonic() - started, 3)})
     run.step("predrain-copy-checked", loud=result["outcome"] != "passed", **local["deferredCheck"])
+    if restored and restored.get("method") == METHOD and restored.get("copy") == local["path"]:
+        restored.update(quickCheck=local["quickCheck"], sha256=local["sha256"], deferredCheck={**local["deferredCheck"], "checked": local["path"]})
+        run.step("predrain-restore-checked", loud=result["outcome"] != "passed", quickCheck=restored["quickCheck"], sha256=restored["sha256"])
 
 
 def restore(record, db, note, deadline=None):

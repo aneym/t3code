@@ -127,15 +127,30 @@ def append(repo, change, message, remote="origin", attempts=4):
     raise LedgerRefusal(f"ledger push refused {attempts} times: {error}")
 
 
+def tree_of(repo, version, commit, remote):
+    found = git(repo, "rev-parse", "--verify", "--quiet", f"{commit}^{{tree}}", check=False)
+    if found.returncode:
+        ref = candidate_ref(version, commit)
+        git(repo, "fetch", "--no-tags", remote, f"+{ref}:{ref.replace('refs/heads/', 'refs/t3nightly/', 1)}", check=False)
+        found = git(repo, "rev-parse", "--verify", "--quiet", f"{commit}^{{tree}}", check=False)
+    return found.stdout.strip() if not found.returncode else None
+
+
 def record_release(repo, version, head, base, topics, host, remote="origin"):
     row = {"kind": "release", "version": version, "head": head, "base": base, "topics": [list(pair) for pair in topics],
            "recordedBy": host, "recordedAt": datetime.now(timezone.utc).isoformat()}
 
     def change(rows):
         present = next((old for old in rows if old.get("kind") == "release" and old.get("version") == version), None)
-        if present and present["head"] != head:
-            raise LedgerRefusal(f"ledger records {version} at {present['head'][:12]}, not {head[:12]}")
-        return None if present else [*rows, row]
+        if not present:
+            return [*rows, row]
+        if present["head"] == head or any(entry["head"] == head for entry in present.get("sameTree", [])):
+            return None
+        recorded, candidate = tree_of(repo, version, present["head"], remote), tree_of(repo, version, head, remote)
+        if not recorded or recorded != candidate:
+            raise LedgerRefusal(f"ledger records {version} at {present['head'][:12]} (tree {(recorded or 'unreadable')[:12]}), not {head[:12]} (tree {(candidate or 'unreadable')[:12]})")
+        entry = {"head": head, "base": base, "tree": candidate, "recordedBy": host, "recordedAt": row["recordedAt"]}
+        return [{**old, "sameTree": [*old.get("sameTree", []), entry]} if old is present else old for old in rows]
 
     return append(repo, change, f"release {version} at {head[:12]}", remote)
 

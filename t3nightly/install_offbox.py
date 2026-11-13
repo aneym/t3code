@@ -7,11 +7,11 @@ import sqlite3
 import subprocess
 import sys
 import time
-import uuid
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
+from . import install_backup_attempts as attempts
 from . import install_offbox_stage as stage
 from . import install_restore_copy as restore_copy
 from .db_publish import LOCAL_MARGIN, wal_bytes
@@ -290,6 +290,7 @@ def stopped_ship(run, host, root, replica, source, size, started):
 
 def capture(run, previous, stop, rollback_gate, keep_local=False):
     started = time.monotonic()
+    attempts.start(run)
     binary = rollback_gate()
     if binary:
         offbox_window.admit(run, 0)
@@ -311,8 +312,7 @@ def capture(run, previous, stop, rollback_gate, keep_local=False):
     else:
         seeded, deadline = preseed(run, host, root, replica, source, size, started)
         catch_up(run, host, replica, source, size, deadline)
-    destination = local / uuid.uuid4().hex
-    destination.mkdir(mode=0o700)
+    destination = attempts.create(run, local)
     stop()
     stopped = time.monotonic()
     window = stopped + run.args.offbox_stop_s
@@ -331,6 +331,7 @@ def capture(run, previous, stop, rollback_gate, keep_local=False):
         metadata = verified(run, host, root, replica, window, {"bytes": size, "schemaState": state, "seed": seeded, "stoppedSeconds": round(time.monotonic() - stopped, 3),
                                                                "seconds": round(time.monotonic() - started, 3), "previous": previous, "stoppedShip": stopped_only, "sha256": digest})
     (destination / "payload.json").write_text(json.dumps(metadata))
+    attempts.completed(destination)
     run.step("hard-backup", **metadata)
     return metadata
 

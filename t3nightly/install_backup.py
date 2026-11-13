@@ -5,11 +5,10 @@ import sqlite3
 import subprocess
 import sys
 import time
-import uuid
 from contextlib import closing
 from pathlib import Path
 
-from . import install_predrain as predrain
+from . import install_backup_attempts as attempts, install_predrain as predrain
 from .install_database_copy import copy_rate, database_copy, require_space
 from .install_calibration import rates
 from .install_restore_copy import checksum, estimate, fsync, identity, verify
@@ -65,9 +64,7 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
 
     require_space(run.backups, size)
     require_space(root, size, clone=root == clone_root)
-    destination = root / uuid.uuid4().hex
-    destination.mkdir(mode=0o700)
-    run.backup_attempt_directories.append(destination)
+    destination = attempts.create(run, root)
     target = destination / "statev2.sqlite"
     clone = sys.platform == "darwin" and root == clone_root and source.stat().st_dev == root.stat().st_dev
     if clone:
@@ -79,12 +76,10 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
         copied.unlink(missing_ok=True)
         clone = result.returncode == 0
         if not clone:
-            destination.rmdir()
+            attempts.discard(destination)
             root = run.backups
             require_space(root, size)
-            destination = root / uuid.uuid4().hex
-            destination.mkdir(mode=0o700)
-            run.backup_attempt_directories.append(destination)
+            destination = attempts.create(run, root)
             target = destination / "statev2.sqlite"
             volume_reason = "APFS capability probe failed; configured-root full copy"
     binary = rollback_gate()
@@ -108,7 +103,7 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
         quiescent(run, source)
     if binary:
         metadata = {"method": "binary-rollback", **binary, "seconds": round(time.monotonic() - started, 3), "previous": previous, "complete": True}
-        destination.rmdir()
+        attempts.discard(destination)
         run.step("hard-backup", **metadata)
         return metadata
     if delta:
@@ -137,12 +132,10 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
                     Path(str(target) + suffix).unlink(missing_ok=True)
                 reason = "APFS clone or verification failed; configured-root full copy fallback"
                 if root != run.backups:
-                    destination.rmdir()
+                    attempts.discard(destination)
                     root = run.backups
                     require_space(root, size)
-                    destination = root / uuid.uuid4().hex
-                    destination.mkdir(mode=0o700)
-                    run.backup_attempt_directories.append(destination)
+                    destination = attempts.create(run, root)
                     target = destination / "statev2.sqlite"
         if method == "sqlite-backup":
             full = estimate(size, rates=rates(run.state, size, source, root=root, clone=False))
@@ -168,12 +161,14 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
         metadata["markError"] = f"{type(error).__name__}: {error}"
         run.step("backup-mark", path=str(target), error=metadata["markError"])
     (destination / "payload.json").write_text(json.dumps(metadata))
+    attempts.completed(destination)
     run.step("hard-backup", **metadata)
     return metadata
 
 
 def capture(run, previous, stop, rollback_gate, *, keep_local=False):
     run.backup_attempt_directories = []
+    attempts.start(run)
     try:
         return _capture(run, previous, stop, rollback_gate, keep_local=keep_local)
     except BaseException:
