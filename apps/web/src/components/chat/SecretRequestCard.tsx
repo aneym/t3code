@@ -12,7 +12,10 @@ import {
   type SecretRequestReply,
   type SecretRequestSource,
 } from "@t3tools/client-runtime/secret-request";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
@@ -107,7 +110,9 @@ function PendingSecretRequestForm(props: {
       setReference("");
       return;
     }
-    pipe(squashAtomCommandFailure(result), secretRequestFailureMessage, setError);
+    if (!isAtomCommandInterrupted(result)) {
+      pipe(squashAtomCommandFailure(result), secretRequestFailureMessage, setError);
+    }
   };
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {

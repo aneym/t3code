@@ -1,4 +1,3 @@
-import { interruptibleTransport } from "./interruptibleTransport.ts";
 import {
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -203,7 +202,6 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     });
 
     const connected = yield* Deferred.make<void>();
-    const transportClosed = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
     const pingTimedOut = yield* Ref.make(false);
     const hooks = RpcClient.ConnectionHooks.of({
@@ -234,7 +232,6 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     let inboundFrames = 0;
     const countingWebSocketConstructor: typeof webSocketConstructor = (url, options) => {
       const socket = webSocketConstructor(url, options);
-      socket.addEventListener("close", () => Deferred.doneUnsafe(transportClosed, Effect.void));
       socket.addEventListener("message", () => {
         inboundFrames += 1;
       });
@@ -281,7 +278,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         ),
       ),
     );
-    const rawProtocolContext = yield* Layer.build(layerProtocol).pipe(
+    const protocolContext = yield* Layer.build(layerProtocol).pipe(
       Effect.withSpan("environment.websocket.connect"),
     );
     // Building the protocol only starts the socket; this span times the
@@ -291,11 +288,6 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       Effect.withSpan("environment.websocket.open"),
       Effect.ignore,
       Effect.forkScoped,
-    );
-    const protocolContext = Context.add(
-      rawProtocolContext,
-      RpcClient.Protocol,
-      interruptibleTransport(Context.get(rawProtocolContext, RpcClient.Protocol), transportClosed),
     );
     const protocolClient = yield* makeWsRpcProtocolClient.pipe(Effect.provide(protocolContext));
     const initialConfigDeferred = yield* Deferred.make<ServerConfig>();
