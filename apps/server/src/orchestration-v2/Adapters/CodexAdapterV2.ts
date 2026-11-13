@@ -6258,7 +6258,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               occurredAt: yield* DateTime.now,
             });
             yield* Ref.update(limitedTurnItems, (items) =>
-              new Map(items).set(context.providerThread.id, item),
+              new Map(items).set(context.providerThread.id, {
+                ...item,
+                failure: { ...item.failure, resetAt: current.failure.resetAt },
+              }),
             );
           }
         });
