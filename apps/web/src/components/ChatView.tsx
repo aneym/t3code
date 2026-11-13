@@ -3108,7 +3108,7 @@ export default function ChatView(props: ChatViewProps) {
       .join(" · ") || null;
   // The end of the timeline holds the thread's present and next turns: what it is doing now,
   // its lifecycle status, guest messages awaiting you, then your queued messages.
-  const pendingHostSendCount = useEmbedPendingSendCount(serverProjection?.thread.id ?? null);
+  const hostSends = useEmbedPendingSendCount(serverProjection, optimisticUserMessages);
   const restartRuns = serverProjection?.runs;
   const restartPause = restartRuns === undefined ? null : restartPauseLabel(restartRuns);
   const timelineFooter =
@@ -3118,7 +3118,7 @@ export default function ChatView(props: ChatViewProps) {
     threadStatusLine === null &&
     pendingGuestMessageCount === 0 &&
     !hasQueuedTurns &&
-    pendingHostSendCount === 0 &&
+    hostSends === 0 &&
     !(heldSendShown && !heldSendDelivered) ? null : (
       <>
         <ThreadRestartNotices
@@ -3143,10 +3143,10 @@ export default function ChatView(props: ChatViewProps) {
           />
         ) : null}
         {hasQueuedTurns ? queuedRunsControl : null}
-        {pendingHostSendCount > 0 && serverProjection ? (
+        {hostSends > 0 && serverProjection ? (
           <EmbedPendingSends
-            thread={serverProjection.thread.id}
-            messages={serverProjection.messages}
+            projection={serverProjection}
+            rows={optimisticUserMessages}
             composerRef={composerRef}
             composerDraftTarget={composerDraftTarget}
           />

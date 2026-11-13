@@ -7,6 +7,7 @@ import { type ComposerThreadTarget, useComposerDraftStore } from "../../composer
 import { retryLocalSend } from "../../embed/embedComposerSend";
 import {
   actOnHostPendingSend,
+  drawnAsRow,
   dropLocalSends,
   type EmbedPendingSend,
   useEmbedHostPendingSends,
@@ -87,22 +88,32 @@ function PendingSendRow(props: {
   );
 }
 
-export function EmbedPendingSends(props: {
-  readonly thread: string;
-  readonly messages: ReadonlyArray<CommittedMessage>;
+export function EmbedPendingSends({
+  projection,
+  rows,
+  ...props
+}: {
+  readonly projection: {
+    readonly thread: { readonly id: string };
+    readonly messages: ReadonlyArray<CommittedMessage>;
+  };
+  readonly rows: ReadonlyArray<{ readonly id: string }>;
   readonly composerRef: ComposerHandleRef;
   readonly composerDraftTarget: ComposerThreadTarget;
 }) {
-  const local = useEmbedLocalSends(props.thread);
-  const host = useEmbedHostPendingSends(props.thread);
-  const delivered = local.filter((send) => deliveredIn(props.messages, send));
+  const thread = projection.thread.id;
+  const local = useEmbedLocalSends(thread);
+  const host = useEmbedHostPendingSends(thread);
+  const delivered = local.filter((send) => deliveredIn(projection.messages, send));
   const deliveredKey = delivered.map((send) => send.messageId).join(",");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retires a pending send once the server has the message it stood for
   useEffect(() => {
-    if (deliveredKey !== "") dropLocalSends(props.thread, deliveredKey.split(","));
-  }, [deliveredKey, props.thread]);
-  const shownLocal = local.filter((send) => !delivered.includes(send));
-  const shownHost = host.filter((send) => !deliveredIn(props.messages, send));
+    if (deliveredKey !== "") dropLocalSends(thread, deliveredKey.split(","));
+  }, [deliveredKey, thread]);
+  const shownLocal = local.filter((send) => !delivered.includes(send) && !drawnAsRow(send, rows));
+  const shownHost = host.filter(
+    (send) => !deliveredIn(projection.messages, send) && !drawnAsRow(send, rows),
+  );
   if (shownLocal.length === 0 && shownHost.length === 0) return null;
   const edit = (text: string, release: () => void) => {
     const drafts = useComposerDraftStore.getState();
@@ -121,20 +132,20 @@ export function EmbedPendingSends(props: {
         <PendingSendRow
           key={send.requestId}
           send={send}
-          onRetry={() => actOnHostPendingSend(props.thread, send.requestId, "retry")}
+          onRetry={() => actOnHostPendingSend(thread, send.requestId, "retry")}
           onEdit={() =>
-            edit(send.text, () => actOnHostPendingSend(props.thread, send.requestId, "discard"))
+            edit(send.text, () => actOnHostPendingSend(thread, send.requestId, "discard"))
           }
-          onDiscard={() => actOnHostPendingSend(props.thread, send.requestId, "discard")}
+          onDiscard={() => actOnHostPendingSend(thread, send.requestId, "discard")}
         />
       ))}
       {shownLocal.map((send) => (
         <PendingSendRow
           key={send.messageId}
           send={send}
-          onRetry={() => retryLocalSend(props.thread, send.messageId)}
-          onEdit={() => edit(send.text, () => dropLocalSends(props.thread, [send.messageId]))}
-          onDiscard={() => dropLocalSends(props.thread, [send.messageId])}
+          onRetry={() => retryLocalSend(thread, send.messageId)}
+          onEdit={() => edit(send.text, () => dropLocalSends(thread, [send.messageId]))}
+          onDiscard={() => dropLocalSends(thread, [send.messageId])}
         />
       ))}
     </ol>
