@@ -128,6 +128,27 @@ html[data-embed="true"] [data-embed-controls-toggle] {
   color: var(--muted-foreground);
 }
 
+html[data-embed="true"] [data-chat-composer-footer="true"] [aria-label="Start voice input"] {
+  flex: none;
+  order: 1;
+  width: 28px;
+  height: 28px;
+  margin: 0 0 0.5rem;
+  border-radius: var(--control-radius);
+  color: var(--muted-foreground);
+}
+
+html[data-embed="true"] [data-chat-composer-footer="true"] [aria-label="Start voice input"]:hover {
+  background: color-mix(in oklab, var(--muted) 60%, transparent);
+  color: var(--foreground);
+}
+
+html[data-embed="true"] [data-chat-composer-footer="true"] [data-slot="voice-input-pill"] {
+  order: 1;
+  height: 32px;
+  margin: 0 0 0.375rem;
+}
+
 html[data-embed="true"] [data-embed-composer-extra] > * {
   order: 1;
   margin-bottom: 0.5rem;
