@@ -6,6 +6,20 @@
       ],
       "kind": "merge",
       "label": "integration-82 tip e788b5f44e (contains all 39 delivered merges)"
+    },
+    {
+      "base": "3d65c1a49c1da016a9b25a55738a3f794f90de2d",
+      "head": "3e6f010e622cf5e6b37283c01a38fa9d3ca69c64",
+      "kind": "release",
+      "recordedAt": "2026-11-13T00:19:00.548815+00:00",
+      "recordedBy": "ax42 seed from git",
+      "topics": [
+        [
+          "aneym/integration-79",
+          "ea7eca76aa6ad6ce439588b8155657b06ea4372c"
+        ]
+      ],
+      "version": "0.1.7-nightly.20261101.4048.aneym.79"
     }
   ],
   "schema": "t3nightly.release-ledger/1"
