@@ -39,7 +39,8 @@ export function AgentLoadBalancingSettings({
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
         Agent launches go to the linked machine with this repository, the selected provider, and the
         most weighted free CPU, memory and disk. Machines past their health line are skipped. An
-        explicit machine always wins. Preferences apply to launches from the selected server.
+        explicit machine always wins. Preferences apply to launches from the selected server, and
+        its preference for itself also caps what other servers send it.
       </p>
       {environments.map((environment) => (
         <EnvironmentRow

@@ -1,4 +1,9 @@
-import { ModelSelection, ProjectId, OrchestratorMcpFailure } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  ModelSelection,
+  ProjectId,
+  OrchestratorMcpFailure,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as AgentPlacement from "../peer/AgentPlacement.ts";
@@ -26,10 +31,11 @@ const sharedBase = (strategy: (typeof LaunchInput.Type)["workspaceStrategy"]) =>
   !/^[0-9a-f]{7,40}$/i.test(strategy.baseRef) &&
   (strategy.baseRef.startsWith("origin/") || strategy.startFromOrigin === true);
 
-export const prepare = Effect.fn("AgentLaunchRouting.prepare")(function* (
+export const launch = Effect.fn("AgentLaunchRouting.launch")(function* <E, R>(
   service: AgentPlacement.AgentPlacement["Service"],
   scope: Invocation.McpInvocationScope,
-  params: unknown,
+  params: object,
+  run: (environmentId: EnvironmentId | undefined, params: object) => Effect.Effect<unknown, E, R>,
 ) {
   const input = yield* decodeInput(params).pipe(
     Effect.mapError(
@@ -55,18 +61,22 @@ export const prepare = Effect.fn("AgentLaunchRouting.prepare")(function* (
           ? { localOnlyReason: "Worktree launches keep their local base references." }
           : {}),
   });
-  if (selected === undefined)
-    return { environmentId: undefined, params: params as object, placement: undefined };
-  const remote = selected.placement.environmentId !== scope.environmentId;
-  return {
-    environmentId: selected.placement.environmentId,
-    placement: selected.placement,
-    params: remote
-      ? {
-          ...(params as object),
-          projectId: selected.projectId,
-          modelSelection: selected.modelSelection,
-        }
-      : (params as object),
-  };
+  if (selected === undefined) return yield* run(undefined, params);
+  const { result, placement } = yield* service.run(
+    scope,
+    selected,
+    input.clientRequestId,
+    (clientRequestId) =>
+      run(selected.placement.environmentId, {
+        ...params,
+        clientRequestId,
+        projectId: selected.projectId,
+        modelSelection: selected.modelSelection,
+      }),
+    run(undefined, params),
+  );
+  if (typeof result !== "object" || result === null) return result;
+  if ("threadId" in result && typeof result.threadId === "string")
+    yield* service.record(result.threadId, placement);
+  return { ...result, placement };
 });

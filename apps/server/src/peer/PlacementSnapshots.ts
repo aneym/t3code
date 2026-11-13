@@ -18,6 +18,8 @@ export const Snapshot = Schema.Struct({
   label: Schema.String,
   hostResources: Schema.optionalKey(Schema.NullOr(HostResourcesSnapshot)),
   placementProjectId: Schema.optionalKey(ProjectId),
+  placementProjectCount: Schema.optionalKey(Schema.Number),
+  placementWeight: Schema.optionalKey(Schema.Number),
   placementProviders: Schema.optionalKey(AgentPlacementProviders),
   placementHealthLine: Schema.optionalKey(AgentPlacementHealthLine),
 });

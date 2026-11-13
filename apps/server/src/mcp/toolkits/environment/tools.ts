@@ -66,6 +66,8 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
     preferences: Schema.Struct(PreferenceFields),
     hostResources: Schema.optionalKey(Schema.NullOr(HostResourcesSnapshot)),
     placementProjectId: Schema.optionalKey(ProjectId),
+    placementProjectCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    placementWeight: Schema.optionalKey(Schema.Finite),
     placementProviders: Schema.optionalKey(AgentPlacementProviders),
     placementHealthLine: Schema.optionalKey(AgentPlacementHealthLine),
     placementHealth: Schema.optionalKey(AgentPlacementScore),

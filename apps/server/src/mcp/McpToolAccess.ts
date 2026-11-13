@@ -438,41 +438,40 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
     handlers[name] = ({ environmentId, ...params }: { readonly environmentId?: EnvironmentId }) =>
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
-        const routed =
+        const run = (environmentId: EnvironmentId | undefined, params: object) => {
+          const target = PeerForwarding.remoteTarget(scope, environmentId);
+          return target === undefined
+            ? here(params)
+            : Effect.gen(function* () {
+                if (scope.linkedEnvironments === false)
+                  return yield* PeerForwarding.linkedEnvironmentsOff;
+                yield* (remote as RemoteCheck<typeof params>)(params);
+                if (Option.isNone(forwarding)) return yield* linksUnavailable;
+                const reply = yield* forwarding.value.call(scope, tool, target, {
+                  ...params,
+                  environmentId,
+                });
+                return forwarded === undefined ? reply : yield* forwarded(params, target, reply);
+              });
+        };
+        if (
           name === "t3_thread_launch" &&
           environmentId === undefined &&
           scope.linkedEnvironments !== false &&
           Option.isSome(placement) &&
           (yield* placement.value.enabled)
-            ? yield* AgentLaunchRouting.prepare(placement.value, scope, params)
-            : { environmentId, params, placement: undefined };
-        const target = PeerForwarding.remoteTarget(scope, routed.environmentId);
-        const result =
-          target === undefined
-            ? yield* here(routed.params)
-            : yield* Effect.gen(function* () {
-                if (scope.linkedEnvironments === false)
-                  return yield* PeerForwarding.linkedEnvironmentsOff;
-                yield* (remote as RemoteCheck<typeof params>)(routed.params);
-                if (Option.isNone(forwarding)) return yield* linksUnavailable;
-                const reply = yield* forwarding.value.call(scope, tool, target, {
-                  ...routed.params,
-                  environmentId: routed.environmentId,
-                });
-                return forwarded === undefined
-                  ? reply
-                  : yield* forwarded(routed.params, target, reply);
-              });
-        if (typeof result !== "object" || result === null) return result;
-        if (name === "t3_thread_read" && target !== undefined && "threadId" in routed.params)
-          return yield* AgentPlacement.withRecordedPlacement(
-            String(routed.params.threadId),
-            result,
-          );
-        if (routed.placement === undefined) return result;
-        if ("threadId" in result && typeof result.threadId === "string" && Option.isSome(placement))
-          yield* placement.value.record(result.threadId, routed.placement);
-        return { ...result, placement: routed.placement };
+        )
+          return yield* AgentLaunchRouting.launch(placement.value, scope, params, run);
+        const result = yield* run(environmentId, params);
+        if (
+          name === "t3_thread_read" &&
+          PeerForwarding.remoteTarget(scope, environmentId) !== undefined &&
+          typeof result === "object" &&
+          result !== null &&
+          "threadId" in params
+        )
+          return yield* AgentPlacement.withRecordedPlacement(String(params.threadId), result);
+        return result;
       });
   }
   return handlers as Toolkit.HandlersFrom<Tools>;
