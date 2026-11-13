@@ -68,6 +68,7 @@ import { recordPromptSent } from "../GitHubStarPrompt";
 import { claimEmbedClearCommand } from "../../embed/embedClear";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId, randomUUID } from "~/lib/utils";
+import { optimisticUserMessage, withoutOptimisticUserMessage } from "./optimisticUserMessages";
 import { heldIdsFor, holdSend, releaseHeldSend } from "./heldSendStore";
 import { holdOrSendThroughHost, sendComposerThroughHost } from "../../embed/embedComposerSend";
 import { isEmbedHostSendOn } from "../../embed/embedHostSend";
@@ -924,9 +925,24 @@ export function useComposerSend(input: ComposerSendInput) {
     const heldIds = isServerThread ? heldIdsFor(routeThreadKey, messageTextForSend) : null;
     const messageIdForSend = embedSendEnter(threadIdForSend, heldIds?.messageId ?? newMessageId());
     const commandIdForSend = heldIds?.commandId ?? CommandId.make(randomUUID());
+    const threadRef = scopeThreadRef(activeThread.environmentId, threadIdForSend);
+    const rowFor = (text: string, createdAt: string, extra?: Partial<ChatMessage>) => {
+      const row = optimisticUserMessage({
+        ...extra,
+        id: messageIdForSend,
+        text,
+        createdAt,
+        queued: shouldQueueBehindActiveRun,
+        steer: phase === "running" && dispatchMode === "steer",
+      });
+      if (!shouldQueueBehindActiveRun) anchorNewTurn(scopedThreadKey(threadRef), row.id);
+      return row;
+    };
     if (plainText && heldIds?.hostUnanswered !== true && isEmbedHostSendOn()) {
       sendInFlightRef.current = true;
       const hostSend = await sendComposerThroughHost({
+        row: rowFor(messageTextForSend, new Date().toISOString()),
+        rows: setOptimisticUserMessages,
         routeThreadKey,
         thread: threadIdForSend,
         composerDraftTarget,
@@ -1248,29 +1264,10 @@ export function useComposerSend(input: ComposerSendInput) {
       });
       return;
     }
-    const optimisticAttachments = optimisticMessageAttachments(composerAttachmentsSnapshot);
-    if (!shouldQueueBehindActiveRun) {
-      anchorNewTurn(
-        scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
-        messageIdForSend,
-      );
-    }
-    const optimisticMessage: ChatMessage = {
-      id: messageIdForSend,
-      role: "user",
-      text: outgoingMessageText,
-      ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-      ...(outgoingMessageContext !== undefined ? { context: outgoingMessageContext } : {}),
-      runId: null,
-      createdAt: messageCreatedAt,
-      updatedAt: messageCreatedAt,
-      streaming: false,
-      ...(shouldQueueBehindActiveRun
-        ? { inputIntent: "queued_turn" as const }
-        : phase === "running" && dispatchMode === "steer"
-          ? { inputIntent: "steer" as const }
-          : {}),
-    };
+    const optimisticMessage = rowFor(outgoingMessageText, messageCreatedAt, {
+      attachments: optimisticMessageAttachments(composerAttachmentsSnapshot),
+      context: outgoingMessageContext,
+    });
     if (currentRouteThreadKeyRef.current === routeThreadKey) {
       optimisticBlobPreviews.track(optimisticMessage);
     } else {
@@ -1518,10 +1515,7 @@ export function useComposerSend(input: ComposerSendInput) {
           useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
         )
       ) {
-        setOptimisticUserMessages((existing) => {
-          const next = existing.filter((message) => message.id !== messageIdForSend);
-          return next.length === existing.length ? existing : next;
-        });
+        setOptimisticUserMessages(withoutOptimisticUserMessage(messageIdForSend));
         // The restored draft clones its images, so the sent copies are no longer used.
         optimisticBlobPreviews.release(optimisticMessage);
         const retryComposerImages = restoreComposerDraft(composerDraftTarget, sendSnapshot);

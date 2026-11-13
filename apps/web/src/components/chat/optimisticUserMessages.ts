@@ -17,6 +17,41 @@ export interface OptimisticUserMessages {
   readonly handoff: Readonly<Record<string, ReadonlyArray<string>>>;
 }
 
+export function optimisticUserMessage(input: {
+  readonly id: MessageId;
+  readonly text: string;
+  readonly createdAt: string;
+  readonly queued: boolean;
+  readonly steer: boolean;
+  readonly attachments?: ChatMessage["attachments"];
+  readonly context?: ChatMessage["context"];
+}): ChatMessage {
+  const { id, text, createdAt, attachments, context } = input;
+  return {
+    id,
+    role: "user",
+    text,
+    ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+    ...(context !== undefined ? { context } : {}),
+    runId: null,
+    createdAt,
+    updatedAt: createdAt,
+    streaming: false,
+    ...(input.queued
+      ? { inputIntent: "queued_turn" as const }
+      : input.steer
+        ? { inputIntent: "steer" as const }
+        : {}),
+  };
+}
+
+export function withoutOptimisticUserMessage(id: string) {
+  return (existing: ChatMessage[]) => {
+    const next = existing.filter((message) => message.id !== id);
+    return next.length === existing.length ? existing : next;
+  };
+}
+
 export function emptyOptimisticUserMessages(threadId: ThreadId): OptimisticUserMessages {
   return { threadId, messages: [], handoff: {} };
 }
