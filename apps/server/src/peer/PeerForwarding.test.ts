@@ -97,9 +97,15 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
     listProjectThreads: () => linked.pipe(Effect.map((shell) => [shell] as never)),
+    listProjectThreadPage: () =>
+      linked.pipe(Effect.map((shell) => ({ threads: [shell], total: 1 }) as never)),
     sendToThread: (input) =>
       Ref.update(seen, (current) => ({ ...current, sends: [...current.sends, input] })).pipe(
-        Effect.as({ run: run("running"), delivery: "started" } as never),
+        Effect.as({
+          run: run("running"),
+          delivery: "started",
+          dispatch: { sequence: 1, replayed: false },
+        } as never),
       ),
     dispatch: (command) =>
       Ref.update(seen, (current) => ({
