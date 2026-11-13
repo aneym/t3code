@@ -26,6 +26,7 @@ import * as Client from "effect/sql/SqlClient";
 import type { Borrower, Connection } from "effect/sql/SqlConnection";
 import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
+import { readerWorkerSource } from "./nodeSqliteReaderWorkerSource.ts";
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 
@@ -44,6 +45,13 @@ const ReadOnly = Context.Reference<typeof Effect.interruptible | undefined>(
   "@t3tools/shared/nodeSqliteClient/ReadOnly",
   { defaultValue: () => undefined },
 );
+
+const Priority = Context.Reference<boolean>("@t3tools/shared/nodeSqliteClient/Priority", {
+  defaultValue: () => false,
+});
+
+export const prioritized = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.provideService(effect, Priority, true);
 
 /** Wrap the whole transaction; existing write transactions retain the writer, and writes on the reader fail as readonly. */
 export const readOnly = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
@@ -193,69 +201,6 @@ const hasLargeBinding = (params: ReadonlyArray<unknown>): boolean => {
   }
 };
 
-// Inline worker source also runs in bundles and single-executable builds without module files.
-const readerWorkerSource = `
-const { parentPort, workerData } = require("node:worker_threads");
-const { DatabaseSync } = require("node:sqlite");
-let db;
-try {
-  // A read-only open cannot be undone by SQL, unlike PRAGMA query_only.
-  const next = new DatabaseSync(workerData.filename, {
-    readOnly: workerData.readOnly,
-    allowExtension: workerData.allowExtension,
-  });
-  next.exec("PRAGMA busy_timeout = 5000;");
-  // Without WAL a reader's shared lock blocks the writer's commits, so refuse.
-  const mode = String(next.prepare("PRAGMA journal_mode").get().journal_mode).toLowerCase();
-  if (mode !== "wal") throw new Error("database uses journal_mode " + mode + ", not wal");
-  db = next;
-  parentPort.postMessage({ type: "ready" });
-} catch (error) {
-  parentPort.postMessage({ type: "unavailable", message: String(error && error.message ? error.message : error) });
-}
-const statements = new Map();
-const prepare = (sql, cached) => {
-  if (!cached) return db.prepare(sql);
-  let statement = statements.get(sql);
-  if (statement === undefined) {
-    statement = db.prepare(sql);
-    if (statements.size >= workerData.prepareCacheSize) statements.delete(statements.keys().next().value);
-  } else {
-    statements.delete(sql);
-  }
-  statements.set(sql, statement);
-  return statement;
-};
-parentPort.on("message", ({ id, sql, params, cached, values, raw, safeIntegers }) => {
-  let operation = "open";
-  try {
-    if (db === undefined) throw new Error("database reader is unavailable");
-    operation = "prepare";
-    const statement = prepare(sql, cached);
-    operation = "execute";
-    statement.setReadBigInts(safeIntegers);
-    if (statement.columns().length > 0) {
-      statement.setReturnArrays(values);
-      parentPort.postMessage({ id, rows: statement.all(...params) });
-    } else {
-      const result = statement.run(...params);
-      parentPort.postMessage({ id, rows: raw ? result : [] });
-    }
-  } catch (error) {
-    parentPort.postMessage({
-      id,
-      error: {
-        operation,
-        message: String(error && error.message ? error.message : error),
-        code: error && error.code,
-        errcode: error && error.errcode,
-        errstr: error && error.errstr,
-      },
-    });
-  }
-});
-`;
-
 interface ReaderRequest {
   readonly sql: string;
   readonly params: ReadonlyArray<unknown>;
@@ -294,7 +239,7 @@ const failed = (cause: unknown, message: string, operation: string) =>
 const endsReadTransaction = (sql: string) => /^\s*ROLLBACK\b|^\s*COMMIT\b/i.test(sql);
 
 // WAL readers run concurrently; one worker serialized every read behind the slowest transaction.
-const READER_POOL_SIZE = 4;
+const READER_POOL_SIZE = 8;
 
 // Bind transactions to one worker; fail after its exit instead of resuming outside the transaction on a replacement.
 const makeReader = Effect.fnUntraced(function* (
@@ -883,20 +828,17 @@ const make = Effect.fn("makeWithDatabase")(function* (
           allowExtension: false,
         }),
       catch: (cause) =>
-        new SqlError({
-          reason: classifyError(cause, "Failed to open database", "open"),
-        }),
+        new SqlError({ reason: classifyError(cause, "Failed to open database", "open") }),
     });
     yield* Scope.addFinalizer(
       scope,
       Effect.try({
         try: () => db.close(),
         catch: (cause) =>
-          new SqlError({
-            reason: classifyError(cause, "Failed to close database", "close"),
-          }),
+          new SqlError({ reason: classifyError(cause, "Failed to close database", "close") }),
       }).pipe(Effect.orDie),
     );
+    db.exec("PRAGMA busy_timeout = 5000");
     // Started after the close finalizer, so the worker stops before the writer closes.
     const checkpoint =
       options.checkpointWorker && isFileDatabase
@@ -988,9 +930,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
           return statement;
         },
         catch: (cause) =>
-          new SqlError({
-            reason: classifyError(cause, "Failed to prepare statement", "prepare"),
-          }),
+          new SqlError({ reason: classifyError(cause, "Failed to prepare statement", "prepare") }),
       });
 
     const prepareCache = yield* Cache.makeWith(prepare, {
@@ -1098,7 +1038,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const readerPool = { unavailable: false };
   const readers =
     options.readerWorker && isFileDatabase
-      ? yield* Effect.forEach(Array.from({ length: READER_POOL_SIZE }), () =>
+      ? yield* Effect.forEach(Array.from({ length: READER_POOL_SIZE + 1 }), () =>
           Effect.map(
             Effect.all([makeReader(options, readerPool), Semaphore.make(1)]),
             ([acquire, lock]) => ({
@@ -1119,8 +1059,11 @@ const make = Effect.fn("makeWithDatabase")(function* (
         return Effect.succeed(writer);
       }
       // Least claimed wins and ties go to the lowest slot, so idle slots never start a worker.
-      let slot = readers[0]!;
-      for (const candidate of readers) if (candidate.claims < slot.claims) slot = candidate;
+      const reserved = readers.at(-1)!;
+      let slot = Context.get(fiber.context, Priority) ? reserved : readers[0]!;
+      if (slot !== reserved)
+        for (const candidate of readers)
+          if (candidate !== reserved && candidate.claims < slot.claims) slot = candidate;
       slot.claims++;
       const reader = slot;
       return Effect.andThen(

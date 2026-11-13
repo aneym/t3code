@@ -1,3 +1,13 @@
+import { ServerProviderRefreshInput } from "./serverProviderRefresh.ts";
+import { ServerConfigSubscriptionInput } from "./serverConfigSubscription.ts";
+import { ServerHandoffProbe, ServerHandoffSubscription } from "./serverLifecycle.ts";
+import {
+  ServerPrepareRestartInput,
+  ServerPrepareRestartResult,
+  ServerPrepareRestartError,
+  ServerAbortRestartResult,
+  ServerRestartStatus,
+} from "./serverRestart.ts";
 import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
@@ -16,16 +26,7 @@ import {
   McpAppToolInfoInput,
   McpAppUpdateModelContextInput,
 } from "./mcpApps.ts";
-import {
-  PeerLink,
-  PeerLinkCreateInput,
-  PeerLinkError,
-  PeerLinkRemoveInput,
-  PeerLinkRemoveResult,
-  PeerLinkRequestAnswerInput,
-  PeerLinkRequestError,
-  PeerLinkSummary,
-} from "./peerLink.ts";
+import { PEER_LINK_WS_METHODS, PeerLinkRpcs } from "./peerLinkRpc.ts";
 import {
   ChatGptReconnectProfileInput,
   ChatGptReconnectProfile,
@@ -33,11 +34,15 @@ import {
   ChatGptHandoffInput,
   ChatGptHandoffState,
 } from "./providerSetup.ts";
+import {
+  ServerImportRestartHandoffInput,
+  ServerImportRestartHandoffError,
+} from "./serverRestartImport.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt } from "./baseSchemas.ts";
 import { SecretSourceCheckResult } from "./settingsSecretValue.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
@@ -168,7 +173,7 @@ import {
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
 } from "./provider.ts";
-import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
+import { ProviderInstanceMutation } from "./providerInstance.ts";
 import {
   GuestShareCreateError,
   GuestShareCreateInput,
@@ -324,7 +329,6 @@ import {
   ServerConfig,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
-  ServerLifecycleStreamEvent,
   ServerRemoveKeybindingInput,
   ServerRemoveKeybindingResult,
   ServerProviderUpdatedPayload,
@@ -333,6 +337,7 @@ import {
   ServerNpmReleaseError,
   ServerNpmReleaseInput,
   ServerSelfUpdateInput,
+  ForkReleaseList,
   ServerSelfUpdateProgressEvent,
   ServerSelfUpdateResult,
   ServerTraceDiagnosticsResult,
@@ -344,6 +349,7 @@ import {
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
+import { ServerLifecycleStreamEvent } from "./serverLifecycle.ts";
 import {
   HostResourcesSnapshot,
   ResourceTelemetryHistory,
@@ -507,9 +513,14 @@ export const WS_METHODS = {
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
+  serverGetRestartStatus: "server.getRestartStatus",
+  serverPrepareRestart: "server.prepareRestart",
+  serverAbortRestart: "server.abortRestart",
+  serverImportRestartHandoff: "server.importRestartHandoff",
   serverGetNpmRelease: "server.getNpmRelease",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
+  serverListForkReleases: "server.listForkReleases",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
   serverCommitDesktopUpdate: "server.commitDesktopUpdate",
@@ -519,10 +530,7 @@ export const WS_METHODS = {
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
   serverGetDatabaseStorage: "server.getDatabaseStorage",
   serverReclaimDatabaseSpace: "server.reclaimDatabaseSpace",
-  peerLinksList: "peerLinks.list",
-  peerLinksLink: "peerLinks.link",
-  peerLinksUnlink: "peerLinks.unlink",
-  peerLinksAnswerRequest: "peerLinks.answerRequest",
+  ...PEER_LINK_WS_METHODS,
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverCheckSecretSource: "server.checkSecretSource",
@@ -642,9 +650,31 @@ const WsServerRemoveKeybindingRpc = Rpc.make(WS_METHODS.serverRemoveKeybinding, 
 });
 
 const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
-  payload: Schema.Struct({}),
+  payload: ServerHandoffProbe,
   success: Schema.Struct({}),
   error: EnvironmentAuthorizationError,
+});
+
+const WsServerGetRestartStatusRpc = Rpc.make(WS_METHODS.serverGetRestartStatus, {
+  payload: ServerPrepareRestartInput,
+  success: ServerRestartStatus,
+  error: Schema.Union([ServerPrepareRestartError, EnvironmentAuthorizationError]),
+});
+const WsServerAbortRestartRpc = Rpc.make(WS_METHODS.serverAbortRestart, {
+  payload: ServerPrepareRestartInput,
+  success: ServerAbortRestartResult,
+  error: Schema.Union([ServerPrepareRestartError, EnvironmentAuthorizationError]),
+});
+const WsServerImportRestartHandoffRpc = Rpc.make(WS_METHODS.serverImportRestartHandoff, {
+  payload: ServerImportRestartHandoffInput,
+  success: ServerPrepareRestartResult,
+  error: Schema.Union([ServerImportRestartHandoffError, EnvironmentAuthorizationError]),
+});
+
+const WsServerPrepareRestartRpc = Rpc.make(WS_METHODS.serverPrepareRestart, {
+  payload: ServerPrepareRestartInput,
+  success: ServerPrepareRestartResult,
+  error: Schema.Union([ServerPrepareRestartError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
@@ -654,40 +684,7 @@ const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
 });
 
 export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, {
-  payload: Schema.Struct({
-    instanceId: Schema.optional(ProviderInstanceId),
-    cwd: Schema.optional(TrimmedNonEmptyString),
-    fresh: Schema.optional(Schema.Boolean),
-    /** Bypass model caches; explicit rediscovery may open sessions, background refreshes must not. */
-    refreshModels: Schema.optional(Schema.Boolean),
-    /**
-     * A model picker opened: refetch a model manifest older than a few minutes and probe providers
-     * only when it changed. The other fields are ignored and the config stream carries the result.
-     */
-    modelCatalogOnly: Schema.optional(Schema.Boolean),
-    /** Read secret references again; unlocking a vault can prompt on the host, so only explicit user refreshes ask. */
-    reloadSecrets: Schema.optional(Schema.Boolean),
-    /**
-     * Reply without snapshots, or with only the requested instance's cwd snapshot. Snapshots then
-     * reach the client only through these replies, so another client's scan shows on its next
-     * refresh, at most one TTL later.
-     */
-    workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
-    /** As on `subscribeServerConfig`: add /usage-limits to the replied snapshot. */
-    usageLimitsCommand: Schema.optional(Schema.Boolean),
-    /** As on `subscribeServerConfig`: a failed cwd scan replies with the machine catalog as a pending snapshot. */
-    providerCatalogsOnDemand: Schema.optional(Schema.Boolean),
-    /**
-     * Reply with no providers; the config stream carries the result. For callers that only wait
-     * for the refresh. Ignored with `instanceId` and `cwd`, whose reply is the snapshot.
-     */
-    omitProviders: Schema.optional(Schema.Boolean),
-    /**
-     * With `providerCatalogsOnDemand`, a cwd reply also carries the machine slash command names
-     * and skills with their `catalogDigest`. Sent by a client whose held lists are not current.
-     */
-    machineCatalog: Schema.optional(Schema.Boolean),
-  }),
+  payload: ServerProviderRefreshInput,
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
 });
@@ -791,6 +788,11 @@ const WsProviderInstallRemoveRpc = Rpc.make(WS_METHODS.providerInstallRemove, {
   error: ProviderSetupRpcError,
 });
 
+const WsServerListForkReleasesRpc = Rpc.make(WS_METHODS.serverListForkReleases, {
+  success: ForkReleaseList,
+  error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
+});
+
 const WsServerGetNpmReleaseRpc = Rpc.make(WS_METHODS.serverGetNpmRelease, {
   payload: ServerNpmReleaseInput,
   success: Schema.NullOr(ServerNpmRelease),
@@ -839,30 +841,6 @@ const WsServerReclaimDatabaseSpaceRpc = Rpc.make(WS_METHODS.serverReclaimDatabas
   payload: Schema.Struct({}),
   error: Schema.Union([DatabaseReclaimError, EnvironmentAuthorizationError]),
 });
-
-const WsPeerLinksListRpc = Rpc.make(WS_METHODS.peerLinksList, {
-  payload: Schema.Struct({}),
-  success: Schema.Struct({ links: Schema.Array(PeerLinkSummary) }),
-  error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
-});
-
-const WsPeerLinksLinkRpc = Rpc.make(WS_METHODS.peerLinksLink, {
-  payload: PeerLinkCreateInput,
-  success: PeerLink,
-  error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
-});
-
-const WsPeerLinksUnlinkRpc = Rpc.make(WS_METHODS.peerLinksUnlink, {
-  payload: PeerLinkRemoveInput,
-  success: PeerLinkRemoveResult,
-  error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
-});
-
-const WsPeerLinksAnswerRequestRpc = Rpc.make(WS_METHODS.peerLinksAnswerRequest, {
-  payload: PeerLinkRequestAnswerInput,
-  error: Schema.Union([PeerLinkRequestError, EnvironmentAuthorizationError]),
-});
-
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({
     patch: ServerSettingsPatch,
@@ -1972,31 +1950,14 @@ const WsSubscribeTerminalMetadataRpc = Rpc.make(WS_METHODS.subscribeTerminalMeta
 });
 
 export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerConfig, {
-  payload: Schema.Struct({
-    /** Opt-in protects older clients that reject unknown theme event types. */
-    environmentThemes: Schema.optional(Schema.Boolean),
-    usageLimitSources: Schema.optional(Schema.Boolean),
-    /** Advertise client handling before the server offers /usage-limits, or older clients send it as a prompt. */
-    usageLimitsCommand: Schema.optional(Schema.Boolean),
-    /** Omit per-cwd provider snapshots; the client fetches its cwd through `server.refreshProviders`. */
-    workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
-    /** With on-demand snapshots, also omit machine slash commands and skills a cwd snapshot replaces. */
-    providerCatalogsOnDemand: Schema.optional(Schema.Boolean),
-    /**
-     * With on-demand catalogs, send a `catalogDigest` in place of the machine slash command names
-     * and skills. The client keeps the lists it holds and loads new ones with a cwd snapshot.
-     */
-    providerCatalogDigests: Schema.optional(Schema.Boolean),
-    /** Send provider changes as `providerStatusDeltas`; older clients reject the event type. */
-    providerStatusDeltas: Schema.optional(Schema.Boolean),
-  }),
+  payload: ServerConfigSubscriptionInput,
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
   stream: true,
 });
 
 const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecycle, {
-  payload: Schema.Struct({}),
+  payload: ServerHandoffSubscription,
   success: ServerLifecycleStreamEvent,
   error: EnvironmentAuthorizationError,
   stream: true,
@@ -2094,6 +2055,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
+  WsServerPrepareRestartRpc,
+  WsServerAbortRestartRpc,
+  WsServerGetRestartStatusRpc,
+  WsServerImportRestartHandoffRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
@@ -2111,6 +2076,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderInstallCancelRpc,
   WsProviderInstallSubscribeRpc,
   WsProviderInstallRemoveRpc,
+  WsServerListForkReleasesRpc,
   WsServerUpdateServerRpc,
   WsServerGetNpmReleaseRpc,
   WsServerUpdateServerWithProgressRpc,
@@ -2122,10 +2088,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetDatabaseStorageRpc,
   WsServerReclaimDatabaseSpaceRpc,
   WsServerUpdateSettingsRpc,
-  WsPeerLinksListRpc,
-  WsPeerLinksLinkRpc,
-  WsPeerLinksUnlinkRpc,
-  WsPeerLinksAnswerRequestRpc,
+  ...PeerLinkRpcs,
   WsServerDiscoverSourceControlRpc,
   WsServerCheckSecretSourceRpc,
   WsServerSearchAcpRegistryRpc,

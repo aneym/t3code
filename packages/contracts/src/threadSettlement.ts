@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { CommandId, ThreadId, IsoDateTime } from "./baseSchemas.ts";
+import { CommandId, ThreadId, IsoDateTime, RunId } from "./baseSchemas.ts";
 
 const SettlementSource = Schema.Literals(["sweep", "user", "mcp"]);
 export const ThreadSettlement = Schema.Struct({
@@ -11,6 +11,7 @@ export const ThreadSettleCommand = Schema.Struct({
   type: Schema.Literal("thread.settle"),
   commandId: CommandId,
   threadId: ThreadId,
+  expectedLatestRunId: Schema.optional(RunId),
   source: Schema.optional(SettlementSource),
   settledAt: Schema.optional(Schema.DateTimeUtc),
 });
@@ -19,7 +20,6 @@ export const ThreadAutoSettleCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   snapshotAt: Schema.DateTimeUtc,
-  settledParentThreadId: Schema.optional(ThreadId),
   settledAt: Schema.optional(Schema.DateTimeUtc),
 });
 export const ThreadLifecycleFields = {

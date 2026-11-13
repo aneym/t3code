@@ -14,6 +14,12 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
   threadId: ThreadId,
   message: OrchestratorMcpPrompt,
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart", "note"])),
+  freshContext: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Start a new provider session without the thread's earlier context, like /clear. Never steers.",
+    }),
+  ),
   clientRequestId: Schema.optional(
     OrchestratorMcpClientRequestId.annotate({
       description:
@@ -40,7 +46,6 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   runId: Schema.optional(RunId),
   taskId: Schema.optional(NodeId),
   status: Schema.optional(OrchestrationV2RunStatus),
-  nativeSessionId: Schema.optional(Schema.NullOr(Schema.String)),
   ...ThreadSendDelivery.fields,
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   receipt: Schema.optional(OrchestratorMcpThreadSendReceipt),

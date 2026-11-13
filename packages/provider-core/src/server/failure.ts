@@ -240,16 +240,16 @@ function replaceUnsafeControlCharacters(value: string): string {
   return sanitized.join("");
 }
 
-export function redactProviderFailureText(value: string): string {
+function redactProviderFailureText(value: string): string {
   return replaceUnsafeControlCharacters(value)
     .replace(/\bhttps?:\/\/[^\s<>"']+/giu, redactUrl)
     .replace(/\b(Bearer|Basic)\s+[^\s,;]+/giu, "$1 [REDACTED]")
     .replace(
-      /(["'](?!(?:tokenizer|passwordless|max_tokens|token_count|secretary)\b)[\w-]*(?:access[_-]?(?:token|key)|api[_-]?key|private[_-]?key|authorization|(?:credential|password|secret|token)[\w-]*)["']\s*:\s*["'])[^"']*(["'])/giu,
+      /(["'][\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)["']\s*:\s*["'])[^"']*(["'])/giu,
       "$1[REDACTED]$2",
     )
     .replace(
-      /((?<![\w-])(?!(?:tokenizer|passwordless|max_tokens|token_count|secretary)\b)[\w-]*(?:access[_-]?(?:token|key)|api[_-]?key|private[_-]?key|authorization|(?:credential|password|secret|token)[\w-]*)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
+      /((?<![\w-])[\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
       "$1[REDACTED]",
     )
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/gu, "[REDACTED]")

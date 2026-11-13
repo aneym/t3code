@@ -115,10 +115,6 @@
       "types": "./src/server/ProviderContinuationRequests.ts",
       "import": "./src/server/ProviderContinuationRequests.ts"
     },
-    "./server/ProviderWakeDispatches": {
-      "types": "./src/server/ProviderWakeDispatches.ts",
-      "import": "./src/server/ProviderWakeDispatches.ts"
-    },
     "./server/ProviderEventLoggers": {
       "types": "./src/server/ProviderEventLoggers.ts",
       "import": "./src/server/ProviderEventLoggers.ts"
