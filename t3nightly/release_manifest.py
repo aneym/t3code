@@ -360,7 +360,7 @@ def freeze(tree, base, version, out, old_releases=None, engine=None, serving_hea
     unknown = sorted((set(old_releases) | set(serving_heads)) - set(TARGETS))
     if unknown:
         raise ValueError(f"unknown target hosts: {', '.join(unknown)}")
-    hosts = {host: target for host, target in TARGETS.items() if host == "studio" or host not in deferred}
+    hosts = {host: target for host, target in TARGETS.items() if host not in deferred}
     missing = sorted(set(hosts) - (set(old_releases) & set(serving_heads)))
     if missing:
         raise ValueError(f"installed release and source head required for every target: {missing}")

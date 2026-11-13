@@ -8,7 +8,7 @@ from .install_offbox import METHOD as OFFBOX_METHOD
 from . import offbox_digest
 from .release_approval import approved
 from .release_graph import SUCCESS_OUTCOMES
-from .release_manifest import digest, eligible, load
+from .release_manifest import TARGETS, digest, eligible, load
 from .release_targets import LINUX_TARGETS, stage_action, stage_target
 from .release_publish_stage import validate as validate_staged
 from .release_receipts import INSTALL_SCHEMA, parse, provenance
@@ -198,8 +198,8 @@ def deferred_hosts(run):
             if not isinstance(value, dict):
                 raise ValueError(f"{name} is not a JSON object")
             hosts = value.get("deferredHosts", {})
-            if not isinstance(hosts, dict) or any(host not in LINUX_TARGETS or not isinstance(reason, str) or not reason.strip() for host, reason in hosts.items()):
-                raise ValueError(f"invalid Linux host deferral in {name}")
+            if not isinstance(hosts, dict) or any(host not in TARGETS or not isinstance(reason, str) or not reason.strip() for host, reason in hosts.items()):
+                raise ValueError(f"invalid host deferral in {name}")
             records.append(hosts)
     if any(records) and (len(records) != 2 or records[0] != records[1]):
         raise ValueError("a host deferral needs fast-inputs.json and readiness.json present and agreeing")

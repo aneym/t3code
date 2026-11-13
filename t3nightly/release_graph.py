@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .release_targets import LINUX_TARGETS, TARGET_SUFFIXES, linux_target
 
@@ -76,18 +76,19 @@ def linux_nodes(host, builder, defer_hosts=(), defer_reason=""):
 def fast_graph(linux_host="ax42", defer_hosts=(), defer_reason=""):
     defer_hosts = tuple(defer_hosts or ())
     if bool(defer_hosts) != bool(defer_reason.strip()):
-        raise ValueError("deferral requires a Linux host and a nonempty reason")
-    if set(defer_hosts) - set(LINUX_TARGETS):
-        raise ValueError("only Linux targets can be deferred")
+        raise ValueError("deferral requires a host and a nonempty reason")
+    if set(defer_hosts) - {"studio", *LINUX_TARGETS}:
+        raise ValueError("only Studio and Linux targets can be deferred")
     builder = linux_target(linux_host)
     if builder in defer_hosts:
         raise ValueError(f"{builder} builds the Linux artifact and cannot be deferred")
     if "ax102" in defer_hosts and "ax42" not in defer_hosts:
         raise ValueError("ax42's off-box backup lives on ax102; defer ax42 too, or don't defer ax102.")
     installs = tuple(f"I{suffix}" for suffix in TARGET_SUFFIXES.values())
-    return (
-        FastNode("Q", "readiness", "studio", (), 30, ("release-coordinator",)),
-        FastNode("A", "assemble", "studio", ("Q",), 30, ("candidate-assembly",)),
+    coordinator = builder if "studio" in defer_hosts else "studio"
+    nodes = (
+        FastNode("Q", "readiness", coordinator, (), 30, ("release-coordinator",)),
+        FastNode("A", "assemble", coordinator, ("Q",), 30, ("candidate-assembly",)),
         FastNode("M", "mac-cli", "studio", ("A",), 330, ("build-tree:mac-cli", "mac-signing")),
         FastNode("L", "linux-cli", builder, ("A",), 300, ("build-tree:linux-cli",)),
         FastNode("D", "desktop", "studio", ("M",), 330, ("build-tree:desktop", "mac-signing")),
@@ -105,6 +106,10 @@ def fast_graph(linux_host="ax42", defer_hosts=(), defer_reason=""):
         FastNode("W", "desktop-windows", "studio", ("SL", *(f"T{TARGET_SUFFIXES[host]}" for host in LINUX_TARGETS if host != builder and host not in defer_hosts)), 1500, ("build-host:pc",), gating=False),
         FastNode("FW", "publish-windows", "studio", ("F", "W"), 30, ("feed",), gating=False),
     )
+    if "studio" not in defer_hosts:
+        return nodes
+    return tuple(replace(node, needs=(), budget=0, resources=(), writes=(), outcomes=("deferred",), defer_reason=defer_reason)
+                 if node.host == "studio" else node for node in nodes)
 
 
 FAST_GRAPH = fast_graph()

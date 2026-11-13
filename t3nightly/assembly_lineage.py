@@ -1,27 +1,7 @@
 import argparse
-import json
 import subprocess
-from pathlib import Path
 
-DELIVERED = Path.home() / ".t3nightly/delivered-merges.json"
-
-
-def delivered_entries(path=DELIVERED):
-    path = Path(path)
-    return json.loads(path.read_text())["merges"] if path.is_file() else []
-
-
-def release_entries(runs_root, versions):
-    entries = []
-    for version in sorted(set(versions)):
-        root = Path(runs_root) / version
-        paths = sorted({*root.glob("*/assembly.json"), *root.glob("assembly.json")})
-        shipped = [path for path in paths if (path.parent / "final-receipt.json").is_file()]
-        for path in (shipped or paths)[-1:]:
-            assembly = json.loads(path.read_text())
-            for name, sha in zip(assembly.get("topics", []), assembly.get("topicShas", [])):
-                entries.append({"label": f"{version} {name}", "any": [sha, assembly["head"]]})
-    return entries
+from .release_ledger import LedgerRefusal, lineage, read, without_commit_graph
 
 
 def ancestor(repo, sha, tip):
@@ -37,15 +17,20 @@ def refusal(gaps):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Refuse an integration branch that drops a delivered release or one-off merge")
+    parser = argparse.ArgumentParser(description="Refuse an integration branch that drops a delivered release or one-off merge in the release ledger")
     parser.add_argument("repo")
     parser.add_argument("tips", nargs="+")
-    parser.add_argument("--delivered", default=str(DELIVERED))
-    parser.add_argument("--runs", default=str(Path.home() / ".t3nightly/runs"))
-    parser.add_argument("--release", action="append", default=[])
+    parser.add_argument("--remote", default="origin")
     args = parser.parse_args(argv)
-    entries = [*delivered_entries(args.delivered), *release_entries(args.runs, args.release)]
+    without_commit_graph()
+    try:
+        ledger = read(args.repo, args.remote)
+    except LedgerRefusal as error:
+        print(f"assembly refused: {error}")
+        return 1
+    entries = lineage(ledger)
     gaps = missing(args.repo, args.tips, entries)
+    print(f"ledger {ledger['commit']} rows {len(ledger['rows'])}")
     for entry in entries:
         print(("MISSING " if entry in gaps else "ok ") + entry["label"] + " " + " or ".join(sha[:10] for sha in entry["any"]))
     if gaps:

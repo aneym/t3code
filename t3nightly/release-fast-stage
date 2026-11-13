@@ -12,6 +12,7 @@ from t3nightly.release_actions import run_fast_action
 from t3nightly.release_config import FastConfig
 from t3nightly.release_engine import require_engine
 from t3nightly.release_graph import fast_graph
+from t3nightly.release_ledger import without_commit_graph
 from t3nightly.release_outputs import fast_output
 from t3nightly.release_targets import LINUX_TARGETS, stage_action
 
@@ -30,7 +31,7 @@ def main():
     parser.add_argument("--override-reason", default="")
     parser.add_argument("--advisory-workers", type=int, default=4)
     parser.add_argument("--compact-db", action="store_true", help="window flag passed to the studio install: compact the stopped database with t3 doctor --fix")
-    parser.add_argument("--defer-host", action="append", default=[], choices=tuple(LINUX_TARGETS), help="Linux host deferred for this release (repeatable); readiness skips it")
+    parser.add_argument("--defer-host", action="append", default=[], choices=("studio", *LINUX_TARGETS), help="host deferred for this release (repeatable); readiness skips it")
     parser.add_argument("--defer-reason", default="", help="operator decision authorizing the deferral")
     args = parser.parse_args()
     args.defer_host = tuple(dict.fromkeys(args.defer_host))
@@ -44,6 +45,7 @@ def main():
     if args.advisory_workers < 1:
         parser.error("--advisory-workers must be positive")
     home = Path.home()
+    without_commit_graph()
     os.environ["PATH"] = os.pathsep.join([str(home / ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", os.environ.get("PATH", "/usr/bin:/bin")])
     config = FastConfig(args.version, args.topic, args.run.resolve(), args.host, args.remote_run, args.remote_tools, args.base, linux_host=args.linux_host, override_reason=args.override_reason, advisory_workers=args.advisory_workers, defer_hosts=args.defer_host, defer_reason=args.defer_reason, compact_db=args.compact_db)
     config.run.mkdir(parents=True, exist_ok=True)

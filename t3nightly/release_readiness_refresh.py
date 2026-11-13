@@ -4,18 +4,23 @@ from datetime import datetime, timezone
 
 from .release_config import FastConfig
 from .release_host_readiness import probe_host
+from .release_ledger import read as read_ledger
+from .release_targets import linux_target
 from .release_manifest import engine_identity
 from .release_readiness_store import atomic_write, readiness_lock
 
 
 def refresh(args, log):
-    config = FastConfig(args.version, args.topic, args.run, "studio", args.remote_run, args.remote_tools, args.base)
+    host = linux_target(args.linux_host) if "studio" in args.defer_host else "studio"
+    config = FastConfig(args.version, args.topic, args.run, host, args.remote_run, args.remote_tools, args.base)
     with readiness_lock(args.run) as path:
         before = path.read_bytes()
         value = json.loads(before)
         if engine_identity(config.tools)["digest"] != value["engine"]["digest"]:
             raise ValueError("readiness engine digest mismatch; use the engine that created this run")
+        value["ledger"] = read_ledger(config.repo)
         probe_host(config, log, args.refresh_readiness, value, require_result=True)
+        value.pop("ledger")
         value["failed"] = sorted(name for name, ok in value["checks"].items() if not ok)
         value["ok"] = not value["failed"]
         after = (json.dumps(value, indent=2) + "\n").encode()

@@ -24,7 +24,8 @@ from .release_seed_remotes import seed
 from .release_advisory import fast_advisory
 from .release_transport import command, git_tree, prepare_remote, remote_worker, require, transfer
 from .release_windows import WINDOWS_STAGES, run_windows
-from .assembly_lineage import delivered_entries, missing, refusal, release_entries
+from .assembly_lineage import missing, refusal
+from .release_ledger import LedgerRefusal, fetch_candidate, lineage, publish_candidate, read as read_ledger, record_installed, require_releases
 
 
 def checksums(config):
@@ -145,6 +146,13 @@ def fast_build(config, stage, head, out, script, log, env=None):
 def fast_assemble(config, log):
     ready = json.loads((config.run / "readiness.json").read_text())
     tree, base = config.candidate_tree(), ready["baseHead"]
+    try:
+        ledger = read_ledger(config.repo)
+        require_releases(ledger, ready["oldReleases"].values())
+    except LedgerRefusal as error:
+        log.write(f"assembly refused: {error}\n")
+        return 4
+    log.write(f"release ledger {ledger['commit']} rows {len(ledger['rows'])}\n")
     if tree.exists():
         require(["git", "-C", str(tree), "checkout", "-q", "--detach", "--force", base], log)
         require(["git", "-C", str(tree), "clean", "-fdq"], log)
@@ -152,8 +160,7 @@ def fast_assemble(config, log):
     else:
         git_tree(config.repo, tree, base, log)
     try:
-        lineage = [*delivered_entries(), *release_entries(config.home / ".t3nightly/runs", ready["oldReleases"].values())]
-        if gaps := missing(tree, ready["topicShas"], lineage):
+        if gaps := missing(tree, ready["topicShas"], lineage(ledger)):
             log.write(refusal(gaps) + "\n")
             return 4
         for name, sha in zip(config.topic.split(","), ready["topicShas"]):
@@ -165,9 +172,9 @@ def fast_assemble(config, log):
         if not eligible(manifest):
             log.write(f"fast path refused: { {host: target['compatibility']['fastPath']['reasons'] for host, target in manifest['targets'].items()} }\n")
             return 3
-        (config.run / "assembly.json").write_text(json.dumps({"base": base, "head": head, "topics": config.topic.split(","), "topicShas": ready["topicShas"]}, indent=2) + "\n")
-        bundle = config.run / "candidate.bundle"
-        require(["git", "-C", str(tree), "bundle", "create", str(bundle), "HEAD", f"^v{config.nightly}"], log)
+        ref = publish_candidate(config.repo, config.version, head)
+        log.write(f"candidate {head} pushed to origin {ref}\n")
+        (config.run / "assembly.json").write_text(json.dumps({"base": base, "head": head, "topics": config.topic.split(","), "topicShas": ready["topicShas"], "candidateRef": ref}, indent=2) + "\n")
         return 0
     finally:
         ownership("release", tree, log)
@@ -226,7 +233,7 @@ def fast_health(config, log):
             return command([sys.executable, str(config.tools / "release-observe"), "--host", host, "--expected-version", config.version,
                             "--linux-host", LINUX_TARGETS.get(host, "ax42"), "--out", str(config.run / "health" / host)], handle)
 
-    hosts = ("studio", *(host for host in LINUX_TARGETS if host not in deferred_hosts(config.run)))
+    hosts = tuple(host for host in ("studio", *LINUX_TARGETS) if host not in deferred_hosts(config.run))
     with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
         return max(pool.map(one, hosts))
 
@@ -248,7 +255,7 @@ def run_fast_action(stage, config, log):
         return fast_build(config, "mac-cli", head, config.build_out(), "build-cli", log, env)
     if stage == "L":
         require_host_ready(config, build=True)
-        require(["git", "-C", str(config.repo), "fetch", str(config.run / "candidate.bundle"), "HEAD"], log)
+        fetch_candidate(config.repo, json.loads((config.run / "assembly.json").read_text()))
         return fast_build(config, "linux-cli", head, config.build_out(), "build-cli", log)
     if stage == "D":
         return fast_build(config, "desktop", head, config.run / "desktop", "build-desktop", log)
@@ -258,7 +265,7 @@ def run_fast_action(stage, config, log):
         return stage_linux(config, target, log)
     if stage == "install":
         prepare_dependencies(config, head, log, fast_tree)
-        return fast_install(config, log)
+        return fast_install(config, log) or record_installed(config, log)
     if stage == "S":
         return fast_swap(config, log)
     if stage == "F":

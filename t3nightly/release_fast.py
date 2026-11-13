@@ -159,9 +159,10 @@ def drive_fast(args):
                     now = time.monotonic()
                     row = {"outcome": "deferred", "reason": node.defer_reason, "seconds": 0,
                            "monotonicStart": now, "monotonicEnd": now, "start": utc_now(), "end": utc_now()}
-                    outcome = args.run / f"install-{node.host}/outcome.json"
-                    outcome.parent.mkdir(parents=True, exist_ok=True)
-                    write_status(outcome, row)
+                    if stage_action(key) == "install":
+                        outcome = args.run / f"install-{node.host}/outcome.json"
+                        outcome.parent.mkdir(parents=True, exist_ok=True)
+                        write_status(outcome, row)
                     if key not in recorded:
                         timeline.record_fast(node, row)
                         recorded.add(key)
@@ -215,7 +216,7 @@ def drive_fast(args):
                 timeline.record_fast(node, row)
                 recorded.add(key)
             del running[key]
-        if "F" in done and completed_at is None:
+        if completed_at is None and {node.id for node in graph if node.gating} <= done:
             completed_at = max(0.0, time.monotonic() - start - uplink.seconds)
         write_status(state, {"start": started_at, "monotonicStart": start,
                             "seconds": time.monotonic() - start, "releaseSeconds": completed_at,
@@ -245,7 +246,7 @@ def main(argv):
     parser.add_argument("--advisory-workers", type=int, default=4, help="maximum parallel advisory suite workers (default: 4)")
     parser.add_argument("--remote-tools")
     parser.add_argument("--linux-host", default="ax42", choices=(*LINUX_TARGETS, "pc-wsl"), help="shared Linux artifact builder (default: ax42)")
-    parser.add_argument("--defer-host", action="append", default=[], choices=tuple(LINUX_TARGETS), help="skip a Linux host for this release (repeatable): no readiness probe, sandbox proofs or install")
+    parser.add_argument("--defer-host", action="append", default=[], choices=("studio", *LINUX_TARGETS), help="skip a host for this release (repeatable): no readiness probe, sandbox proofs or install")
     parser.add_argument("--defer-reason", default="", help="operator decision authorizing the deferral")
     parser.add_argument("--base", default="", help="base ref to build on instead of the serving release head; must contain it")
     parser.add_argument("--uplink-window", default=WINDOW, help=f"UTC span when bulk uploads may leave Studio (default {WINDOW}); off starts them at once")
@@ -286,6 +287,8 @@ def main(argv):
                           "nodes": [dict(id=node.id, name=node.name, needs=node.needs, uplink=node.id in UPLINK_NODES,
                                          gating=node.gating, **stage_spec(node, args)) for node in graph]}, indent=2))
         return 0
+    if "studio" in args.defer_host:
+        parser.error("with Studio deferred, run Q and A on the Linux builder through release-fast-stage; the scheduler still coordinates from Studio")
     if args.dry_run or args.coordinator:
         try:
             return drive_fast(args)

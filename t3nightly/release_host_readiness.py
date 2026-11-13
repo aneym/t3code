@@ -4,7 +4,7 @@ import subprocess
 from .release_config import CHAT_PROJECT
 from .release_manifest import migration_identity
 from .release_targets import LINUX_TARGETS
-from .serving_assembly import serving_assembly_head
+from .release_ledger import release_head
 from .remote_shell import ssh_argv
 
 
@@ -13,7 +13,7 @@ REMOTE_PROBE = r'''
 import json, os, shutil, sqlite3, sys, urllib.request
 from contextlib import closing
 from pathlib import Path
-tools, version, chat, remote_run, host = sys.argv[1:6]
+tools, version, chat = sys.argv[1:4]
 home = Path.home()
 row = {"disk": shutil.disk_usage("/").free, "load": os.getloadavg()[0], "cpus": os.cpu_count()}
 try:
@@ -27,15 +27,6 @@ try:
     row["engine"] = engine_identity(Path(tools))["digest"]
 except Exception as error:
     row["engine"] = f"unavailable: {type(error).__name__}"
-row["head"] = None
-if row["serving"]:
-    current = Path(remote_run)
-    root = current.parent.parent if current.name.startswith("fast") else current.parent
-    try:
-        from t3nightly.serving_assembly import serving_assembly_head
-        row["head"] = next((head for runs in (root / row["serving"], home / ".t3nightly/runs" / row["serving"]) if (head := serving_assembly_head(runs, host, row["serving"]))), None)
-    except Exception:
-        row["head"] = None
 row["liveHistory"] = None
 try:
     with closing(sqlite3.connect(f"file:{home / '.t3/userdata/statev2.sqlite'}?mode=ro", uri=True)) as connection:
@@ -56,12 +47,8 @@ print(json.dumps(row))
 '''
 
 
-def serving_head(config, version, host):
-    return serving_assembly_head(config.home / ".t3nightly/runs" / str(version), host, version) if version else None
-
-
 def remote_probe(config, log, host="ax42"):
-    words = [*ssh_argv(LINUX_TARGETS[host], '-oConnectTimeout=5'), "python3", "-", config.remote_tools, config.version, CHAT_PROJECT, config.remote_run, host]
+    words = [*ssh_argv(LINUX_TARGETS[host], '-oConnectTimeout=5'), "python3", "-", config.remote_tools, config.version, CHAT_PROJECT]
     try:
         result = subprocess.run(words, input=REMOTE_PROBE, capture_output=True, text=True, timeout=25, check=False)
         if result.returncode:
@@ -88,15 +75,14 @@ def probe_host(config, log, host, value, *, require_result=False):
     if require_result and not remote:
         raise ValueError(f"{host}: readiness probe failed; previous evidence preserved")
     old = remote.get("serving")
-    head = remote.get("head") or serving_head(config, old, host)
-    if not head and old and old == value["oldReleases"]["studio"]:
-        head = value["servingHead"]
+    head = release_head(value["ledger"], old)
     history = source_history(config.repo, head)
     value["oldReleases"][host] = old
     value["servingHeads"][host] = head
     value["servingHistories"][host] = history
     value["evidence"][host] = remote
     value["evidence"][f"{host}ServingHead"] = head
+    value["checks"][f"{host}-release-row"] = bool(head)
     value["checks"][f"{host}-base-assembly"] = bool(old and head and history)
     value["checks"][f"{host}-live-history"] = bool(history and remote.get("liveHistory") == history)
     value["checks"][f"{host}-engine"] = remote.get("engine") == value["engine"]["digest"]

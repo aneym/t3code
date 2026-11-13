@@ -3,6 +3,7 @@ import json
 import shlex
 import shutil
 
+from .release_ledger import fetch_candidate
 from .release_ownership import ownership
 from .release_targets import LINUX_TARGETS
 from .release_transport import require
@@ -31,7 +32,7 @@ def require_host_ready(config, *, install=False, build=False):
 def prepare_dependencies(config, head, log, tree_factory):
     if config.host == "studio" or config.host == config.build_host:
         return
-    require(["git", "-C", str(config.repo), "fetch", str(config.run / "candidate.bundle"), "HEAD"], log)
+    fetch_candidate(config.repo, json.loads((config.run / "assembly.json").read_text()))
     tree = tree_factory(config, "linux-cli", head, log)
     try:
         require([str(config.home / ".vite-plus/bin/vp"), "i", "--frozen-lockfile"], log, cwd=tree)
