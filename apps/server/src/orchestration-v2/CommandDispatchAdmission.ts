@@ -11,13 +11,8 @@ import * as Option from "effect/Option";
 import { withServerAdmission } from "../serverHandoffBarrier.ts";
 import type { EffectOutboxV2Shape } from "./EffectOutbox.ts";
 import { BUSY_RETRY_AFTER_MS, DispatchAdmissionBound } from "./DispatchAdmissionBound.ts";
-import {
-  OrchestratorDispatchBusyError,
-  OrchestratorDispatchError,
-} from "./OrchestratorDispatchError.ts";
+import { OrchestratorDispatchBusyError } from "./OrchestratorDispatchError.ts";
 import { isPlainSend } from "./SharedDispatchPolicy.ts";
-
-const SIDE_CHAT_SOURCE_WAIT = "30 seconds";
 
 export function makeCommandDispatchAdmission<A, E, R, P>(options: {
   readonly execute: (
@@ -33,11 +28,12 @@ export function makeCommandDispatchAdmission<A, E, R, P>(options: {
   readonly parentThreadId: (threadId: ThreadId) => Effect.Effect<ThreadId | undefined, P>;
   readonly outbox: Pick<EffectOutboxV2Shape, "admit" | "admitWithin">;
   readonly locks: KeyedLock.KeyedLock<ThreadId>;
+  readonly intake: KeyedLock.KeyedLock<ThreadId>;
 }) {
   const execute = (command: OrchestrationV2ServerCommand, sideChatIds?: ReadonlyArray<ThreadId>) =>
     withServerAdmission(options.execute(command, sideChatIds));
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
-  const dispatch = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+  const route = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
     const label = { type: command.type, thread: options.commandThreadId(command) };
     const bound = yield* DispatchAdmissionBound;
     const startedAt = yield* Clock.currentTimeMillis;
@@ -77,20 +73,9 @@ export function makeCommandDispatchAdmission<A, E, R, P>(options: {
     ) {
       const source = yield* options.findThread(command.sourceThreadId);
       const target = yield* options.findThread(command.targetThreadId);
-      if (source === null || source.lineage.sideChat === true || target !== null)
-        return yield* execution;
-      const forked = yield* options.locks.withLockWithin(
-        command.sourceThreadId,
-        SIDE_CHAT_SOURCE_WAIT,
-        execution,
-      );
-      if (Option.isSome(forked)) return forked.value;
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause:
-          "The source thread stayed busy for 30 seconds, so the fork did not start. Try again.",
-      });
+      return yield* source === null || source.lineage.sideChat === true || target !== null
+        ? execution
+        : options.locks.withLock(command.sourceThreadId, execution);
     }
     if (command.type === "thread.delete")
       return yield* lockThread(
@@ -120,5 +105,11 @@ export function makeCommandDispatchAdmission<A, E, R, P>(options: {
     // Follow-up intake and Stop serialize on the parent before taking the child lock.
     return yield* parentThreadId === undefined ? execution : lockThread(parentThreadId, execution);
   });
+  // Taken before the lineage read, so a message whose read yields keeps its place ahead of later
+  // messages to the same thread.
+  const dispatch = (command: OrchestrationV2ServerCommand) =>
+    command.type === "message.dispatch"
+      ? options.intake.withLock(command.threadId, route(command))
+      : route(command);
   return { execute, dispatch };
 }

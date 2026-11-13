@@ -37,7 +37,6 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
-import { CommandPolicyCapabilityUnsupportedError } from "../CommandPolicy.ts";
 import {
   ClaudeAgentSdkQueryRunnerError,
   ClaudeAppendSystemPromptFileError,
@@ -67,6 +66,7 @@ import {
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as OrchestratorDispatch from "../OrchestratorDispatchError.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -2038,128 +2038,6 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
-  it.live("checks the queued provider's capability while the current provider stays running", () =>
-    Effect.gen(function* () {
-      for (const scenario of [
-        { activeSupportsQueue: false, selectedSupportsQueue: true },
-        { activeSupportsQueue: true, selectedSupportsQueue: false },
-      ]) {
-        const key = `active-${scenario.activeSupportsQueue}-selected-${scenario.selectedSupportsQueue}`;
-        const cwd = yield* checkpointWorkspace(`queued-capability-${key}`);
-        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-        const started = yield* Deferred.make<void>();
-        const scenarioThreadId = ThreadId.make(`thread:queued-capability:${key}`);
-        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
-          makeTestAdapter({
-            instanceId: CODEX_MODEL_SELECTION.instanceId,
-            driver: CODEX_DRIVER,
-            capabilities: {
-              ...CodexProviderCapabilitiesV2,
-              turns: {
-                ...CodexProviderCapabilitiesV2.turns,
-                supportsQueuedMessages: scenario.activeSupportsQueue,
-              },
-            },
-            modelSelection: CODEX_MODEL_SELECTION,
-            responseByRunOrdinal: {},
-            capturedTurns,
-            holdFirstTurn: started,
-          }),
-          makeTestAdapter({
-            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
-            driver: CLAUDE_DRIVER,
-            capabilities: {
-              ...ClaudeProviderCapabilitiesV2,
-              turns: {
-                ...ClaudeProviderCapabilitiesV2.turns,
-                supportsQueuedMessages: scenario.selectedSupportsQueue,
-              },
-            },
-            modelSelection: CLAUDE_MODEL_SELECTION,
-            responseByRunOrdinal: {},
-            capturedTurns,
-          }),
-        ]);
-        yield* Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          yield* orchestrator.dispatch({
-            type: "thread.create",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make(`command:queued-capability:create:${key}`),
-            threadId: scenarioThreadId,
-            projectId: ProjectId.make(`project:queued-capability:${key}`),
-            title: "Queued capability",
-            modelSelection: CODEX_MODEL_SELECTION,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: cwd,
-          });
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make(`command:queued-capability:first:${key}`),
-            threadId: scenarioThreadId,
-            messageId: MessageId.make(`message:queued-capability:first:${key}`),
-            text: "Current Codex turn",
-            attachments: [],
-            modelSelection: CODEX_MODEL_SELECTION,
-            dispatchMode: { type: "start_immediately" },
-          });
-          yield* Deferred.await(started);
-          yield* worker.drain();
-          const queue = orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make(`command:queued-capability:claude:${key}`),
-            threadId: scenarioThreadId,
-            messageId: MessageId.make(`message:queued-capability:claude:${key}`),
-            text: "Queued Claude turn",
-            attachments: [],
-            modelSelection: CLAUDE_MODEL_SELECTION,
-            dispatchMode: { type: "queue_after_active" },
-          });
-          if (scenario.selectedSupportsQueue) {
-            yield* queue;
-          } else {
-            const error = yield* queue.pipe(Effect.flip);
-            assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
-            assert.instanceOf(error.cause, CommandPolicyCapabilityUnsupportedError);
-            assert.equal(error.cause.capability, "queued_messages");
-          }
-          const projection = yield* orchestrator.getThreadProjection(scenarioThreadId);
-          assert.deepEqual(
-            projection.runs.map((run) => run.status),
-            scenario.selectedSupportsQueue ? ["running", "queued"] : ["running"],
-          );
-          assert.deepEqual(projection.thread.modelSelection, CODEX_MODEL_SELECTION);
-        }).pipe(
-          Effect.provide(
-            ProviderReplayHarness.layerWithRegistry(
-              {
-                name: `queued-capability-${key}`,
-                runtimePolicyOverride: {
-                  cwd,
-                  approvalPolicy: "never",
-                  sandboxPolicy: {
-                    type: "readOnly",
-                    access: { type: "fullAccess" },
-                    networkAccess: false,
-                  },
-                },
-              },
-              layerRegistry,
-            ),
-          ),
-        );
-      }
-    }),
-  );
-
   it.live("hands completed Grok steering context to earlier queued Codex and later Claude", () =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("queued-steer-provider-switch");
@@ -3260,7 +3138,7 @@ describe("orchestration v2 provider switching", () => {
                 targetRunId: waiting.runs.find((run) => run.status === "running")!.id,
               })
               .pipe(Effect.flip);
-            assert.instanceOf(promoted, Orchestrator.OrchestratorDispatchError);
+            assert.instanceOf(promoted, OrchestratorDispatch.OrchestratorDispatchError);
             assert.include(String(promoted.cause), "fresh session");
             yield* Deferred.succeed(release, undefined);
           }

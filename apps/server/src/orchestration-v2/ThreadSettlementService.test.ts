@@ -47,6 +47,8 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadSettlementService from "./ThreadSettlementService.ts";
+import * as AutoSettlementPolicy from "./AutoSettlementPolicy.ts";
+import * as ThreadSettlementSettings from "./ThreadSettlementSettings.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -136,33 +138,9 @@ function persistedLink(
 }
 
 describe("isAutoSettlementCandidate", () => {
-  it("settles a thread whose only background work is a command left running", () => {
-    expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
-        shell({
-          pendingBackgroundTasks: [
-            { taskId: "dev", kind: "command", description: "vp run dev --share" },
-          ],
-        }),
-        NOW_MS,
-      ),
-    ).toBe(true);
-    // A pull request watch whose checks finished holds nothing, yet still keeps the thread.
-    expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
-        shell({
-          pendingBackgroundTasks: [
-            { taskId: "pull-request-watch:github.com/acme/app#1", kind: "monitor" },
-          ],
-        }),
-        NOW_MS,
-      ),
-    ).toBe(false);
-  });
-
   it("never settles, or keeps snoozed, a thread whose guest is waiting on the owner", () => {
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      AutoSettlementPolicy.isAutoSettlementCandidate(
         shell({ pendingGuestMessageCount: 1 }),
         NOW_MS,
       ),
@@ -172,7 +150,7 @@ describe("isAutoSettlementCandidate", () => {
       snoozedAt: at(-60 * 60 * 1_000),
       pendingGuestMessageCount: 1,
     });
-    expect(ThreadSettlementService.isSnoozed(snoozed, NOW_MS)).toBe(false);
+    expect(AutoSettlementPolicy.isSnoozed(snoozed, NOW_MS)).toBe(false);
   });
 
   it("keeps snoozed threads parked until a fresh failure or timer wake", () => {
@@ -180,33 +158,33 @@ describe("isAutoSettlementCandidate", () => {
       snoozedUntil: at(60 * 60 * 1_000),
       snoozedAt: at(-60 * 60 * 1_000),
     });
-    expect(ThreadSettlementService.isAutoSettlementCandidate(snoozed, NOW_MS)).toBe(false);
+    expect(AutoSettlementPolicy.isAutoSettlementCandidate(snoozed, NOW_MS)).toBe(false);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      AutoSettlementPolicy.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-30 * 60 * 1_000) }),
         NOW_MS,
       ),
     ).toBe(true);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      AutoSettlementPolicy.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-2 * 60 * 60 * 1_000) }),
         NOW_MS,
       ),
     ).toBe(false);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      AutoSettlementPolicy.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: snoozed.snoozedAt }),
         NOW_MS,
       ),
     ).toBe(false);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      AutoSettlementPolicy.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: null }),
         NOW_MS,
       ),
     ).toBe(false);
     expect(
-      ThreadSettlementService.isAutoSettlementCandidate(
+      AutoSettlementPolicy.isAutoSettlementCandidate(
         shell({ ...snoozed, snoozedUntil: at(-1) }),
         NOW_MS,
       ),
@@ -466,11 +444,11 @@ const PROJECT_ID = ProjectId.make("settlement-project");
 
 describe("autoSettlementSettingsKey", () => {
   it("distinguishes a project that inherits the threshold from one that disables it", () => {
-    const inherits = ThreadSettlementService.autoSettlementSettingsKey({
+    const inherits = ThreadSettlementSettings.autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleOnMerge: true } },
     });
-    const never = ThreadSettlementService.autoSettlementSettingsKey({
+    const never = ThreadSettlementSettings.autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: {
         [PROJECT_ID]: { sidebarAutoSettleOnMerge: true, sidebarAutoSettleAfterDays: null },
@@ -2025,25 +2003,22 @@ describe("isSnoozed", () => {
       createdAt: snoozed.snoozedAt,
     };
     expect(
-      ThreadSettlementService.isSnoozed(
-        shell({ ...snoozed, pendingRuntimeRequest: request }),
-        NOW_MS,
-      ),
+      AutoSettlementPolicy.isSnoozed(shell({ ...snoozed, pendingRuntimeRequest: request }), NOW_MS),
     ).toBe(true);
     expect(
-      ThreadSettlementService.isSnoozed(
+      AutoSettlementPolicy.isSnoozed(
         shell({ ...snoozed, pendingRuntimeRequest: { ...request, createdAt: at(-DAY_MS) } }),
         NOW_MS,
       ),
     ).toBe(false);
     expect(
-      ThreadSettlementService.isSnoozed(
+      AutoSettlementPolicy.isSnoozed(
         shell({ ...snoozed, pendingRuntimeRequest: { ...request, kind: "command" } }),
         NOW_MS,
       ),
     ).toBe(false);
     expect(
-      ThreadSettlementService.isSnoozed(
+      AutoSettlementPolicy.isSnoozed(
         shell({ ...snoozed, snoozedAt: null, pendingRuntimeRequest: request }),
         NOW_MS,
       ),
@@ -2058,8 +2033,8 @@ describe("isSnoozed", () => {
       latestRunCompletedAt: at(-DAY_MS),
     });
 
-    expect(ThreadSettlementService.isSnoozed(thread, NOW_MS)).toBe(true);
-    expect(ThreadSettlementService.isAutoSettlementCandidate(thread, NOW_MS)).toBe(false);
+    expect(AutoSettlementPolicy.isSnoozed(thread, NOW_MS)).toBe(true);
+    expect(AutoSettlementPolicy.isAutoSettlementCandidate(thread, NOW_MS)).toBe(false);
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({
         thread,

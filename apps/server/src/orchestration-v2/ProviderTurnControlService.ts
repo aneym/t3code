@@ -1,7 +1,5 @@
-import { batchedProviderText, foldedQueuedTurnItems } from "./QueuedRunBatch.ts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
-  messageSender,
   MessageId,
   type ModelSelection,
   type NodeId,
@@ -424,17 +422,6 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
-          const batch = yield* projections.getThreadRecords(input.threadId, ["turnItems"], {
-            turnItemTypes: ["user_message"],
-            turnItemRunIds: [run.id],
-          });
-          const parts = [
-            message,
-            ...foldedQueuedTurnItems(batch.turnItems, {
-              id: run.id,
-              userMessageId: message.id,
-            }).filter((item) => item.parentItemId !== null),
-          ];
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -446,22 +433,19 @@ export const layer: Layer.Layer<
                 : { modelSelection: input.modelSelection }),
               message: {
                 messageId: message.id,
-                text: batchedProviderText(
-                  parts.map((part) => ({
-                    ...part,
-                    text: projectComposerContextForProvider({
-                      text: part.text,
-                      records: part.context?.records ?? [],
-                    }),
-                  })),
-                ),
-                attachments: parts.flatMap((part) => part.attachments),
+                text: projectComposerContextForProvider({
+                  text: message.text,
+                  records: message.context?.records ?? [],
+                }),
+                attachments: message.attachments,
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,
                 ...(message.scheduledTaskId === undefined
                   ? {}
                   : { scheduledTaskId: message.scheduledTaskId }),
-                ...messageSender(message),
+                ...(message.senderThreadId === undefined
+                  ? {}
+                  : { senderThreadId: message.senderThreadId }),
               },
             })
             .pipe(

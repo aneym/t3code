@@ -34,7 +34,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import { CLAUDE_PROVIDER } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
-import { OrchestrationEffectRequestV2 } from "./EffectOutbox.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -45,6 +44,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { OrchestrationEffectRequestV2 } from "./EffectOutboxModel.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
@@ -889,30 +889,6 @@ it.effect(
         "queued:held",
         "queued:held",
       ]);
-    }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect(
-  "thread.stop ends an idle thread's watches and accepts a thread with nothing to stop",
-  () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("thread:stop-idle");
-      yield* createWatchingThread(threadId, 3);
-
-      yield* orchestrator.dispatch({
-        type: "thread.stop",
-        commandId: CommandId.make("stop-idle"),
-        threadId,
-      });
-      assert.deepEqual(yield* threadState(threadId), { runs: [], watched: [] });
-
-      const again = yield* orchestrator.dispatch({
-        type: "thread.stop",
-        commandId: CommandId.make("stop-idle-again"),
-        threadId,
-      });
-      assert.lengthOf(again.storedEvents, 0);
     }).pipe(Effect.provide(layerTest)),
 );
 

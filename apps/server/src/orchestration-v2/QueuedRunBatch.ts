@@ -1,6 +1,5 @@
 import {
   messageSender,
-  senderEnvironmentLabel,
   type NodeId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
@@ -13,7 +12,6 @@ import {
   batchableQueuedMessage as batchableMessage,
   compatibleQueuedRuns,
   MAX_QUEUED_MESSAGE_BATCH_SIZE as MAX_BATCH_SIZE,
-  sendAllQueuedMembers,
 } from "@t3tools/shared/queuedMessages";
 
 import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
@@ -33,10 +31,7 @@ type DraftEvent = OrchestrationV2DomainEvent extends infer Event
 export function queuedRunBatch(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
   first: OrchestrationV2Run,
-  explicitRelease = false,
 ): ReadonlyArray<QueuedRunBatchMember> {
-  if (explicitRelease)
-    return sendAllQueuedMembers(projection).filter(({ run }) => run.id !== first.id);
   if (batchableMessage(projection, first) === undefined) return [];
   const members: Array<QueuedRunBatchMember> = [];
   for (const run of queuedRunsInDeliveryOrder(projection)) {
@@ -54,7 +49,7 @@ export function queuedRunBatch(
   return members;
 }
 
-export function foldedQueuedTurnItems(
+function foldedQueuedTurnItems(
   turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
   run: Pick<OrchestrationV2Run, "id" | "userMessageId">,
 ): ReadonlyArray<UserTurnItem> {
@@ -172,30 +167,17 @@ export interface QueuedRunBatchPart {
   readonly createdBy: OrchestrationV2ConversationMessage["createdBy"];
   readonly creationSource: OrchestrationV2ConversationMessage["creationSource"];
   readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
-  readonly senderEnvironmentId?: OrchestrationV2ConversationMessage["senderEnvironmentId"];
-  readonly senderEnvironmentLabel?: OrchestrationV2ConversationMessage["senderEnvironmentLabel"];
 }
 
-export function queuedMessageSender(part: QueuedRunBatchPart): string {
-  if (part.senderThreadId !== undefined) {
-    const environment =
-      part.senderEnvironmentId === undefined
-        ? ""
-        : ` on environment ${part.senderEnvironmentId} (${senderEnvironmentLabel(part.senderEnvironmentId, part.senderEnvironmentLabel)})`;
-    return `an agent in thread ${part.senderThreadId}${environment}`;
-  }
+function queuedMessageSender(part: QueuedRunBatchPart): string {
+  if (part.senderThreadId !== undefined) return `an agent in thread ${part.senderThreadId}`;
   return part.createdBy === "user"
     ? `the user (${part.creationSource})`
     : `${part.createdBy} (${part.creationSource})`;
 }
 
-export function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): string {
-  if (parts.length < 2) {
-    const part = parts[0];
-    return part?.senderEnvironmentId === undefined
-      ? (part?.text ?? "")
-      : `Message from ${queuedMessageSender(part)}:\n${part.text}`;
-  }
+function batchedProviderText(parts: ReadonlyArray<QueuedRunBatchPart>): string {
+  if (parts.length < 2) return parts[0]?.text ?? "";
   return [
     `These ${parts.length} messages were queued separately while you were working. They are listed with their senders: task completions first, then queued messages in the order they were sent. Handle each one accordingly.`,
     ...parts.map(

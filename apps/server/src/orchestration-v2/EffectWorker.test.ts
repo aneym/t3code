@@ -22,11 +22,13 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as EventSink from "./EventSink.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -35,6 +37,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as EffectOutboxModel from "./EffectOutboxModel.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
 const oldSessionId = ProviderSessionId.make("provider-session:effect-worker-restart:old");
@@ -47,11 +50,11 @@ function restartEffect(
   now: DateTime.Utc,
   sessionTransition: NonNullable<
     Extract<
-      EffectOutbox.OrchestrationEffectV2["request"],
+      EffectOutboxModel.OrchestrationEffectV2["request"],
       { readonly type: "provider-turn.restart" }
     >["sessionTransition"]
   >,
-): EffectOutbox.OrchestrationEffectV2 {
+): EffectOutboxModel.OrchestrationEffectV2 {
   const timestamp = DateTime.formatIso(now);
   return {
     id: `effect:restart:${sessionTransition.type}`,
@@ -164,6 +167,8 @@ function layerExecutorFor(input: {
       Layer.mergeAll(
         layerDependencies,
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
+        Layer.mock(EventSink.EventSinkV2)({}),
+        IdAllocator.layer,
         ServerSettings.layerTest(
           input.continueAfterRestart === true ? { continueThreadsAfterServerUpdate: true } : {},
         ),
@@ -271,7 +276,7 @@ it.effect.each([
     });
     yield* Effect.gen(function* () {
       const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
-      const rollback: EffectOutbox.OrchestrationEffectV2 = {
+      const rollback: EffectOutboxModel.OrchestrationEffectV2 = {
         ...restartEffect(now, { type: "detach" }),
         request: {
           type: "provider-thread.rollback",
@@ -330,7 +335,7 @@ it.effect("requeues a claim when a pre-execution worker check fails", () =>
     const now = DateTime.formatIso(yield* DateTime.now);
     const effectId = "effect:worker-pre-execution-failure";
     const workerId = "worker-pre-execution-failure";
-    const claimedEffect: EffectOutbox.OrchestrationEffectV2 = {
+    const claimedEffect: EffectOutboxModel.OrchestrationEffectV2 = {
       id: effectId,
       commandId: CommandId.make("command:worker-pre-execution-failure"),
       threadId: ThreadId.make("thread:worker-pre-execution-failure"),
@@ -357,7 +362,7 @@ it.effect("requeues a claim when a pre-execution worker check fails", () =>
       claimNext: () => Effect.succeedSome(claimedEffect),
       get: () =>
         Effect.fail(
-          new EffectOutbox.EffectOutboxError({
+          new EffectOutboxModel.EffectOutboxError({
             operation: "get",
             effectId,
             cause: "simulated cancellation-state read failure",
@@ -401,7 +406,7 @@ it.effect("arms cancellation before the durable pre-execution check", () =>
     const now = DateTime.formatIso(yield* DateTime.now);
     const effectId = "effect:worker-cancellation-registration-race";
     const workerId = "worker-cancellation-registration-race";
-    const claimedEffect: EffectOutbox.OrchestrationEffectV2 = {
+    const claimedEffect: EffectOutboxModel.OrchestrationEffectV2 = {
       id: effectId,
       commandId: CommandId.make("command:worker-cancellation-registration-race"),
       threadId: ThreadId.make("thread:worker-cancellation-registration-race"),
@@ -465,7 +470,7 @@ it.effect("terminalizes a process-bound claim when success settlement fails", ()
     const now = DateTime.formatIso(yield* DateTime.now);
     const effectId = "effect:worker-process-bound-settlement-failure";
     const workerId = "worker-process-bound-settlement-failure";
-    const claimedEffect: EffectOutbox.OrchestrationEffectV2 = {
+    const claimedEffect: EffectOutboxModel.OrchestrationEffectV2 = {
       id: effectId,
       commandId: CommandId.make("command:worker-process-bound-settlement-failure"),
       threadId: ThreadId.make("thread:worker-process-bound-settlement-failure"),
@@ -492,7 +497,7 @@ it.effect("terminalizes a process-bound claim when success settlement fails", ()
       clearCancellation: () => Effect.void,
       succeed: () =>
         Effect.fail(
-          new EffectOutbox.EffectOutboxError({
+          new EffectOutboxModel.EffectOutboxError({
             operation: "succeed",
             effectId,
             cause: "simulated success settlement failure",
@@ -542,7 +547,7 @@ it.effect("settles a delegated child once its restart continuation fails for goo
           Ref.update(recovered, (ids) => [...ids, childThreadId]),
       },
     });
-    const effect: EffectOutbox.OrchestrationEffectV2 = {
+    const effect: EffectOutboxModel.OrchestrationEffectV2 = {
       id: `effect:restart-continuation:${runId}`,
       commandId: CommandId.make("command:restart-continuation-failure"),
       threadId,

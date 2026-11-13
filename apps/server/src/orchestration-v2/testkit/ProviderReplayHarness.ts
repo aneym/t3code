@@ -210,7 +210,7 @@ export function runOrchestratorV2ProviderReplayScenario<
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
-  | Orchestrator.OrchestratorV2Error
+  | ThreadManagementService.DispatchError
   | OrchestratorV2ScenarioStepError
   | Error
   | MigrationError
@@ -350,6 +350,7 @@ export function layerWithRegistry<Error>(
   ).pipe(Layer.provide(layerDatabase));
   const layerEventSinkProvided = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
+    Layer.merge(IdAllocator.layer),
   );
   const layerRuntime = RuntimePolicy.layerEnforcingCeiling.pipe(
     Layer.provide(Layer.merge(layerRuntimeBase, layerServerSettings)),
@@ -365,7 +366,6 @@ export function layerWithRegistry<Error>(
         }),
         layerStores,
         layerEventSinkProvided,
-        IdAllocator.layer,
         ThreadCommandExecutor.layer,
         GitVcsDriver.layer.pipe(
           Layer.provide(layerServerConfig),
@@ -407,7 +407,6 @@ export function layerWithRegistry<Error>(
         layerCommandOutputHubProvided,
         layerProvidedRegistry,
         layerEventSinkProvided,
-        IdAllocator.layer,
         McpProviderSessions.layer,
         McpSessionRegistryTestkit.layer,
         layerProviderEventIngestorProvided,
@@ -426,7 +425,6 @@ export function layerWithRegistry<Error>(
         PreviewAgentActivity.layer,
         layerCheckpointServiceProvided,
         layerEventSinkProvided,
-        IdAllocator.layer,
         layerProviderEventIngestorProvided,
         layerServerSettings,
         layerStores,
@@ -439,7 +437,6 @@ export function layerWithRegistry<Error>(
       Layer.mergeAll(
         layerContextHandoffServiceProvided,
         layerEventSinkProvided,
-        IdAllocator.layer,
         layerStores,
         layerProviderSessionManagerProvided,
         Layer.mock(ProviderAuthService.ProviderAuthService)({
@@ -465,7 +462,6 @@ export function layerWithRegistry<Error>(
       Layer.mergeAll(
         layerCheckpointServiceProvided,
         layerEventSinkProvided,
-        IdAllocator.layer,
         layerStores,
         layerProviderSessionManagerProvided,
         ThreadCommandExecutor.layer,
@@ -477,12 +473,7 @@ export function layerWithRegistry<Error>(
   );
   const layerCheckpointCaptureServiceProvided = CheckpointCaptureService.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(
-        layerCheckpointServiceProvided,
-        layerEventSinkProvided,
-        IdAllocator.layer,
-        layerStores,
-      ),
+      Layer.mergeAll(layerCheckpointServiceProvided, layerEventSinkProvided, layerStores),
     ),
   );
   const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
@@ -552,6 +543,7 @@ export function layerWithRegistry<Error>(
         layerThreadTitleRegenerationTest,
         layerServerSettings,
         layerThreadManagementProvided,
+        layerEventSinkProvided,
       ),
     ),
   );
@@ -587,14 +579,7 @@ export function layerWithRegistry<Error>(
           ).pipe(Effect.orDie),
         ).pipe(
           Layer.provide(ProviderRuntimeRecoveryService.layer),
-          Layer.provide(
-            Layer.mergeAll(
-              layerStores,
-              layerEventSinkProvided,
-              IdAllocator.layer,
-              layerServerSettings,
-            ),
-          ),
+          Layer.provide(Layer.mergeAll(layerStores, layerEventSinkProvided, layerServerSettings)),
         )
       : Layer.empty;
   return Layer.effect(

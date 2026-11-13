@@ -19,6 +19,7 @@ import * as CodexInstallation from "./CodexInstallation.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import { CliInstallations } from "./cliSetup/CliInstallations.ts";
 import * as ProviderInstallation from "./providerInstallation.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
@@ -70,6 +71,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
   let protectedPaths: ReadonlyArray<string> = [];
   const configured = input.instance ?? instance();
   const dependencies = Layer.mergeAll(
+    Layer.mock(CliInstallations)({ runnerFor: () => undefined }),
     ServerSettings.layerTest(input.settings),
     Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
       getInstance: (id) => Effect.succeed(id === configured.instanceId ? configured : undefined),

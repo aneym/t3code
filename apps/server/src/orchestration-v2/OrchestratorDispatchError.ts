@@ -27,7 +27,6 @@ export class OrchestratorCommandRejectedError extends Schema.TaggedError<Orchest
     commandId: CommandId,
     commandType: Schema.String,
     cause: Schema.optional(Schema.Defect()),
-    reason: Schema.optional(ThreadOrganizeRefusalReason),
   },
 ) {
   override get message(): string {

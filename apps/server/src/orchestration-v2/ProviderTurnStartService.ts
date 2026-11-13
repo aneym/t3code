@@ -1,6 +1,8 @@
+import { prepareResumeRecovery, writeResumeRecoveryNotice } from "./ResumeRecovery.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
+  messageSender,
   CommandId,
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
@@ -39,7 +41,7 @@ import { makeRestoreMissingWorktree } from "../workspace/restoreMissingWorktree.
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
-import { isActiveRun } from "./CommandPolicy.ts";
+import { forkSourceBusy } from "./ThreadForkService.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
@@ -63,11 +65,20 @@ import {
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { makeThreadSessionPreparation } from "./ThreadSessionTransitions.ts";
+import { ThreadNoteContext, previousPromptStart } from "./ThreadNoteContext.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
   restartCancelledBackgroundWorkNote,
 } from "./RestartBackgroundNote.ts";
+import {
+  batchedProviderPrompt,
+  unacceptedAttemptItems,
+  unacceptedContinuationChain,
+  unacceptedSourceOf,
+  unpromptedHistory,
+} from "./QueuedRunBatch.ts";
 
 export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStartError>()(
   "ProviderTurnStartError",
@@ -116,6 +127,12 @@ const startFailureMessage = (error: Error): string => {
   );
 };
 
+const OUTCOME_UNKNOWN_TAGS = ["CodexAppServerUnresponsiveError"] as const;
+
+const outcomeUnknown = (error: unknown): boolean =>
+  OUTCOME_UNKNOWN_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
+  (Predicate.hasProperty(error, "cause") && outcomeUnknown(error.cause));
+
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
     readonly threadId: ThreadId;
@@ -160,12 +177,13 @@ export const layer: Layer.Layer<
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const prepareThreadSession = yield* makeThreadSessionPreparation;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const { quietNotes: quietNoteContext } = yield* ThreadNoteContext;
 
-    // Build draining callbacks outside startup scope so they cannot retain full thread history.
     const makeRunControls = (input: {
       readonly threadId: ThreadId;
       readonly runId: RunId;
@@ -332,7 +350,6 @@ export const layer: Layer.Layer<
           (handoff.transferId == null || !subagentResultTransfers.has(handoff.transferId)) &&
           isPendingForRun(handoff),
       );
-      // Carried forward until a provider turn accepts it, also after a provider switch.
       const sideChatHandoff = projection.contextHandoffs.find(
         (handoff) =>
           isSideChatHandoff(handoff) &&
@@ -443,7 +460,6 @@ export const layer: Layer.Layer<
             expectedStatus: "starting",
             events,
           });
-          // A steering restart that cannot start still ends a run whose earlier turns counted.
           if (written.committed) {
             yield* turnAnalytics.runSettled({
               runId,
@@ -482,7 +498,6 @@ export const layer: Layer.Layer<
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
-        // Preparation may select a new provider; account commands still target the last native session.
         const nativeThreads = new Map(
           projection.providerThreads
             .filter(
@@ -697,6 +712,7 @@ export const layer: Layer.Layer<
         });
         if (!repaired.committed) return;
       }
+      yield* prepareThreadSession({ projection, providerThread });
       const sessionResult = yield* Effect.result(
         providerSessions.open({
           threadId: projection.thread.id,
@@ -738,7 +754,9 @@ export const layer: Layer.Layer<
       ) {
         const loaded = yield* Effect.result(load);
         if (loaded._tag === "Success") return loaded.success;
-        if (input.willRetry === true) return yield* loaded.failure;
+        if (input.willRetry === true && !outcomeUnknown(loaded.failure)) {
+          return yield* loaded.failure;
+        }
         yield* settleStartFailure({
           signal: "provider-thread-load-failure",
           title: "Provider turn failed to start",
@@ -748,23 +766,36 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
       // Native goal commands go verbatim; handoff history waits a turn.
       const goalDriver =
         session.driver === "codex" ||
         session.driver === "claudeAgent" ||
         session.providerSession.capabilities.turns.supportsNativeGoals === true;
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
-      // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
-      const noteContinuation = isRestartNoteContinuation(
-        run,
-        projection.runs,
-        projection.providerTurns,
-        projection.attempts,
+      const unacceptedChain = unacceptedContinuationChain(projection, run);
+      const unacceptedSource = unacceptedChain.at(-1);
+      const {
+        text: userText,
+        attachments,
+        foldedItems,
+      } = batchedProviderPrompt(
+        message,
+        unacceptedSource ?? run,
+        unacceptedSource === undefined
+          ? projection.turnItems
+          : unacceptedAttemptItems(
+              yield* projectionStore.getTurnStartHistory(input.threadId, [unacceptedSource.id]),
+              unacceptedSource,
+            ),
       );
+      const noteContinuation =
+        unacceptedSourceOf(projection, run) !== undefined ||
+        isRestartNoteContinuation(
+          run,
+          projection.runs,
+          projection.providerTurns,
+          projection.attempts,
+        );
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,
@@ -871,7 +902,6 @@ export const layer: Layer.Layer<
             )
             .map((source) => source.id),
         );
-        // Row identity survives recovery; only accepted native input and delivered history occupy the new session.
         const nativeContextEstimate = Effect.gen(function* () {
           return sameNativeThread
             ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
@@ -930,7 +960,7 @@ export const layer: Layer.Layer<
               tokenCap,
               modelContextWindow,
               userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
-              attachments: message.attachments,
+              attachments,
               providerThread: budgetProviderThread,
               nativeContextEstimate:
                 budgetProviderThread.contextUsage?.usedTokens === undefined
@@ -980,38 +1010,18 @@ export const layer: Layer.Layer<
           return retryHandoff;
         },
       );
-      const prepareRecoveryHandoff = Effect.fn("ProviderTurnStartService.prepareRecoveryHandoff")(
-        function* () {
-          const transferId = yield* idAllocator.allocate.contextTransfer({
-            sourceThreadId: projection.thread.id,
-            targetThreadId: projection.thread.id,
-            type: "provider_resume_fallback",
-          });
-          const createdAt = yield* DateTime.now;
-          const handoff = yield* contextHandoffService.prepareProviderHandoff({
-            threadId: projection.thread.id,
-            targetRunId: run.id,
-            transferId,
-            fromProviderThreadIds: [providerThread.id],
-            toProviderThreadId: providerThread.id,
-            fromProviderInstanceId: providerThread.providerInstanceId,
-            toProviderInstanceId: run.providerInstanceId,
-            coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
-            strategy: "full_thread_summary",
-            runs: projection.runs,
-            items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
-              (item) =>
-                item.runId === null ||
-                projection.runs.some(
-                  (source) => source.id === item.runId && source.ordinal < run.ordinal,
-                ),
-            ),
-            createdAt,
-          });
-          return { handoff, transferId, createdAt };
-        },
+      const recoveryHandoff = yield* Effect.cached(
+        prepareResumeRecovery({
+          contextHandoffService,
+          idAllocator,
+          projectionStore,
+          projection,
+          run,
+          providerThread,
+          items: (items) =>
+            unpromptedHistory(items, projection.runs, run, unacceptedChain, foldedItems),
+        }),
       );
-      const recoveryHandoff = yield* Effect.cached(prepareRecoveryHandoff());
       const withRecoveryHandoff = (handoff: OrchestrationV2ContextHandoff) => {
         // Delivery ranks later handoffs as newer history. Pending handoffs from
         // earlier runs predate this summary; handoffs for this run (provider-switch
@@ -1054,12 +1064,10 @@ export const layer: Layer.Layer<
           }
           // Providers refuse to fork a busy thread, so a source that started a turn after
           // dispatch planned this fork gets the portable context dispatch gives a busy source.
-          const sourceBusy = sourceProjection.runs.some(
-            (candidate) => candidate.ordinal > sourceRun.ordinal && isActiveRun(candidate),
-          );
+          const laterRuns = sourceProjection.runs.filter((run) => run.ordinal > sourceRun.ordinal);
+          const sourceBusy = forkSourceBusy(laterRuns, projection);
           let nativeForkFailure: string | undefined;
           if (!sourceBusy) {
-            // Rolled-back turns are no longer in the source conversation, so they cannot bound a fork.
             const rolledBackAttemptIds = new Set(
               sourceProjection.attempts
                 .filter((attempt) =>
@@ -1088,7 +1096,6 @@ export const layer: Layer.Layer<
             if (forked._tag === "Success") return forked.success;
             if (input.willRetry === true) return yield* forked.failure;
             if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
-            // Retries are spent (e.g. the source's native session is gone): start fresh with portable history.
             yield* Effect.logWarning("Starting a native fork in a fresh native session", {
               driver: session.driver,
               providerThreadId: providerThread.id,
@@ -1214,7 +1221,6 @@ export const layer: Layer.Layer<
           return loaded;
         }
         if (providerThread.nativeThreadRef === null) {
-          // Pass the stored provider row for adoption; adapter-minted duplicates make activeProviderThreadId flap.
           return yield* loadFromProvider(
             session.ensureThread({
               threadId: projection.thread.id,
@@ -1226,12 +1232,26 @@ export const layer: Layer.Layer<
             }),
           );
         }
-        const uncertainDelivery = projection.contextHandoffs.some(
-          (handoff) =>
-            handoff.toProviderThreadId === providerThread.id &&
-            handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
-            handoff.delivery?.status === "pending",
-        );
+        const previousRunId = projection.runs.findLast(
+          (candidate) => candidate.ordinal < run.ordinal,
+        )?.id;
+        const rejectedClaudeResume =
+          session.driver === "claudeAgent" &&
+          projection.turnItems.some(
+            (item) =>
+              item.providerThreadId === providerThread.id &&
+              (item.runId === previousRunId || item.runId === run.id) &&
+              item.type === "error" &&
+              /No conversation found/i.test(item.failure.message),
+          );
+        const uncertainDelivery =
+          rejectedClaudeResume ||
+          projection.contextHandoffs.some(
+            (handoff) =>
+              handoff.toProviderThreadId === providerThread.id &&
+              handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
+              handoff.delivery?.status === "pending",
+          );
         const resumed = yield* Effect.result(
           uncertainDelivery
             ? Effect.fail(
@@ -1302,6 +1322,9 @@ export const layer: Layer.Layer<
             );
           }
         }
+        if (resumed._tag === "Failure" && outcomeUnknown(resumed.failure)) {
+          return yield* loadFromProvider(Effect.fail(resumed.failure));
+        }
         resumedHandoffContext = undefined;
         resumedRetryHandoff = [];
         if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
@@ -1332,13 +1355,19 @@ export const layer: Layer.Layer<
             modelSelection: run.modelSelection,
             runtimePolicy: resolvedRuntimePolicy,
             providerSessionId,
-            // Clear the native ref to force a fresh session while preserving row identity.
             existingProviderThread: { ...providerThread, nativeThreadRef: null },
             forceNewNativeThread: true,
           }),
         );
         if (replacement === undefined) return undefined;
         const { handoff, transferId, createdAt } = yield* recoveryHandoff;
+        yield* writeResumeRecoveryNotice({
+          eventSink,
+          idAllocator,
+          run,
+          providerThread,
+          createdAt,
+        });
         effectiveHandoffs = withRecoveryHandoff(handoff);
         resumeFellBack = true;
         const previousRun = projection.runs.findLast(
@@ -1347,7 +1376,6 @@ export const layer: Layer.Layer<
             candidate.ordinal < run.ordinal &&
             candidate.startedAt !== null,
         );
-        // Stable per run so a retried start reuses the reserved run-start position.
         const handoffTurnItemId = idAllocator.derive.runSignalTurnItem({
           runId,
           signal: "resume-fallback-handoff",
@@ -1468,6 +1496,13 @@ export const layer: Layer.Layer<
         status: "running",
         startedAt: now,
       };
+      const quietNotes = goalCommand
+        ? ""
+        : yield* quietNoteContext(
+            projection.thread.id,
+            previousPromptStart(run, projection.runs, projection.messages),
+            now,
+          );
       const runningAttempt: OrchestrationV2RunAttempt = {
         ...attempt,
         ...(runningProviderThread.nativeThreadRef?.nativeId == null
@@ -1531,7 +1566,6 @@ export const layer: Layer.Layer<
                 },
               },
             ]),
-        // Shown only once the replacement session commits with the running transition.
         ...(recoveryTurnItem === undefined
           ? []
           : [
@@ -1630,12 +1664,16 @@ export const layer: Layer.Layer<
           });
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
           const start = compact ? session.compactThread! : session.startTurn;
-          // Like history, the side chat context waits for a turn that sends a prompt.
           const sideChatContext =
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          const context = [
+            delivery.context,
+            sideChatContext,
+            compact ? "" : quietNotes,
+            restartNote,
+          ]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1646,7 +1684,6 @@ export const layer: Layer.Layer<
               text: goalCommand ? userText : withInlineContext(context, userText),
             },
           }).pipe(
-            // Clear pending handoff markers for refused prompts so the next turn retains the native session.
             Effect.tapError((error) =>
               refusedBeforePrompt(error)
                 ? delivery.unsent.pipe(
@@ -1659,7 +1696,6 @@ export const layer: Layer.Layer<
                 : Effect.void,
             ),
           );
-          // After provider acceptance, failed delivery bookkeeping must not stop live ingestion.
           const nativeThreadId = runningProviderThread.nativeThreadRef?.nativeId;
           yield* Effect.forEach(
             [
@@ -1703,6 +1739,7 @@ export const layer: Layer.Layer<
         retryHandoff.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
+        quietNotes === "" &&
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
@@ -1744,15 +1781,13 @@ export const layer: Layer.Layer<
         message: {
           messageId: message.id,
           text: userText,
-          attachments: message.attachments,
+          attachments,
           createdBy: message.createdBy,
           creationSource: message.creationSource,
           ...(message.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: message.scheduledTaskId }),
-          ...(message.senderThreadId === undefined
-            ? {}
-            : { senderThreadId: message.senderThreadId }),
+          ...messageSender(message),
         },
         modelSelection: run.modelSelection,
         runtimePolicy: resolvedRuntimePolicy,

@@ -33,12 +33,14 @@ export const stopDelegatedTaskTree: <E>(
   input: TreeInput & {
     readonly reason?: string | undefined;
     readonly heldByThreadId?: ThreadId | undefined;
+    readonly remoteDispatch?: DelegatedTaskTreeDeps<E>["dispatch"] | undefined;
   },
 ) => Effect.Effect<void, E> = Effect.fn("DelegatedTaskTree.stop")(function* <E>(
   deps: DelegatedTaskTreeDeps<E>,
   input: TreeInput & {
     readonly reason?: string | undefined;
     readonly heldByThreadId?: ThreadId | undefined;
+    readonly remoteDispatch?: DelegatedTaskTreeDeps<E>["dispatch"] | undefined;
   },
 ) {
   const heldByThreadId = input.heldByThreadId ?? input.threadId;
@@ -49,28 +51,26 @@ export const stopDelegatedTaskTree: <E>(
     if (task.childThreadId === null) {
       if (task.remoteChild === undefined) continue;
       const commandId = CommandId.make(`${input.commandId}:stop:${task.id}`);
-      yield* deps
-        .dispatch(
-          task.result === null
-            ? {
-                type: "delegated_task.remote.complete",
-                commandId,
-                parentThreadId: input.threadId,
-                taskId: task.id,
-                status: "interrupted",
-                result:
-                  input.reason === undefined
-                    ? "Stopped with its parent."
-                    : `Stopped with its parent: ${input.reason}`,
-              }
-            : {
-                type: "delegated_task.remote.stop",
-                commandId,
-                parentThreadId: input.threadId,
-                taskId: task.id,
-              },
-        )
-        .pipe(collect(failures, { parentThreadId: input.threadId, taskId: task.id }));
+      yield* (input.remoteDispatch ?? deps.dispatch)(
+        task.result === null
+          ? {
+              type: "delegated_task.remote.complete",
+              commandId,
+              parentThreadId: input.threadId,
+              taskId: task.id,
+              status: "interrupted",
+              result:
+                input.reason === undefined
+                  ? "Stopped with its parent."
+                  : `Stopped with its parent: ${input.reason}`,
+            }
+          : {
+              type: "delegated_task.remote.stop",
+              commandId,
+              parentThreadId: input.threadId,
+              taskId: task.id,
+            },
+      ).pipe(collect(failures, { parentThreadId: input.threadId, taskId: task.id }));
       continue;
     }
     const threadId = task.childThreadId;
@@ -86,7 +86,14 @@ export const stopDelegatedTaskTree: <E>(
         ...(input.reason === undefined ? {} : { reason: input.reason }),
       })
       .pipe(
-        Effect.andThen(stopDelegatedTaskTree(deps, { ...input, threadId, heldByThreadId })),
+        Effect.andThen(
+          stopDelegatedTaskTree(deps, {
+            threadId,
+            commandId: input.commandId,
+            reason: input.reason,
+            heldByThreadId,
+          }),
+        ),
         collect(failures, { parentThreadId: input.threadId, threadId }),
       );
   }

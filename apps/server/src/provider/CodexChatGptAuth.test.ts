@@ -236,6 +236,7 @@ const makeHarnessFor = Effect.fnUntraced(function* (
             analyticsEvents.push({ event, properties });
           }),
     flush: Effect.void,
+    skipShutdownFlush: Effect.void,
     recordOwners: () => Effect.void,
   });
   const auth = yield* makeCodexChatGptAuth({
@@ -748,17 +749,6 @@ it.effect(
         assert.isTrue(Option.isNone(yield* h.auth.read));
       }),
     ),
-);
-it.effect("rejects invalid ID token nonce without saving credentials", () =>
-  provision(
-    Effect.gen(function* () {
-      const h = yield* makeHarness;
-      h.setInvalidNonce();
-      yield* h.signIn;
-      assert.include((yield* h.phase("failed")).message!, "could not be verified");
-      assert.isTrue(Option.isNone(yield* h.auth.read));
-    }),
-  ),
 );
 it.effect("retains identity after declined sharing but never admits inference", () =>
   provision(

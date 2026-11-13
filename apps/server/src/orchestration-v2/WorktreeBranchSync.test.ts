@@ -13,9 +13,9 @@ import * as Layer from "effect/Layer";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as WorktreeBranchSync from "./WorktreeBranchSync.ts";
+import * as OrchestratorDispatch from "./OrchestratorDispatchError.ts";
 
 it.effect.each([false, true])(
   "reconciles shared worktree branches without changing root checkouts or detached HEADs, conflict=%s",
@@ -94,7 +94,7 @@ it.effect.each([false, true])(
                   command.threadId === ThreadId.make("generated") &&
                   conflict
                 ) {
-                  return yield* new Orchestrator.OrchestratorDispatchError({
+                  return yield* new OrchestratorDispatch.OrchestratorDispatchError({
                     commandId: command.commandId,
                     commandType: command.type,
                     cause: "Thread moved before branch metadata could be applied.",

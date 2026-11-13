@@ -1,6 +1,6 @@
 import type { ProviderDriverKind, ProviderInstallState } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -58,7 +58,7 @@ export const makeCliInstallRunner = Effect.fn("makeCliInstallRunner")(function* 
   ) => Effect.Effect<InstalledCli, CliInstallationError, Scope.Scope>;
 }) {
   const serviceScope = yield* Effect.scope;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const gate = yield* Semaphore.make(1);
   let running: { readonly operationId: string; readonly fiber: Fiber.Fiber<void> } | undefined;
   const state = yield* SubscriptionRef.make<ProviderInstallState>({
@@ -100,7 +100,7 @@ export const makeCliInstallRunner = Effect.fn("makeCliInstallRunner")(function* 
         return yield* SubscriptionRef.get(state);
       }
       const operationId = yield* crypto
-        .randomUUIDv4()
+        .uuidV4()
         .pipe(
           Effect.mapError(() =>
             cliInstallationError("start", `Could not start installing ${options.displayName}.`),
