@@ -5,6 +5,7 @@ import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+import { AgentHomeService } from "./agents/AgentHomeService.ts";
 import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinkRpcHandlers from "./peer/PeerLinkRpcHandlers.ts";
@@ -1363,6 +1364,7 @@ export const layerWsRpc = (
       >();
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectStore = yield* ProjectStore.ProjectStoreV2;
+      const agentHomes = yield* AgentHomeService;
       const projectService = yield* ProjectService.ProjectService;
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const scratchThreadPromotion = yield* ScratchThreadPromotion.ScratchThreadPromotion;
@@ -2900,6 +2902,7 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.agentsSubscribeHomes]: () => agentHomes.subscribe(),
         [WS_METHODS.projectsMutate]: (mutation) =>
           startup.enqueueCommand(mutateProject(mutation)).pipe(
             Effect.mapError(

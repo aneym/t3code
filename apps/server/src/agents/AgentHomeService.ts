@@ -12,7 +12,8 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
-import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as NodeOS from "node:os";
 import * as Path from "effect/Path";
 import * as Equal from "effect/Equal";
@@ -37,6 +38,7 @@ export class AgentHomeService extends Context.Service<
   AgentHomeService,
   {
     readonly list: Effect.Effect<AgentHomesSnapshot, AgentHomeError>;
+    readonly subscribe: () => Stream.Stream<AgentHomesSnapshot>;
     readonly bind: (input: AgentBindInput) => Effect.Effect<AgentBindResult, AgentHomeError>;
   }
 >()("t3/agents/AgentHomeService") {}
@@ -56,7 +58,7 @@ export const layer = Layer.effect(
     const scheduledTasks = yield* ScheduledTaskService;
     const settings = yield* ServerSettingsService;
     const crypto = yield* SecureRandom.SecureRandom;
-    const snapshots = yield* Ref.make<AgentHomesSnapshot>({ homes: [] });
+    const snapshots = yield* SubscriptionRef.make<AgentHomesSnapshot>({ homes: [] });
     const refreshLock = yield* Semaphore.make(1);
     const locks = new Map<string, Semaphore.Semaphore>();
     let snapshotGeneration: number | undefined;
@@ -66,8 +68,8 @@ export const layer = Layer.effect(
         try: () => readHomes(root),
         catch: (cause) => new AgentHomeError({ message: "Unable to read agent homes", cause }),
       }).pipe(Effect.tapError(() => Effect.sync(() => (snapshotGeneration = undefined))));
-      const current = yield* Ref.get(snapshots);
-      if (!Equal.equals(snapshot, current)) yield* Ref.set(snapshots, snapshot);
+      const current = yield* SubscriptionRef.get(snapshots);
+      if (!Equal.equals(snapshot, current)) yield* SubscriptionRef.set(snapshots, snapshot);
       snapshotGeneration = generation;
       return snapshot;
     });
@@ -75,7 +77,7 @@ export const layer = Layer.effect(
     const list = Effect.suspend(() => {
       const generation = homesGeneration(root);
       return generation !== undefined && generation === snapshotGeneration
-        ? Ref.get(snapshots)
+        ? SubscriptionRef.get(snapshots)
         : reload;
     });
     yield* Effect.acquireRelease(
@@ -313,6 +315,6 @@ export const layer = Layer.effect(
         }),
       );
     });
-    return { list, bind };
+    return { list, subscribe: () => SubscriptionRef.changes(snapshots), bind };
   }),
 );
