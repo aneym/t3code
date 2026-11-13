@@ -24,6 +24,7 @@ export interface TurnItemPositionStoreV2Shape {
     readonly runOrdinal?: number;
     // `run_start` takes the run's unused first slot, ahead of its items, and appends once it is taken.
     readonly placement?: "append" | "run_start";
+    readonly afterLatestRun?: boolean;
   }) => Effect.Effect<number, TurnItemPositionStoreError>;
   readonly normalize: (
     item: OrchestrationV2TurnItem,
@@ -50,6 +51,7 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           runId,
           runOrdinal: suppliedRunOrdinal,
           placement = "append",
+          afterLatestRun,
         }) {
           const existing = yield* sql<{ readonly ordinal: number }>`
           SELECT ordinal
@@ -61,7 +63,13 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
 
           const runRows =
             runId === null
-              ? []
+              ? afterLatestRun
+                ? yield* sql<{ readonly ordinal: number | null }>`
+                SELECT MAX(ordinal) AS ordinal
+                FROM orchestration_v2_projection_runs
+                WHERE thread_id = ${threadId}
+              `
+                : []
               : yield* sql<{ readonly ordinal: number }>`
                 SELECT ordinal
                 FROM orchestration_v2_projection_runs
@@ -121,6 +129,7 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           threadId: item.threadId,
           turnItemId: item.id,
           runId: item.runId,
+          afterLatestRun: item.type === "user_message" && item.quietNote === true,
           ...(runOrdinal === undefined ? {} : { runOrdinal }),
         }).pipe(Effect.map((ordinal) => (item.ordinal === ordinal ? item : { ...item, ordinal })));
       }),

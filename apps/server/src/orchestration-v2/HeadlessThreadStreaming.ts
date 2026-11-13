@@ -15,7 +15,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 
 type ProviderEvent = ProviderAdapter.ProviderAdapterV2Event;
-type ProviderEventFilter = (event: ProviderEvent, now: number) => ProviderEvent | null;
+type ProviderEventFilter = ReturnType<typeof makeAssistantStreamingFilter>;
 
 const PROVIDER_TURN_REFRESH_MS = 10_000;
 
@@ -89,12 +89,10 @@ export const layer = Layer.effect(
       )
         return makeAssistantStreamingFilter(mode);
       const live = (event: ProviderEvent) => watched(thread.id) || watched(eventThreadId(event));
-      const filterAssistant = makeAssistantStreamingFilter((event) =>
-        live(event) ? mode : "turn",
-      );
+      const assistant = makeAssistantStreamingFilter((event) => (live(event) ? mode : "turn"));
       const storedTurns = new Map<string, { readonly shape: string; readonly at: number }>();
-      return (event, now) => {
-        if (event.type !== "provider_turn.updated") return filterAssistant(event, now);
+      const filter: ProviderEventFilter["filter"] = (event, now) => {
+        if (event.type !== "provider_turn.updated") return assistant.filter(event, now);
         const turn = event.providerTurn;
         const shape = providerTurnShape(turn);
         const stored = storedTurns.get(turn.id);
@@ -108,6 +106,7 @@ export const layer = Layer.effect(
         storedTurns.set(turn.id, { shape, at: now });
         return event;
       };
+      return { ...assistant, filter };
     });
 
     return HeadlessThreadStreaming.of({ watch, makeFilter });

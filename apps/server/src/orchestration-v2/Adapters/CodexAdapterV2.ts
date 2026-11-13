@@ -1,4 +1,10 @@
 import { pipe } from "effect/Function";
+import { codexAppServerDeadline } from "./CodexAppServerDeadline.ts";
+import {
+  codexItemStatus,
+  codexMcpAppResourceUri,
+  codexMcpToolOutput,
+} from "./CodexItemProjection.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
@@ -52,7 +58,6 @@ import {
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { appendGeneratedImageEmbeds } from "@t3tools/shared/generatedImageMarkdown";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { mcpToolResultOutput } from "@t3tools/shared/toolOutput";
 import type {
   ChatAttachment,
   OrchestrationV2AppThread,
@@ -122,7 +127,7 @@ import {
   shouldPersistProviderEvent,
 } from "../../provider/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
+import { codexAppServerArgsFor, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -130,7 +135,6 @@ import {
   MCP_APP_EXTENSION_ID,
   MCP_APP_MIME_TYPE,
   MCP_APP_OUTPUT_KEY,
-  MCP_APP_RESOURCE_SCHEME,
 } from "@t3tools/shared/mcpApp";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import {
@@ -138,6 +142,7 @@ import {
   type ProviderAdapterDriverCreateInput,
 } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { currentEnvironmentId, withT3ThreadEnvironment } from "./T3ThreadEnvironment.ts";
 import { backgroundWorkNotification } from "@t3tools/provider-core/server/notification";
 import {
   makeProviderFailure,
@@ -421,31 +426,6 @@ function providerTurnStatusToTerminal(
   }
 }
 
-function codexItemStatus(status: "inProgress" | "completed" | "failed" | "declined"): {
-  readonly node: OrchestrationV2ExecutionNode["status"];
-  readonly turnItem: OrchestrationV2TurnItem["status"];
-  readonly completed: boolean;
-} {
-  switch (status) {
-    case "inProgress":
-      return { node: "running", turnItem: "running", completed: false };
-    case "completed":
-      return {
-        node: "completed",
-        turnItem: "completed",
-        completed: true,
-      };
-    case "failed":
-      return { node: "failed", turnItem: "failed", completed: true };
-    case "declined":
-      return {
-        node: "cancelled",
-        turnItem: "cancelled",
-        completed: true,
-      };
-  }
-}
-
 /**
  * The composers let a skill be typed with any currency sigil (`€review`), but
  * Codex only parses `$name` as a skill mention.
@@ -501,30 +481,8 @@ export interface CodexDynamicToolProjection extends McpToolPresentation {
   readonly status: OrchestrationV2TurnItem["status"];
 }
 
-function codexMcpToolOutput(
-  item: Extract<CodexDynamicToolItem, { readonly type: "mcpToolCall" }>,
-): unknown | undefined {
-  const resultOutput =
-    item.result === null || item.result === undefined
-      ? undefined
-      : mcpToolResultOutput(item.result);
-
-  if (item.error === null || item.error === undefined) {
-    return resultOutput;
-  }
-  return resultOutput === undefined
-    ? { error: item.error.message }
-    : { error: item.error.message, result: resultOutput };
-}
-
 // A hung MCP resource read must not hold run ingestion open.
 const MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
-
-function codexMcpAppResourceUri(item: CodexDynamicToolItem): string | undefined {
-  if (item.type !== "mcpToolCall") return undefined;
-  const uri = item.mcpAppUi?.resourceUri ?? item.mcpAppResourceUri ?? item.appContext?.resourceUri;
-  return typeof uri === "string" && uri.startsWith(MCP_APP_RESOURCE_SCHEME) ? uri : undefined;
-}
 
 const CODEX_IMAGE_DATA_URL = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i;
 
@@ -1643,8 +1601,9 @@ export const layerAppServerClientFactory: Layer.Layer<
         };
         const command = yield* makeCodexAppServerSpawnCommand({
           command: input.settings.binaryPath || "codex",
-          args: codexAppServerArgs(
+          args: yield* codexAppServerArgsFor(
             resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+            environment,
           ),
           env: environment,
           threadId: input.threadId,
@@ -1709,6 +1668,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const hostEnvironment = yield* HostProcess.Environment;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const serverConfig = yield* ServerConfig;
+  const environmentId = yield* currentEnvironmentId;
   const homeLayout = yield* resolveCodexHomeLayout(config);
 
   yield* materializeCodexShadowHome(homeLayout).pipe(
@@ -1734,6 +1694,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     instanceId,
     settings,
     environment: yield* mergeProviderInstanceEnvironment(environment, hostEnvironment),
+    environmentId,
     clientFactory,
     digest,
     fileSystem,
@@ -1748,6 +1709,7 @@ export interface CodexAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: CodexSettings;
   readonly environment: NodeJS.ProcessEnv;
+  readonly environmentId?: string | undefined;
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   /** The provider's published models, read per turn for catalog defaults. */
@@ -1808,7 +1770,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           providerSessionId: input.providerSessionId,
           runtimePolicy: input.runtimePolicy,
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
-          environment: resolvedRuntime?.environment ?? adapterOptions.environment,
+          environment: withT3ThreadEnvironment(
+            resolvedRuntime?.environment ?? adapterOptions.environment,
+            input.threadId,
+            adapterOptions.environmentId,
+          ),
         });
         const additionalContextByThread = yield* Ref.make(
           new Map<string, NonNullable<CodexTurnStartParams["additionalContext"]>>(),
@@ -1885,7 +1851,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return yield* new ProviderSetupError({
                 instanceId: adapterOptions.instanceId,
                 operation: "runtime",
-                detail: `Codex ${version} does not work with this T3 Code release. Update Codex to ${target}, then retry.`,
+                detail: `Codex ${version} does not work with this app version. Update Codex to ${target}, then retry.`,
               });
             }
             yield* client.notify("initialized", undefined);
@@ -1906,21 +1872,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ProviderAdapter.ProviderAdapterV2Event,
           ProviderAdapter.ProviderAdapterEventStreamError
         >();
+        const retireAppServer = (cause: unknown) =>
+          Queue.fail(
+            events,
+            new ProviderAdapter.ProviderAdapterEventStreamError({
+              driver: CODEX_PROVIDER,
+              providerSessionId: input.providerSessionId,
+              cause,
+            }),
+          );
         // Drain final notifications before the session manager retires the dead process.
         // Queue.fail lets readers take items already buffered before they see the failure.
-        yield* client.awaitTermination.pipe(
-          Effect.catch((cause) =>
-            Queue.fail(
-              events,
-              new ProviderAdapter.ProviderAdapterEventStreamError({
-                driver: CODEX_PROVIDER,
-                providerSessionId: input.providerSessionId,
-                cause,
-              }),
-            ),
-          ),
-          Effect.forkScoped,
-        );
+        yield* client.awaitTermination.pipe(Effect.catch(retireAppServer), Effect.forkScoped);
+        const withAppServerDeadline = codexAppServerDeadline(retireAppServer);
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
@@ -7295,7 +7259,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(yield* Ref.get(settledTurns)),
               ...(yield* Ref.get(activeTurns)),
             ]);
-            const started = yield* client.request("turn/start", turnStartParams);
+            const started = yield* client
+              .request("turn/start", turnStartParams)
+              .pipe(withAppServerDeadline("turn/start"));
             const previousTurn =
               previousTurns.get(started.turn.id) ??
               (yield* Ref.get(activeTurns)).get(started.turn.id);
@@ -7540,7 +7506,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           driver: CODEX_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          events: Stream.fromEffectRepeat(Queue.take(events)),
+          events: Stream.fromQueue(events),
           canReuseContextUsage: canReuseCodexContextUsage,
           normalizeThreadLoadModelSelection: normalizeCodexThreadLoadModelSelection,
           // Idle release can beat delayed subagent resumes: Codex reports them completed between turns with no resume-expected signal.
@@ -7613,6 +7579,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   thread: response.thread,
                 }),
               ),
+              withAppServerDeadline("thread/start"),
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterEnsureThreadError({
@@ -7641,6 +7608,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               });
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(resume),
+                withAppServerDeadline("thread/resume"),
                 Effect.flatMap(decodeCodexResumeMetadata),
               );
               return {

@@ -1,18 +1,13 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
-import { completeSetupScript } from "../project/WorktreeSetupCompletion.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
-  messageSender,
-  type MessageSender,
   CommandId,
-  composerSubmitOf,
   type ChatAttachment,
   type MessageId,
   type ModelSelection,
   type OrchestrationV2Actor,
-  type OrchestrationV2ComposerSubmit,
   type OrchestrationV2CreationSource,
   type OrchestrationV2DelegatedFrom,
   type OrchestrationV2LinkOrigin,
@@ -58,7 +53,6 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as Orchestrator from "./Orchestrator.ts";
-import type { OrchestratorV2Error } from "./OrchestratorErrors.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
@@ -78,13 +72,13 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly startFromOrigin?: boolean | undefined;
     };
 
-export interface ThreadLaunchInitialMessage extends MessageSender {
-  readonly messageId?: MessageId | undefined;
+export interface ThreadLaunchInitialMessage {
+  readonly messageId?: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
+  readonly senderThreadId?: ThreadId;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
-  readonly composerSubmit?: OrchestrationV2ComposerSubmit | undefined;
 }
 
 export interface ThreadLaunchInput {
@@ -109,7 +103,9 @@ export interface ThreadLaunchInput {
   };
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  /** The linked environment this launch is for, if one asked for it. */
   readonly linkOrigin?: OrchestrationV2LinkOrigin;
+  /** The parent there, when that environment's agent delegated this as a task. */
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
 }
 
@@ -222,10 +218,7 @@ export class ThreadLaunchService extends Context.Service<
     >;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
-    ) => Effect.Effect<
-      Orchestrator.OrchestratorV2DispatchResult,
-      OrchestratorV2Error | ThreadManagement.ThreadManagementProviderInstanceDisabledError
-    >;
+    ) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, ThreadManagement.DispatchError>;
     readonly prepareRun: (input: ThreadLaunchPreparationInput) => Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/ThreadLaunchService") {}
@@ -794,9 +787,17 @@ const make = Effect.gen(function* () {
         }));
         if (setup.completion) {
           const awaitCompletion = Effect.gen(function* () {
-            const failure = yield* completeSetupScript(threadId, setup.completion!, setupTracker);
-            if (failure && !setup.async)
-              return yield* mapError(input, "run-setup-script", threadId)(failure);
+            const completion = yield* setup.completion!;
+            yield* setupTracker.stage(threadId, "setup-script", {
+              status: completion.exitCode === 0 ? "done" : "failed",
+              detail: `exited with ${completion.exitCode ?? "no exit code"}`,
+            });
+            if (completion.exitCode !== 0 && !setup.async)
+              return yield* mapError(
+                input,
+                "run-setup-script",
+                threadId,
+              )(`Setup script exited with ${completion.exitCode ?? "no exit code"}.`);
           });
           if (setup.async) {
             awaitAsyncSetup = awaitCompletion.pipe(
@@ -1002,6 +1003,8 @@ const make = Effect.gen(function* () {
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
     function* (request) {
+      // Scratch has no Git repository. Normalize before folder allocation so
+      // durable preparation and retries use the thread's own Scratch folder.
       const input: ThreadLaunchInput =
         request.workspaceStrategy.type === "worktree" &&
         (yield* managedFolders.isScratchProject(request.projectId))
@@ -1105,9 +1108,7 @@ const make = Effect.gen(function* () {
                 modelSelection: input.modelSelection,
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,
-                ...(input.initialMessage?.scheduledTaskId === undefined
-                  ? {}
-                  : { automationTaskId: input.initialMessage.scheduledTaskId }),
+                automationTaskId: input.initialMessage?.scheduledTaskId,
                 branch: initialBranch,
                 worktreePath: initialWorktreePath,
                 ...(input.importedNativeThread === undefined
@@ -1157,10 +1158,11 @@ const make = Effect.gen(function* () {
               ...(input.initialMessage.scheduledTaskId === undefined
                 ? {}
                 : { scheduledTaskId: input.initialMessage.scheduledTaskId }),
-              ...messageSender(input.initialMessage),
+              ...(input.initialMessage.senderThreadId === undefined
+                ? {}
+                : { senderThreadId: input.initialMessage.senderThreadId }),
               attachments: input.initialMessage.attachments,
               ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
-              ...composerSubmitOf(input.initialMessage),
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
               modelSelection: input.modelSelection,
               dispatchMode: { type: "defer_start", workspaceStrategy },

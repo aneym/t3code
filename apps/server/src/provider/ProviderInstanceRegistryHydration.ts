@@ -11,6 +11,7 @@ import {
 import * as NodeUtil from "node:util";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import type * as Config from "effect/Config";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -23,6 +24,7 @@ import * as ManagedProviders from "../policy/managedProviders.ts";
 import * as Settings from "../serverSettings.ts";
 import * as SecretResolver from "../secrets/SecretResolver.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "./builtInDrivers.ts";
+import * as ProviderAllowlist from "./providerAllowlist.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
@@ -135,6 +137,8 @@ export const layerSettingsWatcher = (
   settingsChanges: Stream.Stream<ServerSettings>,
   // The settings the registry was built from: a change queued during startup differs from these.
   initialSettings: ServerSettings | undefined,
+  limit: (configMap: ProviderInstanceConfigMap) => ProviderInstanceConfigMap = (configMap) =>
+    configMap,
 ) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
@@ -148,7 +152,7 @@ export const layerSettingsWatcher = (
           serverSettings.getSettings.pipe(
             Effect.flatMap((current) =>
               Effect.gen(function* () {
-                yield* mutator.reconcile(deriveProviderInstanceConfigMap(current));
+                yield* mutator.reconcile(limit(deriveProviderInstanceConfigMap(current)));
                 // Reconcile leaves instances parked on an unreadable secret alone,
                 // and a corrected secret provider is what can make them readable.
                 const next = vaultConfigs(current);
@@ -171,10 +175,18 @@ export const layerSettingsWatcher = (
 export const layer: Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry
   | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
-  never,
+  Config.ConfigError,
   ProviderInstanceRegistryHydrationEnv
 > = Layer.unwrap(
   Effect.gen(function* () {
+    const allowlist = yield* ProviderAllowlist.providerAllowlistConfig;
+    const devServer = (yield* ServerConfig.ServerConfig).devUrl !== undefined;
+    const limit = (configMap: ProviderInstanceConfigMap) =>
+      ProviderAllowlist.limitConfigMap(
+        configMap,
+        allowlist,
+        (instanceId) => devServer && instanceId === DEV_REPLAY_INSTANCE_ID,
+      );
     const serverSettings = yield* Settings.ServerSettingsService;
     yield* seedDevReplayInstance().pipe(
       Effect.catchCause((cause) => Effect.logWarning("Dev replay agent unavailable", cause)),
@@ -187,7 +199,7 @@ export const layer: Layer.Layer<
     const initialConfigMap =
       initialSettings === undefined
         ? ({} as ProviderInstanceConfigMap)
-        : deriveProviderInstanceConfigMap(initialSettings);
+        : limit(deriveProviderInstanceConfigMap(initialSettings));
 
     // Drivers launch from the host environment, minus launch overrides a policy ignores.
     const hostEnvironment = ManagedProviders.providerHostEnvironment(
@@ -209,13 +221,13 @@ export const layer: Layer.Layer<
       Layer.provide(SecretResolver.layer),
     );
 
-    return layerSettingsWatcher(settingsChanges, initialSettings).pipe(
+    return layerSettingsWatcher(settingsChanges, initialSettings, limit).pipe(
       Layer.provideMerge(layerMutable),
     );
   }),
 ) as Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry
   | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
-  never,
+  Config.ConfigError,
   ProviderInstanceRegistryHydrationEnv
 >;

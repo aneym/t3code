@@ -9,6 +9,7 @@ import {
   OrchestrationV2ProviderTurnTokenUsage,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
+  ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -16,6 +17,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+
+import { isActiveRun } from "./CommandPolicy.ts";
+
+const CLAUDE_ASK_ONLY_DRIVER = ProviderDriverKind.make("claudeAgent");
 
 export interface ThreadForkPlanV2 {
   readonly targetThread: OrchestrationV2AppThread;
@@ -48,6 +53,35 @@ export function forkableSourceRunStatusError(
   return `Fork source run ${run.id} is ${run.status}; in-progress and rolled-back runs cannot be forked.`;
 }
 
+export const threadForkFlags = (command: {
+  readonly sideChat?: boolean | undefined;
+  readonly askOnly?: boolean | undefined;
+}) => ({
+  ...(command.sideChat ? { sideChat: true } : {}),
+  ...(command.askOnly ? { askOnly: true } : {}),
+});
+
+export const forkSourceBusy = (
+  laterSourceRuns: ReadonlyArray<OrchestrationV2Run>,
+  target: { readonly thread: Pick<OrchestrationV2AppThread, "lineage"> },
+) => target.thread.lineage.askOnly !== true && laterSourceRuns.some(isActiveRun);
+
+function askOnlyForkRefusal(input: {
+  readonly sideChat?: boolean;
+  readonly sourceRun: OrchestrationV2Run | null;
+  readonly sourceProviderThread: OrchestrationV2ProviderThread | undefined;
+}): string | null {
+  if (input.sideChat !== true) return "An ask-only fork must be a side chat.";
+  const ref = input.sourceProviderThread?.nativeThreadRef;
+  if (ref != null && ref.driver !== CLAUDE_ASK_ONLY_DRIVER) {
+    return `Ask-only forks are not supported for ${ref.driver} threads; only Claude threads can fork ask-only.`;
+  }
+  if (input.sourceRun === null || ref?.strength !== "strong") {
+    return "An ask-only fork needs a finished Claude run with a native session to fork from.";
+  }
+  return null;
+}
+
 export interface ThreadForkServiceV2Shape {
   readonly plan: (input: {
     readonly sourceProjection: Pick<OrchestrationV2ThreadProjection, "thread">;
@@ -60,6 +94,7 @@ export interface ThreadForkServiceV2Shape {
     readonly targetThreadId: ThreadId;
     readonly title?: string;
     readonly sideChat?: boolean;
+    readonly askOnly?: boolean;
     readonly createdBy: OrchestrationV2Actor;
     readonly creationSource: OrchestrationV2CreationSource;
     readonly createdAt: DateTime.Utc;
@@ -92,6 +127,14 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
             : "A subagent cannot start a side chat.",
         });
       }
+      const askOnlyRefusal = input.askOnly === true ? askOnlyForkRefusal(input) : null;
+      if (askOnlyRefusal !== null) {
+        return yield* new ThreadForkPlanError({
+          sourceThreadId: input.sourceProjection.thread.id,
+          targetThreadId: input.targetThreadId,
+          cause: askOnlyRefusal,
+        });
+      }
       if (sourceRun !== null && !isForkableSourceRunStatus(sourceRun.status)) {
         return yield* new ThreadForkPlanError({
           sourceThreadId: input.sourceProjection.thread.id,
@@ -103,6 +146,8 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
       const { delegatedFrom: _delegatedFrom, ...inherited } = input.sourceProjection.thread;
       const targetThread: OrchestrationV2AppThread = {
         ...inherited,
+        automationTaskId: undefined,
+        automationPlacementAt: undefined,
         // PR context follows the conversation; watching remains the source thread's responsibility.
         pullRequests: input.sourceProjection.thread.pullRequests?.map(
           ({ watch: _watch, ...link }) => link,
@@ -118,7 +163,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           parentThreadId: input.sourceProjection.thread.id,
           relationshipToParent: "fork",
           rootThreadId: input.sourceProjection.thread.lineage.rootThreadId,
-          ...(input.sideChat ? { sideChat: true } : {}),
+          ...threadForkFlags(input),
         },
         forkedFrom:
           sourceRun === null

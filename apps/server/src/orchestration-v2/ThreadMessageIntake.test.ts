@@ -28,12 +28,10 @@ import {
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import {
-  OrchestratorCommandPreviouslyRejectedError,
-  OrchestratorDispatchError,
-} from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
+import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
+import { OrchestratorCommandPreviouslyRejectedError } from "./OrchestratorErrors.ts";
 
 const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",

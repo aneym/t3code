@@ -48,7 +48,6 @@ import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 import { toPersistenceSqlError } from "../persistence/Errors.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
-import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -62,6 +61,7 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { type PendingOrchestrationEffectV2 } from "./EffectOutboxModel.ts";
 
 const mockEventSink = (implementation: Partial<EventSink.EventSinkV2["Service"]>) =>
   Layer.mock(EventSink.EventSinkV2)({
@@ -3369,18 +3369,6 @@ it.effect("fails the run when its event stream ends without a root terminal", ()
       finalEvents.find((event) => event.type === "provider-thread.updated")?.payload.status,
       "idle",
     );
-  }),
-);
-
-it.effect("leaves the run to restart recovery when shutdown interrupts its event stream", () =>
-  Effect.gen(function* () {
-    const { written, observed } = yield* captureRootRunTermination({
-      key: "stream-end:shutdown",
-      shouldFinalizeRun: () => Effect.succeed(true),
-      events: () => Stream.failCause(Cause.interrupt()),
-    });
-    assert.deepEqual(written, []);
-    assert.deepEqual(observed, []);
   }),
 );
 

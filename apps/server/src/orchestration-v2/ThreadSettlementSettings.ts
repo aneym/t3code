@@ -2,7 +2,7 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export const SweepCoalesceMs = Context.Reference("t3/ThreadSettlement/SweepCoalesceMs", {
+const SweepCoalesceMs = Context.Reference("t3/ThreadSettlement/SweepCoalesceMs", {
   defaultValue: () => 250,
 });
 
@@ -18,7 +18,6 @@ export function autoSettlementSettingsKey(
   settings: import("@t3tools/contracts").ServerSettings,
 ): string {
   return JSON.stringify([
-    settings.settleIdleChildren,
     settings.sidebarAutoSettleOnMerge,
     settings.sidebarAutoSettleAfterDays,
     settings.sidebarAutoSettleKeepPullRequests,

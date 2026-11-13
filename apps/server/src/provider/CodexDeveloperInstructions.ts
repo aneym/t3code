@@ -38,33 +38,15 @@ export interface CodexRuntimeInfo {
 }
 
 /** Keep this outside collaboration mode; model-catalog mode text overrides client developer_instructions. */
-const guidanceSections = (guidance: string): ReadonlyArray<string> => {
-  const sections: Array<string> = [];
-  let current = "";
-  for (const paragraph of guidance.split(/\n{2,}/)) {
-    const next = current.length === 0 ? paragraph : `${current}\n\n${paragraph}`;
-    if (Buffer.byteLength(next, "utf8") <= CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES) {
-      current = next;
-      continue;
-    }
-    if (current.length > 0) sections.push(current);
-    current = paragraph;
-  }
-  if (current.trim().length > 0) sections.push(current);
-  return sections;
-};
-
 export function buildCodexAdditionalContext(
   runtime: CodexRuntimeInfo,
   toolsAvailable: boolean | T3CodeToolAvailability = true,
-  toolGuidance?: string,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
-  const tools = toolGuidance === undefined ? toolInstructions(toolsAvailable) : "";
-  const sections =
-    toolGuidance === undefined ? T3_CODE_ORCHESTRATION_SECTIONS : guidanceSections(toolGuidance);
+  const tools = toolInstructions(toolsAvailable);
+  // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {
     ...Object.fromEntries(
-      sections.map((section, index) => [
+      T3_CODE_ORCHESTRATION_SECTIONS.map((section, index) => [
         `t3_code_orchestration_${String(index + 1).padStart(2, "0")}`,
         { kind: "application" as const, value: section },
       ]),

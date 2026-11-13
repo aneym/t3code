@@ -215,7 +215,7 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
         Effect.tap(({ installation }) =>
           settings.getSettings.pipe(
             Effect.flatMap((current) =>
-              current.enableProviderUpdateChecks
+              current.enableProviderUpdateChecks && "checkForUpdate" in installation
                 ? Effect.forkDetach(installation.checkForUpdate)
                 : Effect.void,
             ),

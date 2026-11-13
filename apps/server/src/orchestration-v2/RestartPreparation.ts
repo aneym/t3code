@@ -1,6 +1,6 @@
 import * as ServerSettings from "../serverSettings.ts";
 import { releaseClaudeBackgroundWork } from "./Adapters/ClaudeProcessGroup.ts";
-import { restartContinuationRun, unacceptedRestartRun } from "./RestartContinuation.ts";
+import { restartContinuationRun } from "./RestartContinuation.ts";
 import * as Cause from "effect/Cause";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { awaitRestartEffects, drainBeforeRestart, restartPausedRunIds } from "./RestartDrain.ts";
@@ -181,43 +182,61 @@ export const prepareForShutdown = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
   if (!enabled) return;
-  const threadIds = yield* projections.getRecoveryThreadIds("runtime");
-  for (const threadId of threadIds) {
-    yield* Effect.gen(function* () {
-      const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-      if (
-        !resolveProjectSettings(enabled, projection.thread.projectId).settings
-          .continueThreadsAfterServerUpdate
-      )
-        return;
-      const released = linux ? 0 : releaseClaudeBackgroundWork(threadId);
-      if (released > 0)
-        yield* Effect.logInfo("Released Claude background work for restart", { threadId });
-      const handedOff = restartHandoffRunIds(yield* outbox.restartHandoffs);
-      const run = restartContinuationRun(projection) ?? unacceptedRestartRun(projection);
-      const wakes = yield* bufferedWakeRuns(projections, threadId, projection.runs);
-      for (const source of [...(run === undefined ? [] : [run]), ...wakes]) {
-        if (handedOff.has(source.id)) continue;
-        const commandId = CommandId.make(`command:restart-prepare:${source.id}`);
-        yield* eventSink.writeWithEffects({
-          commandId,
-          events: [],
-          effects: [
-            {
-              id: `effect:restart-continuation:${source.id}`,
-              commandId,
-              threadId,
-              request: { type: "provider-runtime.continue", sourceRunId: source.id },
-            },
-          ],
-        });
-      }
-    }).pipe(
-      Effect.catchCauseIf(
-        (cause) => !Cause.hasInterruptsOnly(cause),
-        (cause) =>
-          Effect.logWarning("Failed to prepare a restart continuation", { threadId, cause }),
+  const enabledProjects = Object.entries(enabled.projectSettingsOverrides)
+    .filter(([, overrides]) => overrides.continueThreadsAfterServerUpdate === true)
+    .map(([id]) => id);
+  if (!enabled.continueThreadsAfterServerUpdate && enabledProjects.length === 0) return;
+  const disabledProjects = Object.entries(enabled.projectSettingsOverrides)
+    .filter(([, overrides]) => overrides.continueThreadsAfterServerUpdate === false)
+    .map(([id]) => id);
+  const threadIds = yield* projections.getRecoveryThreadIds(
+    "restart-continuations",
+    enabled.continueThreadsAfterServerUpdate
+      ? { exclude: disabledProjects }
+      : { include: enabledProjects },
+  );
+  const handedOff = restartHandoffRunIds(yield* outbox.restartHandoffs);
+  yield* Effect.forEach(
+    threadIds,
+    (threadId) =>
+      Effect.gen(function* () {
+        const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
+        if (
+          !resolveProjectSettings(enabled, projection.thread.projectId).settings
+            .continueThreadsAfterServerUpdate
+        )
+          return;
+        const released = linux ? 0 : releaseClaudeBackgroundWork(threadId);
+        if (released > 0)
+          yield* Effect.logInfo("Released Claude background work for restart", { threadId });
+        const run = restartContinuationRun(projection, yield* DateTime.now);
+        const wakes = yield* bufferedWakeRuns(projections, threadId, projection.runs);
+        for (const source of [...(run === undefined ? [] : [run]), ...wakes]) {
+          if (handedOff.has(source.id)) continue;
+          const commandId = CommandId.make(`command:restart-prepare:${source.id}`);
+          yield* eventSink.writeWithEffects({
+            commandId,
+            events: [],
+            effects: [
+              {
+                id: `effect:restart-continuation:${source.id}`,
+                commandId,
+                threadId,
+                request: { type: "provider-runtime.continue", sourceRunId: source.id },
+              },
+            ],
+          });
+        }
+      }).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("Failed to prepare a restart continuation", { threadId, cause }),
+        ),
       ),
-    );
-  }
-}).pipe(Effect.mapError((cause) => new ServerPrepareRestartError({ cause })));
+    { concurrency: 2, discard: true },
+  );
+}).pipe(
+  Effect.withSpan("ProviderRuntimeRecoveryService.prepareForShutdown"),
+  Effect.mapError((cause) => new ServerPrepareRestartError({ cause })),
+);

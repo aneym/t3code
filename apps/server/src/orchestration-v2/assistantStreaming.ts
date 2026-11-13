@@ -156,7 +156,9 @@ function withText(
  * provider that pauses mid-turn still shows everything it wrote.
  */
 export function makeAssistantStreamingFilter(
-  mode: ResponseStreamingMode,
+  mode:
+    | ResponseStreamingMode
+    | ((event: ProviderAdapter.ProviderAdapterV2Event) => ResponseStreamingMode),
   idleFlushMs = ASSISTANT_IDLE_FLUSH_MS,
 ) {
   const tracks = new Map<string, StreamTrack>();
@@ -186,7 +188,7 @@ export function makeAssistantStreamingFilter(
         tracks.delete(key);
         return event;
       }
-      if (mode === "turn") return null;
+      if ((typeof mode === "function" ? mode(event) : mode) === "turn") return null;
       const previous = tracks.get(key);
       const delivered = previous?.text ?? "";
       const hold = (scan = previous?.scan ?? EMPTY_SCAN) => {

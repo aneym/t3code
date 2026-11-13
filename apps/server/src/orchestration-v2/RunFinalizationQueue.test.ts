@@ -3,6 +3,7 @@ import { CheckpointScopeId, CommandId, GitCommandError, RunId, ThreadId } from "
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectEnrichment from "../project/ProjectEnrichmentService.ts";
@@ -15,6 +16,7 @@ import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as CheckpointRollback from "./CheckpointRollbackService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessions from "./ProviderSessionManager.ts";
 import * as ProviderTurnControl from "./ProviderTurnControlService.ts";
@@ -98,6 +100,8 @@ it.effect.each([
           recoverDelegatedTask: () => Effect.void,
         }),
         ServerSettings.layerTest(),
+        Layer.mock(EventSink.EventSinkV2)({}),
+        IdAllocator.layer,
         Layer.mock(ProviderTurnStart.ProviderTurnStartServiceV2)({
           start: () => Effect.sync(() => calls.push("start")).pipe(Effect.asVoid),
         }),

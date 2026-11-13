@@ -9,6 +9,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2LinkedSender,
   type OrchestrationV2Run,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
@@ -46,6 +47,8 @@ export interface ThreadSendInput extends MessageSender {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
   readonly mode: ThreadSendMode;
+  readonly linkedSender?: OrchestrationV2LinkedSender;
+  readonly freshContext?: boolean;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }
@@ -236,7 +239,11 @@ export const makeSendToThread = <LoadError, DispatchError>(
     return replayDispatchMode(input);
   });
 
-  return Effect.fn("ThreadManagementService.sendToThread")(function* (input: ThreadSendInput) {
+  return Effect.fn("ThreadManagementService.sendToThread")(function* (requested: ThreadSendInput) {
+    const input: ThreadSendInput =
+      requested.freshContext && (requested.mode === "steer" || requested.mode === "restart")
+        ? { ...requested, mode: "queue" }
+        : requested;
     const conflict = () =>
       new ThreadManagementSendConflictError({
         threadId: input.threadId,
@@ -276,10 +283,13 @@ export const makeSendToThread = <LoadError, DispatchError>(
       messageId: input.messageId,
       ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
       ...messageSender(input),
+      ...(input.linkedSender === undefined ? {} : { linkedSender: input.linkedSender }),
       text: input.text,
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.freshContext ? { freshContext: true } : {}),
       dispatchMode,
+      ...(input.mode === "auto" ? { deliveryIntent: "auto" } : {}),
       createdBy: input.createdBy,
       creationSource: input.creationSource,
     });
@@ -311,8 +321,17 @@ export const makeSendToThread = <LoadError, DispatchError>(
         messageId: input.messageId,
       });
     }
-    const delivery: ThreadSendResult["delivery"] =
-      run.status === "queued" && run.queueHeld === true
+    const restartedAsNextTurn =
+      input.mode === "restart" &&
+      dispatched.storedEvents.some(
+        ({ event }) =>
+          event.type === "turn-item.updated" &&
+          event.payload.type === "run_interrupt_request" &&
+          event.payload.runId !== run.id,
+      );
+    const delivery: ThreadSendResult["delivery"] = restartedAsNextTurn
+      ? "restarted"
+      : run.status === "queued" && run.queueHeld === true
         ? "held"
         : turnItem === null || turnItem.inputIntent === "queued_turn"
           ? "queued"

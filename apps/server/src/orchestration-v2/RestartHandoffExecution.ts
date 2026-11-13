@@ -27,7 +27,7 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
       if (source === undefined)
         return yield* new RestartHandoffExecutionError({ threadId: input.threadId, sourceRunId });
       if (projection.runs.some((run) => run.restartContinuationOfRunId === sourceRunId)) {
-        yield* threads.recoverDelegatedTask(input.threadId, sourceRunId);
+        yield* threads.recoverDelegatedTask(input.threadId, { sourceRunId });
         continue;
       }
       if (
@@ -37,7 +37,7 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
         source.status === "interrupted" ||
         source.status === "rolled_back"
       ) {
-        yield* threads.recoverDelegatedTask(input.threadId, sourceRunId);
+        yield* threads.recoverDelegatedTask(input.threadId, { sourceRunId });
         continue;
       }
       if (
@@ -45,7 +45,7 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
         projection.thread.deletedAt !== null ||
         projection.thread.settledOverride === "settled"
       ) {
-        yield* threads.recoverDelegatedTask(input.threadId, sourceRunId);
+        yield* threads.recoverDelegatedTask(input.threadId, { sourceRunId });
         continue;
       }
       if (
@@ -53,7 +53,7 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
           (item) => item.type === "run_interrupt_request" && item.runId === sourceRunId,
         )
       ) {
-        yield* threads.recoverDelegatedTask(input.threadId, sourceRunId);
+        yield* threads.recoverDelegatedTask(input.threadId, { sourceRunId });
         continue;
       }
       const awaitingReview = projection.runtimeRequests.some(
@@ -99,7 +99,7 @@ export const executeRestartHandoff = Effect.fn("RestartHandoffExecution.execute"
       if (current === undefined)
         return yield* new RestartHandoffExecutionError({ threadId: input.threadId, sourceRunId });
       yield* recordRestartDeclined(input.threadId, current, declined ?? "dispatch_failed");
-      yield* threads.recoverDelegatedTask(input.threadId, sourceRunId);
+      yield* threads.recoverDelegatedTask(input.threadId, { sourceRunId });
     }
   },
 );

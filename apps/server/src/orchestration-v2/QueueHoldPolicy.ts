@@ -1,11 +1,13 @@
-import {
-  resolveProviderInstanceEnabled,
-  type OrchestrationV2ProviderFailureClass,
-  type OrchestrationV2Run,
-  type OrchestrationV2ThreadProjection,
-  type ServerSettings,
+import type {
+  OrchestrationV2ProviderFailureClass,
+  OrchestrationV2Run,
+  OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
+import {
+  latestExecutedRun,
+  latestRootProviderFailure,
+  usageLimitBlockedRun,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 
 type Hold = Pick<
@@ -202,6 +204,7 @@ export function inheritedQueueHold(
 export function usageLimitHoldsQueue(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
   providerInstanceId: OrchestrationV2Run["providerInstanceId"],
+  now?: DateTime.Utc,
 ): boolean {
   let latestSession: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
   for (const session of projection.providerSessions) {
@@ -213,24 +216,16 @@ export function usageLimitHoldsQueue(
       latestSession = session;
     }
   }
-  return (
-    usageLimitBlockedRun(projection.runs, projection.turnItems, latestSession?.lastError ?? null)
-      ?.providerInstanceId === providerInstanceId
+  const limited = usageLimitBlockedRun(
+    projection.runs.filter((run) => run.providerInstanceId === providerInstanceId),
+    projection.turnItems,
+    latestSession?.lastError ?? null,
   );
-}
-
-export function providerInstanceDisabledForProject(
-  settings: Pick<ServerSettings, "projectSettingsOverrides" | "providerInstances">,
-  projectId: OrchestrationV2ThreadProjection["thread"]["projectId"],
-  providerInstanceId: OrchestrationV2Run["providerInstanceId"],
-): boolean {
-  const projectOverride =
-    settings.projectSettingsOverrides[projectId]?.providerInstances?.[providerInstanceId]?.enabled;
-  if (projectOverride !== undefined) return !projectOverride;
-  const machineInstance = Object.hasOwn(settings.providerInstances, providerInstanceId)
-    ? settings.providerInstances[providerInstanceId]
-    : undefined;
-  return machineInstance !== undefined && !resolveProviderInstanceEnabled(machineInstance);
+  if (limited === null) return false;
+  if (latestExecutedRun(projection.runs)?.id === limited.id) return true;
+  if (now === undefined) return false;
+  const resetAt = latestRootProviderFailure(limited, projection.turnItems)?.resetAt;
+  return resetAt != null && Date.parse(resetAt) > DateTime.toEpochMillis(now);
 }
 
 export function queueReleaseEvents(

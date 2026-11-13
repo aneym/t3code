@@ -1,10 +1,4 @@
-import * as DateTime from "effect/DateTime";
-import {
-  orchestrationV2RunWorkStartedAt,
-  type RunId,
-  type OrchestrationV2Run,
-  type OrchestrationV2ThreadProjection,
-} from "@t3tools/contracts";
+import type { OrchestrationV2Run, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 export function isAutomaticCompletionRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
@@ -43,32 +37,4 @@ export function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
   return queuedRunsInDeliveryOrder(projection).find((run) => run.queueHeld !== true);
-}
-
-export function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs">): number {
-  return projection.runs.reduce((max, run) => Math.max(max, run.ordinal), 0) + 1;
-}
-
-export function wakeWorkStartedAt(
-  runs: ReadonlyArray<OrchestrationV2Run>,
-  trigger: {
-    readonly notification?: unknown;
-    readonly delegatedCompletion?: unknown;
-    readonly restartContinuationOfRunId?: RunId | undefined;
-  },
-): Pick<OrchestrationV2Run, "workStartedAt"> {
-  if (
-    trigger.notification === undefined &&
-    trigger.delegatedCompletion === undefined &&
-    trigger.restartContinuationOfRunId === undefined
-  ) {
-    return {};
-  }
-  const previous = runs
-    .flatMap((run) => (run.startedAt === null ? [] : [{ run, startedAt: run.startedAt }]))
-    .toSorted(
-      (left, right) =>
-        DateTime.Order(right.startedAt, left.startedAt) || right.run.ordinal - left.run.ordinal,
-    )[0]?.run;
-  return previous === undefined ? {} : { workStartedAt: orchestrationV2RunWorkStartedAt(previous) };
 }

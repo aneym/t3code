@@ -1,4 +1,7 @@
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
+import * as Effect from "effect/Effect";
+
+import * as GitStandIn from "../vcs/GitStandIn.ts";
 
 const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
 
@@ -16,6 +19,17 @@ export const codexAppServerArgs = (launchArgs?: string) => [
   "thread_unload_delay_secs=0",
   ...codexLaunchArgv(launchArgs),
 ];
+
+export const codexAppServerArgsFor = Effect.fn("codexAppServerArgsFor")(function* (
+  launchArgs: string | undefined,
+  environment: NodeJS.ProcessEnv,
+) {
+  const gitStandIn = (yield* GitStandIn.environment(environment)) !== environment;
+  return [
+    ...codexAppServerArgs(launchArgs),
+    ...(gitStandIn ? ["--config", "features.plugins=false"] : []),
+  ];
+});
 
 interface LaunchArgFilter {
   readonly switches: ReadonlySet<string>;
