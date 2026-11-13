@@ -243,7 +243,15 @@ export function subagentResultForRun(
     turnItem?.text ??
     (run.status === "completed"
       ? "Child task completed without an assistant result."
-      : `Child task ended with status ${run.status}.`);
+      : run.status === "cancelled" &&
+          projection.turnItems.some(
+            (item) =>
+              item.runId === run.id &&
+              item.type === "system_notice" &&
+              (item.title === "Server restarted" || item.title === "Server shut down"),
+          )
+        ? "Child task cancelled: the T3 server restarted before it finished. Re-send if still needed."
+        : `Child task ended with status ${run.status}.`);
   const executedModel = latestProviderTurnForAttempt(
     projection.providerTurns,
     run.activeAttemptId,
