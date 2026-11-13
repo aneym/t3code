@@ -164,13 +164,12 @@ on that machine. Existing threads stay where they started. If resource checks ar
 unavailable or all eligible machines are full, choose a machine manually to continue.
 Mobile keeps its manual environment selection.
 
-Agent launches (`delegate_task`, `t3_thread_launch` and `t3 thread start`) that name no
-environment use **Agent load balancing** on the server instead. It picks the linked
-machine with the repository, the provider and the most weighted free CPU, memory and
-disk. A machine past its health line (load per core, available memory or free disk,
-set by `agentPlacementHealthLine`) is skipped. **Always here** pins launches to one
-machine. Run `t3 thread placement <thread>` to see where a thread runs and why, or
-`t3 environment show` for this machine's headroom.
+Agent launches (`delegate_task`, `t3_thread_launch`, `t3 thread start`) that name no
+environment use **Agent load balancing**: the linked machine with the repo, the
+provider and the most weighted free CPU, memory and disk wins, skipping any past
+their `agentPlacementHealthLine`. **Always here** pins launches to one machine.
+`t3 thread placement <thread>` explains a thread's machine; `t3 environment show`
+shows this one's headroom.
 
 ### Tailscale HTTPS
 
@@ -452,19 +451,6 @@ your login; `t3 connect logout` also clears that login. Background-service
 
 Treat pairing URLs and authorization codes as passwords. Do not include them in
 screenshots, logs, or bug reports.
-
-### Host daemons
-
-A local service that only reads from the host gets its own session:
-
-```sh
-npx t3 auth daemon-token my-feed
-```
-
-This writes `secrets/daemon-my-feed.json` under the T3 home, readable only by
-you, without printing the token. The session is read-only on the WebSocket and
-`/mcp`, lasts 90 days, and revokes like any other. Run the command daily to
-renew it with 14 days left; after a revoke it refuses until `--reissue`.
 
 ## T3 Connect troubleshooting
 

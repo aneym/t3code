@@ -40,12 +40,12 @@ import {
 } from "../../apps/server/src/device/AgentDeviceTarget.ts";
 import type * as DeviceHost from "../../apps/server/src/device/DeviceHost.ts";
 import * as DeviceService from "../../apps/server/src/device/DeviceService.ts";
-import * as McpHttpServer from "../../apps/server/src/mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { liveThreadsLayer } from "../../apps/server/src/mcp/McpToolAccess.testkit.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import * as ProjectService from "../../apps/server/src/project/ProjectService.ts";
 import { ServerSettingsService } from "../../apps/server/src/serverSettings.ts";
+import { inProcessDeviceToolkit } from "./deviceToolkitLayer.ts";
 import { shellInvocations } from "./device-grading.ts";
 
 export interface DeviceWorld {
@@ -774,8 +774,7 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
     }),
   );
   const context = yield* Layer.build(
-    McpHttpServer.layerDeviceToolkit.pipe(
-      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+    inProcessDeviceToolkit.pipe(
       Layer.provideMerge(devices),
       Layer.provideMerge(
         Layer.mergeAll(

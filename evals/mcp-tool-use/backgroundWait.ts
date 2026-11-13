@@ -23,7 +23,8 @@ import * as References from "effect/References";
 // oxlint-disable-next-line t3code/no-raw-mcp-registration -- the eval calls the tool McpHttpServer registered and registers none.
 import { McpSchema, McpServer } from "effect/ai";
 
-import * as McpHttpServer from "../../apps/server/src/mcp/McpHttpServer.ts";
+import { toolkitRegistration } from "../../apps/server/src/mcp/mcpServer/toolkitRegistration.ts";
+import { layerInProcessMcpServer } from "../../apps/server/src/mcp/mcpServer/transport.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { liveThreadShell } from "../../apps/server/src/mcp/McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "../../apps/server/src/mcp/OrchestratorMcpService.ts";
@@ -97,8 +98,8 @@ export const makeBackgroundWait = Effect.fn("evaluateMcpToolUse.makeBackgroundWa
     getThreadShell: () => Effect.succeed({ ...liveThreadShell(threadId), providerInstanceId }),
   });
   const context = yield* Layer.build(
-    McpHttpServer.toolkitRegistration(OrchestratorToolkit, OrchestratorHandlers.layer).pipe(
-      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+    toolkitRegistration(OrchestratorToolkit, OrchestratorHandlers.layer).pipe(
+      Layer.provideMerge(layerInProcessMcpServer),
       Layer.provide(Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({})),
       Layer.provide(Layer.mock(ThreadMetadataMcpService.ThreadMetadataMcpService)({})),
       Layer.provide(threads),
