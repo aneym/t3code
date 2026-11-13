@@ -1887,6 +1887,7 @@ it.effect.each([
           environmentId: box.environmentId,
           threadId: delegated.remoteChild.threadId,
           message: "Now run the slow suite too.",
+          mode: "auto",
         });
         const sendQueued = a.call("t3_thread_send", {
           environmentId: box.environmentId,
@@ -1956,6 +1957,7 @@ it.effect.each([
           environmentId: box.environmentId,
           threadId: delegated.remoteChild.threadId,
           message: "Now run the slow suite too.",
+          mode: "auto",
         });
         yield* a.call("t3_thread_send", {
           environmentId: box.environmentId,
@@ -2034,6 +2036,7 @@ it.effect("a follow-up sent after the parent's own run ended is still a task", (
         environmentId: box.environmentId,
         threadId: delegated.remoteChild.threadId,
         message: "Now run the slow suite too.",
+        mode: "auto",
       });
       expect(sent.isError, JSON.stringify(sent.content)).toBe(false);
       const followUp = sent.structuredContent as { taskId?: NodeId };
