@@ -230,7 +230,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isRunning,
   canInterrupt,
   runId = null,
-  followUpBehavior = "steer",
+  followUpBehavior = "queue",
   canSteer = true,
   alternateShortcutLabel = null,
   voiceInputActive = false,
