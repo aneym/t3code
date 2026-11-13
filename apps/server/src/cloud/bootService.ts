@@ -16,10 +16,6 @@ import * as Schema from "effect/Schema";
 
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
-import { connectorUnitPath } from "../serviceConnectorUnit.ts";
-import { pinLauncherArtifact } from "./launcherArtifact.ts";
-import { bootServiceUnitCurrent, pinnedLauncherInUse } from "./bootServiceComparison.ts";
-import { writeConnectorService, connectorServiceManager } from "./bootServiceConnector.ts";
 import { type BootServiceOtherHomeError, requireUnitsServeHome } from "./bootServiceOwner.ts";
 import {
   BOOT_SERVICE_LAUNCHD_LABEL,
@@ -39,9 +35,9 @@ import { acquireServiceSelectionLock } from "./serviceSelectionLock.ts";
 import {
   serviceLauncherIsRunning,
   serviceLauncherLockPath,
+  serviceTaskName,
   waitForServiceLauncherExit,
-} from "../serviceLauncherLock.ts";
-import { serviceTaskName } from "../serviceUnit.ts";
+} from "../serviceLauncher.ts";
 import {
   ensurePinnedRuntimeInstalled,
   launcherOwnsVersionsDir,
@@ -1002,22 +998,18 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     }
     // The unit is per user. Rewriting one that serves another home moves the
     // service onto this home's data, which looks like every thread vanished.
-    const refuseOtherBaseDir = Effect.suspend(() =>
-      Effect.forEach([unitPath, connectorUnitPath(unitPath)], (ownedPath) =>
-        Effect.gen(function* () {
-          const existingUnit = yield* fs.readFileString(ownedPath).pipe(Effect.option);
-          const installedBaseDir = Option.isSome(existingUnit)
-            ? otherBaseDirOf(existingUnit.value)
-            : undefined;
-          if (installedBaseDir !== undefined) {
-            return yield* new BootServiceOtherBaseDirError({
-              installedBaseDir,
-              baseDir: input.baseDir,
-            });
-          }
-        }),
-      ),
-    );
+    const refuseOtherBaseDir = Effect.gen(function* () {
+      const existingUnit = yield* fs.readFileString(unitPath).pipe(Effect.option);
+      const installedBaseDir = Option.isSome(existingUnit)
+        ? otherBaseDirOf(existingUnit.value)
+        : undefined;
+      if (installedBaseDir !== undefined) {
+        return yield* new BootServiceOtherBaseDirError({
+          installedBaseDir,
+          baseDir: input.baseDir,
+        });
+      }
+    });
     yield* refuseOtherBaseDir;
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
@@ -1126,7 +1118,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
     // State first, then unit. The launcher acquires only one at a time, and a
     // failure to lock the unit must never prevent its durable update commit.
-    const { plan: installedPlan } = yield* withSelectionLock(
+    const installedPlan = yield* withSelectionLock(
       statePath,
       withSelectionLock(
         unitPath,
@@ -1187,37 +1179,18 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
               return yield* new BootServiceUpdatePendingError();
             }
           }
-          const pinnedLauncher = (yield* pinnedLauncherInUse(manager, input.baseDir))
-            ? yield* pinLauncherArtifact(
-                input.baseDir,
-                runtimePaths.versionDir,
-                runtimePaths.entryPath,
-              )
-            : undefined;
-          const unitPlan =
-            pinnedLauncher === undefined
-              ? plan
-              : { ...plan, program: [pinnedLauncher, "__service-launcher-watchdog"] };
-          const connector =
-            pinnedLauncher === undefined
-              ? undefined
-              : yield* writeConnectorService(manager, unitPlan);
-          const unit = manager.render(unitPlan);
+          const unit = manager.render(plan);
           yield* writeDurably(unitPath, unit);
           if (!start && manager.kind === "schtasks") yield* refreshWindowsTask(unit);
-          return { plan, connector };
-        }).pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-        ),
+          return plan;
+        }),
       ),
     ).pipe(
-      Effect.tap(({ connector }) =>
+      Effect.tap(
         Effect.gen(function* () {
           if (handOff) {
             yield* runSteps(manager.handoff ?? []);
           } else if (start) {
-            if (connector !== undefined) yield* runSteps(connector.activate);
             yield* runSteps(manager.activate);
             yield* withSelectionLock(
               statePath,
@@ -1333,19 +1306,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
     const manager = yield* requireManager;
     yield* requireUnitsServeHome({ fs, path, unitPath, baseDir: input.baseDir });
-    const connector = manager.kind === "schtasks" ? undefined : connectorServiceManager(manager);
-    if (
-      connector !== undefined &&
-      (yield* fs
-        .exists(connector.unitPath)
-        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))))
-    ) {
-      yield* runSteps(connector.deactivate);
-      yield* fs
-        .remove(connector.unitPath, { force: true })
-        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-      yield* runSteps(connector.finalize);
-    }
     if (
       !(yield* fs
         .exists(unitPath)
@@ -1380,6 +1340,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       : undefined;
     const installedBaseDir = bootServiceBaseDirOf(unit);
     const otherBaseDir = otherBaseDirOf(unit);
+    const normalizeUnit = (contents: string) =>
+      manager.kind === "launchd"
+        ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
+        : contents;
     const problems: BootServiceProblem[] =
       manager.kind === "systemd"
         ? [...(yield* readSystemdProblems(true))]
@@ -1397,10 +1361,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       current:
         problems.length === 0 &&
         !(manager.kind === "systemd" && systemdUnsafeValue(planForUnit(unit))) &&
-        (yield* bootServiceUnitCurrent(manager, unit, planForUnit(unit), input.baseDir).pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-        )) &&
+        normalizeUnit(unit) === normalizeUnit(manager.render(planForUnit(unit))) &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&

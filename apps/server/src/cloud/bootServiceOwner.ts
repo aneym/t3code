@@ -6,7 +6,6 @@ import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 
 import { cliRefusal } from "../cliRefusal.ts";
-import { connectorUnitPath } from "../serviceConnectorUnit.ts";
 import { serviceUnitBaseDirOf as bootServiceBaseDirOf } from "./serviceProtocol.ts";
 
 export class BootServiceOtherHomeError extends Schema.TaggedError<BootServiceOtherHomeError>()(
@@ -37,15 +36,13 @@ export const requireUnitsServeHome = Effect.fn("cloud.boot_service_owner.require
     readonly unitPath: string;
     readonly baseDir: string;
   }) {
-    for (const owned of [input.unitPath, connectorUnitPath(input.unitPath)]) {
-      const unit = yield* input.fs.readFileString(owned).pipe(Effect.option);
-      if (Option.isSome(unit) && !unitServesHome(input.path, unit.value, input.baseDir)) {
-        return yield* new BootServiceOtherHomeError({
-          unitPath: owned,
-          installedBaseDir: bootServiceBaseDirOf(unit.value),
-          baseDir: input.baseDir,
-        });
-      }
+    const unit = yield* input.fs.readFileString(input.unitPath).pipe(Effect.option);
+    if (Option.isSome(unit) && !unitServesHome(input.path, unit.value, input.baseDir)) {
+      return yield* new BootServiceOtherHomeError({
+        unitPath: input.unitPath,
+        installedBaseDir: bootServiceBaseDirOf(unit.value),
+        baseDir: input.baseDir,
+      });
     }
   },
 );

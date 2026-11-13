@@ -26,7 +26,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import * as McpOAuthCodes from "./McpOAuthCodes.ts";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpServerRequest } from "effect/http";
 
@@ -124,6 +124,17 @@ export interface AuthorizationRequest {
   readonly issuer: string;
 }
 
+interface PendingCode {
+  readonly clientId: string;
+  readonly clientName: string;
+  readonly peerLink: boolean;
+  readonly redirectUri: string;
+  readonly codeChallenge: string;
+  readonly resource: string;
+  readonly access: AuthMcpClientAccess;
+  readonly expiresAtMs: number;
+}
+
 export type ApprovalDecision = Exclude<AuthMcpApprovalDecision, { readonly _tag: "deny" }>;
 
 export class McpOAuth extends Context.Service<
@@ -197,7 +208,7 @@ const make = Effect.gen(function* () {
   const signer = yield* PayloadSigner.fromSecret(
     yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(Effect.orDie),
   );
-  const codes = yield* McpOAuthCodes.McpOAuthCodes;
+  const codes = yield* Ref.make<ReadonlyMap<string, PendingCode>>(new Map());
 
   const sign = (domain: string, payload: string) => signer.sign(`${domain}.${payload}`);
 
@@ -362,30 +373,20 @@ const make = Effect.gen(function* () {
   ) {
     const now = yield* Clock.currentTimeMillis;
     const code = Buffer.from(yield* random.randomBytes(32)).toString("base64url");
-    const codeKey = yield* sign("mcp-authorization-code", code);
-    yield* codes
-      .put(
-        codeKey,
-        {
-          clientId: authorization.client.clientId,
-          clientName: authorization.client.name,
-          peerLink: authorization.client.peerLink,
-          redirectUri: authorization.redirectUri,
-          codeChallenge: authorization.codeChallenge,
-          resource: authorization.resource,
-          access,
-          expiresAtMs: now + AUTHORIZATION_CODE_TTL_MS,
-        },
-        now,
-      )
-      .pipe(
-        Effect.mapError(
-          () =>
-            new McpOAuthPageError({
-              description: "The authorization could not be saved. Try again.",
-            }),
-        ),
-      );
+    yield* Ref.update(codes, (current) => {
+      const next = new Map(Array.from(current).filter(([, pending]) => pending.expiresAtMs > now));
+      next.set(code, {
+        clientId: authorization.client.clientId,
+        clientName: authorization.client.name,
+        peerLink: authorization.client.peerLink,
+        redirectUri: authorization.redirectUri,
+        codeChallenge: authorization.codeChallenge,
+        resource: authorization.resource,
+        access,
+        expiresAtMs: now + AUTHORIZATION_CODE_TTL_MS,
+      });
+      return next;
+    });
     return code;
   });
 
@@ -464,13 +465,13 @@ const make = Effect.gen(function* () {
         return yield* fail("invalid_client", "The client is unknown.");
       }
       // A presented code is spent even when a later check fails (RFC 6749 §4.1.2).
-      const pending = yield* codes
-        .take(yield* sign("mcp-authorization-code", code))
-        .pipe(
-          Effect.mapError(() =>
-            fail("invalid_grant", "The authorization code could not be consumed."),
-          ),
-        );
+      const pending = yield* Ref.modify(codes, (current) => {
+        const found = current.get(code);
+        if (found === undefined) return [undefined, current] as const;
+        const next = new Map(current);
+        next.delete(code);
+        return [found, next] as const;
+      });
       const now = yield* Clock.currentTimeMillis;
       if (
         pending === undefined ||
@@ -524,7 +525,7 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(McpOAuth, make).pipe(Layer.provide(McpOAuthCodes.layer));
+export const layer = Layer.effect(McpOAuth, make);
 
 export const layerMcpClientAuthenticator = Layer.effect(
   McpClientAuthenticator,

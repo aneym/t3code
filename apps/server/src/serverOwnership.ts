@@ -20,7 +20,6 @@ import {
 } from "./cloud/bootServiceRender.ts";
 import { ServiceLauncherHostProcess } from "./cloud/serviceLauncherClient.ts";
 import {
-  SERVER_OWNER_LOCK_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
@@ -33,7 +32,6 @@ import {
   legacyOwnerStartTimeCommand,
 } from "./legacyServerOwner.ts";
 import { cliRefusal } from "./cliRefusal.ts";
-import { assertServiceOwnershipGrant } from "./serviceOwnershipGrant.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -173,7 +171,7 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
   Effect.orElseSucceed(() => undefined),
 );
 
-const ownershipLockPath = (stateDir: string) => NodePath.join(stateDir, SERVER_OWNER_LOCK_FILE);
+const ownershipLockPath = (stateDir: string) => NodePath.join(stateDir, "server-owner.sqlite");
 
 /**
  * The lock is an exclusive transaction on `server-owner.sqlite`, which never
@@ -225,37 +223,21 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
   statePath: string,
 ) {
   const stateDir = NodePath.dirname(statePath);
-  yield* assertServiceOwnershipGrant(stateDir);
   const random = yield* SecureRandom.SecureRandom;
-  const launcher = yield* ServiceLauncherHostProcess;
   const ownerId = yield* random
     .uuidV4()
     .pipe(Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })));
   const lockPath = ownershipLockPath(stateDir);
-  const lock = yield* Effect.acquireRelease(
-    openOwnershipLock(stateDir).pipe(
-      Effect.tapError((error) =>
-        error._tag === "ServerAlreadyRunningError" && launcher.connected
-          ? Effect.callback<void>((resume) => {
-              try {
-                launcher.send({ type: "state-dir-owned" }, () => resume(Effect.void));
-              } catch {
-                resume(Effect.void);
-              }
-            })
+  const lock = yield* Effect.acquireRelease(openOwnershipLock(stateDir), ({ db }) =>
+    readPersistedServerRuntimeState(statePath).pipe(
+      Effect.flatMap((state) =>
+        Option.isSome(state) && state.value.ownerId === ownerId
+          ? clearPersistedServerRuntimeState(statePath)
           : Effect.void,
       ),
+      Effect.ignore({ log: true }),
+      Effect.ensuring(Effect.sync(() => db.close())),
     ),
-    ({ db }) =>
-      readPersistedServerRuntimeState(statePath).pipe(
-        Effect.flatMap((state) =>
-          Option.isSome(state) && state.value.ownerId === ownerId
-            ? clearPersistedServerRuntimeState(statePath)
-            : Effect.void,
-        ),
-        Effect.ignore({ log: true }),
-        Effect.ensuring(Effect.sync(() => db.close())),
-      ),
   );
 
   const previous = yield* readPersistedServerRuntimeState(statePath).pipe(
