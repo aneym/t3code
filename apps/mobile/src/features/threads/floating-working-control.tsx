@@ -76,7 +76,7 @@ export function FloatingWorkingControl(props: {
   readonly onScrollToEnd: () => void;
   readonly agents: SubagentPillSegment | null;
   readonly onOpenAgents: () => void;
-  readonly queuedCount: number;
+  readonly queueLabel?: string;
   readonly onOpenQueue: () => void;
   readonly lift?: SharedValue<number>;
 }) {
@@ -96,7 +96,7 @@ export function FloatingWorkingControl(props: {
       ? props.status.action
       : null;
   const [agentsWidth, setAgentsWidth] = useState(0);
-  const hasQueue = props.queuedCount > 0;
+  const hasQueue = props.queueLabel !== undefined;
   const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
   const [previewWidth, setPreviewWidth] = useState(0);
   const agents = props.agents;
@@ -282,7 +282,7 @@ export function FloatingWorkingControl(props: {
       {hasQueue ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Open queue, ${props.queuedCount} messages`}
+          accessibilityLabel={`Open queue, ${props.queueLabel}`}
           accessibilityHint="Opens queued messages to send now, edit, or remove"
           onPress={props.onOpenQueue}
           onLayout={(event) => setQueueWidth(settleWidth(event.nativeEvent.layout.width))}
@@ -294,7 +294,7 @@ export function FloatingWorkingControl(props: {
           ) : null}
           <SymbolView name="list.number" size={13} tintColorClassName="accent-foreground" />
           <Text className="shrink font-t3-medium text-xs tabular-nums" numberOfLines={1}>
-            {props.queuedCount} queued
+            {props.queueLabel}
           </Text>
         </Pressable>
       ) : null}

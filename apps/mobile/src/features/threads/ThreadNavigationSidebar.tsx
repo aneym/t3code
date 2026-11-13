@@ -374,28 +374,29 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const renderListItem = ({ item }: { readonly item: SidebarListItem }) => {
     switch (item.type) {
       case "v2-pending": {
-        const task = item.pendingTask;
-        const dest = task.destinationId === undefined ? task.environmentId : task.destinationId;
-        const key = scopedProjectKey(task.environmentId, task.projectId);
+        const pendingScopeKey = scopedProjectKey(
+          item.pendingTask.environmentId,
+          item.pendingTask.projectId,
+        );
         return (
           <ThreadListV2PendingRow
-            pendingTask={task}
+            pendingTask={item.pendingTask}
             selected={
-              activeNewTask?.pendingKey === task.key ||
-              (task.kind === "pending" &&
-                scopedThreadKey(task.environmentId, task.message.threadId) ===
-                  props.selectedThreadKey)
+              activeNewTask?.pendingKey === item.pendingTask.key ||
+              (item.pendingTask.kind === "pending" &&
+                scopedThreadKey(
+                  item.pendingTask.environmentId,
+                  item.pendingTask.message.threadId,
+                ) === props.selectedThreadKey)
             }
-            project={projectByKey.get(key) ?? null}
-            projectTitle={projectTitleByProjectKey.get(key)}
+            project={projectByKey.get(pendingScopeKey) ?? null}
+            projectTitle={projectTitleByProjectKey.get(pendingScopeKey)}
             environmentLabel={
-              !dest
-                ? "Auto balance"
-                : Object.keys(savedConnectionsById).length > 1
-                  ? (savedConnectionsById[dest]?.environmentLabel ?? null)
-                  : null
+              Object.keys(savedConnectionsById).length > 1
+                ? (savedConnectionsById[item.pendingTask.environmentId]?.environmentLabel ?? null)
+                : null
             }
-            environmentMachine={dest ? machineByEnvironmentId.get(dest) : undefined}
+            environmentMachine={machineByEnvironmentId.get(item.pendingTask.environmentId)}
             pane="sidebar"
             showPendingDivider={item.showPendingDivider}
             onSelectPendingTask={props.onOpenPendingTask}
