@@ -1,3 +1,6 @@
+import { scheduledTaskStateLabel } from "@t3tools/client-runtime/scheduled-task-once";
+import { AutomationPlacementControl } from "./AutomationPlacementControl";
+import { useThreadShell } from "../../state/entities";
 import { useAtomValue } from "@effect/atom-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { useNavigate } from "@tanstack/react-router";
@@ -52,7 +55,7 @@ function taskScheduleLine(task: ScheduledTask, timeZone: string | undefined) {
       ) : task.enabled ? (
         ""
       ) : (
-        " · paused"
+        ` · ${scheduledTaskStateLabel(task).toLowerCase()}`
       )}
     </>
   );
@@ -81,7 +84,7 @@ export function ThreadAutomationsPanel(props: {
     (task) => task.threadId === props.threadId,
   );
 
-  if (tasksQuery.error === null && boundTasks.length === 0) return null;
+  const thread = useThreadShell(props);
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -156,6 +159,11 @@ export function ThreadAutomationsPanel(props: {
         </Tooltip>
       }
     >
+      <AutomationPlacementControl
+        {...props}
+        marked={thread?.automationTaskId != null}
+        bound={boundTasks.length > 0}
+      />
       <ul className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0">
         {boundTasks.map((task) => (
           <li

@@ -76,33 +76,3 @@ export function useStableRows(
   setState({ identity, source: rows, stable });
   return stable.result;
 }
-
-interface TimelineLiveTail {
-  readonly rows: MessagesTimelineRow[];
-  readonly liveTail: ReadonlyArray<MessagesTimelineRow>;
-}
-
-function splitLiveTail(rows: MessagesTimelineRow[], separate: boolean): TimelineLiveTail {
-  let start = rows.length;
-  while (separate && start > 0 && ["working", "thinking"].includes(rows[start - 1]!.kind)) {
-    start -= 1;
-  }
-  return start === rows.length
-    ? { rows, liveTail: [] }
-    : { rows: rows.slice(0, start), liveTail: rows.slice(start) };
-}
-
-export function useTimelineLiveTail(
-  rows: MessagesTimelineRow[],
-  separate: boolean,
-): TimelineLiveTail {
-  const [state, setState] = useState<{
-    readonly source: MessagesTimelineRow[] | null;
-    readonly separate: boolean;
-    readonly split: TimelineLiveTail;
-  }>({ source: null, separate, split: { rows, liveTail: [] } });
-  if (state.source === rows && state.separate === separate) return state.split;
-  const split = splitLiveTail(rows, separate);
-  setState({ source: rows, separate, split });
-  return split;
-}

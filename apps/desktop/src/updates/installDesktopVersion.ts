@@ -3,7 +3,8 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Scope from "effect/Scope";
+import * as PubSub from "effect/PubSub";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 class DesktopVersionInstallError extends Schema.TaggedError<DesktopVersionInstallError>()(
@@ -13,22 +14,22 @@ class DesktopVersionInstallError extends Schema.TaggedError<DesktopVersionInstal
 
 interface VersionInstaller {
   readonly getState: Effect.Effect<DesktopUpdateState>;
-  readonly subscribe: Effect.Effect<
-    {
-      readonly latest: DesktopUpdateState;
-      readonly changes: Stream.Stream<DesktopUpdateState>;
-    },
-    never,
-    Scope.Scope
-  >;
+  readonly stateChanges: PubSub.PubSub<DesktopUpdateState>;
+  readonly stateLock: Semaphore.Semaphore;
+  readonly platform: string;
+  readonly quitting: Effect.Effect<boolean>;
+  readonly configured: Effect.Effect<boolean>;
   readonly reserve: Effect.Effect<boolean>;
   readonly release: Effect.Effect<void>;
-  readonly feedRoot: Effect.Effect<string | undefined>;
+  readonly feedConfig: Effect.Effect<Option.Option<Readonly<Record<string, string>>>>;
   readonly setFeed: (url: string) => Effect.Effect<void>;
   readonly check: Effect.Effect<boolean>;
   readonly download: Effect.Effect<{ readonly completed: boolean }>;
   readonly install: (version: string) => Effect.Effect<DesktopUpdateActionResult>;
-  readonly fail: (message: string) => Effect.Effect<void>;
+  readonly updateState: (
+    f: (state: DesktopUpdateState) => DesktopUpdateState,
+  ) => Effect.Effect<DesktopUpdateState>;
+  readonly now: Effect.Effect<string>;
 }
 
 function failureMessage(cause: unknown): string {
@@ -39,17 +40,38 @@ function failureMessage(cause: unknown): string {
 }
 
 export function makeVersionInstaller(input: VersionInstaller) {
+  const fail = (message: string) =>
+    input.now.pipe(
+      Effect.flatMap((checkedAt) =>
+        input.updateState((state) => ({
+          ...state,
+          status: "error",
+          message,
+          checkedAt,
+          downloadPercent: null,
+          errorContext: "check",
+          canRetry: false,
+        })),
+      ),
+    );
   return Effect.fn("DesktopUpdates.installVersion")(function* (version: string) {
     const refused = Effect.map(input.getState, (state) => ({
       accepted: false,
       completed: false,
       state,
     }));
-    if (!(yield* input.reserve)) return yield* refused;
+    if (
+      input.platform !== "darwin" ||
+      (yield* input.quitting) ||
+      !(yield* input.configured) ||
+      !(yield* input.reserve)
+    )
+      return yield* refused;
     return yield* Effect.scoped(
       Effect.gen(function* () {
         const initial = yield* input.getState;
-        const root = yield* input.feedRoot;
+        const feedConfig = Option.getOrUndefined(yield* input.feedConfig);
+        const root = feedConfig?.provider === "generic" ? feedConfig.url : undefined;
         if (!/^\d+\.\d+\.\d+-nightly\.[0-9A-Za-z.-]+\.aneym\.\d+$/.test(version)) {
           return yield* new DesktopVersionInstallError({
             message: "Select an exact fork desktop version.",
@@ -67,13 +89,15 @@ export function makeVersionInstaller(input: VersionInstaller) {
             message: "The desktop feed must use HTTP or HTTPS.",
           });
         }
-        const subscription = yield* input.subscribe;
+        const changes = Stream.fromSubscription(
+          yield* input.stateLock.withPermits(1)(PubSub.subscribe(input.stateChanges)),
+        );
         const awaitState = Effect.fn("DesktopUpdates.awaitVersionState")(function* (
           predicate: (state: DesktopUpdateState) => boolean,
         ) {
           const state = yield* input.getState;
           if (predicate(state)) return state;
-          const next = yield* subscription.changes.pipe(
+          const next = yield* changes.pipe(
             Stream.filter(predicate),
             Stream.runHead,
             Effect.timeout("15 minutes"),
@@ -115,7 +139,7 @@ export function makeVersionInstaller(input: VersionInstaller) {
       }),
     ).pipe(
       Effect.catchCause((cause) =>
-        input.fail(failureMessage(Cause.squash(cause))).pipe(Effect.andThen(refused)),
+        fail(failureMessage(Cause.squash(cause))).pipe(Effect.andThen(refused)),
       ),
       Effect.ensuring(input.release),
     );

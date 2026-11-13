@@ -1,3 +1,4 @@
+import { queueSettingsSearch } from "./queueSettingsSearch";
 import { HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron, isSecretsFeatureEnabled } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
@@ -322,14 +323,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance",
   },
   {
-    // Prefixed because the slider control already owns the `appearance-contrast` id.
     id: "setting-appearance-contrast",
     title: "Contrast",
     to: "/settings/appearance",
     searchTerms: ["colors borders interface"],
   },
   {
-    // Prefixed because the slider control already owns the `glass-opacity` id.
     id: "setting-glass-opacity",
     title: "Glass opacity",
     to: "/settings/appearance",
@@ -768,6 +767,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
     scope: "environment-defaults",
   },
+  ...queueSettingsSearch,
   {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",

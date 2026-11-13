@@ -171,9 +171,6 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                       text: target.text,
                       context,
                     }),
-                    ...(target.text === ""
-                      ? {}
-                      : { composerSubmit: { displayedAssistantMessageId: null } }),
                   },
                   modelSelection: target.selection,
                   titleSeed: title,

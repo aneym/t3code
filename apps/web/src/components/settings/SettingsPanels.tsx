@@ -1,4 +1,10 @@
+import {
+  changedForkThreadSettings,
+  forkThreadSettingsDefaults,
+} from "./forkThreadSettingsDefaults";
 import { useAtomValue } from "@effect/atom-react";
+import { QueueSettings } from "./QueueSettings";
+import { ChatChangedFilesSetting } from "./ChatChangedFilesSetting";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
@@ -554,6 +560,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? ["Continue threads after restarts"]
       : []),
+    ...changedForkThreadSettings(settings),
     ...(isBackgroundActivityDirty ? ["Background activity"] : []),
     ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
       ? ["New thread mode"]
@@ -599,8 +606,6 @@ export function useSettingsRestore(onRestored?: () => void) {
     );
     if (!confirmed) return;
 
-    // Reset only dirty theme keys so storage failures cannot block other settings; re-read after confirmation
-    // for safe rollback.
     let previousTheme = theme;
     try {
       previousTheme = readThemePreference();
@@ -677,6 +682,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
+      ...forkThreadSettingsDefaults,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -1289,6 +1295,7 @@ export function ChatSettingsPanel() {
             </Select>
           }
         />
+        <QueueSettings />
       </SettingsSection>
 
       <SettingsSection id="activity" title="Activity">
@@ -1560,6 +1567,7 @@ export function DiffsSettingsPanel() {
             />
           }
         />
+        <ChatChangedFilesSetting />
         <SettingsRow
           {...searchableSetting("default-diff-file-state")}
           description="Start with files expanded or collapsed when opening diffs or a pull request's Code tab."
@@ -1637,7 +1645,6 @@ export function DiffsSettingsPanel() {
   );
 }
 
-/** The Providers panel can render without a settings scope, as its tests do; this row needs one. */
 export function CompactIdleThreadsRow() {
   return useOptionalSettingsScope() === null ? null : <ScopedCompactIdleThreadsRow />;
 }
@@ -1688,7 +1695,6 @@ function ScopedCompactIdleThreadsRow() {
                 hideIndicator
                 key={mode.value}
                 value={mode.value}
-                // A server from before modes has only the on/off switch, so it cannot store "Never".
                 disabled={mode.value === "off" && !idleCompaction.neverAvailable}
               >
                 {mode.label}
@@ -2237,7 +2243,6 @@ export function MaintenanceSettingsPanel() {
 
 export function AboutSettingsPanel() {
   const primaryPolicy = usePrimaryManagedPolicy();
-  // The Welcome page sets up this computer, so it needs one.
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const telemetryOff = managedTelemetryOffMessage(primaryPolicy);
   return (

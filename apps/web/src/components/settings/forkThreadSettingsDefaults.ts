@@ -1,29 +1,23 @@
 import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
 
 export const forkThreadSettingsDefaults = {
+  showChatChangedFiles: DEFAULT_UNIFIED_SETTINGS.showChatChangedFiles,
   batchQueuedMessages: DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages,
-  queueSendAll: DEFAULT_UNIFIED_SETTINGS.queueSendAll,
-  settleIdleChildren: DEFAULT_UNIFIED_SETTINGS.settleIdleChildren,
   quietThreadNotes: DEFAULT_UNIFIED_SETTINGS.quietThreadNotes,
   childCompletionNotes: DEFAULT_UNIFIED_SETTINGS.childCompletionNotes,
   headlessSubagentStreaming: DEFAULT_UNIFIED_SETTINGS.headlessSubagentStreaming,
   mcpEventsEnabled: DEFAULT_UNIFIED_SETTINGS.mcpEventsEnabled,
   mcpClientApprovals: DEFAULT_UNIFIED_SETTINGS.mcpClientApprovals,
-  liveThreadFeed: DEFAULT_UNIFIED_SETTINGS.liveThreadFeed,
-  hostLinkEnabled: DEFAULT_UNIFIED_SETTINGS.hostLinkEnabled,
   peerLinkRenewalEnabled: DEFAULT_UNIFIED_SETTINGS.peerLinkRenewalEnabled,
 };
 
 export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyArray<string> {
   return [
-    settings.queueSendAll !== forkThreadSettingsDefaults.queueSendAll
-      ? "Send all queued messages"
+    settings.showChatChangedFiles !== forkThreadSettingsDefaults.showChatChangedFiles
+      ? "Changed files in chat"
       : null,
     settings.batchQueuedMessages !== forkThreadSettingsDefaults.batchQueuedMessages
       ? "Send queued messages together"
-      : null,
-    settings.settleIdleChildren !== forkThreadSettingsDefaults.settleIdleChildren
-      ? "Settle idle child threads"
       : null,
     settings.quietThreadNotes !== forkThreadSettingsDefaults.quietThreadNotes
       ? "Quiet thread notes"
@@ -39,12 +33,6 @@ export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyAr
       : null,
     settings.mcpClientApprovals !== forkThreadSettingsDefaults.mcpClientApprovals
       ? "Approvals from MCP clients"
-      : null,
-    settings.liveThreadFeed !== forkThreadSettingsDefaults.liveThreadFeed
-      ? "Live thread feed"
-      : null,
-    settings.hostLinkEnabled !== forkThreadSettingsDefaults.hostLinkEnabled
-      ? "Host app link"
       : null,
     settings.peerLinkRenewalEnabled !== forkThreadSettingsDefaults.peerLinkRenewalEnabled
       ? "Renew links without a code"

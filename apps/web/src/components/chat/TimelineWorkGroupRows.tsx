@@ -55,6 +55,8 @@ import {
   workEntryIconName,
 } from "./TimelineWorkEntryRow.logic";
 import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
+import { useEmbedLiveActivityLabel } from "../../embed/useEmbedLiveActivityLabel";
+import { EmbedLivePeek } from "../embed/EmbedLivePeek";
 
 export const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
@@ -153,8 +155,6 @@ function ExpandedWorkGroupEntries({
   const [expandedContentHeight, setExpandedContentHeight] = useState(0);
   const [fades, setFades] = useState({ top: false, bottom: false, viewportHeight: 0 });
   const [appendState, setAppendState] = useState({ entries, follow: false });
-  // Capture the pre-change edge once per incoming array, before new layout
-  // metrics arrive. Edge/viewport changes never turn a status update into a follow.
   if (appendState.entries !== entries) {
     setAppendState({
       entries,
@@ -202,8 +202,6 @@ function ExpandedWorkGroupEntries({
     const list = listRef.current;
     const element = list?.getScrollableNode();
     if (initialScrollIndex && list && element) {
-      // Bootstrap can report the restored target before the DOM has applied it.
-      // Reconcile once at load, before releasing the measured anchor row.
       const offset = Math.max(
         0,
         Math.min(list.getState().scroll, element.scrollHeight - element.clientHeight),
@@ -292,7 +290,8 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
   const compacting = row.compacting === true || isCompacting;
-  const shimmer = isPreparingWorktree || compacting;
+  const embedded = useEmbedLiveActivityLabel(undefined, true) !== null;
+  const shimmer = isPreparingWorktree || compacting || embedded;
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
   ) : compacting ? (
@@ -314,6 +313,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
           {label}
           {shimmer ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
         </span>
+        <EmbedLivePeek at={row.createdAt} />
         {backgroundWorktreeSetup ? (
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
         ) : null}
@@ -376,7 +376,6 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   const { isCompacting, isPreparingWorktree, liveAnswerPreview, providerStartingLabel } =
     use(TimelineRowActivityCtx);
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
-  // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
   const live = ctx.pendingApprovals.size === 0;
   const activity = (
     <LiveActivityRow
@@ -513,6 +512,7 @@ export function LiveWorkEntryTimelineRow({
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
   const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const threadLabel = threadReadLabel(label, threadTarget);
+  const embedLabel = useEmbedLiveActivityLabel(row.entry.itemType, row.active);
 
   const item = row.entry.projectedItem?.item;
   const pendingApproval =
@@ -521,7 +521,7 @@ export function LiveWorkEntryTimelineRow({
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
   const thoughtLine =
-    row.thought && !row.expanded
+    row.thought && !row.expanded && embedLabel === null
       ? liveThoughtLine((row.thought.detail ?? "").slice(0, THOUGHT_PREVIEW_SOURCE_MAX_LENGTH))
       : "";
   const thoughtIsStatus = thoughtLine !== "" && row.entry === row.thought;
@@ -569,7 +569,8 @@ export function LiveWorkEntryTimelineRow({
       ) : null}
       <LiveActivityRow
         label={
-          thoughtIsStatus ? (
+          embedLabel ??
+          (thoughtIsStatus ? (
             row.active ? (
               "Thinking"
             ) : (
@@ -591,7 +592,7 @@ export function LiveWorkEntryTimelineRow({
             />
           ) : (
             label
-          )
+          ))
         }
         iconName={workEntryIconName(row.entry)}
         toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}

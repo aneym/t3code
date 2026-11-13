@@ -1,17 +1,21 @@
 import { messageSenderRef } from "@t3tools/contracts";
-import { ChevronDown, ChevronRight } from "lucide";
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { use, useState } from "react";
 
 import { noteRunOf } from "../../embed/embedNoteRuns";
-import type { EmbedQuietLine } from "../../embed/embedQuietMessages";
+import { useEmbedHostConnected } from "../../embed/embedHost";
+import { embedQuietLine, type EmbedQuietLine } from "../../embed/embedQuietMessages";
 import { embedSeenAt } from "../../embed/embedSeen";
 import { useQuietThreadShell } from "../../state/entities";
-import { MorphIcon } from "../MorphIcon";
 import { formatShortTimestamp } from "../../timestampFormat";
 import type { ChatMessage } from "../../types";
 import { findRevealRef } from "../chat/markdownFindContext";
 import { TimelineRowCtx } from "../chat/timelineRowContext";
 import { MessageAuthorHeading } from "../chat/TimelineRowParts";
+
+export function useEmbedQuietLine(message: ChatMessage): EmbedQuietLine | null {
+  return useEmbedHostConnected() ? embedQuietLine(message) : null;
+}
 
 export function EmbedQuietMessageRow({
   message,
@@ -61,7 +65,11 @@ export function EmbedQuietMessageRow({
         {run === null && line.summary.length > 0 ? (
           <span className="min-w-0 truncate text-muted-foreground/70">{line.summary}</span>
         ) : null}
-        <MorphIcon className="size-3.5 shrink-0" icon={expanded ? ChevronDown : ChevronRight} />
+        {expanded ? (
+          <ChevronDownIcon className="size-3.5 shrink-0" />
+        ) : (
+          <ChevronRightIcon className="size-3.5 shrink-0" />
+        )}
       </button>
       {expanded || ctx.findActive ? (
         <div

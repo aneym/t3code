@@ -1,4 +1,3 @@
-import { isAutomationOnlyThread, type AutomationPlacement } from "./automations/threadPlacement";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
@@ -190,16 +189,16 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 
 // Snoozed rows cannot accept drops without a wake time. Working rows only drag out as chat context.
 
-export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "offline" | "settled";
+export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
 
 export function resolveSidebarThreadSection(input: {
   readonly snoozed: boolean;
   readonly settled: boolean;
   readonly pinned: boolean;
 }): SidebarSection {
-  if (input.pinned) return "pinned";
   if (input.snoozed) return "snoozed";
   if (input.settled) return "settled";
+  if (input.pinned) return "pinned";
   return "active";
 }
 
@@ -212,7 +211,6 @@ export type SidebarListMarker =
   | "pinned-divider"
   | "working-header"
   | "snoozed-header"
-  | "offline-header"
   | "settled-header";
 
 export function sidebarMarkerId(marker: SidebarListMarker): string {
@@ -235,7 +233,6 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
     if (item.marker === "pinned-divider") section = "active";
     else if (item.marker === "working-header") section = "working";
     else if (item.marker === "snoozed-header") section = "snoozed";
-    else if (item.marker === "offline-header") section = "offline";
     else if (item.marker === "settled-header") section = "settled";
   }
   return section;
@@ -258,7 +255,7 @@ export function resolveSidebarDropTarget(
   const moved = items.filter((_, index) => index !== activeIndex);
   moved.splice(overIndex, 0, items[activeIndex]!);
   const section = sectionAtSidebarSlot(moved, overIndex);
-  if (section === "working" || section === "snoozed" || section === "offline") return null;
+  if (section === "working" || section === "snoozed") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
@@ -268,7 +265,6 @@ export function resolveSidebarDropTarget(
       else if (
         item.marker === "working-header" ||
         item.marker === "snoozed-header" ||
-        item.marker === "offline-header" ||
         item.marker === "settled-header"
       )
         break;
@@ -614,18 +610,17 @@ export function resolveSidebarRowThreadId(
  * the sidebar lists, by thread key; they show under that thread, as subagents do.
  */
 export function filterSidebarV2VisibleThreads<
-  T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id" | "lineage"> &
-    AutomationPlacement & { projectId: string },
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id" | "lineage"> & {
+    projectId: string;
+  },
 >(
   threads: readonly T[],
   scopedProjectKeys: ReadonlySet<string> | null,
-  delegatedUnderParent: ReadonlySet<string> = new Set(),
-  automationThreadKeys?: ReadonlySet<string>,
+  delegatedUnderParent: ReadonlySet<string>,
 ): T[] {
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
-      !isAutomationOnlyThread(thread, automationThreadKeys) &&
       !isShownUnderParent(
         { environmentId: thread.environmentId, threadId: thread.id },
         thread.lineage,

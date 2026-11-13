@@ -9,6 +9,8 @@ import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { RemovedLinkedRoutes } from "./RemovedLinkedRoutes";
+import { EmbedModeSettings } from "./EmbedModeSettings";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
@@ -23,8 +25,11 @@ export function LabsSettingsPanel() {
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
         <PromptSuggestionsRow />
+        <LinkedEnvironmentsLoadBalancingRow />
+        <RemovedLinkedRoutes />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
+        <EmbedModeSettings />
       </SettingsSection>
     </SettingsPageContainer>
   );
@@ -184,6 +189,30 @@ function PromptSuggestionsRow() {
             updateSettings({ promptSuggestionsEnabled: Boolean(checked) })
           }
           aria-label="Suggest next prompt"
+        />
+      }
+    />
+  );
+}
+
+function LinkedEnvironmentsLoadBalancingRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  if (!settings.linkedEnvironmentsEnabled) return null;
+  return (
+    <SettingsRow
+      serverScoped
+      title="Linked machines in load balancing"
+      settingKeys={["loadBalancingIncludeLinkedEnvironments"]}
+      description="Clients that balance load add a route to each machine linked here with full access, so new threads can start there. Turning it off stops new routes; added ones stay until removed in Connections."
+      control={
+        <ScopedSwitch
+          settingKeys={["loadBalancingIncludeLinkedEnvironments"]}
+          checked={settings.loadBalancingIncludeLinkedEnvironments}
+          onCheckedChange={(checked) =>
+            updateSettings({ loadBalancingIncludeLinkedEnvironments: Boolean(checked) })
+          }
+          aria-label="Linked machines in load balancing"
         />
       }
     />

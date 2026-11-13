@@ -1,9 +1,4 @@
-import * as DateTime from "effect/DateTime";
 import type { ScheduledTask } from "@t3tools/contracts";
-
-export function onceScheduleLabel(at: string): string {
-  return `Once on ${DateTime.formatLocal(DateTime.makeUnsafe(at), { dateStyle: "medium", timeStyle: "short" })}`;
-}
 
 export function scheduledTaskStateLabel(task: ScheduledTask): string {
   if (task.enabled) return "Enabled";

@@ -82,19 +82,21 @@ import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
 import { useTallEnoughToFold } from "./useTallEnoughToFold";
+import { useEmbedHostConnected } from "../../embed/embedHost";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import {
   MESSAGE_HEADING_LEVEL,
   MessageAuthorHeading,
   TimelineRowTimestamp,
 } from "./TimelineRowParts";
+import { AppSentNote } from "./AppSentNote";
+import { EmbedQuietMessageRow, useEmbedQuietLine } from "../embed/EmbedQuietMessageRow";
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
 import {
   resolvePreviewAnnotationImage,
   userMessageFileLabel,
 } from "./TimelineUserMessageRow.logic";
 
-// Drawn inside the media so dark screenshots keep an edge on the dark background.
 const MEDIA_EDGE_CLASS_NAME =
   "relative after:pointer-events-none after:absolute after:inset-0 after:z-10 after:rounded-[inherit] after:ring-1 after:ring-inset after:ring-black/9 dark:after:ring-white/12";
 
@@ -187,8 +189,6 @@ function UserVideoAttachment({
   readonly cornerClassName?: string | undefined;
 }) {
   const ctx = use(TimelineRowCtx);
-  // Row updates rebuild attachment objects, so the asset follows only the
-  // fields it reads.
   const { downloadable, id, mimeType, name } = file;
   const environmentId = ctx.activeThreadEnvironmentId;
   const asset =
@@ -266,12 +266,15 @@ export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mes
 
 function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  const quiet = useEmbedQuietLine(row.message);
   return ctx.workflowOpening?.messageId === row.message.id ? (
     <WorkflowOpeningBlock
       opening={ctx.workflowOpening}
       environmentId={ctx.activeThreadEnvironmentId}
       onOpenThread={(threadId) => ctx.onOpenThread(ThreadId.make(threadId))}
     />
+  ) : quiet !== null ? (
+    <EmbedQuietMessageRow message={row.message} line={quiet} />
   ) : resolveUserMessagePresentation(row.message).attribution === "automation" ? (
     <AutomationMessageRow row={row} />
   ) : (
@@ -431,7 +434,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const ctx = use(TimelineRowCtx);
   const { onImageExpand, onFileOpen } = ctx;
   const coarsePointer = useMediaQuery({ pointer: "coarse" });
-  // A linked environment's agent sent it from a thread there.
   const senderRef =
     row.message.linkedSender ??
     (row.message.senderThreadId === undefined
@@ -462,7 +464,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
   const userMessage = resolveUserMessagePresentation(row.message);
-  // Messages from other agents fold to one line so the user's own messages stay easy to find.
   const folded = userMessage.attribution === "agent";
   const [expanded, setExpanded] = useState(false);
   const revealFoldRef = findRevealRef(() => setExpanded(true));
@@ -495,6 +496,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     attachmentReferences.map((reference) => reference.attachmentId),
   );
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
+  const fitWholeImage = useEmbedHostConnected();
   const unchippedFiles = otherUserFiles.filter((file) => !chippedAttachmentIds.has(file.id));
   // Images or videos sent without words show as media, not as a bubble around them.
   const mediaOnly =
@@ -748,11 +750,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   loading="lazy"
                   className={cn(
                     "block transform-gpu",
-                    standaloneMedia && image.source?.kind === "snap-shot"
+                    standaloneMedia && (image.source?.kind === "snap-shot" || fitWholeImage)
                       ? "h-auto max-h-48 w-auto min-w-24 max-w-full object-contain"
                       : loneImage
                         ? "h-48 w-auto min-w-24 max-w-full object-cover"
-                        : "size-full object-cover",
+                        : fitWholeImage
+                          ? "size-full object-contain"
+                          : "size-full object-cover",
                   )}
                 />
               </button>
@@ -844,14 +848,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       className="group @container flex flex-col items-end gap-1"
       data-user-message-attribution={folded ? "agent" : undefined}
     >
-      {userMessage.attribution === "t3code" ? (
-        <p
-          className="me-1 text-2xs text-muted-foreground/70"
-          data-user-message-attribution="t3code"
-        >
-          Sent by T3 Code
-        </p>
-      ) : null}
+      {userMessage.attribution === "t3code" ? <AppSentNote /> : null}
       {/* The row's heading already names the guest for screen readers. */}
       {userMessage.guestName !== undefined ? (
         <div aria-hidden>

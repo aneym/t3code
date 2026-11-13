@@ -90,7 +90,6 @@ function audienceItem(entry: TimelineEntry, inputs: ReadonlyMap<string, unknown>
     case "proposed-plan":
       return { kind: "run", id: entry.id, runId: entry.proposedPlan.runId };
     case "html-render":
-    case "app-card":
       return { kind: "run", id: entry.id, runId: entry.runId };
     case "mcp-app":
       return {

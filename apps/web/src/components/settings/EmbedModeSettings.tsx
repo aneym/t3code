@@ -1,7 +1,41 @@
-import { OriginsInput } from "./OriginsInput";
+import { useState } from "react";
+
+import { Input } from "../ui/input";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsRow } from "./settingsLayout";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+
+function parseOrigins(text: string): string[] {
+  return text
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function AllowedOriginsInput({ saved }: { readonly saved: ReadonlyArray<string> }) {
+  const updateSettings = useUpdateScopedSettings();
+  const savedText = saved.join(" ");
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    setDraft(null);
+    if (draft !== savedText) updateSettings({ embedAllowedOrigins: parseOrigins(draft) });
+  };
+  return (
+    <Input
+      size="sm"
+      className="w-72"
+      aria-label="Pages that may show the bare chat"
+      placeholder="https://app.example.com"
+      value={draft ?? savedText}
+      onValueChange={setDraft}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") commit();
+      }}
+    />
+  );
+}
 
 export function EmbedModeSettings() {
   const settings = useScopedSettings();
@@ -28,14 +62,7 @@ export function EmbedModeSettings() {
           title="Pages that may show the bare chat"
           settingKeys={["embedAllowedOrigins"]}
           description="Web page origins allowed to frame it, separated by spaces. A desktop app that loads the page directly needs none."
-          control={
-            <OriginsInput
-              saved={settings.embedAllowedOrigins}
-              label="Pages that may show the bare chat"
-              placeholder="https://app.example.com"
-              onCommit={(origins) => updateSettings({ embedAllowedOrigins: origins })}
-            />
-          }
+          control={<AllowedOriginsInput saved={settings.embedAllowedOrigins} />}
         />
       ) : null}
     </>

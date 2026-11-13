@@ -5,12 +5,13 @@ import {
   type AuthMcpClientAccess,
   type EnvironmentId,
   type PeerLinkSummary,
+  peerLinkRenewsFromMs,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
+import { peerLinkHealth, peerLinkRenewalNote } from "@t3tools/client-runtime/state/peerLinks";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -42,6 +43,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import { LinkAccessPicker } from "./LinkAccessPicker";
 import { LinkAddressWarning, LinkMachineSelect } from "./LinkMachineSelect";
+import { PeerLinkRenewalSetting } from "./PeerLinkRenewalSetting";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { searchableSetting } from "./settingsSearch";
@@ -67,6 +69,7 @@ export function LinkedEnvironmentsSettings({
       title={environmentLabel === null ? search.title : `${search.title} · ${environmentLabel}`}
       headerAction={canLink ? <LinkEnvironmentAction environmentId={environmentId} /> : null}
     >
+      <PeerLinkRenewalSetting environmentId={environmentId} />
       {links.error ? (
         <SettingsRow title="Could not load linked environments" description={links.error} />
       ) : !links.data ? (
@@ -97,10 +100,24 @@ function LinkedEnvironmentRow({
   readonly link: PeerLinkSummary;
 }) {
   const nowMinute = useNowMinute();
-  const health = peerLinkHealth(link, DateTime.makeUnsafe(nowMinute));
+  const now = DateTime.makeUnsafe(nowMinute);
+  const health = peerLinkHealth(link, now);
   const unlink = useAtomCommand(peerLinkEnvironment.unlink, { label: "unlink environment" });
   const canUnlink = useAtomValue(peerLinkEnvironment.unlink.permissionAtom(environmentId));
+  const renew = useAtomCommand(peerLinkEnvironment.renew, { label: "renew link" });
+  const canRenew = useAtomValue(peerLinkEnvironment.renew.permissionAtom(environmentId));
   const [busy, setBusy] = useState(false);
+  const [renewing, setRenewing] = useState(false);
+  const renewNow = async () => {
+    setRenewing(true);
+    const result = await renew({ environmentId, input: { environmentId: link.environmentId } });
+    setRenewing(false);
+    if (result._tag === "Success") {
+      toastManager.add({ type: "success", title: `Renewed the link to ${link.label}` });
+    } else if (!isAtomCommandInterrupted(result)) {
+      failureToast("Could not renew the link", String(squashAtomCommandFailure(result)));
+    }
+  };
   const forget = async () => {
     const confirmed = await (requestConfirmDialog(
       `Forget ${link.label}? Agents here stop working there. Revoke "T3 Code · …" in ${link.label}'s Connections to end the session there too.`,
@@ -114,6 +131,9 @@ function LinkedEnvironmentRow({
       failureToast("Could not forget the link", String(squashAtomCommandFailure(result)));
     }
   };
+  const renewal = health.kind === "reachable" ? peerLinkRenewalNote(link, now) : null;
+  const renewable =
+    canRenew && health.kind !== "expired" && now.epochMilliseconds >= peerLinkRenewsFromMs(link);
   const status =
     health.kind === "expired"
       ? "Expired. Link it again with a new pairing code."
@@ -122,8 +142,8 @@ function LinkedEnvironmentRow({
         : health.kind === "failing"
           ? health.detail
           : health.expiresInDays !== null
-            ? `Expires in ${health.expiresInDays} ${health.expiresInDays === 1 ? "day" : "days"}. Link it again to renew.`
-            : "Reachable";
+            ? `Expires in ${health.expiresInDays} ${health.expiresInDays === 1 ? "day" : "days"}. ${renewal ?? "Link it again to renew."}`
+            : (renewal ?? "Reachable");
   return (
     <div className={ITEM_ROW_CLASSNAME}>
       <div className={ITEM_ROW_INNER_CLASSNAME}>
@@ -133,7 +153,7 @@ function LinkedEnvironmentRow({
               tooltipText={status}
               dotClassName={
                 health.kind === "reachable"
-                  ? health.expiresInDays === null
+                  ? health.expiresInDays === null && link.renewalError === undefined
                     ? "bg-success"
                     : "bg-warning"
                   : health.kind === "expired" || health.kind === "failing"
@@ -149,16 +169,28 @@ function LinkedEnvironmentRow({
           </p>
           <p className="truncate text-xs text-muted-foreground/80">{link.urls.join(", ")}</p>
         </div>
-        {canUnlink ? (
+        {canUnlink || renewable ? (
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            <Button
-              size="xs"
-              variant="destructive-outline"
-              disabled={busy}
-              onClick={() => void forget()}
-            >
-              {busy ? "Forgetting…" : "Forget"}
-            </Button>
+            {renewable ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={renewing}
+                onClick={() => void renewNow()}
+              >
+                {renewing ? "Renewing…" : "Renew"}
+              </Button>
+            ) : null}
+            {canUnlink ? (
+              <Button
+                size="xs"
+                variant="destructive-outline"
+                disabled={busy}
+                onClick={() => void forget()}
+              >
+                {busy ? "Forgetting…" : "Forget"}
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>

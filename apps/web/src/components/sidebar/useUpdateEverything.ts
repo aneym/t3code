@@ -6,10 +6,11 @@ import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { environmentIdsKey } from "~/state/environmentAtomList";
-import { environmentUpdatePermissionsAtom, environmentUpdateStatesAtom } from "~/state/server";
+import { environmentUpdateStatesAtom } from "~/state/server";
+import { environmentSessionStatesAtom } from "~/state/session";
 import { getProviderUpdateRunOutcome } from "../ProviderUpdateLaunchNotification.logic";
 import { useProviderUpdates } from "../ProviderUpdatesAction";
-import { type ServerUpdateOutcome, useServerUpdate } from "../ServerUpdateAction";
+import { canUpdateServer, type ServerUpdateOutcome, useServerUpdate } from "../ServerUpdateAction";
 import {
   type ChannelSwitchRelease,
   closeFinishedUpdateRun,
@@ -54,7 +55,7 @@ export function useUpdateEverything(
   const targetVersion = localUpdateVersion ?? APP_VERSION;
   const { environments } = useEnvironments();
   const environmentIds = environmentIdsKey(environments.map(({ environmentId }) => environmentId));
-  const updatePermissions = useAtomValue(environmentUpdatePermissionsAtom(environmentIds));
+  const sessionStates = useAtomValue(environmentSessionStatesAtom(environmentIds));
   const updateStates = useAtomValue(environmentUpdateStatesAtom(environmentIds));
   const machines = environments.map((environment, index) => ({
     environmentId: environment.environmentId,
@@ -62,7 +63,7 @@ export function useUpdateEverything(
     serverConfig: environment.serverConfig,
     connected: environment.connection.phase === "connected",
     hostedByThisApp: isHostedByThisApp(environment),
-    canMaintain: updatePermissions[index]!,
+    canMaintain: canUpdateServer(sessionStates[index]!),
     updateState: updateStates[index]!,
   }));
   const { targets: servers, skipped } = channelSwitch

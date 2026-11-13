@@ -33,7 +33,6 @@ function isSnapShotEvent(value: unknown): value is DesktopSnapShotEvent {
 
 exposeClerkBridge({ passkeys: true });
 
-// Runs before any app script reads localStorage. See DesktopLegacyLocalStorage.
 try {
   const legacyItems: unknown = ipcRenderer.sendSync(IpcChannels.TAKE_LEGACY_LOCAL_STORAGE_CHANNEL);
   if (typeof legacyItems === "object" && legacyItems !== null) {
@@ -66,7 +65,6 @@ const syncHtmlFullscreen = () => {
     element !== null && element.tagName !== "WEBVIEW",
   );
 };
-// A reload or renderer crash never reports the old document's exit, so each document reports its start.
 syncHtmlFullscreen();
 document.addEventListener("fullscreenchange", syncHtmlFullscreen);
 
@@ -115,7 +113,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL) === true,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   getClientPlatform: () => clientPlatform,
-  getDeviceName: () => ipcRenderer.sendSync(IpcChannels.GET_DEVICE_NAME_CHANNEL) as string,
   setNotificationBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, badge),
   onNotificationBadgeClear: (listener) => {
@@ -520,15 +517,5 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
     },
-  },
-  desktopBrowser: {
-    onEvent: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, line: unknown) => {
-        if (typeof line === "string") listener(line);
-      };
-      ipcRenderer.on(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, handler);
-      return () => ipcRenderer.removeListener(IpcChannels.DESKTOP_BROWSER_EVENT_CHANNEL, handler);
-    },
-    sendCommand: (line) => ipcRenderer.invoke(IpcChannels.DESKTOP_BROWSER_COMMAND_CHANNEL, line),
   },
 } satisfies DesktopBridge);

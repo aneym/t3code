@@ -18,6 +18,7 @@ import {
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
   AuthOrchestrationOperateScope,
+  CommandId,
   DEFAULT_MODEL,
   type EnvironmentId,
   type ModelSelection,
@@ -28,7 +29,10 @@ import {
   RuntimeMode,
 } from "@t3tools/contracts";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
-import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
+import {
+  isTransportConnectionErrorMessage,
+  wasBootstrapThreadDeleted,
+} from "@t3tools/client-runtime/errors";
 import {
   declinePendingApprovals,
   sendApprovalFeedback,
@@ -59,9 +63,15 @@ import {
 } from "../../composer-logic";
 import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { recordPromptSent } from "../GitHubStarPrompt";
+import { claimEmbedClearCommand } from "../../embed/embedClear";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { newMessageId, newThreadId } from "~/lib/utils";
+import { newMessageId, newThreadId, randomUUID } from "~/lib/utils";
+import { optimisticUserMessage, withoutOptimisticUserMessage } from "./optimisticUserMessages";
+import { heldIdsFor, holdSend, releaseHeldSend } from "./heldSendStore";
+import { holdOrSendThroughHost, sendComposerThroughHost } from "../../embed/embedComposerSend";
+import { isEmbedHostSendOn } from "../../embed/embedHostSend";
+import { embedSendEnter, embedSendFailed } from "../../embed/embedSendMarks";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -252,6 +262,7 @@ interface ComposerSendInput {
     branch?: string;
     runtimeMode: RuntimeMode;
     interactionMode: ProviderInteractionMode;
+    modelSelection?: ModelSelection;
   }) => Promise<AtomCommandResult<void, unknown>>;
   /** Links a checked-out pull request to its thread; best effort, failures only logged. */
   readonly linkCheckoutPullRequest: (threadRef: ScopedThreadRef, url: string) => void;
@@ -471,6 +482,17 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     if (activeEnvironmentUnavailable) {
+      if (
+        isServerThread &&
+        !directAnnotation &&
+        submissionIntent === "foreground" &&
+        !queuedRunEdit.isEditing &&
+        (promptAtSend.trim() !== "" || draftHasNonPromptContent(composerDraftTarget))
+      ) {
+        const thread = activeThread.id;
+        const held = { routeThreadKey, thread, promptAtSend, composerDraftTarget };
+        return holdOrSendThroughHost({ ...held, promptRef, composerRef });
+      }
       const toastSlot = environmentUnavailableSendToastSlotRef.current;
       environmentUnavailableSendToastSlotRef.current =
         (toastSlot + 1) % ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE;
@@ -482,6 +504,12 @@ export function useComposerSend(input: ComposerSendInput) {
         }),
         id: `chat-send-environment-unavailable:${toastSlot}`,
       });
+      return;
+    }
+    if (claimEmbedClearCommand(promptAtSend)) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
       return;
     }
     // Where side chats are unavailable, `/side` text can still be a literal answer.
@@ -809,6 +837,60 @@ export function useComposerSend(input: ComposerSendInput) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }
+    const plainText =
+      isServerThread &&
+      !directAnnotation &&
+      submissionIntent !== "background" &&
+      multipleModelSelections === null &&
+      composerAttachmentsSnapshot.length === 0 &&
+      composerFilesSnapshot.length === 0 &&
+      composerTerminalContextsSnapshot.length === 0 &&
+      composerPreviewAnnotationsSnapshot.length === 0 &&
+      composerReviewCommentsSnapshot.length === 0 &&
+      composerThreadContextsSnapshot.length === 0 &&
+      composerEnvironmentContextsSnapshot.length === 0 &&
+      messageTextForSend.trim() !== "";
+    const heldIds = isServerThread ? heldIdsFor(routeThreadKey, messageTextForSend) : null;
+    const messageIdForSend = embedSendEnter(threadIdForSend, heldIds?.messageId ?? newMessageId());
+    const commandIdForSend = heldIds?.commandId ?? CommandId.make(randomUUID());
+    const threadRef = scopeThreadRef(activeThread.environmentId, threadIdForSend);
+    const rowFor = (text: string, createdAt: string, extra?: Partial<ChatMessage>) => {
+      const row = optimisticUserMessage({
+        ...extra,
+        id: messageIdForSend,
+        text,
+        createdAt,
+        queued: shouldQueueBehindActiveRun,
+        steer: phase === "running" && dispatchMode === "steer",
+      });
+      if (!shouldQueueBehindActiveRun) anchorNewTurn(scopedThreadKey(threadRef), row.id);
+      return row;
+    };
+    if (plainText && heldIds?.hostUnanswered !== true && isEmbedHostSendOn()) {
+      sendInFlightRef.current = true;
+      const hostSend = await sendComposerThroughHost({
+        row: rowFor(messageTextForSend, new Date().toISOString()),
+        rows: setOptimisticUserMessages,
+        routeThreadKey,
+        thread: threadIdForSend,
+        composerDraftTarget,
+        promptRef,
+        composerRef,
+        text: messageTextForSend,
+        ids: { messageId: messageIdForSend, commandId: commandIdForSend },
+        steer: turnDispatchMode === "steer",
+        save: () =>
+          persistThreadSettingsForNextTurn({
+            threadId: threadIdForSend,
+            createdAt: new Date().toISOString(),
+            runtimeMode,
+            interactionMode: DEFAULT_INTERACTION_MODE,
+            modelSelection: ctxSelectedModelSelection,
+          }).then((saved) => saved._tag === "Success"),
+      });
+      sendInFlightRef.current = false;
+      if (hostSend !== null) return hostSend.done;
+    }
     // Records bind attachments by the id each side knows: the local id for the optimistic
     // row, the upload id (or local id on the data-URL path) on the wire; the server
     // rebinds them to the persisted id.
@@ -828,7 +910,6 @@ export function useComposerSend(input: ComposerSendInput) {
     const outgoingMessageContext = buildOutgoingMessageContext(
       composerAttachmentsSnapshot.map((attachment) => attachment.id),
     );
-    const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
@@ -1126,29 +1207,10 @@ export function useComposerSend(input: ComposerSendInput) {
       });
       return;
     }
-    const optimisticAttachments = optimisticMessageAttachments(composerAttachmentsSnapshot);
-    if (!shouldQueueBehindActiveRun) {
-      anchorNewTurn(
-        scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
-        messageIdForSend,
-      );
-    }
-    const optimisticMessage: ChatMessage = {
-      id: messageIdForSend,
-      role: "user",
-      text: outgoingMessageText,
-      ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-      ...(outgoingMessageContext !== undefined ? { context: outgoingMessageContext } : {}),
-      runId: null,
-      createdAt: messageCreatedAt,
-      updatedAt: messageCreatedAt,
-      streaming: false,
-      ...(shouldQueueBehindActiveRun
-        ? { inputIntent: "queued_turn" as const }
-        : phase === "running" && dispatchMode === "steer"
-          ? { inputIntent: "steer" as const }
-          : {}),
-    };
+    const optimisticMessage = rowFor(outgoingMessageText, messageCreatedAt, {
+      attachments: optimisticMessageAttachments(composerAttachmentsSnapshot),
+      context: outgoingMessageContext,
+    });
     // After leaving the thread during an upload, its previews were already released and the
     // message is never shown, so tracking them would keep them alive past the thread.
     if (currentRouteThreadKeyRef.current === routeThreadKey) {
@@ -1308,6 +1370,7 @@ export function useComposerSend(input: ComposerSendInput) {
           dispatchMode: turnDispatchMode,
           ...(freshArm === undefined ? {} : { freshContext: true }),
           ...(bootstrap ? { bootstrap } : {}),
+          commandId: commandIdForSend,
           createdAt: messageCreatedAt,
         },
       });
@@ -1345,6 +1408,7 @@ export function useComposerSend(input: ComposerSendInput) {
             checkoutPullRequestUrl,
           );
         }
+        if (isServerThread) releaseHeldSend(routeThreadKey);
         setKeepFullHistory(routeThreadKey, false);
         if (freshArm !== undefined) disarmFreshSession(routeThreadKey, freshArm);
         clearUsageLimitsFor(routeThreadKey);
@@ -1387,7 +1451,7 @@ export function useComposerSend(input: ComposerSendInput) {
       }
     }
 
-    if (failure !== null) {
+    if (embedSendFailed(messageIdForSend, failure)) {
       if (isLocalDraftThread && draftId && draftThread) {
         restoreFailedDraftThread(
           draftId,
@@ -1399,10 +1463,7 @@ export function useComposerSend(input: ComposerSendInput) {
         clearBackgroundDraftSubmissionByRef(scopeThreadRef(environmentId, threadIdForSend));
       }
       // Only an acknowledged send replaces its optimistic row, so a failed one leaves here.
-      setOptimisticUserMessages((existing) => {
-        const next = existing.filter((message) => message.id !== messageIdForSend);
-        return next.length === existing.length ? existing : next;
-      });
+      setOptimisticUserMessages(withoutOptimisticUserMessage(messageIdForSend));
       // A restored draft clones its images, so the sent copies are no longer used.
       optimisticBlobPreviews.release(optimisticMessage);
       if (
@@ -1446,6 +1507,20 @@ export function useComposerSend(input: ComposerSendInput) {
             ),
             prompt: sendSnapshot.draftText,
             detectTrigger: true,
+          });
+        }
+        const sendError = squashAtomCommandFailure(failure);
+        if (
+          isServerThread &&
+          submissionIntent === "foreground" &&
+          (isAtomCommandInterrupted(failure) ||
+            (sendError as { readonly _tag?: unknown } | null)?._tag ===
+              "ConnectionTransientError" ||
+            (sendError instanceof Error && isTransportConnectionErrorMessage(sendError.message)))
+        ) {
+          holdSend(routeThreadKey, messageTextForSend, {
+            messageId: messageIdForSend,
+            commandId: commandIdForSend,
           });
         }
       }

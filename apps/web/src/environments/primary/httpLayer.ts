@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
-import { readPrimaryBearerToken } from "./primaryBearer";
+import { readDesktopPrimaryBearerToken } from "./desktopAuth";
 import { resolvePrimaryEnvironmentHttpUrl } from "./target";
 
 function isSameOriginBrowserPrimary(): boolean {
@@ -21,7 +21,7 @@ function isSameOriginBrowserPrimary(): boolean {
 function withPrimaryBearerToken(client: HttpClient.HttpClient): HttpClient.HttpClient {
   return client.pipe(
     HttpClient.mapRequestEffect((request) =>
-      Effect.promise(readPrimaryBearerToken).pipe(
+      Effect.promise(readDesktopPrimaryBearerToken).pipe(
         Effect.map((bearerToken) =>
           bearerToken ? HttpClientRequest.bearerToken(request, bearerToken) : request,
         ),
@@ -33,16 +33,22 @@ function withPrimaryBearerToken(client: HttpClient.HttpClient): HttpClient.HttpC
 export function layerForCurrentOrigin() {
   return Layer.unwrap(
     Effect.sync(() => {
+      const layerBase = layerRemoteHttpClient(globalThis.fetch);
+      if (isSameOriginBrowserPrimary()) {
+        return Layer.merge(
+          layerBase,
+          Layer.succeed(FetchHttpClient.RequestInit, { credentials: "include" }),
+        );
+      }
+
       const layerBearerClient = Layer.effect(
         HttpClient.HttpClient,
         Effect.map(HttpClient.HttpClient, withPrimaryBearerToken),
-      ).pipe(Layer.provide(layerRemoteHttpClient(globalThis.fetch)));
+      ).pipe(Layer.provide(layerBase));
 
       return Layer.merge(
         layerBearerClient,
-        Layer.succeed(FetchHttpClient.RequestInit, {
-          credentials: isSameOriginBrowserPrimary() ? "include" : "omit",
-        }),
+        Layer.succeed(FetchHttpClient.RequestInit, { credentials: "omit" }),
       );
     }),
   );

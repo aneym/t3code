@@ -4,7 +4,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 
 import { connectPairing } from "../connection/onboarding";
 import { useClientSettings } from "../hooks/useSettings";
-import { useEnvironmentIds } from "./environments";
+import { environmentSummaries } from "./presentation";
 import { peerLinkEnvironment } from "./peerLinks";
 import { useEnvironmentQuery } from "./query";
 import { useAtomCommand } from "./use-atom-command";
@@ -14,7 +14,7 @@ export function useLinkedRoutePlan(hostId: EnvironmentId) {
   const links = useEnvironmentQuery(
     allowed ? peerLinkEnvironment.list({ environmentId: hostId, input: {} }) : null,
   );
-  const known = new Set(useEnvironmentIds());
+  const known = new Set(useAtomValue(environmentSummaries.environmentIdsAtom));
   const seen = useClientSettings((settings) => settings.loadBalancingSeenLinkedEnvironmentIds);
   return { ...linkedRoutePlan(links.data?.links ?? [], known, new Set(seen)), seen };
 }
