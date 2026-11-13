@@ -10,10 +10,8 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import { Command, Flag } from "effect/cli";
 
-import {
-  resolveDesktopProductName,
-  verifyWindowsPackagedRuntime,
-} from "./build-desktop-artifact.ts";
+import { verifyWindowsPackagedRuntime } from "./build-desktop-artifact.ts";
+import { resolveDesktopProductName } from "./lib/desktop-release-channel.ts";
 
 const verifyWindowsDesktopArtifactCli = Command.make("verify-windows-desktop-artifact", {
   appDir: Flag.String("app-dir").pipe(

@@ -348,7 +348,10 @@ export default defineConfig({
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: false }] },
       },
       {
-        files: ["packages/client-runtime/src/state/commandPermissions.ts"],
+        files: [
+          "packages/client-runtime/src/state/runtime.ts",
+          "packages/client-runtime/src/state/vcsAction.ts",
+        ],
         rules: {
           "t3code/no-rpc-permission-bypass": [
             "error",
