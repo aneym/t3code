@@ -6,6 +6,13 @@ import type { ThreadManagementServiceShape } from "../orchestration-v2/ThreadMan
 import { threadSettlement } from "./threadSettlement.ts";
 
 const DEFAULT_THREAD_LIST_LIMIT = 50;
+const LIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
 
 export const listThreadPage = Effect.fn("OrchestratorMcpService.listThreadPage")(function* (
   threadManagement: ThreadManagementServiceShape,
@@ -19,6 +26,8 @@ export const listThreadPage = Effect.fn("OrchestratorMcpService.listThreadPage")
   const cursor = input.cursor ?? 0;
   const limit = input.limit ?? DEFAULT_THREAD_LIST_LIMIT;
   const onlySubagents = input.onlySubagents === true;
+  const liveRunOnly =
+    statuses !== null && [...statuses].every((status) => LIVE_RUN_STATUSES.has(status));
   const query = {
     projectId: projectId ?? undefined,
     includeSubagents: input.includeSubagents === true || onlySubagents,
@@ -29,7 +38,7 @@ export const listThreadPage = Effect.fn("OrchestratorMcpService.listThreadPage")
     input.snoozed === undefined &&
     titleContains === undefined
       ? threadManagement.listProjectThreadPage({ ...query, onlySubagents, cursor, limit })
-      : threadManagement.listProjectThreads(query).pipe(
+      : threadManagement.listProjectThreads({ ...query, liveRunOnly }).pipe(
           Effect.map((threads) => {
             const filtered = threads.filter(
               (thread) =>

@@ -430,6 +430,7 @@ export interface ShellSnapshotOptions {
   readonly familyOf?: ThreadId;
   readonly worktreePath?: string;
   readonly threadIds?: ReadonlyArray<ThreadId>;
+  readonly liveRunOnly?: boolean;
 }
 
 /** What a shell subscriber's trims read from an active thread, without building its shell. */
@@ -654,10 +655,6 @@ export interface ProjectionStoreV2Shape {
       readonly scopeId: CheckpointScopeId;
     },
   ) => Effect.Effect<ProjectionCheckpointRollbackContext, ProjectionStoreV2Error>;
-  readonly getRunMessage: (
-    threadId: ThreadId,
-    runId: RunId,
-  ) => Effect.Effect<OrchestrationV2ConversationMessage | undefined, ProjectionStoreV2Error>;
   readonly canStartQueuedRun: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
@@ -5200,24 +5197,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
-    const getRunMessage: ProjectionStoreV2Shape["getRunMessage"] = (threadId, runId) =>
-      sql
-        .withTransaction(
-          Effect.gen(function* () {
-            yield* requireThread(threadId);
-            const rows = yield* sql<PayloadRow>`
-          SELECT message.payload_json FROM orchestration_v2_projection_messages AS message
-          JOIN orchestration_v2_projection_runs AS run
-            ON message.message_id = json_extract(run.payload_json, '$.userMessageId')
-          WHERE run.thread_id = ${threadId} AND run.run_id = ${runId}
-            AND message.thread_id = ${threadId}`;
-            return rows[0] === undefined
-              ? undefined
-              : yield* decodeMessagePayload(rows[0].payload_json);
-          }),
-        )
-        .pipe(Effect.mapError(controlReadError(threadId)));
-
     const canStartQueuedRun: ProjectionStoreV2Shape["canStartQueuedRun"] = (threadId) =>
       sql
         .withTransaction(
@@ -5810,6 +5789,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         familyOf,
         worktreePath,
         threadIds,
+        liveRunOnly,
       }: ShellSnapshotOptions = {},
     ) =>
       sql<ShellThreadRow>`
@@ -6017,7 +5997,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               worktreePath === undefined
                 ? sql``
                 : sql` AND json_extract(t.payload_json, '$.worktreePath') = ${worktreePath}`
-            }${threadIds === undefined ? sql`` : sql` AND t.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}
+            }${threadIds === undefined ? sql`` : sql` AND t.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}${
+              liveRunOnly === true
+                ? sql` AND t.thread_id IN (SELECT thread_id FROM orchestration_v2_projection_runs WHERE status IN ('queued', 'preparing', 'starting', 'running', 'waiting'))`
+                : sql``
+            }
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
 
@@ -6965,7 +6949,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointContext: readOnReader(getCheckpointContext),
       getCheckpointCaptureContext: readOnReader(getCheckpointCaptureContext),
       getCheckpointRollbackContext: readOnReader(getCheckpointRollbackContext),
-      getRunMessage: readOnReader(getRunMessage),
       canStartQueuedRun: readOnReader(canStartQueuedRun),
       getHeldQueuedRuns: readOnReader(getHeldQueuedRuns),
       getPendingNativeUserInputs: readOnReader(getPendingNativeUserInputs),

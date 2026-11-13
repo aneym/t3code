@@ -13,6 +13,7 @@ import type * as Orchestrator from "./Orchestrator.ts";
 export interface ProjectThreadListInput {
   readonly projectId?: ProjectId | undefined;
   readonly includeSubagents: boolean;
+  readonly liveRunOnly?: boolean | undefined;
 }
 
 export interface ProjectThreadPageInput extends ProjectThreadListInput {
@@ -50,6 +51,7 @@ export const makeProjectThreadListing = (
       .getShellSnapshot({
         location: "active",
         ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+        ...(input.liveRunOnly === true ? { liveRunOnly: true } : {}),
       })
       .pipe(
         Effect.map((snapshot) =>
