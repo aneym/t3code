@@ -3,11 +3,10 @@ import json
 import os
 import platform
 import pwd
-import sqlite3
 import sys
-from contextlib import closing
 from pathlib import Path
 
+from .live_query import bounded
 from .release_manifest import digest, engine_identity, history_digest, load
 
 
@@ -17,8 +16,7 @@ def file_digest(path):
 
 
 def migration_history(run):
-    with closing(sqlite3.connect(f"{run.db.resolve().as_uri()}?mode=ro", uri=True)) as connection:
-        return history_digest(connection.execute("SELECT migration_id, name FROM effect_sql_migrations"))
+    return history_digest(bounded(run.db, "SELECT migration_id, name FROM effect_sql_migrations"))
 
 
 def eligibility(manifest, host, args, restore_copy=None):

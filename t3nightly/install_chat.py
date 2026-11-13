@@ -1,21 +1,19 @@
 import json
-import sqlite3
 import subprocess
 import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from contextlib import closing
 from pathlib import Path
 
 from .identity_snapshot import for_version, read, take
+from .live_query import bounded
 from .proof_archive import archive_chat
 from .release_manifest import digest
 
 
 def query(run, sql, params=()):
-    with closing(sqlite3.connect(f"{run.db.resolve().as_uri()}?mode=ro", uri=True, timeout=10)) as connection:
-        return connection.execute(sql, params).fetchall()
+    return bounded(run.db, sql, params)
 
 
 def identities(run, *, fresh=False):

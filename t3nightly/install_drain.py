@@ -1,7 +1,7 @@
 import sqlite3
 import time
-from contextlib import closing
 
+from .live_query import bounded
 from .install_protected import ProtectedRunActive, wait
 
 FINISHING = ("preparing", "starting", "running")
@@ -10,11 +10,7 @@ POLL_S = 1.0
 
 
 def open_runs(db):
-    with closing(sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=10)) as connection:
-        rows = connection.execute(
-            "SELECT thread_id,run_id,status FROM orchestration_v2_projection_runs WHERE status IN (?,?,?,?) ORDER BY thread_id,ordinal",
-            (*FINISHING, *WAITING),
-        ).fetchall()
+    rows = bounded(db, "SELECT thread_id,run_id,status FROM orchestration_v2_projection_runs WHERE status IN (?,?,?,?) ORDER BY thread_id,ordinal", (*FINISHING, *WAITING))
     return [{"threadId": thread_id, "runId": run_id, "status": status} for thread_id, run_id, status in rows]
 
 

@@ -39,7 +39,7 @@ def available():
 def estimate(size, pass_seconds=None, passes=PASSES):
     seconds = size / (RSYNC_MIB_S << 20) if pass_seconds is None else pass_seconds
     return {"method": METHOD, "passSeconds": round(seconds, 3), "passes": passes, "allowanceSeconds": ALLOWANCE_S, "totalSeconds": round(passes * seconds + ALLOWANCE_S, 3),
-            "source": f"constant {RSYNC_MIB_S} MiB/s" if pass_seconds is None else "measured pass"}
+            "source": f"constant {RSYNC_MIB_S} MiB/s" if pass_seconds is None else "previous install's stopped delta, scaled to size"}
 
 
 def previous_copy(run, target):
@@ -53,15 +53,23 @@ def previous_copy(run, target):
             local = value.get("local") if isinstance(value, dict) else None
             path = Path(local.get("path", "")) if isinstance(local, dict) else None
             if value.get("method") == METHOD and value.get("complete") and path and path.parent == record.parent and path != target and path.is_file():
-                found.append((path.stat().st_mtime, path))
-    return max(found)[1] if found else None
+                found.append((path.stat().st_mtime, str(path), local))
+    return (Path(found[-1][1]), found[-1][2]) if (found := sorted(found)) else (None, None)
 
 
-def seed(run, target):
+def measured_pass(local, size):
+    seconds, measured = (local.get("delta") or {}).get("seconds"), local.get("bytes")
+    if not isinstance(seconds, (int, float)) or not isinstance(measured, int) or measured <= 0 or seconds <= 0:
+        return None
+    return seconds * max(1.0, size / measured)
+
+
+def seed(run, target, size):
     started = time.monotonic()
-    source = previous_copy(run, target)
+    source, local = previous_copy(run, target)
     if source is None:
         return {"seed": "none", "reason": "no earlier pre-drain copy; the stopped delta copies every page"}
+    run.predrain_pass_s = measured_pass(local, size)
     command = [*NICE, "ionice", "-c3", "cp", "--sparse=always", str(source), str(target)]
     try:
         subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=run.args.offbox_copy_s, check=True)
@@ -72,10 +80,11 @@ def seed(run, target):
 
 
 def prepare(run, source, target, size, budget):
-    seeded = seed(run, target)
+    seeded = seed(run, target, size)
     run.step("predrain-seed", liveReads=0, **seeded)
-    work = estimate(size, passes=STOP_PASSES)
-    back = estimate(size)
+    measured = getattr(run, "predrain_pass_s", None) if seeded["seed"] == "previous-copy" else None
+    work = estimate(size, measured, STOP_PASSES)
+    back = estimate(size, measured)
     most = max(work["totalSeconds"], back["totalSeconds"])
     run.step("hard-backup-estimate", stoppedWork=STOPPED_WORK, afterStart=AFTER_START, localRestoreCopy=work, rollback=back, seed=seeded, estimateSeconds=most, budgetSeconds=budget)
     if most > budget:
