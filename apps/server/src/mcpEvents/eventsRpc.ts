@@ -9,12 +9,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import type { McpEventsServer } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Schema from "effect/Schema";
 
 import { credentialValues, redact, redactTokens } from "./secretText.ts";
 
@@ -22,11 +22,14 @@ const PROTOCOL_VERSION = "2025-06-18";
 const HEADER_DIR = NodePath.join(NodeOS.homedir(), ".config", "t3-mcp-events");
 const CALL_TIMEOUT = Duration.seconds(45);
 
-export class McpEventsRpcError extends Data.TaggedError("McpEventsRpcError")<{
-  readonly message: string;
-  readonly code?: number;
-  readonly reason?: string;
-}> {}
+export class McpEventsRpcError extends Schema.TaggedError<McpEventsRpcError>()(
+  "McpEventsRpcError",
+  {
+    message: Schema.String,
+    code: Schema.optional(Schema.Number),
+    reason: Schema.optional(Schema.String),
+  },
+) {}
 
 interface RpcMessage {
   readonly id?: number | string | null;

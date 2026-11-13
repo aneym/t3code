@@ -1,3 +1,4 @@
+import { hotSwapContext } from "../serviceChildTransport.ts";
 import {
   ServerSelfUpdateError,
   type ServerSelfUpdateCapability,
@@ -24,6 +25,7 @@ import {
   CLI_RELEASE_BASE_URL_ENV,
   cliReleaseChannelOf,
   crossesReleaseTrack,
+  isCliForkVersion,
 } from "@t3tools/shared/cliRelease";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -45,6 +47,7 @@ import {
 import { bootServiceProgramOf, bootServiceUnitPath } from "./bootService.ts";
 import { decodeServicePreflightResult } from "./servicePreflight.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
+import { selfUpdateOff } from "./selfUpdateSwitch.ts";
 import { isExactServiceVersion } from "./serviceProtocol.ts";
 
 // A staged runtime's cold start can take over a minute on a loaded, swapping host.
@@ -54,6 +57,7 @@ export function resolveServerSelfUpdateCapability(input: {
   readonly desktopManaged: boolean;
   readonly launcherManaged: boolean;
 }): ServerSelfUpdateCapability | null {
+  if (selfUpdateOff) return null;
   if (input.desktopManaged) return "desktop-managed" as const;
   return input.launcherManaged ? ("boot-service" as const) : null;
 }
@@ -177,6 +181,15 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const update: ServerSelfUpdate["Service"]["update"] = Effect.fn(
     "cloud.server_self_update.update",
   )(function* (input, reportProgress = () => Effect.void, onHandoffAccepted = () => Effect.void) {
+    const targetVersion = input.targetVersion.trim();
+    if (!isExactServiceVersion(targetVersion)) {
+      return yield* failWith(`'${targetVersion}' is not an exact t3 version.`);
+    }
+    if (isCliForkVersion(packageJson.version) !== isCliForkVersion(targetVersion)) {
+      return yield* failWith(
+        "This runtime can only update to a release from the same distribution.",
+      );
+    }
     const policyRefusal = managedUpdateRefusal(
       policy.document,
       capability === "boot-service" ? cliReleaseChannelOf(input.targetVersion.trim()) : undefined,
@@ -209,10 +222,6 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
 
     const unsafeCrossing = crossesTrackUnsafely(input);
     if (unsafeCrossing !== null) return yield* failWith(unsafeCrossing);
-    const targetVersion = input.targetVersion.trim();
-    if (!isExactServiceVersion(targetVersion)) {
-      return yield* failWith(`'${targetVersion}' is not an exact t3 version.`);
-    }
     if (yield* Ref.getAndSet(inFlight, true)) {
       return yield* failWith("A server update is already in progress.");
     }
@@ -325,17 +334,23 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
 
       yield* reportProgress("installing");
       const updateId = yield* Effect.uninterruptible(
-        launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
-          Effect.mapError((error) =>
-            failWith(
-              error._tag === "ServiceLauncherRejectedError"
-                ? error.reason
-                : "Could not ask the service launcher to activate the prepared update.",
-              error,
+        launcher
+          .requestUpdate({
+            targetVersion,
+            dbPath: serverConfig.dbPath,
+            ...(input.allowDowngrade === undefined ? {} : { allowDowngrade: input.allowDowngrade }),
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failWith(
+                error._tag === "ServiceLauncherRejectedError"
+                  ? error.reason
+                  : "Could not ask the service launcher to activate the prepared update.",
+                error,
+              ),
             ),
+            Effect.tap(() => onHandoffAccepted()),
           ),
-          Effect.tap(() => onHandoffAccepted()),
-        ),
       );
 
       yield* Effect.logInfo("Server update prepared; handing off to the service launcher.", {
@@ -344,7 +359,10 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         runtimePath: paths.entryPath,
       });
       return { targetVersion, method: "boot-service" as const, updateId };
-    }).pipe(Effect.onError(() => Ref.set(inFlight, false)));
+    }).pipe(
+      Effect.onError(() => Ref.set(inFlight, false)),
+      Effect.tap(() => (hotSwapContext() === undefined ? Effect.void : Ref.set(inFlight, false))),
+    );
   });
 
   return ServerSelfUpdate.of({

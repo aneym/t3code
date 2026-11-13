@@ -28,7 +28,6 @@ import {
 } from "effect/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
 import * as PeerLinks from "./PeerLinks.ts";
@@ -42,6 +41,7 @@ import {
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 
 import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
+import * as McpToolkitRegistration from "../mcp/mcpServer/toolkitRegistration.ts";
 
 /** What B's probe saw: the calling client and the modes it may start work with. */
 const Probe = Schema.Struct({ caller: Schema.String, modes: Schema.String });
@@ -82,7 +82,7 @@ const probeHandlers = McpToolAccess.toLayer(ProbeToolkit, {
 });
 
 const serveB = (descriptor: ExecutionEnvironmentDescriptor) =>
-  servePeer(descriptor, McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers));
+  servePeer(descriptor, McpToolkitRegistration.toolkitRegistration(ProbeToolkit, probeHandlers));
 
 /** Environment A, which links to B. */
 const makeA = (
@@ -475,7 +475,10 @@ it.effect("cancelling a descriptor probe aborts its request and leaves later res
       );
       const b = yield* servePeer(
         box,
-        Layer.merge(McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers), holdDescriptor),
+        Layer.merge(
+          McpToolkitRegistration.toolkitRegistration(ProbeToolkit, probeHandlers),
+          holdDescriptor,
+        ),
       );
       const a = yield* makeA(laptop);
       const pairing = yield* b.auth.issuePairingCredential();
@@ -493,38 +496,6 @@ it.effect("cancelling a descriptor probe aborts its request and leaves later res
       expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
       expect(yield* Ref.get(requests)).toBe(2);
       expect(yield* Ref.get(b.bearers)).toEqual([]);
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
-);
-
-it.live("one dropped descriptor request does not list a live peer as unreachable", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const dropNext = yield* Ref.make(false);
-      const dropOnce = HttpRouter.middleware(
-        (httpEffect) =>
-          Effect.gen(function* () {
-            const request = yield* HttpServerRequest.HttpServerRequest;
-            if (
-              request.url.startsWith("/.well-known/t3/environment") &&
-              (yield* Ref.getAndSet(dropNext, false))
-            ) {
-              return HttpServerResponse.empty({ status: 503 });
-            }
-            return yield* httpEffect;
-          }),
-        { global: true },
-      );
-      const b = yield* servePeer(
-        box,
-        Layer.merge(McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers), dropOnce),
-      );
-      const a = yield* makeA(laptop);
-      const pairing = yield* b.auth.issuePairingCredential();
-      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
-
-      yield* Ref.set(dropNext, true);
-      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

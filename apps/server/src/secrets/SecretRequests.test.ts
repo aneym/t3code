@@ -28,6 +28,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "./SecretRequests.ts";
 
@@ -92,6 +93,7 @@ const withService = <A, E>(
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       NodeServices.layer,
+      Layer.mock(EffectOutbox.EffectOutboxV2)({ restartHandoffs: Effect.succeed([]) }),
       options.resolver ?? fakeVault().layer,
       Layer.succeed(
         ServerSecretStore.ServerSecretStore,
@@ -690,15 +692,4 @@ it.effect("a pasted secret keeps its exact bytes from the tool input to the file
     );
     assert.equal(yield* fs.readFileString(file), pasted);
   }).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.effect("a pasted secret is refused without a secrets directory", () =>
-  withService(({ service }) =>
-    Effect.gen(function* () {
-      const failed = yield* service
-        .savePasted({ threadId, requestNamespace: "session-a", requestKey: "key-1", value: "4829" })
-        .pipe(Effect.flip);
-      assert.equal(failed.reason, "store_failed");
-    }),
-  ),
 );

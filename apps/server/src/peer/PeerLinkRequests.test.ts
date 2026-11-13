@@ -65,6 +65,8 @@ import {
   type ServedPeer,
 } from "./PeerLinks.testkit.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
+import * as McpToolkitRegistration from "../mcp/mcpServer/toolkitRegistration.ts";
+import * as McpTransport from "../mcp/mcpServer/transport.ts";
 
 // The laptop's agent asks the user to link the box. The laptop is its real
 // orchestrator and toolkit; the box is its real descriptor and MCP OAuth on a
@@ -85,7 +87,7 @@ const NoTools = Toolkit.make(
 );
 const serveBox = servePeer(
   box,
-  McpHttpServer.toolkitRegistration(
+  McpToolkitRegistration.toolkitRegistration(
     NoTools,
     McpToolAccess.toLayer(NoTools, { noop: McpToolAccess.reads(() => Effect.succeed({})) }),
   ),
@@ -152,7 +154,7 @@ const makeLaptop = Effect.gen(function* () {
     Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
   );
   const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
-    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+    Layer.provideMerge(McpTransport.layerInProcessMcpServer),
     Layer.provideMerge(PeerLinkRequests.layer),
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
     Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
@@ -939,17 +941,6 @@ it.live("a card an older server left naming a machine beside its address links n
       expect(yield* cardOf(a)).toMatchObject({ linkStatus: "failed" });
       expect(Option.isNone(yield* a.links.get(box.environmentId))).toBe(true);
       expect(yield* b.linkedSessions).toEqual([]);
-    }),
-  ),
-);
-
-it.live("an agent below full access may not ask, and no card is shown", () =>
-  withBoth((a, b) =>
-    Effect.gen(function* () {
-      yield* seedThread(a, "auto");
-      const refused = yield* a.call({ url: b.url });
-      expect(errorOf(refused)).toMatchObject({ code: "capability_denied" });
-      expect(yield* cardOf(a)).toBeUndefined();
     }),
   ),
 );

@@ -140,7 +140,11 @@ export const makeLauncherEndpointRuntime = Effect.fn("ServiceEndpointRuntime.mak
   );
   return {
     applyConfig,
-    inspectConnector: readStatus.pipe(Effect.map((status) => status.facts)),
+    inspectConnector: readStatus.pipe(
+      Effect.map((status) =>
+        status.facts === null || status.pid === null ? null : { ...status.facts, pid: status.pid },
+      ),
+    ),
     readinessChanged: Stream.fromQueue(readiness),
     recoveryRequests: Stream.fromQueue(recovery),
     tunnelConnected: Stream.fromQueue(connected),
@@ -148,6 +152,7 @@ export const makeLauncherEndpointRuntime = Effect.fn("ServiceEndpointRuntime.mak
       (config: RelayManagedEndpointRuntimeConfig) =>
         Queue.offer(recovery, config).pipe(Effect.asVoid),
     ),
+    restartConnector: () => Effect.succeed(false),
     withLinkStateLock: lock.withPermits(1),
   } satisfies CloudManagedEndpointRuntime["Service"];
 });

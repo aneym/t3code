@@ -28,6 +28,7 @@ export async function spawnServiceChild(options: {
   readonly ingress: LauncherIngressConfig | undefined;
   readonly maintenance: boolean;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
+  readonly output: number | undefined;
   readonly onError: (child: NodeChildProcess.ChildProcess) => void;
 }) {
   const { version, instanceId, warm, update } = options;
@@ -61,7 +62,10 @@ export async function spawnServiceChild(options: {
           }),
       [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context),
     },
-    stdio: ["inherit", "inherit", "inherit", "ipc"],
+    stdio:
+      options.output === undefined
+        ? ["inherit", "inherit", "inherit", "ipc"]
+        : ["ignore", options.output, options.output, "ipc"],
   });
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => reject(error);

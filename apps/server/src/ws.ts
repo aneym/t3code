@@ -1,10 +1,13 @@
+import { subscribeServerLifecycle } from "./serverLifecycleSubscription.ts";
+import { acknowledgeHandoff } from "./serverHandoffDelivery.ts";
+import { handoffRpc } from "./serverHandoffProtocol.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
-import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
+import * as PeerLinkRpcHandlers from "./peer/PeerLinkRpcHandlers.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 
 import * as DateTime from "effect/DateTime";
@@ -83,9 +86,6 @@ import {
   type RelayClientInstallProgressEvent,
   type ServerConfig as ClientServerConfig,
   type ServerConfigStreamEvent,
-  type ServerLifecycleStreamEvent,
-  type ServerProvider,
-  serverProviderDeltas,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -175,13 +175,22 @@ import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErr
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as SecretCheck from "./secrets/SecretCheck.ts";
 import * as AcpRegistrySessions from "./provider/AcpRegistrySessions.ts";
+import {
+  machineCatalogDigest,
+  machineCatalogNames,
+  withoutWorkspaceSnapshots,
+  withProviderStatusDeltas,
+  workspaceSnapshotOrCatalog,
+} from "./provider/configProviders.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import * as ProviderInstallation from "./provider/providerInstallation.ts";
+import * as ProviderRuntimeRecoveryService from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
+import * as ForkReleases from "./cloud/forkReleases.ts";
 import * as NpmRelease from "./cloud/npmRelease.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -192,7 +201,7 @@ import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { makePrepareTerminalLaunch } from "./workspace/restoreMissingWorktree.ts";
-import { terminalOutputStream, withOutputWindow } from "./terminal/OutputProtocol.ts";
+import { terminalOutputStream } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
@@ -432,87 +441,6 @@ export const resolveOpenDiscoveryForConfig = <T, D, E1, R1, E2, R2, E3, R3, E4, 
     },
     { concurrency: "unbounded" },
   ).pipe(Effect.map(({ editorConfig, ...endpoints }) => ({ ...editorConfig, ...endpoints })));
-// A failed scan leaves no cwd snapshot, so a client without the machine catalog gets it
-// as a pending snapshot, which it shows while it retries the scan.
-function workspaceSnapshotOrCatalog(
-  provider: ServerProvider,
-  cwd: string,
-  catalogOnDemand: boolean,
-) {
-  const snapshots = (provider.workspaceSnapshots ?? []).filter((snapshot) => snapshot.cwd === cwd);
-  if (snapshots.length > 0 || !catalogOnDemand) return snapshots;
-  return [
-    {
-      cwd,
-      checkedAt: provider.checkedAt,
-      slashCommands: provider.slashCommands,
-      slashCommandsPending: true,
-      skills: provider.skills,
-    },
-  ];
-}
-
-// What an on-demand catalog client keeps of the machine catalog: full entries come from the
-// cwd snapshot it fetches, and skill names and labels keep skill links working without one.
-function machineCatalogNames(provider: Pick<ServerProvider, "slashCommands" | "skills">) {
-  return {
-    slashCommands: provider.slashCommands.map(({ name }) => ({ name })),
-    skills: provider.skills.map(({ description: _d, shortDescription: _s, ...skill }) => skill),
-  };
-}
-
-// Stable across restarts, so a client's cached lists stay current until the catalog changes.
-// It covers the full entries: a changed description or input hint must reach the client too.
-const machineCatalogDigest = (provider: Pick<ServerProvider, "slashCommands" | "skills">) =>
-  NodeCrypto.createHash("sha256")
-    .update(JSON.stringify([provider.slashCommands, provider.skills]))
-    .digest("hex")
-    .slice(0, 16);
-
-// Names, or the digest that stands for them, still change the config when the machine catalog
-// does, so the client refetches its cwd snapshot.
-function withoutWorkspaceSnapshots(
-  providers: ReadonlyArray<ServerProvider>,
-  catalogsPerCwd: ReadonlySet<string> = new Set(),
-  catalogDigests = false,
-): ServerProvider[] {
-  return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) => {
-    if (!catalogsPerCwd.has(provider.instanceId)) return provider;
-    return catalogDigests
-      ? {
-          ...provider,
-          slashCommands: [],
-          skills: [],
-          catalogDigest: machineCatalogDigest(provider),
-        }
-      : { ...provider, ...machineCatalogNames(provider) };
-  });
-}
-
-// Deltas are taken from the list this client last received, which a late snapshot replaces.
-const withProviderStatusDeltas = (sent: ReadonlyArray<ServerProvider>) =>
-  Stream.mapAccum(
-    () => sent,
-    (
-      previous,
-      event: ServerConfigStreamEvent,
-    ): readonly [ReadonlyArray<ServerProvider>, ReadonlyArray<ServerConfigStreamEvent>] => {
-      if (event.type === "snapshot") return [event.config.providers, [event]];
-      if (event.type !== "providerStatuses") return [previous, [event]];
-      const { providers } = event.payload;
-      return [
-        providers,
-        [
-          {
-            version: 1,
-            type: "providerStatusDeltas",
-            payload: { providers: serverProviderDeltas(previous, providers) },
-          },
-        ],
-      ];
-    },
-  );
-
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
 }
@@ -1441,6 +1369,8 @@ export const layerWsRpc = (
       const eventLoopMonitor = yield* EventLoopMonitor.EventLoopMonitor;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
 
+      const providerRuntimeRecovery =
+        yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
       const analytics = yield* AnalyticsService.AnalyticsService;
@@ -1530,6 +1460,7 @@ export const layerWsRpc = (
       const providerAuth = yield* ProviderAuthService.ProviderAuthService;
       const providerInstallation = yield* ProviderInstallation.ProviderInstallation;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+      const forkReleases = yield* ForkReleases.ForkReleases;
       const npmRelease = yield* NpmRelease.NpmRelease;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -1537,8 +1468,7 @@ export const layerWsRpc = (
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const secretResolver = yield* SecretResolver.SecretResolver;
-      const peerLinks = yield* PeerLinks.PeerLinks;
-      const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+      const peerLinkHandlers = yield* PeerLinkRpcHandlers.make;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1982,7 +1912,7 @@ export const layerWsRpc = (
                   Effect.tap((result) =>
                     result.replayed ? Effect.void : recordClientCommandAnalytics(command),
                   ),
-                  Effect.map((result) => ({ sequence: result.sequence })),
+                  Effect.map(ThreadMessageIntake.dispatchResult),
                   Effect.mapError((cause) => {
                     const detail = userFacingDispatchErrorMessage(cause);
                     return new OrchestrationV2DispatchCommandError({
@@ -2312,7 +2242,7 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
           ),
-        [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
+        [WS_METHODS.serverProbe]: (input) => acknowledgeHandoff(input),
         [WS_METHODS.serverGetConfig]: (_input) =>
           loadServerConfig({
             usageLimitsCommand: false,
@@ -2623,6 +2553,14 @@ export const layerWsRpc = (
         [WS_METHODS.providerInstallCancel]: (input) => providerInstallation.cancel(input),
         [WS_METHODS.providerInstallSubscribe]: (input) => providerInstallation.subscribe(input),
         [WS_METHODS.providerInstallRemove]: (input) => providerInstallation.remove(input),
+        [WS_METHODS.serverListForkReleases]: () => forkReleases.list(),
+        [WS_METHODS.serverGetRestartStatus]: (input) =>
+          providerRuntimeRecovery.getRestartStatus(input.epoch),
+        [WS_METHODS.serverAbortRestart]: ({ epoch }) => providerRuntimeRecovery.abortRestart(epoch),
+        [WS_METHODS.serverImportRestartHandoff]: (input) =>
+          providerRuntimeRecovery.importRestartHandoff(input),
+        [WS_METHODS.serverPrepareRestart]: (input) =>
+          providerRuntimeRecovery.prepareRestart(input.epoch, input.drainTimeoutMs),
         [WS_METHODS.serverUpdateServer]: (input) => serverSelfUpdate.update(input),
         [WS_METHODS.serverGetNpmRelease]: (input) => npmRelease.get(input),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
@@ -2643,15 +2581,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
         [WS_METHODS.serverReclaimDatabaseSpace]: () => databaseStorage.requestReclaim,
-        [WS_METHODS.peerLinksList]: (_input) =>
-          peerLinks.list.pipe(Effect.map((links) => ({ links }))),
-        [WS_METHODS.peerLinksLink]: (input) => peerLinks.link(input),
-        [WS_METHODS.peerLinksUnlink]: ({ environmentId }) =>
-          peerLinks.unlink(environmentId).pipe(Effect.map((removed) => ({ removed }))),
-        [WS_METHODS.peerLinksAnswerRequest]: (input) =>
-          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
-            Effect.andThen(peerLinkRequests.answer(input)),
-          ),
+        ...peerLinkHandlers,
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* ({ patch, providerInstanceMutation }) {
@@ -3420,26 +3350,8 @@ export const layerWsRpc = (
               );
             }),
           ),
-        [WS_METHODS.subscribeServerLifecycle]: (_input) =>
-          Stream.unwrap(
-            Effect.gen(function* () {
-              const liveBuffer = yield* Queue.unbounded<ServerLifecycleStreamEvent>();
-              yield* Effect.forkScoped(
-                lifecycleEvents.stream.pipe(
-                  Stream.runForEach((event) => Queue.offer(liveBuffer, event)),
-                ),
-                { startImmediately: true },
-              );
-              const snapshot = yield* lifecycleEvents.snapshot;
-              const snapshotEvents = Array.from(snapshot.events).toSorted(
-                (left, right) => left.sequence - right.sequence,
-              );
-              const liveEvents = Stream.fromQueue(liveBuffer).pipe(
-                Stream.filter((event) => event.sequence > snapshot.sequence),
-              );
-              return Stream.concat(rpcInitialItems(snapshotEvents), liveEvents);
-            }),
-          ),
+        [WS_METHODS.subscribeServerLifecycle]: (input) =>
+          subscribeServerLifecycle(lifecycleEvents, input),
         [WS_METHODS.subscribeAuthAccess]: (_input) =>
           Stream.unwrap(
             Effect.gen(function* () {
@@ -3519,6 +3431,7 @@ export const layer = Layer.unwrap(
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+    const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3554,9 +3467,9 @@ export const layer = Layer.unwrap(
         yield* analytics.recordOwners(readClientOwners(request), "client");
         const reportProfiles = yield* serverBrowser.profileReporter;
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
-          const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
+          const { protocol, httpEffect } = yield* handoffRpc();
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
-            Effect.provideService(RpcServer.Protocol, withOutputWindow(protocol)),
+            Effect.provideService(RpcServer.Protocol, protocol),
             Effect.provide(
               Layer.merge(
                 RpcAuthorization.layer(session.scopes, (method, payload) => {
@@ -3594,6 +3507,7 @@ export const layer = Layer.unwrap(
               Layer.provide(DefectReporter.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AcpRegistrySessions.layer),
+              Layer.provide(ForkReleases.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
@@ -3608,6 +3522,7 @@ export const layer = Layer.unwrap(
               ),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
+              Layer.provide(Layer.succeed(PeerClientPairing.PeerClientPairing, peerClientPairing)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

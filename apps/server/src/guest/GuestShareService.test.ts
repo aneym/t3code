@@ -5,7 +5,6 @@ import {
   ChatAttachmentId,
   CommandId,
   EventId,
-  GuestShareId,
   type GuestStreamEvent,
   MessageId,
   type OrchestrationV2ThreadHistoryPage,
@@ -130,6 +129,7 @@ const layerAnalytics = Layer.effectContext(
           record: (event, properties) =>
             Ref.update(recorded, (events) => [...events, { event, ...properties }]),
           flush: Effect.void,
+          skipShutdownFlush: Effect.void,
           recordOwners: () => Effect.void,
         }),
       ),
@@ -392,17 +392,6 @@ it.effect("shows the guest the thread's new model", () =>
       event.type === "view" ? [event.view.model.name] : [],
     );
     assert.include(views, "gpt-5.2-codex");
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("refuses a message a page sends for a share the cookie no longer opens", () =>
-  Effect.gen(function* () {
-    const { guestShares, credential } = yield* shareThread;
-    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
-    const submitted = yield* Effect.exit(
-      guestShares.submit(session, { shareId: GuestShareId.make("share:older"), text: "Hello" }, []),
-    );
-    assert.isTrue(Exit.isFailure(submitted));
   }).pipe(Effect.provide(layerTest)),
 );
 

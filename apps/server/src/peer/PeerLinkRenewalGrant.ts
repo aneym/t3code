@@ -93,7 +93,6 @@ const make = Effect.gen(function* () {
         ? {}
         : { runtimeModeCeiling: session.runtimeModeCeiling }),
       peerLink: true,
-      peer: session.peer,
       client: {
         ...deriveAuthClientMetadata({ request }),
         ...(session.client.label === undefined ? {} : { label: session.client.label }),

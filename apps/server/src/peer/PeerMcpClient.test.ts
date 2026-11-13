@@ -20,12 +20,12 @@ import { Tool, Toolkit } from "effect/ai";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
+import * as McpToolkitRegistration from "../mcp/mcpServer/toolkitRegistration.ts";
 
 const Result = Schema.Struct({ modes: Schema.String });
 const toolkit = Toolkit.make(
@@ -114,7 +114,10 @@ it.effect("tells the peer which thread a call is made for", () =>
         ),
       });
       const box = descriptorOf("environment-box", "Box");
-      const b = yield* servePeer(box, McpHttpServer.toolkitRegistration(senderToolkit, handlers));
+      const b = yield* servePeer(
+        box,
+        McpToolkitRegistration.toolkitRegistration(senderToolkit, handlers),
+      );
       const context = yield* Layer.build(
         layerLinkingEnvironment(descriptorOf("environment-a", "A")),
       );
@@ -172,7 +175,10 @@ it.effect.each([false, true])(
           ),
         });
         const box = descriptorOf("environment-box", "Box");
-        const b = yield* servePeer(box, McpHttpServer.toolkitRegistration(toolkit, handlers));
+        const b = yield* servePeer(
+          box,
+          McpToolkitRegistration.toolkitRegistration(toolkit, handlers),
+        );
         const context = yield* Layer.build(
           layerLinkingEnvironment(descriptorOf("environment-a", "A")),
         );
@@ -217,7 +223,10 @@ it.effect("keeps a link healthy when the peer refuses a call", () =>
         refuse: McpToolAccess.reads(() => Effect.fail(refusal)),
       });
       const box = descriptorOf("environment-box", "Box");
-      const b = yield* servePeer(box, McpHttpServer.toolkitRegistration(toolkit, handlers));
+      const b = yield* servePeer(
+        box,
+        McpToolkitRegistration.toolkitRegistration(toolkit, handlers),
+      );
       const context = yield* Layer.build(
         layerLinkingEnvironment(descriptorOf("environment-a", "A")),
       );

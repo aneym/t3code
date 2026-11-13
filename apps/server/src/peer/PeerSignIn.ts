@@ -1,26 +1,28 @@
 import {
   AuthMcpRegistrationError,
   AuthMcpTokenError,
+  type EnvironmentHttpApi,
   MCP_PEER_LINK_SOFTWARE_ID,
   PeerLinkError,
   type PeerLinkCreateInput,
 } from "@t3tools/contracts";
-import type * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Redacted from "effect/Redacted";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Base64Url from "effect/encoding/Base64Url";
-import type { EnvironmentHttpApi } from "@t3tools/contracts";
 import type * as HttpApiClient from "effect/http-api/HttpApiClient";
-import type * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
 /** The redirect registered for a link. Nothing ever listens there: the code comes back in the response. */
 const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
 
 export const makePeerSignIn = (
-  clientFor: (origin: string) => Effect.Effect<HttpApiClient.ForApi<typeof EnvironmentHttpApi>>,
-  crypto: Crypto.Crypto,
-  environment: ServerEnvironment.ServerEnvironment["Service"],
+  clientFor: (origin: string) => Effect.Effect<{
+    readonly mcpOAuth: HttpApiClient.ForApi<typeof EnvironmentHttpApi>["mcpOAuth"];
+  }>,
+  random: SecureRandom.SecureRandom["Service"],
+  digest: Digest.Digest["Service"],
 ) => {
   /** Signs in to the peer's `/mcp` with a pairing code: register, decide, exchange. */
   return Effect.fn("PeerLinks.signIn")(
@@ -34,7 +36,6 @@ export const makePeerSignIn = (
             client_name: clientName,
             redirect_uris: [LINK_REDIRECT_URI],
             software_id: MCP_PEER_LINK_SOFTWARE_ID,
-            peer_environment: yield* environment.getDescriptor,
           },
         })
         .pipe(
@@ -48,14 +49,15 @@ export const makePeerSignIn = (
             ),
           ),
         );
-      const verifier = Base64Url.encode(yield* crypto.randomBytes(32).pipe(Effect.orDie));
+      const verifier = Base64Url.encode(yield* random.randomBytes(32));
       const challenge = Base64Url.encode(
-        yield* crypto.digest("SHA-256", new TextEncoder().encode(verifier)).pipe(Effect.orDie),
+        yield* digest.digest(Digest.sha256, new TextEncoder().encode(verifier)).pipe(Effect.orDie),
       );
-      const state = Base64Url.encode(yield* crypto.randomBytes(16).pipe(Effect.orDie));
+      const state = Base64Url.encode(yield* random.randomBytes(16));
       const resource = `${origin}/mcp`;
       const decided = yield* client.mcpOAuth
         .decision({
+          headers: {},
           payload: {
             authorization: {
               response_type: "code",

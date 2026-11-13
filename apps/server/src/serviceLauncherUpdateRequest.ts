@@ -12,7 +12,7 @@ import {
   type ServiceLauncherChildMessage,
 } from "./cloud/serviceProtocol.ts";
 import { databaseBackupBlocker, type BackupSpaceProbe } from "./serviceLauncherDatabase.ts";
-import { runtimeExists, writeServiceState } from "./serviceLauncherState.ts";
+import { runtimeExists, selectServiceState } from "./serviceLauncherState.ts";
 import { sendMessage } from "./serviceLauncherMessages.ts";
 
 export async function acceptServiceUpdate(
@@ -83,9 +83,14 @@ export async function acceptServiceUpdate(
     dbPath: message.dbPath,
     status: "pending",
   };
-  await writeServiceState(NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE), {
-    ...state,
-    update: pending,
-  });
+  try {
+    await selectServiceState(NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE), state, {
+      ...state,
+      update: pending,
+    });
+  } catch (error) {
+    await reject(error instanceof Error ? error.message : String(error));
+    return;
+  }
   return pending;
 }

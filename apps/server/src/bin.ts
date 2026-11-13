@@ -45,14 +45,26 @@ if (
   process.stdout.on("error", ignoreOutputError);
   process.stderr.on("error", ignoreOutputError);
 
+  const command = process.argv[2];
   // The launcher owns shutdown until its child exits, so it bypasses the Effect CLI runtime.
   // A service unit passes nothing, or on Windows the launcher's own flags; help and anything
   // else go through the full CLI.
   const launcher =
-    process.argv[2] === "__service-launcher" ? await import("./cli/serviceLauncher.ts") : undefined;
+    command === "__service-launcher" ? await import("./cli/serviceLauncher.ts") : undefined;
   const launcherOptions = launcher?.parseServiceLauncherArgs(process.argv.slice(3));
   if (launcher !== undefined && launcherOptions !== undefined) {
     await launcher.runServiceLauncherCli(launcherOptions);
+  } else if (command === "__service-launcher-watchdog") {
+    const { runLauncherWatchdog } = await import("./serviceLauncherWatchdog.ts");
+    await runLauncherWatchdog(process.execPath);
+  } else if (command === "__service-connector") {
+    const { runServiceConnector } = await import("./serviceConnector.ts");
+    const baseDir = process.env.T3CODE_HOME?.trim();
+    if (!baseDir) throw new Error("T3CODE_HOME is required by the connector service.");
+    await runServiceConnector(baseDir);
+  } else if (command === "__git-spawn-broker") {
+    const { runGitSpawnBroker } = await import("./vcs/gitSpawnBrokerChild.ts");
+    runGitSpawnBroker();
   } else {
     const { runCliCommand } = await loadCliMain();
     await runCliCommand();

@@ -14,10 +14,9 @@ import {
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -87,7 +86,7 @@ const make = Effect.gen(function* () {
   const config = yield* Config.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const digests = yield* Digest.Digest;
   const threads = yield* Threads.ThreadManagementService;
   const platform = yield* HostProcess.Platform;
   const lock = yield* KeyedLock.make<string>();
@@ -182,22 +181,18 @@ const make = Effect.gen(function* () {
       const digest =
         input.clientRequestId === undefined
           ? undefined
-          : Hex.encode(
-              yield* crypto
-                .digest(
-                  "SHA-256",
-                  new TextEncoder().encode(
-                    yield* encodeKey([
-                      requestPrincipal(scope),
-                      input.operation,
-                      input.clientRequestId,
-                      projectId,
-                      yield* encodeModel(modelSelection).pipe(Effect.mapError(unavailable)),
-                      input.driverKind ?? "",
-                    ]).pipe(Effect.mapError(unavailable)),
-                  ),
-                )
-                .pipe(Effect.mapError(unavailable)),
+          : yield* digests.digestHex(
+              Digest.sha256,
+              new TextEncoder().encode(
+                yield* encodeKey([
+                  requestPrincipal(scope),
+                  input.operation,
+                  input.clientRequestId,
+                  projectId,
+                  yield* encodeModel(modelSelection).pipe(Effect.mapError(unavailable)),
+                  input.driverKind ?? "",
+                ]).pipe(Effect.mapError(unavailable)),
+              ),
             );
       const receiptPath =
         digest === undefined ? undefined : path.join(receiptDir, `${digest}.json`);
@@ -325,13 +320,17 @@ const make = Effect.gen(function* () {
             reason: string,
           ): typeof Selection.Type => {
             const chosen = scores.find((entry) => entry.environmentId === environmentId);
+            const mapped = matching.get(environmentId) ?? projectId;
             return {
-              projectId: matching.get(environmentId) ?? projectId,
+              projectId: mapped,
               modelSelection,
               placement: {
                 environmentId,
                 label: chosen?.label ?? descriptor.label,
-                reason,
+                reason:
+                  environmentId === scope.environmentId
+                    ? reason
+                    : `${reason} Project mapped to ${mapped} by repository ${keys[0]}.`,
                 mode,
                 decidedAt: now,
                 scores,

@@ -2,6 +2,8 @@
 // @effect-diagnostics globalTimers:off
 import type * as NodeChildProcess from "node:child_process";
 
+import { sendMessage } from "./serviceLauncherMessages.ts";
+
 const STOP_GRACE_MS = 75_000;
 
 function waitForExit(child: NodeChildProcess.ChildProcess): Promise<void> {
@@ -14,6 +16,13 @@ export class ChildTerminator {
   readonly #terminating = new Set<NodeChildProcess.ChildProcess>();
   #deadlineArmed = false;
   #beforeSignal: Promise<void> = Promise.resolve();
+  readonly #stopOverIpc: boolean;
+
+  /** Windows `kill()` is TerminateProcess, which skips the server's shutdown finalizers. */
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+  constructor(stopOverIpc = process.platform === "win32") {
+    this.#stopOverIpc = stopOverIpc;
+  }
 
   startStopDeadline(onDeadline: () => void): void {
     if (this.#deadlineArmed) return;
@@ -45,7 +54,9 @@ export class ChildTerminator {
     const kill = () => child.kill("SIGKILL");
     try {
       await this.#beforeSignal;
-      child.kill(signal);
+      if (this.#stopOverIpc)
+        await sendMessage(child, { type: "stop" }).catch(() => child.kill(signal));
+      else child.kill(signal);
       if (force.aborted) kill();
       else force.addEventListener("abort", kill, { once: true });
       await waitForExit(child);

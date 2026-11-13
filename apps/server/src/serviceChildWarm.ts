@@ -23,7 +23,10 @@ const prewarmServiceChild = Effect.fn("serviceChildWarm.prewarm")(function* (bas
   const path = yield* Path.Path;
   const startedAt = yield* serviceBootTimeline.now;
   const loadPty = yield* NodePtyModuleLoaderRef;
-  yield* Effect.tryPromise(loadPty).pipe(Effect.ignore);
+  yield* Effect.tryPromise({
+    try: loadPty,
+    catch: (cause) => new ServiceWarmError({ cause }),
+  }).pipe(Effect.ignore);
   yield* probeLocalCodex(path.join(baseDir, "tools", "codex"), true).pipe(Effect.ignore);
   serviceBootTimeline.prewarmMs = (yield* serviceBootTimeline.now) - startedAt;
 });

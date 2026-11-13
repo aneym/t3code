@@ -8,7 +8,9 @@ import {
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadWaitInput,
   OrchestratorMcpThreadWaitResult,
+  peerLinkRenewalState,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -19,6 +21,7 @@ import * as Schema from "effect/Schema";
 import type * as Tool from "effect/ai/Tool";
 
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
+import { requestPrincipal } from "../mcp/ownerCliSession.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -142,9 +145,13 @@ const make = Effect.gen(function* () {
         message: "A launch in a linked environment cannot carry attachments yet.",
       });
     }
-    if (typeof args.clientRequestId === "string") {
-      args.clientRequestId = yield* scopedRequestId(scope.requestNamespace, args.clientRequestId);
-    }
+    const callerRequestId =
+      typeof args.clientRequestId === "string" ? args.clientRequestId : undefined;
+    const scopedId =
+      callerRequestId === undefined
+        ? undefined
+        : yield* scopedRequestId(requestPrincipal(scope), callerRequestId);
+    if (scopedId !== undefined) args.clientRequestId = scopedId;
     // So a message sent there names the thread that sent it, even to a client that cannot reach here.
     const sender =
       caller === undefined
@@ -154,7 +161,7 @@ const make = Effect.gen(function* () {
             threadId: caller.id,
             title: caller.title,
           };
-    return yield* peers.call({
+    const result = yield* peers.call({
       environmentId,
       tool: toolName,
       arguments: args,
@@ -162,6 +169,13 @@ const make = Effect.gen(function* () {
       ...(sender === undefined ? {} : { sender }),
       success: success as Schema.Decoder<A>,
     });
+    return callerRequestId !== undefined &&
+      typeof result === "object" &&
+      result !== null &&
+      "clientRequestId" in result &&
+      result.clientRequestId === scopedId
+      ? { ...result, clientRequestId: callerRequestId }
+      : result;
   });
 
   const readThread: PeerForwarding["Service"]["readThread"] = (scope, environmentId, input) =>
@@ -257,6 +271,7 @@ const make = Effect.gen(function* () {
             new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
         ),
       );
+      const now = yield* Clock.currentTimeMillis;
       return {
         environmentId: scope.environmentId,
         links: listed.map((link) => ({
@@ -266,6 +281,11 @@ const make = Effect.gen(function* () {
           access: link.access,
           expiresAt: DateTime.formatIso(link.expiresAt),
           lastError: link.lastError,
+          renewal: peerLinkRenewalState(link, now),
+          ...(link.renewedAt === undefined
+            ? {}
+            : { renewedAt: DateTime.formatIso(link.renewedAt) }),
+          ...(link.renewalError === undefined ? {} : { renewalError: link.renewalError }),
         })),
         notListed: NOT_LISTED,
       };
