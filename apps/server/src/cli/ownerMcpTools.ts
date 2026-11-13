@@ -10,9 +10,10 @@ import { GlobalFlag } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
-import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
+import type { McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
 import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
 import { resolveCliAuthConfig } from "./config.ts";
+import { openOwnerCliSession } from "./ownerCliSessionCache.ts";
 
 export class McpServerNotRunningError extends Schema.TaggedError<McpServerNotRunningError>()(
   "McpServerNotRunningError",
@@ -116,24 +117,16 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
       return yield* new McpServerNotRunningError({ baseDir: config.baseDir });
     }
     const origin = runtimeState.value.origin;
-    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const issued = yield* Effect.acquireRelease(
-      environmentAuth.issueMcpClientSession({
-        label: `t3 ${command} cli`,
-        access: "full-access",
-        peerLink: false,
-        ownerCli: true,
-        client: { deviceType: "bot" },
+    const session = yield* openOwnerCliSession(
+      config.secretsDir,
+      new URL("/mcp", origin).href,
+      command,
+      headers,
+    ).pipe(
+      Effect.catchTags({
+        AcpMcpBridgeError: (cause) => Effect.fail(new McpServerUnreachableError({ origin, cause })),
       }),
-      (session) =>
-        environmentAuth.revokeSession(session.sessionId).pipe(Effect.ignore({ log: true })),
     );
-    const session = yield* mcpToolSession({
-      endpoint: new URL("/mcp", origin).href,
-      authorization: `Bearer ${issued.token}`,
-      clientName: `t3-${command}-cli`,
-      ...(headers === undefined ? {} : { headers }),
-    }).pipe(Effect.mapError((cause) => new McpServerUnreachableError({ origin, cause })));
     return yield* run(makeOwnerMcpTools(session, origin));
   }).pipe(
     Effect.scoped,
