@@ -20,7 +20,10 @@ import { QueuedMessage } from "./QueuedMessage";
 import { ArrowUpIcon, ChevronDownIcon, Clock3Icon, PencilIcon, XIcon } from "lucide-react";
 import { useId, useImperativeHandle, useRef, useState, type Ref } from "react";
 
+import { useAtomValue } from "@effect/atom-react";
 import { useAssetUrls } from "../../assets/assetUrls";
+import { shortcutLabelForCommand } from "../../keybindings";
+import { primaryServerKeybindingsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -43,6 +46,7 @@ const QUEUE_VISIBLE_ROWS = 3;
 export interface QueuedRunsControlHandle {
   steerNext: (repeat: boolean) => boolean;
   editLatest: (repeat: boolean) => boolean;
+  focusFirst: () => boolean;
 }
 
 type ThreadQueueProjection = Parameters<typeof deriveThreadQueueWorkflowState>[0];
@@ -63,8 +67,6 @@ export function QueuedRunsControl({
   ...props
 }: {
   readonly ref?: Ref<QueuedRunsControlHandle>;
-  readonly steerShortcutLabel?: string | null;
-  readonly editShortcutLabel?: string | null;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly optimisticMessages: ReadonlyArray<
@@ -84,10 +86,18 @@ export function QueuedRunsControl({
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const steerShortcutLabel = shortcutLabelForCommand(keybindings, "thread.steerQueuedMessage", {
+    context: { terminalFocus: false },
+  });
+  const editShortcutLabel = shortcutLabelForCommand(keybindings, "thread.editQueuedMessage", {
+    context: { composerFocus: true },
+  });
   const [showAll, setShowAll] = useState(false);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   const steerInFlightRef = useRef(false);
+  const listRef = useRef<HTMLOListElement>(null);
   // Run-only acknowledgements can resurrect pending rows after cancellation or startup.
   const acknowledgedMessageIds = new Set((projection?.messages ?? []).map((message) => message.id));
   const queuedImageAttachmentResources = queuedImageResources(projection);
@@ -176,6 +186,13 @@ export function QueuedRunsControl({
       }
       return true;
     },
+    focusFirst() {
+      const action = listRef.current?.querySelector<HTMLElement>(
+        "[data-queue-action]:not(:disabled)",
+      );
+      action?.focus();
+      return action !== undefined && action !== null;
+    },
   }));
 
   if (items.length === 0) return null;
@@ -222,7 +239,7 @@ export function QueuedRunsControl({
           )}
         </p>
       ) : null}
-      <ol className="flex flex-col items-end gap-3" id={queueListId}>
+      <ol ref={listRef} className="flex flex-col items-end gap-3" id={queueListId}>
         {visibleItems.map((item, position) => {
           const ownText = withoutRailsDeskContext(item.text);
           const previewText = isAttachmentOnlyBootstrapPrompt(ownText)
@@ -268,6 +285,7 @@ export function QueuedRunsControl({
                     <Tooltip>
                       <TooltipTrigger render={<span className="flex shrink-0" />}>
                         <Button
+                          data-queue-action
                           size="xs"
                           variant="ghost-muted"
                           disabled={
@@ -284,7 +302,7 @@ export function QueuedRunsControl({
                         </Button>
                       </TooltipTrigger>
                       <TooltipPopup>
-                        {`${workflow?.canSendNow ? "Start a turn with this message" : workflow?.promoteSkipsCompaction ? "Skip compaction and send this message" : "Send into the current turn"}${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                        {`${workflow?.canSendNow ? "Start a turn with this message" : workflow?.promoteSkipsCompaction ? "Skip compaction and send this message" : "Send into the current turn"}${item.serverIndex === 0 && steerShortcutLabel ? ` (${steerShortcutLabel})` : ""}`}
                       </TooltipPopup>
                     </Tooltip>
                   </>
@@ -313,6 +331,7 @@ export function QueuedRunsControl({
                       {/* The span keeps the tooltip, and its reason, on a disabled button. */}
                       <TooltipTrigger render={<span className="flex shrink-0" />}>
                         <Button
+                          data-queue-action
                           size="icon-xs"
                           variant="ghost-muted"
                           aria-label="Edit queued message"
@@ -338,13 +357,14 @@ export function QueuedRunsControl({
                       </TooltipTrigger>
                       <TooltipPopup>
                         {props.editBlockedReason ??
-                          `Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
+                          `Edit in the composer${item.serverIndex === queued.length - 1 && editShortcutLabel ? ` (${editShortcutLabel})` : ""}`}
                       </TooltipPopup>
                     </Tooltip>
                     <Tooltip>
                       <TooltipTrigger
                         render={
                           <Button
+                            data-queue-action
                             size="icon-xs"
                             variant="ghost-muted"
                             aria-label="Remove queued message"

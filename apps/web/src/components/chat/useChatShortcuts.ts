@@ -20,6 +20,12 @@ type ChatShortcutHandler = (context: {
   readonly terminalFocusOwner: TerminalFocusOwner | null;
 }) => boolean | void;
 
+const SIDE_CHAT_QUEUE_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
+  "composer.sendAlternate",
+  "thread.steerQueuedMessage",
+  "thread.editQueuedMessage",
+]);
+
 export type ChatShortcutCommands = Partial<Record<KeybindingCommand, ChatShortcutHandler>>;
 
 interface ChatShortcutsInput {
@@ -114,7 +120,8 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       context: input.getShortcutContext(event.target),
     });
     const run = command
-      ? composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command]
+      ? ((SIDE_CHAT_QUEUE_COMMANDS.has(command) ? input.commands[command] : undefined) ??
+        composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command])
       : undefined;
     if (!run || run({ event, terminalFocusOwner: null }) === false) return;
     event.preventDefault();

@@ -319,6 +319,7 @@ import {
   isThreadErrorBannerDismissedForSession,
   shouldShowThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
+import { queuedRunShortcutContext, useQueuedRunShortcuts } from "./chat/queuedRunShortcuts";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { EmbedPendingSends } from "./chat/EmbedPendingSends";
 import { usePendingGuestMessageFollow } from "./chat/usePendingGuestMessageFollow";
@@ -2704,6 +2705,7 @@ export default function ChatView(props: ChatViewProps) {
     draftThreadRoute: routeKind === "draft",
     turnRunning: phase === "running" || phase === "connecting",
     composerRequiresModifier: composerRequiresModifier(settings.sendShortcut, promptRef.current),
+    ...queuedRunShortcutContext(eventTarget, promptRef.current, composerHasNonPromptContent),
     isWeb: !isElectron,
     isDesktop: isElectron,
   });
@@ -2719,6 +2721,9 @@ export default function ChatView(props: ChatViewProps) {
     }
   });
 
+  const queuedRunShortcuts = useQueuedRunShortcuts(queuedRunsControlRef, composerRef, () =>
+    routeKind === "draft" ? null : getShortcutContext().composerEmpty,
+  );
   useChatShortcuts({
     enabled: activeThreadId !== null && !backgroundThread,
     embedded,
@@ -2755,12 +2760,7 @@ export default function ChatView(props: ChatViewProps) {
         const next = logicalProjectEnvironments[(index + 1) % logicalProjectEnvironments.length];
         if (next) onEnvironmentChangeStable(next.environmentId);
       },
-      "thread.steerQueuedMessage": ({ event }) =>
-        routeKind !== "draft" && queuedRunsControlRef.current?.steerNext(event.repeat) === true,
-      "thread.editQueuedMessage": ({ event }) =>
-        routeKind !== "draft" &&
-        composerRef.current?.isCaretAtStart() === true &&
-        queuedRunsControlRef.current?.editLatest(event.repeat) === true,
+      ...queuedRunShortcuts,
       "thread.stop": ({ event }) => {
         if (!canInterruptRunningThread) return false;
         if (!event.repeat) void onInterruptStable();
@@ -3021,12 +3021,6 @@ export default function ChatView(props: ChatViewProps) {
       <>
         <QueuedRunsControl
           ref={queuedRunsControlRef}
-          steerShortcutLabel={shortcutLabelForCommand(keybindings, "thread.steerQueuedMessage", {
-            context: { terminalFocus: false },
-          })}
-          editShortcutLabel={shortcutLabelForCommand(keybindings, "thread.editQueuedMessage", {
-            context: { composerFocus: true },
-          })}
           environmentId={activeThread.environmentId}
           threadId={activeThread.id}
           optimisticMessages={optimisticUserMessages}
