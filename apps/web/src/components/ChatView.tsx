@@ -100,8 +100,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-workflows";
 import { compactionBlocksSteering } from "@t3tools/client-runtime/state/composer-dispatch";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
-import { ThreadRestartNotices } from "./chat/ThreadRestartNotices";
-import { restartPauseLabel } from "@t3tools/client-runtime/restart-pause";
+import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
   codexFeedbackMessage,
   deriveWorkspaceMutationId,
@@ -3108,10 +3107,7 @@ export default function ChatView(props: ChatViewProps) {
   // The end of the timeline holds the thread's present and next turns: what it is doing now,
   // its lifecycle status, guest messages awaiting you, then your queued messages.
   const hostSends = useEmbedPendingSendCount(serverProjection, optimisticUserMessages);
-  const restartRuns = serverProjection?.runs;
-  const restartPause = restartRuns === undefined ? null : restartPauseLabel(restartRuns);
   const timelineFooter =
-    restartPause === null &&
     pendingHandoff === null &&
     !hasThreadNow &&
     threadStatusLine === null &&
@@ -3120,12 +3116,16 @@ export default function ChatView(props: ChatViewProps) {
     hostSends === 0 &&
     heldSend.held === null ? null : (
       <>
-        <ThreadRestartNotices
-          label={restartPause}
-          environmentId={environmentId}
-          endpoints={pendingHandoff}
-          providers={providerStatuses}
-        />
+        {pendingHandoff === null ? null : (
+          <div className="chat-content-lane">
+            <HandoffRow
+              environmentId={environmentId}
+              endpoints={pendingHandoff}
+              providers={providerStatuses}
+              pending
+            />
+          </div>
+        )}
         <ThreadNow
           key={routeThreadKey}
           attention={attentionNow}

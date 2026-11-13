@@ -2,6 +2,8 @@ import {
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerConfig,
+  type ServerLifecycleWelcomePayload,
+  type ServerLifecycleStreamReadyEvent,
   type ServerProviderWorkspaceSnapshot,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
@@ -9,10 +11,6 @@ import {
   type UsageSummary,
   WS_METHODS,
 } from "@t3tools/contracts";
-import {
-  type ServerLifecycleWelcomePayload,
-  type ServerLifecycleStreamReadyEvent,
-} from "@t3tools/contracts/serverLifecycle";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
@@ -607,7 +605,7 @@ export function applyServerWelcomeEvent(
   current: EnvironmentServerWelcomeState,
   session: RpcSession,
   event: {
-    readonly type: "welcome" | "ready" | "legacyThreadMigration" | "handoff";
+    readonly type: "welcome" | "ready" | "legacyThreadMigration";
     readonly payload: unknown;
   },
 ): EnvironmentServerWelcomeState {
