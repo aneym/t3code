@@ -12,7 +12,7 @@ def classify(compat, host):
     if reasons == ["persisted-state-changed"] and not compat["migrationFiles"]:
         name, changes, conditions = "rollback-proven", {"binaryRollback": True}, []
     elif host in RESTORE_HOSTS and set(reasons) <= RESTORE_WAIVABLE:
-        name, changes, conditions = RESTORE_CLASS, {"binaryRollback": False}, [*(["offbox", "offbox-stopped-ship"] if host == "ax42" else ["local-restore-copy"]), "drain-then-hard"]
+        name, changes, conditions = RESTORE_CLASS, {"binaryRollback": False}, ["local-restore-copy", "drain-then-hard"]
     else:
         return {**compat, "eligibility": None, "fastPath": {**compat["fastPath"], "waived": [], "conditions": []}}
     return {**compat, **changes, "eligibility": name, "fastPath": {"eligible": True, "reasons": [], "waived": list(reasons), "conditions": conditions}}
@@ -27,6 +27,4 @@ def restore_refusal(compatibility, host, args):
         return None
     if host not in RESTORE_HOSTS:
         return f"restore-rollback installs only on {', '.join(RESTORE_HOSTS)}; nothing stopped"
-    if host == "ax42" and not args.offbox:
-        return "restore-rollback installs on ax42 require --offbox; nothing stopped"
     return None

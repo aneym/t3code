@@ -70,7 +70,7 @@ def seed(run, target, size):
     if source is None:
         return {"seed": "none", "reason": "no earlier pre-drain copy; the stopped delta copies every page"}
     run.predrain_pass_s = measured_pass(local, size)
-    command = [*NICE, "ionice", "-c3", "cp", "--sparse=always", str(source), str(target)]
+    command = [*NICE, "ionice", "-c3", "cp", "--reflink=auto", "--sparse=always", str(source), str(target)]
     try:
         subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=run.args.offbox_copy_s, check=True)
     except (OSError, subprocess.SubprocessError) as error:

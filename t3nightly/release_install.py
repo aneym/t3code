@@ -4,7 +4,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .offbox_hosts import root
 from .release_graph import SUCCESS_OUTCOMES
 from .release_linux import require_host_ready
 from .release_transport import command
@@ -35,7 +34,7 @@ def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, a
     if host != "studio":
         words.extend(["--service-label", "t3code.service"])
     if host == "ax42":
-        words.extend(["--backups", str(backups), "--offbox", f"ax102:{root('ax102')}/ax42", "--offbox-stopped-ship", "--offbox-mib-s", "90", "--offbox-stop-s", "2400", "--offbox-window-s", "4380"])
+        words.extend(["--backups", str(backups)])
     for kind, path in (("launcher", launcher_artifact), ("connector", connector_artifact)):
         if path is not None:
             words.extend([f"--{kind}-artifact", str(path)])
