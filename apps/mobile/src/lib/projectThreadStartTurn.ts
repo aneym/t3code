@@ -5,7 +5,6 @@ import {
   type ChatAttachment,
   type ModelSelection,
   type OrchestrationMessageContext,
-  type OrchestrationV2ComposerSubmit,
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -36,7 +35,6 @@ export interface ProjectThreadStartTurnSpec {
   readonly worktreePath: string | null;
   readonly startFromOrigin: boolean;
   readonly worktreeBranchName: string;
-  readonly composerSubmit?: OrchestrationV2ComposerSubmit;
 }
 
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
@@ -55,7 +53,6 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
       text: spec.text,
       ...(spec.context ? { context: spec.context } : {}),
       attachments: spec.uploadedAttachments,
-      ...(spec.composerSubmit ? { composerSubmit: spec.composerSubmit } : {}),
     },
     modelSelection: spec.modelSelection,
     titleSeed: title,

@@ -570,7 +570,6 @@ export function NewTaskDraftScreen(props: {
     const draftKey = flow.draftKey;
     if (
       !selectedProject ||
-      flow.autoBalanceUnresolved ||
       !draftKey ||
       cloneBlocksStart ||
       !isIncomingShareReady ||
@@ -698,9 +697,8 @@ export function NewTaskDraftScreen(props: {
   // an empty loading surface here flashes between two already-cached threads.
   if (!selectedProject) return null;
 
-  const setupBlockReason = flow.autoBalanceUnresolved
-    ? flow.autoBalanceLabel
-    : isIncomingShareReady && !isImportingShare
+  const setupBlockReason =
+    isIncomingShareReady && !isImportingShare
       ? cloneBlocksStart
         ? "Wait for the project clone to finish."
         : flow.submitting
@@ -729,13 +727,9 @@ export function NewTaskDraftScreen(props: {
   const environmentControl = (
     <DraftEnvironmentControl
       connectionState={connectionState}
-      label={
-        flow.environmentSelection === "auto"
-          ? `${flow.autoBalanceLabel} · ${selectedEnvironmentLabel}`
-          : selectedEnvironmentLabel
-      }
+      label={selectedEnvironmentLabel}
       machineKind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
-      disabled={isComposerInteractionLocked || isImportingShare}
+      disabled={isComposerInteractionLocked}
       onChooseEnvironment={() => openContextPicker("NewTaskEnvironment")}
     />
   );
