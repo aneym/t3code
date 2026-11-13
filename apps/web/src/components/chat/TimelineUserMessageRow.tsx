@@ -1,6 +1,6 @@
 import { FoldedMessageHeader, useScheduledTaskTitle } from "./FoldedMessageHeader";
 import { SenderThreadButton } from "./SenderThreadButton";
-import { InlineAudioPreview } from "../files/InlineAudioPreview";
+import { UserMessageAudio } from "./UserMessageAudio";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
 import {
@@ -469,21 +469,23 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ? ""
         : reference.label,
     ).trim() === "";
+  const voice = folded ? undefined : userMessage.voice;
   const audioOnly =
     !folded &&
     userMessage.attribution !== "guest" &&
     userAudio.length > 0 &&
     regularImages.length + userVideos.length + otherUserFiles.length + unknownAttachments.length ===
       0 &&
-    replaceComposerContextReferences(resolvedContext.text, (reference) =>
-      attachmentReferences.some(
-        (attached) =>
-          attached.contextId === reference.contextId &&
-          userAudio.some((file) => file.id === attached.attachmentId),
-      )
-        ? ""
-        : reference.label,
-    ).trim() === "";
+    (voice !== undefined ||
+      replaceComposerContextReferences(resolvedContext.text, (reference) =>
+        attachmentReferences.some(
+          (attached) =>
+            attached.contextId === reference.contextId &&
+            userAudio.some((file) => file.id === attached.attachmentId),
+        )
+          ? ""
+          : reference.label,
+      ).trim() === "");
   const annotationRecordIds = resolvedContext.records
     .filter((record) => record.kind === "preview-annotation")
     .map((record) => record.contextId);
@@ -835,26 +837,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             )}
           >
             {!mediaAboveText && mediaBlock}
-            {userAudio.length > 0 ? (
-              <div className={cn("flex max-w-full flex-col gap-1", !audioOnly && "mb-2")}>
-                {userAudio.map((file) => (
-                  <InlineAudioPreview
-                    key={file.id}
-                    name={file.name}
-                    variant={audioOnly ? "bubble" : "chip"}
-                    environmentId={ctx.activeThreadEnvironmentId}
-                    resource={{
-                      _tag: "attachment",
-                      attachmentId: file.id,
-                      fileName: file.name,
-                      mimeType: file.mimeType,
-                      disposition: "inline",
-                    }}
-                    onOpen={() => ctx.onFileOpen(file)}
-                  />
-                ))}
-              </div>
-            ) : null}
+            <UserMessageAudio
+              files={userAudio}
+              audioOnly={audioOnly}
+              voice={voice}
+              time={formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
+              environmentId={ctx.activeThreadEnvironmentId}
+              onOpen={ctx.onFileOpen}
+            />
             {fileCardsOnly ? (
               <div className="flex flex-col items-end gap-1" onCopyCapture={onBodyCopyCapture}>
                 {otherUserFiles.map((file) => (

@@ -63,6 +63,10 @@
       "types": "./src/laneResult.ts",
       "default": "./src/laneResult.ts"
     },
+    "./rails-voice": {
+      "types": "./src/railsVoice.ts",
+      "default": "./src/railsVoice.ts"
+    },
     "./rails-comment": {
       "types": "./src/railsComment.ts",
       "default": "./src/railsComment.ts"
