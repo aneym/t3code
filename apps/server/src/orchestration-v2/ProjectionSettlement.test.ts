@@ -21,11 +21,8 @@ import * as Layer from "effect/Layer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import {
-  isAutoSettlementCandidate,
-  isSnoozed,
-  resolveAutoSettlementAt,
-} from "./ThreadSettlementService.ts";
+import { resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
+import { isAutoSettlementCandidate, isSnoozed } from "./AutoSettlementPolicy.ts";
 
 const layerSql = ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");

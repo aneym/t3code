@@ -46,6 +46,7 @@ import {
   hasClaudeManagedMcpConfig,
   makeClaudeEnvironment,
 } from "./Drivers/ClaudeHome.ts";
+import * as GitStandIn from "../vcs/GitStandIn.ts";
 import {
   customClaudeApiEndpointHost,
   discoverClaudeSkills,
@@ -249,7 +250,6 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
       ...providerProbeEnvironment(input.environment),
       // Disable claude.ai MCP separately; it is discovered outside filesystem config.
       ENABLE_CLAUDEAI_MCP_SERVERS: "false",
-      // Skipping this avoids a Windows tasklist | findstr process tree on every refresh.
       FORCE_CODE_TERMINAL: undefined,
       CLAUDE_CODE_AUTO_CONNECT_IDE: "0",
       CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: "1",
@@ -451,7 +451,9 @@ const probeClaudeCapabilities = (
     if (!abort.signal.aborted) abort.abort();
   });
   return Effect.gen(function* () {
-    const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+    const claudeEnvironment = yield* GitStandIn.environment(
+      yield* makeClaudeEnvironment(claudeSettings, environment),
+    );
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
       claudeEnvironment,
@@ -644,7 +646,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Claude is disabled in T3 Code settings.",
+        message: "Claude is turned off in settings.",
       },
     });
   }
@@ -876,7 +878,7 @@ export const makePendingClaudeProvider = Effect.fn("ClaudeProvider.makePendingCl
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Claude is disabled in T3 Code settings.",
+          message: "Claude is turned off in settings.",
         },
       });
     }

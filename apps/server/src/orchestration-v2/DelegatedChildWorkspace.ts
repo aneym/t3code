@@ -1,5 +1,4 @@
 import type { OrchestrationV2AppThread, OrchestrationV2Command } from "@t3tools/contracts";
-import * as Struct from "effect/Struct";
 
 type DelegatedTaskRequest = Extract<
   OrchestrationV2Command,
@@ -13,7 +12,7 @@ export const delegatedChildWorkspace = (
   projectId === undefined && workspaceStrategy === undefined
     ? thread
     : {
-        ...Struct.omit(thread, ["cwd"]),
+        ...thread,
         ...(projectId === undefined ? {} : { projectId }),
         branch: null,
         worktreePath: null,

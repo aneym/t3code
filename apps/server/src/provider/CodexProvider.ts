@@ -233,8 +233,8 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
   return account.email;
 }
 
-export function codexDefaultReasoningEffortOverride(model: string): "high" | undefined {
-  return /^gpt-6(?:[.-]|$)/.test(codexModelFamily(model)) ? "high" : undefined;
+export function codexDefaultReasoningEffortOverride(model: string) {
+  return /^gpt-6\b/.test(codexModelFamily(model)) ? "high" : undefined;
 }
 
 export function mapCodexModelCapabilities(
@@ -776,6 +776,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   } satisfies CodexAppServerProviderSnapshot;
 });
 
+// Old CLIs can exit before initialize reports the version needed for compatibility advice.
 const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
   function* (input: {
     readonly binaryPath: string;
@@ -964,7 +965,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     probeTimeoutMs,
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
-    launchArgs: resolveCodexLaunchArgs(codexSettings, resolvedEnvironment),
+    launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
     cwd: process.cwd(),
     environment: resolvedEnvironment,
     ...(managedAuth ? { skipNativeUsage: true } : {}),

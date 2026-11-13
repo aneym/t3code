@@ -10,6 +10,7 @@ export const claimableCandidatePredicate = (
     readonly availableBefore?: string;
     readonly excludeRestartContinuations?: boolean;
     readonly draining: boolean;
+    readonly maxRunningTitleGenerations?: number | undefined;
   },
 ) => sql`
   ${
@@ -66,4 +67,17 @@ export const claimableCandidatePredicate = (
         )
       )
   )
+  AND ${
+    input.maxRunningTitleGenerations === undefined
+      ? sql`1 = 1`
+      : sql`(
+          candidate.effect_type != 'thread-title.generate'
+          OR (
+            SELECT COUNT(*)
+            FROM orchestration_v2_effect_outbox AS running_title
+            WHERE running_title.status = 'running'
+              AND running_title.effect_type = 'thread-title.generate'
+          ) < ${input.maxRunningTitleGenerations}
+        )`
+  }
 `;

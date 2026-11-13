@@ -44,7 +44,7 @@ export const executeRestartEffect = Effect.fn("RestartEffectExecution.execute")(
         )
       )
         yield* recordRestartDeclined(effect.threadId, source, declined);
-      yield* threads.recoverDelegatedTask(effect.threadId, request.sourceRunId);
+      yield* threads.recoverDelegatedTask(effect.threadId, { sourceRunId: request.sourceRunId });
       return;
     }
     yield* executeRestartHandoff({
@@ -79,7 +79,7 @@ export const executeRestartEffect = Effect.fn("RestartEffectExecution.execute")(
             }).pipe(Effect.ignoreCause);
             yield* Effect.forEach(
               runIds,
-              (runId) => threads.recoverDelegatedTask(effect.threadId, runId),
+              (runId) => threads.recoverDelegatedTask(effect.threadId, { sourceRunId: runId }),
               { discard: true },
             );
           }),

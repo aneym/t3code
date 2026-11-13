@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpServer } from "effect/ai";
 
+import { AgentHomeService } from "../agents/AgentHomeService.ts";
 import { AssetSigner } from "../assets/AssetSigner.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
@@ -15,6 +16,7 @@ import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
+import { McpEventsService } from "../mcpEvents/McpEventsService.ts";
 import {
   CLAUDE_PROVIDER,
   makeClaudeQueryOptions,
@@ -45,16 +47,19 @@ import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import { buildCodexAdditionalContext } from "./CodexDeveloperInstructions.ts";
 import { DocumentText } from "./DocumentText.ts";
 import { ProviderRegistry } from "./ProviderRegistry.ts";
+import * as McpTransport from "../mcp/mcpServer/transport.ts";
 import budget from "./agentContextBudget.json" with { type: "json" };
 
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
+  Layer.mock(AgentHomeService)({}),
   Layer.mock(AssetSigner)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
+  Layer.mock(McpEventsService)({}),
   Layer.mock(McpProviderSessions)({}),
   Layer.mock(OrchestratorV2)({}),
   Layer.mock(PeerForwarding)({}),
@@ -111,7 +116,7 @@ const codexAdditionalContext = () =>
     .join("");
 
 const layerAdvertisedTools = McpHttpServer.layerTools.pipe(
-  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+  Layer.provideMerge(McpTransport.layerInProcessMcpServer),
   Layer.provide(toolHandlerServices),
 );
 

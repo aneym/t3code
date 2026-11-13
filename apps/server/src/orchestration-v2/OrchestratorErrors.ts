@@ -1,9 +1,9 @@
 import {
   CommandId,
+  ProviderInstanceId,
   ThreadId,
   RuntimeMode,
   ProviderInteractionMode,
-  ThreadOrganizeRefusalReason,
   managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -12,7 +12,6 @@ import {
   OrchestratorDispatchBusyError,
   OrchestratorDispatchError,
 } from "./OrchestratorDispatchError.ts";
-import { OrchestratorProviderAdapterError } from "./ThreadSessionTransitions.ts";
 
 export class OrchestratorThreadAlreadyExistsError extends Schema.TaggedError<OrchestratorThreadAlreadyExistsError>()(
   "OrchestratorThreadAlreadyExistsError",
@@ -46,6 +45,19 @@ export class OrchestratorDomainEventStreamError extends Schema.TaggedError<Orche
   }
 }
 
+export class OrchestratorProviderAdapterError extends Schema.TaggedError<OrchestratorProviderAdapterError>()(
+  "OrchestratorProviderAdapterError",
+  {
+    commandId: CommandId,
+    providerInstanceId: ProviderInstanceId,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Provider adapter failed while dispatching orchestration command ${this.commandId}.`;
+  }
+}
+
 export class OrchestratorSubagentThreadReadOnlyError extends Schema.TaggedError<OrchestratorSubagentThreadReadOnlyError>()(
   "OrchestratorSubagentThreadReadOnlyError",
   { commandId: CommandId, threadId: ThreadId },
@@ -76,7 +88,6 @@ export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedErr
     commandId: CommandId,
     commandType: Schema.String,
     detail: Schema.String,
-    reason: Schema.optional(ThreadOrganizeRefusalReason),
   },
 ) {
   override get message(): string {
@@ -115,6 +126,15 @@ export class OrchestratorRuntimeModeAboveCeilingError extends Schema.TaggedError
   }
 }
 
+export class OrchestratorProviderSelectionBusyError extends Schema.TaggedError<OrchestratorProviderSelectionBusyError>()(
+  "OrchestratorProviderSelectionBusyError",
+  { commandId: CommandId, threadId: ThreadId },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} has an active turn. Wait for it to finish, then retry the provider selection change.`;
+  }
+}
+
 export const OrchestratorV2Error = Schema.Union([
   OrchestratorDispatchError,
   OrchestratorDispatchBusyError,
@@ -127,6 +147,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
   OrchestratorThreadAboveModeLimitError,
+  OrchestratorProviderSelectionBusyError,
   OrchestratorRuntimeModeAboveCeilingError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;

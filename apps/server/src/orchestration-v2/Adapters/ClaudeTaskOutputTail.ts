@@ -1,4 +1,3 @@
-import * as Config from "effect/Config";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,10 +12,8 @@ const CLAUDE_TASK_OUTPUT_POLL_MS = 250;
 const MAX_LOCATE_ATTEMPTS = 40;
 /** Skip ahead of fast writers; only the tail is displayed. */
 const MAX_READ_BYTES = 256 * 1024;
-const DEFAULT_SCAN_EVERY_ATTEMPTS = 20;
-const MAX_PROJECT_NAME_LENGTH = 200;
 
-/** Claude Code's task output directory for this cwd's project, or none where it has no uid (Windows). */
+/** Claude Code's per-user temp root, or none where it has no uid (Windows). */
 export function claudeTaskOutputRoot(
   environment: Readonly<Record<string, string | undefined>> | undefined,
   path: Path.Path,
@@ -34,39 +31,28 @@ export function claudeTaskOutputRoot(
       ? "/tmp"
       : environment?.TMPDIR || environment?.TMP || environment?.TEMP || "/tmp";
   const base = environment?.CLAUDE_CODE_TMPDIR?.trim() || fallback;
-  const project = path.resolve(cwd ?? ".").replace(/[^a-zA-Z0-9]/g, "-");
-  return path.resolve(cwd ?? ".", base, `claude-${uid}`, project.slice(0, MAX_PROJECT_NAME_LENGTH));
+  return path.resolve(cwd ?? ".", base, `claude-${uid}`);
 }
 
 const locate = Effect.fn("ClaudeTaskOutputTail.locate")(function* (input: {
   readonly root: string;
   readonly sessionId: string;
   readonly taskId: string;
-  readonly scan: boolean;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const exists = (projectDirectory: string) => {
+  const projects = yield* fileSystem.readDirectory(input.root).pipe(Effect.orElseSucceed(() => []));
+  for (const project of projects) {
     const candidate = path.join(
-      projectDirectory,
+      input.root,
+      project,
       input.sessionId,
       "tasks",
       `${input.taskId}.output`,
     );
-    return fileSystem.exists(candidate).pipe(
-      Effect.orElseSucceed(() => false),
-      Effect.map((found) => (found ? Option.some(candidate) : Option.none<string>())),
-    );
-  };
-  const own = yield* exists(input.root);
-  if (Option.isSome(own) || !input.scan) return own;
-  const parent = path.dirname(input.root);
-  const ownName = path.basename(input.root);
-  const projects = yield* fileSystem.readDirectory(parent).pipe(Effect.orElseSucceed(() => []));
-  for (const project of projects) {
-    if (project === ownName) continue;
-    const found = yield* exists(path.join(parent, project));
-    if (Option.isSome(found)) return found;
+    if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+      return Option.some(candidate);
+    }
   }
   return Option.none<string>();
 });
@@ -80,9 +66,6 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
   readonly onChunk: (chunk: string) => Effect.Effect<void>;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const scanEvery = yield* Config.Int("T3CODE_CLAUDE_TASK_OUTPUT_SCAN_EVERY").pipe(
-    Effect.orElseSucceed(() => DEFAULT_SCAN_EVERY_ATTEMPTS),
-  );
   const pause = Deferred.await(input.stop).pipe(
     Effect.as(true),
     Effect.timeoutOrElse({
@@ -92,11 +75,9 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
   );
   let file = Option.none<string>();
   for (let attempt = 0; Option.isNone(file); attempt += 1) {
-    const lastAttempt = attempt + 1 >= MAX_LOCATE_ATTEMPTS;
-    const scan = lastAttempt || (attempt + 1) % Math.max(1, scanEvery) === 0;
-    file = yield* locate({ ...input, scan });
+    file = yield* locate(input);
     if (Option.isSome(file)) break;
-    if (lastAttempt || (yield* pause)) return;
+    if (attempt + 1 >= MAX_LOCATE_ATTEMPTS || (yield* pause)) return;
   }
   const filePath = file.value;
   let decoder = new TextDecoder("utf-8", { fatal: false });

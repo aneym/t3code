@@ -89,7 +89,6 @@ const layerEffectOutboxProvided = EffectOutbox.layer.pipe(Layer.provide(layerDat
 const layerCommandReceiptStoreProvided = CommandReceiptStore.layer.pipe(
   Layer.provide(layerDatabase),
 );
-const layerIsolatedOutbox = Layer.fresh(EffectOutbox.layer.pipe(Layer.provideMerge(layerDatabase)));
 const layerProjectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
   Layer.provide(layerDatabase),
 );
@@ -2712,56 +2711,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         reason: "Test cleanup.",
       });
     }),
-  );
-
-  it.effect("prunes settled effects past retention in batches and keeps the rest", () =>
-    Effect.gen(function* () {
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const sql = yield* SqlClient.SqlClient;
-      const now = yield* DateTime.now;
-      const insert = (
-        prefix: string,
-        count: number,
-        status: EffectOutbox.OrchestrationEffectStatusV2,
-        completedAgo: Duration.Duration | null,
-      ) => {
-        const completedAt =
-          completedAgo === null
-            ? null
-            : DateTime.formatIso(DateTime.subtractDuration(now, completedAgo));
-        const createdAt = DateTime.formatIso(now);
-        return sql`
-          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${count})
-          INSERT INTO orchestration_v2_effect_outbox (
-            effect_id, command_id, thread_id, effect_type, payload_json, status,
-            available_at, created_at, updated_at, completed_at
-          )
-          SELECT ${prefix} || i, 'command:prune', 'thread:prune', 'terminal.cleanup',
-            '{"type":"terminal.cleanup"}', ${status}, ${createdAt}, ${createdAt}, ${createdAt},
-            ${completedAt}
-          FROM n
-        `;
-      };
-      const old = Duration.sum(EffectOutbox.SETTLED_EFFECT_RETENTION, Duration.minutes(1));
-      const recent = Duration.subtract(EffectOutbox.SETTLED_EFFECT_RETENTION, Duration.minutes(1));
-      yield* insert("succeeded-old:", 1_201, "succeeded", old);
-      yield* insert("cancelled-old:", 2, "cancelled", old);
-      yield* insert("succeeded-recent:", 1, "succeeded", recent);
-      yield* insert("failed-old:", 1, "failed", old);
-      yield* insert("pending:", 1, "pending", null);
-      yield* insert("running:", 1, "running", null);
-
-      assert.equal(yield* outbox.pruneSettled, 1_203);
-
-      const remaining = yield* sql<{ readonly effect_id: string }>`
-        SELECT effect_id FROM orchestration_v2_effect_outbox ORDER BY effect_id
-      `;
-      assert.deepEqual(
-        remaining.map((row) => row.effect_id),
-        ["failed-old:1", "pending:1", "running:1", "succeeded-recent:1"],
-      );
-      assert.equal(yield* outbox.pruneSettled, 0);
-    }).pipe(Effect.provide(layerIsolatedOutbox)),
   );
 
   it.effect("wakes claimers when cancellation unblocks same-thread work", () =>

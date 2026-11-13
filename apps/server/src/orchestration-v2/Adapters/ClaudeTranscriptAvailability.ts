@@ -9,7 +9,15 @@ const decodeLine = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ type: Schema.String })),
 );
 
-export const claudeTranscriptUnavailable = Effect.fn("ClaudeAdapterV2.transcriptUnavailable")(
+const isConversationLine = (line: string): boolean =>
+  Option.match(decodeLine(line), {
+    onNone: () => false,
+    onSome: (entry) => entry.type === "user" || entry.type === "assistant",
+  });
+
+export type ClaudeTranscriptState = "conversation" | "empty" | "missing" | "unreadable";
+
+export const readClaudeTranscriptState = Effect.fn("ClaudeAdapterV2.claudeTranscriptState")(
   function* (input: {
     readonly fileSystem: FileSystem.FileSystem;
     readonly projectsDir: string;
@@ -17,9 +25,7 @@ export const claudeTranscriptUnavailable = Effect.fn("ClaudeAdapterV2.transcript
     readonly nativeThreadId: string;
     readonly cwd: string;
   }) {
-    const hasMessages = Effect.fn("ClaudeAdapterV2.transcriptHasMessages")(function* (
-      project: string,
-    ) {
+    const copyState = Effect.fn("ClaudeAdapterV2.transcriptCopyState")(function* (project: string) {
       const transcript = input.path.join(
         input.projectsDir,
         project,
@@ -27,29 +33,33 @@ export const claudeTranscriptUnavailable = Effect.fn("ClaudeAdapterV2.transcript
       );
       // Stray files beside the project dirs fail with ENOTDIR.
       if (!(yield* input.fileSystem.exists(transcript).pipe(Effect.orElseSucceed(() => false))))
-        return false;
-      return Option.isSome(
-        yield* input.fileSystem.stream(transcript).pipe(
+        return "missing" as const;
+      const line = yield* input.fileSystem
+        .stream(transcript)
+        .pipe(
           Stream.decodeText,
           Stream.splitLines,
-          Stream.filter((line) =>
-            Option.match(decodeLine(line), {
-              onNone: () => false,
-              onSome: (entry) => entry.type === "user" || entry.type === "assistant",
-            }),
-          ),
+          Stream.filter(isConversationLine),
           Stream.runHead,
-        ),
-      );
+          Effect.option,
+        );
+      if (Option.isNone(line)) return "unreadable" as const;
+      return Option.isSome(line.value) ? ("conversation" as const) : ("empty" as const);
     });
     const localProject = input.cwd.replace(/[^a-zA-Z0-9]/g, "-");
-    if (yield* hasMessages(localProject)) return false;
+    const local = yield* copyState(localProject);
+    if (local === "conversation") return local;
     const projects = yield* input.fileSystem.readDirectory(input.projectsDir).pipe(Effect.option);
-    if (Option.isNone(projects)) return false;
+    if (Option.isNone(projects)) return "unreadable" as const;
     // Any message in any transcript copy means Claude may still resume it.
+    const states: Array<ClaudeTranscriptState> = [local];
     for (const project of projects.value) {
-      if (project !== localProject && (yield* hasMessages(project))) return false;
+      if (project === localProject) continue;
+      const copy = yield* copyState(project);
+      if (copy === "conversation") return copy;
+      states.push(copy);
     }
-    return true;
+    if (states.includes("unreadable")) return "unreadable" as const;
+    return states.includes("empty") ? ("empty" as const) : ("missing" as const);
   },
 );

@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 import type { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { childAwaitsRestartContinuation } from "./RestartAwaits.ts";
+import { delegatedTaskResultRun } from "./RestartBackgroundNote.ts";
 
 export const delegatedRestartPending = Effect.fn("DelegatedRestartPending.read")(function* (
   projections: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
@@ -19,7 +20,7 @@ export const delegatedRestartPending = Effect.fn("DelegatedRestartPending.read")
   );
   if (taskId !== undefined) {
     const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
-    const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+    const run = delegatedTaskResultRun(runs, taskId);
     if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
     return yield* childAwaitsRestartContinuation(outbox, projections, runs, run);
   }

@@ -98,6 +98,7 @@ export const decideSecretRequestRecord = Effect.fn("orchestrationV2.decideSecret
           type: "secret_request",
           label: command.label,
           reason: command.reason,
+          ...(command.url === undefined ? {} : { url: command.url }),
           ...(command.placeholder === undefined ? {} : { placeholder: command.placeholder }),
           ...(command.delivery === undefined ? {} : { delivery: command.delivery }),
           secretStatus: command.secretStatus,
