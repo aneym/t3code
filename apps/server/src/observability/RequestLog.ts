@@ -23,6 +23,16 @@ const CurrentRequest = Context.Reference<CurrentRequestEntry | undefined>(
   { defaultValue: () => undefined },
 );
 
+const CurrentRpc = Context.Reference<CurrentRequestEntry | undefined>(
+  "t3/observability/RequestLog/CurrentRpc",
+  { defaultValue: () => undefined },
+);
+
+const currentEntry = Effect.map(
+  Effect.zip(Effect.service(CurrentRpc), Effect.service(CurrentRequest)),
+  ([rpc, request]) => rpc ?? request,
+);
+
 const SIGNED_PREFIXES = ["/api/assets", "/api/hooks", "/api/attachments/upload"];
 const OPAQUE_SEGMENT = /^[A-Za-z0-9_~.%=-]{24,}$/;
 
@@ -55,7 +65,7 @@ const statusOf = (exit: Exit.Exit<{ readonly status: number }, unknown>) =>
   Exit.isSuccess(exit) ? exit.value.status : Cause.hasInterruptsOnly(exit.cause) ? 499 : 500;
 
 const note = Effect.fn("RequestLog.note")(function* (update: Fields) {
-  const entry = yield* CurrentRequest;
+  const entry = yield* currentEntry;
   if (entry !== undefined) Object.assign(entry.fields, update);
 });
 
@@ -77,7 +87,7 @@ export const noteMcpCaller = (caller: {
 export const noteTool = (tool: string) => note({ tool });
 
 export const noteDispatchGate = Effect.fnUntraced(function* (waitMs: number, holdMs: number) {
-  const entry = yield* CurrentRequest;
+  const entry = yield* currentEntry;
   if (entry === undefined) return;
   const { gw, gh } = entry.fields;
   entry.fields.gw = (typeof gw === "number" ? gw : 0) + waitMs;
@@ -91,7 +101,7 @@ export const logRpc = <A, E, R>(method: string, effect: Effect.Effect<A, E, R>) 
       : Effect.flatMap(Clock.currentTimeMillis, (startedAt) => {
           const rpcEntry = { fields: { ...entry.fields }, write: entry.write };
           return effect.pipe(
-            Effect.provideService(CurrentRequest, rpcEntry),
+            Effect.provideService(CurrentRpc, rpcEntry),
             Effect.onExit((exit) =>
               Effect.map(Clock.currentTimeMillis, (endedAt) =>
                 entry.write({

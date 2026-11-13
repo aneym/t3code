@@ -1,5 +1,6 @@
 import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
+import { MCP_APP_CARD_HOST_TOKEN } from "@t3tools/shared/mcpAppCard";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -32,6 +33,12 @@ const MILESTONES = 5;
 const sends = new Map<string, OpenSend>();
 let observer: MutationObserver | null = null;
 let frame: number | null = null;
+const railsShell =
+  typeof navigator !== "undefined" && navigator.userAgent.includes(MCP_APP_CARD_HOST_TOKEN);
+
+export function sendMarksToWindow(): boolean {
+  return railsShell && !inEmbedPage();
+}
 
 function epochNow(): number {
   return performance.timeOrigin + performance.now();
@@ -45,7 +52,10 @@ function inputTime(): number {
 }
 
 export function postEmbedSendMark(thread: string, mark: EmbedSendMark, at = epochNow()): boolean {
-  return postToEmbedHost({ type: EMBED_SEND_MARK_MESSAGE, thread, at, ...mark });
+  const message = { type: EMBED_SEND_MARK_MESSAGE, thread, at, ...mark } as const;
+  if (!sendMarksToWindow()) return postToEmbedHost(message);
+  window.postMessage(message, window.location.origin);
+  return true;
 }
 
 function close(messageId: string): void {
@@ -97,7 +107,7 @@ function schedule(): void {
 }
 
 export function embedSendEnter<T extends string>(thread: string, messageId: T): T {
-  if (sends.has(messageId) || !inEmbedPage()) return messageId;
+  if (sends.has(messageId) || !(railsShell || inEmbedPage())) return messageId;
   const at = inputTime();
   if (!postEmbedSendMark(thread, { mark: "enter", messageId }, at)) return messageId;
   sends.set(messageId, {

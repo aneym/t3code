@@ -275,6 +275,6 @@ const brokerLayer = Layer.effect(
   }),
 );
 
-export const layer = AppleGitPlaceholderGate.layer.pipe(Layer.provide(brokerLayer));
+export const layer = Layer.fresh(AppleGitPlaceholderGate.layer).pipe(Layer.provide(brokerLayer));
 
 export const layerNode = layer.pipe(Layer.provideMerge(NodeServices.layer));

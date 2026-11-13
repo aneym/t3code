@@ -144,6 +144,7 @@ import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import { resolveDelegatedTaskWorkspace } from "./delegatedTaskWorkspace.ts";
 import { recentThreadRuns } from "./threadRunSummary.ts";
+import { recentAndOpenRuns } from "../orchestration-v2/CommandRunWindow.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -750,6 +751,9 @@ const make = Effect.gen(function* () {
           ),
         );
 
+  const readFailure = (threadId: ThreadId) => (error: unknown) =>
+    failure("orchestration_error", `Unable to read thread ${threadId}: ${errorMessage(error)}`);
+
   const loadProjection = (threadId: ThreadId, includeUserMessages = true) =>
     threadManagement
       .getThreadRecords(
@@ -765,22 +769,13 @@ const make = Effect.gen(function* () {
         ],
         { turnItemTypes: [], messageRoles: includeUserMessages ? ["user"] : [] },
       )
-      .pipe(
-        Effect.mapError((error) =>
-          failure(
-            "orchestration_error",
-            `Unable to read thread ${threadId}: ${errorMessage(error)}`,
-          ),
-        ),
-      );
+      .pipe(Effect.mapError(readFailure(threadId)));
 
   // A dispatcher thread holds thousands of tasks, each with its full prompt; read only the ones named.
   const loadTasks = (threadId: ThreadId, taskIds: ReadonlyArray<NodeId>) =>
     threadManagement.getThreadRecords(threadId, ["subagents"], { subagentIds: taskIds }).pipe(
       Effect.map(({ subagents }) => subagents),
-      Effect.mapError((error) =>
-        failure("orchestration_error", `Unable to read thread ${threadId}: ${errorMessage(error)}`),
-      ),
+      Effect.mapError(readFailure(threadId)),
     );
 
   // Task waits read on every wake of a parent that may hold thousands of
@@ -790,39 +785,10 @@ const make = Effect.gen(function* () {
       .getThreadRecords(threadId, ["runs", "subagents", "contextTransfers"], {
         subagentIds: [taskId],
       })
-      .pipe(
-        Effect.mapError((error) =>
-          failure(
-            "orchestration_error",
-            `Unable to read thread ${threadId}: ${errorMessage(error)}`,
-          ),
-        ),
-      );
-
-  const loadProjectThread = (
-    projectId: OrchestrationV2ThreadProjection["thread"]["projectId"],
-    threadId: ThreadId,
-  ) =>
-    threadManagement
-      .getProjectThreadRecords(
-        { projectId, threadId },
-        [
-          "runs",
-          "messages",
-          "subagents",
-          "providerThreads",
-          "providerTurns",
-          "runtimeRequests",
-          "contextTransfers",
-          "turnItems",
-        ],
-        { turnItemTypes: [], messageRoles: ["user"] },
-      )
-      .pipe(Effect.mapError(threadManagementFailure));
+      .pipe(Effect.mapError(readFailure(threadId)));
 
   const loadCaller = Effect.fn("OrchestratorMcpService.loadCaller")(function* (
     scope: McpInvocationScope,
-    includeUserMessages = true,
   ) {
     yield* requireCapability(scope);
     if (scope.thread === undefined) {
@@ -831,7 +797,8 @@ const make = Effect.gen(function* () {
         limits: clientModeCeiling(scope.client),
       } as const;
     }
-    const parent = yield* loadProjection(scope.thread.threadId, includeUserMessages);
+    // No loadCaller consumer reads the caller's own prompts.
+    const parent = yield* loadProjection(scope.thread.threadId, false);
     return {
       parent,
       limits: {
@@ -868,7 +835,7 @@ const make = Effect.gen(function* () {
 
   const loadTargetThread = Effect.fn("OrchestratorMcpService.loadTargetThread")(function* (
     threadId: ThreadId,
-    includeHistory = true,
+    withProviderThreads = false,
   ) {
     const shell = yield* threadManagement
       .getThreadShell(threadId)
@@ -876,25 +843,39 @@ const make = Effect.gen(function* () {
     if (shell === null || shell.deletedAt !== null) {
       return yield* threadNotFound(threadManagement, threadId, `Thread ${threadId} was not found.`);
     }
-    // Native wait owns its history reads; keep legacy import and project validation here.
-    return yield* includeHistory
-      ? loadProjectThread(shell.projectId, threadId)
-      : threadManagement
-          .getProjectThreadRecords({ projectId: shell.projectId, threadId }, [])
-          .pipe(Effect.mapError(threadManagementFailure));
+    const input = { projectId: shell.projectId, threadId };
+    return yield* (
+      withProviderThreads
+        ? threadManagement.getProjectThreadRecords(input, ["providerThreads"])
+        : threadManagement.getProjectThreadRecords(input, [])
+    ).pipe(Effect.mapError(threadManagementFailure));
   });
 
   const loadScopedThread = Effect.fn("OrchestratorMcpService.loadScopedThread")(function* (
     scope: McpInvocationScope,
     threadId: ThreadId,
-    includeHistory = true,
+    withProviderThreads = false,
   ) {
-    const caller = yield* loadCaller(scope);
+    yield* requireCapability(scope);
+    const callerId = scope.thread?.threadId;
+    const parent =
+      callerId === undefined
+        ? undefined
+        : yield* threadManagement
+            .getThreadRecords(callerId, ["runs", "providerThreads"], recentAndOpenRuns)
+            .pipe(Effect.mapError(readFailure(callerId)));
+    const limits =
+      parent === undefined
+        ? clientModeCeiling(scope.client)
+        : {
+            runtimeMode: parent.thread.runtimeMode,
+            interactionMode: parent.thread.interactionMode,
+          };
     const target =
-      caller.parent !== undefined && threadId === caller.parent.thread.id
-        ? caller.parent
-        : yield* loadTargetThread(threadId, includeHistory);
-    return { ...caller, target } as const;
+      parent !== undefined && threadId === parent.thread.id
+        ? parent
+        : yield* loadTargetThread(threadId, withProviderThreads);
+    return { parent, limits, target } as const;
   });
 
   /** Cross-thread writes require a live caller run; stale session credentials cannot authorize them. */
@@ -947,8 +928,7 @@ const make = Effect.gen(function* () {
     scope: McpInvocationScope,
     threadId: ThreadId,
   ) {
-    // Caller prompts are not used to read a timeline or acknowledge a child result.
-    const { parent } = yield* loadCaller(scope, false);
+    const { parent } = yield* loadCaller(scope);
     const shell = yield* threadManagement
       .getThreadShell(threadId)
       .pipe(Effect.mapError(threadManagementFailure));
@@ -1423,14 +1403,7 @@ const make = Effect.gen(function* () {
       const parentThreadId = scope.thread.threadId;
       const parentProjection = yield* threadManagement
         .getThreadRecords(parentThreadId, ["runs"])
-        .pipe(
-          Effect.mapError((error) =>
-            failure(
-              "orchestration_error",
-              `Unable to read thread ${parentThreadId}: ${errorMessage(error)}`,
-            ),
-          ),
-        );
+        .pipe(Effect.mapError(readFailure(parentThreadId)));
       const observingRun = ThreadManagementService.latestActiveRun(parentProjection);
       yield* threadManagement
         .dispatch({
@@ -1639,7 +1612,7 @@ const make = Effect.gen(function* () {
       const bound =
         input.threadId === undefined
           ? undefined
-          : (yield* loadScopedThread(scope, input.threadId, false)).target;
+          : (yield* loadScopedThread(scope, input.threadId)).target;
       if (bound !== undefined) yield* assertLiveCallerForOtherThread(scope, caller.parent, bound);
       const parent = bound ?? caller.parent;
       const projectId = yield* resolveProjectTarget(parent, input.projectId);
@@ -2648,7 +2621,7 @@ const make = Effect.gen(function* () {
       } satisfies OrchestratorMcpThreadReadResult;
     }),
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {
-      const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId);
+      const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId, true);
       yield* assertLiveCallerForOtherThread(scope, parent, target);
       yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
@@ -2661,7 +2634,7 @@ const make = Effect.gen(function* () {
       });
     }),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {
-      const { parent, target } = yield* loadScopedThread(scope, input.threadId, false);
+      const { parent, target } = yield* loadScopedThread(scope, input.threadId);
       const result = yield* threadManagement
         .waitForThread({
           projectId: target.thread.projectId,

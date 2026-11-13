@@ -81,6 +81,7 @@ export const StorageCleanupSettings = Schema.Struct({
   threadHistoryAfterDays: StorageRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  pruneEventLog: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeOrphans: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeDisposableIgnoredPaths: DisposableIgnoredPaths.pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -94,6 +95,7 @@ export const StorageCleanupSettingsPatch = Schema.Struct({
   browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
   logsAfterDays: Schema.optionalKey(StorageRetentionDays),
   threadHistoryAfterDays: Schema.optionalKey(StorageRetentionDays),
+  pruneEventLog: Schema.optionalKey(Schema.Boolean),
   worktreeDisposableIgnoredPaths: Schema.optionalKey(DisposableIgnoredPaths),
   worktreeOrphans: Schema.optionalKey(Schema.Boolean),
   worktreeAcceptPushed: Schema.optionalKey(Schema.Boolean),
