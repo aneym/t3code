@@ -107,7 +107,7 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
         run.step("hard-backup", **metadata)
         return metadata
     if delta:
-        local = {**predrain.take(run, source, target, prepared), "previous": previous, "methodReason": "pre-drain sqlite3_rsync seed and catch-up, stopped delta, verify after the start", "volumeDevice": root.stat().st_dev, "backupRoot": str(root)}
+        local = {**predrain.take(run, source, target, prepared), "previous": previous, "methodReason": "seeded from the previous pre-drain copy with no live read, stopped delta, verify after the start", "volumeDevice": root.stat().st_dev, "backupRoot": str(root)}
         method = predrain.METHOD
     elif keep_local:
         deadline = run.stop_deadline

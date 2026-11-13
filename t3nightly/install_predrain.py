@@ -1,9 +1,7 @@
 import argparse
-import ctypes
 import hashlib
 import json
 import os
-import signal
 import sqlite3
 import subprocess
 import sys
@@ -12,10 +10,10 @@ import time
 from contextlib import closing
 from pathlib import Path
 
-from . import live_read_guard as guard
 from .db_publish import fsync, wal_bytes
 from .install_restore_copy import RecoveryRequired, check_deadline, foreground_io, identity, service_active
-from .install_sqlite_sync import executable, local_command, local_sync, page_updates
+from .install_sqlite_sync import executable, local_sync
+from .install_storage import backup_roots
 
 METHOD = "predrain-sqlite3-rsync"
 RSYNC_MIB_S = 200
@@ -27,16 +25,7 @@ STOPPED_WORK = ["sqlite3-rsync-delta", "identity"]
 AFTER_START = ["identity", "quick_check", "sha256"]
 STOP_PASSES = 1
 ALERTS = Path.home() / ".agent-rails/lanes/t3-fast-release/STATE.md"
-PROBE_EVERY_S = 5
-PROBE_TIMEOUT_S = 2
-PROBE_SLOW_S = 1
-PROBE_STRIKES = 2
 NICE = ["nice", "-n", "19"]
-THROTTLE = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "-p", "MemoryHigh=4G", "--"]
-
-
-class ServingSlow(ValueError):
-    pass
 
 
 def available():
@@ -50,103 +39,48 @@ def available():
 def estimate(size, pass_seconds=None, passes=PASSES):
     seconds = size / (RSYNC_MIB_S << 20) if pass_seconds is None else pass_seconds
     return {"method": METHOD, "passSeconds": round(seconds, 3), "passes": passes, "allowanceSeconds": ALLOWANCE_S, "totalSeconds": round(passes * seconds + ALLOWANCE_S, 3),
-            "source": f"constant {RSYNC_MIB_S} MiB/s" if pass_seconds is None else "measured online catch-up pass"}
+            "source": f"constant {RSYNC_MIB_S} MiB/s" if pass_seconds is None else "measured pass"}
 
 
-def bound(parent):
-    prctl = ctypes.CDLL(None, use_errno=True).prctl
-
-    def arm():
-        if prctl(guard.PR_SET_PDEATHSIG, int(signal.SIGKILL), 0, 0, 0) != 0 or os.getppid() != parent:
-            os._exit(1)
-    return arm
-
-
-class Probe(threading.Thread):
-    def __init__(self, read):
-        super().__init__(daemon=True)
-        self.read, self.done = read, threading.Event()
-        self.count, self.failed, self.worst, self.strikes = 0, 0, 0.0, 0
-
-    def run(self):
-        while not self.done.wait(PROBE_EVERY_S):
-            started = time.monotonic()
-            served = self.read()
-            took = time.monotonic() - started
-            self.count += 1
-            self.failed += not served
-            self.worst = max(self.worst, took)
-            self.strikes = self.strikes + 1 if not served or took > PROBE_SLOW_S else 0
-
-    def record(self):
-        return {"probes": self.count, "probeFailures": self.failed, "probeWorstSeconds": round(self.worst, 3)}
+def previous_copy(run, target):
+    found = []
+    for root in backup_roots(run.home, run.backups):
+        for record in root.glob("*/at-stop.json"):
+            try:
+                value = json.loads(record.read_text())
+            except (OSError, ValueError):
+                continue
+            local = value.get("local") if isinstance(value, dict) else None
+            path = Path(local.get("path", "")) if isinstance(local, dict) else None
+            if value.get("method") == METHOD and value.get("complete") and path and path.parent == record.parent and path != target and path.is_file():
+                found.append((path.stat().st_mtime, path))
+    return max(found)[1] if found else None
 
 
-def watched(source, target, limit, seconds, read, scoped=False):
+def seed(run, target):
     started = time.monotonic()
-    backstop = started + seconds
-    peak, abort = guard.wal_in_use(source), None
-    probe = Probe(read)
-    command = [*(THROTTLE if scoped else []), *NICE, *local_command(source, target)]
-    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, preexec_fn=bound(os.getpid()))
-    probe.start()
+    source = previous_copy(run, target)
+    if source is None:
+        return {"seed": "none", "reason": "no earlier pre-drain copy; the stopped delta copies every page"}
+    command = [*NICE, "ionice", "-c3", "cp", "--sparse=always", str(source), str(target)]
     try:
-        while process.poll() is None:
-            peak = max(peak, guard.wal_in_use(source))
-            if peak >= limit:
-                abort = guard.WalAbort(f"live WAL reached {peak / 2**20:.1f} MiB during the pre-drain sync, over the {limit / 2**20:.1f} MiB limit; nothing stopped")
-            elif probe.strikes >= PROBE_STRIKES:
-                abort = ServingSlow(f"{probe.strikes} serving probes in a row failed or took over {PROBE_SLOW_S} s (worst {probe.worst:.2f} s) during the pre-drain sync; nothing stopped")
-            elif time.monotonic() >= backstop:
-                abort = ValueError(f"pre-drain sync passed its {seconds} s deadline; nothing stopped")
-            if abort:
-                break
-            time.sleep(guard.POLL_S)
-    finally:
-        probe.done.set()
-        if process.poll() is None:
-            process.kill()
-        output = process.communicate()[0]
-        probe.join()
-    if abort:
-        abort.probe = probe.record()
-        raise abort
-    return {"pageUpdates": page_updates(source, target, process.returncode, output), "seconds": round(time.monotonic() - started, 3), "walPeak": peak, "scoped": scoped, **probe.record()}
-
-
-def online(source, target, seconds, note, read, throttle=False):
-    limit = guard.headroom_limit(source)
-    passes, state = {}, {"scoped": False, "worst": 0.0}
-
-    def seen(record):
-        state["worst"] = max(state["worst"], record["probeWorstSeconds"])
-        state["scoped"] = state["scoped"] or (throttle and state["worst"] > PROBE_SLOW_S)
-
-    def attempt():
-        try:
-            result = watched(source, target, limit, seconds, read, state["scoped"])
-        except (guard.WalAbort, ServingSlow) as error:
-            seen(error.probe)
-            raise
-        seen(result)
-        return result
-
-    for name in ("seed", "catchUp"):
-        passes[name] = guard.retried(attempt, lambda wait, error: note("predrain-sync-retry", phase=name, waitSeconds=wait, reason=str(error), **error.probe), errors=(guard.WalAbort, ServingSlow))
-    return {**passes, "walLimit": limit, "probeWorstSeconds": round(state["worst"], 3), "throttle": "memory-scope" if state["scoped"] else "off"}
+        subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=run.args.offbox_copy_s, check=True)
+    except (OSError, subprocess.SubprocessError) as error:
+        target.unlink(missing_ok=True)
+        return {"seed": "failed", "from": str(source), "error": f"{type(error).__name__}"[:200], "seconds": round(time.monotonic() - started, 3)}
+    return {"seed": "previous-copy", "from": str(source), "bytes": target.stat().st_size, "seconds": round(time.monotonic() - started, 3)}
 
 
 def prepare(run, source, target, size, budget):
-    started = time.monotonic()
-    presync = online(source, target, run.args.offbox_copy_s, run.step, lambda: run.environment(timeout=PROBE_TIMEOUT_S) is not None, run.args.predrain_throttle)
-    presync["seconds"] = round(time.monotonic() - started, 3)
-    work = estimate(size, presync["catchUp"]["seconds"], STOP_PASSES)
-    back = estimate(size, presync["catchUp"]["seconds"])
+    seeded = seed(run, target)
+    run.step("predrain-seed", liveReads=0, **seeded)
+    work = estimate(size, passes=STOP_PASSES)
+    back = estimate(size)
     most = max(work["totalSeconds"], back["totalSeconds"])
-    run.step("hard-backup-estimate", stoppedWork=STOPPED_WORK, afterStart=AFTER_START, localRestoreCopy=work, rollback=back, presync=presync, estimateSeconds=most, budgetSeconds=budget)
+    run.step("hard-backup-estimate", stoppedWork=STOPPED_WORK, afterStart=AFTER_START, localRestoreCopy=work, rollback=back, seed=seeded, estimateSeconds=most, budgetSeconds=budget)
     if most > budget:
-        raise ValueError(f"pre-drain delta sync or rollback estimated at {most:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
-    return {"presync": presync, "stopEstimate": work, "rollbackEstimate": back}
+        raise ValueError(f"stopped delta sync or rollback estimated at {most:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
+    return {"seed": seeded, "stopEstimate": work, "rollbackEstimate": back}
 
 
 def converge(origin, replica, deadline, what):
@@ -317,9 +251,9 @@ def main():
     db = args.db.expanduser().resolve()
     if args.command == "estimate":
         size = db.stat().st_size + wal_bytes(db)
-        work = estimate(size)
-        print(json.dumps({"db": str(db), "bytes": size, "sqlite3Rsync": available(), "presyncSeconds": round(PASSES * size / (RSYNC_MIB_S << 20), 3), "stoppedWork": STOPPED_WORK,
-                          "stopEstimate": work, "rollbackEstimate": work, "budgetSeconds": args.budget, "fits": work["totalSeconds"] <= args.budget}))
+        work, back = estimate(size, passes=STOP_PASSES), estimate(size)
+        print(json.dumps({"db": str(db), "bytes": size, "sqlite3Rsync": available(), "liveReadsBeforeStop": 0, "stoppedWork": STOPPED_WORK, "afterStart": AFTER_START,
+                          "stopEstimate": work, "rollbackEstimate": back, "budgetSeconds": args.budget, "fits": max(work["totalSeconds"], back["totalSeconds"]) <= args.budget}))
         return 0
     record = json.loads(args.receipt.read_text())["backup"]["local"]
     if record.get("method") != METHOD:
