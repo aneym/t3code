@@ -111,7 +111,8 @@ class Rehearsal:
         if getattr(self.args, "protect_held_turn", False):
             command.extend(["--protected-thread", self.workload.work["active-turn"]["threadId"], "--protected-wait-s", str(self.args.protected_wait_s)])
         for thread in getattr(self.args, "protected_thread", None) or ():
-            command.extend(["--protected-thread", thread, "--protected-wait-s", str(self.args.protected_wait_s)])
+            named = self.workload.work[thread.removeprefix("workload:")]["threadId"] if thread.startswith("workload:") else thread
+            command.extend(["--protected-thread", named, "--protected-wait-s", str(self.args.protected_wait_s)])
         if (self.engine / "install_land_gate.py").is_file():
             for pattern in getattr(self.args, "land_lock", None) or ["none"]:
                 command.extend(["--land-lock", pattern])
