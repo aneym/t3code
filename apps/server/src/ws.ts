@@ -1,6 +1,3 @@
-import { subscribeServerLifecycle } from "./serverLifecycleSubscription.ts";
-import { acknowledgeHandoff } from "./serverHandoffDelivery.ts";
-import { handoffRpc } from "./serverHandoffProtocol.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -87,6 +84,7 @@ import {
   type RelayClientInstallProgressEvent,
   type ServerConfig as ClientServerConfig,
   type ServerConfigStreamEvent,
+  type ServerLifecycleStreamEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -189,7 +187,6 @@ import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/s
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import * as ProviderInstallation from "./provider/providerInstallation.ts";
-import * as ProviderRuntimeRecoveryService from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ForkReleases from "./cloud/forkReleases.ts";
 import * as NpmRelease from "./cloud/npmRelease.ts";
@@ -1371,8 +1368,6 @@ export const layerWsRpc = (
       const eventLoopMonitor = yield* EventLoopMonitor.EventLoopMonitor;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
 
-      const providerRuntimeRecovery =
-        yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
       const analytics = yield* AnalyticsService.AnalyticsService;
@@ -2244,7 +2239,7 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
           ),
-        [WS_METHODS.serverProbe]: (input) => acknowledgeHandoff(input),
+        [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
         [WS_METHODS.serverGetConfig]: (_input) =>
           loadServerConfig({
             usageLimitsCommand: false,
@@ -2556,13 +2551,6 @@ export const layerWsRpc = (
         [WS_METHODS.providerInstallSubscribe]: (input) => providerInstallation.subscribe(input),
         [WS_METHODS.providerInstallRemove]: (input) => providerInstallation.remove(input),
         [WS_METHODS.serverListForkReleases]: () => forkReleases.list(),
-        [WS_METHODS.serverGetRestartStatus]: (input) =>
-          providerRuntimeRecovery.getRestartStatus(input.epoch),
-        [WS_METHODS.serverAbortRestart]: ({ epoch }) => providerRuntimeRecovery.abortRestart(epoch),
-        [WS_METHODS.serverImportRestartHandoff]: (input) =>
-          providerRuntimeRecovery.importRestartHandoff(input),
-        [WS_METHODS.serverPrepareRestart]: (input) =>
-          providerRuntimeRecovery.prepareRestart(input.epoch, input.drainTimeoutMs),
         [WS_METHODS.serverUpdateServer]: (input) => serverSelfUpdate.update(input),
         [WS_METHODS.serverGetNpmRelease]: (input) => npmRelease.get(input),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
@@ -3355,8 +3343,26 @@ export const layerWsRpc = (
               );
             }),
           ),
-        [WS_METHODS.subscribeServerLifecycle]: (input) =>
-          subscribeServerLifecycle(lifecycleEvents, input),
+        [WS_METHODS.subscribeServerLifecycle]: (_input) =>
+          Stream.unwrap(
+            Effect.gen(function* () {
+              const liveBuffer = yield* Queue.unbounded<ServerLifecycleStreamEvent>();
+              yield* Effect.forkScoped(
+                lifecycleEvents.stream.pipe(
+                  Stream.runForEach((event) => Queue.offer(liveBuffer, event)),
+                ),
+                { startImmediately: true },
+              );
+              const snapshot = yield* lifecycleEvents.snapshot;
+              const snapshotEvents = Array.from(snapshot.events).toSorted(
+                (left, right) => left.sequence - right.sequence,
+              );
+              const liveEvents = Stream.fromQueue(liveBuffer).pipe(
+                Stream.filter((event) => event.sequence > snapshot.sequence),
+              );
+              return Stream.concat(rpcInitialItems(snapshotEvents), liveEvents);
+            }),
+          ),
         [WS_METHODS.subscribeAuthAccess]: (_input) =>
           Stream.unwrap(
             Effect.gen(function* () {
@@ -3472,7 +3478,7 @@ export const layer = Layer.unwrap(
         yield* analytics.recordOwners(readClientOwners(request), "client");
         const reportProfiles = yield* serverBrowser.profileReporter;
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
-          const { protocol, httpEffect } = yield* handoffRpc();
+          const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
             Effect.provideService(RpcServer.Protocol, protocol),
             Effect.provide(
