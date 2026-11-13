@@ -303,7 +303,7 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
   ),
 );
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
-  Layer.provide(Layer.merge(layerThreadManagementProvided, layerStores)),
+  Layer.provide(layerThreadManagementProvided),
 );
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
   Layer.provide(
@@ -354,8 +354,6 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
       layerRuntimeRequestServiceProvided,
       layerThreadTitleRegenerationProvided,
       layerThreadManagementProvided,
-      layerEventSink,
-      IdAllocator.layer,
     ),
   ),
 );

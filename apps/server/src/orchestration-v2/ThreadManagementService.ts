@@ -1,6 +1,4 @@
-import { restartWaitEvents } from "./RestartWaitEvents.ts";
 import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
-import { awaitServerFreeze } from "../serverHandoffBarrier.ts";
 import { makeSettlementCommands } from "./ThreadSettlementCommands.ts";
 import {
   resumeDelegatedTaskTree,
@@ -154,7 +152,6 @@ export interface ThreadManagementWaitInput {
   readonly threadId: ThreadId;
   readonly runId?: RunId;
   readonly timeoutMs: number;
-  readonly returnOnFreeze?: boolean;
   readonly untilDelegatedWorkSettled?: boolean;
 }
 
@@ -848,15 +845,38 @@ const make = Effect.gen(function* () {
     const initial = yield* evaluate(target.runs);
     if (initial.settled) return settledResult(initial);
 
-    const wait = restartWaitEvents(orchestrator, {
-      threadId: input.threadId,
-      afterSequence,
-      untilDelegatedWorkSettled,
-      pending: initial.pending,
-      run: initial.run,
-      selectedRunId: selectedRun.id,
-    }).pipe(
-      Stream.mapError(loadError),
+    const wait = Stream.merge(
+      Stream.mergeAll(
+        (
+          [
+            "run.updated",
+            "thread.deleted",
+            ...(untilDelegatedWorkSettled
+              ? (["subagent.updated", "provider-thread.updated"] as const)
+              : []),
+          ] as const
+        ).map((eventType) =>
+          orchestrator.streamStoredEventsFrom({
+            threadId: input.threadId,
+            afterSequence,
+            eventType,
+          }),
+        ),
+        { concurrency: "unbounded" },
+      ).pipe(
+        Stream.mapError(loadError),
+        Stream.filter(
+          (stored) =>
+            untilDelegatedWorkSettled ||
+            stored.event.type !== "run.updated" ||
+            stored.event.payload.id === selectedRun.id ||
+            stored.event.payload.restartContinuationOfRunId !== undefined,
+        ),
+      ),
+      initial.pending
+        ? Stream.fromEffect(orchestrator.awaitRestartContinuation(initial.run))
+        : Stream.empty,
+    ).pipe(
       Stream.mapEffect(() =>
         getProjectThreadRecords(input, ["runs"]).pipe(
           Effect.flatMap((current) => evaluate(current.runs)),
@@ -865,9 +885,6 @@ const make = Effect.gen(function* () {
       Stream.filter((current) => current.settled),
       Stream.runHead,
       Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
-      Effect.raceFirst(
-        awaitServerFreeze(input.returnOnFreeze === true).pipe(Effect.as(Option.none())),
-      ),
     );
     const waited = Option.flatten(yield* wait);
     if (Option.isSome(waited)) return settledResult(waited.value);

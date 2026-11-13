@@ -434,7 +434,6 @@ it.effect("records only failed calls of tools that hand off no work", () => {
                   Effect.asVoid,
                 ),
               flush: Effect.void,
-              skipShutdownFlush: Effect.void,
               recordOwners: () => Effect.void,
             }),
           ),

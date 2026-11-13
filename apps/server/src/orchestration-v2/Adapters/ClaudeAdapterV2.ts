@@ -190,7 +190,6 @@ import * as ThreadSessionRestarts from "../ThreadSessionRestarts.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
-import { trackClaudeProcessGroup } from "./ClaudeProcessGroup.ts";
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
@@ -1416,7 +1415,6 @@ export const layerQueryRunner: Layer.Layer<
                   stderrDone,
                   providerProcesses.register,
                 );
-                trackClaudeProcessGroup(child, input.threadId);
                 if (unit === undefined && child.pid !== undefined) {
                   const tracker = trackDescendants(child.pid);
                   const polling = runFork(

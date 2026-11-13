@@ -27,7 +27,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 
 import { markGatePhase } from "./DispatchGateRecord.ts";
-import { mergeRunField } from "./EventSinkRunFieldMerge.ts";
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import { projectStoredEventForWire } from "./WireProjection.ts";
@@ -35,7 +34,6 @@ import { makeRunOutcomeRecorder, type RunOutcome } from "./RunMetrics.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
-import * as EffectOutboxModel from "./EffectOutboxModel.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -115,7 +113,6 @@ export interface EventSinkV2Shape {
      * The batch must not also change that run's lifecycle.
      */
     readonly updateDelegatedCompletionOnly?: boolean;
-    readonly updateRestartDeclinedOnly?: boolean;
     readonly unlessNativeThreadOwned?: Pick<
       OrchestrationV2ProviderThread,
       "driver" | "providerInstanceId" | "appThreadId" | "nativeThreadRef"
@@ -123,7 +120,7 @@ export interface EventSinkV2Shape {
     readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-    readonly effects: ReadonlyArray<EffectOutboxModel.PendingOrchestrationEffectV2>;
+    readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeIfRunCurrent: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
@@ -138,7 +135,7 @@ export interface EventSinkV2Shape {
       readonly resultId: OrchestrationV2TurnItem["id"];
     };
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-    readonly effects?: ReadonlyArray<EffectOutboxModel.PendingOrchestrationEffectV2>;
+    readonly effects?: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
   }) => Effect.Effect<
     {
       readonly committed: boolean;
@@ -190,9 +187,9 @@ export interface EventSinkV2Shape {
     readonly commandType: string;
     readonly acceptedAt: DateTime.Utc;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-    readonly effects: ReadonlyArray<EffectOutboxModel.PendingOrchestrationEffectV2>;
+    readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
     readonly cancelUnsettledEffects?: {
-      readonly effectTypes: ReadonlyArray<EffectOutboxModel.OrchestrationEffectRequestV2["type"]>;
+      readonly effectTypes: ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2["type"]>;
       readonly reason: string;
     };
     /** Like writeWithEffects' updateDelegatedCompletionOnly, for this run's run.updated only. */
@@ -230,10 +227,6 @@ export interface EventSinkV2Shape {
     readonly rejectedAt: DateTime.Utc;
     readonly error: string;
   }) => Effect.Effect<CommandReceiptStore.ProjectCommandReceiptV2, EventSinkV2Error>;
-  readonly read: (input?: {
-    readonly afterSequence?: number;
-    readonly throughSequence?: number;
-  }) => Stream.Stream<OrchestrationV2StoredEvent, EventSinkV2Error>;
   readonly stream: (input?: {
     readonly threadId?: ThreadId;
     readonly afterSequence?: number;
@@ -438,6 +431,27 @@ const layerBase: Layer.Layer<
         return yield* runOutcomes.prepare(storedEvents);
       });
 
+    const updateDelegatedCompletionOnly = Effect.fnUntraced(function* (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+      includesRun: (runId: RunId) => boolean,
+    ) {
+      return yield* Effect.forEach(events, (event) =>
+        Effect.gen(function* () {
+          if (event.type !== "run.updated" || !includesRun(event.payload.id)) return event;
+          const { runs } = yield* projectionStore.getThreadRecords(event.threadId, ["runs"], {
+            runIds: [event.payload.id],
+          });
+          const current = runs[0];
+          return current === undefined
+            ? event
+            : {
+                ...event,
+                payload: { ...current, delegatedCompletion: event.payload.delegatedCompletion },
+              };
+        }),
+      );
+    });
+
     const writeEffect = Effect.fn("orchestrationV2.EventSink.write")(function* (
       input: Parameters<EventSinkV2Shape["writeWithEffects"]>[0],
     ) {
@@ -468,10 +482,8 @@ const layerBase: Layer.Layer<
           // Checkpoint capture can finish after a cohort writer reads its parent run.
           // Merge in this transaction so the event log and projection keep that completion.
           const events = input.updateDelegatedCompletionOnly
-            ? yield* mergeRunField(projectionStore, input.events, "delegatedCompletion")
-            : input.updateRestartDeclinedOnly
-              ? yield* mergeRunField(projectionStore, input.events, "restartDeclined")
-              : input.events;
+            ? yield* updateDelegatedCompletionOnly(input.events, () => true)
+            : input.events;
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(events)
@@ -739,12 +751,7 @@ const layerBase: Layer.Layer<
           const normalized = yield* normalizeEvents(
             runId === undefined
               ? input.events
-              : yield* mergeRunField(
-                  projectionStore,
-                  input.events,
-                  "delegatedCompletion",
-                  (id) => id === runId,
-                ),
+              : yield* updateDelegatedCompletionOnly(input.events, (id) => id === runId),
           );
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
@@ -1120,10 +1127,6 @@ const layerBase: Layer.Layer<
               new EventSinkWriteError({ commandId: input.commandId, eventCount: 0, cause }),
           ),
         ),
-      read: (input) =>
-        eventStore
-          .read(input)
-          .pipe(Stream.mapError((cause) => new EventSinkStreamError({ cause }))),
       stream: (input) =>
         stream(input).pipe(
           Stream.mapError(

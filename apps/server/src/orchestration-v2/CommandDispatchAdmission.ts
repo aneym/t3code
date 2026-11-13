@@ -8,7 +8,6 @@ import type * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { withServerAdmission } from "../serverHandoffBarrier.ts";
 import type { EffectOutboxV2Shape } from "./EffectOutbox.ts";
 import { BUSY_RETRY_AFTER_MS, DispatchAdmissionBound } from "./DispatchAdmissionBound.ts";
 import { OrchestratorDispatchBusyError } from "./OrchestratorDispatchError.ts";
@@ -30,8 +29,7 @@ export function makeCommandDispatchAdmission<A, E, R, P>(options: {
   readonly locks: KeyedLock.KeyedLock<ThreadId>;
   readonly intake: KeyedLock.KeyedLock<ThreadId>;
 }) {
-  const execute = (command: OrchestrationV2ServerCommand, sideChatIds?: ReadonlyArray<ThreadId>) =>
-    withServerAdmission(options.execute(command, sideChatIds));
+  const execute = options.execute;
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
   const route = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
     const label = { type: command.type, thread: options.commandThreadId(command) };

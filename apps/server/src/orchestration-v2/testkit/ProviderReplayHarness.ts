@@ -310,7 +310,6 @@ export function layerWithRegistry<Error>(
           Layer.provide(RuntimePolicy.layer),
         );
   const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
-  // Share one continuation queue across adapters, orchestrator, and worker through layer memoization.
   const layerContinuationRequests =
     options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
   const layerProvidedRegistry = registryLayer.pipe(
@@ -350,7 +349,6 @@ export function layerWithRegistry<Error>(
   ).pipe(Layer.provide(layerDatabase));
   const layerEventSinkProvided = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
-    Layer.merge(IdAllocator.layer),
   );
   const layerRuntime = RuntimePolicy.layerEnforcingCeiling.pipe(
     Layer.provide(Layer.merge(layerRuntimeBase, layerServerSettings)),
@@ -366,6 +364,7 @@ export function layerWithRegistry<Error>(
         }),
         layerStores,
         layerEventSinkProvided,
+        IdAllocator.layer,
         ThreadCommandExecutor.layer,
         GitVcsDriver.layer.pipe(
           Layer.provide(layerServerConfig),
@@ -407,6 +406,7 @@ export function layerWithRegistry<Error>(
         layerCommandOutputHubProvided,
         layerProvidedRegistry,
         layerEventSinkProvided,
+        IdAllocator.layer,
         McpProviderSessions.layer,
         McpSessionRegistryTestkit.layer,
         layerProviderEventIngestorProvided,
@@ -425,6 +425,7 @@ export function layerWithRegistry<Error>(
         PreviewAgentActivity.layer,
         layerCheckpointServiceProvided,
         layerEventSinkProvided,
+        IdAllocator.layer,
         layerProviderEventIngestorProvided,
         layerServerSettings,
         layerStores,
@@ -437,6 +438,7 @@ export function layerWithRegistry<Error>(
       Layer.mergeAll(
         layerContextHandoffServiceProvided,
         layerEventSinkProvided,
+        IdAllocator.layer,
         layerStores,
         layerProviderSessionManagerProvided,
         Layer.mock(ProviderAuthService.ProviderAuthService)({
@@ -462,6 +464,7 @@ export function layerWithRegistry<Error>(
       Layer.mergeAll(
         layerCheckpointServiceProvided,
         layerEventSinkProvided,
+        IdAllocator.layer,
         layerStores,
         layerProviderSessionManagerProvided,
         ThreadCommandExecutor.layer,
@@ -473,7 +476,12 @@ export function layerWithRegistry<Error>(
   );
   const layerCheckpointCaptureServiceProvided = CheckpointCaptureService.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(layerCheckpointServiceProvided, layerEventSinkProvided, layerStores),
+      Layer.mergeAll(
+        layerCheckpointServiceProvided,
+        layerEventSinkProvided,
+        IdAllocator.layer,
+        layerStores,
+      ),
     ),
   );
   const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
@@ -543,7 +551,6 @@ export function layerWithRegistry<Error>(
         layerThreadTitleRegenerationTest,
         layerServerSettings,
         layerThreadManagementProvided,
-        layerEventSinkProvided,
       ),
     ),
   );
@@ -579,7 +586,14 @@ export function layerWithRegistry<Error>(
           ).pipe(Effect.orDie),
         ).pipe(
           Layer.provide(ProviderRuntimeRecoveryService.layer),
-          Layer.provide(Layer.mergeAll(layerStores, layerEventSinkProvided, layerServerSettings)),
+          Layer.provide(
+            Layer.mergeAll(
+              layerStores,
+              layerEventSinkProvided,
+              IdAllocator.layer,
+              layerServerSettings,
+            ),
+          ),
         )
       : Layer.empty;
   return Layer.effect(

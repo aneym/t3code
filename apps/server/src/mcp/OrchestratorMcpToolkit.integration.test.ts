@@ -47,7 +47,6 @@ import {
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
-import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -272,9 +271,6 @@ describe("orchestrator MCP toolkit", () => {
         Layer.provideMerge(
           SecretRequests.layer.pipe(
             Layer.provide(layerMemorySecretStore),
-            Layer.provide(
-              Layer.mock(EffectOutbox.EffectOutboxV2)({ restartHandoffs: Effect.succeed([]) }),
-            ),
             Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
             Layer.provide(layerOrchestration),
           ),

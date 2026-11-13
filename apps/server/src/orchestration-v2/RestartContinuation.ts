@@ -1,4 +1,3 @@
-import { restartSecretNote } from "./RestartSecretNote.ts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -9,7 +8,6 @@ import {
   type OrchestrationV2Run,
   type RunId,
   type ThreadId,
-  secretRequestClientRequestId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -25,13 +23,12 @@ import {
   continuationFailedBeforePrompt,
   isAwaitedWork,
   isRestartContinuationSource,
+  cancelledBeforeStart,
   isRestartNoteSource,
   neverStarted,
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
-  restartNoteOwed,
 } from "./RestartBackgroundNote.ts";
-import { restartSourceSuperseded } from "./RestartDispatchPolicy.ts";
 
 const CONTINUE_PROMPT =
   "Continue where you left off. Your last turn was cut short, so a command or other action it started may have finished or may still be running. Before you repeat one that changes state, confirm it did not take effect and is not still running; if you cannot tell, say so instead of repeating it.";
@@ -79,10 +76,11 @@ function restartContinuationBlocked(
     (item) =>
       item.type === "secret_request" &&
       item.runId === source.id &&
-      item.secretStatus === "cancelled" &&
-      item.completedAt !== null &&
-      source.completedAt !== null &&
-      DateTime.Equivalence(item.completedAt, source.completedAt),
+      (item.secretStatus === "pending" ||
+        (item.secretStatus === "cancelled" &&
+          item.completedAt !== null &&
+          source.completedAt !== null &&
+          DateTime.Equivalence(item.completedAt, source.completedAt))),
   );
 }
 
@@ -185,16 +183,10 @@ export function restartContinuationRun(
 }
 
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
-  function* (input: {
-    readonly threadId: ThreadId;
-    readonly sourceRunId: RunId;
-    readonly prepared?: boolean;
-    readonly epoch?: string;
-    readonly humanReply?: string;
-    readonly attempt?: number;
-  }) {
+  function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
+    if (!enabled) return;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
     const projection = yield* threads.getThreadRecords(
@@ -203,57 +195,37 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       { messageIds: [messageId], turnItemTypes: ["secret_request"] },
     );
     if (
-      !input.prepared &&
-      enabled !== null &&
       !resolveProjectSettings(enabled, projection.thread.projectId).settings
         .continueThreadsAfterServerUpdate
     )
       return;
-    if (
-      projection.messages.some((message) => message.id === messageId) ||
-      projection.runs.some((run) => run.restartContinuationOfRunId === input.sourceRunId)
-    )
-      return;
-    if (
-      projection.runtimeRequests.some(
-        (request) =>
-          request.status === "pending" &&
-          request.restartContinuationRunIds?.includes(input.sourceRunId),
-      )
-    )
-      return;
+    if (projection.messages.some((message) => message.id === messageId)) return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
     if (
       !source ||
-      (!input.prepared &&
-        !(
-          isRestartContinuationSource(source, projection.providerTurns) ||
-          continuationFailedBeforePrompt(source, projection.providerTurns)
-        )) ||
-      (input.prepared &&
-        source.status !== "cancelled" &&
-        !restartNoteOwed(source, projection.providerTurns)) ||
+      !(
+        isRestartContinuationSource(source, projection.providerTurns) ||
+        continuationFailedBeforePrompt(source, projection.providerTurns)
+      ) ||
       restartContinuationBlocked(
-        input.humanReply === undefined
-          ? projection
-          : {
-              ...projection,
-              runtimeRequests: projection.runtimeRequests.filter(
-                (request) => request.status === "pending",
-              ),
-              turnItems: projection.turnItems.filter(
-                (item) => item.type !== "secret_request" || item.secretStatus === "pending",
-              ),
-            },
+        projection,
         source,
         yield* DateTime.now,
         isRestartNoteSource(source, projection.providerTurns),
       )
     )
       return;
-    if (!input.prepared && restartSourceSuperseded(projection.runs, source)) return;
-    if (projection.thread.providerInstanceId !== source.providerInstanceId)
-      return "dispatch_failed" as const;
+    if (
+      projection.runs.some(
+        (run) =>
+          run.id !== source.id &&
+          run.status !== "queued" &&
+          !cancelledBeforeStart(run) &&
+          runRanAfter(run, source),
+      )
+    )
+      return;
+    if (projection.thread.providerInstanceId !== source.providerInstanceId) return;
     // A turn that keeps crashing the server would otherwise restart it forever.
     let chainLength = 0;
     const loopWindowStart =
@@ -272,7 +244,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         threadId: input.threadId,
         sourceRunId: input.sourceRunId,
       });
-      return "chain_limit" as const;
+      return;
     }
     const sourceRecords = yield* threads.getThreadRecords(
       input.threadId,
@@ -318,8 +290,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const sourceMessage = sourceRecords.messages.find(
       (message) => message.id === source.userMessageId,
     );
-    if (sourceMessage !== undefined && isNativeMaintenanceCommand(sourceMessage))
-      return "native_maintenance" as const;
+    if (sourceMessage !== undefined && isNativeMaintenanceCommand(sourceMessage)) return;
     const note = restartContinuationNote(
       source,
       projection.runs,
@@ -328,52 +299,19 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     );
     const noteText =
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
-    const replayUnacceptedPrompt = !projection.providerTurns.some(
-      (turn) => turn.runAttemptId === source.activeAttemptId,
-    );
-    const baseText =
-      replayUnacceptedPrompt && sourceMessage !== undefined
-        ? sourceMessage.text
-        : noteText === undefined
-          ? CONTINUE_PROMPT
-          : note.settled
-            ? noteText
-            : `${noteText}\n\n${CONTINUE_PROMPT}`;
-    const secretNotes = projection.turnItems.flatMap((item) => {
-      if (
-        item.type !== "secret_request" ||
-        item.secretStatus === "cancelled" ||
-        item.runId !== source.id ||
-        !(
-          item.secretStatus === "pending" ||
-          (item.completedAt !== null &&
-            source.completedAt !== null &&
-            DateTime.toEpochMillis(item.completedAt) >= DateTime.toEpochMillis(source.completedAt))
-        )
-      )
-        return [];
-      const clientRequestId = secretRequestClientRequestId(item.id);
-      return clientRequestId === undefined
-        ? []
-        : [restartSecretNote({ label: item.label, clientRequestId, status: item.secretStatus })];
-    });
-    const text = [baseText, ...secretNotes].join("\n\n");
-    return yield* threads
+    const text =
+      noteText === undefined
+        ? CONTINUE_PROMPT
+        : note.settled
+          ? noteText
+          : `${noteText}\n\n${CONTINUE_PROMPT}`;
+    yield* threads
       .dispatch({
         type: "message.dispatch",
-        commandId: CommandId.make(
-          `${
-            input.epoch === undefined
-              ? `command:restart-continuation:${input.sourceRunId}`
-              : `command:restart-handoff:${input.epoch}:${input.sourceRunId}`
-          }${input.attempt === undefined ? "" : `:attempt:${input.attempt}`}`,
-        ),
+        commandId: CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
         threadId: input.threadId,
         messageId,
-        text:
-          input.humanReply === undefined
-            ? text
-            : `${text}\n\nThe user reviewed the restart interruption and replied:\n${input.humanReply}\nNo prior tool approval is granted; request a new approval or secure-input prompt if still needed.`,
+        text,
         notification: {
           source: { kind: "system" },
           outcome: "updated",
@@ -382,12 +320,9 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
             : "The app restarted and resumed this turn",
           detail: text,
         },
-        ...(replayUnacceptedPrompt && sourceMessage?.context !== undefined
-          ? { context: sourceMessage.context }
-          : {}),
-        attachments: replayUnacceptedPrompt ? (sourceMessage?.attachments ?? []) : [],
+        attachments: [],
         modelSelection: source.modelSelection,
-        dispatchMode: { type: input.prepared ? "queue_after_active" : "start_immediately" },
+        dispatchMode: { type: "start_immediately" },
         createdBy: "agent",
         creationSource: "server",
         restartContinuationOfRunId: input.sourceRunId,
@@ -402,14 +337,23 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
               sourceRunId: input.sourceRunId,
               projectId: error.projectId,
               instanceId: error.instanceId,
-            }).pipe(Effect.as("provider_disabled" as const)),
+            }),
           OrchestratorRuntimeModeAboveCeilingError: () =>
             Effect.logInfo("orchestration-v2.restart-continuation.above-ceiling", {
               threadId: input.threadId,
               sourceRunId: input.sourceRunId,
-            }).pipe(Effect.as("above_ceiling" as const)),
+            }),
         }),
-        Effect.map((declined) => (declined === "provider_disabled" ? declined : undefined)),
       );
   },
+  // Declined child continuations still owe parent results; existing continuation runs settle them instead.
+  (effect, input) =>
+    effect.pipe(
+      Effect.andThen(
+        Effect.gen(function* () {
+          const threads = yield* ThreadManagementService.ThreadManagementService;
+          yield* threads.recoverDelegatedTask(input.threadId, { sourceRunId: input.sourceRunId });
+        }),
+      ),
+    ),
 );
