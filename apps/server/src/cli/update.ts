@@ -2,9 +2,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   CLI_RELEASE_BASE_URL_ENV,
   CLI_RELEASE_CHANNELS,
-  cliReleaseIndexPageUrl,
   cliReleaseChannelOf,
-  newestCliReleaseVersion,
   releaseAssetUrl,
   updateFeedFileName,
   type CliReleaseChannel,
@@ -18,7 +16,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag, Prompt } from "effect/cli";
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
@@ -37,11 +35,13 @@ import {
 } from "../cloud/pinnedRuntime.ts";
 import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
+import { managedUpdateMirror } from "../policy/managedUpdates.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { resolveNewestVersion } from "./releaseIndex.ts";
 import { createUpdateProgress } from "./updateProgress.ts";
+import { refuseUpdate } from "./updateRefusal.ts";
 import * as CliService from "./service.ts";
 
 export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
@@ -51,52 +51,6 @@ export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpd
     return this.reason;
   }
 }
-
-const ReleaseIndex = Schema.Array(
-  Schema.Struct({
-    tag_name: Schema.String,
-    draft: Schema.optional(Schema.Boolean),
-  }),
-);
-const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseIndex));
-
-const RELEASE_INDEX_TIMEOUT = Duration.seconds(30);
-const RELEASE_INDEX_MAX_PAGES = 10;
-
-export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
-  channel: CliReleaseChannel,
-) {
-  const httpClient = yield* HttpClient.HttpClient;
-  const environment = yield* HostProcess.Environment;
-  const githubToken = environment.GH_TOKEN?.trim() || environment.GITHUB_TOKEN?.trim() || undefined;
-  for (let page = 1; page <= RELEASE_INDEX_MAX_PAGES; page += 1) {
-    const request = HttpClientRequest.get(cliReleaseIndexPageUrl(page)).pipe(
-      HttpClientRequest.setHeader("Accept", "application/vnd.github+json"),
-    );
-    const authenticatedRequest =
-      githubToken === undefined
-        ? request
-        : HttpClientRequest.setHeader(request, "Authorization", `Bearer ${githubToken}`);
-    const body = yield* httpClient.execute(authenticatedRequest).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) => response.text),
-      Effect.mapError(() => new CliUpdateError({ reason: "Could not list t3 releases." })),
-      Effect.timeoutOrElse({
-        duration: RELEASE_INDEX_TIMEOUT,
-        orElse: () => Effect.fail(new CliUpdateError({ reason: "Timed out listing t3 releases." })),
-      }),
-    );
-    const releases = yield* decodeReleaseIndex(body).pipe(
-      Effect.mapError(
-        () => new CliUpdateError({ reason: "The t3 release index had an unexpected shape." }),
-      ),
-    );
-    const version = newestCliReleaseVersion(releases, channel);
-    if (version !== undefined) return version;
-    if (releases.length === 0) break;
-  }
-  return yield* new CliUpdateError({ reason: `No published ${channel} release was found.` });
-});
 
 /** The version an update mirror's feed file for this platform offers on `channel`. */
 export const resolveMirrorVersion = Effect.fn("cli.update.resolve_mirror")(function* (
@@ -124,7 +78,7 @@ export const resolveMirrorVersion = Effect.fn("cli.update.resolve_mirror")(funct
     Effect.flatMap((response) => response.text),
     Effect.mapError(() => unreadable),
     Effect.timeoutOrElse({
-      duration: RELEASE_INDEX_TIMEOUT,
+      duration: Duration.seconds(30),
       orElse: () => Effect.fail(unreadable),
     }),
   );
@@ -258,27 +212,25 @@ export const updateCommand = Command.make("update", {
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
+      const channel = Option.getOrUndefined(flags.channel);
+      const requestedVersion = Option.getOrUndefined(flags.version);
+      yield* refuseUpdate({ channel, requestedVersion });
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
       return yield* runUpdate({
         baseDir: config.baseDir,
         logsDir: config.logsDir,
         serverRuntimeStatePath: config.serverRuntimeStatePath,
-        channel: Option.getOrUndefined(flags.channel),
-        requestedVersion: Option.getOrUndefined(flags.version),
+        channel,
+        requestedVersion,
         allowDowngrade: flags.allowDowngrade,
         assumeYes: flags.yes,
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(
-            CliService.layer(config),
-            ProcessRunner.layer,
-            FetchHttpClient.layer,
-            ManagedPolicy.layer,
-          ),
+          Layer.mergeAll(CliService.layer(config), ProcessRunner.layer, FetchHttpClient.layer),
         ),
       );
-    }),
+    }).pipe(Effect.provide(ManagedPolicy.layer)),
   ),
 );
 
@@ -342,18 +294,12 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const environment = yield* HostProcess.Environment;
   const httpClient = yield* HttpClient.HttpClient;
   const service = yield* BootService.BootService;
+  yield* refuseUpdate(input);
   const policy = yield* ManagedPolicy.ManagedPolicy;
   const mirror = managedUpdateMirror(policy.document);
 
   const currentVersion = packageJson.version;
   const channel = input.channel ?? cliReleaseChannelOf(currentVersion);
-  const refusal = managedUpdateRefusal(
-    policy.document,
-    input.requestedVersion === undefined ? channel : cliReleaseChannelOf(input.requestedVersion),
-  );
-  if (refusal !== undefined) {
-    return yield* new CliUpdateError({ reason: refusal });
-  }
   if (input.requestedVersion !== undefined && !isExactServiceVersion(input.requestedVersion)) {
     return yield* new CliUpdateError({
       reason: `'${input.requestedVersion}' is not an exact t3 version.`,
@@ -365,7 +311,9 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     input.requestedVersion !== undefined
       ? Effect.succeed(input.requestedVersion)
       : mirror === undefined
-        ? resolveNewestVersion(channel)
+        ? resolveNewestVersion(channel, currentVersion, `${platform}-${arch}`).pipe(
+            Effect.mapError((error) => new CliUpdateError({ reason: error.reason })),
+          )
         : resolveMirrorVersion(mirror, channel)
   ).pipe(Effect.ensuring(Effect.sync(progress.finish)));
   const targetChannel = cliReleaseChannelOf(targetVersion);

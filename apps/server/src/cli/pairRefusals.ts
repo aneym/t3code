@@ -9,6 +9,8 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
   {
     checkedStatePaths: Schema.Array(Schema.String),
     inLinkedWorktree: Schema.Boolean,
+    serveCommand: Schema.String,
+    connectCommand: Schema.String,
   },
 ) {
   override readonly [Runtime.errorReported] = false;
@@ -20,21 +22,25 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
       ...(this.inLinkedWorktree
         ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
         : []),
-      "Start one with `npx t3 serve`, or connect this machine with T3 Connect: `npx t3 connect`.",
+      `Start one with \`${this.serveCommand}\`, or connect this machine with T3 Connect: \`${this.connectCommand}\`.`,
     ].join("\n");
   }
 }
 
 export class IncompatibleServerProtocolError extends Schema.TaggedError<IncompatibleServerProtocolError>()(
   "IncompatibleServerProtocolError",
-  { serverVersion: Schema.String, serverProtocolVersion: Schema.Number },
+  {
+    serverVersion: Schema.String,
+    serverProtocolVersion: Schema.Number,
+    pairCommand: Schema.String,
+  },
 ) {
   override readonly [Runtime.errorReported] = false;
   readonly [cliRefusal] = true;
   override get message(): string {
     return [
       `The running T3 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
-      `Pair with the matching CLI instead: \`npx t3@${this.serverVersion} pair\`.`,
+      `Pair with the matching CLI instead: \`${this.pairCommand}\`.`,
     ].join("\n");
   }
 }
@@ -91,6 +97,17 @@ export class TailscaleServeFailedError extends Schema.TaggedError<TailscaleServe
   readonly [cliRefusal] = true;
   override get message(): string {
     return `tailscale serve failed for HTTPS port ${String(this.servePort)}. Run \`tailscale serve --https=${String(this.servePort)} --bg <local-url>\` by hand to see why.`;
+  }
+}
+
+export class TailscaleServeTargetRefusedError extends Schema.TaggedError<TailscaleServeTargetRefusedError>()(
+  "TailscaleServeTargetRefusedError",
+  { localHost: Schema.String },
+) {
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
+  override get message(): string {
+    return `This Tailscale install can only proxy to localhost, and the server listens on ${this.localHost}. Restart it with \`--host 127.0.0.1\` or \`--host 0.0.0.0\`, then run this command again.`;
   }
 }
 

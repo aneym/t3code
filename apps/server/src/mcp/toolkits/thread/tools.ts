@@ -33,7 +33,7 @@ import * as ServerSettings from "../../../serverSettings.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`; behind queued messages it applies after they run unless something newer organizes the thread. Settling this thread applies at turn end. A failed turn or queued message leaves it active. Refusals carry a code saying why.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
@@ -53,7 +53,6 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   success: Schema.Union([
     OrchestrationV2DispatchCommandResult,
     Schema.Struct({ settlesWhenTurnEnds: Schema.Literal(true) }),
-    Schema.Struct({ snoozesWhenQueueDrains: Schema.Literal(true) }),
   ]),
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
@@ -97,7 +96,7 @@ const QUEUE_READ_ACTIONS = ["list", "read"] as const;
 const QueueTool = Tool.make("t3_queue", {
   ...commandTool,
   description:
-    "Manage a thread's queued messages. Omit `threadId` for this thread. list: send order, paged by `cursor` and `limit`. read: up to 16,000 chars of one. edit: replace its `text`; attachments stay. cancel. reorder: before `beforeRunId`, or to the end with null. promote_to_steer: send it now as steering to active `targetRunId`. send_all: release and send compatible queued messages together. resume: release a held queue, and the holds this thread's Stop put on its delegated tasks. Writes fail once the run is no longer queued.",
+    "Manage a thread's queued messages. Omit `threadId` for this thread. list: send order, paged by `cursor` and `limit`. read: up to 16,000 chars of one. edit: replace its `text`; attachments stay. cancel. reorder: before `beforeRunId`, or to the end with null. promote_to_steer: send it now as steering to active `targetRunId`. resume: release a held queue, and the holds this thread's Stop put on its delegated tasks. Writes fail once the run is no longer queued.",
   parameters: Schema.Struct({
     action: Schema.Literals([
       ...QUEUE_READ_ACTIONS,
@@ -105,7 +104,6 @@ const QueueTool = Tool.make("t3_queue", {
       "cancel",
       "reorder",
       "promote_to_steer",
-      "send_all",
       "resume",
     ]),
     environmentId: OrchestratorMcpEnvironmentTarget,
@@ -195,11 +193,7 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 const ThreadMoveTool = Tool.make("t3_thread_move", {
   ...commandTool,
   description: "Move an existing thread to another project.",
-  parameters: Schema.Struct({
-    environmentId: OrchestratorMcpEnvironmentTarget,
-    threadId: ThreadId,
-    projectId: ProjectId,
-  }),
+  parameters: Schema.Struct({ threadId: ThreadId, projectId: ProjectId }),
 }).annotate(Tool.Destructive, true);
 
 export const ThreadRestartResult = Schema.Struct({

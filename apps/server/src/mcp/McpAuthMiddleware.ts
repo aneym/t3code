@@ -5,14 +5,14 @@ import type * as Types from "effect/Types";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
-import { noteMcpCaller } from "../observability/RequestLog.ts";
+import { requestUrl } from "../requestUrl.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import { withPeerRequestContext } from "./peerRequestContext.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
-  HttpServerRequest.toURL(request).pipe(
+  requestUrl(request).pipe(
     Option.map((url) => `${url.origin}/.well-known/oauth-protected-resource/mcp`),
   );
 
@@ -112,8 +112,9 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
-  return Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
-    const request = yield* HttpServerRequest.HttpServerRequest;
+  const authenticateRequest = Effect.fn("McpHttpServer.authenticateRequest")(function* (
+    request: HttpServerRequest.HttpServerRequest,
+  ) {
     const authorization = request.headers.authorization;
     const token = parseBearerToken(request) ?? "";
     const invocation =
@@ -141,14 +142,16 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const asked = withPeerRequestContext(invocation, request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
-    yield* noteMcpCaller(limited);
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
+    return { ...limited, linkedEnvironments };
+  });
+  // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
+  return Effect.fnUntraced(function* (httpEffect) {
+    const admitted = yield* authenticateRequest(yield* HttpServerRequest.HttpServerRequest);
+    if (HttpServerResponse.isHttpServerResponse(admitted)) return admitted;
     return yield* httpEffect.pipe(
-      Effect.provideService(McpInvocationContext.McpInvocationContext, {
-        ...limited,
-        linkedEnvironments,
-      }),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, admitted),
       Effect.map(normalizeMcpHttpResponse),
     );
   }) satisfies McpAuthMiddleware;

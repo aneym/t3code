@@ -48,6 +48,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+import * as OrchestratorDispatch from "../orchestration-v2/OrchestratorDispatchError.ts";
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -183,7 +184,7 @@ const cancelBackgroundOnlyTask = (
                   ...service,
                   stopDelegatedTasks: () =>
                     Effect.fail(
-                      new Orchestrator.OrchestratorDispatchError({
+                      new OrchestratorDispatch.OrchestratorDispatchError({
                         commandId: CommandId.make("refused-descendant-stop"),
                         commandType: "thread.stop",
                         cause: "descendant refused stop",
@@ -665,10 +666,6 @@ const cancelBackgroundOnlyTask = (
 
 it.effect("task_cancel ends a delegated child's background native subagent", () =>
   cancelBackgroundOnlyTask("subagent"),
-);
-
-it.effect("task_cancel ends a delegated child's background shell command", () =>
-  cancelBackgroundOnlyTask("command"),
 );
 
 it.effect("task_cancel ends background work while the child's run captures its checkpoint", () =>

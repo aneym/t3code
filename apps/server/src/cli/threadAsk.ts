@@ -1,6 +1,6 @@
 import { NonNegativeInt, OrchestratorMcpThreadSendResult, ThreadId } from "@t3tools/contracts";
 import * as Console from "effect/Console";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Command } from "effect/cli";
@@ -34,8 +34,8 @@ export const threadAskCommand = Command.make("ask", {
     Effect.gen(function* () {
       const threadId = yield* decodeThreadId(flags.thread);
       const message = yield* readMessageArgument(flags.message);
-      const clientRequestId = yield* Crypto.Crypto.pipe(
-        Effect.flatMap((crypto) => crypto.randomUUIDv4()),
+      const clientRequestId = yield* SecureRandom.SecureRandom.pipe(
+        Effect.flatMap((crypto) => crypto.uuidV4()),
         Effect.orDie,
       );
       yield* withOwnerMcpTools(

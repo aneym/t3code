@@ -1,12 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  DeviceHostUnavailableError,
-  DeviceId,
-  EnvironmentId,
-  ProviderInstanceId,
-  ThreadId,
-} from "@t3tools/contracts";
+import { DeviceId, EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -18,6 +12,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
+import * as McpTransport from "./mcpServer/transport.ts";
 
 const environmentId = EnvironmentId.make("environment-device-test");
 const threadId = ThreadId.make("thread-device-test");
@@ -147,7 +142,7 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
 });
 
 const layerTest = McpHttpServer.layerDeviceToolkit.pipe(
-  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+  Layer.provideMerge(McpTransport.layerInProcessMcpServer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provideMerge(layerDeviceServiceMock),
   Layer.provide(layerProjectsMock),
@@ -242,49 +237,6 @@ it.effect("registers the device tools and returns the screenshot as image conten
   ).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("rejects unavailable agent access before booting or opening a device", () => {
-  const layerUnavailable = Layer.mock(DeviceService.DeviceService)({
-    list: Effect.succeed(state),
-    agentReadinessIfSupported: () =>
-      Effect.fail(
-        new DeviceHostUnavailableError({ hostId: "local", reason: "Agent access is disabled." }),
-      ),
-    open: () => Effect.die("Must not boot or register a device when agent access fails"),
-  });
-  return Effect.gen(function* () {
-    const server = yield* McpServer.McpServer;
-    const result = yield* server
-      .callTool({ name: "device_open", arguments: { platform: "ios" } })
-      .pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(["device"])),
-        Effect.provideService(McpSchema.McpServerClient, client),
-      );
-    expect(result.isError).toBe(true);
-    expect(result.content).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: "text",
-          text: expect.stringContaining("Agent access is disabled."),
-        }),
-      ]),
-    );
-  }).pipe(
-    Effect.scoped,
-    Effect.provide(
-      McpHttpServer.layerDeviceToolkit.pipe(
-        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-        Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
-        Layer.provide(layerUnavailable),
-        Layer.provide(layerProjectsMock),
-        Layer.provide(
-          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
-        ),
-        Layer.provide(NodeServices.layer),
-      ),
-    ),
-  );
-});
-
 it.effect("device_open reports a failed host's setup error instead of no devices", () => {
   const failure = "Device support failed: npm was not found. Install Node.js, which includes npm.";
   const failedState = {
@@ -324,7 +276,7 @@ it.effect("device_open reports a failed host's setup error instead of no devices
     Effect.scoped,
     Effect.provide(
       McpHttpServer.layerDeviceToolkit.pipe(
-        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provideMerge(McpTransport.layerInProcessMcpServer),
         Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(layerFailed),
         Layer.provide(layerProjectsMock),
@@ -464,7 +416,7 @@ describe("device targeting across hosts", () => {
       Effect.scoped,
       Effect.provide(
         McpHttpServer.layerDeviceToolkit.pipe(
-          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provideMerge(McpTransport.layerInProcessMcpServer),
           Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
           Layer.provide(layerDevices),
           Layer.provide(layerProjectsMock),

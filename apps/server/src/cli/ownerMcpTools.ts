@@ -1,14 +1,17 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as References from "effect/References";
 import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import { GlobalFlag } from "effect/cli";
 
-import { AcpMcpBridgeError, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
-import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
-import { openOwnerCliSession } from "./ownerCliSession.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerConfig from "../config.ts";
+import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
+import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
 import { resolveCliAuthConfig } from "./config.ts";
 
 export class McpServerNotRunningError extends Schema.TaggedError<McpServerNotRunningError>()(
@@ -46,11 +49,7 @@ export const reportCliErrors =
   (isExpected: (error: unknown) => error is { readonly message: string }) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
-      Effect.tapError((error) =>
-        isExpected(error) || error instanceof AcpMcpBridgeError
-          ? Console.error(error.message)
-          : Effect.void,
-      ),
+      Effect.tapError((error) => (isExpected(error) ? Console.error(error.message) : Effect.void)),
     );
 
 const decodeFailureText = Schema.decodeUnknownOption(Schema.fromJsonString(OrchestratorMcpFailure));
@@ -72,12 +71,9 @@ const toolFailureDetail = (result: typeof ToolResult.Type) => {
   const text = result.content?.find((part) => part.text !== undefined)?.text ?? "";
   return Option.match(decodeFailureText(text), {
     onNone: () => text || "The tool call failed.",
-    onSome: (failure) => `${failure.code}: ${failure.message}`,
+    onSome: (failure) => failure.message,
   });
 };
-
-const classifyBridgeError = (cause: AcpMcpBridgeError, origin: string) =>
-  cause.kind === "transport" ? new McpServerUnreachableError({ origin, cause }) : cause;
 
 const makeOwnerMcpTools = (session: McpToolSession, origin: string) => {
   const unexpected = (tool: string) =>
@@ -90,13 +86,10 @@ const makeOwnerMcpTools = (session: McpToolSession, origin: string) => {
       tool: string,
       args: Readonly<Record<string, unknown>>,
       schema: S,
-    ): Effect.fn.Return<
-      S["Type"],
-      McpServerUnreachableError | McpToolFailedError | AcpMcpBridgeError
-    > {
+    ): Effect.fn.Return<S["Type"], McpServerUnreachableError | McpToolFailedError> {
       const raw = yield* session
         .call(tool, args)
-        .pipe(Effect.mapError((cause) => classifyBridgeError(cause, origin)));
+        .pipe(Effect.mapError((cause) => new McpServerUnreachableError({ origin, cause })));
       const result = yield* decodeToolResult(raw).pipe(Effect.mapError(() => unexpected(tool)));
       if (result.isError === true) {
         return yield* new McpToolFailedError({ tool, detail: toolFailureDetail(result) });
@@ -118,23 +111,37 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
   return yield* Effect.gen(function* () {
-    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+    const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
     if (Option.isNone(runtimeState)) {
       return yield* new McpServerNotRunningError({ baseDir: config.baseDir });
     }
     const origin = runtimeState.value.origin;
-    const session = yield* openOwnerCliSession(
-      config,
-      new URL("/mcp", origin).href,
-      command,
-      headers,
-    ).pipe(
-      Effect.catchTags({
-        AcpMcpBridgeError: (cause) => Effect.fail(classifyBridgeError(cause, origin)),
-        CliDatabaseMissingError: (cause) =>
-          Effect.fail(new McpServerUnreachableError({ origin, cause })),
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const issued = yield* Effect.acquireRelease(
+      environmentAuth.issueMcpClientSession({
+        label: `t3 ${command} cli`,
+        access: "full-access",
+        peerLink: false,
+        ownerCli: true,
+        client: { deviceType: "bot" },
       }),
+      (session) =>
+        environmentAuth.revokeSession(session.sessionId).pipe(Effect.ignore({ log: true })),
     );
+    const session = yield* mcpToolSession({
+      endpoint: new URL("/mcp", origin).href,
+      authorization: `Bearer ${issued.token}`,
+      clientName: `t3-${command}-cli`,
+      ...(headers === undefined ? {} : { headers }),
+    }).pipe(Effect.mapError((cause) => new McpServerUnreachableError({ origin, cause })));
     return yield* run(makeOwnerMcpTools(session, origin));
-  }).pipe(Effect.scoped);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      EnvironmentAuth.layerRuntime.pipe(
+        Layer.provide(ServerConfig.layer(config)),
+        Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
+      ),
+    ),
+  );
 });

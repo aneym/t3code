@@ -1,6 +1,7 @@
 import type { ProjectionRecordField } from "../orchestration-v2/ProjectionStore.ts";
 import {
   CommandId,
+  type OrchestrationV2TurnItem,
   OrchestratorMcpFailure,
   type ProjectId,
   type ProviderInstanceId,
@@ -12,7 +13,7 @@ import {
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
-import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
+import type { OrchestratorV2Error } from "../orchestration-v2/OrchestratorErrors.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -182,7 +183,11 @@ const resolveThreadId = (context: Caller, threadId: ThreadId | undefined) =>
 
 export const readThread = Effect.fn("mcp.readThread")(function* <
   K extends ProjectionRecordField = never,
->(threadId?: ThreadId, fields: ReadonlyArray<K> = []) {
+>(
+  threadId?: ThreadId,
+  fields: ReadonlyArray<K> = [],
+  turnItemTypes: ReadonlyArray<OrchestrationV2TurnItem["type"]> = ["user_input_request"],
+) {
   const context = yield* readCaller();
   const targetId = yield* resolveThreadId(context, threadId);
   const shell = yield* context.threads.getThreadShell(targetId).pipe(Effect.mapError(unavailable));
@@ -191,7 +196,7 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
   }
   const projection = yield* context.threads
     .getProjectThreadRecords({ projectId: shell.projectId, threadId: targetId }, fields, {
-      turnItemTypes: ["user_input_request"],
+      turnItemTypes,
     })
     .pipe(
       Effect.mapError((error) =>

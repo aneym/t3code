@@ -16,12 +16,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
+import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { cliRefusal } from "../cliRefusal.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 
 import * as ServerConfig from "../config.ts";
@@ -102,7 +104,7 @@ export class ProjectLiveServerRequestError extends Schema.TaggedError<ProjectLiv
   },
 ) {
   override get message(): string {
-    return "Failed to call the running server.";
+    return "The running T3 Code server did not respond in time. It may be busy; retry.";
   }
 }
 
@@ -113,6 +115,8 @@ export class ProjectTitleEmptyError extends Schema.TaggedError<ProjectTitleEmpty
     title: Schema.String,
   },
 ) {
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
   override get message(): string {
     return "Project title cannot be empty.";
   }
@@ -125,6 +129,8 @@ export class ProjectIdentifierEmptyError extends Schema.TaggedError<ProjectIdent
     identifier: Schema.String,
   },
 ) {
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
   override get message(): string {
     return "Project identifier cannot be empty.";
   }
@@ -140,6 +146,8 @@ export class ProjectNotFoundError extends Schema.TaggedError<ProjectNotFoundErro
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
   override get message(): string {
     return `No active project found for '${this.identifier}'.`;
   }
@@ -153,6 +161,8 @@ export class ProjectAlreadyExistsError extends Schema.TaggedError<ProjectAlready
     workspaceRoot: Schema.String,
   },
 ) {
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
   override get message(): string {
     return `An active project already exists for '${this.workspaceRoot}'.`;
   }
@@ -221,7 +231,6 @@ const makeProjectCliRuntimeLayer = (layerProjectService: typeof RuntimeLayer.lay
     Layer.provideMerge(SqlitePersistence.layerConfig),
   );
 
-const PROJECT_CLI_LIVE_SERVER_PROBE_TIMEOUT = Duration.seconds(1);
 const PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT = Duration.seconds(10);
 const withProjectCliSessionToken = <A, E, R>(
   environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
@@ -325,14 +334,17 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
 });
 
 const fetchLiveOrchestrationSnapshot = Effect.fn("project.fetchLiveOrchestrationSnapshot")(
-  function* (origin: string, bearerToken: string, _timeout?: Duration.Duration) {
+  function* (origin: string, bearerToken: string) {
     const client = yield* makeLiveServerClient(origin);
     return yield* client.projects.snapshot({
       headers: { authorization: `Bearer ${bearerToken}` },
     });
   },
-  (effect, _origin, _bearerToken, timeout = PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT) =>
-    effect.pipe(Effect.timeout(timeout), Effect.mapError(projectCommandErrorFromLiveServerRequest)),
+  (effect, _origin, _bearerToken) =>
+    effect.pipe(
+      Effect.timeout(PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT),
+      Effect.mapError(projectCommandErrorFromLiveServerRequest),
+    ),
 );
 
 const dispatchLiveOrchestrationCommand = Effect.fn("project.dispatchLiveOrchestrationCommand")(
@@ -355,40 +367,10 @@ const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
   return yield* projects.snapshot;
 });
 
-const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecutionMode")(
-  function* (
-    environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
-    config: ServerConfig.ServerConfig["Service"],
-  ) {
-    const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
-    if (Option.isNone(runtimeState)) {
-      return Option.none<{ readonly origin: string }>();
-    }
-
-    const attempt = withProjectCliSessionToken(environmentAuth, (token) =>
-      fetchLiveOrchestrationSnapshot(
-        runtimeState.value.origin,
-        token,
-        PROJECT_CLI_LIVE_SERVER_PROBE_TIMEOUT,
-      ).pipe(
-        Effect.as({
-          origin: runtimeState.value.origin,
-        }),
-      ),
-    );
-
-    const attempted = yield* Effect.result(attempt);
-    if (attempted._tag === "Success") {
-      return Option.some(attempted.success);
-    }
-
-    yield* Effect.logDebug("Failed to connect to the persisted project CLI server.", {
-      origin: runtimeState.value.origin,
-      cause: attempted.failure,
-    });
-    return Option.none<{ readonly origin: string }>();
-  },
-);
+const liveServerOrigin = Effect.fn("liveServerOrigin")(function* (statePath: string) {
+  const runtimeState = yield* readLiveServerRuntimeState(statePath);
+  return Option.map(runtimeState, (state) => state.origin);
+});
 
 const runProjectMutation = Effect.fn("runProjectMutation")(function* (
   flags: CliAuthLocationFlags,
@@ -414,16 +396,16 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
 
   return yield* Effect.gen(function* () {
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const liveMode = yield* tryResolveLiveProjectExecutionMode(environmentAuth, config);
+    const liveOrigin = yield* liveServerOrigin(config.serverRuntimeStatePath);
 
-    if (Option.isSome(liveMode)) {
+    if (Option.isSome(liveOrigin)) {
       return yield* withProjectCliSessionToken(environmentAuth, (token) =>
         Effect.gen(function* () {
-          const snapshot = yield* fetchLiveOrchestrationSnapshot(liveMode.value.origin, token);
+          const snapshot = yield* fetchLiveOrchestrationSnapshot(liveOrigin.value, token);
           const output = yield* run({
             snapshot,
             dispatch: (command) =>
-              dispatchLiveOrchestrationCommand(liveMode.value.origin, token, command),
+              dispatchLiveOrchestrationCommand(liveOrigin.value, token, command),
             mode: "live",
           });
           yield* Console.log(output);
@@ -443,6 +425,10 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
     // An unreachable server may still be running; never write behind it.
     yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath).pipe(
       Effect.provide(ProcessRunner.layer),
+      Effect.catchTags({
+        ServerAlreadyRunningError: (cause) =>
+          Effect.fail(new ProjectLiveServerRequestError({ operation: "callLiveServer", cause })),
+      }),
     );
     yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
     return yield* Effect.gen(function* () {

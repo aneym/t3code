@@ -1,6 +1,7 @@
 import {
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadWaitResult,
+  type OrchestratorMcpThreadRun,
   type OrchestratorMcpThreadStatus,
   type OrchestratorMcpThreadTimelineItem,
   type RunId,
@@ -13,7 +14,17 @@ import { printJson, type OwnerMcpTools } from "./ownerMcpTools.ts";
 import { ThreadNeedsInputError, ThreadRunEndedError } from "./threadCommon.ts";
 
 const WAIT_SLICE_MS = 15_000;
+const WAKE_GRACE_MS = 10_000;
+const WAKE_POLL_MS = 500;
+const TERMINAL_RUN_STATUSES = new Set<OrchestratorMcpThreadRun["status"]>([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "rolled_back",
+]);
 const READ_PAGE_LIMIT = 100;
+const READ_ITEM_MAX_CHARS = 20_000;
 const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
   tools: OwnerMcpTools,
   threadId: ThreadId,
@@ -29,6 +40,7 @@ const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
         threadId,
         view,
         limit: READ_PAGE_LIMIT,
+        maxCharsPerItem: READ_ITEM_MAX_CHARS,
         runLimit: 1,
         ...(afterPosition === undefined ? {} : { afterPosition }),
       },
@@ -74,6 +86,7 @@ export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(fun
           threadId,
           view: "messages",
           limit: READ_PAGE_LIMIT,
+          maxCharsPerItem: READ_ITEM_MAX_CHARS,
           runLimit: 1,
           ...(afterPosition < 0 ? {} : { afterPosition }),
         },
@@ -107,7 +120,13 @@ export const readFullText = Effect.fn("cli.thread.readFullText")(function* (
   while (nextTextOffset !== null) {
     const page = yield* tools.call(
       "t3_thread_read",
-      { threadId, itemId: item.itemId, textOffset: nextTextOffset, runLimit: 1 },
+      {
+        threadId,
+        itemId: item.itemId,
+        textOffset: nextTextOffset,
+        runLimit: 1,
+        maxCharsPerItem: READ_ITEM_MAX_CHARS,
+      },
       OrchestratorMcpThreadReadResult,
     );
     const chunk = page.items.find((candidate) => candidate.itemId === item.itemId);
@@ -141,27 +160,107 @@ type WaitOutcome =
     }
   | { readonly type: "needs_input" };
 
-export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
+export const threadIsIdle = Effect.fn("cli.thread.threadIsIdle")(function* (
+  tools: OwnerMcpTools,
+  threadId: ThreadId,
+) {
+  const waited = yield* tools.call(
+    "t3_thread_wait",
+    { threadId, timeoutMs: 1, untilDelegatedWorkSettled: true },
+    OrchestratorMcpThreadWaitResult,
+  );
+  return !waited.timedOut;
+});
+
+const runsAfter = Effect.fn("cli.thread.runsAfter")(function* (
   tools: OwnerMcpTools,
   threadId: ThreadId,
   runId: RunId,
 ) {
-  const waitSlice = (timeoutMs: number) =>
-    tools.call("t3_thread_wait", { threadId, runId, timeoutMs }, OrchestratorMcpThreadWaitResult);
+  const { recentRuns } = yield* tools.call(
+    "t3_thread_read",
+    { threadId, limit: 1, runLimit: 50 },
+    OrchestratorMcpThreadReadResult,
+  );
+  const own = recentRuns.find((run) => run.runId === runId);
+  if (own === undefined) return { later: [], sent: true };
+  const later = recentRuns.filter((run) => run.ordinal > own.ordinal);
+  if (later.length === 0) return { later, sent: false };
+  const { items } = yield* readTimeline(tools, threadId, "messages");
+  const sent = items.some(
+    (item) => item.type === "user_message" && later.some((run) => run.runId === item.runId),
+  );
+  return { later, sent };
+});
+
+export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
+  tools: OwnerMcpTools,
+  threadId: ThreadId,
+  runId: RunId,
+  followWakes = false,
+) {
+  const waitSlice = (timeoutMs: number, untilDelegatedWorkSettled?: true) =>
+    tools.call(
+      "t3_thread_wait",
+      {
+        threadId,
+        runId,
+        timeoutMs,
+        ...(untilDelegatedWorkSettled ? { untilDelegatedWorkSettled } : {}),
+      },
+      OrchestratorMcpThreadWaitResult,
+    );
   const ended = (waited: OrchestratorMcpThreadWaitResult) =>
     ({ type: "ended", runId: waited.runId, status: waited.status }) satisfies WaitOutcome;
+  const ownRun = Effect.gen(function* () {
+    while (true) {
+      const waited = yield* waitSlice(WAIT_SLICE_MS);
+      if (!waited.timedOut) return ended(waited);
+      const { thread } = yield* tools.call(
+        "t3_thread_read",
+        { threadId, limit: 1, runLimit: 1 },
+        OrchestratorMcpThreadReadResult,
+      );
+      if (thread.pendingRequestCount > 0) {
+        const recheck = yield* waitSlice(1);
+        return recheck.timedOut ? ({ type: "needs_input" } satisfies WaitOutcome) : ended(recheck);
+      }
+    }
+  });
+  const outcome = yield* ownRun;
+  if (!followWakes || outcome.type !== "ended" || outcome.status !== "completed") return outcome;
+  const finalRunId = outcome.runId ?? runId;
+  const wakeRunRecorded = Effect.gen(function* () {
+    for (let waited = 0; waited < WAKE_GRACE_MS; waited += WAKE_POLL_MS) {
+      yield* Effect.sleep(WAKE_POLL_MS);
+      const after = yield* runsAfter(tools, threadId, finalRunId);
+      if (after.sent) return false;
+      if (after.later.length > 0) return true;
+    }
+    return false;
+  });
+  let workOutlivedRun = false;
   while (true) {
-    const waited = yield* waitSlice(WAIT_SLICE_MS);
-    if (!waited.timedOut) return ended(waited);
+    const waited = yield* waitSlice(WAIT_SLICE_MS, true);
+    const result = waited.timedOut ? undefined : waited.resultRun;
+    const after = yield* runsAfter(tools, threadId, finalRunId);
+    if (after.sent) return outcome;
+    if (!waited.timedOut) {
+      if (result !== undefined && after.later.some((run) => run.runId === result.runId)) {
+        return { type: "ended", runId: result.runId, status: result.status } satisfies WaitOutcome;
+      }
+      if (!workOutlivedRun) return outcome;
+      if (after.later.some((run) => !TERMINAL_RUN_STATUSES.has(run.status))) continue;
+      if (after.later.length === 0 && (yield* wakeRunRecorded)) continue;
+      return outcome;
+    }
+    workOutlivedRun = true;
     const { thread } = yield* tools.call(
       "t3_thread_read",
       { threadId, limit: 1, runLimit: 1 },
       OrchestratorMcpThreadReadResult,
     );
-    if (thread.pendingRequestCount > 0) {
-      const recheck = yield* waitSlice(1);
-      return recheck.timedOut ? ({ type: "needs_input" } satisfies WaitOutcome) : ended(recheck);
-    }
+    if (thread.pendingRequestCount > 0) return { type: "needs_input" } satisfies WaitOutcome;
   }
 });
 
@@ -171,11 +270,12 @@ export const finishRun = Effect.fn("cli.thread.finishRun")(function* (
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly json: boolean;
+    readonly followWakes?: boolean;
     readonly extra?: Readonly<Record<string, unknown>>;
     readonly includeRun?: boolean;
   },
 ) {
-  const outcome = yield* waitForRun(tools, input.threadId, input.runId);
+  const outcome = yield* waitForRun(tools, input.threadId, input.runId, input.followWakes);
   const runId = outcome.type === "ended" ? (outcome.runId ?? input.runId) : input.runId;
   const status = outcome.type === "ended" ? outcome.status : "waiting";
   const reply =

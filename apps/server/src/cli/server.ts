@@ -1,3 +1,4 @@
+import { appNameRefusal } from "@t3tools/shared/appName";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,6 +14,7 @@ import * as DatabaseMaintenance from "../persistence/DatabaseMaintenance.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as AutomaticPort from "./automaticPort.ts";
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
+import { reportServerFailureToStderr } from "./serverFailureReport.ts";
 
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
@@ -24,6 +26,13 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
     readonly rejectRunningServer?: boolean;
   },
 ) {
+  const appNameProblem = yield* appNameRefusal;
+  if (appNameProblem !== null) {
+    return yield* Effect.sync(() => {
+      process.stderr.write(`${appNameProblem}\n`);
+      return process.exit(1);
+    });
+  }
   // Before config resolution, which claims a port and creates directories.
   const { runServer } = yield* Effect.promise(() => import("../server.ts"));
   const logLevel = yield* GlobalFlag.LogLevel;
@@ -48,7 +57,7 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
       Effect.andThen(Effect.interrupt),
     ),
   );
-});
+}, reportServerFailureToStderr);
 
 export const runDefaultServerCommand = Effect.fn("server.runDefaultServerCommand")(function* (
   flags: CliServerFlags,

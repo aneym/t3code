@@ -7,6 +7,7 @@ import {
   type ThreadMetadataMcpUpdateInput,
   type ThreadMetadataMcpUpdateResult,
   ThreadId,
+  ScheduledTaskId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -15,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { threadNotFound } from "./threadAccess.ts";
 
@@ -72,6 +74,18 @@ function metadataCommand(input: {
         threadId: input.threadId,
         title: input.update.title!,
       };
+    case "mark_automation":
+    case "unmark_automation":
+      return {
+        type: "thread.metadata.update",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        automationTaskId:
+          input.update.action === "unmark_automation"
+            ? null
+            : (input.update.automationTaskId ??
+              ScheduledTaskId.make(`automation:thread:${input.threadId}`)),
+      };
     case "regenerate_title":
       return {
         type: "thread.metadata.update",
@@ -88,7 +102,7 @@ function resultFromThread(input: {
   readonly sequence: number;
   readonly thread: Pick<
     OrchestrationV2AppThread,
-    "id" | "title" | "titleRegeneration" | "linkedPullRequest" | "updatedAt"
+    "id" | "title" | "automationTaskId" | "titleRegeneration" | "linkedPullRequest" | "updatedAt"
   >;
 }): ThreadMetadataMcpUpdateResult {
   return {
@@ -97,6 +111,7 @@ function resultFromThread(input: {
     commandId: input.commandId,
     sequence: input.sequence,
     title: input.thread.title,
+    automationTaskId: input.thread.automationTaskId ?? null,
     titleRegeneration:
       input.thread.titleRegeneration === undefined || input.thread.titleRegeneration === null
         ? null
@@ -111,6 +126,7 @@ function resultFromThread(input: {
 
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
+  const scheduledTasks = yield* ScheduledTaskService;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
 
   const update = Effect.fn("ThreadMetadataMcpService.update")(function* (
@@ -144,6 +160,21 @@ const make = Effect.gen(function* () {
     if (shell === null || shell.deletedAt !== null) {
       return yield* threadNotFound(threadManagement, threadId, `Thread ${threadId} was not found.`);
     }
+    if (
+      input.action === "mark_automation" &&
+      input.automationTaskId !== undefined &&
+      input.automationTaskId !== `automation:thread:${threadId}`
+    ) {
+      const { tasks } = yield* scheduledTasks
+        .list()
+        .pipe(Effect.mapError((error) => failure("orchestration_error", errorMessage(error))));
+      if (!tasks.some((task) => task.id === input.automationTaskId)) {
+        return yield* failure(
+          "invalid_request",
+          "automationTaskId must name an existing scheduled task in this environment or this thread's automation self-mark. Omit it to mark this thread manually.",
+        );
+      }
+    }
     const requestKey =
       input.clientRequestId === undefined ? yield* random.uuidV4() : input.clientRequestId;
     const updateCommandId = commandId({
@@ -157,7 +188,12 @@ const make = Effect.gen(function* () {
         metadataCommand({
           commandId: updateCommandId,
           threadId,
-          update: input,
+          update:
+            input.action === "mark_automation" &&
+            input.automationTaskId === undefined &&
+            shell.automationTaskId != null
+              ? { ...input, automationTaskId: shell.automationTaskId }
+              : input,
         }),
       )
       .pipe(
@@ -198,5 +234,5 @@ const make = Effect.gen(function* () {
 export const layer: Layer.Layer<
   ThreadMetadataMcpService,
   never,
-  SecureRandom.SecureRandom | ThreadManagementService.ThreadManagementService
+  SecureRandom.SecureRandom | ThreadManagementService.ThreadManagementService | ScheduledTaskService
 > = Layer.effect(ThreadMetadataMcpService, make);
