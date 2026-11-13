@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 DEFAULT_LOCKS = (
-    "~/.local/state/rails-one-land/active/*.lock",
+    "~/.local/state/rails-one-land/active/*",
     "~/.local/state/rails-one-land/check-slots/slot-*",
 )
 DEFAULT_WAIT_S = 1800
