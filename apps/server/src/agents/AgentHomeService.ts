@@ -33,6 +33,7 @@ import {
   writeBinding,
   writeOffice,
 } from "./AgentHomeFiles.ts";
+import { createLaneIndex } from "./AgentLaneFiles.ts";
 
 export class AgentHomeService extends Context.Service<
   AgentHomeService,
@@ -58,6 +59,7 @@ export const layer = Layer.effect(
     const scheduledTasks = yield* ScheduledTaskService;
     const settings = yield* ServerSettingsService;
     const crypto = yield* SecureRandom.SecureRandom;
+    const laneIndex = createLaneIndex(path.join(root, "..", "lanes"), NodeOS.hostname());
     const snapshots = yield* SubscriptionRef.make<AgentHomesSnapshot>({ homes: [] });
     const refreshLock = yield* Semaphore.make(1);
     const locks = new Map<string, Semaphore.Semaphore>();
@@ -65,7 +67,7 @@ export const layer = Layer.effect(
     const refresh = Effect.fn("AgentHomeService.refresh")(function* () {
       const generation = homesGeneration(root);
       const snapshot = yield* Effect.tryPromise({
-        try: () => readHomes(root),
+        try: () => readHomes(root, false, laneIndex),
         catch: (cause) => new AgentHomeError({ message: "Unable to read agent homes", cause }),
       }).pipe(Effect.tapError(() => Effect.sync(() => (snapshotGeneration = undefined))));
       const current = yield* SubscriptionRef.get(snapshots);
