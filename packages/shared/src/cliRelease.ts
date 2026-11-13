@@ -62,12 +62,12 @@ export function releaseAssetUrl(baseUrl: string, ...segments: ReadonlyArray<stri
 }
 
 /** A file of release `version`, from `baseUrl` laid out as GitHub's release downloads. */
-export function cliReleaseAssetUrl(
-  version: string,
-  fileName: string,
-  baseUrl: string | undefined = CLI_RELEASE_DEFAULT_BASE_URL,
-): string {
-  return releaseAssetUrl(baseUrl?.trim() || CLI_RELEASE_DEFAULT_BASE_URL, `v${version}`, fileName);
+export function cliReleaseAssetUrl(version: string, fileName: string, baseUrl?: string): string {
+  return releaseAssetUrl(
+    baseUrl?.trim() || cliReleaseDefaultBaseUrl(version),
+    `v${version}`,
+    fileName,
+  );
 }
 
 export function parseChecksums(text: string): ReadonlyMap<string, string> {
@@ -98,7 +98,7 @@ export function isCliForkVersion(version: string): boolean {
   return CLI_FORK_VERSION_RE.test(version);
 }
 
-export function cliReleaseRepositoryOf(version: string): string {
+function cliReleaseRepositoryOf(version: string): string {
   return isCliForkVersion(version) ? CLI_FORK_RELEASE_REPOSITORY : CLI_RELEASE_REPOSITORY;
 }
 

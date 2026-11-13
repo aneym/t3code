@@ -1,5 +1,4 @@
 import {
-  mcpEventOfMessage,
   parseGoalCommand,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2Run,
@@ -16,11 +15,10 @@ export const MAX_QUEUED_MESSAGE_BATCH_SIZE = 20;
 export function batchableQueuedMessage(
   projection: Pick<QueueProjection, "messages">,
   run: OrchestrationV2Run,
-  releaseHeld = false,
 ): OrchestrationV2ConversationMessage | undefined {
   if (
     run.status !== "queued" ||
-    (!releaseHeld && run.queueHeld === true) ||
+    run.queueHeld === true ||
     run.restartContinuationOfRunId !== undefined ||
     run.delegatedTaskId !== undefined ||
     run.sourcePlanRef !== undefined
@@ -46,33 +44,4 @@ export function compatibleQueuedRuns(first: OrchestrationV2Run, next: Orchestrat
     modelSelectionsEqual(first.modelSelection, next.modelSelection) &&
     first.workspacePreparation?.type === next.workspacePreparation?.type
   );
-}
-
-export function sendAllQueuedMembers(projection: QueueProjection) {
-  const members: Array<{
-    readonly run: OrchestrationV2Run;
-    readonly message: OrchestrationV2ConversationMessage;
-  }> = [];
-  const ordered = projection.runs
-    .filter((run) => run.status === "queued")
-    .sort(
-      (left, right) =>
-        (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
-        left.ordinal - right.ordinal,
-    );
-  for (const run of ordered) {
-    const message = batchableQueuedMessage(projection, run, true);
-    if (
-      message === undefined ||
-      message.delegatedCompletion !== undefined ||
-      mcpEventOfMessage(message) !== null ||
-      (message.creationSource === "server" && message.id.startsWith("async-answer:"))
-    )
-      continue;
-    const first = members[0]?.run;
-    if (first !== undefined && !compatibleQueuedRuns(first, run)) continue;
-    members.push({ run, message });
-    if (members.length === MAX_QUEUED_MESSAGE_BATCH_SIZE) break;
-  }
-  return members;
 }

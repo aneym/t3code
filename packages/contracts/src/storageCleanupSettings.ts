@@ -1,6 +1,5 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const StorageRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
@@ -8,13 +7,6 @@ export const StorageRetentionDays = Schema.NullOr(
 export const SettledWorktreeRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3650 })),
 );
-
-export const DisposableIgnoredPaths = Schema.Array(
-  TrimmedNonEmptyString.check(
-    Schema.isMaxLength(200),
-    Schema.isPattern(/^(?!(?:[\w.*?[\]!@+~/-]*\/)?\.\.(?:\/|$))[\w.*?[\]!@+~/-]+$/),
-  ),
-).check(Schema.isMaxLength(50));
 
 export const WorktreeKeepWhen = Schema.Literals([
   "any-local-files",
@@ -34,10 +26,6 @@ export const WorktreeCleanupRules = Schema.Struct({
   worktreeOnMerge: Schema.Boolean,
   worktreeOnDelete: Schema.Boolean,
   worktreeUnchanged: Schema.Boolean,
-  worktreeRequireIntegrated: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeContentIntegration: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(false)),
-  ),
 });
 export type WorktreeCleanupRules = typeof WorktreeCleanupRules.Type;
 export const WorktreeCleanupRulesPatchFields = {
@@ -47,8 +35,6 @@ export const WorktreeCleanupRulesPatchFields = {
   worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
   worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
   worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
-  worktreeRequireIntegrated: Schema.optionalKey(Schema.Boolean),
-  worktreeContentIntegration: Schema.optionalKey(Schema.Boolean),
 };
 
 export const WorktreeCleanup = Schema.NullOr(
@@ -70,22 +56,10 @@ export const StorageCleanupSettings = Schema.Struct({
   worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeUnchanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeRequireIntegrated: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeContentIntegration: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(false)),
-  ),
   browserArtifactsAfterDays: StorageRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   logsAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  threadHistoryAfterDays: StorageRetentionDays.pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  worktreeOrphans: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeDisposableIgnoredPaths: DisposableIgnoredPaths.pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
-  worktreeAcceptPushed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
@@ -93,8 +67,4 @@ export const StorageCleanupSettingsPatch = Schema.Struct({
   ...WorktreeCleanupRulesPatchFields,
   browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
   logsAfterDays: Schema.optionalKey(StorageRetentionDays),
-  threadHistoryAfterDays: Schema.optionalKey(StorageRetentionDays),
-  worktreeDisposableIgnoredPaths: Schema.optionalKey(DisposableIgnoredPaths),
-  worktreeOrphans: Schema.optionalKey(Schema.Boolean),
-  worktreeAcceptPushed: Schema.optionalKey(Schema.Boolean),
 });

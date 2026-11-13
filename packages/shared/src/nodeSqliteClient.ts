@@ -45,6 +45,13 @@ const ReadOnly = Context.Reference<typeof Effect.interruptible | undefined>(
   { defaultValue: () => undefined },
 );
 
+const Priority = Context.Reference<boolean>("@t3tools/shared/nodeSqliteClient/Priority", {
+  defaultValue: () => false,
+});
+
+export const prioritized = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.provideService(effect, Priority, true);
+
 /** Wrap the whole transaction; existing write transactions retain the writer, and writes on the reader fail as readonly. */
 export const readOnly = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.uninterruptibleMask((restore) =>
@@ -668,18 +675,14 @@ const make = Effect.fn("makeWithDatabase")(function* (
           allowExtension: false,
         }),
       catch: (cause) =>
-        new SqlError({
-          reason: classifyError(cause, "Failed to open database", "open"),
-        }),
+        new SqlError({ reason: classifyError(cause, "Failed to open database", "open") }),
     });
     yield* Scope.addFinalizer(
       scope,
       Effect.try({
         try: () => db.close(),
         catch: (cause) =>
-          new SqlError({
-            reason: classifyError(cause, "Failed to close database", "close"),
-          }),
+          new SqlError({ reason: classifyError(cause, "Failed to close database", "close") }),
       }).pipe(Effect.orDie),
     );
     const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
@@ -697,9 +700,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
       Effect.try({
         try: () => db.prepare(sql),
         catch: (cause) =>
-          new SqlError({
-            reason: classifyError(cause, "Failed to prepare statement", "prepare"),
-          }),
+          new SqlError({ reason: classifyError(cause, "Failed to prepare statement", "prepare") }),
       });
 
     const prepareCache = yield* Cache.makeWith(prepare, {
@@ -819,7 +820,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const readerPool = { unavailable: false };
   const readers =
     options.readerWorker && isFileDatabase
-      ? yield* Effect.forEach(Array.from({ length: READER_POOL_SIZE }), () =>
+      ? yield* Effect.forEach(Array.from({ length: READER_POOL_SIZE + 1 }), () =>
           Effect.map(
             Effect.all([makeReader(options.filename, readerPool), Semaphore.make(1)]),
             ([acquire, lock]) => ({
@@ -849,8 +850,11 @@ const make = Effect.fn("makeWithDatabase")(function* (
         return writer;
       }
       // Least claimed wins and ties go to the lowest slot, so idle slots never start a worker.
-      let slot = readers[0]!;
-      for (const candidate of readers) if (candidate.claims < slot.claims) slot = candidate;
+      const reserved = readers.at(-1)!;
+      let slot = Context.get(fiber.context, Priority) ? reserved : readers[0]!;
+      if (slot !== reserved)
+        for (const candidate of readers)
+          if (candidate !== reserved && candidate.claims < slot.claims) slot = candidate;
       slot.claims++;
       const reader = slot;
       return Effect.andThen(

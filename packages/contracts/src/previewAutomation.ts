@@ -11,7 +11,6 @@ import {
 } from "./preview.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
-import { PreviewAutomationDevice } from "./previewAutomationDevice.ts";
 
 const BoundedUrl = Schema.String.check(Schema.isTrimmed())
   .check(Schema.isNonEmpty())
@@ -139,7 +138,6 @@ export const PreviewAutomationStatus = Schema.Struct({
   ),
   profiles: Schema.optional(Schema.Array(PreviewAutomationProfile)),
   defaultProfileId: Schema.optional(BrowserProfileId),
-  devices: Schema.optional(Schema.Array(PreviewAutomationDevice)),
 });
 export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
 
@@ -173,7 +171,6 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   profileId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))).annotate({
     description: PROFILE_GUIDANCE,
   }),
-  device: Schema.optional(TrimmedNonEmptyString),
 }).check(
   Schema.makeFilter(
     (input) =>
