@@ -1615,7 +1615,7 @@ it.effect.each(["failed", "interrupted"] as const)(
         createdBy: "user",
         creationSource: "web",
       });
-      assert.equal(sentAfter.delivery, "queued");
+      assert.equal(sentAfter.delivery, "held");
       yield* threads.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make(`command:launch:late-queued-follow-up-${ending}:wake`),
@@ -1642,7 +1642,7 @@ it.effect.each(["failed", "interrupted"] as const)(
         createdBy: "user",
         creationSource: "web",
       });
-      assert.equal(sentAgain.delivery, "queued");
+      assert.equal(sentAgain.delivery, "held");
       const after = yield* threads.getThreadProjection(launched.threadId);
       assert.isTrue(after.runs.find((run) => run.id === held.id)?.queueHeld);
       assert.deepStrictEqual(
