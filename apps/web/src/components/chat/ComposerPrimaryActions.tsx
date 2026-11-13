@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  ArrowUpIcon,
   CheckIcon,
   ChevronLeftIcon,
   Minimize2Icon,
@@ -14,6 +15,7 @@ import {
   CornerUpRightIcon,
   ListPlusIcon,
 } from "lucide-react";
+import { useEmbedHostConnected } from "~/embed/embedHost";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { formatContextWindowTokens } from "~/lib/contextWindow";
 import { cn, isMacPlatform } from "~/lib/utils";
@@ -144,6 +146,7 @@ function StopGenerationButton({
         render={
           <button
             type="button"
+            data-chat-composer-stop=""
             className={cn(
               "flex shrink-0 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-control-highlight transition-colors duration-150 hover:bg-destructive active:inset-shadow-control-pressed active:shadow-none disabled:cursor-default disabled:opacity-64 disabled:hover:bg-destructive/90 [&_svg]:pointer-events-none",
               insidePendingAction ? "size-8 sm:size-7" : "size-8 sm:h-8 sm:w-8",
@@ -265,7 +268,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     }) === "queue";
   const alternateAction = alternateComposerDispatchAction(followUpBehavior);
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
-  const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
+  const embedded = useEmbedHostConnected();
+  const backdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
+  const stageBackdropVariant = embedded ? null : backdropVariant;
 
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
     <StopGenerationButton
@@ -395,6 +400,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const sendButton = (
     <button
       type={showResume ? "button" : "submit"}
+      data-chat-composer-send=""
       className={cn(
         "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-control-highlight hover:scale-105 active:inset-shadow-control-pressed active:shadow-none disabled:pointer-events-none disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8 [&_svg]:pointer-events-none",
         stageBackdropVariant
@@ -426,6 +432,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         <ListPlusIcon className="size-4" aria-hidden="true" />
       ) : isRunning ? (
         <CornerUpRightIcon className="size-4" aria-hidden="true" />
+      ) : embedded ? (
+        <ArrowUpIcon className="size-4" aria-hidden="true" />
       ) : (
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
           <path

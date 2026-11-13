@@ -10,48 +10,11 @@ import {
   useEnvironmentSupportsServerBrowser,
 } from "~/state/entities";
 
-import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
-import { readPreparedConnection } from "~/state/session";
-
-import {
-  type RemoteDeviceAccess,
-  type RemoteDeviceAccessFor,
-  remoteDeviceAccess,
-  remoteDeviceTabAccess,
-  useRemoteDeviceAccessFor,
-} from "./remoteDeviceAccess";
-import { nativeTabFailed, useNativeTabFailures } from "./nativeTabFailures";
-import { publicTabUrl } from "./remoteTabUrl";
-
-type NativeTabSnapshot = Pick<
-  PreviewSessionSnapshot,
-  "tabId" | "runtime" | "device" | "headless" | "navStatus"
->;
-
-export function isLocalPreviewEnvironment(
-  environmentId: EnvironmentId,
-  primaryEnvironmentId: EnvironmentId | null,
-): boolean {
-  if (environmentId === primaryEnvironmentId) return true;
-  const target = readPreparedConnection(environmentId)?.target;
-  return target !== undefined && isDesktopLocalConnectionTarget(target);
-}
-
-export function guardsPreviewTab(
-  environmentId: EnvironmentId,
-  primaryEnvironmentId: EnvironmentId | null,
-  access: RemoteDeviceAccess,
-): boolean {
-  return access !== "off" && !isLocalPreviewEnvironment(environmentId, primaryEnvironmentId);
-}
-
 export function previewRuntimeFor(environmentId: EnvironmentId): PreviewRuntime | undefined {
   if (!readEnvironmentSupportsServerBrowser(environmentId)) return undefined;
-  const primaryEnvironmentId = appAtomRegistry.get(primaryEnvironmentIdAtom);
   if (
     isPreviewSupportedInRuntime() &&
-    environmentId !== primaryEnvironmentId &&
-    !guardsPreviewTab(environmentId, primaryEnvironmentId, remoteDeviceAccess())
+    environmentId !== appAtomRegistry.get(primaryEnvironmentIdAtom)
   ) {
     return undefined;
   }
@@ -81,43 +44,20 @@ export function usePreviewAvailable(environmentId: EnvironmentId | null): boolea
 export function rendersServerTabNatively(
   environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
-  snapshot: NativeTabSnapshot | null | undefined,
-  accessFor: RemoteDeviceAccessFor,
+  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "headless"> | null | undefined,
 ): boolean {
-  if (!isElectron || snapshot?.runtime !== "server") return false;
-  if (primaryEnvironmentId !== null && environmentId === primaryEnvironmentId)
-    return !snapshot.headless;
-  const status = snapshot.navStatus;
-  const failed =
-    status._tag !== "Idle" && nativeTabFailed(environmentId, snapshot.tabId, status.url);
-  const access = remoteDeviceTabAccess(snapshot, accessFor(environmentId));
-  if (access === "off" || (access === "control" && snapshot.headless)) return false;
-  if (status._tag === "Idle") return true;
-  return publicTabUrl(status.url) !== null && !failed;
-}
-
-export function serverDrivesNativeTab(
-  environmentId: EnvironmentId,
-  primaryEnvironmentId: EnvironmentId | null,
-  snapshot: NativeTabSnapshot,
-  accessFor: RemoteDeviceAccessFor,
-): boolean {
-  if (!rendersServerTabNatively(environmentId, primaryEnvironmentId, snapshot, accessFor))
-    return false;
-  if (snapshot.headless) return false;
   return (
-    environmentId === primaryEnvironmentId ||
-    remoteDeviceTabAccess(snapshot, accessFor(environmentId)) === "control"
+    isElectron &&
+    snapshot?.runtime === "server" &&
+    !snapshot.headless &&
+    primaryEnvironmentId !== null &&
+    environmentId === primaryEnvironmentId
   );
 }
 
 export function useRendersServerTabNatively(
-  environmentId: EnvironmentId | null,
-  snapshot: NativeTabSnapshot | null | undefined,
+  environmentId: EnvironmentId,
+  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "headless"> | null | undefined,
 ): boolean {
-  const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
-  const accessFor = useRemoteDeviceAccessFor();
-  useNativeTabFailures();
-  if (environmentId === null) return false;
-  return rendersServerTabNatively(environmentId, primaryEnvironmentId, snapshot, accessFor);
+  return rendersServerTabNatively(environmentId, useAtomValue(primaryEnvironmentIdAtom), snapshot);
 }

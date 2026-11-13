@@ -30,7 +30,6 @@ export type ProviderUpdateSidebarPillTone = "loading" | "warning" | "error" | "s
 
 export interface ProviderUpdateSidebarPillView {
   readonly key: string;
-  readonly dismissalKey?: string;
   readonly tone: ProviderUpdateSidebarPillTone;
   readonly title: string;
   readonly description: string;
@@ -283,17 +282,6 @@ function getUpdateFinishedAt(provider: ServerProvider): string | null {
   return provider.updateState?.finishedAt ?? null;
 }
 
-function providerUpdateNoticeKey(provider: ServerProvider): string {
-  const installedVersion =
-    provider.installedVersion !== undefined ? provider.installedVersion : provider.version;
-  return JSON.stringify([
-    provider.driver,
-    provider.instanceId,
-    installedVersion?.replace(/^v/, "") ?? null,
-    provider.versionAdvisory?.latestVersion?.replace(/^v/, "") ?? null,
-  ]);
-}
-
 function isRecentTerminalProvider(
   provider: ServerProvider,
   visibleAfterIso: string | undefined,
@@ -378,7 +366,6 @@ export function getProviderUpdateSidebarPillView(
         )
         .toSorted()
         .join("|")}`,
-      dismissalKey: `failed:${failedProviders.map(providerUpdateNoticeKey).toSorted().join("|")}`,
       tone: "error",
       title:
         failedProviders.length === 1
@@ -390,8 +377,7 @@ export function getProviderUpdateSidebarPillView(
   }
 
   const unchangedProviders = recentTerminalProviders.filter(
-    (provider) =>
-      provider.updateState?.status === "unchanged" && isProviderUpdateCandidate(provider),
+    (provider) => provider.updateState?.status === "unchanged",
   );
   if (unchangedProviders.length > 0) {
     const unchangedProvider = unchangedProviders[0]!;
@@ -405,7 +391,6 @@ export function getProviderUpdateSidebarPillView(
         )
         .toSorted()
         .join("|")}`,
-      dismissalKey: `unchanged:${unchangedProviders.map(providerUpdateNoticeKey).toSorted().join("|")}`,
       tone: "warning",
       title:
         unchangedProviders.length === 1
@@ -431,7 +416,6 @@ export function getProviderUpdateSidebarPillView(
         )
         .toSorted()
         .join("|")}`,
-      dismissalKey: `succeeded:${succeededProviders.map(providerUpdateNoticeKey).toSorted().join("|")}`,
       tone: "success",
       title:
         succeededProviders.length === 1
@@ -463,11 +447,7 @@ export function getProviderUpdateSidebarPillView(
         const rightFinishedAt = latestFinishedAtForProviders(rightProviders) ?? "";
         return rightFinishedAt.localeCompare(leftFinishedAt);
       })
-      .find(
-        (candidate) =>
-          !options?.dismissedKeys?.has(candidate.key) &&
-          !options?.dismissedKeys?.has(candidate.dismissalKey ?? candidate.key),
-      ) ?? null
+      .find((candidate) => !options?.dismissedKeys?.has(candidate.key)) ?? null
   );
 }
 

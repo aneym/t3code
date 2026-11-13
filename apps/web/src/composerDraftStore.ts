@@ -95,7 +95,8 @@ import {
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
-import { createDeferredStorage, createMemoryStorage } from "./lib/storage";
+import { createDeferredStorage } from "./lib/storage";
+import { draftKey, draftStorage } from "./embed/embedDraftStorage";
 import { getDefaultServerModel } from "./providerModels";
 import {
   replaceComposerContextReferences,
@@ -129,8 +130,7 @@ type ComposerPersistState =
   | { capturedState: ComposerDraftStoreState }
   | PersistedComposerDraftStoreState;
 
-const composerDraftBaseStorage =
-  typeof localStorage !== "undefined" ? localStorage : createMemoryStorage();
+const composerDraftBaseStorage = draftStorage();
 
 interface ComposerDraftWrite {
   readonly text: string;
@@ -2458,7 +2458,7 @@ function readPersistedAttachmentIdsFromStorage(threadKey: string): string[] {
   }
   try {
     const persisted = getLocalStorageItem(
-      COMPOSER_DRAFT_STORAGE_KEY,
+      draftKey(COMPOSER_DRAFT_STORAGE_KEY),
       PersistedComposerDraftStoreStorage,
     );
     if (!persisted || persisted.version !== COMPOSER_DRAFT_STORAGE_VERSION) {

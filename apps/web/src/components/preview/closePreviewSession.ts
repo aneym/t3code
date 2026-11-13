@@ -9,7 +9,7 @@ import type {
 import { useClosedViewStore } from "~/closedViewStore";
 import { beginPreviewSessionClose, cancelPreviewSessionClose } from "~/previewStateStore";
 
-export interface ClosePreviewSessionInput<E> {
+interface ClosePreviewSessionInput<E> {
   readonly closePreview: (input: {
     readonly environmentId: EnvironmentId;
     readonly input: PreviewCloseInput;

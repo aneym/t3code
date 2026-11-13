@@ -10,11 +10,13 @@ import {
   UsageLimitSourceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
-  type ServerLifecycleStreamEvent,
-  type ServerLifecycleWelcomePayload,
-  type ServerSelfUpdateOutcome,
   WS_METHODS,
 } from "@t3tools/contracts";
+import type {
+  ServerLifecycleStreamEvent,
+  ServerLifecycleWelcomePayload,
+  ServerSelfUpdateOutcome,
+} from "@t3tools/contracts/serverLifecycle";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Cause from "effect/Cause";
@@ -616,7 +618,6 @@ describe("server state projection", () => {
       const otherInstanceId = ProviderInstanceId.make("codex");
       const thirdInstanceId = ProviderInstanceId.make("cursor");
       const slashCommands = [{ name: "compact" }];
-      // What the server sends: a digest in place of the two lists.
       const snapshot = (catalogDigest = "d1") =>
         snapshotEvent({
           ...CONFIG,

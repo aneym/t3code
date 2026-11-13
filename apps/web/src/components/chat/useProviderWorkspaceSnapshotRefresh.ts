@@ -1,11 +1,12 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { type EnvironmentId, type ProviderInstanceId } from "@t3tools/contracts";
+import { type EnvironmentId, type ServerProvider } from "@t3tools/contracts";
 import {
   createProviderWorkspaceSnapshotRefreshAtomFamily,
   isProviderWorkspaceSnapshotScanning,
   type ProviderWorkspaceSnapshotRefreshState,
 } from "@t3tools/client-runtime/providerSkills";
 import { Atom } from "effect/reactivity";
+import { useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
 
@@ -26,15 +27,24 @@ const idleRefreshAtom: Atom.Atom<ProviderWorkspaceSnapshotRefreshState | undefin
 export function useProviderWorkspaceSnapshotRefresh(input: {
   readonly environmentId: EnvironmentId | null;
   readonly gitCwd: string | null;
-  readonly instanceId: ProviderInstanceId | undefined;
+  readonly provider: ServerProvider | null;
 }): { readonly refresh: () => void; readonly scanning: boolean } {
-  const { environmentId, gitCwd, instanceId } = input;
+  const { environmentId, gitCwd, provider } = input;
+  const instanceId = provider?.instanceId;
+  const key = gitCwd && instanceId ? `${environmentId}:${instanceId}:${gitCwd}` : null;
+  const [typedKey, setTypedKey] = useState<string | null>(null);
+  const active =
+    key !== null && (typedKey === key || (provider?.workspaceSnapshots?.length ?? 0) === 0);
   const atom =
-    environmentId && gitCwd && instanceId
+    active && environmentId && gitCwd && instanceId
       ? providerWorkspaceSnapshotRefresh({ environmentId, instanceId, cwd: gitCwd })
       : idleRefreshAtom;
+  const recheck = useAtomRefresh(atom);
   return {
-    refresh: useAtomRefresh(atom),
+    refresh: () => {
+      if (typedKey === key) recheck();
+      else setTypedKey(key);
+    },
     scanning: isProviderWorkspaceSnapshotScanning(useAtomValue(atom)),
   };
 }

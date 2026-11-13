@@ -11,7 +11,6 @@ import * as Option from "effect/Option";
 import * as Electron from "electron";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { isDesktopIsolated } from "./desktopIsolation.ts";
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { trimmedString } from "./DesktopConfig.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
@@ -72,7 +71,7 @@ export const make = Effect.gen(function* () {
     const linux =
       platform === "linux" ? resolveEarlyLinuxElectronOptionsFromProcess(homeDirectory) : null;
 
-    if (linux !== null && !isDesktopIsolated()) {
+    if (linux !== null) {
       DesktopEarlyElectronStartup.restoreEarlyLinuxDeviceScaleFactor({
         env: process.env,
         homeDirectory,

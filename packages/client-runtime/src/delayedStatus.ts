@@ -1,11 +1,6 @@
 const STATUS_SHOW_DELAY_MS = 400;
 const STATUS_MIN_VISIBLE_MS = 400;
 
-export interface DelayedStatusTiming {
-  readonly showDelayMs?: number;
-  readonly minVisibleMs?: number;
-}
-
 /**
  * A status shows only after it has stayed set for a moment, then stays shown
  * for a minimum time so a quick flicker never flashes on screen.
@@ -13,13 +8,7 @@ export interface DelayedStatusTiming {
  */
 export type DelayedStatusState<A> =
   | { readonly phase: "idle"; readonly key: string }
-  | {
-      readonly phase: "pending";
-      readonly key: string;
-      readonly value: A;
-      readonly showDelayMs: number;
-      readonly showAt: number;
-    }
+  | { readonly phase: "pending"; readonly key: string; readonly showAt: number }
   | {
       readonly phase: "shown";
       readonly key: string;
@@ -32,7 +21,6 @@ export interface DelayedStatusInput<A> {
   /** Compared by identity, so use strings or other stable values. */
   readonly value: A | null;
   readonly deadlinePassed: boolean;
-  readonly timing?: DelayedStatusTiming;
   readonly showDelayMs?: number | undefined;
 }
 
@@ -43,47 +31,29 @@ export interface DelayedStatusInput<A> {
  */
 export function stepDelayedStatus<A>(
   state: DelayedStatusState<A> | null,
-  {
-    key,
-    value,
-    deadlinePassed,
-    timing: inputTiming,
-    showDelayMs: overrideShowDelayMs,
-  }: DelayedStatusInput<A>,
+  { key, value, deadlinePassed, showDelayMs = STATUS_SHOW_DELAY_MS }: DelayedStatusInput<A>,
   now: () => number,
 ): DelayedStatusState<A> {
   const idle = (): DelayedStatusState<A> => ({ phase: "idle", key });
-  const showDelayMs = inputTiming?.showDelayMs ?? overrideShowDelayMs ?? STATUS_SHOW_DELAY_MS;
-  const pending = (pendingValue: A): DelayedStatusState<A> =>
-    showDelayMs <= 0
-      ? shown(pendingValue)
-      : {
-          phase: "pending",
-          key,
-          value: pendingValue,
-          showDelayMs,
-          showAt: now() + showDelayMs,
-        };
+  const pending = (): DelayedStatusState<A> => ({
+    phase: "pending",
+    key,
+    showAt: now() + showDelayMs,
+  });
   const shown = (shownValue: A): DelayedStatusState<A> => ({
     phase: "shown",
     key,
     value: shownValue,
-    holdUntil: now() + (inputTiming?.minVisibleMs ?? STATUS_MIN_VISIBLE_MS),
+    holdUntil: now() + STATUS_MIN_VISIBLE_MS,
   });
 
-  if (state === null || state.key !== key) return value === null ? idle() : pending(value);
+  if (state === null || state.key !== key) return value === null ? idle() : pending();
   switch (state.phase) {
     case "idle":
-      return value === null ? state : pending(value);
+      return value === null ? state : pending();
     case "pending":
       if (value === null) return idle();
-      if (showDelayMs <= 0) return shown(value);
-      if (deadlinePassed) return shown(value);
-      if (value !== state.value || showDelayMs !== state.showDelayMs) {
-        const showAt = Math.min(state.showAt, now() + showDelayMs);
-        return { phase: "pending", key, value, showDelayMs, showAt };
-      }
-      return state;
+      return deadlinePassed ? shown(value) : state;
     case "shown":
       if (value === null) return deadlinePassed ? idle() : state;
       return value === state.value ? state : shown(value);

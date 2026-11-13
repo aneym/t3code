@@ -6,7 +6,7 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-import { toastManager } from "../components/ui/toast";
+import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { readProject, readThreadShell } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
@@ -23,6 +23,16 @@ function threadSessionRestartBlocker(
     return `${tasks} background ${tasks === 1 ? "task is" : "tasks are"} still running in this session. Restart after ${tasks === 1 ? "it finishes" : "they finish"}.`;
   }
   return null;
+}
+
+export function restartFailureToast(error: unknown) {
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title: "Failed to restart agent session",
+      description: error instanceof Error ? error.message : "An error occurred.",
+    }),
+  );
 }
 
 export function useRestartThreadSession() {

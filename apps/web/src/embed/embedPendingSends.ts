@@ -108,9 +108,23 @@ export function useEmbedHostPendingSends(thread: string): ReadonlyArray<EmbedPen
   return useStore((state) => state.host[thread] ?? EMPTY);
 }
 
-export function useEmbedPendingSendCount(thread: string | null): number {
+type Rows = ReadonlyArray<{ readonly id: string }>;
+
+export function drawnAsRow(send: EmbedPendingSend, rows: Rows): boolean {
+  return send.state === "sending" && rows.some((row) => row.id === send.messageId);
+}
+
+export function useEmbedPendingSendCount(
+  projection: { readonly thread: { readonly id: string } } | null,
+  rows: Rows,
+): number {
+  const thread = projection?.thread.id;
   return useStore((state) =>
-    thread === null ? 0 : (state.local[thread]?.length ?? 0) + (state.host[thread]?.length ?? 0),
+    thread === undefined
+      ? 0
+      : [...(state.local[thread] ?? EMPTY), ...(state.host[thread] ?? EMPTY)].filter(
+          (send) => !drawnAsRow(send, rows),
+        ).length,
   );
 }
 

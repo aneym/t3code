@@ -15,7 +15,7 @@ import {
 import type { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type SetStateAction } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useOpenProviderSettings } from "./useOpenProviderSettings";
 import { toastManager } from "../ui/toast";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
 import { resolveNewDraftStartFromOrigin } from "../../lib/chatThreadActions";
@@ -75,7 +75,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
   } = input;
-  const navigate = useNavigate();
+  const openProviderSettings = useOpenProviderSettings();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
@@ -94,12 +94,8 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   };
   const handleRuntimeModeChangeStable = useStableCallback(handleRuntimeModeChange);
 
-  const openProviderSetup = (instanceId: ProviderInstanceId) => {
-    void navigate({
-      to: "/settings/providers",
-      search: { environmentId, instanceId },
-    });
-  };
+  const openProviderSetup = (instanceId: ProviderInstanceId) =>
+    openProviderSettings({ environmentId, instanceId });
   const openProviderSetupStable = useStableCallback(openProviderSetup);
 
   // Keyed on the fields it reads: the thread and runtime objects change with

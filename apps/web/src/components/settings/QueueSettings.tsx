@@ -3,34 +3,21 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 import { SettingsRow, SettingResetButton } from "./settingsLayout";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { searchableSetting } from "./settingsSearch";
-import { DelegatedChildModelSetting } from "./DelegatedChildModelSetting";
+import { AutomationPlacementSetting } from "./AutomationPlacementSetting";
 
 export function QueueSettings() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
     <>
+      <AutomationPlacementSetting />
       {[
-        {
-          key: "settleIdleChildren",
-          searchId: "settle-idle-children",
-          label: "Settle idle child threads",
-          description:
-            "Settle idle child threads when their parent is settled. Keep running, waiting, pinned, snoozed, and explicitly active children open.",
-        },
         {
           key: "batchQueuedMessages",
           searchId: "batch-queued-messages",
           label: "Send queued messages together",
           description:
             "When a turn ends, start up to 20 compatible queued messages on the thread together as one turn instead of one turn each.",
-        },
-        {
-          key: "queueSendAll",
-          searchId: "queue-send-all",
-          label: "Send all queued messages",
-          description:
-            "Show Send all to release and send up to 20 compatible queued messages together, into the current turn or as one new turn.",
         },
         {
           key: "quietThreadNotes",
@@ -67,40 +54,15 @@ export function QueueSettings() {
           description:
             "Let a person's MCP client, such as the t3 CLI or an app you approved, approve or decline a thread's permission requests. Agents can never decide them.",
         },
-        {
-          key: "liveThreadFeed",
-          searchId: "live-thread-feed",
-          label: "Live thread feed",
-          description:
-            "Stream Claude replies while they are written. MCP thread reads mark partial replies as streaming.",
-        },
-        {
-          key: "hostLinkEnabled",
-          searchId: "host-link",
-          label: "Host app link",
-          description:
-            "Push turns, messages, steps and thread ends of threads with a host lane to the linked host app. Link one with `t3 host-link set`.",
-        },
-        {
-          key: "childModelGuard",
-          searchId: "child-model-guard",
-          label: "Child model rules",
-          description:
-            'Refuse a delegated task whose model is not allowed for its role, before the child starts. Rules are childModelAllow in settings.json, such as [{"model": "claude-opus-5-5"}, {"model": "claude-fable-*", "roles": ["review"]}]. With no rules, any model runs.',
-        },
       ].map(({ key, searchId, label, description }) => {
         const settingKey = key as
           | "batchQueuedMessages"
-          | "queueSendAll"
-          | "settleIdleChildren"
           | "quietThreadNotes"
           | "childCompletionNotes"
           | "headlessSubagentStreaming"
           | "mcpEventsEnabled"
-          | "mcpClientApprovals"
-          | "liveThreadFeed"
-          | "hostLinkEnabled"
-          | "childModelGuard";
+          | "mcpClientApprovals";
+
         return (
           <SettingsRow
             key={key}
@@ -129,7 +91,6 @@ export function QueueSettings() {
           />
         );
       })}
-      <DelegatedChildModelSetting />
     </>
   );
 }
