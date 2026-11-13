@@ -434,7 +434,7 @@ const makeReader = Effect.fnUntraced(function* (
 
 const CHECKPOINT_FRAMES = 1000;
 const CHECKPOINT_IDLE_MS = 100;
-const CHECKPOINT_BACKPRESSURE_FRAMES = 10 * CHECKPOINT_FRAMES;
+const CHECKPOINT_BACKPRESSURE_FRAMES = 256 * CHECKPOINT_FRAMES;
 
 const readSafeSqliteInteger = (value: unknown) => {
   const number = typeof value === "bigint" ? Number(value) : value;
@@ -498,7 +498,7 @@ const check = (id, nextJournalSizeLimit, force, nextGeneration = generation) => 
     });
     return;
   }
-  const blocked = (atCeiling(state) || oversized) && state.checkpointed < state.log;
+  const blocked = atCeiling(state) && state.checkpointed < state.log;
   parentPort.postMessage({ type: "checkpoint", id, generation, ...state, blocked });
   schedule(state, blocked);
 };
@@ -515,7 +515,7 @@ const finishTruncate = (truncateId) => {
     db.exec("PRAGMA busy_timeout = 5000;");
   }
   const state = frames.get();
-  const blocked = (atCeiling(state) && (busy || state.checkpointed < state.log)) || exceedsSizeLimit();
+  const blocked = atCeiling(state) && (busy || state.checkpointed < state.log);
   pendingTruncate = undefined;
   parentPort.postMessage({
     type: "checkpoint",
