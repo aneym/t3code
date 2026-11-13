@@ -1,9 +1,4 @@
 import {
-  CONNECTOR_UNIT_PATH_ENV,
-  connectorUnitPath,
-  serviceUnitFileName,
-} from "../serviceConnectorUnit.ts";
-import {
   associatedBundleEnvironmentPlistLines,
   associatedBundlePlistLines,
 } from "./bootServiceAssociation.ts";
@@ -47,7 +42,7 @@ function escapeSystemdSpecifiers(value: string): string {
   return value.replaceAll("%", "%%");
 }
 
-export function quoteSystemdValue(value: string): string {
+function quoteSystemdValue(value: string): string {
   const escaped = escapeSystemdSpecifiers(value);
   return /[\s"'\\]/.test(escaped)
     ? `"${escaped.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
@@ -63,7 +58,6 @@ export interface BootServicePlan {
   readonly logPath: string;
   readonly unitPath: string;
   readonly installBinDir?: string;
-  readonly connectorUnitPath?: string;
   /** The manager accepted a detached install; its outcome is written to `logPath`. */
   readonly handedOff?: boolean;
 }
@@ -84,15 +78,13 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     ...(plan.installBinDir === undefined
       ? []
       : [`Environment=T3CODE_INSTALL_BIN_DIR=${quoteSystemdValue(plan.installBinDir)}`]),
-    `Environment=${SERVICE_UNIT_ENV}=${quoteSystemdValue(serviceUnitFileName(plan.unitPath))}`,
-    `Environment=${CONNECTOR_UNIT_PATH_ENV}=${quoteSystemdValue(plan.connectorUnitPath ?? connectorUnitPath(plan.unitPath))}`,
+    `Environment=${SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     ...customNameUnitLines,
     ...selfUpdateOffUnitLines,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark the stop before it signals the server.
     // Past TimeoutStopSec, systemd SIGKILLs the cgroup.
     "KillMode=mixed",
-    "TimeoutStopSec=90s",
     // Helpers share this cgroup; default OOMPolicy=stop would stop the unit if one is OOM-killed.
     "OOMPolicy=continue",
     "Restart=always",
@@ -131,7 +123,7 @@ export function renderBootServicePlist(
     `<plist version="1.0">`,
     `<dict>`,
     `  <key>Label</key>`,
-    `  <string>${escapeXmlText(serviceUnitFileName(plan.unitPath).replace(/\.plist$/, ""))}</string>`,
+    `  <string>${BOOT_SERVICE_LAUNCHD_LABEL}</string>`,
     `  <key>ProgramArguments</key>`,
     `  <array>`,
     ...plan.program.map((argument) => `    <string>${escapeXmlText(argument)}</string>`),
@@ -149,9 +141,7 @@ export function renderBootServicePlist(
           `    <string>${escapeXmlText(plan.installBinDir)}</string>`,
         ]),
     `    <key>${SERVICE_UNIT_ENV}</key>`,
-    `    <string>${escapeXmlText(serviceUnitFileName(plan.unitPath))}</string>`,
-    `    <key>${CONNECTOR_UNIT_PATH_ENV}</key>`,
-    `    <string>${escapeXmlText(plan.connectorUnitPath ?? connectorUnitPath(plan.unitPath))}</string>`,
+    `    <string>${BOOT_SERVICE_PLIST_FILE}</string>`,
     ...customNamePlistLines,
     ...associatedBundleEnvironmentPlistLines,
     ...selfUpdateOffPlistLines,

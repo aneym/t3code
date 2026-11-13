@@ -1,4 +1,3 @@
-import { hotSwapContext } from "./serviceChildTransport.ts";
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -117,14 +116,7 @@ export class ServerConfig extends Context.Service<
   ) => layerTest(cwd, baseDirOrPrefix);
 }
 
-export const make = (config: ServerConfig["Service"]) => {
-  const endpoint = config.mode === "desktop" ? undefined : hotSwapContext()?.hotSwap;
-  return ServerConfig.of(
-    endpoint === undefined
-      ? config
-      : { ...config, host: endpoint.publicHost, port: endpoint.publicPort },
-  );
-};
+export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
 
 export const otlpResource = (
   config: Pick<ServerConfig["Service"], "mode" | "otelEnvironment">,

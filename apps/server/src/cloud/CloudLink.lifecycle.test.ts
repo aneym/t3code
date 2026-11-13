@@ -30,7 +30,7 @@ import * as EnvironmentKeys from "./environmentKeys.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "../config.ts";
-import { writeServiceState } from "../serviceLauncherState.ts";
+import { writeServiceState } from "../serviceLauncher.ts";
 import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
@@ -1194,6 +1194,29 @@ describe("releaseManagedTunnelOnShutdown", () => {
           hostname: "prod-abc.t3coderelay.com",
           protocol: null,
         },
+      }),
+    );
+  });
+
+  it.effect("reports a check that ran after the managed tunnel config was stored", () => {
+    const { store } = makeMemorySecretStore(managedLinkSecrets);
+    const reachable = {
+      status: "reachable" as const,
+      checkedAt: "2026-10-29T00:00:00.000Z",
+      readyConnections: 4,
+      protocol: "quic",
+    };
+
+    return Effect.gen(function* () {
+      const state = yield* (yield* CloudLink.CloudLink).linkState();
+
+      expect(state.reachability).toEqual(reachable);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls: [],
+        requests: [],
+        latestReachability: Effect.succeedSome(reachable),
       }),
     );
   });

@@ -1,4 +1,4 @@
-import type { ServerSelfUpdateOutcome } from "@t3tools/contracts/serverLifecycle";
+import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
@@ -7,12 +7,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import packageJson from "../../package.json" with { type: "json" };
 import { pinnedRuntimePaths, pinnedRuntimeVersionsDir } from "./pinnedRuntime.ts";
 import {
   decodeServiceLauncherContext,
-  unsupportedServiceHotSwap,
   decodeServiceLauncherParentMessage,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   type ServiceLauncherChildMessage,
@@ -20,11 +20,49 @@ import {
   type SupportedLauncherProtocol,
 } from "./serviceProtocol.ts";
 
-import {
-  ServiceLauncherClientError,
-  ServiceLauncherRejectedError,
-} from "./serviceLauncherErrors.ts";
-import { hotSwapContext, prepareServiceRouting } from "../serviceChildTransport.ts";
+export class ServiceLauncherClientError extends Schema.TaggedError<ServiceLauncherClientError>()(
+  "ServiceLauncherClientError",
+  {
+    operation: Schema.Literals([
+      "decode-context",
+      "version-mismatch",
+      "unmanaged",
+      "send",
+      "disconnect",
+      "timeout",
+    ]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.operation) {
+      case "decode-context":
+        return "The service launcher supplied invalid startup context.";
+      case "version-mismatch":
+        return "The service launcher started a different t3 version.";
+      case "unmanaged":
+        return "This server is not managed by the launcher.";
+      case "send":
+        return "Could not send a request to the service launcher.";
+      case "disconnect":
+        return "The service launcher disconnected before acknowledging the request.";
+      case "timeout":
+        return "The service launcher did not respond within 30 seconds.";
+    }
+  }
+}
+
+export class ServiceLauncherRejectedError extends Schema.TaggedError<ServiceLauncherRejectedError>()(
+  "ServiceLauncherRejectedError",
+  {
+    targetVersion: Schema.String,
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
 
 interface ServiceLauncherProcess {
   readonly connected: boolean;
@@ -90,10 +128,6 @@ const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup"
     const context = rawContext === undefined ? undefined : decodeServiceLauncherContext(rawContext);
 
     if (rawContext !== undefined && context === undefined) {
-      if (unsupportedServiceHotSwap(rawContext))
-        yield* Effect.sync(() =>
-          host.send({ type: "capability-rejected", reason: "unsupported-hot-swap" }),
-        );
       return yield* new ServiceLauncherClientError({ operation: "decode-context" });
     }
     if (context !== undefined && context.childVersion !== currentVersion) {
@@ -296,13 +330,6 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
     context?.update === undefined || context.update.status === "pending"
       ? undefined
       : context.update;
-  const repointCommitted = (baseDir: string, targetVersion: string) =>
-    repointLaunchers({ baseDir, targetVersion }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-      Effect.provideService(HostProcess.Environment, environment),
-      Effect.provideService(HostProcess.Platform, platform),
-    );
   const prepareTrial = (input: { readonly baseDir: string }) =>
     pending !== undefined
       ? exchange(
@@ -312,7 +339,14 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
           Effect.flatMap((reply) =>
             reply.type !== "committed"
               ? Effect.die("service launcher returned an impossible prepared response")
-              : repointCommitted(input.baseDir, pending.targetVersion).pipe(
+              : repointLaunchers({
+                  baseDir: input.baseDir,
+                  targetVersion: pending.targetVersion,
+                }).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fs),
+                  Effect.provideService(Path.Path, path),
+                  Effect.provideService(HostProcess.Environment, environment),
+                  Effect.provideService(HostProcess.Platform, platform),
                   Effect.as({
                     id: pending.id,
                     fromVersion: pending.fromVersion,
@@ -323,20 +357,12 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
           ),
         )
       : Effect.succeed(outcome);
-  const prepareRouting = (input: { readonly baseDir: string }) =>
-    prepareServiceRouting().pipe(
-      Effect.tap((routed) =>
-        pending !== undefined && routed?.status === "committed"
-          ? repointCommitted(input.baseDir, routed.targetVersion)
-          : Effect.void,
-      ),
-    );
 
   return ServiceLauncherClient.of({
     managed,
     protocol: context?.protocol,
     requestUpdate,
-    prepareTrial: hotSwapContext() === undefined ? prepareTrial : prepareRouting,
+    prepareTrial,
   });
 });
 

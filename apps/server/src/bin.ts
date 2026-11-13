@@ -54,14 +54,6 @@ if (
   const launcherOptions = launcher?.parseServiceLauncherArgs(process.argv.slice(3));
   if (launcher !== undefined && launcherOptions !== undefined) {
     await launcher.runServiceLauncherCli(launcherOptions);
-  } else if (command === "__service-launcher-watchdog") {
-    const { runLauncherWatchdog } = await import("./serviceLauncherWatchdog.ts");
-    await runLauncherWatchdog(process.execPath);
-  } else if (command === "__service-connector") {
-    const { runServiceConnector } = await import("./serviceConnector.ts");
-    const baseDir = process.env.T3CODE_HOME?.trim();
-    if (!baseDir) throw new Error("T3CODE_HOME is required by the connector service.");
-    await runServiceConnector(baseDir);
   } else if (command === "__git-spawn-broker") {
     const { runGitSpawnBroker } = await import("./vcs/gitSpawnBrokerChild.ts");
     runGitSpawnBroker();
