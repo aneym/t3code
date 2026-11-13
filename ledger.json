@@ -1,0 +1,12 @@
+{
+  "rows": [
+    {
+      "any": [
+        "e788b5f44e746c43bfe17f172507bb59f59435ef"
+      ],
+      "kind": "merge",
+      "label": "integration-82 tip e788b5f44e (contains all 39 delivered merges)"
+    }
+  ],
+  "schema": "t3nightly.release-ledger/1"
+}
