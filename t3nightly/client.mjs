@@ -122,7 +122,7 @@ const programs = {
   }),
   "restart-rpc": Effect.fnUntraced(function* () {
     const { session } = yield* bearerSession();
-    const methods = { prepare: "server.prepareRestart", abort: "server.abortRestart", import: "server.importRestartHandoff", status: "server.getRestartStatus", update: "server.updateServer" };
+    const methods = { update: "server.updateServer" };
     const method = methods[opts.operation];
     if (!method) throw new Error("unsupported restart operation");
     const request = JSON.parse(readFileSync(opts["request-file"], "utf8"));

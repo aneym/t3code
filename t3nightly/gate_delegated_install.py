@@ -24,7 +24,7 @@ def delegated_install(ctx, deadline):
     (runtime / ".install-complete").write_text(ctx.version + "\n")
     (runtime / "delegated-gate-source").write_text(str(ctx.out) + "\n")
     args = SimpleNamespace(home=ctx.work / "delegated-home", evidence=ctx.work / "delegated-evidence", old_runtime=runtime,
-        seed=seed, label="t3-rehearsal-delegated-" + uuid4().hex[:12], port=free_port(), hot_swap=False, managed_service=True,
+        seed=seed, label="t3-rehearsal-delegated-" + uuid4().hex[:12], port=free_port(), managed_service=True,
         rpc_tree=ctx.tree, provider="unused", provider_binary="/usr/bin/false", launcher_artifact="", old_launcher_artifact="",
         connector_artifact="", live_home=[], offbox_stop_s=600, rehearsal_drain_s=120)
     sandbox = Sandbox(args)
@@ -41,8 +41,7 @@ def managed_install(ctx, deadline):
     from .gate_client import client, pairing
     from .install_service import service
     from .install_policy import admit, window
-    from .install_rpc import restart_session
-    from .install_seamless import prepare_with_drain
+    from .install_drain import drain as drain_runs
     from .rehearsal_drain import configure_replay
 
     sandbox = ctx.sandbox
@@ -68,19 +67,18 @@ def managed_install(ctx, deadline):
         proof["checks"].append({"name": name, "ok": True, "at": datetime.now(timezone.utc).isoformat(), **detail})
         receipt.write_text(json.dumps(proof, indent=2) + "\n")
 
-    run = SimpleNamespace(args=args, home=ctx.home, state=ctx.work, service_label=sandbox.label + ".service", report={}, runtime=lambda v: ctx.home / "runtime/versions" / v / "t3", step=lambda name, **detail: mark(name, **detail))
+    run = SimpleNamespace(args=args, home=ctx.home, db=ctx.home / "userdata/statev2.sqlite", state=ctx.work, service_label=sandbox.label + ".service", report={}, runtime=lambda v: ctx.home / "runtime/versions" / v / "t3", step=lambda name, **detail: mark(name, **detail))
     admit(run, window(version, sandbox=True))
     try:
         for phase in ("before", "after"):
             client(ctx, "delegated-child-drain-" + phase, deadline, "queue-drain", "--pairing-file", str(pairing(ctx, "delegated-child-drain-" + phase, deadline)), "--cli", ctx.t3, "--home", str(ctx.home), "--project", str(ctx.project), "--scenario", "delegated-drain", "--phase", phase, "--evidence", str(receipt))
             if phase == "before":
-                with restart_session(run, version) as bearer:
-                    drain = prepare_with_drain(run, bearer, str(uuid4()))
-                    mark("drain-120", receipt=drain, drain_s=120)
-                    service(run, "stop")
-                    service(run, "start")
-                    sandbox.wait_ready(version, 90)
-                    mark("restart-ready", version=version, service=run.service_label)
+                drain = drain_runs(run)
+                mark("drain-120", receipt=drain, drain_s=120)
+                service(run, "stop")
+                service(run, "start")
+                sandbox.wait_ready(version, 90)
+                mark("restart-ready", version=version, service=run.service_label)
         proof = json.loads(receipt.read_text())
         if not proof.get("ok"):
             raise CheckFailed("delegated task did not survive install drain and restart")

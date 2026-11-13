@@ -21,24 +21,6 @@ def disk_gate(evidence=None):
     return receipt
 
 
-def register(run):
-    if os.getpgrp() != os.getpid():
-        os.setsid()
-    observed = identity(os.getpid())
-    if observed is None or observed["pgid"] != os.getpid():
-        raise ValueError("rehearsal could not acquire a private process group")
-    (run / ".rehearsal-process.json").write_text(json.dumps({"at": now(), "pid": os.getpid(), "pgid": os.getpgrp(), "identity": observed}) + "\n")
-
-
-def finish(run):
-    path = run / ".rehearsal-process.json"
-    if path.exists():
-        receipt = json.loads(path.read_text())
-        if receipt["pid"] != os.getpid():
-            raise ValueError("rehearsal process reservation owner changed")
-        path.write_text(json.dumps({**receipt, "endedAt": now()}) + "\n")
-
-
 def running(run):
     path = run / ".rehearsal-process.json"
     if not path.exists():

@@ -56,8 +56,7 @@ class Workload:
         records = self.sandbox.home.parent / "gate-waiters"
         command = shlex.join(["python3", str(helper), "--home", str(self.sandbox.home), "--records", str(records), "--seconds", str(HOLD_S)])
         prompt = f"Use Bash in the foreground with a {HOLD_S * 1000} ms timeout to run exactly: {command}\nDo not background it. Do no other work. After it completes reply RELEASED."
-        names = ("active-turn", "snoozed-thread", "queued-thread") if getattr(self.sandbox.args, "hot_swap", False) else ("active-turn", "snoozed-thread")
-        for name in names:
+        for name in ("active-turn", "snoozed-thread"):
             if name == "active-turn":
                 self.held = time.monotonic()
             expected = "CONTINUED_" + uuid.uuid4().hex
@@ -68,7 +67,7 @@ class Workload:
             wait_for(lambda: self.running(item), self.sandbox.args.chat_timeout, "running provider milestone")
         active = self.work["active-turn"]
         nonce = f"QUEUED_{uuid.uuid4().hex}"
-        queue_thread = self.work.get("queued-thread", active)["threadId"]
+        queue_thread = active["threadId"]
         queued = self.sandbox.t3("thread", "send", queue_thread, f"Reply with exactly {nonce} and nothing else.", "--mode", "queue", "--json")
         self.work["queued-message"] = {"threadId": queue_thread, "runId": queued["runId"], "messageId": queued.get("messageId"), "nonce": nonce}
         until = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
@@ -117,9 +116,7 @@ class Workload:
         if queued["messageId"] not in current or current[queued["messageId"]][2] != queued["runId"]:
             raise ValueError("queued message identity changed")
         continuation = None
-        installer_path = self.sandbox.evidence / "installer-state/last.json"
-        capable = installer_path.is_file() and json.loads(installer_path.read_text()).get("hotSwap", {}).get("method") == "launcher-ipc"
-        if getattr(self.sandbox.args, "hot_swap", False) and capable and not interrupted:
+        if not interrupted:
             from .rehearsal_continuation import automatic
 
             proof, continuation = automatic(self)

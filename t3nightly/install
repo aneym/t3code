@@ -51,7 +51,6 @@ def parse():
     parser.add_argument("--snapshot-mib-s", type=float, default=32)
     parser.add_argument("--snapshot-max-s", type=int, default=1200)
     parser.add_argument("--prepare-only", action="store_true")
-    parser.add_argument("--seamless", action="store_true")
     parser.add_argument("--override-reason", default="")
     parser.add_argument("--connector-artifact", default="")
     parser.add_argument("--launcher-artifact", default="")
@@ -64,12 +63,7 @@ def parse():
     parser.add_argument("--install-receipt", default="")
     parser.add_argument("--receipt-host", choices=("studio", "ax42", "forge", "owl", "ax102"))
     parser.add_argument("--rehearsal", action="store_true")
-    parser.add_argument("--strict-drain-proof", action="store_true")
-    parser.add_argument("--handoff-stop", action=argparse.BooleanOptionalAction, default=False, help="window flag: when the drain times out, stop on a ready restart handoff instead of refusing")
-    parser.add_argument("--handoff-wait-s", type=int, default=180)
     parser.add_argument("--compact-db", action=argparse.BooleanOptionalAction, default=False, help="window flag: run the installed t3 doctor --fix in the stopped window after the rollback backup; macOS only")
-    parser.add_argument("--rehearsal-inject", dest="inject", choices=("none", "warm-death", "post-flip"), default="none")
-    parser.add_argument("--rollback-fallback-proof", action="store_true", help="isolated non-release fallback proof; never changes existing injection semantics")
     parser.add_argument("--compatibility-probe", action="store_true")
     parser.add_argument("--force-rollback", action="store_true")
     parser.add_argument("--chat-project", default="")
@@ -93,44 +87,34 @@ def parse():
     args = parser.parse_args()
     if not args.version and not args.calibrate:
         parser.error("--version is required unless --calibrate")
-    if args.calibrate and any((args.hard, args.seamless, args.prepare_only, args.rehearsal, args.version, args.wait, args.check_only, args.dry_run)):
+    if args.calibrate and any((args.hard, args.prepare_only, args.rehearsal, args.version, args.wait, args.check_only, args.dry_run)):
         parser.error("--calibrate cannot be combined with installation modes, --version, --wait, --check-only or --dry-run")
     if args.backup_keep < 1:
         parser.error("--backup-keep must be at least one")
     if not 0 <= args.drain_s <= 300:
         parser.error("--drain-s must be between 0 and 300")
-    if args.hard and (args.seamless or args.wait or args.check_only or args.prepare_only):
-        parser.error("--hard cannot be combined with --seamless, --wait, --check-only or --prepare-only")
+    if args.hard and (args.wait or args.check_only or args.prepare_only):
+        parser.error("--hard cannot be combined with --wait, --check-only or --prepare-only")
     if args.hard and not (args.manifest and args.artifact_manifest and args.chat_project):
         parser.error("--hard requires --manifest, --artifact-manifest and --chat-project")
-    if args.rehearsal and not (args.hard or args.seamless):
-        parser.error("--rehearsal requires --hard or --seamless")
-    if (args.inject != "none" or args.rollback_fallback_proof) and not (args.rehearsal and args.seamless):
-        parser.error("fault and fallback proofs require isolated --rehearsal --seamless")
-    if args.rollback_fallback_proof and (args.inject != "none" or args.force_rollback):
-        parser.error("--rollback-fallback-proof cannot replace an existing rollback proof")
-    if not 0 <= args.handoff_wait_s <= 900:
-        parser.error("--handoff-wait-s must be between 0 and 900")
-    if args.compact_db and (sys.platform != "darwin" or not (args.hard or args.seamless) or args.offbox):
-        parser.error("--compact-db requires a macOS --hard or --seamless install without --offbox")
-    if args.strict_drain_proof and not args.rehearsal:
-        parser.error("--strict-drain-proof requires isolated --rehearsal")
+    if args.rehearsal and not args.hard:
+        parser.error("--rehearsal requires --hard")
+    if args.compact_db and (sys.platform != "darwin" or not args.hard or args.offbox):
+        parser.error("--compact-db requires a macOS --hard install without --offbox")
     if args.force_rollback and not args.rehearsal:
         parser.error("--force-rollback requires isolated --rehearsal")
     if args.compatibility_probe and not args.rehearsal:
         parser.error("--compatibility-probe requires isolated --rehearsal")
-    if (args.hard or args.seamless) and not args.prepare_only:
+    if args.hard and not args.prepare_only:
         from t3nightly.connector_artifact import preflight_connector
 
         try:
             preflight_connector(SimpleNamespace(args=args, service_label=args.service_label))
         except ValueError as error:
             parser.error(str(error))
-    if args.seamless and not all((args.manifest, args.artifact_manifest, args.chat_project, args.rpc_tree)):
-        parser.error("--seamless requires --manifest, --artifact-manifest, --chat-project and --rpc-tree")
     if args.offbox:
-        if not (args.hard or args.seamless):
-            parser.error("--offbox requires --hard or --seamless")
+        if not args.hard:
+            parser.error("--offbox requires --hard")
         if args.offbox_mib_s <= 0 or args.offbox_seed_s < 60 or args.offbox_stop_s < 30:
             parser.error("--offbox-mib-s must be positive, --offbox-seed-s at least 60 and --offbox-stop-s at least 30")
         if not (args.offbox_stage or args.offbox_stopped_ship) or args.offbox_stage_floor_gib < 0 or args.offbox_copy_s < 10:
@@ -172,7 +156,7 @@ if __name__ == "__main__":
                 from t3nightly.install_assets import check_served_assets
                 from t3nightly.launcher_artifact import preflight_launcher
 
-                if (args.hard or args.seamless) and not args.prepare_only:
+                if args.hard and not args.prepare_only:
                     run = Run(args)
                     preflight_launcher(run, current=run.server_version() == args.version)
                 check_served_assets(args.base_url, args.version)
@@ -186,17 +170,11 @@ if __name__ == "__main__":
 
             with installer_owner(run), payload_lifecycle(run):
                 if args.hard:
-                    if not args.rehearsal and not policy["isolated"]:
-                        from t3nightly.install_seamless import drain_then_hard
-
-                        sys.exit(drain_then_hard(run, run.server_version()))
+                    if not args.rehearsal and not policy["isolated"] and args.drain_s < 1:
+                        raise ValueError("live --hard requires --drain-s >= 1; nothing stopped")
                     from t3nightly.install_hard import install as hard_install
 
                     sys.exit(hard_install(run))
-                if args.seamless:
-                    from t3nightly.install_hot_swap import install
-
-                    sys.exit(install(run))
                 if args.prepare_only:
                     from t3nightly.install_prepare import prepare
 

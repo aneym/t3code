@@ -38,7 +38,7 @@ class Rehearsal:
         self.engine = Path(__file__).resolve().parent
         self.engine_identity = engine_identity(self.engine)
         self.restore_class = self.manifest["targets"][args.target_host]["compatibility"].get("eligibility") == RESTORE_CLASS
-        args.managed_service = args.hot_swap or self.restore_class
+        args.managed_service = self.restore_class
 
     def mark(self, phase, start):
         self.timings[phase] = round(time.monotonic() - start, 3)
@@ -60,7 +60,7 @@ class Rehearsal:
         if sys.platform != "darwin" and not (self.engine / "install_hard.py").is_file():
             raise ValueError("Linux rehearsal requires P4 isolated hard installer; refusing before boot")
         if self.restore_class and not self.args.rpc_tree:
-            raise ValueError("restore-rollback rehearsal requires --rpc-tree for the drained hard install")
+            raise ValueError("restore-rollback rehearsal requires --rpc-tree for the launcher-managed sandbox unit")
         self.version = self.manifest["version"]
         self.archive = self.args.assets / f"t3-{self.version}-{platform}-{arch}.tar.gz"
         verify_archive(self.archive)
@@ -104,12 +104,7 @@ class Rehearsal:
             command.extend(["--offbox", self.args.offbox, "--offbox-mib-s", "90", "--offbox-stop-s", "2400"])
             command.extend(["--offbox-stopped-ship"] if self.args.offbox_stopped_ship else ["--offbox-stage", str(self.sandbox.evidence / "offbox-stage"), "--offbox-stage-floor-gib", "5"])
         if self.args.managed_service:
-            command[command.index("--hard")] = "--seamless"
-            command.extend(["--rpc-tree", str(self.args.rpc_tree.resolve()), "--rehearsal-inject", self.args.inject])
-            if getattr(self.args, "rollback_fallback_proof", False):
-                command.append("--rollback-fallback-proof")
-            if getattr(self.args, "strict_drain_proof", False):
-                command.append("--strict-drain-proof")
+            command.extend(["--rpc-tree", str(self.args.rpc_tree.resolve())])
             for name in ("launcher_artifact", "connector_artifact"):
                 if getattr(self.args, name):
                     command.extend(["--" + name.replace("_", "-"), getattr(self.args, name)])
@@ -117,12 +112,12 @@ class Rehearsal:
             command.extend(["--verdict", str(self.args.verdict)])
         installer_home = Path.home() if (self.engine / "install_hard.py").is_file() else sandbox.os_home
         environment = dict(os.environ, HOME=str(installer_home), LOAD_GUARD_STATE=str(Path.home() / ".agent-rails/state/load-guard"))
-        drains = 2 if self.args.force_rollback or getattr(self.args, "rollback_fallback_proof", False) else 1
+        drains = 2 if self.args.force_rollback else 1
         timeout = 260 + drains * (self.args.health_s + self.args.rehearsal_drain_s)
         with (sandbox.evidence / "installer.log").open("w") as output:
             result = subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=timeout, check=False)
         report = json.loads((sandbox.evidence / "installer-state/last.json").read_text())
-        if self.args.force_rollback or (getattr(self.args, "hot_swap", False) and self.args.inject != "none"):
+        if self.args.force_rollback:
             if report["outcome"] != "rolled-back":
                 raise RuntimeError(f"forced rollback did not roll back: {report['outcome']}; see installer.log")
             sandbox.wait_ready(sandbox.old.name, 30)
@@ -139,10 +134,6 @@ class Rehearsal:
         result = {"result": "FAIL", "phase": self.phase}
         try:
             tick = time.monotonic()
-            if getattr(self.args, "hot_swap", False):
-                from .hot_swap_retention import reserve
-
-                self.reservation = reserve(self.sandbox)
             self.preflight()
             self.mark("preflight", tick)
             self.phase = "prepare"
@@ -162,14 +153,12 @@ class Rehearsal:
             tick = time.monotonic()
             before = workload.prepare()
             (self.sandbox.evidence / "before.json").write_text(json.dumps(before, indent=2) + "\n")
-            if self.restore_class:
-                (self.sandbox.home / "release-gate").touch()
             self.mark("workload", tick)
             self.phase = "install"
             tick = time.monotonic()
             self.install()
             self.mark("install", tick)
-            if self.args.force_rollback or (getattr(self.args, "hot_swap", False) and self.args.inject != "none"):
+            if self.args.force_rollback:
                 self.phase = "rollback-verify"
                 tick = time.monotonic()
                 proof = self.rollback_proof(workload)
@@ -191,7 +180,7 @@ class Rehearsal:
                 raise ValueError("; ".join(reasons))
             receipt_path = self.sandbox.evidence / "rehearsal-receipt.json"
             write(receipt_path, receipt)
-            result = {"result": "COMPATIBILITY-PROBE" if self.args.compatibility_probe else "PASS", "receipt": str(receipt_path), "releaseEligible": not reasons and not self.args.compatibility_probe and not getattr(self.args, "focused", False), "provenanceRefusals": reasons}
+            result = {"result": "COMPATIBILITY-PROBE" if self.args.compatibility_probe else "PASS", "receipt": str(receipt_path), "releaseEligible": not reasons and not self.args.compatibility_probe, "provenanceRefusals": reasons}
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, TimeoutError) as error:
             blocked = "environment-refused" if "sandbox" in str(error) or "live T3" in str(error) else "environment-blocked"
             result = {"result": blocked if self.phase in ("prepare", "baseline") else "FAIL", "phase": self.phase, "error": str(error)}
@@ -224,17 +213,6 @@ class Rehearsal:
                         self.sandbox.close()
                     except BaseException as error:
                         result.update(result="FAIL", releaseEligible=False, teardownError=f"{type(error).__name__}: {error}")
-                    finally:
-                        reservation = getattr(self, "reservation", None)
-                        if reservation:
-                            from .rehearsal_lifecycle import finish
-
-                            try:
-                                finish(self.sandbox.home.parent)
-                            except BaseException as error:
-                                result.update(result="FAIL", releaseEligible=False, finishError=f"{type(error).__name__}: {error}")
-                            finally:
-                                reservation.close()
             return self.report(result)
         finally:
             if mask is not None:

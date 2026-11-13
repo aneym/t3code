@@ -17,7 +17,7 @@ def restart_session(run, previous):
     binary = run.runtime(previous)
     ttl = f"{30 + math.ceil(getattr(run.args, 'drain_s', 0) / 60)}m"
     scopes = getattr(run.args, "auth_scopes", ("orchestration:read", "orchestration:operate", "environment:maintain"))
-    args = [str(binary), "auth", "session", "issue", "--base-dir", str(run.home), "--json", "--ttl", ttl, "--label", "t3nightly-seamless"]
+    args = [str(binary), "auth", "session", "issue", "--base-dir", str(run.home), "--json", "--ttl", ttl, "--label", "t3nightly-installer"]
     for scope in scopes:
         args.extend(["--scope", scope])
     watched = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM)
@@ -91,7 +91,7 @@ def restart_rpc(run, bearer, operation, payload, *, timeout=120):
     tree = Path(run.args.rpc_tree).expanduser().resolve()
     if not tree.is_dir():
         raise ValueError(
-            "seamless installation requires the frozen RPC dependency tree"
+            "launcher update requires the frozen RPC dependency tree"
         )
     with tempfile.NamedTemporaryFile(
         mode="w", prefix=".restart-request-", dir=run.state, delete=False

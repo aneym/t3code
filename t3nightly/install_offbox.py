@@ -194,17 +194,6 @@ def verified(run, host, root, replica, deadline, metadata):
     return metadata
 
 
-def live_backup(run, previous):
-    started = time.monotonic()
-    host, root, replica, source, size = placement(run, run.db.resolve().parent)
-    seeded, deadline = preseed(run, host, root, replica, source, size, started)
-    metadata = verified(run, host, root, replica, deadline, {"bytes": size, "seed": seeded, "live": True, "previous": previous})
-    metadata["seconds"] = round(time.monotonic() - started, 3)
-    run.step("backup", **metadata)
-    prune(run, host, root, run.args.version)
-    return metadata
-
-
 def fresh(host, directory, deadline):
     path = shlex.quote(str(directory / "verified.json"))
     script = f"if [ -f {path} ] && [ ! -L {path} ] && [ -n \"$(find {path} -mmin -{FRESH_H * 60})\" ]; then cat {path}; fi"

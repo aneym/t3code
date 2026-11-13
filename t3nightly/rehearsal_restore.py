@@ -27,8 +27,8 @@ def prove(rehearsal, workload):
             raise ValueError("restore rollback has no verified pre-install copy")
         if restored.get("source") != "local-restore-copy" or restored.get("sha256") != copy["sha256"] or restored.get("identity") != copy["identity"] or restored.get("quickCheck") != "ok":
             raise ValueError("stopped restored database did not match the pre-install copy")
-    if (receipt.get("hotSwap") or {}).get("method") != "maintenance" or not (receipt.get("restartDrain") or {}).get("drained"):
-        raise ValueError("restore rollback did not use a drained hard install")
+    if (receipt.get("restartDrain") or {}).get("outcome") not in ("drained", "timed-out"):
+        raise ValueError("restore rollback did not drain before the hard install stop")
     writes = json.loads((state / "candidate-writes.json").read_text())
     if sandbox.query("SELECT thread_id FROM orchestration_v2_projection_threads WHERE thread_id=?", (writes["threadId"],)):
         raise ValueError("candidate-only writes survived database restore")

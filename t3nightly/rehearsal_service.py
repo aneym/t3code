@@ -25,30 +25,11 @@ def render(tree, home, unit, program, log, environment, kind="server", connector
 
 def boot(sandbox, argv, log):
     environment = sandbox.service_environment()
-    if getattr(sandbox.args, "strict_drain_proof", False):
-        from .rehearsal_drain import configure_replay
-
-        configure_replay(sandbox)
     if sys.platform == "darwin":
         from .rehearsal_internal import internal
 
         internal(sandbox.args.rpc_tree)
 
-    if sandbox.args.hot_swap:
-        from shutil import copy2
-
-        fault = sandbox.home / "runtime/hot-swap-fault.cjs"
-        copy2(Path(__file__).with_name("hot_swap_fault.cjs"), fault)
-        hold = 0
-        if getattr(sandbox.args, "queue_mode", "none") != "none":
-            config = json.loads((sandbox.home / "runtime/launcher-config.json").read_text())
-            hold = 2000 if sandbox.args.queue_mode == "capacity" else config["holdBudgetMs"] + 1000
-        if getattr(sandbox.args, "watchdog_bad_launcher", ""):
-            environment["T3_REHEARSAL_BAD_LAUNCHER"] = sandbox.args.watchdog_bad_launcher
-            environment["T3_REHEARSAL_LAUNCHER_DEATHS"] = str(sandbox.evidence / "launcher-deaths.jsonl")
-        environment["T3_REHEARSAL_VALIDATED_HOLD_MS"] = str(hold)
-        environment["T3_REHEARSAL_IPC_RECEIPT"] = str(sandbox.evidence / "launcher-ipc.jsonl")
-        environment.update(NODE_OPTIONS="--require=" + json.dumps(str(fault)), T3_REHEARSAL_FAULT="post-flip" if getattr(sandbox.args, "rollback_fallback_proof", False) else "" if sandbox.args.inject == "none" else sandbox.args.inject, T3_REHEARSAL_FAULT_RECEIPT=str(sandbox.evidence / "fault-injected.json"))
     unit_path = sandbox.unit if sys.platform == "darwin" else sandbox.systemd_unit
     from .connector_artifact import identity
 

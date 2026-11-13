@@ -14,6 +14,7 @@ from .install_restore_copy import RecoveryRequired
 from .install_db_rollback import recovery_required
 from .install_backup import advisory, capture
 from .install_compact import UNSAFE, compact, served
+from .install_drain import drain
 from .install_chat import candidate_writes, identities, prove, retained
 from .install_process import serving_process
 from .install_service import service
@@ -191,14 +192,11 @@ def install(run):
 
     def stop():
         nonlocal stopped
-        from .install_handoff import admit_stop
         from .install_policy import recheck
 
         recheck(run)
-        drain = getattr(run, "drain_before_stop", None)
-        run.drain_before_stop = None
-        if drain:
-            admit_stop(run, drain())
+        if "restartDrain" not in run.report:
+            drain(run)
         install_settings.capture(run)
         service(run, "stop")
         stopped = True
@@ -344,8 +342,6 @@ def install(run):
                 advisory(run, backup)
             except (OSError, subprocess.SubprocessError) as error:
                 run.step("advisory-backup-check-failed", error=str(error))
-    if getattr(run, "handoff_check", None):
-        run.handoff_check(outcome)
     install_predrain.finish(run, backup, stopped, database_rollback)
     moment = datetime.now(timezone.utc).isoformat()
     serving_version = run.server_version() or "unavailable"
@@ -365,7 +361,7 @@ def install(run):
         "oldRuntime": {"version": previous, "digest": observed["oldRuntime.digest"]},
         "servingRuntime": {"version": serving_version, "digest": serving_digest},
         "installWindow": run.report.get("installWindow"), "hotSwap": {**(run.report.get("hotSwap") or {}), "forwardRepairRequired": run.report.get("forwardRepairRequired", False)},
-        **{key: run.report[key] for key in ("restartDrain", "restartHandoff", "connectorRestore", "databaseQuiescence", "databaseCompaction") if key in run.report},
+        **{key: run.report[key] for key in ("restartDrain", "connectorRestore", "databaseQuiescence", "databaseCompaction") if key in run.report},
         "retryable": any((run.report.get(key) or {}).get("retryable") is True for key in ("restartDrain", "databaseQuiescence")),
         "migrationHistory": migration_evidence, "databaseRollback": database_rollback,
         **install_settings.receipt(run),

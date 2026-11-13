@@ -47,16 +47,6 @@ def automatic(workload):
     report["automaticMessage"] = {"messageId": new_rows[0][0], "payload": new_rows[0][1]}
     report["status"] = "running-on-NEW"
     save()
-    probe_path = sandbox.evidence / "connection-probe.json"
-
-    def replacement():
-        try:
-            probe = json.loads(probe_path.read_text())
-        except (OSError, ValueError):
-            return None
-        return next((row for row in probe.get("subscriptions", []) if row.get("sessionId", 0) > 1 and row.get("serverVersion") == manifest["version"] and row.get("afterSequence") is not None), None)
-
-    report["replacementSubscription"] = wait_for(replacement, 30, "NEW replacement subscription before releasing active continuation")
     report["postSwapEventFloor"] = sandbox.query("SELECT coalesce(max(sequence),0) FROM orchestration_events WHERE aggregate_kind='thread' AND stream_id=?", (active["threadId"],))[0][0]
     save()
     (sandbox.home / "release-gate").touch()

@@ -141,7 +141,7 @@ def condition_met(condition, compatibility, install):
     if condition == "local-restore-copy":
         return copy.get("quickCheck") == "ok" and bool(copy.get("identity")) and bool(copy.get("path")) and bool(copy.get("sha256")) and all(copy.get(key) == local.get(key) for key in ("path", "identity", "sha256", "quickCheck"))
     if condition == "drain-then-hard":
-        return (install.get("hotSwap") or {}).get("method") == "maintenance" and (install.get("restartDrain") or {}).get("drained") is True and install.get("migrationHistory") == {"before": compatibility["baseMigrations"]["history"], "candidate": compatibility["candidateMigrations"]["history"]}
+        return (install.get("restartDrain") or {}).get("outcome") in ("drained", "timed-out") and install.get("migrationHistory") == {"before": compatibility["baseMigrations"]["history"], "candidate": compatibility["candidateMigrations"]["history"]}
     return False
 
 

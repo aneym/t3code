@@ -19,7 +19,7 @@ class InstallCommand:
 
 def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, artifact_manifest,
                           receipt_host, install_receipt, state_dir, chat_project, override_reason="", launcher_artifact=None,
-                          connector_artifact=None, home=None, drain_s=None, handoff_stop=None, compact_db=None):
+                          connector_artifact=None, home=None, drain_s=None, compact_db=None):
     home = Path.home() if home is None else Path(home)
     state, env, prefix = Path(state_dir), None, []
     if host == "ax42":
@@ -27,7 +27,7 @@ def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, a
         state = backups.parent / "fast-install" / version
         env = {**os.environ, "AGENT_LANE": "t3-nightly", "AGENT_THREAD_ID": "mcp:a2795f2f-43aa-40c5-890c-98de1291379a"}
         prefix = ["ionice", "-c3"]
-    words = [*prefix, sys.executable, str(Path(tools) / "install"), "--seamless", "--rpc-tree", str(rpc_tree), "--version", version, "--assets", str(assets),
+    words = [*prefix, sys.executable, str(Path(tools) / "install"), "--hard", "--rpc-tree", str(rpc_tree), "--version", version, "--assets", str(assets),
              "--manifest", str(manifest), "--artifact-manifest", str(artifact_manifest),
              "--receipt-host", receipt_host, "--install-receipt", str(install_receipt), "--state-dir", str(state),
              "--chat-project", str(chat_project), "--load-max", "64", "--health-s", "300", "--override-reason", override_reason]
@@ -42,8 +42,6 @@ def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, a
         if not 1 <= drain_s <= 300:
             raise ValueError("drain_s must be between 1 and 300")
         words.extend(["--drain-s", str(drain_s)])
-    if handoff_stop is not None:
-        words.append("--handoff-stop" if handoff_stop else "--no-handoff-stop")
     if compact_db is not None:
         if compact_db and host != "studio":
             raise ValueError("compact_db is supported on studio only")
@@ -63,7 +61,6 @@ def fast_install(config, log):
         install_receipt=config.receipt("install"), state_dir=config.install_state(),
         chat_project=config.chat_project(), override_reason=config.override_reason,
         home=config.home, compact_db=config.compact_db or None,
-        handoff_stop=True if config.compact_db else None,
         **{artifacts[index].removeprefix("--").replace("-", "_"): artifacts[index + 1] for index in range(0, len(artifacts), 2)},
     )
     plan.state.mkdir(parents=True, exist_ok=True)
