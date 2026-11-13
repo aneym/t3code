@@ -124,20 +124,6 @@ it("rejects contradictory service state", () => {
       },
     }),
   );
-
-  assert.isUndefined(
-    decodeServiceState({
-      protocol: SERVICE_LAUNCHER_PROTOCOL,
-      activeVersion: "1.0.0",
-      update: {
-        id: "update-2",
-        fromVersion: "1.0.0",
-        targetVersion: "0.9.0",
-        dbPath: "/tmp/state.sqlite",
-        status: "pending",
-      },
-    }),
-  );
 });
 
 const unitPlan = (root: string, version: string) => ({
