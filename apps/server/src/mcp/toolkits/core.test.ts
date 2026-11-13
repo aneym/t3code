@@ -218,7 +218,7 @@ it.effect("a pending question read keeps option previews", () => {
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
-    expect(result.structuredContent).toEqual({ requestId, questions });
+    expect(result.structuredContent).toEqual({ requestId, questions, dismissible: true });
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(

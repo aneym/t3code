@@ -3,7 +3,6 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Metric from "effect/Metric";
-import * as Schedule from "effect/Schedule";
 
 import { makeDispatchGateLog } from "../observability/DispatchGateLog.ts";
 import * as Metrics from "../observability/Metrics.ts";
@@ -87,7 +86,20 @@ export const makeGateRecorder = Effect.gen(function* () {
       });
     }
   });
-  yield* sweep.pipe(Effect.repeat(Schedule.spaced(SWEEP_EVERY)), Effect.forkScoped);
+  const scope = yield* Effect.scope;
+  let sweeping = false;
+  const sweepWhileWaiting: Effect.Effect<void> = Effect.suspend(() => {
+    if (waiters.size === 0) {
+      sweeping = false;
+      return Effect.void;
+    }
+    return Effect.sleep(SWEEP_EVERY).pipe(Effect.andThen(sweep), Effect.andThen(sweepWhileWaiting));
+  });
+  const startSweep = Effect.suspend(() => {
+    if (sweeping) return Effect.void;
+    sweeping = true;
+    return Effect.asVoid(Effect.forkIn(sweepWhileWaiting, scope));
+  });
 
   const release = (holder: Holder, outermost: boolean) =>
     Effect.flatMap(Clock.currentTimeMillis, (now) => {
@@ -147,7 +159,10 @@ export const makeGateRecorder = Effect.gen(function* () {
             Effect.ensuring(release(holder, parent === undefined)),
           );
         });
-        return lock(held).pipe(Effect.ensuring(Effect.sync(() => waiters.delete(waiter))));
+        return startSweep.pipe(
+          Effect.andThen(lock(held)),
+          Effect.ensuring(Effect.sync(() => waiters.delete(waiter))),
+        );
       },
     );
 

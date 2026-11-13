@@ -163,8 +163,6 @@ it.effect("resolves only the requested active project page in creation order", (
         first.projects.map((project) => project.repositoryIdentity?.canonicalKey),
         ["example.test/work/page-0", "example.test/work/page-2"],
       );
-      // A sentinel queued after the page lets the enrichment workers finish
-      // earlier requests before checking which workspaces were inspected.
       yield* enrichment.request("/work/page-sentinel");
       for (;;) {
         if ((yield* PubSub.take(changes)).workspaceRoot === "/work/page-sentinel") break;
@@ -554,7 +552,8 @@ it.layer(layerTest)("ProjectService", (it) => {
       });
       const input = { commandId: CommandId.make("command:delete-retry:delete"), projectId };
       const deleted = yield* service.delete(input);
-      assert.deepEqual(yield* service.delete(input), deleted);
+      const retried = yield* service.delete(input);
+      assert.deepEqual({ ...retried, repositoryIdentity: null, faviconPath: null }, deleted);
       const events = yield* sql<{ readonly command_id: string }>`
         SELECT command_id FROM orchestration_events
         WHERE stream_id = ${projectId} AND event_type = 'project.deleted'

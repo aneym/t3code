@@ -728,7 +728,7 @@ describe("composerDraftStore context persistence", () => {
   it("keeps a draft another tab saved after this tab loaded", async () => {
     const sharedStorage = createMemoryStorage();
     vi.stubGlobal("localStorage", sharedStorage);
-    vi.stubGlobal("window", new EventTarget());
+    vi.stubGlobal("window", Object.assign(new EventTarget(), { location: { pathname: "/" } }));
     vi.useFakeTimers();
     vi.resetModules();
     try {
@@ -1628,7 +1628,6 @@ describe("composerDraftStore modelSelection", () => {
     const latest = draftFor(threadId, TEST_ENVIRONMENT_ID);
     expect(latest?.modelSelectionByProvider[original.instanceId]).toEqual(original);
 
-    // The earlier pick lands, then the latest one is rejected.
     h.update({ modelSelection: other });
     h.showInFlightPick(null);
     expect(h.model()).toEqual(other);

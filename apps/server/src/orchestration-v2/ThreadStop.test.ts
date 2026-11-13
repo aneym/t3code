@@ -879,7 +879,7 @@ it.effect(
         createdBy: "agent",
         creationSource: "mcp",
       });
-      assert.equal(result.delivery, "queued");
+      assert.equal(result.delivery, "held");
       assert.deepEqual((yield* threadState(threadId)).runs, [
         "running",
         "queued:held",

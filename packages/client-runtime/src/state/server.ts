@@ -62,6 +62,7 @@ import {
   serverConfigSubscriptionInput,
 } from "../rpc/session.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
+import { createCommandPermissions, provideCommandPermissions } from "./commandPermissions.ts";
 import {
   applyServerConfigProjection,
   reuseUnchanged,
@@ -906,7 +907,8 @@ export function createServerEnvironmentAtoms<R, E>(
   );
   const updateStateAtom = (environmentId: EnvironmentId | null) =>
     environmentId === null ? EMPTY_SERVER_UPDATE_STATE_ATOM : updateStateValueAtom(environmentId);
-  const updateServer = createRuntimeCommand<
+  const updateServerPermissions = createCommandPermissions(runtime, WS_METHODS.serverUpdateServer);
+  const updateServerCommand = createRuntimeCommand<
     EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
     E,
     ServerUpdateTarget,
@@ -932,6 +934,7 @@ export function createServerEnvironmentAtoms<R, E>(
       });
 
       return Effect.gen(function* () {
+        yield* updateServerPermissions.authorize(atomRegistry, target.environmentId, target.input);
         const environmentRegistry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const desktopCommitStarting = yield* Deferred.make<void>();
         const desktopReconnectObserverArmed = yield* Deferred.make<void>();
@@ -1183,6 +1186,7 @@ export function createServerEnvironmentAtoms<R, E>(
         atomRegistry.set(stateAtom, IDLE_SERVER_UPDATE_STATE);
         return result;
       }).pipe(
+        provideCommandPermissions(runtime, atomRegistry),
         Effect.onExit((exit) =>
           Effect.sync(() => {
             if (Exit.isSuccess(exit)) {
@@ -1204,6 +1208,11 @@ export function createServerEnvironmentAtoms<R, E>(
       );
     }),
   });
+  const updateServer = {
+    ...updateServerCommand,
+    requiredScopes: updateServerPermissions.requiredScopes,
+    permissionAtom: updateServerPermissions.permissionAtom,
+  };
   const settingsValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(configValueAtom(environmentId))?.settings ?? null).pipe(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
