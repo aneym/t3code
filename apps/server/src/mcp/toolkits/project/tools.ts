@@ -1,4 +1,3 @@
-import * as Struct from "effect/Struct";
 import { McpAttachmentInput } from "../attachment/input.ts";
 import {
   AgentPlacementReceipt,
@@ -84,7 +83,7 @@ const ProjectReadTool = Tool.make("t3_project_read", {
 const ProjectCreateTool = Tool.make("t3_project_create", {
   ...shared,
   description:
-    "Register a project folder the user keeps. Not for probes, proofs or tests: use `t3_thread_launch` with `scratch: true`, or delete the project when done. `createWorkspaceRootIfMissing` creates it. A registered folder is rejected with its projectId: reuse it, never register another folder. No `workspaceRoot`: makes a git repo from `title` with README, icon, first commit (`commitError` on failure; project still exists). Clone first with `t3_project_clone` if needed.",
+    "Register a project folder. `createWorkspaceRootIfMissing` creates it; a registered folder is rejected. No `workspaceRoot`: makes a git repo from `title` with README, icon, first commit (`commitError` on failure; project still exists). Clone first with `t3_project_clone` if needed.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...ProjectCreatePayload.fields,
@@ -99,13 +98,12 @@ const ProjectUpdateTool = Tool.make("t3_project_update", {
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,
-    ...Struct.omit(ProjectUpdatePayload.fields, ["pinOrder"]),
+    ...ProjectUpdatePayload.fields,
   }),
 }).annotate(Tool.Destructive, true);
 const ProjectDeleteTool = Tool.make("t3_project_delete", {
   ...shared,
-  description:
-    "Delete one project. Archive all threads first; `force: true` deletes archived threads. Folder on disk stays.",
+  description: "Delete one project. Nonempty needs `force: true`. Folder on disk stays.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,
@@ -142,9 +140,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
           "No project: a new Scratch folder. Not with `projectId` or `workspaceStrategy`.",
       }),
     ),
-    title: Schema.optional(
-      TrimmedNonEmptyString.annotate({ description: "Omit to generate one from `message`." }),
-    ),
+    title: TrimmedNonEmptyString,
     modelSelection: Schema.optional(ModelSelection),
     runtimeMode: Schema.optional(RuntimeMode),
     interactionMode: Schema.optional(ProviderInteractionMode),

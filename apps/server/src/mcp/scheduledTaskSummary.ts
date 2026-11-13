@@ -1,4 +1,8 @@
-import type { OrchestratorMcpScheduledTask, ScheduledTask } from "@t3tools/contracts";
+import {
+  scheduledTaskThreadMode,
+  type OrchestratorMcpScheduledTask,
+  type ScheduledTask,
+} from "@t3tools/contracts";
 
 export function scheduledTaskSummary(
   task: ScheduledTask,
@@ -11,11 +15,11 @@ export function scheduledTaskSummary(
     enabled: task.enabled,
     projectId: task.projectId,
     boundThreadId: task.threadId,
+    freshSession: scheduledTaskThreadMode(task) === "fresh_session",
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunAt: task.lastRunAt,
     lastRunStatus: task.lastRunStatus,
-    ...(task.lastRunError === null ? {} : { lastRunError: task.lastRunError }),
     runCount: task.runCount,
     ...(task.blockedByPolicy === undefined ? {} : { blockedByPolicy: task.blockedByPolicy }),
     ...(task.webhook?.url == null || !mayRun || task.blockedByPolicy !== undefined

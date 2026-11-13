@@ -31,7 +31,7 @@ const HANDOFF_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 const INPUT_TARGET_ACTIONS = {
-  t3_queue: new Set(["edit", "promote_to_steer", "send_all"]),
+  t3_queue: new Set(["edit", "promote_to_steer"]),
   t3_pending_request: new Set(["respond", "dismiss"]),
 };
 

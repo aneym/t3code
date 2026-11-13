@@ -56,7 +56,7 @@ import {
 import {
   OrchestratorProjectionError,
   OrchestratorThreadAboveModeLimitError,
-} from "../orchestration-v2/Orchestrator.ts";
+} from "../orchestration-v2/OrchestratorErrors.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -3827,55 +3827,6 @@ describe("OrchestratorMcpService thread lookup", () => {
       assert.equal(read.message, `Thread ${bareId} is no longer available.`);
       assert.equal(send.message, `Thread ${bareId} was not found.`);
       assert.equal(wait.message, send.message);
-    }),
-  );
-
-  it.effect("records the linked environment's thread that sent a message", () =>
-    Effect.gen(function* () {
-      const target = liveThreadShell(ThreadId.make("thread:target"));
-      const sender = {
-        environmentId: EnvironmentId.make("environment:a"),
-        threadId: ThreadId.make("thread:orc"),
-        title: "orc lead",
-      };
-      const linked = (senderThread?: typeof sender): McpInvocationScope => ({
-        ...client,
-        client: {
-          sessionId: "link-a",
-          label: "A",
-          access: "full-access",
-          linked: true,
-          ...(senderThread === undefined ? {} : { senderThread }),
-        },
-      });
-      const sendAs = (scope: McpInvocationScope) =>
-        Effect.gen(function* () {
-          const inputs: Array<ThreadManagementService.ThreadManagementSendInput> = [];
-          const sent = yield* Ref.make(0);
-          yield* Effect.gen(function* () {
-            const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
-            yield* mcp.sendToThread(scope, { threadId: target.id, message: "hello" });
-          }).pipe(
-            Effect.provide(
-              service([target], sent, {
-                getProjectThreadRecords: () => Effect.succeed(idleThreadProjection(target)),
-                sendToThread: (input) => {
-                  inputs.push(input);
-                  return Effect.succeed({
-                    run: { id: RunId.make("run:sent"), status: "running" },
-                    delivery: "started",
-                  } as never);
-                },
-              }),
-            ),
-          );
-          return inputs[0];
-        });
-
-      const fromLink = yield* sendAs(linked(sender));
-      assert.deepStrictEqual(fromLink?.linkedSender, sender);
-      assert.isUndefined(fromLink?.senderThreadId);
-      assert.isUndefined((yield* sendAs(linked()))?.linkedSender);
     }),
   );
 

@@ -20,6 +20,8 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import * as AgentLaunchRouting from "./agentLaunchRouting.ts";
+import * as AgentPlacement from "../peer/AgentPlacement.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -81,7 +83,7 @@ let handlersLayer: <Tools extends Record<string, Tool.Any>, EX, RX>(
   layer: Layer.Layer<Tool.HandlersFor<Tools>, EX, RX>,
 ) => HandlersLayer<Tools, EX, RX>;
 
-/** t3code/no-raw-mcp-registration confines Effect's unchecked registration API to McpHttpServer. */
+/** t3code/no-raw-mcp-registration confines Effect's unchecked registration API to mcp/mcpServer. */
 export class Declaration<out Handler> {
   readonly #handle: Handler;
   readonly #remote: RemoteCheck<never> | undefined;
@@ -417,6 +419,7 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
 ) {
   // Optional so toolkits that never leave this environment build without it.
   const forwarding = yield* Effect.serviceOption(PeerForwarding.PeerForwarding);
+  const placement = yield* Effect.serviceOption(AgentPlacement.AgentPlacement);
   const handlers: Record<string, unknown> = { ...checked };
   for (const [name, declaration] of Object.entries<Declaration<unknown>>(declarations)) {
     const tool = toolkit.tools[name];
@@ -435,16 +438,41 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
     handlers[name] = ({ environmentId, ...params }: { readonly environmentId?: EnvironmentId }) =>
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
-        const target = PeerForwarding.remoteTarget(scope, environmentId);
-        if (target === undefined) return yield* here(params);
-        if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
-        yield* (remote as RemoteCheck<typeof params>)(params);
-        if (Option.isNone(forwarding)) return yield* linksUnavailable;
-        const result = yield* forwarding.value.call(scope, tool, target, {
-          ...params,
-          environmentId,
-        });
-        return forwarded === undefined ? result : yield* forwarded(params, target, result);
+        const routed =
+          name === "t3_thread_launch" &&
+          environmentId === undefined &&
+          scope.linkedEnvironments !== false &&
+          Option.isSome(placement) &&
+          (yield* placement.value.enabled)
+            ? yield* AgentLaunchRouting.prepare(placement.value, scope, params)
+            : { environmentId, params, placement: undefined };
+        const target = PeerForwarding.remoteTarget(scope, routed.environmentId);
+        const result =
+          target === undefined
+            ? yield* here(routed.params)
+            : yield* Effect.gen(function* () {
+                if (scope.linkedEnvironments === false)
+                  return yield* PeerForwarding.linkedEnvironmentsOff;
+                yield* (remote as RemoteCheck<typeof params>)(routed.params);
+                if (Option.isNone(forwarding)) return yield* linksUnavailable;
+                const reply = yield* forwarding.value.call(scope, tool, target, {
+                  ...routed.params,
+                  environmentId: routed.environmentId,
+                });
+                return forwarded === undefined
+                  ? reply
+                  : yield* forwarded(routed.params, target, reply);
+              });
+        if (typeof result !== "object" || result === null) return result;
+        if (name === "t3_thread_read" && target !== undefined && "threadId" in routed.params)
+          return yield* AgentPlacement.withRecordedPlacement(
+            String(routed.params.threadId),
+            result,
+          );
+        if (routed.placement === undefined) return result;
+        if ("threadId" in result && typeof result.threadId === "string" && Option.isSome(placement))
+          yield* placement.value.record(result.threadId, routed.placement);
+        return { ...result, placement: routed.placement };
       });
   }
   return handlers as Toolkit.HandlersFrom<Tools>;

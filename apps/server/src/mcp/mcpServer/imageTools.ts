@@ -12,7 +12,7 @@ import * as DeviceService from "../../device/DeviceService.ts";
 import * as HtmlRender from "../../htmlRender/HtmlRender.ts";
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import { advertisedJsonSchema } from "../advertisedJsonSchema.ts";
-import { decodeAsAdvertised } from "../advertisedParameters.ts";
+import { decodeAsAdvertised, parameterValidationMessage } from "../advertisedParameters.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import { DeviceScreenshotTool, DeviceScreenshotToolkit } from "../toolkits/device/tools.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit } from "../toolkits/html/tools.ts";
@@ -81,7 +81,7 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
   R,
 >(
   tool: T,
-  handle: (payload: Tool.Parameters<T>) => Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
+  handle: (payload: Schema.Json) => Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
   provide: (
     effect: Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
   ) => Effect.Effect<
@@ -116,15 +116,12 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
           fiber.context,
           McpInvocationContext.McpInvocationContext,
         );
-        return provide(handle(payload as Tool.Parameters<T>)).pipe(
+        return provide(handle(payload)).pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.matchCauseEffect({
             onFailure: imageToolFailure(tool.name, operation, failureText),
             onSuccess: ({ encodedResult }) => {
               const { screenshot, ...rest } = encodedResult as ImageToolResult;
-              const includeImage =
-                (payload as { readonly includeImage?: boolean } | undefined)?.includeImage !==
-                false;
               const metadata = {
                 ...rest,
                 screenshot: {
@@ -139,15 +136,11 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
                   structuredContent: metadata,
                   content: [
                     { type: "text", text: JSON.stringify(metadata) },
-                    ...(includeImage
-                      ? [
-                          {
-                            type: "image" as const,
-                            data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                            mimeType: screenshot.mimeType,
-                          },
-                        ]
-                      : []),
+                    {
+                      type: "image" as const,
+                      data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
+                      mimeType: screenshot.mimeType,
+                    },
                   ],
                 }),
               );
@@ -177,7 +170,9 @@ export const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceS
       "screenshot",
       (error) => {
         if (!isDeviceToolError(error)) {
-          return isOrchestratorMcpFailure(error) ? error.message : "Device screenshot failed.";
+          return isOrchestratorMcpFailure(error)
+            ? error.message
+            : (parameterValidationMessage(error) ?? "Device screenshot failed.");
         }
         return error._tag === "DeviceOperationError" && error.reason === "hub_rejected"
           ? `${error.message} Call device_list to check the device state, and device_open if it needs to be reopened.`

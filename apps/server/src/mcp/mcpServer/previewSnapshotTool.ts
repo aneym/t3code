@@ -1,7 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -15,14 +15,17 @@ import { PreviewAutomationError } from "@t3tools/contracts";
 import * as ServerConfig from "../../config.ts";
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import { advertisedJsonSchema } from "../advertisedJsonSchema.ts";
-import { decodeAsAdvertised } from "../advertisedParameters.ts";
+import { decodeAsAdvertised, parameterValidationMessage } from "../advertisedParameters.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../PreviewAutomationBroker.ts";
 import { PreviewSnapshotTool, PreviewSnapshotToolkit } from "../toolkits/preview/tools.ts";
+import { cutText } from "./cutText.ts";
 
 /** Claude Code spills oversized results to files, losing locators; bound both text and its preferred structuredContent. */
 export const MAX_SNAPSHOT_TEXT_BYTES = 20_000;
 const MAX_SNAPSHOT_VISIBLE_TEXT_CHARS = 8_000;
+// Page text and the ARIA tree both shrink to this before either drops below it.
+const SNAPSHOT_TEXT_FLOOR_CHARS = 2_000;
 const MAX_SNAPSHOT_ELEMENT_NAME_CHARS = 200;
 const MAX_SNAPSHOT_LOG_ENTRIES = 40;
 const MAX_SNAPSHOT_LOG_TEXT_CHARS = 500;
@@ -30,9 +33,6 @@ const MAX_SNAPSHOT_IDENTIFIER_CHARS = 2_048;
 
 const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const utf8Length = (text: string) => Buffer.byteLength(text, "utf8");
-const cutText = (text: string, max: number) =>
-  text.length > max ? `${text.slice(0, max)}…` : text;
-
 const cutEntryStrings = <A>(entry: A): A =>
   typeof entry === "object" && entry !== null
     ? (Object.fromEntries(
@@ -61,6 +61,11 @@ type SnapshotMetadata = {
   readonly actionTimeline: ReadonlyArray<unknown>;
   readonly [key: string]: unknown;
 };
+
+const halveToFloor = (chars: number) =>
+  chars > SNAPSHOT_TEXT_FLOOR_CHARS
+    ? Math.max(SNAPSHOT_TEXT_FLOOR_CHARS, Math.floor(chars / 2))
+    : Math.floor(chars / 2);
 
 const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   const omitted: Array<string> = [];
@@ -137,18 +142,22 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
       shedOrder.find(
         (candidate) => candidate !== "interactiveElements" && lists[candidate].length > 0,
       ) ??
-      (visibleTextChars > 0
+      (visibleTextChars > SNAPSHOT_TEXT_FLOOR_CHARS
         ? "visibleText"
-        : lists.interactiveElements.length > 0
-          ? "interactiveElements"
-          : ariaTreeChars > 0
-            ? "accessibilityTree"
-            : undefined);
+        : ariaTreeChars > SNAPSHOT_TEXT_FLOOR_CHARS
+          ? "accessibilityTree"
+          : visibleTextChars > 0
+            ? "visibleText"
+            : lists.interactiveElements.length > 0
+              ? "interactiveElements"
+              : ariaTreeChars > 0
+                ? "accessibilityTree"
+                : undefined);
     if (key === undefined) break;
     if (key === "visibleText") {
-      visibleTextChars = Math.floor(visibleTextChars / 2);
+      visibleTextChars = halveToFloor(visibleTextChars);
     } else if (key === "accessibilityTree") {
-      ariaTreeChars = Math.floor(ariaTreeChars / 2);
+      ariaTreeChars = halveToFloor(ariaTreeChars);
     } else {
       const keep = Math.floor(lists[key].length / 2);
       dropped[key] += lists[key].length - keep;
@@ -210,8 +219,8 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const millis = yield* Clock.currentTimeMillis;
-  const crypto = yield* Crypto.Crypto;
-  const unique = (yield* crypto.randomUUIDv4().pipe(Effect.orDie)).slice(0, 8);
+  const random = yield* SecureRandom.SecureRandom;
+  const unique = (yield* random.uuidV4()).slice(0, 8);
   const fileName = `browser-screenshot-${screenshotSiteSlug(pageUrl)}-${millis.toString(36)}-${unique}.png`;
   const screenshotPath = path.join(config.browserArtifactsDir, fileName);
   yield* fileSystem.makeDirectory(config.browserArtifactsDir, { recursive: true }).pipe(
@@ -222,6 +231,7 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
 });
 
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
+const isPreviewScreenshotSaveError = Schema.is(PreviewScreenshotSaveError);
 
 const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
   cause: Cause.Cause<E>,
@@ -238,7 +248,10 @@ const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
     typeof firstFailure._tag === "string"
       ? firstFailure._tag
       : "PreviewSnapshotError";
-  const message = isPreviewAutomationError(firstFailure) ? firstFailure.message : undefined;
+  const message =
+    isPreviewAutomationError(firstFailure) || isPreviewScreenshotSaveError(firstFailure)
+      ? firstFailure.message
+      : parameterValidationMessage(firstFailure);
   const result = new McpSchema.CallToolResult({
     isError: true,
     structuredContent: {
@@ -264,7 +277,7 @@ export const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewS
     const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const saveServices = yield* Effect.context<
-      ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+      ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path | SecureRandom.SecureRandom
     >();
     const built = yield* decodeAsAdvertised(PreviewSnapshotToolkit);
     const tool = PreviewSnapshotTool;
@@ -308,11 +321,19 @@ export const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewS
                     readonly width: number;
                     readonly height: number;
                   };
+                  readonly fullScreenshot?: { readonly data: string };
                 };
-                const { screenshot, ...page } = snapshot;
+                const { screenshot, fullScreenshot, ...page } = snapshot;
                 const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
                 const screenshotPath =
-                  payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
+                  payload?.save === true
+                    ? yield* saveScreenshot(
+                        snapshot.url,
+                        fullScreenshot
+                          ? new Uint8Array(Buffer.from(fullScreenshot.data, "base64"))
+                          : png,
+                      )
+                    : undefined;
                 const includeImage = payload?.includeImage === true;
                 if (screenshotPath !== undefined && !includeImage) {
                   const saved = {

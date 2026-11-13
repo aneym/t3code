@@ -29,7 +29,6 @@ import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as DocumentText from "../../../provider/DocumentText.ts";
-import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -46,6 +45,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
+import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/OrchestratorErrors.ts";
 
 const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: RuntimeMode;
@@ -471,33 +471,6 @@ it.effect("a launch key of any length or content gives a short id and never a de
     const loneSurrogate = yield* launch("key-\ud800").pipe(Effect.exit);
     expect(Exit.isFailure(loneSurrogate) && Cause.hasDies(loneSurrogate.cause)).toBe(false);
     expect(launched).toHaveLength(1);
-  }),
-);
-
-it.effect("a retried launch replays after the project loses its default model", () =>
-  Effect.gen(function* () {
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
-    const { projectId, modelSelection, projectDefaults, dependencies } = clientLaunchHarness({
-      runtimeModeCeiling: "auto",
-      launched,
-    });
-    const toolkit = yield* ProjectToolkit.pipe(
-      Effect.provide(
-        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
-      ),
-    );
-    const launch = toolkit
-      .handle("t3_thread_launch", { title: "Fix", projectId, clientRequestId: "fix-1" })
-      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
-
-    yield* launch;
-    projectDefaults.model = null;
-    const retried = (yield* launch).at(-1)?.result;
-    expect(retried).toMatchObject({ projectId, modelSelection });
-    expect(launched.map((input) => input.threadId)).toEqual([
-      launched[0]?.threadId,
-      launched[0]?.threadId,
-    ]);
   }),
 );
 

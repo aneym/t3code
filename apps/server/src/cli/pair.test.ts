@@ -35,15 +35,11 @@ import {
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import { resolveHostCliCommand } from "./invocation.ts";
-import {
-  DevServerNotProxiableError,
-  resolveTailscaleLocalTarget,
-  ServePortOccupiedError,
-  TailscaleServeTargetRefusedError,
-} from "./pair.ts";
+import { resolveTailscaleLocalTarget } from "./pair.ts";
 
 import packageJson from "../../package.json" with { type: "json" };
 import { buildPairingAppLink } from "@t3tools/shared/remote";
+import { ServePortOccupiedError, TailscaleServeTargetRefusedError } from "./pairRefusals.ts";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer);
 
@@ -67,12 +63,6 @@ describe("pair tailscale local target", () => {
     expect(
       resolveTailscaleLocalTarget({ ...baseState, devUrl: "http://[fd7a:115c::1]:5733/" }),
     ).toEqual({ localPort: 5_733, localHost: "[fd7a:115c::1]" });
-  });
-
-  it("rejects HTTPS dev URLs, which tailscale serve cannot proxy", () => {
-    expect(
-      resolveTailscaleLocalTarget({ ...baseState, devUrl: "https://localhost:5733/" }),
-    ).toBeInstanceOf(DevServerNotProxiableError);
   });
 });
 

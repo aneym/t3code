@@ -7,9 +7,7 @@ import {
   RunId,
   ThreadId,
   OrchestrationV2RunStatus,
-  OrchestratorMcpClientRequestId,
   OrchestratorMcpFailure,
-  OrchestratorMcpThreadSendReceipt,
   ThreadSendDelivery,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -51,7 +49,7 @@ const AttachmentSendTool = Tool.make("t3_thread_send_attachments", {
   ...shared,
   dependencies: [...shared.dependencies, DocumentText.DocumentText],
   description:
-    "Send uploaded attachments as a new message to a thread. Target modes cannot exceed yours. Success does not mean the provider read them or finished.",
+    "Send uploaded attachments as a new message to a thread. No retry key. Target modes cannot exceed yours. Success does not mean the provider read them or finished.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     message: Schema.optional(Schema.String.check(Schema.isMaxLength(120000))),
@@ -60,12 +58,6 @@ const AttachmentSendTool = Tool.make("t3_thread_send_attachments", {
       Schema.isMinLength(1),
       Schema.isMaxLength(8),
     ),
-    clientRequestId: Schema.optional(
-      OrchestratorMcpClientRequestId.annotate({
-        description:
-          "Needs the Live thread feed setting. Reuse it to retry this exact send: it is delivered once and a retry returns the same receipt.",
-      }),
-    ),
   }),
   success: Schema.Struct({
     threadId: ThreadId,
@@ -73,8 +65,6 @@ const AttachmentSendTool = Tool.make("t3_thread_send_attachments", {
     runId: RunId,
     status: OrchestrationV2RunStatus,
     ...ThreadSendDelivery.fields,
-    clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-    receipt: Schema.optional(OrchestratorMcpThreadSendReceipt),
   }),
 })
   .annotate(Tool.Destructive, true)

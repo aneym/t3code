@@ -22,14 +22,10 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
-import {
-  readLatestMessages,
-  resolveProject,
-  threadCommand,
-  type ThreadTools,
-  titleFromMessage,
-  waitForRun,
-} from "./thread.ts";
+import type { OwnerMcpTools } from "./ownerMcpTools.ts";
+import { threadCommand } from "./thread.ts";
+import { resolveProject } from "./threadProject.ts";
+import { readLatestMessages, waitForRun } from "./threadRun.ts";
 
 vi.mock("../auth/EnvironmentAuth.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../auth/EnvironmentAuth.ts")>();
@@ -184,8 +180,8 @@ const scriptedTools = (script: Record<string, Array<unknown>>) => {
     calls.push({ tool, args });
     const next = script[tool]?.shift();
     return next === undefined ? Effect.die(`unscripted ${tool} call`) : Effect.succeed(next);
-  }) as ThreadTools["call"];
-  return { tools: { call } satisfies ThreadTools, calls };
+  }) as OwnerMcpTools["call"];
+  return { tools: { call } satisfies OwnerMcpTools, calls };
 };
 
 it.effect("--wait follows the sent run to its continuation's terminal status", () =>
@@ -394,13 +390,13 @@ const timelineTools = (types: ReadonlyArray<string>) => {
       nextPosition: page.at(-1)?.position ?? null,
       hasMore: matching.length > page.length,
     });
-  }) as ThreadTools["call"];
+  }) as OwnerMcpTools["call"];
   const latest = (count: number) =>
     items
       .filter((item) => item.type === "user_message" || item.type === "assistant_message")
       .slice(-count)
       .map((item) => item.itemId);
-  return { tools: { call } satisfies ThreadTools, served, latest };
+  return { tools: { call } satisfies OwnerMcpTools, served, latest };
 };
 
 const tail = (tools: number) => [...Array<string>(tools).fill("tool_call"), "assistant_message"];
@@ -457,11 +453,6 @@ it.effect("show returns a --messages count larger than one call can spread", () 
     );
   }),
 );
-
-it("titles from a long first line without splitting an emoji", () => {
-  const title = titleFromMessage(`${"a".repeat(78)}😀 and the rest of a long first line`);
-  assert.strictEqual(title, `${"a".repeat(78)}…`);
-});
 
 const git = Effect.fn("test.git")(function* (cwd: string, args: ReadonlyArray<string>) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

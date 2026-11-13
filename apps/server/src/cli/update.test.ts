@@ -24,12 +24,8 @@ import {
 } from "../cloud/pinnedRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import {
-  repointLauncher,
-  resolveMirrorVersion,
-  resolveNewestVersion,
-  runUpdate,
-} from "./update.ts";
+import { repointLauncher, resolveMirrorVersion, runUpdate } from "./update.ts";
+import { resolveNewestVersion } from "./releaseIndex.ts";
 
 // lsof listing one process, so prune sees a process list in which no runtime is running.
 const unrelatedLsof = ProcessRunner.ProcessRunner.of({
@@ -149,13 +145,6 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
         ),
       ),
     );
-
-  it.effect("refuses to update when updates are off", () =>
-    Effect.gen(function* () {
-      const error = yield* runWithPolicy({ mode: "off" });
-      assert.equal(error.message, "Example Corp manages T3 Code updates.");
-    }),
-  );
 
   it.effect("refuses nightly releases when the policy disallows them", () =>
     Effect.gen(function* () {

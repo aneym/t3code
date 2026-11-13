@@ -6,12 +6,12 @@ import {
   type OrchestratorMcpThreadSendInput,
   type OrchestratorMcpThreadSendResult,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 
 import { mcpMessageSender } from "./messageSender.ts";
-import { runNativeSessionId } from "./runNativeSession.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import { type McpInvocationScope, threadLinkFor } from "./McpInvocationContext.ts";
@@ -26,22 +26,22 @@ import {
 
 const FINGERPRINT_CHARS = 32;
 
-export const sendIdentity = Effect.fn("OrchestratorMcpService.sendIdentity")(function* (input: {
-  readonly crypto: Crypto.Crypto;
+const sendIdentity = Effect.fn("OrchestratorMcpService.sendIdentity")(function* (input: {
+  readonly digest: Digest.Digest["Service"];
   readonly scope: McpInvocationScope;
   readonly threadId: OrchestratorMcpThreadSendInput["threadId"];
   readonly requestKey: string;
   readonly mode: string;
   readonly message: string;
-  readonly operation?: string;
 }) {
-  const digest = yield* input.crypto
-    .digest("SHA-256", new TextEncoder().encode(`${input.mode}\n${input.message}`))
-    .pipe(Effect.orDie);
+  const digest = yield* input.digest.digest(
+    Digest.sha256,
+    new TextEncoder().encode(`${input.mode}\n${input.message}`),
+  );
   const key = [
     "mcp",
     encodeURIComponent(requestPrincipal(input.scope)),
-    input.operation ?? "thread-send",
+    "thread-send",
     encodeURIComponent(input.threadId),
     encodeURIComponent(input.requestKey),
   ].join(":");
@@ -53,20 +53,19 @@ export const sendIdentity = Effect.fn("OrchestratorMcpService.sendIdentity")(fun
 
 export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(function* (input: {
   readonly threadManagement: ThreadManagementService.ThreadManagementService["Service"];
-  readonly crypto: Crypto.Crypto;
+  readonly random: SecureRandom.SecureRandom["Service"];
+  readonly digest: Digest.Digest["Service"];
   readonly scope: McpInvocationScope;
-  readonly target: Pick<OrchestrationV2ThreadProjection, "thread"> &
-    Partial<Pick<OrchestrationV2ThreadProjection, "providerThreads">>;
+  readonly target: Pick<OrchestrationV2ThreadProjection, "thread">;
   readonly request: OrchestratorMcpThreadSendInput;
 }) {
   const { threadManagement, scope, target, request } = input;
   const mode = request.mode ?? "queue";
-  const requestKey =
-    request.clientRequestId ?? (yield* input.crypto.randomUUIDv4().pipe(Effect.orDie));
+  const requestKey = request.clientRequestId ?? (yield* input.random.uuidV4());
   const { commandId, messageId } =
     request.composerIds === undefined
       ? yield* sendIdentity({
-          crypto: input.crypto,
+          digest: input.digest,
           scope,
           threadId: request.threadId,
           requestKey,
@@ -94,6 +93,9 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
     commandId,
     threadId: request.threadId,
     ...mcpMessageSender(scope),
+    ...(scope.thread === undefined && scope.client?.senderThread !== undefined
+      ? { linkedSender: scope.client.senderThread }
+      : {}),
     messageId,
     text: request.message,
     attachments: [],
@@ -103,7 +105,11 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
   const result = yield* (
     mode === "note"
       ? threadManagement.noteToThread(send)
-      : threadManagement.sendToThread({ ...send, mode })
+      : threadManagement.sendToThread({
+          ...send,
+          mode,
+          ...(request.freshContext ? { freshContext: true } : {}),
+        })
   ).pipe(
     Effect.mapError((error) =>
       isThreadManagementError(error) || dispatchBusyFailure(error) !== undefined
@@ -122,7 +128,7 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
   if (!("run" in result))
     return {
       threadId: request.threadId,
-      link: threadLinkFor(scope, request.threadId),
+      link: threadLinkFor(scope, request.threadId, target.thread.title),
       messageId,
       delivery: result.delivery,
       clientRequestId: requestKey,
@@ -130,12 +136,11 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
     } satisfies OrchestratorMcpThreadSendResult;
   return {
     threadId: request.threadId,
-    link: threadLinkFor(scope, request.threadId),
+    link: threadLinkFor(scope, request.threadId, target.thread.title),
     messageId,
     runId: result.run.id,
     ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
     status: result.run.status,
-    nativeSessionId: runNativeSessionId(result.run, target.providerThreads ?? []),
     delivery: result.delivery,
     ...(result.holdReason === undefined ? {} : { holdReason: result.holdReason }),
     ...(result.next === undefined ? {} : { next: result.next }),
