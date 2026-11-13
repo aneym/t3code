@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type DelegatedTaskOutcome,
   type EnvironmentId,
   NodeId,
   OrchestratorMcpCapabilitiesInput,
@@ -35,6 +36,8 @@ import { withExecutedModelNote } from "@t3tools/provider-core/server/subagentPro
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import {
+  awaitedFor,
+  reportedOutcomeOf,
   resolveInteractionMode,
   resolveRuntimeMode,
   taskPrompt,
@@ -43,11 +46,15 @@ import { followUpOwnerRun } from "../orchestration-v2/CommandPolicy.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { delegatedChildDefaultModel, remoteChildOptions } from "../mcp/delegatedChildModel.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+import * as RemoteWorktreeTask from "./RemoteWorktreeTask.ts";
+import { isFinal, isModeRefusal, isTerminal, terminalStatus } from "./RemoteFollowRules.ts";
 
 /** How long one follow of a remote task waits on its thread there before checking again. */
 const FOLLOW_WAIT_MS = 10 * 60 * 1_000;
@@ -126,21 +133,6 @@ export class RemoteDelegation extends Context.Service<
   }
 >()("t3/peer/RemoteDelegation") {}
 
-/** The other side refused because the thread there runs above this caller's modes. */
-const isModeRefusal = (error: OrchestratorMcpFailure) =>
-  error.code === "runtime_mode_escalation_denied" ||
-  error.code === "interaction_mode_escalation_denied";
-
-/**
- * Refusals that following again cannot change: the link was revoked, expired
- * or forgotten, or the thread or run there is gone. Anything else (the other
- * machine asleep, a dropped route) is worth retrying.
- */
-const isFinal = (error: OrchestratorMcpFailure) =>
-  error.code === "capability_denied" ||
-  error.code === "thread_not_found" ||
-  error.code === "run_not_found";
-
 const make = Effect.gen(function* () {
   const followRetry = yield* FollowRetrySchedule;
   const forwarding = yield* PeerForwarding.PeerForwarding;
@@ -150,6 +142,8 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const random = yield* SecureRandom.SecureRandom;
+  const worktrees = yield* RemoteWorktreeTask.RemoteWorktreeTask;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
   );
@@ -277,17 +271,6 @@ const make = Effect.gen(function* () {
       }
       const parentNodeId = parentRun.rootNodeId;
       const { target } = input;
-      // A worktree there would branch from a commit this checkout has and the
-      // other may not, so a remote task runs in that project's checkout.
-      if (input.isolation === "worktree") {
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message:
-            'A task in a linked environment runs in that project\'s checkout; isolation "worktree" is not supported there. Omit isolation, or use t3_thread_launch with environmentId and a worktree workspaceStrategy.',
-        });
-      }
-      // The provider and model inherit as they do for a task here. Another
-      // provider there has no model to inherit, so the caller names one.
       const inherited = parent.thread.modelSelection;
       const instanceId =
         target.driverKind === undefined
@@ -297,22 +280,24 @@ const make = Effect.gen(function* () {
               providerInstanceId: target.providerInstanceId,
               inheritedInstanceId: inherited.instanceId,
             });
+      const { delegatedChildModel, childCompletionNotes } = yield* settings.getSettings.pipe(
+        Effect.orDie,
+      );
       const model =
-        target.model ?? (instanceId === inherited.instanceId ? inherited.model : undefined);
+        target.model ?? delegatedChildDefaultModel(delegatedChildModel, instanceId, inherited);
       if (model === undefined) {
         return yield* new OrchestratorMcpFailure({
           code: "target_required",
           message: "Pass target.model from orchestrator_capabilities with this environmentId.",
         });
       }
-      const options =
-        target.options ??
-        (instanceId === inherited.instanceId && model === inherited.model
-          ? inherited.options
-          : undefined);
-      // Modes asked for are checked against this thread. Omitted ones are left
-      // to the other side, which inherits this thread's modes capped by the
-      // link's access, so a narrower link still takes the task.
+      const options = remoteChildOptions(
+        delegatedChildModel,
+        { instanceId, model },
+        inherited,
+        target.options,
+      );
+      // Omitted modes are left to the other side, which caps them by the link's access.
       const runtimeMode =
         input.runtimeMode === undefined || input.runtimeMode === "inherit"
           ? undefined
@@ -331,12 +316,13 @@ const make = Effect.gen(function* () {
       // Both are scoped to the provider session, as every key a caller passes is:
       // the forwarder scopes the launch's, and the record's names it.
       const key = input.clientRequestId ?? (yield* random.uuidV4());
-      const task = taskPrompt(input);
+      const task = taskPrompt(input, childCompletionNotes);
       const title = input.title ?? parent.thread.title;
-      const launched = yield* forwarding.call(
+      const { launched, worktreeBase } = yield* worktrees.launch(
         scope,
-        ProjectToolkit.tools.t3_thread_launch,
         target.environmentId,
+        parent.thread,
+        input,
         {
           projectId,
           title,
@@ -366,6 +352,7 @@ const make = Effect.gen(function* () {
         label: link?.label ?? target.environmentId,
         title,
         ...(launched.runId === null ? {} : { runId: launched.runId }),
+        ...(worktreeBase === undefined ? {} : { worktreeBase }),
       };
       const recorded = yield* threads
         .dispatch({
@@ -381,6 +368,7 @@ const make = Effect.gen(function* () {
           modelSelection: launched.modelSelection,
           remoteChild,
           completionWake: input.mode === "wait" ? "settled_only" : "always",
+          ...awaitedFor(input),
         })
         .pipe(
           // The cause goes to the log; the caller learns only that recording failed.
@@ -528,6 +516,7 @@ const make = Effect.gen(function* () {
     result: string,
     stoppedThere: "ran-out" | "stopped" | undefined,
     stopCount?: number,
+    reportedOutcome?: DelegatedTaskOutcome,
   ) {
     const attempt = yield* random.uuidV4();
     yield* threads
@@ -540,6 +529,7 @@ const make = Effect.gen(function* () {
         result,
         ...(stoppedThere === undefined ? {} : { stoppedThere }),
         ...(stopCount === undefined ? {} : { stopCount }),
+        ...reportedOutcomeOf({ reportedOutcome }),
       })
       .pipe(
         Effect.catch((error) =>
@@ -816,13 +806,16 @@ const make = Effect.gen(function* () {
       waited.resultRun !== undefined && !sharedThread
         ? waited.resultRun
         : { runId: waited.runId, status: waited.status };
-    const result = yield* lastReply(scope, remote, resultRun.runId, resultRun.status === "failed");
+    const reply = yield* lastReply(scope, remote, resultRun.runId, resultRun.status === "failed");
+    const result = yield* worktrees.withWork(scope, remote, thread, taskId, reply ?? noReply);
     yield* complete(
       parentThreadId,
       taskId,
       terminalStatus(resultRun.status),
-      result ?? noReply,
+      result,
       "ran-out",
+      undefined,
+      waited.resultRun?.reportedOutcome,
     );
     return yield* settled(parentThreadId, taskId);
   });
@@ -976,14 +969,6 @@ const make = Effect.gen(function* () {
   return RemoteDelegation.of({ delegate, followUp, cancel, start });
 });
 
-const isTerminal = (status: string) =>
-  status === "completed" ||
-  status === "failed" ||
-  status === "cancelled" ||
-  status === "interrupted" ||
-  status === "rolled_back";
-
-const terminalStatus = (status: string): "completed" | "failed" | "cancelled" | "interrupted" =>
-  status === "completed" || status === "failed" || status === "interrupted" ? status : "cancelled";
-
-export const layer = Layer.effect(RemoteDelegation, make);
+export const layer = Layer.effect(RemoteDelegation, make).pipe(
+  Layer.provide(RemoteWorktreeTask.layer),
+);

@@ -7,7 +7,13 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 import { agentHomeSealing } from "./AgentHomeSealing.ts";
-import { lanesUnder, readLaneText, type createLaneReader } from "./AgentLaneFiles.ts";
+
+const watched = new Map<string, { count: number; generation: number }>();
+const bump = (root: string) => {
+  const entry = watched.get(NodePath.resolve(root));
+  if (entry) entry.generation += 1;
+};
+export const homesGeneration = (root: string) => watched.get(NodePath.resolve(root))?.generation;
 
 const agentFile = async (root: string, handle: string) => {
   if (!AGENT_HOME_HANDLE_PATTERN.test(handle)) throw new Error("Invalid agent handle");
@@ -33,16 +39,6 @@ const readDocument = async (root: string, handle: string) =>
 const decodeBinding = Schema.decodeSync(AgentHomeBinding);
 const decodeHome = Schema.decodeSync(AgentHome);
 const text = (value: unknown) => (typeof value === "string" ? value : null);
-const isRetired = (doc: Record<string, unknown>) => Boolean(doc.retired) || doc.env === "retired";
-const FACE_URL_PATTERN =
-  /^https:\/\/[a-z0-9.-]+\/api\/faces\/[a-z0-9]+\/[A-Za-z0-9_-]{22}\/(?:(?:im_[0-9a-f]{16}|lv_[0-9a-f]{12}|seed)\/)?(128|512)\.png$/;
-const faceUrl = (rails: unknown) => {
-  const value =
-    typeof rails === "object" && rails !== null
-      ? text((rails as Record<string, unknown>).face_url)
-      : null;
-  return value !== null && FACE_URL_PATTERN.test(value) ? value : null;
-};
 const decodeMainBinding = (value: unknown): AgentHomeBinding | null => {
   if (value === undefined || value === null) return null;
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid agent binding");
@@ -73,7 +69,6 @@ export const homeFromDocument = (
   root: string,
   handle: string,
   doc: Record<string, unknown>,
-  lanes: ReadonlyArray<{ name: string; threadId: string; host: string | null }> = [],
   strict = false,
 ): AgentHome =>
   decodeHome({
@@ -81,11 +76,6 @@ export const homeFromDocument = (
     workspaceRoot: NodePath.join(root, handle),
     displayName: text(doc.display_name),
     role: text(doc.role),
-    faceUrl: faceUrl(doc.rails),
-    projects: Array.isArray(doc.projects)
-      ? doc.projects.filter((name): name is string => typeof name === "string")
-      : [],
-    lanes,
     binding: binding(doc.t3, strict),
     previous: binding(
       typeof doc.t3 === "object" && doc.t3 !== null ? t3Field(doc, "previous") : doc.t3_previous,
@@ -101,7 +91,7 @@ export const isLaneThread = async (root: string, threadId: string) => {
     entries
       .filter((entry) => entry.isDirectory())
       .map((entry) =>
-        readLaneText(lanes, entry.name)
+        NodeFSP.readFile(NodePath.join(lanes, entry.name, "lane.json"), "utf8")
           .then(parseDocument)
           .then(
             (lane) => {
@@ -116,34 +106,18 @@ export const isLaneThread = async (root: string, threadId: string) => {
   );
   return owners.includes(true);
 };
-export const readHomes = async (
-  root: string,
-  readLanes: ReturnType<typeof createLaneReader>,
-  isLocal: (host: string) => boolean,
-  strict = false,
-) => {
+export const readHomes = async (root: string, strict = false) => {
   const entries = await NodeFSP.readdir(root, { withFileTypes: true }).catch(
     (error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return [];
       throw error;
     },
   );
-  const lanes = await readLanes();
   const homes: AgentHome[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !AGENT_HOME_HANDLE_PATTERN.test(entry.name)) continue;
     try {
-      const doc = await readDocument(root, entry.name);
-      if (isRetired(doc)) continue;
-      homes.push(
-        homeFromDocument(
-          root,
-          entry.name,
-          doc,
-          lanesUnder(lanes, text(doc.lane) ?? entry.name, isLocal),
-          strict,
-        ),
-      );
+      homes.push(homeFromDocument(root, entry.name, await readDocument(root, entry.name), strict));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
       console.warn(
@@ -169,6 +143,7 @@ const writeDocument = async (
     if ((await NodeFSP.readFile(target, "utf8")) !== readText)
       throw new Error("agent.json changed while binding; try again");
     await NodeFSP.rename(temporary, target);
+    bump(root);
   } finally {
     await NodeFSP.unlink(temporary).catch(() => undefined);
   }
@@ -178,9 +153,8 @@ export const writeBinding = async (
   root: string,
   handle: string,
   doc: Record<string, unknown>,
-  next: Record<string, unknown> | null | undefined,
+  next: Record<string, unknown> | null,
   readText: string,
-  projects?: ReadonlyArray<string>,
 ) => {
   const old =
     typeof doc.t3 === "object" && doc.t3 !== null ? (doc.t3 as Record<string, unknown>) : null;
@@ -198,12 +172,8 @@ export const writeBinding = async (
   if (next && office !== undefined && binding(office, false)?.threadId !== next.thread_id)
     next.office = office;
   const updated =
-    next === undefined
-      ? doc
-      : next === null
-        ? { ...withoutBinding, t3_previous: prior }
-        : { ...withoutBinding, t3: next };
-  await writeDocument(root, handle, { ...updated, ...(projects ? { projects } : {}) }, readText);
+    next === null ? { ...withoutBinding, t3_previous: prior } : { ...withoutBinding, t3: next };
+  await writeDocument(root, handle, updated, readText);
 };
 export const writeOffice = async (
   root: string,
@@ -217,24 +187,30 @@ export const writeOffice = async (
 };
 export const watchHomes = (root: string, changed: () => void) => {
   const watchers = new Map<string, NodeFS.FSWatcher>();
+  const key = NodePath.resolve(root);
+  const entry = watched.get(key) ?? { count: 0, generation: 0 };
+  entry.count += 1;
+  watched.set(key, entry);
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const schedule = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      void reconcile();
+  const refresh = () =>
+    void reconcile().then(() => {
+      bump(root);
       changed();
-    }, 200);
+    });
+  const schedule = () => {
+    bump(root);
+    clearTimeout(timer);
+    timer = setTimeout(refresh, 200);
   };
+  const subdirectories = async (dir: string, accept: (name: string) => boolean) =>
+    (await NodeFSP.readdir(dir, { withFileTypes: true }).catch(() => []))
+      .filter((e) => e.isDirectory() && accept(e.name))
+      .map((e) => NodePath.join(dir, e.name));
   const reconcile = async () => {
-    const entries = await NodeFSP.readdir(root, { withFileTypes: true }).catch(() => []);
+    const homes = await subdirectories(root, (name) => AGENT_HOME_HANDLE_PATTERN.test(name));
     if (closed) return;
-    const paths = new Set([
-      root,
-      ...entries
-        .filter((e) => e.isDirectory() && AGENT_HOME_HANDLE_PATTERN.test(e.name))
-        .map((e) => NodePath.join(root, e.name)),
-    ]);
+    const paths = new Set([root, ...homes]);
     for (const [name, watcher] of watchers)
       if (!paths.has(name)) {
         watcher.close();
@@ -253,27 +229,36 @@ export const watchHomes = (root: string, changed: () => void) => {
     }
   };
   void reconcile();
-  const interval = setInterval(() => {
-    void reconcile();
-    changed();
-  }, 30_000);
+  const interval = setInterval(refresh, 30_000);
   return () => {
     closed = true;
+    entry.count -= 1;
+    if (entry.count === 0) watched.delete(key);
     clearInterval(interval);
     clearTimeout(timer);
     for (const watcher of watchers.values()) watcher.close();
   };
 };
 
+const mainHomes = new Map<string, { generation: number; homes: Promise<AgentHome[]> }>();
+const readMainHomes = (root: string) => {
+  const generation = homesGeneration(root);
+  const read = () => readHomes(root, true).then((snapshot) => snapshot.homes);
+  if (generation === undefined) return read();
+  const key = NodePath.resolve(root);
+  const cached = mainHomes.get(key);
+  if (cached?.generation === generation) return cached.homes;
+  const homes = read();
+  mainHomes.set(key, { generation, homes });
+  homes.catch(() => {
+    if (mainHomes.get(key)?.homes === homes) mainHomes.delete(key);
+  });
+  return homes;
+};
 export const readAgentMainThreads = async (environmentId?: EnvironmentId) => {
   const root =
     process.env.T3CODE_AGENT_HOMES_DIR ?? NodePath.join(NodeOS.homedir(), ".agent-rails", "agents");
-  const { homes } = await readHomes(
-    root,
-    async () => [],
-    () => false,
-    true,
-  );
+  const homes = await readMainHomes(root);
   return new Set(
     homes.flatMap(({ binding, office }) =>
       [binding, office ?? null].flatMap((bound) =>

@@ -1,4 +1,11 @@
 import {
+  hotSwapContext,
+  serviceBootTimeline,
+  serviceCommandReady,
+} from "./serviceChildTransport.ts";
+import { runServiceHandoff } from "./serviceChildHandoff.ts";
+import { importRestartManifest } from "./orchestration-v2/RestartManifest.ts";
+import {
   CommandId,
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -50,7 +57,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { getServerOwners } from "./telemetry/Identify.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { formatHeadlessServeOutput, issueHeadlessServeAccessInfo } from "./startupAccess.ts";
+import { announceHeadlessServeAccess } from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeStartupError>()(
   "ServerRuntimeStartupError",
@@ -298,7 +305,6 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
           creationSource: "server",
         })
         .pipe(
-          // The bootstrap thread is optional; its launch must not prevent opening the app.
           Effect.catchTags({
             ThreadManagementProviderInstanceDisabledError: (error) =>
               Effect.logInfo("Skipped bootstrap thread because its provider instance is disabled", {
@@ -346,7 +352,6 @@ export const announceStartupPairingUrl = (pairingUrl: string) =>
     Effect.andThen(Console.log(`  pairingUrl: ${pairingUrl}`)),
   );
 
-// Pairing tokens belong only in announceStartupPairingUrl's stdout output.
 export const logBrowserAutoOpenUnavailable = Effect.logInfo("browser auto-open unavailable", {
   hint: "Open the pairing URL above in your browser.",
 });
@@ -361,8 +366,6 @@ export const maybeOpenBrowser = Effect.fn("serverRuntimeStartup.maybeOpenBrowser
   const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
 
   yield* externalLauncher.launchBrowser(target).pipe(
-    // The target carries the pairing token, and a failed launch records its
-    // command line on the span, so this call stays out of traces.
     Effect.withTracerEnabled(false),
     Effect.catch(() => logBrowserAutoOpenUnavailable),
   );
@@ -370,7 +373,6 @@ export const maybeOpenBrowser = Effect.fn("serverRuntimeStartup.maybeOpenBrowser
 
 const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
-    // Use span attributes; annotations would follow long-lived forked fibers for the server's lifetime.
     Effect.withSpan(`server.startup.${phase}`, { attributes: { "startup.phase": phase } }),
   );
 
@@ -483,8 +485,15 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
     ),
   );
 
+  const prepareRouting = runStartupPhase("http.wait", Deferred.await(httpListening)).pipe(
+    Effect.andThen(
+      runStartupPhase("auxiliary-roots.parked", options?.awaitAuxiliaryParked ?? Effect.void),
+    ),
+    Effect.andThen(launcher.prepareTrial({ baseDir: serverConfig.baseDir })),
+  );
+  const warm = hotSwapContext()?.hotSwap?.warm === true;
   const startup = Effect.gen(function* () {
-    yield* Effect.logDebug("startup phase: starting keybindings runtime");
+    serviceBootTimeline.layersAt = yield* serviceBootTimeline.now;
     yield* runStartupPhase(
       "keybindings.start",
       keybindings.start.pipe(
@@ -498,7 +507,6 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       ),
     );
 
-    yield* Effect.logDebug("startup phase: starting server settings runtime");
     yield* runStartupPhase(
       "settings.start",
       serverSettings.start.pipe(
@@ -527,6 +535,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         },
       });
     }
+    let updateOutcome = warm ? yield* prepareRouting : undefined;
     const { recovery, bootstrap: bootstrapTargets } = yield* runOrderedV2StartupPhases({
       importLegacyShells: runStartupPhase(
         "orchestration-v2.legacy-v1.import-shells",
@@ -538,7 +547,10 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
           ),
         ),
       ),
-      recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
+      recover: runStartupPhase(
+        "orchestration-v2.recovery",
+        importRestartManifest.pipe(Effect.andThen(providerRuntimeRecovery.recover)),
+      ),
       recoverDelegatedTasks: runStartupPhase(
         "orchestration-v2.delegated-tasks.recover",
         orchestrator.recoverDelegatedTasks,
@@ -562,8 +574,6 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
     });
     yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
-    // Runs after activation: the status check fetches every enabled project's
-    // remote, and awaiting it here held command readiness for that long.
     yield* runStartupPhase(
       "projects.auto-pull",
       Effect.gen(function* () {
@@ -602,6 +612,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         : importPendingTranscripts
     ).pipe(forkParked);
 
+    yield* forkParked(orchestrator.resumeQueuedRuns);
     yield* forkParked(
       Effect.gen(function* () {
         yield* Effect.logDebug("startup phase: recording startup heartbeat");
@@ -613,11 +624,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         );
         if (serverConfig.startupPresentation === "headless") {
           yield* Effect.logDebug("startup phase: headless access info");
-          const accessInfo = yield* issueHeadlessServeAccessInfo();
-          yield* runStartupPhase(
-            "headless.output",
-            Console.log(formatHeadlessServeOutput(accessInfo)),
-          );
+          yield* runStartupPhase("headless.output", announceHeadlessServeAccess());
         } else {
           yield* Effect.logDebug("startup phase: browser open check");
           const startupBrowserTarget = yield* resolveStartupBrowserTarget;
@@ -629,11 +636,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       }),
     );
 
-    yield* Effect.logDebug("startup phase: waiting for http listener");
-    yield* runStartupPhase("http.wait", Deferred.await(httpListening));
-    yield* runStartupPhase("auxiliary-roots.parked", options?.awaitAuxiliaryParked ?? Effect.void);
-
-    const updateOutcome = yield* launcher.prepareTrial({ baseDir: serverConfig.baseDir });
+    if (!warm) updateOutcome = yield* prepareRouting;
 
     yield* Effect.logDebug("startup phase: publishing welcome event", {
       environmentId: environment.environmentId,
@@ -658,7 +661,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
     yield* options?.activate ?? Effect.void;
     yield* Effect.logDebug("Accepting commands");
     yield* commandGate.signalCommandReady;
-    yield* Effect.logDebug("startup phase: publishing ready event");
+    yield* serviceCommandReady;
     yield* runStartupPhase(
       "ready.publish",
       lifecycleEvents.publish({
@@ -671,6 +674,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         },
       }),
     );
+    yield* runServiceHandoff();
     yield* Effect.logDebug("startup phase: complete");
     yield* flushCompileCache;
   }).pipe(
@@ -686,7 +690,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
   );
 
   yield* Effect.forkScoped(
-    Effect.exit(startup).pipe(
+    Effect.exit(warm ? startup.pipe(Effect.timeout("30 minutes")) : startup).pipe(
       Effect.flatMap((startupExit) => {
         if (Exit.isSuccess(startupExit)) return Effect.void;
         const error = new ServerRuntimeStartupError({

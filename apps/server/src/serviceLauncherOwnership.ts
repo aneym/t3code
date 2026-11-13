@@ -9,7 +9,7 @@ export async function reserveServiceOwnership(baseDir: string, instanceId: strin
   await NodeFSP.mkdir(stateDir, { recursive: true });
   const db = new NodeSqlite.DatabaseSync(NodePath.join(stateDir, SERVER_OWNER_LOCK_FILE));
   try {
-    db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+    db.exec("PRAGMA busy_timeout = 250; BEGIN EXCLUSIVE;");
   } catch (cause) {
     db.close();
     throw cause;

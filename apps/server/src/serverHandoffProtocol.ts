@@ -5,7 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Schema from "effect/Schema";
 import { RpcServer } from "effect/rpc";
 import { acknowledgeHandoff } from "./serverHandoffDelivery.ts";
-import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
+import { withOutputWindow } from "./terminal/OutputProtocol.ts";
 
 const isHandoffProbe = Schema.is(ServerHandoffProbe);
 const pending = new Set<Deferred.Deferred<void>>();
@@ -24,7 +24,7 @@ export const flushHandoffResponses = Effect.fn("serverHandoffProtocol.flushRespo
 export const handoffRpc = Effect.fn("serverHandoffProtocol.make")(function* () {
   const { protocol: socketProtocol, httpEffect } =
     yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
-  const protocol = withTerminalOutputWindow(socketProtocol);
+  const protocol = withOutputWindow(socketProtocol);
   const confirmations = new Map<
     string,
     { input: typeof ServerHandoffProbe.Type; written: Deferred.Deferred<void> }

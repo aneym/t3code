@@ -22,8 +22,7 @@ export const makeNdjsonLogWriter = Effect.fnUntraced(function* (options: {
   let dropped = 0;
   const flush = Effect.suspend(() => {
     if (dropped > 0) {
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
-      buffer.push(`${JSON.stringify({ k: "dropped", n: dropped })}\n`);
+      buffer.push(`{"k":"dropped","n":${dropped}}\n`);
       dropped = 0;
     }
     if (buffer.length === 0) return Effect.void;

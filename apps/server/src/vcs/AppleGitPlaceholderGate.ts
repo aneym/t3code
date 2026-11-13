@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Redacted from "effect/Redacted";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { isAppleGitPlaceholder } from "@t3tools/shared/appleGitPlaceholder";
@@ -12,7 +13,11 @@ export const commandEnv = (options: ChildProcess.CommandOptions) => {
   const merged = options.extendEnv
     ? { ...process.env, ...options.env }
     : (options.env ?? process.env);
-  return Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== undefined));
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(merged)) {
+    if (value !== undefined) env[key] = typeof value === "string" ? value : Redacted.value(value);
+  }
+  return env;
 };
 
 const refusal = (command: ChildProcess.StandardCommand) =>

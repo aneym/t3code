@@ -2,13 +2,12 @@ import { connectorUnitPath, serviceUnitFileName } from "../serviceConnectorUnit.
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { type BootServiceManager } from "./bootService.ts";
+import { type BootServiceManager, type BootServiceStep } from "./bootService.ts";
 import {
   BOOT_SERVICE_LAUNCHD_LABEL,
   BOOT_SERVICE_PLIST_FILE,
   BOOT_SERVICE_UNIT_FILE,
   type BootServicePlan,
-  type BootServiceStep,
 } from "./bootServiceRender.ts";
 
 export function connectorServiceManager(
@@ -33,8 +32,8 @@ export function connectorServiceManager(
     "g",
   );
   const replace = (value: string) => value.replace(pattern, (match) => replacements.get(match)!);
-  const steps = (list: ReadonlyArray<BootServiceStep>) =>
-    list.map((step) => ({ ...step, args: step.args.map(replace) }));
+  const steps = (list: ReadonlyArray<BootServiceStep>): ReadonlyArray<BootServiceStep> =>
+    list.map((step) => ("args" in step ? { ...step, args: step.args.map(replace) } : step));
   return {
     ...manager,
     unitPath,
@@ -46,11 +45,17 @@ export function connectorServiceManager(
     restart: steps(manager.restart),
     deactivate: steps(manager.deactivate),
     finalize: steps(manager.finalize),
-    activate: steps(manager.activate).map((step) => ({
-      ...step,
-      args: step.args.map((arg) => (arg === "restart" ? "start" : arg)),
-      ...(step.command === "launchctl" && step.args[0] === "bootstrap" ? { optional: true } : {}),
-    })),
+    activate: steps(manager.activate).map((step) =>
+      "args" in step
+        ? {
+            ...step,
+            args: step.args.map((arg) => (arg === "restart" ? "start" : arg)),
+            ...(step.command === "launchctl" && step.args[0] === "bootstrap"
+              ? { optional: true }
+              : {}),
+          }
+        : step,
+    ),
   };
 }
 

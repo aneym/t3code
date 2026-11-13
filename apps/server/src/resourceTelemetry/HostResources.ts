@@ -1,4 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - Effect has no free-space query.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
+import * as NodePerfHooks from "node:perf_hooks";
 import type { HostResourcesSnapshot } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cache from "effect/Cache";
@@ -8,7 +11,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as Config from "../config.ts";
 
 export class HostResources extends Context.Service<
   HostResources,
@@ -74,9 +79,15 @@ const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcess.Platform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const config = yield* Effect.serviceOption(Config.ServerConfig);
+  const diskPath = Option.match(config, {
+    onNone: () => NodeOS.homedir(),
+    onSome: (value) => value.stateDir,
+  });
 
   const readFile = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
 
+  let previousEventLoop = NodePerfHooks.performance.eventLoopUtilization();
   const sample = Effect.fn("HostResources.sample")(function* () {
     // cgroup v2 only; limits of the server's own cgroup, which is `/` inside a container.
     const cgroupPath =
@@ -172,7 +183,28 @@ const make = Effect.fn("makeHostResources")(function* () {
         memoryMax - (memoryCurrent - reclaimable),
       );
     }
+    const disk = yield* Effect.promise(() => NodeFSP.statfs(diskPath).catch(() => undefined)).pipe(
+      Effect.timeout("1 second"),
+      Effect.orElseSucceed(() => undefined),
+    );
+    const loadAverage1m = platform === "win32" ? undefined : NodeOS.loadavg()[0];
+    const eventLoop = NodePerfHooks.performance.eventLoopUtilization();
+    const serverEventLoopUtilization = NodePerfHooks.performance.eventLoopUtilization(
+      eventLoop,
+      previousEventLoop,
+    ).utilization;
+    previousEventLoop = eventLoop;
     return {
+      ...(Number.isFinite(serverEventLoopUtilization)
+        ? { serverEventLoopUtilization: Math.min(1, Math.max(0, serverEventLoopUtilization)) }
+        : {}),
+      ...(loadAverage1m === undefined || !Number.isFinite(loadAverage1m) ? {} : { loadAverage1m }),
+      ...(disk === undefined
+        ? {}
+        : {
+            freeDiskBytes: Math.max(0, Math.floor(disk.bavail * disk.bsize)),
+            totalDiskBytes: Math.max(0, Math.floor(disk.blocks * disk.bsize)),
+          }),
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
       cpuCount,

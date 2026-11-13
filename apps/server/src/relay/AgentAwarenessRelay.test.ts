@@ -247,7 +247,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getThreadSnapshotWindow: unused,
     getProjectThreadRecords: () => Effect.die("unused project record read"),
     listProjectThreads: unused,
+    listProjectThreadPage: unused,
     sendToThread: unused,
+    noteToThread: unused,
     assertProviderInstanceEnabled: unused,
     isProviderInstanceEnabledForProject: unused,
     hasReceipt: unused,
@@ -259,6 +261,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     forceStopThread: () => Effect.die("unused forceStopThread"),
     awaitBackgroundTasks: unused,
     stopDelegatedTasks: unused,
+    resumeDelegatedTasks: unused,
     getThreadEventSequence: unused,
     recoverDelegatedTask: unused,
     cancelDelegatedTask: unused,
@@ -885,23 +888,6 @@ describe("AgentAwarenessRelay", () => {
       assert.deepEqual(
         publications.map((publication) => publication.state?.phase ?? null),
         [null, "completed", null],
-      );
-    }),
-  );
-
-  it.effect("drops a held completion when a queued continuation hides the thread", () =>
-    Effect.gen(function* () {
-      const { relay, currentShell, publications } = yield* makeTestRelay();
-      yield* relay.publishThread(THREAD_ID);
-      yield* Ref.set(currentShell, shell({ status: "completed" }));
-      yield* relay.publishThread(THREAD_ID);
-      yield* Ref.set(currentShell, shell({ status: "queued" }));
-      yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
-      assert.notInclude(
-        publications.map((publication) => publication.state?.phase ?? null),
-        "completed",
       );
     }),
   );

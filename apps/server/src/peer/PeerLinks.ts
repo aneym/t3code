@@ -1,11 +1,10 @@
+import { makePeerLinkRenewal } from "./PeerLinkRenewal.ts";
+import { makePeerSignIn } from "./PeerSignIn.ts";
 import {
   AuthMcpClientAccess,
-  AuthMcpRegistrationError,
-  AuthMcpTokenError,
   EnvironmentHttpApi,
   EnvironmentId,
   type ExecutionEnvironmentCapabilities,
-  MCP_PEER_LINK_SOFTWARE_ID,
   type PeerLink,
   type PeerLinkCreateInput,
   PeerLinkError,
@@ -19,12 +18,10 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
-import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -34,19 +31,17 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
-import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { peerOrigin } from "./peerOrigin.ts";
 
 const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
   .add(EnvironmentHttpApi.groups.metadata)
   .add(EnvironmentHttpApi.groups.mcpOAuth)
   .annotateMerge(EnvironmentHttpApi.annotations);
-
-/** The redirect registered for a link. Nothing ever listens there: the code comes back in the response. */
-const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
 /**
  * How long a peer's descriptor or MCP handshake may take before a route counts
  * as unreachable. A tailnet or relayed route to a machine that is waking up takes longer.
@@ -97,6 +92,7 @@ export class PeerLinks extends Context.Service<
     readonly enabled: Effect.Effect<boolean>;
     readonly link: (input: PeerLinkCreateInput) => Effect.Effect<PeerLink, PeerLinkError>;
     readonly list: Effect.Effect<ReadonlyArray<PeerLinkSummary>, PeerLinkError>;
+    readonly stored: Effect.Effect<ReadonlyArray<PeerLink>, PeerLinkError>;
     /** The stored link, without asking the peer whether it answers. */
     readonly get: (
       environmentId: EnvironmentId,
@@ -112,6 +108,8 @@ export class PeerLinks extends Context.Service<
       environmentId: EnvironmentId,
       outcome: { readonly error: string | null },
     ) => Effect.Effect<void>;
+    readonly renew: (environmentId: EnvironmentId) => Effect.Effect<PeerLink, PeerLinkError>;
+    readonly renewDue: Effect.Effect<void>;
   }
 >()("t3/peer/PeerLinks") {}
 
@@ -126,6 +124,8 @@ interface PeerLinkRow {
   readonly last_reached_at: string | null;
   readonly last_error: string | null;
   readonly fenced: number;
+  readonly renewed_at: string | null;
+  readonly renewal_error: string | null;
 }
 
 const decodeUrls = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -146,36 +146,6 @@ const failStorage = (cause: unknown) =>
       ),
     ),
   );
-
-/**
- * The base URL a peer is reached at, normalised to its origin. The pairing
- * code and then the link's token travel to it, so plain http is accepted only
- * where the network already encrypts: this machine, or a Tailscale address.
- */
-const peerOrigin = (url: string) => {
-  const parsed = URL.parse(url);
-  if (parsed === null || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
-    return Effect.fail(
-      new PeerLinkError({
-        reason: "unreachable",
-        message: `${url} is not an http or https address.`,
-      }),
-    );
-  }
-  if (
-    parsed.protocol === "http:" &&
-    !isLocalLoopbackHost(parsed.hostname) &&
-    !isTailnetHost(parsed.hostname)
-  ) {
-    return Effect.fail(
-      new PeerLinkError({
-        reason: "unreachable",
-        message: `${url} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
-      }),
-    );
-  }
-  return Effect.succeed(parsed.origin);
-};
 
 /** The system error under a failed connection, such as ECONNREFUSED or ENOTFOUND. */
 const connectionCode = (cause: unknown) =>
@@ -250,6 +220,8 @@ const make = Effect.gen(function* () {
       Effect.provideService(HttpClient.HttpClient, peerHttpClient),
     );
 
+  const signIn = makePeerSignIn(clientFor, random, digest);
+
   /** The environment answering at `origin`, or why nothing there answers as T3 Code. */
   const probe = (origin: string) => {
     const timeout = probeTimeout(origin);
@@ -288,6 +260,8 @@ const make = Effect.gen(function* () {
       expiresAt: DateTime.makeUnsafe(row.fenced === 1 ? row.expires_at : row.linked_at),
       lastReachedAt: row.last_reached_at === null ? null : DateTime.makeUnsafe(row.last_reached_at),
       lastError: row.last_error,
+      ...(row.renewed_at === null ? {} : { renewedAt: DateTime.makeUnsafe(row.renewed_at) }),
+      ...(row.renewal_error === null ? {} : { renewalError: row.renewal_error }),
     } satisfies PeerLink;
   }, Effect.catch(failStorage));
 
@@ -303,124 +277,6 @@ const make = Effect.gen(function* () {
       Effect.catch(failStorage),
       Effect.map((rows) => Option.fromNullishOr(rows[0])),
     );
-
-  /** Signs in to the peer's `/mcp` with a pairing code: register, decide, exchange. */
-  const signIn = Effect.fn("PeerLinks.signIn")(
-    function* (origin: string, input: PeerLinkCreateInput, clientName: string) {
-      const client = yield* clientFor(origin);
-      // Only the peer's own refusals are rejections. A dropped connection or
-      // an answer this version cannot read is classified below.
-      const registered = yield* client.mcpOAuth
-        .register({
-          payload: {
-            client_name: clientName,
-            redirect_uris: [LINK_REDIRECT_URI],
-            software_id: MCP_PEER_LINK_SOFTWARE_ID,
-          },
-        })
-        .pipe(
-          // A plain Schema.Error has no tag to catch by.
-          Effect.catchIf(Schema.is(AuthMcpRegistrationError), (error) =>
-            Effect.fail(
-              new PeerLinkError({
-                reason: "pairing_rejected",
-                message: `The peer refused to register this environment: ${error.message}`,
-              }),
-            ),
-          ),
-        );
-      const verifier = Base64Url.encode(yield* random.randomBytes(32));
-      const challenge = Base64Url.encode(
-        yield* digest.digest(Digest.sha256, new TextEncoder().encode(verifier)).pipe(Effect.orDie),
-      );
-      const state = Base64Url.encode(yield* random.randomBytes(16));
-      const resource = `${origin}/mcp`;
-      const decided = yield* client.mcpOAuth
-        .decision({
-          headers: {},
-          payload: {
-            authorization: {
-              response_type: "code",
-              client_id: registered.client_id,
-              redirect_uri: LINK_REDIRECT_URI,
-              code_challenge: challenge,
-              code_challenge_method: "S256",
-              state: Redacted.make(state),
-              resource,
-            },
-            decision: { _tag: "pairing-code", access: input.access, code: input.pairingCode },
-          },
-        })
-        .pipe(
-          Effect.catchTags({
-            AuthMcpApprovalError: (error) =>
-              Effect.fail(
-                new PeerLinkError({ reason: "pairing_rejected", message: error.message }),
-              ),
-          }),
-        );
-      const redirect = URL.parse(decided.redirectTo);
-      if (redirect === null) {
-        return yield* new PeerLinkError({
-          reason: "incompatible",
-          message: `${origin} answered the sign-in with an address this version cannot read. Update both environments.`,
-        });
-      }
-      const code = redirect.searchParams.get("code");
-      if (code === null || redirect.searchParams.get("state") !== state) {
-        return yield* new PeerLinkError({
-          reason: "pairing_rejected",
-          message:
-            redirect.searchParams.get("error_description") ??
-            "The peer did not approve the link. Check the pairing code and try again.",
-        });
-      }
-      return yield* client.mcpOAuth
-        .token({
-          payload: {
-            grant_type: "authorization_code",
-            code: Redacted.make(code),
-            redirect_uri: LINK_REDIRECT_URI,
-            client_id: registered.client_id,
-            code_verifier: Redacted.make(verifier),
-            resource,
-          },
-        })
-        .pipe(
-          Effect.catchIf(Schema.is(AuthMcpTokenError), (error) =>
-            Effect.fail(
-              new PeerLinkError({
-                reason: "pairing_rejected",
-                message: `The peer refused the sign-in: ${error.message}`,
-              }),
-            ),
-          ),
-        );
-    },
-    (effect, origin) =>
-      effect.pipe(
-        // Endpoint errors are mapped above; what is left is the transport or an
-        // answer this version cannot decode.
-        Effect.catchTags({
-          SchemaError: (cause) =>
-            Effect.fail(
-              new PeerLinkError({
-                reason: "incompatible",
-                message: `${origin} answered in a shape this version does not understand. Update both environments.`,
-                cause,
-              }),
-            ),
-          HttpClientError: (cause) =>
-            Effect.fail(
-              new PeerLinkError({
-                reason: "unreachable",
-                message: `${origin} stopped answering while linking.`,
-                cause,
-              }),
-            ),
-        }),
-      ),
-  );
 
   /**
    * The addresses that answer as `environmentId`, in the order given, with
@@ -565,7 +421,9 @@ const make = Effect.gen(function* () {
           linked_at = excluded.linked_at,
           expires_at = excluded.expires_at,
           last_reached_at = excluded.last_reached_at,
-          last_error = NULL
+          last_error = NULL,
+          renewed_at = NULL,
+          renewal_error = NULL
       `.pipe(Effect.catch(failStorage));
       return previous;
     }).pipe(Effect.onError(() => secrets.remove(secretName).pipe(Effect.ignore)));
@@ -710,14 +568,28 @@ const make = Effect.gen(function* () {
       Effect.ignoreCause({ log: true }),
     );
 
+  const stored = Effect.flatMap(readRows, (rows) => Effect.forEach(rows, toLink));
+  const renewal = makePeerLinkRenewal({
+    sql,
+    secrets,
+    random,
+    httpClient: peerHttpClient,
+    enabled,
+    disabledMessage: LINKED_ENVIRONMENTS_OFF,
+    get,
+    stored,
+    resolve,
+  });
   return PeerLinks.of({
     enabled,
     link,
     list,
+    stored,
     get,
     unlink,
     resolve,
     recordOutcome,
+    ...renewal,
   });
 });
 

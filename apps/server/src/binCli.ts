@@ -1,3 +1,4 @@
+import { agentCommand } from "./cli/agent.ts";
 import { doctorCommand } from "./cli/doctor.ts";
 import { policyCommand } from "./cli/policy.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -16,10 +17,13 @@ import { environmentCommand } from "./cli/environment.ts";
 import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
 import { pairCommand } from "./cli/pair.ts";
+import { reportCliRefusals } from "./cliRefusal.ts";
+import { requireValidEnvironmentValues } from "./environmentValueCheck.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { extendConnectionAttemptTimeout, keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
+import { scheduleCommand } from "./cli/schedule.ts";
 import { threadCommand } from "./cli/thread.ts";
 import { runDefaultServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { updateCommand } from "./cli/update.ts";
@@ -40,8 +44,13 @@ import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
 import { connectCommand, statusCommand, upCommand } from "./cli/up.ts";
+import * as AppleGitPlaceholderGate from "./vcs/AppleGitPlaceholderGate.ts";
 
-const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer);
+const layerCliRuntime = Layer.mergeAll(
+  AppleGitPlaceholderGate.layer.pipe(Layer.provideMerge(NodeServices.layer)),
+  NodeCrypto.layer,
+  NetService.layer,
+);
 
 const connectPublicConfigMissingMessage =
   "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
@@ -91,6 +100,8 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       browserCommand,
       projectCommand,
       threadCommand,
+      agentCommand,
+      scheduleCommand,
       upCommand,
       statusCommand,
       serviceCommand,
@@ -122,15 +133,20 @@ export const cli = makeCli();
 export function runCli() {
   extendConnectionAttemptTimeout();
   keepOutboundFetchOnHttp1();
-  offerCliInstall({
-    args: process.argv.slice(2),
-    // A child started over IPC (a service launcher) has no one to answer.
-    interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY) && process.send === undefined,
-    foreground: inTerminalForeground,
-    confirm: confirmCliInstall,
-  }).pipe(
-    // The offer handles its own errors; even an unexpected defect must not stop the command.
-    Effect.catchDefect(() => Effect.succeed(true)),
+  requireValidEnvironmentValues.pipe(
+    Effect.andThen(
+      offerCliInstall({
+        args: process.argv.slice(2),
+        // A child started over IPC (a service launcher) has no one to answer.
+        interactive:
+          Boolean(process.stdin.isTTY && process.stdout.isTTY) && process.send === undefined,
+        foreground: inTerminalForeground,
+        confirm: confirmCliInstall,
+      }).pipe(
+        // The offer handles its own errors; even an unexpected defect must not stop the command.
+        Effect.catchDefect(() => Effect.succeed(true)),
+      ),
+    ),
     Effect.flatMap((proceed) =>
       proceed
         ? Command.run(cli, { version: packageJson.version })
@@ -138,6 +154,7 @@ export function runCli() {
             process.exitCode = 130;
           }),
     ),
+    reportCliRefusals,
     Effect.scoped,
     Effect.provide(layerCliRuntime),
     NodeRuntime.runMain,

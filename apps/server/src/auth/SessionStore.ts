@@ -1,14 +1,12 @@
-import { SessionClaims } from "./SessionClaims.ts";
 import {
   AuthSessionId,
   AuthStandardClientScopes,
+  AuthEnvironmentScopes,
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthEnvironmentScope,
   AuthWebSocketTicketUse,
-  type RuntimeMode,
-  type PeerIdentity,
-  boundedPeerIdentity,
+  RuntimeMode,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -62,7 +60,6 @@ export interface VerifiedSession {
   readonly runtimeModeCeiling?: RuntimeMode;
   /** An MCP client that is another T3 Code environment's peer link. */
   readonly peerLink?: true;
-  readonly peer?: PeerIdentity | undefined;
 }
 
 export interface VerifiedWebSocketTicket extends VerifiedSession {
@@ -385,7 +382,6 @@ export class SessionStore extends Context.Service<
       readonly proofKeyThumbprint?: string;
       readonly runtimeModeCeiling?: RuntimeMode;
       readonly peerLink?: boolean;
-      readonly peer?: PeerIdentity | undefined;
       readonly replaceActiveForSubjectAndMethod?: boolean;
       readonly replaceSessionId?: AuthSessionId;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
@@ -431,6 +427,22 @@ export class SessionStore extends Context.Service<
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
+
+const SessionClaims = Schema.Struct({
+  v: Schema.Literals([1, 2]),
+  kind: Schema.Literal("session"),
+  sid: AuthSessionId,
+  sub: Schema.String,
+  scopes: AuthEnvironmentScopes,
+  method: Schema.Literals(["browser-session-cookie", "bearer-access-token", "dpop-access-token"]),
+  jkt: Schema.optionalKey(Schema.String),
+  rtc: Schema.optionalKey(RuntimeMode),
+  /** Signed, so a client cannot shed its peer link's limits. */
+  plk: Schema.optionalKey(Schema.Literal(1)),
+  iat: Schema.Number,
+  exp: Schema.Number,
+});
+type SessionClaims = typeof SessionClaims.Type;
 
 const WebSocketClaims = Schema.Struct({
   v: Schema.Literal(1),
@@ -649,12 +661,7 @@ const make = Effect.gen(function* () {
         method: input?.method ?? "browser-session-cookie",
         ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
         ...(input?.runtimeModeCeiling ? { rtc: input.runtimeModeCeiling } : {}),
-        ...(input?.peerLink === true
-          ? {
-              plk: 1 as const,
-              ...(input.peer === undefined ? {} : { peer: boundedPeerIdentity(input.peer) }),
-            }
-          : {}),
+        ...(input?.peerLink === true ? { plk: 1 as const } : {}),
         iat: issuedAt.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
       };
@@ -836,7 +843,7 @@ const make = Effect.gen(function* () {
         scopes: row.value.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
-        ...(claims.plk === 1 ? { peerLink: true as const, peer: claims.peer } : {}),
+        ...(claims.plk === 1 ? { peerLink: true as const } : {}),
       } satisfies VerifiedSession;
     },
   );
@@ -1050,8 +1057,9 @@ const make = Effect.gen(function* () {
             );
         const original = yield* readRow(sessionId);
         if (Option.isNone(original)) return;
-        // Revoking any session the socket has used closes it. The rows decide. Events (also sent
-        // when an expired session loses its last socket) and a recheck for CLI revokes wake it.
+        // Revoking any session the socket has used closes it. Events only wake this loop
+        // and the rows decide: revocations are written before they are published, and
+        // clientRemoved also reports an expired session losing its last socket.
         const chain = [sessionId];
         const nextRemoval = Effect.gen(function* () {
           while (true) {
@@ -1066,10 +1074,7 @@ const make = Effect.gen(function* () {
           const now = yield* DateTime.now;
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
-            yield* Effect.raceFirst(
-              nextRemoval,
-              Effect.sleep(Duration.millis(Math.min(remaining, 5000))),
-            );
+            yield* Effect.raceFirst(nextRemoval, Effect.sleep(Duration.millis(remaining)));
             continue;
           }
           const successorId =

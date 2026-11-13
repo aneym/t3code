@@ -103,7 +103,7 @@ export class ServiceRestartGuards {
       this.#waiting = home === "owned";
       if (home !== "free") {
         this.resetRetries();
-        return home === "reclaimed" ? 0 : 5_000;
+        return 5_000;
       }
     }
     if (!confirmed && this.#unclassifiedRetries++ >= 5) {

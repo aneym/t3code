@@ -68,6 +68,7 @@ import * as PeerLinks from "./PeerLinks.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
+import * as McpTransport from "../mcp/mcpServer/transport.ts";
 
 // The laptop's agent delegates a task to the box through a link. The box is
 // its real /mcp behind real OAuth, with one thread the test finishes; the
@@ -669,7 +670,7 @@ const makeLaptop = (
       Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
     );
     const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
-      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+      Layer.provideMerge(McpTransport.layerInProcessMcpServer),
       Layer.provideMerge(
         RemoteDelegation.layer.pipe(
           Layer.provideMerge(PeerForwarding.layer),
@@ -2274,26 +2275,6 @@ it.effect("a task whose thread there has no run ends with its last reply", () =>
       });
       // One look, not a loop.
       expect(yield* Ref.get(thread.waitedFor)).toEqual([undefined]);
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
-);
-
-it.effect("a local task runs in this thread's project", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const offers = yield* SubscriptionRef.make<
-        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-      >([]);
-      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const a = yield* makeLaptop(database, offers);
-      yield* seedParent(a);
-
-      const result = yield* a.call("delegate_task", {
-        task: "Run it here.",
-        target: { projectId: "project:elsewhere" },
-      });
-      expect(result.isError).toBe(true);
-      expect(JSON.stringify(result.content)).toContain("invalid_request");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

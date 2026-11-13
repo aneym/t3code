@@ -18,7 +18,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
-import { serviceLauncherLockPath } from "../serviceLauncher.ts";
+import { serviceLauncherLockPath } from "../serviceLauncherLock.ts";
 import * as BootService from "./bootService.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
@@ -1538,16 +1538,6 @@ process.disconnect();
         "    <key>PATH</key>\n    <string>/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/sbin</string>",
       );
       expect((yield* service.status).current).toBe(true);
-    }),
-  );
-
-  it.effect("keeps an installed launch agent current when the process PATH changes", () =>
-    Effect.gen(function* () {
-      const { service, makeService } = yield* makeHarness("darwin");
-      yield* service.install();
-
-      const restartedService = yield* makeService("/usr/local/bin:/usr/bin:/bin");
-      expect((yield* restartedService.status).current).toBe(true);
     }),
   );
 

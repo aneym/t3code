@@ -15,22 +15,25 @@ import * as Schema from "effect/Schema";
 
 import {
   BOOT_SERVICE_LAUNCHD_LABEL,
-  BOOT_SERVICE_PLIST_FILE,
   BOOT_SERVICE_UNIT_FILE,
-  bootServiceBaseDirOf,
-} from "./cloud/bootService.ts";
+  bootServiceUnitPath,
+} from "./cloud/bootServiceRender.ts";
 import { ServiceLauncherHostProcess } from "./cloud/serviceLauncherClient.ts";
 import {
+  SERVER_OWNER_LOCK_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
   compareExactServiceVersions,
   serviceStateActiveVersion,
+  serviceUnitBaseDirOf,
 } from "./cloud/serviceProtocol.ts";
 import {
   legacyOwnerStartedBeforeRecord,
   legacyOwnerStartTimeCommand,
 } from "./legacyServerOwner.ts";
+import { cliRefusal } from "./cliRefusal.ts";
+import { assertServiceOwnershipGrant } from "./serviceOwnershipGrant.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -46,6 +49,8 @@ export class ServerAlreadyRunningError extends Schema.TaggedError<ServerAlreadyR
 ) {
   // Distinct exit codes let supervisors stop restarting an already-owned server.
   override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_STATE_DIR_OWNED;
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
 
   override get message(): string {
     return `A T3 Code server already owns ${this.stateDir}. Stop that server, or use a separate T3 home and pair with it, then retry. No server was stopped. server-owner.sqlite is the ownership lock; do not delete it while a server is running.`;
@@ -57,6 +62,8 @@ export class OlderBootServiceError extends Schema.TaggedError<OlderBootServiceEr
   { baseDir: Schema.String },
 ) {
   override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_STATE_DIR_OWNED;
+  override readonly [Runtime.errorReported] = false;
+  readonly [cliRefusal] = true;
 
   override get message(): string {
     return `A T3 Code background service set up for ${this.baseDir} may still run a release without the ownership lock. On that machine, try \`t3 update\` and let it restart (or run \`t3 service restart\` if the update is already installed). If the older launcher cannot update, run \`t3 service uninstall\`, then reinstall with \`t3 service install\` from a current CLI. You can also leave the service uninstalled. Pass \`--base-dir ${this.baseDir}\` to each command, and use \`npx t3@latest\` if \`t3\` is not installed or is outdated. Then retry. No server was stopped.`;
@@ -117,11 +124,8 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
     const homeDir = yield* HostProcess.HomeDirectory;
     const fs = yield* FileSystem.FileSystem;
     const runner = yield* ProcessRunner.ProcessRunner;
-    const unitPath =
-      platform === "darwin"
-        ? NodePath.join(homeDir, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE)
-        : NodePath.join(homeDir, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
-    const baseDir = bootServiceBaseDirOf(yield* fs.readFileString(unitPath));
+    const unitPath = bootServiceUnitPath(NodePath.join, platform, homeDir);
+    const baseDir = serviceUnitBaseDirOf(yield* fs.readFileString(unitPath));
     if (
       baseDir === undefined ||
       (yield* fs.realPath(NodePath.join(baseDir, "userdata"))) !== (yield* fs.realPath(stateDir))
@@ -169,7 +173,7 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
   Effect.orElseSucceed(() => undefined),
 );
 
-const ownershipLockPath = (stateDir: string) => NodePath.join(stateDir, "server-owner.sqlite");
+const ownershipLockPath = (stateDir: string) => NodePath.join(stateDir, SERVER_OWNER_LOCK_FILE);
 
 /**
  * The lock is an exclusive transaction on `server-owner.sqlite`, which never
@@ -221,21 +225,37 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
   statePath: string,
 ) {
   const stateDir = NodePath.dirname(statePath);
+  yield* assertServiceOwnershipGrant(stateDir);
   const random = yield* SecureRandom.SecureRandom;
+  const launcher = yield* ServiceLauncherHostProcess;
   const ownerId = yield* random
     .uuidV4()
     .pipe(Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })));
   const lockPath = ownershipLockPath(stateDir);
-  const lock = yield* Effect.acquireRelease(openOwnershipLock(stateDir), ({ db }) =>
-    readPersistedServerRuntimeState(statePath).pipe(
-      Effect.flatMap((state) =>
-        Option.isSome(state) && state.value.ownerId === ownerId
-          ? clearPersistedServerRuntimeState(statePath)
+  const lock = yield* Effect.acquireRelease(
+    openOwnershipLock(stateDir).pipe(
+      Effect.tapError((error) =>
+        error._tag === "ServerAlreadyRunningError" && launcher.connected
+          ? Effect.callback<void>((resume) => {
+              try {
+                launcher.send({ type: "state-dir-owned" }, () => resume(Effect.void));
+              } catch {
+                resume(Effect.void);
+              }
+            })
           : Effect.void,
       ),
-      Effect.ignore({ log: true }),
-      Effect.ensuring(Effect.sync(() => db.close())),
     ),
+    ({ db }) =>
+      readPersistedServerRuntimeState(statePath).pipe(
+        Effect.flatMap((state) =>
+          Option.isSome(state) && state.value.ownerId === ownerId
+            ? clearPersistedServerRuntimeState(statePath)
+            : Effect.void,
+        ),
+        Effect.ignore({ log: true }),
+        Effect.ensuring(Effect.sync(() => db.close())),
+      ),
   );
 
   const previous = yield* readPersistedServerRuntimeState(statePath).pipe(

@@ -24,6 +24,7 @@ import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
+import * as EffectOutbox from "./orchestration-v2/EffectOutbox.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectService from "./project/ProjectService.ts";
@@ -72,6 +73,7 @@ it.effect("parks automatic pull until activation without delaying command readin
     const dependencies: Layer.Layer<
       Layer.Services<ReturnType<typeof ServerRuntimeStartup.layerWithOptions>>
     > = Layer.mergeAll(
+      Layer.mock(EffectOutbox.EffectOutboxV2)({}),
       Layer.mock(ServerConfig.ServerConfig)({
         ...(yield* ServerConfig.deriveServerPaths(cwd, undefined).pipe(Effect.provide(Path.layer))),
         baseDir: cwd,

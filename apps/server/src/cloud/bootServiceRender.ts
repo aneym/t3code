@@ -8,7 +8,10 @@ import {
   associatedBundlePlistLines,
 } from "./bootServiceAssociation.ts";
 import { selfUpdateOffPlistLines, selfUpdateOffUnitLines } from "./selfUpdateSwitch.ts";
-import type * as Duration from "effect/Duration";
+import { SERVICE_UNIT_ENV } from "./serviceProtocol.ts";
+import { CliError } from "effect/cli";
+import * as Schema from "effect/Schema";
+
 export const BOOT_SERVICE_NAME_ENV = "T3CODE_SERVICE_NAME";
 const requestedServiceName = process.env[BOOT_SERVICE_NAME_ENV]?.trim() || undefined;
 export const bootServiceNameProblem =
@@ -29,6 +32,8 @@ const customNamePlistLines = BOOT_SERVICE_CUSTOM_NAME
   ? [`    <key>${BOOT_SERVICE_NAME_ENV}</key>`, `    <string>${BOOT_SERVICE_CUSTOM_NAME}</string>`]
   : [];
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
+/** Task Scheduler keeps its own copy; this one lets status and repair read the task back. */
+export const BOOT_SERVICE_TASK_FILE = `${BOOT_SERVICE_NAME}-task.xml`;
 export const bootServiceUnitPath = (
   join: (...parts: ReadonlyArray<string>) => string,
   platform: NodeJS.Platform,
@@ -37,7 +42,6 @@ export const bootServiceUnitPath = (
   platform === "darwin"
     ? join(homeDir, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE)
     : join(homeDir, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
-export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
 
 /** systemd expands `%` specifiers, including in unquoted append-log paths. */
@@ -52,44 +56,43 @@ export function quoteSystemdValue(value: string): string {
     : escaped;
 }
 
-const unquoteSystemdValue = (raw: string) =>
-  (raw.startsWith('"') && raw.endsWith('"')
-    ? raw.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\")
-    : raw
-  ).replaceAll("%%", "%");
-
-const unescapeXmlText = (value: string) =>
-  value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
-
-export function bootServiceBaseDirOf(contents: string): string | undefined {
-  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
-  if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());
-  const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
-  return plist === undefined ? undefined : unescapeXmlText(plist);
-}
-
-/** The executable an installed unit or plist starts: the launcher's runtime. */
-export function bootServiceProgramOf(contents: string): string | undefined {
-  const systemd = /^ExecStart=("(?:\\.|[^"\\])*"|\S+)/m.exec(contents)?.[1];
-  if (systemd !== undefined) return unquoteSystemdValue(systemd);
-  const plist = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/.exec(
-    contents,
-  )?.[1];
-  return plist === undefined ? undefined : unescapeXmlText(plist);
-}
+/** Windows paths cannot contain `"`; only backslashes before the closing quote need doubling. */
+const quoteWindowsArgument = (value: string) => `"${value.replace(/(\\+)$/, "$1$1")}"`;
 
 export interface BootServicePlan {
   readonly program: ReadonlyArray<string>;
   readonly baseDir: string;
   readonly logPath: string;
   readonly unitPath: string;
+  readonly installBinDir?: string;
   readonly connectorUnitPath?: string;
   /** The manager accepted a detached install; its outcome is written to `logPath`. */
   readonly handedOff?: boolean;
 }
 
+// systemd refuses an executable with a quote, backslash or control character even when
+// quoted. The executable lives under the T3 home, so this also catches a home with a newline.
+export const systemdUnsafeValue = (plan: BootServicePlan) =>
+  /[\x00-\x1f\x7f"'\\]/.test(plan.program[0] ?? "");
+
+export class BootServiceBaseDirUnsupportedError extends Schema.TaggedError<BootServiceBaseDirUnsupportedError>()(
+  "BootServiceBaseDirUnsupportedError",
+  { baseDir: Schema.String },
+) {
+  override get message(): string {
+    return `systemd cannot run T3 Code from ${JSON.stringify(this.baseDir)}: the path contains a quote, backslash or control character. Choose another T3 home with --base-dir.`;
+  }
+
+  override get [CliError.userMessage]() {
+    return this.message;
+  }
+}
+
 /** Service units cannot rely on the user's shell or PATH. */
 export function renderBootServiceUnit(plan: BootServicePlan): string {
+  if (systemdUnsafeValue(plan)) {
+    throw new BootServiceBaseDirUnsupportedError({ baseDir: plan.baseDir });
+  }
   // The user manager has no reliable network-online target; server networking retries itself.
   return [
     "[Unit]",
@@ -101,7 +104,10 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "Type=simple",
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
-    `Environment=${BOOT_SERVICE_UNIT_ENV}=${quoteSystemdValue(serviceUnitFileName(plan.unitPath))}`,
+    ...(plan.installBinDir === undefined
+      ? []
+      : [`Environment=T3CODE_INSTALL_BIN_DIR=${quoteSystemdValue(plan.installBinDir)}`]),
+    `Environment=${SERVICE_UNIT_ENV}=${quoteSystemdValue(serviceUnitFileName(plan.unitPath))}`,
     `Environment=${CONNECTOR_UNIT_PATH_ENV}=${quoteSystemdValue(plan.connectorUnitPath ?? connectorUnitPath(plan.unitPath))}`,
     ...customNameUnitLines,
     ...selfUpdateOffUnitLines,
@@ -159,7 +165,13 @@ export function renderBootServicePlist(
     `    <string>${escapeXmlText(options.environmentPath)}</string>`,
     `    <key>T3CODE_HOME</key>`,
     `    <string>${escapeXmlText(plan.baseDir)}</string>`,
-    `    <key>${BOOT_SERVICE_UNIT_ENV}</key>`,
+    ...(plan.installBinDir === undefined
+      ? []
+      : [
+          `    <key>T3CODE_INSTALL_BIN_DIR</key>`,
+          `    <string>${escapeXmlText(plan.installBinDir)}</string>`,
+        ]),
+    `    <key>${SERVICE_UNIT_ENV}</key>`,
     `    <string>${escapeXmlText(serviceUnitFileName(plan.unitPath))}</string>`,
     `    <key>${CONNECTOR_UNIT_PATH_ENV}</key>`,
     `    <string>${escapeXmlText(plan.connectorUnitPath ?? connectorUnitPath(plan.unitPath))}</string>`,
@@ -190,11 +202,67 @@ export function renderBootServicePlist(
   ].join("\n");
 }
 
-export interface BootServiceStep {
-  readonly step: string;
-  readonly command: string;
-  readonly args: ReadonlyArray<string>;
-  /** Non-zero exit is logged and ignored. */
-  readonly optional?: boolean;
-  readonly timeout?: Duration.Input;
+/**
+ * Task Scheduler can neither set variables nor redirect output, so the launcher takes them as
+ * flags. A console program started by a task opens a window unless a headless console hosts it.
+ * No XML declaration: schtasks rejects `encoding="UTF-8"` but reads undeclared XML as UTF-8.
+ */
+export function renderBootServiceTask(
+  plan: BootServicePlan,
+  options: { readonly userId: string; readonly homeDir: string; readonly conhostPath: string },
+): string {
+  const launcherArguments = [
+    ...plan.program,
+    "--base-dir",
+    plan.baseDir,
+    "--log-file",
+    plan.logPath,
+    "--service-unit",
+    BOOT_SERVICE_TASK_FILE,
+  ]
+    .map(quoteWindowsArgument)
+    .join(" ");
+  // conhost reports exit code 0 whatever the launcher returns, so restart-on-failure never
+  // fires. A repeating trigger with IgnoreNew starts the task again within a minute instead.
+  // Priority 5 is normal; the default 7 runs below it.
+  return [
+    `<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">`,
+    `  <RegistrationInfo>`,
+    `    <Description>T3 Code server</Description>`,
+    `  </RegistrationInfo>`,
+    `  <Triggers>`,
+    `    <LogonTrigger>`,
+    `      <UserId>${escapeXmlText(options.userId)}</UserId>`,
+    `    </LogonTrigger>`,
+    `    <TimeTrigger>`,
+    `      <StartBoundary>2000-01-01T00:00:00</StartBoundary>`,
+    `      <Repetition>`,
+    `        <Interval>PT1M</Interval>`,
+    `      </Repetition>`,
+    `    </TimeTrigger>`,
+    `  </Triggers>`,
+    `  <Principals>`,
+    `    <Principal id="Author">`,
+    `      <UserId>${escapeXmlText(options.userId)}</UserId>`,
+    `      <LogonType>InteractiveToken</LogonType>`,
+    `      <RunLevel>LeastPrivilege</RunLevel>`,
+    `    </Principal>`,
+    `  </Principals>`,
+    `  <Settings>`,
+    `    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>`,
+    `    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>`,
+    `    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>`,
+    `    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>`,
+    `    <Priority>5</Priority>`,
+    `  </Settings>`,
+    `  <Actions Context="Author">`,
+    `    <Exec>`,
+    `      <Command>${escapeXmlText(options.conhostPath)}</Command>`,
+    `      <Arguments>--headless ${escapeXmlText(launcherArguments)}</Arguments>`,
+    `      <WorkingDirectory>${escapeXmlText(options.homeDir)}</WorkingDirectory>`,
+    `    </Exec>`,
+    `  </Actions>`,
+    `</Task>`,
+    ``,
+  ].join("\n");
 }

@@ -7,8 +7,8 @@ import {
   ProviderDriverKind,
   CommandId,
   EnvironmentId,
-  type ServerLifecycleStreamEvent,
 } from "@t3tools/contracts";
+import type { ServerLifecycleStreamEvent } from "@t3tools/contracts/serverLifecycle";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { HttpServer } from "effect/http";
@@ -37,6 +37,7 @@ import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
+import * as EffectOutbox from "./orchestration-v2/EffectOutbox.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectService from "./project/ProjectService.ts";
@@ -68,6 +69,7 @@ it.effect.each([
     };
     const imports = { importedThreadCount: 0, importedMessageCount: 0 };
     const dependencies = Layer.mergeAll(
+      Layer.mock(EffectOutbox.EffectOutboxV2)({}),
       NodeCrypto.layer,
       Path.layer,
       Layer.mock(ServerConfig.ServerConfig)({

@@ -31,6 +31,8 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { withServerAdmission } from "../serverHandoffBarrier.ts";
+import * as RpcSchema from "effect/rpc/RpcSchema";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
@@ -83,6 +85,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.providerInstallCancel]: AuthProvidersManageScope,
   [WS_METHODS.providerInstallSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.providerInstallRemove]: AuthProvidersManageScope,
+  [WS_METHODS.serverListForkReleases]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverAbortRestart]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverImportRestartHandoff]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverGetRestartStatus]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverPrepareRestart]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverUpdateServer]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverUpdateServerWithProgress]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCommitDesktopUpdate]: AuthEnvironmentMaintainScope,
@@ -294,9 +301,15 @@ export const layer = (
     const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
     const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
     if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
-    return onAuthorized === undefined
-      ? effect
-      : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
+    const admitted =
+      onAuthorized === undefined
+        ? effect
+        : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
+    return RpcSchema.isStreamSchema(rpc.successSchema) ||
+      rpc._tag === WS_METHODS.serverProbe ||
+      rpc._tag === WS_METHODS.secretsAnswerRequest
+      ? admitted
+      : withServerAdmission(admitted);
   });
 
 /** Retrying can install or restart tools even though ordinary listing is readable. */

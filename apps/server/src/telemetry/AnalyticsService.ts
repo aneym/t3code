@@ -9,6 +9,11 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
@@ -30,6 +35,20 @@ interface BufferedAnalyticsEvent {
   readonly properties?: Readonly<Record<string, unknown>>;
   readonly capturedAt: string;
 }
+
+const HandoffEvents = Schema.fromJsonString(
+  Schema.Array(
+    Schema.Struct({
+      uuid: Schema.String,
+      event: Schema.String,
+      properties: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+      capturedAt: Schema.String,
+    }),
+  ),
+);
+
+const decodeHandoffEvents = Schema.decodeEffect(HandoffEvents);
+const encodeHandoffEvents = Schema.encodeEffect(HandoffEvents);
 
 interface DeliveryState {
   readonly failedBatch: ReadonlyArray<BufferedAnalyticsEvent>;
@@ -88,6 +107,7 @@ export class AnalyticsService extends Context.Service<
     ) => Effect.Effect<void>;
 
     readonly flush: Effect.Effect<void>;
+    readonly skipShutdownFlush: Effect.Effect<void>;
 
     /**
      * Records `install.owner_observed` for each owner of this install that the
@@ -147,7 +167,22 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const { distinctId, installId } = yield* getTelemetryIdentity;
   const crypto = yield* SecureRandom.SecureRandom;
-  const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const handoffPath = path.join(serverConfig.stateDir, "analytics-handoff.json");
+  const handoff = yield* fs.readFileString(handoffPath).pipe(
+    Effect.flatMap(decodeHandoffEvents),
+    Effect.catchIf(
+      (error) => error._tag === "PlatformError" && error.reason._tag === "NotFound",
+      () => Effect.void,
+    ),
+    Effect.catch((cause) =>
+      Effect.logWarning("Ignored unreadable analytics handoff", { cause }).pipe(Effect.as([])),
+    ),
+  );
+  const persistedRef = yield* Ref.make<string | undefined>(undefined);
+  const skipShutdownFlushRef = yield* Ref.make(false);
+  const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>(handoff ?? []);
   const deliveryRef = yield* Ref.make<DeliveryState>({
     failedBatch: [],
     batchAttempts: 0,
@@ -240,11 +275,29 @@ export const make = Effect.gen(function* () {
     return [nextBatch, current.slice(nextBatch.length)] as const;
   });
 
+  const persistHandoff = Effect.gen(function* () {
+    const buffered = yield* Ref.get(bufferRef);
+    const { failedBatch } = yield* Ref.get(deliveryRef);
+    const contents = yield* encodeHandoffEvents([...failedBatch, ...buffered]);
+    if ((yield* Ref.get(persistedRef)) === contents) return;
+    yield* writeFileStringAtomically({ filePath: handoffPath, contents });
+    yield* Ref.set(persistedRef, contents);
+  }).pipe(
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.catch((cause) => Effect.logWarning("Analytics handoff persist failed", { cause })),
+  );
+
   // Back off even after dropping rejected batches so bad API keys cannot drain the queue in a tight loop.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
+    if (yield* Ref.get(skipShutdownFlushRef)) return;
     while (true) {
       const delivery = yield* Ref.get(deliveryRef);
-      const batch = delivery.failedBatch.length > 0 ? delivery.failedBatch : yield* takeBatch;
+      const batch = yield* Effect.gen(function* () {
+        const pending = delivery.failedBatch.length > 0 ? delivery.failedBatch : yield* takeBatch;
+        yield* Ref.set(deliveryRef, { ...delivery, failedBatch: pending });
+        return pending;
+      }).pipe(Effect.uninterruptible);
       if (batch.length === 0) {
         return;
       }
@@ -300,7 +353,10 @@ export const make = Effect.gen(function* () {
       );
       return;
     }
-  }).pipe(flushLock.withPermit);
+  }).pipe(
+    Effect.ensuring(handoff === undefined ? Effect.void : persistHandoff),
+    flushLock.withPermit,
+  );
 
   const flushWhenDue = Effect.gen(function* () {
     const { retryAt } = yield* Ref.get(deliveryRef);
@@ -350,15 +406,31 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.andThen(flushWhenDue)), {
-    disableYield: true,
-  }).pipe(Effect.forkScoped);
+  const periodic = yield* Effect.forever(
+    Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.andThen(flushWhenDue)),
+    {
+      disableYield: true,
+    },
+  ).pipe(Effect.forkScoped);
 
-  yield* Effect.addFinalizer(() =>
-    flush.pipe(Effect.timeout(SHUTDOWN_FLUSH_TIMEOUT), Effect.ignore),
+  const skipShutdownFlush = Ref.set(skipShutdownFlushRef, true).pipe(
+    Effect.andThen(Fiber.interrupt(periodic)),
+    Effect.asVoid,
   );
 
-  return AnalyticsService.of({ record, flush, recordOwners });
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      if (!(yield* Ref.get(skipShutdownFlushRef)))
+        return yield* flush.pipe(Effect.timeout(SHUTDOWN_FLUSH_TIMEOUT), Effect.ignore);
+      yield* persistHandoff;
+      yield* Effect.logInfo("Analytics shutdown flush skipped for service handoff", {
+        buffered: (yield* Ref.get(bufferRef)).length,
+        failedBatch: (yield* Ref.get(deliveryRef)).failedBatch.length,
+      });
+    }),
+  );
+
+  return AnalyticsService.of({ record, flush, skipShutdownFlush, recordOwners });
 });
 
 export const layer = Layer.effect(AnalyticsService, make);
