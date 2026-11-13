@@ -364,6 +364,33 @@ const threadUnqueueCommand = Command.make("unqueue", {
   ),
 );
 
+const threadContinueCommand = Command.make("continue", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "Continue a thread stopped by a usage limit or an interruption now, then release its held queue in order.",
+  ),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      yield* withOwnerMcpTools(
+        "thread",
+        flags,
+        Effect.fn("cli.thread.continue")(function* (tools) {
+          const continued = yield* tools.call(
+            "t3_queue",
+            { action: "continue", threadId },
+            OrchestrationV2DispatchCommandResult,
+          );
+          yield* flags.json ? printJson(continued) : Console.log("Continued.");
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 const threadInterruptCommand = Command.make("interrupt", {
   ...projectLocationFlags,
   thread: threadArgument,
@@ -487,6 +514,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadRestartCommand,
     threadPromoteCommand,
     threadUnqueueCommand,
+    threadContinueCommand,
     threadInterruptCommand,
     threadShowCommand,
     threadPlacementCommand,

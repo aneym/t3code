@@ -32,6 +32,7 @@ type RecoveryProps = {
   recovery: OrchestrationV2LimitRecovery | null;
   timestampFormat: TimestampFormat;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
+  onContinue: (() => void) | null;
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
@@ -53,9 +54,14 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     canSchedule && recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
-  const recoveryActions = canSchedule ? (
-    <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
-  ) : null;
+  const recoveryActions = (
+    <>
+      {canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null}
+      {props.onContinue && !settled && !requestPending ? (
+        <ContinueAction resetAt={resetAt} onContinue={props.onContinue} />
+      ) : null}
+    </>
+  );
   const displayAt =
     resumes && resetAt && snoozedUntil && Date.parse(snoozedUntil) > Date.parse(resetAt)
       ? snoozedUntil
@@ -97,6 +103,24 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
       </>
     ),
   };
+}
+
+function ContinueAction({
+  resetAt,
+  onContinue,
+}: {
+  resetAt: string | null;
+  onContinue: () => void;
+}) {
+  const resetPassed = useDeadlinePassed(resetAt === null ? null : Date.parse(resetAt));
+  if (resetAt !== null && !resetPassed) return null;
+  return (
+    <span className="flex items-center px-1">
+      <InlineButton touchTarget="padded" onClick={onContinue}>
+        Continue now
+      </InlineButton>
+    </span>
+  );
 }
 
 function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: RecoveryProps) {

@@ -296,6 +296,22 @@ export function makeProviderFailure(input: {
   };
 }
 
+export const USAGE_LIMIT_FALLBACK_RESET_MINUTES = 5;
+
+function withUsageLimitReset(
+  failure: OrchestrationV2ProviderFailure,
+  failedAt: DateTime.Utc,
+): OrchestrationV2ProviderFailure {
+  return failure.class !== "usage_limit" || failure.resetAt != null
+    ? failure
+    : {
+        ...failure,
+        resetAt: DateTime.formatIso(
+          DateTime.add(failedAt, { minutes: USAGE_LIMIT_FALLBACK_RESET_MINUTES }),
+        ),
+      };
+}
+
 export function makeProviderFailureTurnItem(input: {
   readonly driver: ProviderDriverKind;
   readonly threadId: ThreadId;
@@ -328,7 +344,7 @@ export function makeProviderFailureTurnItem(input: {
     completedAt: input.occurredAt,
     updatedAt: input.occurredAt,
     type: "error",
-    failure: input.failure,
+    failure: withUsageLimitReset(input.failure, input.occurredAt),
     ...(input.retry === undefined ? {} : { retry: input.retry }),
   };
 }
@@ -378,7 +394,10 @@ export function makeProviderRetryTurnItem(input: {
     completedAt: completed ? input.updatedAt : null,
     updatedAt: input.updatedAt,
     type: "error",
-    failure: input.failure,
+    failure:
+      input.status === "failed"
+        ? withUsageLimitReset(input.failure, input.updatedAt)
+        : input.failure,
     retry: input.retry,
   };
 }

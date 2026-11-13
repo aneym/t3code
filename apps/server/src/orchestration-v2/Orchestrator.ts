@@ -614,7 +614,8 @@ function mayStartSubagentFollowup(
   return (
     command.createdBy === "user" ||
     command.creationSource === "mcp" ||
-    command.usageLimitContinuationOfRunId !== undefined
+    command.usageLimitContinuationOfRunId !== undefined ||
+    command.manualContinuationOfRunId !== undefined
   );
 }
 
@@ -2053,7 +2054,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         modelSelection,
         providerInstanceId: modelSelection.instanceId,
       };
-      // A limited provider would fail and consume every waiting message.
       if (
         usageLimitHoldsQueue(
           projection,
@@ -2063,7 +2063,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return;
       }
-      // Waits without a hold: lowering the thread's mode starts the queue again.
       if (isRuntimeModeAbove(projection.thread.runtimeMode, runtimeModeCeiling?.maxRuntimeMode)) {
         return;
       }

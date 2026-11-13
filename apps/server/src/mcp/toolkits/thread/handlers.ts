@@ -24,6 +24,7 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import * as ThreadSessionRestarts from "../../../orchestration-v2/ThreadSessionRestarts.ts";
+import { continueThread } from "../../../orchestration-v2/ThreadContinue.ts";
 import * as PendingRequests from "./pendingRequests.ts";
 import { ThreadToolkit } from "./tools.ts";
 
@@ -265,6 +266,22 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             ...common,
             type: "queue.resume",
           }));
+        if (input.action === "continue") {
+          const { threads, projection } = yield* readThread(input.threadId);
+          const result = yield* continueThread(threads, {
+            threadId: projection.thread.id,
+            commandId: yield* newCommandId(),
+            createdBy: "agent",
+            creationSource: "mcp",
+          }).pipe(
+            Effect.mapError((error) =>
+              error._tag === "ThreadContinueNothingToContinueError"
+                ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
+                : dispatchFailure(error),
+            ),
+          );
+          return { sequence: result.sequence };
+        }
         const runId = yield* required(input.queuedRunId, "queuedRunId");
         switch (input.action) {
           case "edit": {
