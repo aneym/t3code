@@ -9,8 +9,9 @@ import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueThread } from "./ThreadContinue.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { limitRetryStreak, ROOM_CONTINUATION_COMMAND_PREFIX } from "./UsageLimitBackoff.ts";
 
-export function usageRoomCheckedAt(
+function usageRoomCheckedAt(
   provider: Pick<ServerProvider, "usageLimits">,
   model: string,
 ): number | null {
@@ -103,9 +104,16 @@ const makeRelease = Effect.gen(function* () {
       const roomAt = provider === undefined ? null : usageRoomCheckedAt(provider, row.model ?? "");
       if (roomAt === null || roomAt <= Date.parse(row.failed_at)) continue;
       const threadId = ThreadId.make(row.thread_id);
+      const repeated = yield* threads.getThreadRecords(threadId, ["runs"]).pipe(
+        Effect.map(({ runs }) => limitRetryStreak(runs) > 0),
+        Effect.orElseSucceed(() => true),
+      );
+      if (repeated) continue;
       yield* continueThread(threads, {
         threadId,
-        commandId: CommandId.make(`limit-room:${row.thread_id}:${row.run_id}`),
+        commandId: CommandId.make(
+          `${ROOM_CONTINUATION_COMMAND_PREFIX}${row.thread_id}:${row.run_id}`,
+        ),
         createdBy: "agent",
         creationSource: "server",
       }).pipe(

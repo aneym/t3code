@@ -296,7 +296,7 @@ export function makeProviderFailure(input: {
   };
 }
 
-export const USAGE_LIMIT_FALLBACK_RESET_MINUTES = 5;
+const USAGE_LIMIT_FALLBACK_RESET_MINUTES = 5;
 
 function withUsageLimitReset(
   failure: OrchestrationV2ProviderFailure,
