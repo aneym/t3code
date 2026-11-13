@@ -10,7 +10,7 @@ import { isSnoozed } from "../orchestration-v2/AutoSettlementPolicy.ts";
 import type { ThreadManagementServiceShape } from "../orchestration-v2/ThreadManagementService.ts";
 import { threadSettlement } from "./threadSettlement.ts";
 
-const DEFAULT_THREAD_LIST_LIMIT = 10;
+const DEFAULT_THREAD_LIST_LIMIT = 50;
 
 // Awaited background work keeps a thread live after its turn ends, as auto-settle and the sidebar treat it.
 export function listedThreadStatus(shell: OrchestrationV2ThreadShell) {
