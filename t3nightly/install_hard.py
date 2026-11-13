@@ -346,7 +346,7 @@ def install(run):
                 run.step("advisory-backup-check-failed", error=str(error))
     if getattr(run, "handoff_check", None):
         run.handoff_check(outcome)
-    install_predrain.finish(run, backup)
+    install_predrain.finish(run, backup, stopped)
     moment = datetime.now(timezone.utc).isoformat()
     serving_version = run.server_version() or "unavailable"
     serving_digest = ""

@@ -1,7 +1,9 @@
 import argparse
+import ctypes
 import hashlib
 import json
 import os
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -12,7 +14,7 @@ from pathlib import Path
 
 from . import live_read_guard as guard
 from .db_publish import fsync, wal_bytes
-from .install_restore_copy import RecoveryRequired, check_deadline, foreground_io, identity, ionice, service_active
+from .install_restore_copy import RecoveryRequired, check_deadline, foreground_io, identity, service_active
 from .install_sqlite_sync import executable, local_command, local_sync, page_updates
 
 METHOD = "predrain-sqlite3-rsync"
@@ -22,6 +24,16 @@ ALLOWANCE_S = 30
 HEADER_PAGES = 1
 CHUNK = 1024 * 1024
 STOPPED_WORK = ["sqlite3-rsync-delta", "sqlite3-rsync-verify", "identity"]
+PROBE_EVERY_S = 5
+PROBE_TIMEOUT_S = 2
+PROBE_SLOW_S = 1
+PROBE_STRIKES = 2
+NICE = ["nice", "-n", "19"]
+THROTTLE = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "-p", "MemoryHigh=4G", "--"]
+
+
+class ServingSlow(ValueError):
+    pass
 
 
 def available():
@@ -38,41 +50,92 @@ def estimate(size, pass_seconds=None):
             "source": f"constant {RSYNC_MIB_S} MiB/s" if pass_seconds is None else "measured online catch-up pass"}
 
 
-def watched(source, target, limit, seconds):
+def bound(parent):
+    prctl = ctypes.CDLL(None, use_errno=True).prctl
+
+    def arm():
+        if prctl(guard.PR_SET_PDEATHSIG, int(signal.SIGKILL), 0, 0, 0) != 0 or os.getppid() != parent:
+            os._exit(1)
+    return arm
+
+
+class Probe(threading.Thread):
+    def __init__(self, read):
+        super().__init__(daemon=True)
+        self.read, self.done = read, threading.Event()
+        self.count, self.failed, self.worst, self.strikes = 0, 0, 0.0, 0
+
+    def run(self):
+        while not self.done.wait(PROBE_EVERY_S):
+            started = time.monotonic()
+            served = self.read()
+            took = time.monotonic() - started
+            self.count += 1
+            self.failed += not served
+            self.worst = max(self.worst, took)
+            self.strikes = self.strikes + 1 if not served or took > PROBE_SLOW_S else 0
+
+    def record(self):
+        return {"probes": self.count, "probeFailures": self.failed, "probeWorstSeconds": round(self.worst, 3)}
+
+
+def watched(source, target, limit, seconds, read, scoped=False):
     started = time.monotonic()
     backstop = started + seconds
     peak, abort = guard.wal_in_use(source), None
-    process = subprocess.Popen(local_command(source, target, background=True), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    probe = Probe(read)
+    command = [*(THROTTLE if scoped else []), *NICE, *local_command(source, target)]
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, preexec_fn=bound(os.getpid()))
+    probe.start()
     try:
         while process.poll() is None:
             peak = max(peak, guard.wal_in_use(source))
             if peak >= limit:
                 abort = guard.WalAbort(f"live WAL reached {peak / 2**20:.1f} MiB during the pre-drain sync, over the {limit / 2**20:.1f} MiB limit; nothing stopped")
+            elif probe.strikes >= PROBE_STRIKES:
+                abort = ServingSlow(f"{probe.strikes} serving probes in a row failed or took over {PROBE_SLOW_S} s (worst {probe.worst:.2f} s) during the pre-drain sync; nothing stopped")
             elif time.monotonic() >= backstop:
                 abort = ValueError(f"pre-drain sync passed its {seconds} s deadline; nothing stopped")
             if abort:
                 break
             time.sleep(guard.POLL_S)
     finally:
+        probe.done.set()
         if process.poll() is None:
             process.kill()
         output = process.communicate()[0]
+        probe.join()
     if abort:
+        abort.probe = probe.record()
         raise abort
-    return {"pageUpdates": page_updates(source, target, process.returncode, output), "seconds": round(time.monotonic() - started, 3), "walPeak": peak}
+    return {"pageUpdates": page_updates(source, target, process.returncode, output), "seconds": round(time.monotonic() - started, 3), "walPeak": peak, "scoped": scoped, **probe.record()}
 
 
-def online(source, target, seconds, note):
+def online(source, target, seconds, note, read, throttle=False):
     limit = guard.headroom_limit(source)
-    passes = {}
+    passes, state = {}, {"scoped": False, "worst": 0.0}
+
+    def seen(record):
+        state["worst"] = max(state["worst"], record["probeWorstSeconds"])
+        state["scoped"] = state["scoped"] or (throttle and state["worst"] > PROBE_SLOW_S)
+
+    def attempt():
+        try:
+            result = watched(source, target, limit, seconds, read, state["scoped"])
+        except (guard.WalAbort, ServingSlow) as error:
+            seen(error.probe)
+            raise
+        seen(result)
+        return result
+
     for name in ("seed", "catchUp"):
-        passes[name] = guard.retried(lambda: watched(source, target, limit, seconds), lambda wait, error: note("predrain-sync-retry", phase=name, waitSeconds=wait, reason=str(error)))
-    return {**passes, "walLimit": limit}
+        passes[name] = guard.retried(attempt, lambda wait, error: note("predrain-sync-retry", phase=name, waitSeconds=wait, reason=str(error), **error.probe), errors=(guard.WalAbort, ServingSlow))
+    return {**passes, "walLimit": limit, "probeWorstSeconds": round(state["worst"], 3), "throttle": "memory-scope" if state["scoped"] else "off"}
 
 
 def prepare(run, source, target, size, budget):
     started = time.monotonic()
-    presync = online(source, target, run.args.offbox_copy_s, run.step)
+    presync = online(source, target, run.args.offbox_copy_s, run.step, lambda: run.environment(timeout=PROBE_TIMEOUT_S) is not None, run.args.predrain_throttle)
     presync["seconds"] = round(time.monotonic() - started, 3)
     work = estimate(size, presync["catchUp"]["seconds"])
     run.step("hard-backup-estimate", stoppedWork=STOPPED_WORK, localRestoreCopy=work, rollback=work, presync=presync, estimateSeconds=work["totalSeconds"], budgetSeconds=budget)
@@ -130,7 +193,7 @@ class Check(threading.Thread):
 
     def run(self):
         started = time.monotonic()
-        ionice("-c3")
+        os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 19)
         try:
             with closing(sqlite3.connect(f"{self.path.resolve().as_uri()}?immutable=1", uri=True, timeout=30)) as connection:
                 connection.set_progress_handler(lambda: int(self.cancel.is_set()), 10000)
@@ -154,7 +217,7 @@ def after_restart(run, backup):
         return
     run.predrain_check = Check(local["path"])
     run.predrain_check.start()
-    run.step("predrain-copy-check-started", path=local["path"], ioPriority="idle")
+    run.step("predrain-copy-check-started", path=local["path"], cpuNice=19)
 
 
 def pause(run):
@@ -166,9 +229,16 @@ def pause(run):
         run.step("predrain-copy-check-paused", reason="rollback restore runs at foreground priority")
 
 
-def finish(run, backup):
+def finish(run, backup, stopped=False):
     local = backup.get("local") or {}
     if local.get("method") != METHOD:
+        return
+    if stopped:
+        if getattr(run, "predrain_check", None) is not None:
+            run.predrain_check.cancel.set()
+            run.predrain_check = None
+        local["deferredCheck"] = {"outcome": "skipped-service-stopped"}
+        run.step("predrain-copy-checked", loud=True, **local["deferredCheck"])
         return
     started = time.monotonic()
     if not Path(local["path"]).is_file():

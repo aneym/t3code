@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .compact_headroom import headroom, refusal
 from .install_backup_retention import inventory
+from .install_predrain import METHOD as PREDRAIN
 from .install_restore_copy import RecoveryRequired, checksum, identity, restore
 from .install_storage import EXTERNAL, backup_roots
 from .snapshot_space import database_bytes
@@ -107,8 +108,11 @@ def unsafe(record):
 
 
 def source(backup):
-    if backup.get("local"):
-        return backup["local"]
+    local = backup.get("local")
+    if local:
+        if local.get("method") == PREDRAIN and not local.get("sha256"):
+            local["sha256"] = checksum(local["path"])
+        return local
     path = Path(backup["path"])
     record = {"path": str(path), "bytes": path.stat().st_size, "sha256": checksum(path), "source": "rollback-backup", "identity": None}
     try:

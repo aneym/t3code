@@ -86,10 +86,10 @@ class Run:
         print(line, flush=True)
         return install_settings.exit_code(self, outcome)
 
-    def environment(self):
+    def environment(self, timeout=5):
         url = f"http://127.0.0.1:{self.args.port}/.well-known/t3/environment"
         try:
-            with urllib.request.urlopen(url, timeout=5) as response:
+            with urllib.request.urlopen(url, timeout=timeout) as response:
                 return json.load(response)
         except (OSError, ValueError):
             return None

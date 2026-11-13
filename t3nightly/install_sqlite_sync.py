@@ -27,9 +27,8 @@ def sync(origin, replica, deadline, *, background=False, hang_guard=None):
     return time.monotonic() - started
 
 
-def local_command(origin, replica, *, background=False):
-    command = [executable(), str(origin), str(replica), "-vvv"]
-    return background_command(command) if background else command
+def local_command(origin, replica):
+    return [executable(), str(origin), str(replica), "-vvv"]
 
 
 def page_updates(origin, replica, code, output):

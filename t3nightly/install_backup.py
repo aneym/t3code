@@ -88,7 +88,7 @@ def _capture(run, previous, stop, rollback_gate, *, keep_local=False):
             target = destination / "statev2.sqlite"
             volume_reason = "APFS capability probe failed; configured-root full copy"
     binary = rollback_gate()
-    delta = keep_local and not binary and not clone and predrain.available()
+    delta = keep_local and not binary and not clone and sys.platform.startswith("linux") and predrain.available()
     if delta:
         prepared = predrain.prepare(run, source, target, size, run.args.offbox_stop_s)
     elif keep_local and not binary:
