@@ -232,6 +232,12 @@ import {
   makeProviderRetryTurnItem,
 } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
+import {
+  CLAUDE_COMPACTION_FAILURE_CAP,
+  claudeAutoCompactThreshold,
+  claudeCompactionCapFailure,
+  claudeCompactionFailed,
+} from "./ClaudeCompaction.ts";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
@@ -283,18 +289,6 @@ function claudePromptCacheTtlMs(
   if (cacheCreation.ephemeral_1h_input_tokens > 0) return 60 * 60_000;
   if (cacheCreation.ephemeral_5m_input_tokens > 0) return 5 * 60_000;
   return undefined;
-}
-
-// Claude caps the window at the model's context, so a setting at or above it never applies.
-// Below that, Claude compacts 33,000 tokens short of the window: Claude Code 2.1.305's
-// getContextUsage reports a 150,000 window as a 117,000 threshold, for every catalog model.
-const CLAUDE_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
-
-function claudeAutoCompactThreshold(autoCompactWindow: string, maxTokens: number | null) {
-  const windowTokens = Number(autoCompactWindow);
-  return windowTokens > 0 && (maxTokens === null || windowTokens < maxTokens)
-    ? { autoCompactThreshold: windowTokens - CLAUDE_AUTO_COMPACT_RESERVE_TOKENS }
-    : {};
 }
 
 function claudeMessageInputTokens(usage: {
@@ -4622,9 +4616,7 @@ interface ActiveClaudeTurnContext {
     readonly type: string | null;
     readonly resetAt: string | null;
   } | null;
-  // Set while this turn's latest compaction status reports a failure, with
-  // Claude's error text when it sent one.
-  compactionFailure: { readonly message: string | undefined } | null;
+  compactionFailure: { readonly message: string | undefined; readonly count: number } | null;
   // Steers end segments whose usage is excluded from the final result; bill them too, oldest first.
   readonly steeredSegmentUsage: Array<SDKResultMessage["usage"]>;
   // Set as finalization starts: a steer admitted later would stay pending
@@ -10178,12 +10170,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             (message.compact_result !== undefined ||
               (message.status === null && message.permissionMode === undefined))
           ) {
-            // The CLI reports a compaction it aborted for our interrupt as failed.
             const failed =
               message.compact_result === "failed" &&
               !(yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             if (message.compact_result !== undefined) {
-              context.compactionFailure = failed ? { message: message.compact_error } : null;
+              context.compactionFailure = failed
+                ? claudeCompactionFailed(context.compactionFailure, message.compact_error)
+                : null;
             }
             if (context.compaction?.status === "running") {
               const now = yield* DateTime.now;
@@ -10215,6 +10208,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 const budget = pdfBudgets.get(context.nativeThreadId);
                 if (budget !== undefined) budget.compacting = null;
               }
+            }
+            if (
+              (context.compactionFailure?.count ?? 0) >= CLAUDE_COMPACTION_FAILURE_CAP &&
+              context === (yield* Ref.get(activeTurn))
+            ) {
+              liveQuery.stopping = true;
+              yield* finalizeActiveTurn({
+                context,
+                status: "failed",
+                completedAt: yield* DateTime.now,
+                failure: claudeCompactionCapFailure(message.compact_error),
+              });
+              yield* liveQuery.query.close.pipe(Effect.ignore);
+              return;
             }
           }
 

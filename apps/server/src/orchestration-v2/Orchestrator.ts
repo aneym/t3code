@@ -141,6 +141,7 @@ import {
   isActiveRun,
   isNativeMaintenanceCommand,
   resolveMessageDispatchIntent,
+  isCompactingRun,
 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
 import {
@@ -5559,12 +5560,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const targetMessage = input.projection.messages.find(
       (message) => message.id === targetRun.userMessageId,
     );
-    if (targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)) {
+    const compacting = isCompactingRun(input.projection, targetRun.id);
+    if (compacting || (targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage))) {
       return yield* new OrchestratorDispatchError({
         commandId: input.command.commandId,
         commandType: input.command.type,
         cause:
-          targetMessage.text.trim().toLowerCase() === "/compact"
+          compacting || targetMessage?.text.trim().toLowerCase() === "/compact"
             ? "Wait for context compaction to finish before steering the thread."
             : "Wait for sign-out to finish before steering the thread.",
       });
@@ -10764,7 +10766,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const targetMessage = projection.messages.find(
       (message) => message.id === target?.userMessageId,
     );
-    // A compacting turn cannot take steering input, so steering skips the compaction instead.
     if (
       target !== undefined &&
       targetMessage !== undefined &&
@@ -10795,7 +10796,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         now,
       });
     }
-    // Skipping compaction starts the message as its own turn; steering would join the current one.
     if (queuedRun.freshContext === true) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
