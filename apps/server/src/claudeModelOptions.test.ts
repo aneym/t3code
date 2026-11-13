@@ -59,7 +59,7 @@ describe("compileClaudeModelSelection", () => {
     expect(
       compileClaudeModelSelection(selection("claude-opus-5-5", [{ id: "effort", value: "high" }]))
         .settings,
-    ).not.toHaveProperty("ultracode");
+    ).toHaveProperty("ultracode", false);
   });
 
   it("keeps old Ultracode defaults and selections at Extra High on custom models", () => {

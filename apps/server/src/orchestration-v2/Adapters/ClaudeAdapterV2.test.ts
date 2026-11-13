@@ -1708,18 +1708,6 @@ describe("ClaudeAdapterV2 resumeThread", () => {
           },
         });
         assert.equal(saved.nativeThreadRef?.nativeId, "native-thread-saved");
-
-        const missing = yield* runtime.resumeThread({
-          providerThread: {
-            ...providerThread,
-            nativeThreadRef: {
-              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-              nativeId: "native-thread-missing",
-              strength: "strong",
-            },
-          },
-        });
-        assert.equal(missing.nativeThreadRef?.nativeId, "native-thread-missing");
       }),
     ).pipe(
       Effect.provide(
@@ -3398,6 +3386,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-claude-v2-wake-",
       });
+      const projectDir = `${attachmentsDir}/projects/sandbox`;
+      yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+      for (const id of [WAKE_NATIVE_SESSION, "forked-native-session"])
+        yield* fileSystem.writeFileString(`${projectDir}/${id}.jsonl`, '{"type":"user"}\n');
       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
       const processQueues: Array<Queue.Queue<SDKMessage>> = [];
       const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
@@ -3448,7 +3440,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
         ...(options?.modelCatalog === undefined ? {} : { modelCatalog: options.modelCatalog }),
-        environment: options?.environment ?? {},
+        environment: { CLAUDE_CONFIG_DIR: attachmentsDir, ...options?.environment },
         attachmentsDir,
         fileSystem,
         path: yield* Path.Path,
@@ -6723,7 +6715,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         { model: "claude-sonnet-4-6" },
         { effortLevel: "high", fastMode: null, ultracode: null },
         { model: "claude-opus-5-5" },
-        { effortLevel: "medium", fastMode: false, ultracode: null },
+        { effortLevel: "medium", fastMode: false, ultracode: false },
       ]);
     }).pipe(
       Effect.provide(

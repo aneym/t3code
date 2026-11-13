@@ -26,7 +26,7 @@ describe("t3code/no-raw-mcp-registration", () => {
       export const server = McpServer.McpServer;
     `,
     (output) => {
-      assert.match(output, /Only McpHttpServer may use Effect's McpServer/);
+      assert.match(output, /Only apps\/server\/src\/mcp\/mcpServer may use Effect's McpServer/);
     },
   );
 
