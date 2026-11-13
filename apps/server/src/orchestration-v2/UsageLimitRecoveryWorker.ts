@@ -11,6 +11,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { limitRetryDueMs, limitRetryStreak } from "./UsageLimitBackoff.ts";
 
 export const MAX_OVERDUE_ARM_MS = 24 * 60 * 60 * 1000;
 
@@ -111,6 +112,7 @@ const makeSweep = Effect.gen(function* () {
       snooze: preferences.snoozeLimitedThreads,
     });
     let acted = false;
+    let backoffWakeAt = Infinity;
     for (const thread of candidates) {
       const command = limitRecoveryCommand(
         thread,
@@ -119,6 +121,21 @@ const makeSweep = Effect.gen(function* () {
         preferences.snoozeLimitedThreads,
       );
       if (command === null) continue;
+      if (command.type === "message.dispatch" && thread.usageLimitResetAt) {
+        const streak = yield* threads.getThreadRecords(thread.id, ["runs"]).pipe(
+          Effect.map(({ runs }) => limitRetryStreak(runs)),
+          Effect.orElseSucceed(() => 0),
+        );
+        const dueMs = limitRetryDueMs({
+          resetMs: Date.parse(thread.usageLimitResetAt),
+          failedAt: thread.latestRunCompletedAt ?? thread.updatedAt,
+          streak,
+        });
+        if (dueMs > nowMs) {
+          backoffWakeAt = Math.min(backoffWakeAt, dueMs);
+          continue;
+        }
+      }
       acted = true;
       yield* Effect.gen(function* () {
         if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
@@ -142,7 +159,7 @@ const makeSweep = Effect.gen(function* () {
     // A sweep that acted, or failed to, re-checks on the next tick.
     if (acted) return;
     const wakeAt = yield* projections.getLimitRecoveryWakeAt(now);
-    yield* due.record(readVersion, wakeAt ?? Infinity, nowMs);
+    yield* due.record(readVersion, Math.min(wakeAt ?? Infinity, backoffWakeAt), nowMs);
   });
 });
 
