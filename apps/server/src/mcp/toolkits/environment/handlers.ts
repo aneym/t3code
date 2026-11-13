@@ -67,6 +67,7 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
       const resources = yield* Effect.serviceOption(HostResources.HostResources);
       const providers = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
       let placementProjectId = input.projectId;
+      let placementProjectCount: number | undefined;
       const wanted = new Set([
         ...(input.placementRepositoryKey === undefined ? [] : [input.placementRepositoryKey]),
         ...(input.placementRepositoryKeys ?? []),
@@ -94,12 +95,16 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
             );
             cursor = page.nextCursor;
           }
+          if (cursor === null) placementProjectCount = matches.length;
           if (cursor === null && matches.length === 1) placementProjectId = matches[0]?.id;
         }
       }
       const hostResources = Option.isSome(resources) ? yield* resources.value.read : null;
+      const placementWeight = current.agentLoadBalancingWeights[descriptor.environmentId];
       return {
         ...(placementProjectId === undefined ? {} : { placementProjectId }),
+        ...(placementProjectCount === undefined ? {} : { placementProjectCount }),
+        ...(placementWeight === undefined ? {} : { placementWeight }),
         placementHealthLine: current.agentPlacementHealthLine,
         placementHealth: scoreAgentPlacement({
           environmentId: descriptor.environmentId,
