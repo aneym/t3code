@@ -1,5 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -719,6 +720,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     Layer.succeed(ServerSettings.ServerSettingsService, serverSettings),
     Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
+    ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_SETTLEMENT_COALESCE_MS: "0" } })),
     FileSystem.layerNoop({
       exists: (path) =>
         options.unreadablePaths?.includes(path)
