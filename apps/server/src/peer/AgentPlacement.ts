@@ -325,13 +325,17 @@ const make = Effect.gen(function* () {
             reason: string,
           ): typeof Selection.Type => {
             const chosen = scores.find((entry) => entry.environmentId === environmentId);
+            const mapped = matching.get(environmentId) ?? projectId;
             return {
-              projectId: matching.get(environmentId) ?? projectId,
+              projectId: mapped,
               modelSelection,
               placement: {
                 environmentId,
                 label: chosen?.label ?? descriptor.label,
-                reason,
+                reason:
+                  environmentId === scope.environmentId
+                    ? reason
+                    : `${reason} Project mapped to ${mapped} by repository ${keys[0]}.`,
                 mode,
                 decidedAt: now,
                 scores,

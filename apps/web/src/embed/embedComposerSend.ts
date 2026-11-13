@@ -1,6 +1,9 @@
 import { CommandId, type MessageId } from "@t3tools/contracts";
 
+import type { Dispatch, SetStateAction } from "react";
+
 import { holdSend, holdUnansweredSend, releaseHeldSend } from "../components/chat/heldSendStore";
+import { withoutOptimisticUserMessage } from "../components/chat/optimisticUserMessages";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import {
   type ComposerThreadTarget,
@@ -9,6 +12,7 @@ import {
 } from "../composerDraftStore";
 import type { ComposerHandleRef } from "../composerHandleContext";
 import { newMessageId, randomUUID } from "../lib/utils";
+import type { ChatMessage } from "../types";
 import { type EmbedSendSettled, sendThroughEmbedHost } from "./embedHostSend";
 import {
   dropLocalSends,
@@ -30,6 +34,15 @@ interface ComposerTarget {
 interface Ids {
   readonly messageId: MessageId;
   readonly commandId: CommandId;
+}
+
+interface Row {
+  readonly row: ChatMessage;
+  readonly rows: Dispatch<SetStateAction<ChatMessage[]>>;
+}
+
+function unshow(input: Row): void {
+  input.rows(withoutOptimisticUserMessage(input.row.id));
 }
 
 const NO_ANSWER = "No answer from the app, so this wasn't sent.";
@@ -116,14 +129,16 @@ function putBack(input: ComposerTarget, text: string): boolean {
 }
 
 export async function sendComposerThroughHost(
-  input: ComposerTarget & {
-    readonly text: string;
-    readonly ids: Ids;
-    readonly steer: boolean;
-    readonly save: () => Promise<boolean>;
-  },
+  input: ComposerTarget &
+    Row & {
+      readonly text: string;
+      readonly ids: Ids;
+      readonly steer: boolean;
+      readonly save: () => Promise<boolean>;
+    },
 ): Promise<{ readonly done: Promise<void> } | null> {
   const { thread, text, ids } = input;
+  input.rows((existing) => [...existing, input.row]);
   const when = input.steer ? "steer" : "queue";
   trackLocalSend(thread, {
     requestId: randomUUID(),
@@ -138,6 +153,7 @@ export async function sendComposerThroughHost(
   const saved = await input.save().catch(() => false);
   const sent = saved ? handToHost(thread, text, ids, when, onLateClear(input, text)) : null;
   if (sent === null) {
+    unshow(input);
     dropLocalSends(thread, [ids.messageId]);
     putBack(input, text);
     return null;
@@ -146,9 +162,10 @@ export async function sendComposerThroughHost(
 }
 
 function settleComposerSend(
-  input: ComposerTarget & { readonly text: string; readonly ids: Ids },
+  input: ComposerTarget & Row & { readonly text: string; readonly ids: Ids },
   result: EmbedSendSettled,
 ): void {
+  if (result.outcome !== "sent") unshow(input);
   if (result.outcome !== "unanswered") {
     releaseHeldSend(input.routeThreadKey);
     return;

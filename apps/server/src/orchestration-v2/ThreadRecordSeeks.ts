@@ -144,6 +144,15 @@ export const makeThreadRecordSeeks = (sql: SqlClient.SqlClient) => {
             AND provider_thread_id IS NOT NULL
         )`;
 
+  const nodesOwningProviderThreads = (threadId: ThreadId) => sql`
+    SELECT owner.node_id
+    FROM orchestration_v2_projection_provider_threads AS owned
+      INDEXED BY orchestration_v2_projection_provider_threads_owner_idx
+    CROSS JOIN orchestration_v2_projection_nodes AS owner
+      ON owner.node_id = owned.owner_node_id
+    WHERE owned.owner_node_id IS NOT NULL AND owner.thread_id = ${threadId}
+  `;
+
   const contextTransfersWhere = (threadId: ThreadId, filter: SettledRecordFilter | undefined) =>
     filter?.contextTransferStatuses === undefined
       ? sql`source_thread_id = ${threadId} OR target_thread_id = ${threadId}`
@@ -162,6 +171,7 @@ export const makeThreadRecordSeeks = (sql: SqlClient.SqlClient) => {
     nodesWhere,
     subagentsSettledFilter,
     subagentProviderThreads,
+    nodesOwningProviderThreads,
     contextTransfersWhere,
   };
 };
