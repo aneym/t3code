@@ -1,3 +1,6 @@
+import { exitUnlessInterrupted } from "./supervisorAttempt.ts";
+import { makeHandoffWindow } from "./handoff.ts";
+import { availableState, offlineState, connectingState } from "./supervisorState.ts";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -130,16 +133,6 @@ type EstablishmentEvent =
   | { readonly _tag: "Interrupted"; readonly resetRetry: boolean }
   | { readonly _tag: "TimedOut" };
 
-function exitUnlessInterrupted<A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<Exit.Exit<A, E>, never, R> {
-  return Effect.matchCauseEffect(effect, {
-    onFailure: (cause) =>
-      Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Exit.failCause(cause)),
-    onSuccess: (value) => Effect.succeed(Exit.succeed(value)),
-  });
-}
-
 export interface EnvironmentSupervisorOptions {
   readonly initiallyDesired?: boolean;
   readonly learnRoutes?: (input: {
@@ -173,56 +166,6 @@ function annotateTarget(target: ConnectionTarget) {
     "environment.label": target.label,
     "environment.target.kind": target._tag,
   });
-}
-
-function availableState(intent: SupervisorIntent, generation: number): SupervisorConnectionState {
-  return {
-    desired: false,
-    network: intent.network,
-    phase: "available",
-    stage: null,
-    attempt: 0,
-    generation,
-    lastFailure: null,
-    retryAt: null,
-  };
-}
-
-function offlineState(
-  intent: SupervisorIntent,
-  generation: number,
-  attempt: number,
-  lastFailure: ConnectionAttemptError | null,
-): SupervisorConnectionState {
-  return {
-    desired: true,
-    network: intent.network,
-    phase: "offline",
-    stage: null,
-    attempt,
-    generation,
-    lastFailure,
-    retryAt: null,
-  };
-}
-
-function connectingState(
-  intent: SupervisorIntent,
-  generation: number,
-  attempt: number,
-  lastFailure: ConnectionAttemptError | null,
-  stage: SupervisorConnectionState["stage"] = "preparing",
-): SupervisorConnectionState {
-  return {
-    desired: true,
-    network: intent.network,
-    phase: "connecting",
-    stage,
-    attempt,
-    generation,
-    lastFailure,
-    retryAt: null,
-  };
 }
 
 function failureFromExit<A>(
@@ -433,11 +376,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     { discard: true },
   );
 
-  const setState = Effect.fn("EnvironmentSupervisor.setState")(function* (
-    next: SupervisorConnectionState,
-  ) {
-    yield* SubscriptionRef.set(state, next);
-  });
+  const handoff = yield* makeHandoffWindow(state);
+  const setState = handoff.setState;
 
   const signal = Effect.fn("EnvironmentSupervisor.signal")(function* (next: SupervisorSignal) {
     yield* Queue.offer(signals, next);
@@ -1039,7 +979,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       retryAt: null,
     });
 
-    const connectedExit = yield* Effect.raceFirst(
+    const connectedExit = yield* Effect.raceAllFirst([
+      handoff.watch(connectedLease.session),
       connectedLease.session.closed.pipe(
         Effect.mapError((error): TracedAttemptFailure => ({
           error,
@@ -1052,7 +993,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           attemptSpan: active.attemptSpan,
         })),
       ),
-    ).pipe(exitUnlessInterrupted);
+    ]).pipe(exitUnlessInterrupted);
     const connectedForMs = (yield* Clock.currentTimeMillis) - connectedAt;
     if (Exit.isSuccess(connectedExit)) {
       return {
@@ -1142,7 +1083,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         yield* waitForSignal;
         continue;
       }
-      if (currentIntent.network === "offline" && !replacing) {
+      if (currentIntent.network === "offline" && !replacing && !(yield* handoff.active)) {
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
         const applicationActivated = yield* waitForSignal;
@@ -1175,6 +1116,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           resetRetryLadder();
           replacing = true;
         }
+        yield* handoff.pause;
         continue;
       }
 
@@ -1199,6 +1141,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         if (applicationActivated) {
           resetRetryLadder();
         }
+        continue;
+      }
+
+      if (yield* handoff.active) {
+        resetRetryLadder();
+        replacing = true;
+        yield* handoff.pause;
         continue;
       }
 

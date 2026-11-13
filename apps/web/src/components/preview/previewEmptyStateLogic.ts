@@ -1,10 +1,7 @@
 import type { PreviewSessionSnapshot, ProjectScript } from "@t3tools/contracts";
 
-export function shouldShowPreviewEmptyState(
-  snapshot: PreviewSessionSnapshot | null,
-  navStatus = snapshot?.navStatus,
-): boolean {
-  return snapshot === null || navStatus?._tag === "Idle";
+export function shouldShowPreviewEmptyState(snapshot: PreviewSessionSnapshot | null): boolean {
+  return snapshot === null || snapshot.navStatus._tag === "Idle";
 }
 
 export function getConfiguredPreviewUrls(

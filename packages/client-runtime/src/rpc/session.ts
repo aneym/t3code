@@ -1,3 +1,4 @@
+import { interruptibleTransport } from "./interruptibleTransport.ts";
 import {
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -69,6 +70,17 @@ export interface RpcSessionOptions {
   readonly providerCatalogsOnDemand?: boolean;
   readonly providerCatalogDigests?: boolean;
   readonly providerStatusDeltas?: boolean;
+}
+
+export function serverConfigSubscriptionInput(options: RpcSessionOptions) {
+  return {
+    ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
+    ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
+    ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+    ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
+    ...(options.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
+    ...(options.providerStatusDeltas === true ? { providerStatusDeltas: true } : {}),
+  };
 }
 
 export class RpcSessionFactory extends Context.Service<
@@ -174,14 +186,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
   options: RpcSessionOptions = {},
 ) {
   const webSocketConstructor = yield* Socket.WebSocketConstructor;
-  const serverConfigInput: ServerConfigSubscriptionInput = {
-    ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
-    ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
-    ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
-    ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
-    ...(options.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
-    ...(options.providerStatusDeltas === true ? { providerStatusDeltas: true } : {}),
-  };
+  const serverConfigInput: ServerConfigSubscriptionInput = serverConfigSubscriptionInput(options);
   // Config state merges the snapshots it fetches back in, so no subscriber needs them broadcast.
   const onDemandSnapshots = (input: ServerConfigSubscriptionInput) => ({
     ...input,
@@ -198,6 +203,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     });
 
     const connected = yield* Deferred.make<void>();
+    const transportClosed = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
     const pingTimedOut = yield* Ref.make(false);
     const hooks = RpcClient.ConnectionHooks.of({
@@ -228,6 +234,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     let inboundFrames = 0;
     const countingWebSocketConstructor: typeof webSocketConstructor = (url, options) => {
       const socket = webSocketConstructor(url, options);
+      socket.addEventListener("close", () => Deferred.doneUnsafe(transportClosed, Effect.void));
       socket.addEventListener("message", () => {
         inboundFrames += 1;
       });
@@ -274,7 +281,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         ),
       ),
     );
-    const protocolContext = yield* Layer.build(layerProtocol).pipe(
+    const rawProtocolContext = yield* Layer.build(layerProtocol).pipe(
       Effect.withSpan("environment.websocket.connect"),
     );
     // Building the protocol only starts the socket; this span times the
@@ -284,6 +291,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       Effect.withSpan("environment.websocket.open"),
       Effect.ignore,
       Effect.forkScoped,
+    );
+    const protocolContext = Context.add(
+      rawProtocolContext,
+      RpcClient.Protocol,
+      interruptibleTransport(Context.get(rawProtocolContext, RpcClient.Protocol), transportClosed),
     );
     const protocolClient = yield* makeWsRpcProtocolClient.pipe(Effect.provide(protocolContext));
     const initialConfigDeferred = yield* Deferred.make<ServerConfig>();

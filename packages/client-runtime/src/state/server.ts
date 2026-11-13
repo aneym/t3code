@@ -2,9 +2,6 @@ import {
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerConfig,
-  type ServerConfigStreamEvent,
-  type ServerLifecycleWelcomePayload,
-  type ServerLifecycleStreamReadyEvent,
   type ServerProviderWorkspaceSnapshot,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
@@ -12,6 +9,10 @@ import {
   type UsageSummary,
   WS_METHODS,
 } from "@t3tools/contracts";
+import {
+  type ServerLifecycleWelcomePayload,
+  type ServerLifecycleStreamReadyEvent,
+} from "@t3tools/contracts/serverLifecycle";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
@@ -55,7 +56,11 @@ import {
   subscribeDynamicWithSession,
   type EnvironmentRpcInput,
 } from "../rpc/client.ts";
-import type { RpcSession } from "../rpc/session.ts";
+import {
+  type RpcSession,
+  type RpcSessionOptions,
+  serverConfigSubscriptionInput,
+} from "../rpc/session.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import {
   applyServerConfigProjection,
@@ -368,21 +373,6 @@ export function resolveServerUpdateProgressResult<E>(
   return Effect.fail(new ServerUpdateProgressIncompleteError({ targetVersion }));
 }
 
-const cachedConfigSnapshotEvent = (config: ServerConfig): ServerConfigStreamEvent => ({
-  version: 1,
-  type: "snapshot",
-  config,
-});
-
-export interface ServerConfigSubscriptionOptions {
-  readonly environmentThemes?: boolean;
-  readonly usageLimitSources?: boolean;
-  readonly usageLimitsCommand?: boolean;
-  readonly providerCatalogsOnDemand?: boolean;
-  readonly providerCatalogDigests?: boolean;
-  readonly providerStatusDeltas?: boolean;
-}
-
 type ServerProviderEntry = ServerConfig["providers"][number];
 
 /** Machine slash commands and skills a cwd snapshot reply carried, with the digest they belong to. */
@@ -457,14 +447,15 @@ function sameCacheValue(previous: unknown, next: unknown): boolean {
 
 export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConfigState.make")(
   function* (
-    subscription: ServerConfigSubscriptionOptions,
+    subscription: RpcSessionOptions,
     // Merged into the state, so the cache keeps the lists for the next launch and for offline.
     machineCatalogs: Stream.Stream<ReadonlyArray<FetchedMachineCatalog>> = Stream.empty,
   ) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const cache = yield* Persistence.EnvironmentCacheStore;
     const environmentId = supervisor.target.environmentId;
-    const cachedConfig = yield* cache.loadServerConfig(environmentId).pipe(
+    const slim = subscription.providerCatalogsOnDemand;
+    const cachedConfig = yield* cache.loadServerConfig(environmentId, slim).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not load cached server configuration.").pipe(
           Effect.annotateLogs({
@@ -476,9 +467,9 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       ),
     );
     const state = yield* SubscriptionRef.make<Option.Option<ServerConfigProjection>>(
-      Option.map(cachedConfig, (cached) => ({
-        config: withoutEnvironmentThemes(cached),
-        latestEvent: cachedConfigSnapshotEvent(withoutEnvironmentThemes(cached)),
+      Option.map(Option.map(cachedConfig, withoutEnvironmentThemes), (config) => ({
+        config,
+        latestEvent: { version: 1 as const, type: "snapshot" as const, config },
         source: "cache" as const,
       })),
     );
@@ -499,7 +490,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       if (lastPersisted !== undefined && sameCacheValue(lastPersisted, cacheable)) {
         return true;
       }
-      const saved = yield* cache.saveServerConfig(environmentId, cacheable).pipe(
+      const saved = yield* cache.saveServerConfig(environmentId, cacheable, slim).pipe(
         Effect.as(true),
         Effect.catch((error) =>
           Effect.logWarning("Could not persist cached server configuration.").pipe(
@@ -544,14 +535,10 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     ) => Option.Option<ServerConfigProjection>;
     // Written and read inside the one update loop below.
     let fetchedCatalogs: ReadonlyArray<FetchedMachineCatalog> = [];
-    const configUpdates = subscribe(WS_METHODS.subscribeServerConfig, {
-      ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
-      ...(subscription.usageLimitSources === true ? { usageLimitSources: true } : {}),
-      ...(subscription.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
-      ...(subscription.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
-      ...(subscription.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
-      ...(subscription.providerStatusDeltas === true ? { providerStatusDeltas: true } : {}),
-    }).pipe(
+    const configUpdates = subscribe(
+      WS_METHODS.subscribeServerConfig,
+      serverConfigSubscriptionInput(subscription),
+    ).pipe(
       Stream.map((event): Update => (current) => {
         const next = applyServerConfigProjection(current, event);
         return fetchedCatalogs.length === 0
@@ -593,7 +580,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
 
 function serverConfigStateChanges(
   environmentId: EnvironmentId,
-  subscription: ServerConfigSubscriptionOptions,
+  subscription: RpcSessionOptions,
   machineCatalogs: Stream.Stream<ReadonlyArray<FetchedMachineCatalog>>,
 ) {
   return followStreamInEnvironment(
@@ -619,7 +606,7 @@ export function applyServerWelcomeEvent(
   current: EnvironmentServerWelcomeState,
   session: RpcSession,
   event: {
-    readonly type: "welcome" | "ready" | "legacyThreadMigration";
+    readonly type: "welcome" | "ready" | "legacyThreadMigration" | "handoff";
     readonly payload: unknown;
   },
 ): EnvironmentServerWelcomeState {
@@ -836,16 +823,10 @@ export function createServerEnvironmentAtoms<R, E>(
     EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
     E
   >,
-  options: {
+  options: RpcSessionOptions & {
     readonly initialConfigValueAtom: (
       environmentId: EnvironmentId,
     ) => Atom.Atom<ServerConfig | null>;
-    readonly environmentThemes?: boolean;
-    readonly usageLimitSources?: boolean;
-    readonly usageLimitsCommand?: boolean;
-    readonly providerCatalogsOnDemand?: boolean;
-    readonly providerCatalogDigests?: boolean;
-    readonly providerStatusDeltas?: boolean;
     /** Machine refresh replies carry no providers; the config stream already delivers them. */
     readonly omitRefreshedProviders?: boolean;
   },
@@ -867,16 +848,7 @@ export function createServerEnvironmentAtoms<R, E>(
       .atom((get) =>
         serverConfigStateChanges(
           environmentId,
-          {
-            ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
-            ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
-            ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
-            ...(options.providerCatalogsOnDemand === true
-              ? { providerCatalogsOnDemand: true }
-              : {}),
-            ...(options.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
-            ...(options.providerStatusDeltas === true ? { providerStatusDeltas: true } : {}),
-          },
+          options,
           // Scoped to the stream, which restarts with every new session.
           AtomRegistry.toStream(get.registry, fetchedMachineCatalogsAtom(environmentId)),
         ),

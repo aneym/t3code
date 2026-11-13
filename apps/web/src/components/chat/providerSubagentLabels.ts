@@ -1,10 +1,11 @@
 import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
-import type { ModelSelection } from "@t3tools/contracts";
+import type { ModelSelection, ServerProvider } from "@t3tools/contracts";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
-import { EMPTY_PROVIDER_MODELS } from "./chatViewDefaults";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
+
+const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 
 export function resolveProviderSubagentLabels(
   entry: ProviderInstanceEntry | undefined,

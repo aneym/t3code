@@ -1250,23 +1250,16 @@ export function ProviderInstanceCard({
     </>
   );
 
-  const settingsForm = (
-    definition: NonNullable<typeof driverOption>,
-    keys?: ReadonlyArray<string>,
-  ) => (
+  const runtimeFields = driverOption ? (
     <ProviderSettingsForm
-      definition={definition}
+      definition={driverOption}
       value={instance.config}
       idPrefix={`provider-instance-${instanceId}`}
       variant="settings"
       onChange={updateConfig}
       managed={instanceLocks && { keys: instanceLocks.configKeys, reason: instanceLocks.reason }}
       environmentId={environmentId}
-      keys={keys}
     />
-  );
-  const runtimeFields = driverOption ? (
-    settingsForm(driverOption)
   ) : (
     <SettingsRow
       title="Driver"
@@ -1360,7 +1353,6 @@ export function ProviderInstanceCard({
             headerPlacement="outside"
           >
             {runtime ?? runtimeFields}
-            {runtime && driverOption ? settingsForm(driverOption, ["baseUrl"]) : null}
           </FoldedSettingsSection>
         </div>
       ) : !driverOption || deriveProviderSettingsFields(driverOption).length > 0 ? (

@@ -66,7 +66,6 @@ import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentatio
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
-import { mcpAppCardsEqual, type McpAppCardReference } from "@t3tools/shared/mcpAppCard";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
@@ -83,9 +82,7 @@ export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "proposed-plan") {
     return entry.proposedPlan.runId;
   }
-  if (entry.kind === "html-render" || entry.kind === "mcp-app" || entry.kind === "app-card") {
-    return entry.runId;
-  }
+  if (entry.kind === "html-render" || entry.kind === "mcp-app") return entry.runId;
   return entry.kind === "work" ? (entry.entry.runId ?? null) : null;
 }
 
@@ -645,8 +642,7 @@ type MessagesTimelineRowContent =
       itemId: TurnItemId;
       revision: string;
       mcpApp: McpAppReference;
-    }
-  | { kind: "app-card"; id: string; createdAt: string; card: McpAppCardReference };
+    };
 
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
@@ -821,7 +817,6 @@ function deriveSupersededAttemptFolds(
       (entry.kind === "event" && entry.projectedItem.item.type === "handoff") ||
       entry.kind === "html-render" ||
       entry.kind === "mcp-app" ||
-      entry.kind === "app-card" ||
       timelineEntryIsPersistentResourceCard(entry) ||
       liveSubagentEntryIds.has(entry.id) ||
       (entry.kind === "work" && entry.entry.itemType === "system_notice")
@@ -2144,12 +2139,6 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
-    if (timelineEntry.kind === "app-card") {
-      const { id, createdAt, card } = timelineEntry;
-      nextRows.push({ kind: "app-card", id, createdAt, card });
-      continue;
-    }
-
     if (timelineEntry.kind === "event") {
       const previous = nextRows.at(-1);
       if (
@@ -2739,9 +2728,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         mcpAppReferencesEqual(a.mcpApp, bm.mcpApp)
       );
     }
-
-    case "app-card":
-      return mcpAppCardsEqual(a.card, (b as typeof a).card);
 
     case "event":
       return (

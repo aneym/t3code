@@ -4,11 +4,13 @@ import {
   type EnvironmentTheme,
   type ServerConfig,
   type ServerConfigStreamEvent,
-  type ServerLifecycleLegacyThreadMigrationPayload,
-  type ServerLifecycleWelcomePayload,
   type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
+import {
+  type ServerLifecycleLegacyThreadMigrationPayload,
+  type ServerLifecycleWelcomePayload,
+} from "@t3tools/contracts/serverLifecycle";
 import {
   AVAILABLE_CONNECTION_STATE,
   presentConnectionState,
@@ -23,6 +25,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { isConnectedWithConfig } from "../components/settings/scopedSettings";
 import { environmentCatalog } from "../connection/catalog";
+import { inEmbedPage } from "../embed/embedProtocol";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentAtomList } from "./environmentAtomList";
 import { primaryEnvironmentIdAtom, themeEnvironmentIdAtom } from "./primaryEnvironment";
@@ -35,6 +38,7 @@ export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRunt
   environmentThemes: true,
   usageLimitSources: true,
   usageLimitsCommand: true,
+  providerCatalogsOnDemand: inEmbedPage(),
 });
 export const environmentUpdateStatesAtom = environmentAtomList(
   "web-environment-update-states",

@@ -1,56 +1,40 @@
+import { queuedRunRows } from "./queuedRunRows";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { withoutRailsDeskContext } from "@t3tools/client-runtime/user-message";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import {
   isAttachmentOnlyBootstrapPrompt,
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
-import type {
-  ChatAttachment as ContractChatAttachment,
-  EnvironmentId,
-  MessageId,
-  RunId,
-  ThreadId,
-} from "@t3tools/contracts";
-import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import { Link } from "@tanstack/react-router";
 import {
-  ArrowUpIcon,
-  CalendarClockIcon,
-  ChevronDownIcon,
-  Clock3Icon,
-  MessagesSquareIcon,
-  PencilIcon,
-  XIcon,
-} from "lucide-react";
-import * as DateTime from "effect/DateTime";
-import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+  mcpEventOfMessage,
+  type ChatAttachment as ContractChatAttachment,
+  type EnvironmentId,
+  type MessageId,
+  type RunId,
+  type ThreadId,
+} from "@t3tools/contracts";
+import { QueuedEventRow } from "./QueuedEventRow";
+import { QueuedMessage } from "./QueuedMessage";
+import { ArrowUpIcon, ChevronDownIcon, Clock3Icon, PencilIcon, XIcon } from "lucide-react";
+import { useId, useImperativeHandle, useRef, useState, type Ref } from "react";
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
 import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
-import { useEnvironment } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { isImageAttachment, type ChatMessage } from "../../types";
+import type { ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
-import { GuestMessageName } from "./guestMessageStyle";
-import { TimelineRowTimestamp } from "./TimelineRowParts";
-import { FoldedMessageHeader, useScheduledTaskTitle } from "./TimelineUserMessageRow";
 
 export interface EditQueuedRunRequest {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly text: string;
   readonly attachments: ReadonlyArray<ContractChatAttachment>;
-}
-
-interface QueuedRowThumbnail {
-  readonly key: string;
-  readonly name: string;
-  readonly url: string | null;
 }
 
 // A longer queue shows its first messages and a button that shows the rest.
@@ -119,6 +103,10 @@ export function QueuedRunsControl({
     workflow?.canSendNow === true ||
     (workflow?.canPromoteToSteer === true &&
       (!freshContext || workflow.promoteSkipsCompaction === true));
+  const heldByThreadId = workflow?.isHeld ? workflow.heldByThreadId : null;
+  const heldByThread = useQuietThreadShell(
+    heldByThreadId === null ? null : scopeThreadRef(props.environmentId, heldByThreadId),
+  );
   const queuedImageUrlById = new Map(
     queuedImageAttachmentUrls.flatMap((url, index) => {
       const resource = queuedImageAttachmentResources[index];
@@ -128,53 +116,17 @@ export function QueuedRunsControl({
   const optimisticQueued = props.optimisticMessages.filter(
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
-  const items = [
-    ...queued.map(({ run, text, attachments, context, message }, serverIndex) => ({
-      key: run.id,
-      message,
-      runId: run.id,
-      messageId: run.userMessageId,
-      freshContext: run.freshContext === true,
-      serverIndex,
-      text,
-      // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
-      editable: context?.guest === undefined,
-      attachments,
-      thumbnails: attachments
-        .filter((attachment) => attachment.type === "image")
-        .map<QueuedRowThumbnail>((attachment) => ({
-          key: attachment.id,
-          name: attachment.name,
-          url: queuedImageUrlById.get(attachment.id) ?? null,
-        })),
-      pending: false,
-    })),
-    ...optimisticQueued.map((message) => ({
-      key: message.id,
-      message: undefined,
-      runId: null,
-      messageId: null,
-      freshContext: false,
-      serverIndex: null,
-      text: message.text,
-      editable: true,
-      attachments: [] as ReadonlyArray<ContractChatAttachment>,
-      thumbnails: (message.attachments ?? [])
-        .filter(isImageAttachment)
-        .map<QueuedRowThumbnail>((attachment) => ({
-          key: attachment.id,
-          name: attachment.name,
-          url: attachment.previewUrl ?? null,
-        })),
-      pending: true,
-    })),
-  ];
+  const items = queuedRunRows(queued, optimisticQueued, queuedImageUrlById);
+  const ownQueued = queued.filter((run) => mcpEventOfMessage(run.message) === null);
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
-    const freshContext = queued.some(
-      ({ run }) => run.id === queuedRunId && run.freshContext === true,
-    );
-    if (!canSendRun(freshContext) || steerInFlightRef.current) return;
+    const entry = queued.find(({ run }) => run.id === queuedRunId);
+    if (
+      !canSendRun(entry?.run.freshContext === true) ||
+      steerInFlightRef.current ||
+      entry?.isBackgroundResult
+    )
+      return;
     steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
     if (workflow?.canSendNow) {
@@ -194,16 +146,18 @@ export function QueuedRunsControl({
 
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
-      const next = queued[0];
-      if (!next || !canSendRun(next.run.freshContext === true)) return false;
+      const next = ownQueued[0];
+      if (!next || !canSendRun(next.run.freshContext === true) || next.isBackgroundResult)
+        return false;
       if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
       return true;
     },
     // Leave the key to caret navigation while editing.
     editLatest(repeat) {
-      const latest = queued.at(-1);
+      const latest = ownQueued.at(-1);
       if (
         !latest ||
+        latest.isBackgroundResult ||
         latest.context?.guest !== undefined ||
         props.editingRunId !== null ||
         props.editBlockedReason !== null ||
@@ -235,27 +189,62 @@ export function QueuedRunsControl({
     setBusyRunId(null);
   };
 
+  const ownItemCount = items.filter((item) => mcpEventOfMessage(item.message) === null).length;
+  const queueLabel =
+    ownItemCount > 0
+      ? `${ownItemCount} queued message${ownItemCount === 1 ? "" : "s"}`
+      : `${items.length} queued event${items.length === 1 ? "" : "s"}`;
   const collapsible = items.length > QUEUE_VISIBLE_ROWS;
   const visibleItems = collapsible && !showAll ? items.slice(0, QUEUE_VISIBLE_ROWS - 1) : items;
 
   return (
     <section
-      aria-label={`${items.length} queued message${items.length === 1 ? "" : "s"}`}
+      aria-label={queueLabel}
       data-thread-queue="true"
       // Anchors the sr-only live region; unanchored, it escapes the timeline scroller and makes the chat column scroll.
       className="relative mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-2 pb-4"
     >
       <span className="sr-only" aria-live="polite">
-        {items.length} queued
+        {queueLabel}
       </span>
+      {workflow?.isHeld ? (
+        <p className="self-end pe-1 text-muted-foreground text-xs" data-queue-held="true">
+          {heldByThreadId === null ? (
+            "Queue paused. Resume the thread to send it."
+          ) : (
+            <>
+              {"Paused by a Stop on "}
+              <InlineButton tone="muted" onClick={() => props.onOpenThread(heldByThreadId)}>
+                {heldByThread?.title ?? "its parent"}
+              </InlineButton>
+              {". Resuming that thread resumes this queue."}
+            </>
+          )}
+        </p>
+      ) : null}
       <ol className="flex flex-col items-end gap-3" id={queueListId}>
         {visibleItems.map((item, position) => {
-          const previewText = isAttachmentOnlyBootstrapPrompt(item.text)
+          const ownText = withoutRailsDeskContext(item.text);
+          const previewText = isAttachmentOnlyBootstrapPrompt(ownText)
             ? ""
             : assistantCitationsToPlainText(
-                replaceComposerContextReferences(item.text, (reference) => reference.label),
+                replaceComposerContextReferences(ownText, (reference) => reference.label),
               ).trim();
           const isEditing = item.runId !== null && item.runId === props.editingRunId;
+          const event = mcpEventOfMessage(item.message);
+          if (event !== null) {
+            return (
+              <li
+                key={item.key}
+                aria-label={`Queued event ${position + 1} of ${items.length}, delivered when this turn ends`}
+                aria-posinset={position + 1}
+                aria-setsize={items.length}
+                className="flex w-full flex-col items-start"
+              >
+                <QueuedEventRow event={event} text={item.text} />
+              </li>
+            );
+          }
           return (
             <li
               key={item.key}
@@ -274,14 +263,16 @@ export function QueuedRunsControl({
                 timestampFormat={props.timestampFormat}
                 onOpenThread={props.onOpenThread}
               >
-                {canSendRun(item.freshContext) && !isEditing ? (
+                {canSendRun(item.freshContext) && !isEditing && !item.isBackgroundResult ? (
                   <>
                     <Tooltip>
                       <TooltipTrigger render={<span className="flex shrink-0" />}>
                         <Button
                           size="xs"
                           variant="ghost-muted"
-                          disabled={item.runId === null || busyRunId !== null}
+                          disabled={
+                            item.runId === null || busyRunId !== null || item.isBackgroundResult
+                          }
                           onClick={() => {
                             if (item.runId !== null) {
                               void sendQueuedMessage(item.runId);
@@ -357,7 +348,9 @@ export function QueuedRunsControl({
                             size="icon-xs"
                             variant="ghost-muted"
                             aria-label="Remove queued message"
-                            disabled={item.runId === null || busyRunId !== null}
+                            disabled={
+                              item.runId === null || busyRunId !== null || item.isBackgroundResult
+                            }
                             onClick={() => {
                               if (item.runId !== null) void remove(item.runId);
                             }}
@@ -397,153 +390,5 @@ export function QueuedRunsControl({
         </div>
       ) : null}
     </section>
-  );
-}
-
-type QueuedRunMessage = NonNullable<ThreadQueueProjection["messages"][number]>;
-
-/** A queued turn wears its sent form's attribution; only the dashed edge and controls differ. */
-function QueuedMessage(props: {
-  readonly environmentId: EnvironmentId;
-  readonly message: QueuedRunMessage | undefined;
-  readonly previewText: string;
-  readonly thumbnails: ReadonlyArray<QueuedRowThumbnail>;
-  readonly isEditing: boolean;
-  readonly timestampFormat: TimestampFormat;
-  readonly onOpenThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
-  readonly children: ReactNode;
-}) {
-  const presentation = props.message ? resolveUserMessagePresentation(props.message) : null;
-  const attribution = presentation?.attribution ?? null;
-  const scheduledTaskId = presentation?.scheduledTaskId;
-  const senderThreadId = props.message?.senderThreadId;
-  // A linked environment's agent sent it from a thread there.
-  const senderRef =
-    props.message?.linkedSender ??
-    (senderThreadId === undefined ? null : scopeThreadRef(props.environmentId, senderThreadId));
-  const [expanded, setExpanded] = useState(false);
-  const taskTitle = useScheduledTaskTitle(props.environmentId, scheduledTaskId);
-  const senderShell = useQuietThreadShell(attribution === "agent" ? senderRef : null);
-  const linkedSenderEnvironment = useEnvironment(
-    props.message?.linkedSender?.environmentId ?? null,
-  );
-  const fold =
-    attribution === "automation"
-      ? {
-          icon: CalendarClockIcon,
-          label: "Automation",
-          summary: taskTitle ?? props.previewText.split(/\r?\n/, 1)[0] ?? "",
-        }
-      : attribution === "agent"
-        ? {
-            icon: MessagesSquareIcon,
-            label:
-              senderShell?.title.trim() || props.message?.linkedSender?.title.trim() || "Agent",
-            summary: props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? "",
-          }
-        : null;
-  const bodyVisible = fold === null || expanded;
-
-  return (
-    <>
-      {attribution === "t3code" ? (
-        <p className="me-1 text-2xs text-muted-foreground/70">Sent by T3 Code</p>
-      ) : null}
-      {presentation?.guestName === undefined ? null : (
-        <GuestMessageName name={presentation.guestName} />
-      )}
-      {/* Dashed and unfilled: a turn that has not been sent yet. */}
-      <div
-        className={cn(
-          "flex min-w-0 max-w-[80%] flex-col rounded-2xl border border-dashed text-sm",
-          props.isEditing
-            ? "border-primary/60 text-foreground"
-            : attribution === "guest"
-              ? "border-guest/50 text-muted-foreground"
-              : "border-muted-foreground/40 text-muted-foreground",
-          fold === null && "px-3 py-2",
-          fold !== null && expanded && "w-full",
-        )}
-      >
-        {fold ? (
-          <FoldedMessageHeader
-            icon={fold.icon}
-            label={fold.label}
-            summary={fold.summary}
-            expanded={expanded}
-            onToggle={() => setExpanded((value) => !value)}
-          />
-        ) : null}
-        {bodyVisible ? (
-          <div
-            className={cn(
-              "flex flex-col gap-2",
-              fold !== null && "max-h-96 overflow-auto px-3 pb-2",
-            )}
-          >
-            {props.thumbnails.length > 0 ? (
-              <span className="flex flex-wrap items-center gap-1">
-                {props.thumbnails.map((thumbnail) => (
-                  <span
-                    key={thumbnail.key}
-                    className="size-8 overflow-hidden rounded-md border border-border/70 bg-background"
-                  >
-                    {thumbnail.url ? (
-                      <img
-                        src={thumbnail.url}
-                        alt={thumbnail.name}
-                        className="size-full object-cover"
-                      />
-                    ) : (
-                      <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
-                    )}
-                  </span>
-                ))}
-              </span>
-            ) : null}
-            {/* In full, like a sent turn: a queued message is read before it is sent. */}
-            {props.previewText ? (
-              <p className="whitespace-pre-wrap wrap-anywhere">{props.previewText}</p>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-      <div className="flex items-center gap-0.5 pe-1 text-xs text-muted-foreground">
-        {props.message ? (
-          <span className="me-1 flex items-center gap-2 px-1 opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/queued:opacity-100">
-            {attribution === "agent" &&
-            senderRef &&
-            // Only an environment this client is connected to can open the sender's thread there.
-            (props.message?.linkedSender === undefined || linkedSenderEnvironment !== null) ? (
-              <InlineButton
-                tone="muted"
-                onClick={() => props.onOpenThread(senderRef.threadId, senderRef.environmentId)}
-              >
-                Open thread
-              </InlineButton>
-            ) : null}
-            {scheduledTaskId ? (
-              <InlineButton
-                tone="muted"
-                render={
-                  <Link
-                    to="/settings/scheduled-tasks"
-                    search={{ environmentId: props.environmentId, taskId: scheduledTaskId }}
-                  />
-                }
-              >
-                Open automation
-              </InlineButton>
-            ) : null}
-            <TimelineRowTimestamp
-              createdAt={DateTime.formatIso(props.message.createdAt)}
-              timestampFormat={props.timestampFormat}
-              alwaysVisible
-            />
-          </span>
-        ) : null}
-        {props.children}
-      </div>
-    </>
   );
 }

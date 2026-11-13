@@ -30,7 +30,7 @@ export function PeerLinkRenewalSetting({
   return (
     <SettingsRow
       title="Renew links without a code"
-      description="Environments linked to this one renew their link for 30 more days in its last 7 days, with no new pairing code. Each renewal replaces the old session in Authorized clients. Expired or revoked links still need a code."
+      description="Linked environments renew for 30 more days in a link's last 7 days, with no pairing code. Each renewal replaces the old session in Authorized clients. Expired or revoked links still need a code."
       control={
         <Switch
           checked={enabled}

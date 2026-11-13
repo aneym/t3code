@@ -43,6 +43,7 @@ import {
   matchesPullRequestQuery,
   rankPullRequestMatches,
 } from "../pullRequest/pullRequestList.logic";
+import { isEmbedPath } from "../../embed/embedProtocol";
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import { matchComposerModelItems } from "./composerModelMentions";
 import type { ModelEsque } from "./providerIconUtils";
@@ -230,6 +231,7 @@ export function useComposerMenuItems({
       ];
     }
     if (composerTrigger.kind === "slash-command") {
+      const embedded = isEmbedPath(window.location.pathname);
       const builtInSlashCommandItems = [
         {
           id: "slash:model",
@@ -238,6 +240,17 @@ export function useComposerMenuItems({
           label: "/model",
           description: "Switch response model for this thread",
         },
+        ...(activeThreadId === null
+          ? []
+          : ([
+              {
+                id: "slash:restart",
+                type: "slash-command",
+                command: "restart",
+                label: "/restart",
+                description: "Restart the agent session to reload MCP servers and settings",
+              },
+            ] as const)),
         ...(sideChatAvailable
           ? ([
               {
@@ -256,7 +269,7 @@ export function useComposerMenuItems({
               },
             ] as const)
           : []),
-        ...(freshSessionAvailable
+        ...(freshSessionAvailable && !embedded
           ? ([
               {
                 id: "slash:clear",
@@ -299,7 +312,7 @@ export function useComposerMenuItems({
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) =>
           (item.command.name !== "compact" || compactSlashCommandAvailable) &&
-          (item.command.name !== "clear" || !freshSessionAvailable),
+          (item.command.name !== "clear" || (!freshSessionAvailable && !embedded)),
       );
       const slashCommandItems = slashCommandItemsForPromptPosition(
         [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],

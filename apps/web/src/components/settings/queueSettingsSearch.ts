@@ -2,18 +2,17 @@ import type { SettingsSearchItem } from "./settingsSearch";
 
 export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
   {
-    id: "settle-idle-children",
-    title: "Settle idle child threads",
-    to: "/settings/chat",
-    scope: "environment-defaults",
-    searchTerms: ["settle parent child subagent delegate idle cleanup worktree"],
+    id: "show-chat-changed-files",
+    title: "Changed files in chat",
+    to: "/settings/general",
+    searchTerms: ["diff inline hide show card files changed timeline message"],
   },
   {
-    id: "queue-send-all",
-    title: "Send all queued messages",
+    id: "retain-automation-placement",
+    title: "Keep automation threads together",
     to: "/settings/chat",
     scope: "environment-defaults",
-    searchTerms: ["queue bulk send all queued steer follow up"],
+    searchTerms: ["automation sidebar placement webhook scheduled event"],
   },
   {
     id: "batch-queued-messages",
@@ -58,47 +57,5 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     to: "/settings/chat",
     scope: "environment-defaults",
     searchTerms: ["mcp client cli phone rails approve decline permission request remote"],
-  },
-  {
-    id: "live-thread-feed",
-    title: "Live thread feed",
-    to: "/settings/chat",
-    scope: "environment-defaults",
-    searchTerms: ["live stream streaming partial reply claude mcp thread read phone rails"],
-  },
-  {
-    id: "host-link",
-    title: "Host app link",
-    to: "/settings/chat",
-    scope: "environment-defaults",
-    searchTerms: ["host app link push turns messages steps thread ends lane rails"],
-  },
-  {
-    id: "mcp-app-remember-tool-grants",
-    title: "Remember MCP app approvals",
-    to: "/settings/chat",
-    scope: "environment-defaults",
-    searchTerms: ["mcp app widget tool always allow approval prompt confirm"],
-  },
-  {
-    id: "mcp-app-tool-grants",
-    title: "Always allowed MCP app tools",
-    to: "/settings/chat",
-    scope: "environment-defaults",
-    searchTerms: ["mcp app widget tool always allow revoke approval grant"],
-  },
-  {
-    id: "delegated-child-model",
-    title: "Delegated child model",
-    to: "/settings/chat",
-    scope: "environment-defaults",
-    searchTerms: ["delegate child subagent task default model effort options inherit opus fable"],
-  },
-  {
-    id: "child-model-guard",
-    title: "Child model rules",
-    to: "/settings/chat",
-    scope: "environment-defaults",
-    searchTerms: ["delegate child subagent task model role allow deny refuse opus fable review"],
   },
 ];

@@ -1,5 +1,6 @@
 import { useNavigate, type AnyRouter } from "@tanstack/react-router";
 
+import { isEmbedPath } from "../../embed/embedProtocol";
 import { GUEST_PAGE_PATH } from "../../guestPage";
 import { withoutAssistantCitationHash } from "../../lib/assistantCitationNavigation";
 import { resolveThreadRouteTarget, type ThreadRouteTarget } from "../../threadRoutes";
@@ -26,7 +27,7 @@ let appModalReturnThreadTarget: ThreadRouteTarget | null = null;
 export function startMainAppLocationTracking(router: AnyRouter): () => void {
   const record = () => {
     const { pathname } = router.state.location;
-    if (isAppModalPage(pathname) || SHELL_LESS_PATHS.has(pathname)) return;
+    if (isAppModalPage(pathname) || SHELL_LESS_PATHS.has(pathname) || isEmbedPath(pathname)) return;
     const href = withoutAssistantCitationHash(router.state.location.href);
     appModalReturnHref = href;
     appModalReturnThreadTarget = resolveThreadRouteTarget(

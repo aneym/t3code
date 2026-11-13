@@ -38,6 +38,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
+import { makeVersionInstaller } from "./installDesktopVersion.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 import {
   normalizeDesktopUpdateReleaseNotes,
@@ -218,6 +219,7 @@ export class DesktopUpdates extends Context.Service<
     ) => Effect.Effect<DesktopUpdateCheckResult>;
     readonly download: Effect.Effect<DesktopUpdateActionResult>;
     readonly install: Effect.Effect<DesktopUpdateActionResult>;
+    readonly installVersion: (version: string) => Effect.Effect<DesktopUpdateActionResult>;
     readonly installPrepared: (
       expectedVersion: string,
     ) => Effect.Effect<DesktopPreparedUpdateInstallResult>;
@@ -383,7 +385,7 @@ export const make = Effect.gen(function* () {
   // Any user can set the mock flag, so it never replaces an administrator's update source.
   const mockUpdates = config.mockUpdates && policy.message === null;
 
-  const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
+  const effectiveFeedConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
   const installRunningBackendsRef = yield* Ref.make<
     ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>
@@ -460,11 +462,8 @@ export const make = Effect.gen(function* () {
           )
       : false;
 
-  const hasUpdateFeedConfig = Ref.get(appUpdateYmlConfigRef).pipe(
-    Effect.map(
-      (appUpdateYmlConfig) =>
-        Option.isSome(appUpdateYmlConfig) || mockUpdates || policy.feedUrl !== undefined,
-    ),
+  const hasUpdateFeedConfig = Ref.get(effectiveFeedConfigRef).pipe(
+    Effect.map((feedConfig) => Option.isSome(feedConfig)),
   );
 
   const resolveDisabledReason = Effect.gen(function* () {
@@ -596,13 +595,15 @@ export const make = Effect.gen(function* () {
         );
   });
 
-  const downloadAvailableUpdate = Effect.gen(function* () {
+  const downloadAvailableUpdate = Effect.fn("desktop.updates.downloadAvailableUpdate")(function* (
+    reservationHeld = false,
+  ) {
     const state = yield* Ref.get(updateStateRef);
     if (!(yield* Ref.get(updaterConfiguredRef)) || state.status !== "available") {
       return { accepted: false, completed: false };
     }
 
-    if (!(yield* tryStartUpdateAction("download"))) {
+    if (!reservationHeld && !(yield* tryStartUpdateAction("download"))) {
       return { accepted: false, completed: false };
     }
 
@@ -653,9 +654,9 @@ export const make = Effect.gen(function* () {
           return { accepted: true, completed: false };
         });
       }),
-      Effect.ensuring(finishUpdateAction("download")),
+      Effect.ensuring(reservationHeld ? Effect.void : finishUpdateAction("download")),
     );
-  }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
+  });
 
   const updateRestartMarkerDir = environment.path.join(environment.baseDir, "runtime");
   const updateRestartMarkerPath = environment.path.join(
@@ -795,7 +796,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const installDownloadedUpdate = (expectedVersion?: string) =>
+  const installDownloadedUpdate = (expectedVersion?: string, reservationHeld = false) =>
     Effect.scoped(
       Effect.gen(function* () {
         const actionCompletions = yield* PubSub.subscribe(finishedUpdateActions);
@@ -815,7 +816,10 @@ export const make = Effect.gen(function* () {
               ) {
                 return "refused" as const;
               }
-              if (Option.isSome(activeAction)) {
+              if (
+                Option.isSome(activeAction) &&
+                !(reservationHeld && activeAction.value === "check")
+              ) {
                 return activeAction.value === "check" && expectedVersion !== undefined
                   ? ("wait-for-check" as const)
                   : ("refused" as const);
@@ -825,6 +829,10 @@ export const make = Effect.gen(function* () {
                 (state.status === "error" &&
                   (state.errorContext === null || state.errorContext === "install"));
               if (!hasInstallableDownload) return "refused" as const;
+              if (reservationHeld) {
+                yield* Ref.set(activeUpdateActionRef, Option.some<UpdateAction>("install"));
+                return "admitted" as const;
+              }
               return (yield* tryStartUpdateAction("install"))
                 ? ("admitted" as const)
                 : ("refused" as const);
@@ -913,6 +921,7 @@ export const make = Effect.gen(function* () {
 
   const installWithExpectedVersion = Effect.fn("desktop.updates.install")(function* (
     expectedVersion?: string,
+    reservationHeld = false,
   ) {
     if (yield* Ref.get(desktopState.quitting)) {
       return {
@@ -922,7 +931,7 @@ export const make = Effect.gen(function* () {
         state: yield* Ref.get(updateStateRef),
       };
     }
-    const result = yield* installDownloadedUpdate(expectedVersion);
+    const result = yield* installDownloadedUpdate(expectedVersion, reservationHeld);
     return {
       accepted: result.accepted,
       completed: result.completed,
@@ -1166,7 +1175,15 @@ export const make = Effect.gen(function* () {
       };
 
       const appUpdateYmlConfig = yield* readAppUpdateYml;
-      yield* Ref.set(appUpdateYmlConfigRef, appUpdateYmlConfig);
+      const feedOverride = mockUpdates
+        ? { provider: "generic", url: `http://localhost:${config.mockUpdateServerPort}` }
+        : policy.feedUrl !== undefined
+          ? { provider: "generic", url: policy.feedUrl }
+          : undefined;
+      yield* Ref.set(
+        effectiveFeedConfigRef,
+        feedOverride === undefined ? appUpdateYmlConfig : Option.some(feedOverride),
+      );
 
       const notAppliedVersion = yield* readNotAppliedInstallVersion;
       yield* Ref.set(notAppliedVersionRef, notAppliedVersion);
@@ -1177,17 +1194,8 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      if (mockUpdates) {
-        yield* electronUpdater.setFeedURL({
-          provider: "generic",
-          url: `http://localhost:${config.mockUpdateServerPort}`,
-        } as ElectronUpdater.ElectronUpdaterFeedUrl);
-      } else if (policy.feedUrl !== undefined) {
-        // The administrator's mirror replaces the GitHub feed baked into app-update.yml.
-        yield* electronUpdater.setFeedURL({
-          provider: "generic",
-          url: policy.feedUrl,
-        } as ElectronUpdater.ElectronUpdaterFeedUrl);
+      if (feedOverride !== undefined) {
+        yield* electronUpdater.setFeedURL(feedOverride as ElectronUpdater.ElectronUpdaterFeedUrl);
       }
 
       const settings = yield* desktopSettings.get;
@@ -1328,7 +1336,7 @@ export const make = Effect.gen(function* () {
       };
     }),
     download: Effect.gen(function* () {
-      const result = yield* downloadAvailableUpdate;
+      const result = yield* downloadAvailableUpdate();
       return {
         accepted: result.accepted,
         completed: result.completed,
@@ -1338,6 +1346,23 @@ export const make = Effect.gen(function* () {
     install: installWithExpectedVersion().pipe(
       Effect.map(({ accepted, completed, state }) => ({ accepted, completed, state })),
     ),
+    installVersion: makeVersionInstaller({
+      getState: Ref.get(updateStateRef),
+      stateChanges,
+      stateLock: stateMutex,
+      platform: environment.platform,
+      quitting: Ref.get(desktopState.quitting),
+      configured: Ref.get(updaterConfiguredRef),
+      reserve: tryStartUpdateAction("check"),
+      release: finishUpdateAction("check"),
+      feedConfig: Ref.get(effectiveFeedConfigRef),
+      setFeed: (url) => electronUpdater.setFeedURL({ provider: "generic", url }),
+      check: checkForUpdates("fork-switch", "held"),
+      download: downloadAvailableUpdate(true),
+      install: (version) => installWithExpectedVersion(version, true),
+      updateState,
+      now: currentIsoTimestamp,
+    }),
     installPrepared: Effect.fn("DesktopUpdates.installPrepared")(function (expectedVersion) {
       return installWithExpectedVersion(expectedVersion);
     }),

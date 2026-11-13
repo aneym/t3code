@@ -17,10 +17,10 @@ import { retainThreadOverlaysForThread } from "./components/chat/threadOverlayRe
 import { resolveWindowTitleThreadStatus } from "./components/Sidebar.logic";
 import { startBackgroundThreadAnnouncements } from "./components/BackgroundThreadAnnouncer";
 import { startSshPasswordPromptQueue } from "./components/desktop/SshPasswordPromptDialog";
-import { startHostFreezeToasts } from "./components/HostFreezeToastCoordinator";
 import { startKeybindingsUpdateToasts } from "./components/KeybindingsUpdateToast";
 import { startLegacyThreadMigrationToast } from "./components/LegacyThreadMigrationToast";
 import { startPermissionUpdateNotices } from "./components/PermissionUpdateNotice";
+import { isEmbedPath } from "./embed/embedProtocol";
 import { startAgentOpenedPreviews } from "./components/preview/agentOpenedPreviews";
 import { startMainAppLocationTracking } from "./components/sidebar/mainAppLocation";
 import { startDesktopUpdateLaunchNotice } from "./components/sidebar/updateEverythingRun";
@@ -139,6 +139,7 @@ function readOpenThreadRef(router: AppRouter): ScopedThreadRef | null {
  * Screen readers read it on Alt+Tab, so it can lead with the thread and what it's doing.
  */
 function startDocumentTitle(router: AppRouter): void {
+  if (isEmbedPath(window.location.pathname)) return;
   const readOnGuestPage = () => router.state.matches.some((match) => match.routeId === "/guest");
   let openThreadRef = readOpenThreadRef(router);
   let onGuestPage = readOnGuestPage();
@@ -290,17 +291,18 @@ export function startAppServices(): AppRouter {
   });
   startMainAppLocationTracking(router);
   startWorkspaceFocus(router);
-  startBackgroundThreadAnnouncements(appAtomRegistry, router);
   startThreadVisitedMigration(appAtomRegistry);
   startSshPasswordPromptQueue();
 
-  startKeybindingsUpdateToasts();
-  startSlowRpcRequestToasts();
-  startHostFreezeToasts();
-  startLegacyThreadMigrationToast();
-  startPermissionUpdateNotices(router);
-  startThreadNotifications(appAtomRegistry, router);
-  startGuideRunNotifications(appAtomRegistry, router);
+  if (!isEmbedPath(window.location.pathname)) {
+    startBackgroundThreadAnnouncements(appAtomRegistry, router);
+    startKeybindingsUpdateToasts();
+    startSlowRpcRequestToasts();
+    startLegacyThreadMigrationToast();
+    startPermissionUpdateNotices(router);
+    startThreadNotifications(appAtomRegistry, router);
+    startGuideRunNotifications(appAtomRegistry, router);
+  }
   if (isElectron) startDesktopUpdateLaunchNotice();
 
   return router;

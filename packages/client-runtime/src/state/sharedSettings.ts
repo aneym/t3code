@@ -7,13 +7,11 @@ import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 const SHARED_SERVER_SETTING_KEYS = [
   "continueThreadsAfterServerUpdate",
   "batchQueuedMessages",
-  "queueSendAll",
   "sidebarAutoSettleAfterDays",
   "sidebarAutoSettleOnMerge",
   "autoResumeLimitedThreads",
   "snoozeLimitedThreads",
   "snoozePresets",
-  "sidebarAgents",
   "newWorktreesStartFromOrigin",
   "sourceControlWritingStyle",
   "textGenerationModelSelection",

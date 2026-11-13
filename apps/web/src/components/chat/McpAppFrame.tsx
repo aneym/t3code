@@ -26,6 +26,7 @@ import { flushSync } from "react-dom";
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
 import { APP_VERSION } from "~/branding";
 import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
+import { openThroughEmbedHost } from "~/embed/embedHost";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
@@ -260,7 +261,7 @@ export function McpAppFrame(props: {
       flushSync(() => setDisplayMode("inline"));
       const approved = await requestConfirmDialog(message);
       if (approved === undefined) {
-        throw new McpAppHostRefusal({ message: "T3 could not ask for approval here." });
+        throw new McpAppHostRefusal({ message: "Could not ask for approval here." });
       }
       return approved;
     };
@@ -307,7 +308,7 @@ export function McpAppFrame(props: {
         if (document.activeElement !== frameRef.current || !navigator.userActivation?.isActive) {
           throw new McpAppHostRefusal({ message: "Links open only from a click in the app." });
         }
-        window.open(url, "_blank", "noopener,noreferrer");
+        if (!openThroughEmbedHost(url)) window.open(url, "_blank", "noopener,noreferrer");
       },
       sendMessage: async (text) => {
         const send = readLive().props.onSendMessage;

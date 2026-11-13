@@ -5,7 +5,6 @@ import * as NodePath from "node:path";
 
 import {
   desktopDir,
-  devRoot,
   resolveDevProtocolClient,
   resolveElectronLaunchCommand,
 } from "./electron-launcher.mjs";
@@ -97,10 +96,10 @@ function cleanupStaleDevApps() {
     return;
   }
 
-  const escapedDevRoot = devRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapedDesktopDir = desktopDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   NodeChildProcess.spawnSync(
     "pkill",
-    ["-f", "--", `(^| )--t3code-dev-root=${escapedDevRoot}( |$)`],
+    ["-f", "--", `(^| )--t3code-dev-root=${escapedDesktopDir}( |$)`],
     {
       stdio: "ignore",
     },
@@ -117,7 +116,7 @@ function startApp() {
     : [];
   const launchArgs = devProtocolClient
     ? electronArgs
-    : [...electronArgs, `--t3code-dev-root=${devRoot}`, "dist-electron/main.cjs"];
+    : [...electronArgs, `--t3code-dev-root=${desktopDir}`, "dist-electron/main.cjs"];
   const electronCommand = resolveElectronLaunchCommand(launchArgs);
   const app = NodeChildProcess.spawn(electronCommand.electronPath, electronCommand.args, {
     cwd: desktopDir,

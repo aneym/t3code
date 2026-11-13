@@ -7,7 +7,6 @@ import { startEmbedAudience } from "../../embed/embedAudience";
 import { startEmbedControls } from "../../embed/embedComposer";
 import { placeEmbedHost, type EmbedHostSpot } from "../../embed/embedHost";
 import { isEmbedPath, normalizeEmbedOrigins, readEmbedScheme } from "../../embed/embedProtocol";
-import { readEmbedSignIn } from "../../embed/embedSignIn";
 import { applyEmbedTheme, themeFromEmbedMessage } from "../../embed/embedTheme";
 import { useEmbedHostBridge } from "../../embed/useEmbedHostBridge";
 import { useEmbedNavigationPrefetch } from "../../embed/useEmbedNavigationPrefetch";
@@ -95,13 +94,7 @@ export function EmbedPage({
   const settings = useAtomValue(primaryServerConfigAtom)?.settings ?? null;
   const target = threadId === null ? null : resolveThreadRouteTarget({ environmentId, threadId });
   useEmbedDocumentTitle(authenticated && target?.kind === "server" ? target.threadRef : null);
-  if (!authenticated) {
-    return (
-      <EmbedNotice
-        text={readEmbedSignIn() === "expired" ? "Sign-in expired" : "Sign in to continue."}
-      />
-    );
-  }
+  if (!authenticated) return <EmbedNotice text="Sign in to continue." />;
   return (
     <>
       {target?.kind === "server" ? <EmbedPrefetch threadRef={target.threadRef} /> : null}

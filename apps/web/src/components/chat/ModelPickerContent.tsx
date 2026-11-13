@@ -49,8 +49,10 @@ import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../../keybindings";
-import { useEnvironmentModelPreferences } from "~/hooks/useSettings";
-import { useWritableModelFavoriteToggle } from "~/hooks/useWritableModelFavoriteToggle";
+import {
+  useEnvironmentModelPreferences,
+  useToggleEnvironmentModelFavorite,
+} from "~/hooks/useSettings";
 import { announce } from "~/lib/announce";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
@@ -438,10 +440,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return hasPickableFavorite ? "favorites" : props.activeInstanceId;
     },
   );
+  const entryByInstanceId = new Map(instanceEntries.map((entry) => [entry.instanceId, entry]));
+  const selectedEntry =
+    selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
   const { scanning: workspaceModelsScanning } = useProviderWorkspaceSnapshotRefresh({
     environmentId: props.environmentId,
     gitCwd: props.workspaceCwd ?? null,
-    instanceId: selectedInstanceId === "favorites" ? undefined : selectedInstanceId,
+    provider: selectedEntry?.snapshot ?? null,
   });
   const favoritesSet = new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
   const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(
@@ -456,7 +461,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
-  const toggleFavorite = useWritableModelFavoriteToggle(props.environmentId);
+  const toggleFavorite = useToggleEnvironmentModelFavorite(props.environmentId);
 
   const focusSearchInput = () => {
     searchInputRef.current?.focus({ preventScroll: true });
@@ -516,7 +521,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const lockedContinuationGroupKey = props.lockedContinuationGroupKey;
   const canOpenProviderSetup = onOpenProviderSetup !== undefined;
 
-  const entryByInstanceId = new Map(instanceEntries.map((entry) => [entry.instanceId, entry]));
   const matchesLockedProvider = (
     entry: Pick<ProviderInstanceEntry, "driverKind" | "continuationGroupKey">,
   ): boolean => {
@@ -709,8 +713,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     ];
   })();
 
-  const selectedEntry =
-    selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
   const providerSetupEntries =
     !isSearching && canOpenProviderSetup
       ? instanceEntries.filter(
@@ -1033,6 +1035,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 if (!model) {
                   return null;
                 }
+                const disabledReason =
+                  getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
                 return (
                   <ModelListRow
                     key={modelKey}
@@ -1057,7 +1061,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     showNewBadge={model.badge === "new"}
                     unavailable={model.isUnavailable === true}
                     jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
-                    disabledReason={getModelDisabledReason?.(model.instanceId, model.slug) ?? null}
+                    disabledReason={disabledReason}
                     onToggleFavorite={toggleFavorite}
                   />
                 );

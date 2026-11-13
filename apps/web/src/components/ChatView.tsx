@@ -83,7 +83,6 @@ import {
   deriveProviderExtensionStatuses,
   deriveReportedModelSelection,
   deriveResumableRunId,
-  formatModelSelectionEffort,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveLatestThreadRun,
@@ -95,13 +94,14 @@ import {
   workflowOpeningParentThreadId,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
-  getUserQueuedThreadRuns,
+  countQueuedThreadRuns,
   threadSteersDuringCompaction,
   threadSupportsProviderHandoff,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import { compactionBlocksSteering } from "@t3tools/client-runtime/state/composer-dispatch";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
-import { HandoffRow } from "./chat/V2LifecycleRow";
+import { ThreadRestartNotices } from "./chat/ThreadRestartNotices";
+import { restartPauseLabel } from "@t3tools/client-runtime/restart-pause";
 import {
   codexFeedbackMessage,
   deriveWorkspaceMutationId,
@@ -115,7 +115,6 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { orchestrationV2WorktreePending } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -200,6 +199,7 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
+import { useEmbedHostConnected } from "~/embed/embedHost";
 import { isInSideChatPane, type SideChatParentPanel } from "~/lib/sideChatPane";
 import {
   NO_PROVIDER_MODEL_SELECTION,
@@ -285,7 +285,9 @@ import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
-import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
+import { EmbedProviderPrompt } from "./embed/EmbedProviderPrompt";
+import { embedNeedsProvider } from "~/embed/embedProviderReady";
+import { resolveProviderSubagentLabels } from "./chat/providerSubagentLabels";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useSideChat } from "./chat/useSideChat";
@@ -319,6 +321,11 @@ import {
   shouldShowThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
+import { EmbedPendingSends } from "./chat/EmbedPendingSends";
+import { usePendingGuestMessageFollow } from "./chat/usePendingGuestMessageFollow";
+import { useEmbedPendingSendCount } from "../embed/embedPendingSends";
+import { HeldSendNotice } from "./chat/HeldSendNotice";
+import { useHeldSend } from "./chat/useHeldSend";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
@@ -385,7 +392,6 @@ import {
 } from "./ChatView.logic";
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
-const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 
@@ -436,6 +442,8 @@ export default function ChatView(props: ChatViewProps) {
     embedded: parentPanel,
   } = props;
   const embedded = parentPanel !== undefined;
+  const embedHostConnected = useEmbedHostConnected();
+  const bare = embedHostConnected || embedded;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
@@ -1330,6 +1338,7 @@ export default function ChatView(props: ChatViewProps) {
     settings,
     activeProject?.id ?? null,
   );
+  const needsProvider = embedNeedsProvider(serverConfig !== null, providerInstanceEntries);
   const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
   const { selectedProviderEntry, requestedDriverKind } = resolveComposerProviderSelection({
     entries: providerInstanceEntries,
@@ -1723,12 +1732,11 @@ export default function ChatView(props: ChatViewProps) {
     activeProviderStatus,
   );
   const providerStatusDismissed = useProviderStatusBannerDismissed(providerStatusDismissalKey);
-  const visibleProviderStatus = shouldShowProviderStatusBanner(
-    activeProviderStatus,
-    providerStatusDismissed,
-  )
-    ? activeProviderStatus
-    : null;
+  const visibleProviderStatus =
+    (!embedHostConnected || timelineThreadError) &&
+    shouldShowProviderStatusBanner(activeProviderStatus, providerStatusDismissed)
+      ? activeProviderStatus
+      : null;
   const hasTimelineTopBanner = Boolean(timelineThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
@@ -1745,30 +1753,12 @@ export default function ChatView(props: ChatViewProps) {
   const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
   // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
-  const composerMounted = !showProviderSubagentBar;
-  const providerSubagentModels = selectedProviderEntry?.models ?? EMPTY_PROVIDER_MODELS;
-  // Providers can report dated model ids or aliases.
-  const providerSubagentModelSlug = selectedProviderEntry
-    ? resolveSelectableModel(
-        selectedProviderEntry.driverKind,
-        activeThread?.modelSelection.model,
-        providerSubagentModels,
-      )
-    : null;
-  const providerSubagentCatalogModel = providerSubagentModels.find(
-    (model) => model.slug === providerSubagentModelSlug,
+  const composerMounted = !showProviderSubagentBar && !needsProvider;
+  const providerSubagentLabels = resolveProviderSubagentLabels(
+    selectedProviderEntry,
+    activeThread?.modelSelection,
+    reportedModelSelection,
   );
-  const providerSubagentModelLabel = providerSubagentCatalogModel
-    ? getTriggerDisplayModelName(providerSubagentCatalogModel, selectedProviderEntry?.driverKind)
-    : formatModelSlugName(activeThread?.modelSelection.model ?? "");
-  const providerSubagentEffortLabel =
-    activeThread === undefined
-      ? null
-      : formatModelSelectionEffort(
-          activeThread.modelSelection,
-          providerSubagentModels,
-          reportedModelSelection,
-        );
   const showComposerContextStrip =
     !embedded &&
     shouldShowComposerContextStrip({
@@ -2062,6 +2052,7 @@ export default function ChatView(props: ChatViewProps) {
     branch?: string;
     runtimeMode: RuntimeMode;
     interactionMode: ProviderInteractionMode;
+    modelSelection?: ModelSelection;
   }): Promise<AtomCommandResult<void, unknown>> => {
     if (!serverThread) {
       return AsyncResult.success(undefined);
@@ -2070,6 +2061,7 @@ export default function ChatView(props: ChatViewProps) {
     let result: AtomCommandResult<void, unknown> = AsyncResult.success(undefined);
     const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
       currentModelSelection: serverThread.modelSelection,
+      ...(input.modelSelection ? { nextModelSelection: input.modelSelection } : {}),
       currentBranch: serverThread.branch,
       ...(input.branch ? { nextBranch: input.branch } : {}),
     });
@@ -2464,7 +2456,6 @@ export default function ChatView(props: ChatViewProps) {
     activePendingUserInput,
     localCheckoutBranchMismatch,
     gitStatusQuery,
-    nowMinute,
     composerRef,
     composerDraftTarget,
     sendInFlightRef,
@@ -2829,7 +2820,7 @@ export default function ChatView(props: ChatViewProps) {
         : serverConfig === null
           ? "Side chats are not ready yet. Try again in a moment."
           : serverConfig.environment.capabilities.sideChats !== true
-            ? "Update this environment's T3 Code server to use side chats."
+            ? "Update this environment's server to use side chats."
             : sideChatsOffered && !isServerThread
               ? "Side chats start after the first message."
               : sideChat.available &&
@@ -2999,6 +2990,17 @@ export default function ChatView(props: ChatViewProps) {
   };
   const onWorktreeSetupWorkLocallyStable = useStableCallback(onWorktreeSetupWorkLocally);
   const onComposerSendStable = useStableCallback(onSend);
+  const heldSend = useHeldSend({
+    threadKey: routeThreadKey,
+    draftTarget: composerDraftTarget,
+    hasAttachments: composerHasAttachments,
+    messages: serverProjection?.messages,
+    promptRef,
+    composerRef,
+    unavailable: activeEnvironmentUnavailable,
+    busy: threadDetailLoading || isSendBusy,
+    send: onComposerSendStable,
+  });
   const sendPreviewAnnotation = (
     annotation: PreviewAnnotationPayload,
     image: ComposerImageAttachment | null,
@@ -3009,34 +3011,12 @@ export default function ChatView(props: ChatViewProps) {
   const onComposerResumeStable = useStableCallback(onResume);
   const onComposerCompactContextStable = useStableCallback(onCompactContext);
   // Read from the projection the footer renders, so the scroll below sees the new message.
-  const pendingGuestMessageIds =
-    serverProjection?.thread.guestShare?.messages.flatMap((message) =>
-      message.status === "pending" ? [message.id] : [],
-    ) ?? [];
-  const pendingGuestMessageCount = pendingGuestMessageIds.length;
-  const pendingGuestMessageKey = pendingGuestMessageIds.join(",");
-  const previousPendingGuestMessagesRef = useRef({
-    threadKey: routeThreadKey,
-    key: pendingGuestMessageKey,
+  const pendingGuestMessageCount = usePendingGuestMessageFollow({
+    guestMessages: serverProjection?.thread.guestShare?.messages,
+    routeThreadKey,
+    liveFollowEnabled: timelineLiveFollowEnabled,
+    scrollToEnd,
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the timeline list to the end when a new pending guest message joins its footer
-  useEffect(() => {
-    const previous = previousPendingGuestMessagesRef.current;
-    previousPendingGuestMessagesRef.current = {
-      threadKey: routeThreadKey,
-      key: pendingGuestMessageKey,
-    };
-    // Opening another thread is not a new message; its own scroll position wins.
-    if (previous.threadKey !== routeThreadKey) return;
-    // Pending guest messages sit in the list footer, which the list does not follow on its own.
-    // The follow flag reflects the owner's position before the footer grew; a live measure may not.
-    // Any new id counts, even when another one was resolved in the same update.
-    const previousIds = new Set(previous.key.split(","));
-    const hasNewMessage = pendingGuestMessageKey
-      .split(",")
-      .some((id) => id !== "" && !previousIds.has(id));
-    if (hasNewMessage && timelineLiveFollowEnabled) scrollToEnd(true);
-  }, [routeThreadKey, pendingGuestMessageKey, timelineLiveFollowEnabled, scrollToEnd]);
   const queuedRunsControl =
     isServerThread && activeThread ? (
       <>
@@ -3111,39 +3091,41 @@ export default function ChatView(props: ChatViewProps) {
   const shownThreadSyncPhase = activeEnvironmentUnavailable ? null : delayedThreadSyncPhase;
   const hasThreadNow =
     attentionNow !== null || workNow !== null || goalNow !== null || shownThreadSyncPhase !== null;
-  const queuedRunCount = serverProjection ? getUserQueuedThreadRuns(serverProjection).length : 0;
+  const queued = serverProjection ? countQueuedThreadRuns(serverProjection) : null;
   // The queue control is mounted for every server thread but joins the footer only while it shows
   // something, by its own rule: an optimistic message stops counting once the server has it.
   const hasQueuedTurns =
-    queuedRunCount > 0 ||
+    queued !== null ||
     optimisticUserMessages.some(
       (message) =>
         message.inputIntent === "queued_turn" &&
         !serverProjection?.messages.some((committed) => committed.id === message.id),
     );
   const scrollToEndSummary =
-    [childInputNow?.waitingLabel ?? null, queuedRunCount === 0 ? null : `${queuedRunCount} queued`]
+    [childInputNow?.waitingLabel ?? null, queued?.messages ? queued.label : null]
       .filter((part) => part !== null)
       .join(" · ") || null;
   // The end of the timeline holds the thread's present and next turns: what it is doing now,
   // its lifecycle status, guest messages awaiting you, then your queued messages.
+  const hostSends = useEmbedPendingSendCount(serverProjection, optimisticUserMessages);
+  const restartRuns = serverProjection?.runs;
+  const restartPause = restartRuns === undefined ? null : restartPauseLabel(restartRuns);
   const timelineFooter =
+    restartPause === null &&
     pendingHandoff === null &&
     !hasThreadNow &&
     threadStatusLine === null &&
     pendingGuestMessageCount === 0 &&
-    !hasQueuedTurns ? null : (
+    !hasQueuedTurns &&
+    hostSends === 0 &&
+    heldSend.held === null ? null : (
       <>
-        {pendingHandoff === null ? null : (
-          <div className="chat-content-lane">
-            <HandoffRow
-              environmentId={environmentId}
-              endpoints={pendingHandoff}
-              providers={providerStatuses}
-              pending
-            />
-          </div>
-        )}
+        <ThreadRestartNotices
+          label={restartPause}
+          environmentId={environmentId}
+          endpoints={pendingHandoff}
+          providers={providerStatuses}
+        />
         <ThreadNow
           key={routeThreadKey}
           attention={attentionNow}
@@ -3160,6 +3142,22 @@ export default function ChatView(props: ChatViewProps) {
           />
         ) : null}
         {hasQueuedTurns ? queuedRunsControl : null}
+        {hostSends > 0 && serverProjection ? (
+          <EmbedPendingSends
+            projection={serverProjection}
+            rows={optimisticUserMessages}
+            composerRef={composerRef}
+            composerDraftTarget={composerDraftTarget}
+          />
+        ) : null}
+        {heldSend.held !== null ? (
+          <HeldSendNotice
+            threadKey={routeThreadKey}
+            held={heldSend.held}
+            label={activeEnvironment?.label ?? "the server"}
+            onRetry={heldSend.retry}
+          />
+        ) : null}
       </>
     );
 
@@ -3328,7 +3326,7 @@ export default function ChatView(props: ChatViewProps) {
         data-chat-column
         inert={rightPanelMaximized}
       >
-        {embedded ? null : (
+        {bare ? null : (
           <header
             ref={threadPanelPopoverAnchorRef}
             data-chat-header
@@ -3590,8 +3588,8 @@ export default function ChatView(props: ChatViewProps) {
                                     providerInstanceEntries,
                                   )
                                 }
-                                modelLabel={providerSubagentModelLabel}
-                                effortLabel={providerSubagentEffortLabel}
+                                modelLabel={providerSubagentLabels.modelLabel}
+                                effortLabel={providerSubagentLabels.effortLabel}
                                 status={providerSubagentStatus}
                                 onOpenParent={parentThreadLink?.open ?? null}
                                 actions={
@@ -3603,6 +3601,8 @@ export default function ChatView(props: ChatViewProps) {
                                   ) : null
                                 }
                               />
+                            ) : needsProvider ? (
+                              <EmbedProviderPrompt environmentId={environmentId} />
                             ) : null}
                             {!composerMounted ? null : (
                               <ChatComposer
@@ -3860,7 +3860,7 @@ export default function ChatView(props: ChatViewProps) {
               />
             ) : null}
 
-            {embedded ? null : (
+            {bare ? null : (
               <>
                 <BranchRestoreConfirmHost
                   threadKey={activeThreadKey}

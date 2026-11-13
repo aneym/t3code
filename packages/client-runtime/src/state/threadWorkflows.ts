@@ -1,6 +1,7 @@
 import {
   type ChatAttachment,
   isCompactionCommandMessage,
+  mcpEventOfMessage,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
@@ -26,6 +27,7 @@ export interface QueuedThreadRun {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly messageId: Message["id"];
+  readonly isBackgroundResult: boolean;
   readonly context?: Message["context"];
   /** Carries the attribution a sent message shows: automation, agent sender, or guest. */
   readonly message?: Message;
@@ -35,6 +37,7 @@ export interface ThreadQueueWorkflowState {
   readonly activeRun: Run | null;
   readonly queuedRuns: ReadonlyArray<QueuedThreadRun>;
   readonly isHeld: boolean;
+  readonly heldByThreadId: NonNullable<Run["queueHeldByThreadId"]> | null;
   readonly canPromoteToSteer: boolean;
   /** The active run is a compaction, so promoting a queued message stops it instead of steering. */
   readonly promoteSkipsCompaction: boolean;
@@ -120,7 +123,26 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
   );
 }
 
-export function getUserQueuedThreadRuns(
+export function countQueuedThreadRuns(
+  projection: Pick<Projection, "runs" | "messages">,
+): { readonly messages: number; readonly label: string } | null {
+  const queued = queuedRunsExceptCompletions(projection);
+  if (queued.length === 0) return null;
+  const mcpEventMessageIds = new Set(
+    projection.messages
+      .filter((message) => mcpEventOfMessage(message) !== null)
+      .map((message) => message.id),
+  );
+  const messages = queued.filter((run) => !mcpEventMessageIds.has(run.userMessageId)).length;
+  const events = queued.length - messages;
+  return {
+    messages,
+    label:
+      messages > 0 ? `${messages} queued` : `${events} ${events === 1 ? "event" : "events"} queued`,
+  };
+}
+
+function queuedRunsExceptCompletions(
   projection: Pick<Projection, "runs" | "messages">,
 ): ReadonlyArray<Run> {
   const automaticCompletionMessageIds = new Set(
@@ -131,8 +153,18 @@ export function getUserQueuedThreadRuns(
       )
       .map((message) => message.id),
   );
+  const completionMessageIds = new Set(
+    projection.messages
+      .filter((message) => message.delegatedCompletion !== undefined)
+      .map((message) => message.id),
+  );
   return projection.runs.filter(
-    (run) => run.status === "queued" && !automaticCompletionMessageIds.has(run.userMessageId),
+    (run) =>
+      run.status === "queued" &&
+      (!automaticCompletionMessageIds.has(run.userMessageId) ||
+        (run.queueHeld === true &&
+          run.queueHoldReason === "blocked" &&
+          completionMessageIds.has(run.userMessageId))),
   );
 }
 
@@ -152,16 +184,20 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
     );
   const queuedRuns = copySorted(
-    getUserQueuedThreadRuns(projection),
+    queuedRunsExceptCompletions(projection),
     (left, right) =>
       (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
       left.ordinal - right.ordinal,
   ).map((run) => {
     const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+    const isBackgroundResult = message?.delegatedCompletion !== undefined;
     return {
       run,
+      isBackgroundResult,
       // A queued guest message shows the guest's words; the agent still gets the attributed text.
-      text: message?.context?.guest?.text ?? message?.text ?? "Queued message",
+      text: isBackgroundResult
+        ? "Background result waiting"
+        : (message?.context?.guest?.text ?? message?.text ?? "Queued message"),
       attachments: message?.attachments ?? [],
       messageId: run.userMessageId,
       ...(message?.context ? { context: message.context } : {}),
@@ -173,6 +209,13 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     activeRun,
     queuedRuns,
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
+    heldByThreadId:
+      projection.runs.find(
+        (run) =>
+          run.status === "queued" &&
+          run.queueHeld === true &&
+          run.queueHeldByThreadId !== undefined,
+      )?.queueHeldByThreadId ?? null,
     canSendNow:
       activeRun === null &&
       projection.thread.archivedAt == null &&

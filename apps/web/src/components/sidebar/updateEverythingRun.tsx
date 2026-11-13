@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { serverUpdateStateAtom } from "@t3tools/client-runtime/state/server";
 import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+import { isCliForkVersion } from "@t3tools/shared/cliRelease";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -66,6 +67,7 @@ export function settleUpdateRunMachine(
 function runsVersion(config: ServerConfig | null, targetVersion: string): boolean {
   return (
     config !== null &&
+    isCliForkVersion(config.environment.serverVersion) === isCliForkVersion(targetVersion) &&
     resolveVersionMismatch(config.environment.serverVersion, targetVersion) === null
   );
 }
