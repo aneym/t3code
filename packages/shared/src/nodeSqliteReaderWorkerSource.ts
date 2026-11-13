@@ -6,7 +6,7 @@ let db;
 try {
   // A read-only open cannot be undone by SQL, unlike PRAGMA query_only.
   const next = new DatabaseSync(workerData.filename, {
-    readOnly: true,
+    readOnly: workerData.readOnly,
     allowExtension: workerData.allowExtension,
   });
   next.exec("PRAGMA busy_timeout = 5000;");

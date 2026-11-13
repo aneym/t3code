@@ -18,6 +18,13 @@ import { WS_METHODS } from "./rpc.ts";
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
+  [WS_METHODS.serverAbortRestart]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverImportRestartHandoff]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverGetRestartStatus]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverPrepareRestart]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverUpdateServer]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverUpdateServerWithProgress]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverListForkReleases]: AuthEnvironmentMaintainScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
@@ -76,8 +83,19 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.guestShareCreate]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksLink]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksUnlink]: AuthAccessWriteScope,
+  [WS_METHODS.peerLinksRenew]: AuthAccessWriteScope,
   // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
+  [WS_METHODS.peerLinksPairClient]: AuthAccessWriteScope,
+  [WS_METHODS.providerInstallStart]: AuthProvidersManageScope,
+  [WS_METHODS.providerInstallCancel]: AuthProvidersManageScope,
+  [WS_METHODS.providerInstallRemove]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthStart]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthRespond]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthComplete]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthCancel]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthLogout]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthSubscribe]: AuthProvidersManageScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

@@ -11,6 +11,7 @@ import { ProviderOptionSelection } from "./model.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { ProviderRequestKind } from "./providerPolicy.ts";
 import { AgentPlacementReceipt } from "./agentPlacement.ts";
+import { OrchestratorMcpExecutedModel } from "./orchestratorMcpThreadRun.ts";
 const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "queued",
   "running",
@@ -32,7 +33,9 @@ const OrchestratorMcpRunningTaskNext = Schema.Literal(
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   placement: Schema.optional(AgentPlacementReceipt),
   taskId: NodeId,
+  /** Null for a task that runs in a linked environment; see `remoteChild`. */
   childThreadId: Schema.NullOr(ThreadId),
+  /** The linked environment and thread a remote task runs as. */
   remoteChild: Schema.optional(
     Schema.Struct({ environmentId: EnvironmentId, threadId: ThreadId, label: Schema.String }),
   ),
@@ -48,6 +51,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   latestTerminalResultContextTransferId: Schema.NullOr(ContextTransferId),
   providerInstanceId: ProviderInstanceId,
   model: Schema.NullOr(Schema.String),
+  executedModel: Schema.optional(OrchestratorMcpExecutedModel),
   options: Schema.optional(Schema.Array(ProviderOptionSelection)),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),

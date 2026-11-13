@@ -20,13 +20,22 @@ export const LinuxLibc = Context.Reference<"gnu" | "musl">(
   "@t3tools/shared/HostProcess/LinuxLibc",
   {
     defaultValue: () => {
+      const reports = process.report as
+        | (typeof process.report & { excludeNetwork: boolean })
+        | undefined;
+      const excludedNetwork = reports?.excludeNetwork;
       try {
-        const report = process.report?.getReport() as
+        if (reports !== undefined) reports.excludeNetwork = true;
+        const report = reports?.getReport() as
           | { header?: { glibcVersionRuntime?: unknown } }
           | undefined;
         return typeof report?.header?.glibcVersionRuntime === "string" ? "gnu" : "musl";
       } catch {
         return "musl";
+      } finally {
+        if (reports !== undefined && excludedNetwork !== undefined) {
+          reports.excludeNetwork = excludedNetwork;
+        }
       }
     },
   },

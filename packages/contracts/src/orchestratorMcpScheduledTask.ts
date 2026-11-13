@@ -17,6 +17,7 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   enabled: Schema.Boolean,
   projectId: ProjectId,
   boundThreadId: Schema.NullOr(ThreadId),
+  freshSession: Schema.Boolean,
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunAt: Schema.NullOr(IsoDateTime),
@@ -27,8 +28,10 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
     description:
       "Public URL for the sender. Absent: no T3 Connect tunnel. The user must enable T3 Connect remote access.",
   }),
-  blockedByPolicy: Schema.optional(Schema.String),
   webhookSignature: Schema.optional(Schema.Literals(["none", "set"])),
+  blockedByPolicy: Schema.optional(Schema.String).annotate({
+    description: "Present when an administrator's policy stops this task from running.",
+  }),
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
 

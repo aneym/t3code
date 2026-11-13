@@ -1,3 +1,13 @@
+import * as ForkEmbed from "./forkEmbedSettings.ts";
+import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
+import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
+import {
+  WorktreeCleanupRulesPatchFields,
+  WorktreeCleanup,
+  StorageCleanupSettings,
+  StorageCleanupSettingsPatch,
+} from "./storageCleanupSettings.ts";
+import { SidebarAgentsSettings } from "./sidebarAgents.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
@@ -26,6 +36,14 @@ import { SecretProviderId, SecretProviderSlug } from "./secretReference.ts";
 import { SettingsSecretValue } from "./settingsSecretValue.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
+import {
+  LinkedEnvironmentServerSettingsFields,
+  LinkedEnvironmentServerSettingsPatchFields,
+} from "./linkedEnvironmentSettings.ts";
+import {
+  LoadBalancingClientSettingsFields,
+  LoadBalancingClientSettingsPatchFields,
+} from "./loadBalancingSettings.ts";
 import {
   CustomModelSetting,
   DEFAULT_TEXT_GENERATION_MODEL,
@@ -329,11 +347,6 @@ export const BrowserCustomSearchUrl = Schema.String.check(
   Schema.isMaxLength(BROWSER_CUSTOM_SEARCH_URL_MAX_LENGTH),
 );
 
-export const LoadBalancingWeights = Schema.Record(
-  TrimmedNonEmptyString,
-  Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
-);
-
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
@@ -406,8 +419,7 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
   effortDisplay: EffortDisplay.pipe(Schema.withDecodingDefault(Effect.succeed("label" as const))),
-  loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  ...LoadBalancingClientSettingsFields,
   appearanceContrast: AppearanceContrast.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
   ),
@@ -466,6 +478,7 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadUnpin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   diffFilesCollapsed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  showChatChangedFiles: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffLayout: DiffLayout.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_DIFF_LAYOUT))),
   environmentIdentificationMode: EnvironmentIdentificationMode.pipe(
@@ -539,6 +552,7 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  ...ForkSidebarThread.Client,
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -730,7 +744,7 @@ export const CodexSettings = makeProviderSettingsSchema(
         description:
           "Account-specific Codex home. Keeps auth.json separate while sharing state from CODEX_HOME.",
         providerSettingsForm: {
-          placeholder: "~/.codex-t3/personal",
+          placeholder: "~/.codex-personal",
           clearWhenEmpty: "omit",
         },
       }),
@@ -1126,42 +1140,6 @@ export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph"]);
 export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
 
-const StorageRetentionDays = Schema.NullOr(
-  Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
-);
-const SettledWorktreeRetentionDays = Schema.NullOr(
-  Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3650 })),
-);
-
-export const WorktreeKeepWhen = Schema.Literals([
-  "any-local-files",
-  "uncommitted-changes",
-  "tracked-changes",
-]);
-export type WorktreeKeepWhen = typeof WorktreeKeepWhen.Type;
-
-export const WorktreeCleanupRules = Schema.Struct({
-  worktreeKeepWhen: WorktreeKeepWhen.pipe(
-    Schema.withDecodingDefault(Effect.succeed("uncommitted-changes")),
-  ),
-  worktreeAfterDays: StorageRetentionDays,
-  worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  worktreeOnMerge: Schema.Boolean,
-  worktreeOnDelete: Schema.Boolean,
-  worktreeUnchanged: Schema.Boolean,
-});
-export type WorktreeCleanupRules = typeof WorktreeCleanupRules.Type;
-
-export const WorktreeCleanup = Schema.NullOr(
-  Schema.Union([
-    Schema.Struct({ mode: Schema.Literal("off") }),
-    Schema.Struct({ mode: Schema.Literal("custom"), rules: WorktreeCleanupRules }),
-  ]),
-);
-export type WorktreeCleanup = typeof WorktreeCleanup.Type;
-
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "worktreeCleanup",
   "defaultModelSelection",
@@ -1323,24 +1301,6 @@ export const StorageCleanupReport = Schema.Struct({
 });
 export type StorageCleanupReport = typeof StorageCleanupReport.Type;
 
-export const StorageCleanupSettings = Schema.Struct({
-  worktreeKeepWhen: WorktreeKeepWhen.pipe(
-    Schema.withDecodingDefault(Effect.succeed("uncommitted-changes")),
-  ),
-  worktreeAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeUnchanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  browserArtifactsAfterDays: StorageRetentionDays.pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  logsAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-});
-export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
-
 const CloudSpeechCredential = SettingsSecretValue.pipe(
   Schema.withDecodingDefault(Effect.succeed("")),
 );
@@ -1377,8 +1337,10 @@ export const ServerSettings = Schema.Struct({
   ),
   /** Holds an OS sleep inhibitor while any run is active; closing a laptop lid still sleeps it. */
   keepAwakeWhileAgentsWork: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  ...ForkThreadSettingsFields,
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  ...ForkEmbed.Server,
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
     Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
   ),
@@ -1458,13 +1420,12 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   hideTaggedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  sidebarAgents: Schema.NullOr(SidebarAgentsSettings).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Beta: guest links for this machine's threads. Off refuses new links and pauses existing ones. */
   guestSharingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  /**
-   * Beta: links to the user's other machines, both ways. Off refuses new links, calls over links
-   * and tasks on another machine; tasks already running there finish.
-   */
-  linkedEnvironmentsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  ...LinkedEnvironmentServerSettingsFields,
   /** Beta: Claude and Codex predict the next prompt after completed turns. Codex follows a change at once; open Claude threads after they restart. */
   promptSuggestionsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
@@ -1799,36 +1760,19 @@ export const ServerSettingsPatch = Schema.Struct({
         Schema.Struct({ mode: Schema.Literal("off") }),
         Schema.Struct({
           mode: Schema.Literal("custom"),
-          rules: Schema.Struct({
-            worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
-            worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
-            worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
-            worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
-            worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
-            worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
-          }),
+          rules: Schema.Struct(WorktreeCleanupRulesPatchFields),
         }),
       ]),
     ),
   ),
-  storageCleanup: Schema.optionalKey(
-    Schema.Struct({
-      worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
-      worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
-      worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
-      worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
-      worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
-      worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
-      browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
-      logsAfterDays: Schema.optionalKey(StorageRetentionDays),
-    }),
-  ),
+  storageCleanup: Schema.optionalKey(StorageCleanupSettingsPatch),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
   fastWorktreeCheckout: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   keepAwakeWhileAgentsWork: Schema.optionalKey(Schema.Boolean),
+  ...ForkThreadSettingsPatchFields,
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   cloudSpeechCredentials: Schema.optionalKey(
     Schema.Struct({
@@ -1842,6 +1786,7 @@ export const ServerSettingsPatch = Schema.Struct({
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
   speechPostProcessingModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  ...ForkEmbed.ServerPatch,
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
@@ -1887,8 +1832,9 @@ export const ServerSettingsPatch = Schema.Struct({
   snoozePresets: Schema.optionalKey(SnoozePresetSettings),
   hiddenThreadTags: Schema.optionalKey(Schema.Array(Schema.String)),
   hideTaggedThreads: Schema.optionalKey(Schema.Boolean),
+  sidebarAgents: Schema.optionalKey(Schema.NullOr(SidebarAgentsSettings)),
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
-  linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
+  ...LinkedEnvironmentServerSettingsPatchFields,
   promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
@@ -2007,8 +1953,7 @@ export const ClientSettingsPatch = Schema.Struct({
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),
   effortDisplay: Schema.optionalKey(EffortDisplay),
-  loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
-  loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
+  ...LoadBalancingClientSettingsPatchFields,
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
   panelAnimationDurationMs: Schema.optionalKey(PanelAnimationDurationMs),
   browserDefaultViewport: Schema.optionalKey(PreviewViewportSetting),
@@ -2028,6 +1973,7 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   confirmThreadUnpin: Schema.optionalKey(Schema.Boolean),
   diffFilesCollapsed: Schema.optionalKey(Schema.Boolean),
+  showChatChangedFiles: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
@@ -2062,6 +2008,7 @@ export const ClientSettingsPatch = Schema.Struct({
   threadDetailsUsageEnabled: Schema.optionalKey(Schema.Boolean),
   threadDetailsItems: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
+  ...ForkSidebarThread.ClientPatch,
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

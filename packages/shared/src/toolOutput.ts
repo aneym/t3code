@@ -15,6 +15,11 @@ import {
   readMcpAppReference,
   type McpAppReference,
 } from "./mcpApp.ts";
+import {
+  MCP_APP_CARD_OUTPUT_KEY,
+  mcpAppCardFromOutput,
+  type McpAppCardReference,
+} from "./mcpAppCard.ts";
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
 const MAX_PARSED_BYTES = 16_384;
@@ -46,6 +51,7 @@ interface CompactToolOutput {
   status?: "rolled_back";
   htmlRender?: HtmlRenderReference;
   [MCP_APP_OUTPUT_KEY]?: McpAppReference;
+  [MCP_APP_CARD_OUTPUT_KEY]?: McpAppCardReference;
   thread?: { threadId: string };
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
   linkedCount?: number;
@@ -123,6 +129,8 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
   };
   const result = readResult(value, budget);
   const output: CompactToolOutput = result.failed ? { isError: true } : {};
+  const card = mcpAppCardFromOutput(value);
+  if (card !== undefined) output[MCP_APP_CARD_OUTPUT_KEY] = card;
   const data = budget.exceeded ? undefined : result.data;
   if (data !== undefined) {
     for (const key of ["threadId", "messageId", "taskId", "scheduledTaskId"] as const) {
@@ -184,6 +192,7 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     output[MCP_APP_OUTPUT_KEY] = rest;
   }
   if (oversized()) delete output[MCP_APP_OUTPUT_KEY];
+  if (oversized()) delete output[MCP_APP_CARD_OUTPUT_KEY];
   return Object.keys(output).length === 0 ? undefined : output;
 }
 

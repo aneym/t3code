@@ -1050,7 +1050,6 @@ export interface DesktopBridge {
   getRelayTelemetryEnabled: () => boolean;
   getPathForFile: (file: File) => string;
   getClientPlatform: () => string;
-  getDeviceName?: () => string;
   setNotificationBadge: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear: (listener: () => void) => () => void;
   onTrackpadScrollBegin: (listener: () => void) => () => void;
@@ -1160,7 +1159,6 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   /** With a version, installs only that downloaded build. */
   installUpdate: (expectedVersion?: string) => Promise<DesktopUpdateActionResult>;
-  installDesktopVersion: (version: string) => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   cliCommand: {
     getState: () => Promise<DesktopCliCommandState>;
@@ -1178,10 +1176,6 @@ export interface DesktopBridge {
     onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
   };
   preview: DesktopPreviewBridge;
-  desktopBrowser?: {
-    onEvent: (listener: (line: string) => void) => () => void;
-    sendCommand: (line: string) => Promise<void>;
-  };
 }
 
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */

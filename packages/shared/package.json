@@ -7,6 +7,10 @@
       "types": "./src/pullRequestAnchor.ts",
       "import": "./src/pullRequestAnchor.ts"
     },
+    "./queuedMessages": {
+      "types": "./src/queuedMessages.ts",
+      "import": "./src/queuedMessages.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"
@@ -87,6 +91,10 @@
       "types": "./src/otelEnvironment.ts",
       "import": "./src/otelEnvironment.ts"
     },
+    "./appName": {
+      "types": "./src/appName.ts",
+      "import": "./src/appName.ts"
+    },
     "./httpObservability": {
       "types": "./src/httpObservability.ts",
       "import": "./src/httpObservability.ts"
@@ -94,6 +102,10 @@
     "./editor": {
       "types": "./src/editor.ts",
       "import": "./src/editor.ts"
+    },
+    "./appleGitPlaceholder": {
+      "types": "./src/appleGitPlaceholder.ts",
+      "import": "./src/appleGitPlaceholder.ts"
     },
     "./shell": {
       "types": "./src/shell.ts",
@@ -114,6 +126,14 @@
     "./KeyedCoalescingWorker": {
       "types": "./src/KeyedCoalescingWorker.ts",
       "import": "./src/KeyedCoalescingWorker.ts"
+    },
+    "./FairMutex": {
+      "types": "./src/FairMutex.ts",
+      "import": "./src/FairMutex.ts"
+    },
+    "./FairRwLock": {
+      "types": "./src/FairRwLock.ts",
+      "import": "./src/FairRwLock.ts"
     },
     "./KeyedLock": {
       "types": "./src/KeyedLock.ts",
@@ -526,6 +546,10 @@
     "./mcpApp": {
       "types": "./src/mcpApp.ts",
       "import": "./src/mcpApp.ts"
+    },
+    "./mcpAppCard": {
+      "types": "./src/mcpAppCard.ts",
+      "import": "./src/mcpAppCard.ts"
     },
     "./atomicWrite": {
       "types": "./src/atomicWrite.ts",

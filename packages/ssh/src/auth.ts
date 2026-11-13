@@ -7,7 +7,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
-import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import { SshPasswordPromptError } from "./errors.ts";
@@ -63,8 +62,6 @@ export interface SshChildEnvironmentOptions {
   readonly askpassDirectory?: string;
   readonly authSecret?: string | null;
 }
-
-export const SSH_RUNTIME_TEMP_PREFIX = "t3code-ssh-runtime-";
 
 const SSH_ASKPASS_DIR_NAME = "t3code-ssh-askpass";
 
@@ -209,7 +206,7 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
 ): Effect.fn.Return<
   NodeJS.ProcessEnv,
   PlatformError.PlatformError,
-  FileSystem.FileSystem | Path.Path | Scope.Scope
+  FileSystem.FileSystem | Path.Path
 > {
   const baseEnv = { ...input.baseEnv };
   if (!input.interactiveAuth) {

@@ -116,7 +116,6 @@ export const WorktreeMcpExportInput = Schema.Struct({
 export type WorktreeMcpExportInput = typeof WorktreeMcpExportInput.Type;
 
 export const WorktreeMcpExportResult = Schema.Struct({
-  note: Schema.optional(Schema.String),
   worktreePath: TrimmedNonEmptyString,
   branch: TrimmedNonEmptyString,
   baseCommit: TrimmedNonEmptyString,

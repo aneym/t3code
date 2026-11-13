@@ -4,9 +4,7 @@ import { MCP_APP_OUTPUT_KEY } from "./mcpApp.ts";
 
 export const MCP_APP_CARD_OUTPUT_KEY = `${MCP_APP_OUTPUT_KEY}Card` as const;
 const MCP_APP_CARD_META_KEY = "rails/app";
-export const MCP_APP_CARD_HEIGHT = 398;
 export const MCP_APP_CARD_HOST_TOKEN = "RailsDesktop/";
-export const MCP_APP_CARD_PATH = "/card/app";
 
 const MAX_URL_LENGTH = 2048;
 const MAX_NAME_LENGTH = 256;
@@ -55,20 +53,4 @@ export function mcpAppCardFromMeta(meta: unknown): McpAppCardReference | undefin
 
 export function mcpAppCardFromOutput(output: unknown): McpAppCardReference | undefined {
   return Predicate.isObject(output) ? readMcpAppCard(output[MCP_APP_CARD_OUTPUT_KEY]) : undefined;
-}
-
-export function mcpAppCardFromToolItem(item: {
-  readonly type: string;
-  readonly output?: unknown;
-}): McpAppCardReference | undefined {
-  return item.type === "dynamic_tool" ? mcpAppCardFromOutput(item.output) : undefined;
-}
-
-export function mcpAppCardsEqual(left: McpAppCardReference, right: McpAppCardReference): boolean {
-  return (
-    left.card === right.card &&
-    left.link === right.link &&
-    left.server === right.server &&
-    left.lane === right.lane
-  );
 }
