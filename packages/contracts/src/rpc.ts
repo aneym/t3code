@@ -1,13 +1,4 @@
-import { ServerProviderRefreshInput } from "./serverProviderRefresh.ts";
 import { ServerConfigSubscriptionInput } from "./serverConfigSubscription.ts";
-import { ServerHandoffProbe, ServerHandoffSubscription } from "./serverLifecycle.ts";
-import {
-  ServerPrepareRestartInput,
-  ServerPrepareRestartResult,
-  ServerPrepareRestartError,
-  ServerAbortRestartResult,
-  ServerRestartStatus,
-} from "./serverRestart.ts";
 import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
@@ -34,15 +25,11 @@ import {
   ChatGptHandoffInput,
   ChatGptHandoffState,
 } from "./providerSetup.ts";
-import {
-  ServerImportRestartHandoffInput,
-  ServerImportRestartHandoffError,
-} from "./serverRestartImport.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SecretSourceCheckResult } from "./settingsSecretValue.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
@@ -173,7 +160,7 @@ import {
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
 } from "./provider.ts";
-import { ProviderInstanceMutation } from "./providerInstance.ts";
+import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
   GuestShareCreateError,
   GuestShareCreateInput,
@@ -329,6 +316,7 @@ import {
   ServerConfig,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
+  ServerLifecycleStreamEvent,
   ServerRemoveKeybindingInput,
   ServerRemoveKeybindingResult,
   ServerProviderUpdatedPayload,
@@ -349,7 +337,6 @@ import {
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
-import { ServerLifecycleStreamEvent } from "./serverLifecycle.ts";
 import {
   HostResourcesSnapshot,
   ResourceTelemetryHistory,
@@ -515,10 +502,6 @@ export const WS_METHODS = {
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
-  serverGetRestartStatus: "server.getRestartStatus",
-  serverPrepareRestart: "server.prepareRestart",
-  serverAbortRestart: "server.abortRestart",
-  serverImportRestartHandoff: "server.importRestartHandoff",
   serverGetNpmRelease: "server.getNpmRelease",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
@@ -652,31 +635,9 @@ const WsServerRemoveKeybindingRpc = Rpc.make(WS_METHODS.serverRemoveKeybinding, 
 });
 
 const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
-  payload: ServerHandoffProbe,
+  payload: Schema.Struct({}),
   success: Schema.Struct({}),
   error: EnvironmentAuthorizationError,
-});
-
-const WsServerGetRestartStatusRpc = Rpc.make(WS_METHODS.serverGetRestartStatus, {
-  payload: ServerPrepareRestartInput,
-  success: ServerRestartStatus,
-  error: Schema.Union([ServerPrepareRestartError, EnvironmentAuthorizationError]),
-});
-const WsServerAbortRestartRpc = Rpc.make(WS_METHODS.serverAbortRestart, {
-  payload: ServerPrepareRestartInput,
-  success: ServerAbortRestartResult,
-  error: Schema.Union([ServerPrepareRestartError, EnvironmentAuthorizationError]),
-});
-const WsServerImportRestartHandoffRpc = Rpc.make(WS_METHODS.serverImportRestartHandoff, {
-  payload: ServerImportRestartHandoffInput,
-  success: ServerPrepareRestartResult,
-  error: Schema.Union([ServerImportRestartHandoffError, EnvironmentAuthorizationError]),
-});
-
-const WsServerPrepareRestartRpc = Rpc.make(WS_METHODS.serverPrepareRestart, {
-  payload: ServerPrepareRestartInput,
-  success: ServerPrepareRestartResult,
-  error: Schema.Union([ServerPrepareRestartError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
@@ -686,7 +647,40 @@ const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
 });
 
 export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, {
-  payload: ServerProviderRefreshInput,
+  payload: Schema.Struct({
+    instanceId: Schema.optional(ProviderInstanceId),
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    fresh: Schema.optional(Schema.Boolean),
+    /** Bypass model caches; explicit rediscovery may open sessions, background refreshes must not. */
+    refreshModels: Schema.optional(Schema.Boolean),
+    /**
+     * A model picker opened: refetch a model manifest older than a few minutes and probe providers
+     * only when it changed. The other fields are ignored and the config stream carries the result.
+     */
+    modelCatalogOnly: Schema.optional(Schema.Boolean),
+    /** Read secret references again; unlocking a vault can prompt on the host, so only explicit user refreshes ask. */
+    reloadSecrets: Schema.optional(Schema.Boolean),
+    /**
+     * Reply without snapshots, or with only the requested instance's cwd snapshot. Snapshots then
+     * reach the client only through these replies, so another client's scan shows on its next
+     * refresh, at most one TTL later.
+     */
+    workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
+    /** As on `subscribeServerConfig`: add /usage-limits to the replied snapshot. */
+    usageLimitsCommand: Schema.optional(Schema.Boolean),
+    /** As on `subscribeServerConfig`: a failed cwd scan replies with the machine catalog as a pending snapshot. */
+    providerCatalogsOnDemand: Schema.optional(Schema.Boolean),
+    /**
+     * Reply with no providers; the config stream carries the result. For callers that only wait
+     * for the refresh. Ignored with `instanceId` and `cwd`, whose reply is the snapshot.
+     */
+    omitProviders: Schema.optional(Schema.Boolean),
+    /**
+     * With `providerCatalogsOnDemand`, a cwd reply also carries the machine slash command names
+     * and skills with their `catalogDigest`. Sent by a client whose held lists are not current.
+     */
+    machineCatalog: Schema.optional(Schema.Boolean),
+  }),
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
 });
@@ -1966,7 +1960,7 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
 });
 
 const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecycle, {
-  payload: ServerHandoffSubscription,
+  payload: Schema.Struct({}),
   success: ServerLifecycleStreamEvent,
   error: EnvironmentAuthorizationError,
   stream: true,
@@ -2064,10 +2058,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
-  WsServerPrepareRestartRpc,
-  WsServerAbortRestartRpc,
-  WsServerGetRestartStatusRpc,
-  WsServerImportRestartHandoffRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,

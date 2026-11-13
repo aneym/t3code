@@ -18,10 +18,6 @@
     "./relay": {
       "types": "./src/relay.ts",
       "import": "./src/relay.ts"
-    },
-    "./serverLifecycle": {
-      "types": "./src/serverLifecycle.ts",
-      "import": "./src/serverLifecycle.ts"
     }
   },
   "scripts": {

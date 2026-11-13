@@ -12,7 +12,6 @@ import {
   OrchestrationV2DelegatedCompletionCohort,
   OrchestrationV2DelegatedCompletionRef,
 } from "./delegatedCompletionDelivery.ts";
-import { RestartRunState } from "./restartRunState.ts";
 import { QueueHoldState, QueueHoldStateJson } from "./queueHoldReason.ts";
 import { OrchestrationV2ProviderFailureClass } from "./providerFailureClass.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
@@ -723,7 +722,7 @@ export const OrchestrationV2Run = Schema.Struct({
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   checkpointId: Schema.NullOr(CheckpointId),
   contextHandoffId: Schema.NullOr(ContextHandoffId),
-  ...RestartRunState.fields,
+  restartContinuationOfRunId: Schema.optional(RunId),
   usageLimitContinuationOfRunId: Schema.optional(RunId),
   delegatedTaskId: Schema.optional(NodeId),
   workStartedAt: Schema.optional(Schema.DateTimeUtc),
@@ -1217,7 +1216,6 @@ export function latestProviderTurnForAttempt<
 }
 
 export const OrchestrationV2RuntimeRequest = Schema.Struct({
-  restartContinuationRunIds: Schema.optional(Schema.Array(RunId)),
   id: RuntimeRequestId,
   nodeId: NodeId,
   providerTurnId: Schema.NullOr(ProviderTurnId),
