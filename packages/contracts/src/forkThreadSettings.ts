@@ -17,6 +17,7 @@ export type DelegatedChildModel = typeof DelegatedChildModel.Type;
 export const ForkThreadSettingsFields = {
   retainAutomationPlacement: DefaultTrue,
   batchQueuedMessages: DefaultTrue,
+  queueSendAll: DefaultFalse,
   queuedMessagesAnswerPendingInput: DefaultTrue,
   quietThreadNotes: DefaultTrue,
   childCompletionNotes: DefaultTrue,
@@ -33,6 +34,7 @@ export const ForkThreadSettingsFields = {
 export const ForkThreadSettingsPatchFields = {
   retainAutomationPlacement: Schema.optionalKey(Schema.Boolean),
   batchQueuedMessages: Schema.optionalKey(Schema.Boolean),
+  queueSendAll: Schema.optionalKey(Schema.Boolean),
   queuedMessagesAnswerPendingInput: Schema.optionalKey(Schema.Boolean),
   quietThreadNotes: Schema.optionalKey(Schema.Boolean),
   childCompletionNotes: Schema.optionalKey(Schema.Boolean),

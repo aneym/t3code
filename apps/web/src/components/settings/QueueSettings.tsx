@@ -20,6 +20,13 @@ export function QueueSettings() {
             "When a turn ends, start up to 20 compatible queued messages on the thread together as one turn instead of one turn each.",
         },
         {
+          key: "queueSendAll",
+          searchId: "queue-send-all",
+          label: "Send all queued",
+          description:
+            "Show Send all on a thread's queue. While a turn runs it sends each queued message into it in order; on a stopped thread it starts the queue. The Rails embed always shows it.",
+        },
+        {
           key: "quietThreadNotes",
           searchId: "quiet-thread-notes",
           label: "Quiet thread notes",
@@ -57,6 +64,7 @@ export function QueueSettings() {
       ].map(({ key, searchId, label, description }) => {
         const settingKey = key as
           | "batchQueuedMessages"
+          | "queueSendAll"
           | "quietThreadNotes"
           | "childCompletionNotes"
           | "headlessSubagentStreaming"

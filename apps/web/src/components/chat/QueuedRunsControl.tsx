@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { QueuedEventRow } from "./QueuedEventRow";
 import { QueuedMessage } from "./QueuedMessage";
+import { SendAllQueuedButton } from "./SendAllQueuedButton";
 import { ArrowUpIcon, ChevronDownIcon, Clock3Icon, PencilIcon, XIcon } from "lucide-react";
 import { useId, useImperativeHandle, useRef, useState, type Ref } from "react";
 
@@ -224,6 +225,16 @@ export function QueuedRunsControl({
       <span className="sr-only" aria-live="polite">
         {queueLabel}
       </span>
+      {workflow ? (
+        <SendAllQueuedButton
+          environmentId={props.environmentId}
+          threadId={props.threadId}
+          workflow={workflow}
+          editing={props.editingRunId !== null}
+          busy={busyRunId !== null}
+          onBusyChange={setBusyRunId}
+        />
+      ) : null}
       {workflow?.isHeld ? (
         <p className="self-end pe-1 text-muted-foreground text-xs" data-queue-held="true">
           {heldByThreadId === null ? (

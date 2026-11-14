@@ -39,6 +39,7 @@ import { assetImageSource } from "../../lib/assetImageSource";
 import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edit";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ThreadQueueSendAll } from "./ThreadQueueSendAll";
 import {
   REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
   buildCancelQueuedRunCommand,
@@ -216,6 +217,18 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       contentContainerClassName="px-5 pb-6"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
     >
+      {workflow ? (
+        <ThreadQueueSendAll
+          target={target}
+          workflow={workflow}
+          editing={editing !== null}
+          busy={resuming || busyRunId !== null}
+          onBusyChange={(busy) => {
+            busyRef.current = busy;
+            setResuming(busy);
+          }}
+        />
+      ) : null}
       {workflow?.isHeld && queuedRuns.length > 0 ? (
         <View className="gap-2 py-3">
           <Text className="text-sm text-foreground-muted">Queue paused</Text>

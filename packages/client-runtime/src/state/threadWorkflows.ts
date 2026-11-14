@@ -233,6 +233,72 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
   };
 }
 
+export type SendAllQueuedPlan =
+  | { readonly kind: "start"; readonly description: string }
+  | {
+      readonly kind: "steer";
+      readonly runIds: ReadonlyArray<Run["id"]>;
+      readonly description: string;
+    };
+
+export interface SendAllQueuedActions {
+  readonly start: () => Promise<boolean>;
+  readonly steer: (queuedRunId: Run["id"], targetRunId: Run["id"]) => Promise<boolean>;
+  readonly activeRunId: () => Run["id"] | null;
+}
+
+function backgroundResultsNote(workflow: ThreadQueueWorkflowState): string {
+  const waiting = workflow.queuedRuns.filter((entry) => entry.isBackgroundResult).length;
+  if (waiting === 0) return "";
+  return `. ${waiting} background ${waiting === 1 ? "result stays" : "results stay"} waiting`;
+}
+
+export function planSendAllQueued(
+  workflow: ThreadQueueWorkflowState,
+  editing: boolean,
+): SendAllQueuedPlan | null {
+  if (editing) return null;
+  const sendable = workflow.queuedRuns.filter(
+    (entry) =>
+      !entry.isBackgroundResult &&
+      (entry.message === undefined || mcpEventOfMessage(entry.message) === null),
+  );
+  if (sendable.length < 2) return null;
+  if (workflow.canSendNow) {
+    return {
+      kind: "start",
+      description: `Start the queued messages now, in order${backgroundResultsNote(workflow)}`,
+    };
+  }
+  if (workflow.activeRun === null || !workflow.canPromoteToSteer) return null;
+  const firstFresh = sendable.findIndex(
+    (entry) => entry.run.freshContext === true && !workflow.promoteSkipsCompaction,
+  );
+  const runIds = (firstFresh < 0 ? sendable : sendable.slice(0, firstFresh)).map(
+    (entry) => entry.run.id,
+  );
+  if (runIds.length < 2) return null;
+  return {
+    kind: "steer",
+    runIds,
+    description: `Send each queued message into the current turn, in order${backgroundResultsNote(workflow)}`,
+  };
+}
+
+export async function sendAllQueued(
+  plan: SendAllQueuedPlan,
+  actions: SendAllQueuedActions,
+): Promise<void> {
+  if (plan.kind === "start") {
+    await actions.start();
+    return;
+  }
+  for (const runId of plan.runIds) {
+    const targetRunId = actions.activeRunId();
+    if (targetRunId === null || !(await actions.steer(runId, targetRunId))) return;
+  }
+}
+
 export function canForkProjectedAssistantItem(input: {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly capabilities?: OrchestrationV2ProviderCapabilities | undefined;
