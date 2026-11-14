@@ -30,6 +30,7 @@ import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
 import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
@@ -126,7 +127,15 @@ export function QueuedRunsControl({
   );
   const items = queuedRunRows(queued, optimisticQueued, queuedImageUrlById);
   const ownQueued = queued.filter((run) => mcpEventOfMessage(run.message) === null);
-  const offerSendAll = canSendAll && ownQueued.length >= 2;
+  const sendable = ownQueued.filter((entry) => !entry.isBackgroundResult);
+  const stepSendAll =
+    props.editingRunId === null &&
+    activeRun !== null &&
+    workflow?.canPromoteToSteer === true &&
+    sendable.length >= 2 &&
+    (workflow.sendAllCount ?? 0) < sendable.length;
+  const offerSendAll = stepSendAll || (canSendAll && ownQueued.length >= 2);
+  const currentActiveRunId = useStableCallback(() => activeRun?.id ?? null);
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
     if (
@@ -152,14 +161,27 @@ export function QueuedRunsControl({
     setBusyRunId(null);
   };
 
+  const steerEachQueued = async () => {
+    for (const entry of sendable) {
+      const targetRunId = currentActiveRunId();
+      if (targetRunId === null) return;
+      setBusyRunId(entry.run.id);
+      const sent = await promote({
+        environmentId: props.environmentId,
+        input: { threadId: props.threadId, queuedRunId: entry.run.id, targetRunId },
+      });
+      if (sent._tag === "Failure") return;
+    }
+  };
+
   const sendAllMessages = async () => {
     if (!queueSendAll || !offerSendAll || steerInFlightRef.current || busyRunId !== null) return;
     steerInFlightRef.current = true;
     setBusyRunId(queued[0]!.run.id);
-    await sendAll({
-      environmentId: props.environmentId,
-      input: { threadId: props.threadId },
-    }).finally(() => {
+    const release = stepSendAll
+      ? steerEachQueued()
+      : sendAll({ environmentId: props.environmentId, input: { threadId: props.threadId } });
+    await release.finally(() => {
       steerInFlightRef.current = false;
       setBusyRunId(null);
     });
@@ -247,7 +269,11 @@ export function QueuedRunsControl({
                 </Button>
               }
             />
-            <TooltipPopup>{describeSendAllQueued(workflow)}</TooltipPopup>
+            <TooltipPopup>
+              {stepSendAll
+                ? "Send each queued message into the current turn, in order"
+                : describeSendAllQueued(workflow)}
+            </TooltipPopup>
           </Tooltip>
         </div>
       ) : null}

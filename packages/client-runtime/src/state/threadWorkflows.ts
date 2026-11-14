@@ -44,6 +44,7 @@ export interface ThreadQueueWorkflowState {
   readonly promoteSkipsCompaction: boolean;
   readonly canSendNow: boolean;
   readonly canSendAll?: boolean;
+  readonly sendAllCount?: number;
 }
 
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
@@ -223,6 +224,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
   return {
     activeRun,
     queuedRuns,
+    sendAllCount: eligible.length,
     canSendAll:
       eligible.length >= 2 &&
       (canSendNow || canPromoteToSteer) &&
