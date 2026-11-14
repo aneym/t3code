@@ -324,6 +324,17 @@ const make = Effect.gen(function* () {
               },
             };
           };
+          const projectElsewhere = [...matching].some(
+            ([environmentId, mapped]) =>
+              environmentId !== scope.environmentId && mapped === projectId,
+          );
+          if (
+            input.projectId !== undefined &&
+            matching.has(scope.environmentId) &&
+            weightOf(scope.environmentId) > 0 &&
+            !projectElsewhere
+          )
+            return decided(scope.environmentId, "pinned", "Pinned by project.");
           const pinned = current.agentPlacementPinnedEnvironmentId;
           if (pinned !== null && matching.has(pinned))
             return decided(pinned, "pinned", "Pinned to this environment in settings.");
