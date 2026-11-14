@@ -31,6 +31,11 @@ interface ChildRow {
   readonly root_project_id: string | null;
 }
 
+interface ActiveChild {
+  readonly child_thread_id: string;
+  readonly root_project_id: string | null;
+}
+
 type HeldRun = Pick<OrchestrationV2Run, "id" | "status" | "childStartHeld">;
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -133,6 +138,20 @@ const make = Effect.gen(function* () {
     ORDER BY r.requested_at, r.run_id
   `;
 
+  const readActiveChildren = sql<ActiveChild>`
+    SELECT s.child_thread_id, root.project_id AS root_project_id
+    FROM orchestration_v2_projection_nodes n
+      INDEXED BY orchestration_v2_projection_nodes_live_idx
+    JOIN orchestration_v2_projection_subagents s ON s.subagent_id = n.node_id
+    JOIN orchestration_v2_projection_threads t ON t.thread_id = s.child_thread_id
+    LEFT JOIN orchestration_v2_projection_threads root
+      ON root.thread_id = COALESCE(json_extract(t.payload_json, '$.lineage.rootThreadId'), t.thread_id)
+    WHERE n.status IN ('pending', 'starting', 'running', 'waiting')
+      AND n.kind = 'subagent'
+      AND s.origin = 'app_owned'
+      AND t.deleted_at IS NULL
+  `;
+
   const heldRow = (row: ChildRow) =>
     row.status === "preparing" && row.held === 1 && !released.has(row.run_id);
 
@@ -155,16 +174,32 @@ const make = Effect.gen(function* () {
 
   const tally = Effect.fn("DelegatedChildStartGate.tally")(function* (
     rows: ReadonlyArray<ChildRow>,
+    activeChildren: ReadonlyArray<ActiveChild>,
     limits: ReadonlyMap<string, GroupLimit>,
   ) {
     const running = new Map<string, number>();
     const queued = new Map<string, number>();
     const groups = new Map<string, ReadonlyArray<string>>();
+    const heldThreads = new Set<string>();
+    const activeThreads = new Map<string, string | null>();
     for (const row of rows) {
       const rowGroups = yield* groupsOf(row.root_project_id, limits);
       groups.set(row.run_id, rowGroups);
-      const counts = heldRow(row) ? queued : running;
-      for (const group of rowGroups) counts.set(group, (counts.get(group) ?? 0) + 1);
+      if (heldRow(row)) {
+        heldThreads.add(row.thread_id);
+        for (const group of rowGroups) queued.set(group, (queued.get(group) ?? 0) + 1);
+      } else activeThreads.set(row.thread_id, row.root_project_id);
+    }
+    for (const child of activeChildren) {
+      if (!heldThreads.has(child.child_thread_id)) {
+        activeThreads.set(child.child_thread_id, child.root_project_id);
+      }
+    }
+    for (const [threadId, rootProjectId] of activeThreads) {
+      if (heldThreads.has(threadId)) continue;
+      for (const group of yield* groupsOf(rootProjectId, limits)) {
+        running.set(group, (running.get(group) ?? 0) + 1);
+      }
     }
     return { running, queued, groups };
   });
@@ -191,7 +226,8 @@ const make = Effect.gen(function* () {
         const groups = yield* groupsOf(rootProject, limits);
         if (groups.length === 0) return yield* dispatch(false);
         const rows = yield* readChildren.pipe(Effect.orElseSucceed(() => []));
-        const { running, queued } = yield* tally(rows, limits);
+        const activeChildren = yield* readActiveChildren.pipe(Effect.orElseSucceed(() => []));
+        const { running, queued } = yield* tally(rows, activeChildren, limits);
         const now = yield* Clock.currentTimeMillis;
         const held = groups.some(
           (group) => (queued.get(group) ?? 0) > 0 || !allows(limits, group, running, now),
@@ -224,7 +260,8 @@ const make = Effect.gen(function* () {
           return;
         }
         const limits = yield* readLimits;
-        const { running, groups } = yield* tally(rows, limits);
+        const activeChildren = yield* readActiveChildren;
+        const { running, groups } = yield* tally(rows, activeChildren, limits);
         const now = yield* Clock.currentTimeMillis;
         const blocked = new Set<string>();
         for (const row of held) {
