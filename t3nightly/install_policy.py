@@ -64,19 +64,23 @@ def inside(windows, moment):
     return any(start <= minute < end if start < end else minute >= start or minute < end for start, end, _ in windows)
 
 
-def window(version, *, reason="", host=None, sandbox=False, spec=""):
+def window(version, *, reason="", override=False, host=None, sandbox=False, spec=""):
     moment = datetime.now(timezone.utc)
     reason = reason.strip()
     if any(char in reason for char in "\r\n\x00"):
         raise ValueError("--override-reason must be a single line")
+    if override and not reason:
+        raise ValueError("--override-window needs --override-reason '<text>' on the same run")
     host = host or platform.node().split(".")[0]
     windows = parse_windows(spec or ",".join(HOST_WINDOWS.get(host, DEFAULT_WINDOWS)))
     allowed = inside(windows, moment)
     receipt = {"at": moment.isoformat(), "host": host, "version": version, "windowsUtc": [label for _, _, label in windows], "windowSource": "flag" if spec else "host-default",
-               "inWindow": allowed, "isolated": sandbox, "overrideReason": reason or None, "allowed": sandbox or allowed or bool(reason)}
+               "inWindow": allowed, "isolated": sandbox, "overrideRequested": bool(override), "overrideReason": reason if override else None,
+               "reasonNotOverride": reason if reason and not override else None, "allowed": sandbox or allowed or bool(override)}
     if not receipt["allowed"]:
-        raise ValueError(f"live install on {host} outside its {', '.join(receipt['windowsUtc'])} UTC window; requires --override-reason '<text>'")
-    if reason and not sandbox:
+        ignored = "; the --override-reason given is not an override without --override-window" if reason else ""
+        raise ValueError(f"live install on {host} outside its {', '.join(receipt['windowsUtc'])} UTC window; requires --override-window --override-reason '<text>' on this run{ignored}")
+    if override and not sandbox:
         print(json.dumps({"step": "install-window-override", **receipt}), flush=True)
         STATE.parent.mkdir(parents=True, exist_ok=True)
         line = "\n- Install-window override: " + json.dumps(receipt, separators=(",", ":")) + "\n"
@@ -100,7 +104,7 @@ def enforce(args):
     state = Path(args.state_dir).expanduser()
     state.mkdir(parents=True, exist_ok=True)
     try:
-        policy = window(args.version, reason=args.override_reason, sandbox=sandbox, host=getattr(args, "receipt_host", None), spec=getattr(args, "install_window", ""))
+        policy = window(args.version, reason=args.override_reason, override=getattr(args, "override_window", False), sandbox=sandbox, host=getattr(args, "receipt_host", None), spec=getattr(args, "install_window", ""))
     except ValueError as error:
         (state / "install-window.json").write_text(json.dumps({"allowed": False, "error": str(error), "version": args.version}) + "\n")
         raise
@@ -130,7 +134,7 @@ def recheck(run, *, recovery=False):
         return
     age = (datetime.now(timezone.utc) - admitted).total_seconds()
     if not 0 <= age <= MAX_ADMISSION_AGE_S:
-        raise ValueError("install admission expired; re-run the installer inside a window or with --override-reason")
+        raise ValueError("install admission expired; re-run the installer inside a window or with --override-window --override-reason")
 
 
 def begin_recovery(run):

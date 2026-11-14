@@ -21,12 +21,13 @@ def main():
     parser.add_argument("--connector-artifact", default="")
     parser.add_argument("--rpc-tree", default="")
     parser.add_argument("--override-reason", default="")
+    parser.add_argument("--override-window", action="store_true", help="install outside the window on this run; needs --override-reason")
     parser.add_argument("--receipt", type=Path, required=True)
     args = parser.parse_args()
     home = args.home.expanduser().resolve()
     events = []
     try:
-        policy = window(args.version, reason=args.override_reason, sandbox=isolated(home, args.port, args.service_label))
+        policy = window(args.version, reason=args.override_reason, override=args.override_window, sandbox=isolated(home, args.port, args.service_label))
         run = SimpleNamespace(args=args, home=home, service_label=args.service_label, report={"installWindow": policy}, cutover_admitted=True, step=lambda name, **fields: events.append({"step": name, **fields}))
         if args.action == "install":
             if not args.connector_artifact:

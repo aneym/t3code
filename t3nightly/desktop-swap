@@ -23,6 +23,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--fast-evidence", type=Path, help="fast-release run whose Studio install receipt replaces the visual verdict")
     parser.add_argument("--override-reason", default="")
+    parser.add_argument("--override-window", action="store_true", help="install outside the window on this run; needs --override-reason")
     args = parser.parse_args()
     dest = Path("/Applications/T3 Dev.app")
     try:
@@ -42,7 +43,7 @@ def main():
                 return
             from t3nightly.install_policy import window
 
-            policy = window(version, reason=args.override_reason)
+            policy = window(version, reason=args.override_reason, override=args.override_window)
             receipt = Path.home() / ".t3nightly" / f"desktop-window-{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}.json"
             receipt.parent.mkdir(parents=True, exist_ok=True)
             receipt.write_text(json.dumps(policy) + "\n")

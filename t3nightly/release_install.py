@@ -17,7 +17,7 @@ class InstallCommand:
 
 
 def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, artifact_manifest,
-                          receipt_host, install_receipt, state_dir, chat_project, override_reason="", launcher_artifact=None,
+                          receipt_host, install_receipt, state_dir, chat_project, override_reason="", override_window=False, launcher_artifact=None,
                           connector_artifact=None, home=None, drain_s=None, compact_db=None,
                           install_window="", protected_threads=None, protected_wait_s=None, land_locks=None, land_wait_s=None):
     home = Path.home() if home is None else Path(home)
@@ -31,6 +31,8 @@ def build_install_command(*, host, version, tools, rpc_tree, assets, manifest, a
              "--manifest", str(manifest), "--artifact-manifest", str(artifact_manifest),
              "--receipt-host", receipt_host, "--install-receipt", str(install_receipt), "--state-dir", str(state),
              "--chat-project", str(chat_project), "--load-max", "64", "--health-s", "300", "--override-reason", override_reason]
+    if override_window:
+        words.append("--override-window")
     if host != "studio":
         words.extend(["--service-label", "t3code.service"])
     if host == "ax42":
