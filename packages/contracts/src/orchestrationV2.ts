@@ -725,6 +725,7 @@ export const OrchestrationV2Run = Schema.Struct({
   restartContinuationOfRunId: Schema.optional(RunId),
   usageLimitContinuationOfRunId: Schema.optional(RunId),
   delegatedTaskId: Schema.optional(NodeId),
+  childStartHeld: Schema.optional(Schema.Boolean),
   workStartedAt: Schema.optional(Schema.DateTimeUtc),
   restartCancelledBackgroundWork: Schema.optional(
     Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
@@ -3419,6 +3420,7 @@ export const OrchestrationV2Command = Schema.Union([
     projectId: Schema.optional(ProjectId),
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
     ...AwaitedFields,
+    startHeld: Schema.optional(Schema.Boolean),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({

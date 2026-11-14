@@ -28,6 +28,7 @@ export const ForkThreadSettingsFields = {
   delegatedChildModel: Schema.NullOr(DelegatedChildModel).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  childStart: Schema.Unknown.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 };
 
 export const ForkThreadSettingsPatchFields = {
@@ -42,4 +43,5 @@ export const ForkThreadSettingsPatchFields = {
   mcpEventsCallbackBaseUrl: Schema.optionalKey(Schema.String),
   peerLinkRenewalEnabled: Schema.optionalKey(Schema.Boolean),
   delegatedChildModel: Schema.optionalKey(Schema.NullOr(DelegatedChildModel)),
+  childStart: Schema.optionalKey(Schema.Unknown),
 };

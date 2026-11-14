@@ -109,6 +109,7 @@ import { delegatedTaskResultRun, runOutcome } from "../orchestration-v2/RestartB
 import { stableCommandId, stableMessageId, stableThreadId } from "./stableIds.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as DelegatedChildStartGate from "../orchestration-v2/DelegatedChildStartGate.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { resolveDefaultBaseRef } from "../vcs/defaultBaseRef.ts";
 import { isSnoozed } from "../orchestration-v2/AutoSettlementPolicy.ts";
@@ -959,6 +960,9 @@ const make = Effect.gen(function* () {
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
+  const childStartGate = Option.getOrUndefined(
+    yield* Effect.serviceOption(DelegatedChildStartGate.DelegatedChildStartGate),
+  );
 
   const requireProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -1487,7 +1491,10 @@ const make = Effect.gen(function* () {
       ),
       childRunId: childRun?.id ?? null,
       childNodeId: task.id,
-      status,
+      status:
+        status === "running" && childRun !== undefined && childStartGate?.isHeld(childRun)
+          ? "queued"
+          : status,
       workState,
       hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
       providerInstanceId: modelSelection.instanceId,
@@ -2341,15 +2348,16 @@ const make = Effect.gen(function* () {
         parent.thread.interactionMode,
         input.interactionMode,
       );
-      const result = yield* threadManagement
-        .dispatch({
+      const parentNodeId = parentRun.rootNodeId;
+      const request = (held: boolean) =>
+        threadManagement.dispatch({
           type: "delegated_task.request",
           createdBy: "agent",
           creationSource: "mcp",
           commandId,
           parentThreadId: scope.thread.threadId,
           parentRunId: parentRun.id,
-          parentNodeId: parentRun.rootNodeId,
+          parentNodeId,
           task: taskPrompt(input, settingsNow.childCompletionNotes),
           ...(input.title === undefined ? {} : { title: input.title }),
           modelSelection: target.modelSelection,
@@ -2361,17 +2369,22 @@ const make = Effect.gen(function* () {
           // gives up the wait (timeout, cancelled call) and upgrades the wake.
           completionWake: input.mode === "wait" ? "settled_only" : "always",
           ...awaitedFor(input),
-        })
-        .pipe(
-          Effect.mapError((error) =>
-            error._tag === "ThreadManagementProviderInstanceDisabledError"
-              ? threadManagementFailure(error)
-              : failure(
-                  "orchestration_error",
-                  `Unable to create delegated task: ${errorMessage(error)}`,
-                ),
-          ),
-        );
+          ...(held ? { startHeld: true } : {}),
+        });
+      const result = yield* (
+        childStartGate === undefined || isRetryOfAcceptedDelegation
+          ? request(false)
+          : childStartGate.admit(scope.thread.threadId, request)
+      ).pipe(
+        Effect.mapError((error) =>
+          error._tag === "ThreadManagementProviderInstanceDisabledError"
+            ? threadManagementFailure(error)
+            : failure(
+                "orchestration_error",
+                `Unable to create delegated task: ${errorMessage(error)}`,
+              ),
+        ),
+      );
       const taskEvent = result.storedEvents.find(
         (stored) =>
           stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
@@ -2390,7 +2403,10 @@ const make = Effect.gen(function* () {
       if (
         childThreadId !== null &&
         childRunEvent?.event.type === "run.created" &&
-        childRunEvent.event.payload.workspacePreparation !== undefined
+        childRunEvent.event.payload.workspacePreparation !== undefined &&
+        !result.storedEvents.some(
+          ({ event }) => event.type === "run.updated" && event.payload.childStartHeld === true,
+        )
       ) {
         yield* threadLaunch.prepareRun({
           commandId,

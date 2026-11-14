@@ -3,6 +3,7 @@ import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as AskOnlyForkArchiver from "./AskOnlyForkArchiver.ts";
 import * as BlockedQueueWakeWorker from "./BlockedQueueWakeWorker.ts";
+import * as DelegatedChildStartGate from "./DelegatedChildStartGate.ts";
 import * as UsageLimitRoomWorker from "./UsageLimitRoomWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -424,6 +425,11 @@ export const layerProduction = Layer.mergeAll(
     Layer.provide(Layer.mergeAll(layerProjectionStore, layerThreadManagementProvided)),
   ),
   UsageLimitRoomWorker.layer.pipe(Layer.provide(layerThreadManagementProvided)),
+  DelegatedChildStartGate.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(layerProjectService, layerThreadManagementProvided, layerThreadLaunchProvided),
+    ),
+  ),
   AskOnlyForkArchiver.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
