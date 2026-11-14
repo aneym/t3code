@@ -4787,6 +4787,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* emitProviderEvent({
                 type: "turn_item.updated",
                 driver: CODEX_PROVIDER,
+                sessionScoped: true,
                 turnItem: updated,
               });
             }
