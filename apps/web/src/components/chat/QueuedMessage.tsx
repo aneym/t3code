@@ -1,7 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { ChatFileAttachment, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { filePreviewKind } from "@t3tools/shared/filePreview";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { Link } from "@tanstack/react-router";
 import { CalendarClockIcon, MessagesSquareIcon } from "lucide-react";
@@ -12,12 +13,14 @@ import { isEmbedPersonMessage } from "../../embed/embedQuietMessages";
 import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { cn } from "~/lib/utils";
+import { formatDayAwareTimestamp } from "../../timestampFormat";
 import { InlineButton } from "../ui/button";
 import { GuestMessageName } from "./guestMessageStyle";
 import type { QueuedRowThumbnail } from "./queuedRunRows";
 import { TimelineRowTimestamp } from "./TimelineRowParts";
 import { FoldedMessageHeader, useScheduledTaskTitle } from "./TimelineUserMessageRow";
 import { AppSentNote } from "./AppSentNote";
+import { UserMessageAudio } from "./UserMessageAudio";
 
 type QueuedRunMessage = Parameters<typeof deriveThreadQueueWorkflowState>[0]["messages"][number];
 
@@ -30,6 +33,7 @@ export function QueuedMessage(props: {
   readonly isEditing: boolean;
   readonly timestampFormat: TimestampFormat;
   readonly onOpenThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
+  readonly onFileOpen: (file: ChatFileAttachment) => void;
   readonly children: ReactNode;
 }) {
   const presentation = props.message ? resolveUserMessagePresentation(props.message) : null;
@@ -63,6 +67,15 @@ export function QueuedMessage(props: {
           }
         : null;
   const bodyVisible = fold === null || expanded;
+  const voice = presentation?.voice;
+  const attachments = props.message?.attachments ?? [];
+  const audio = voice
+    ? attachments.filter(
+        (file): file is ChatFileAttachment =>
+          file.type === "file" && filePreviewKind(file) === "audio",
+      )
+    : [];
+  const audioOnly = audio.length > 0 && audio.length === attachments.length;
 
   return (
     <>
@@ -119,8 +132,21 @@ export function QueuedMessage(props: {
                 ))}
               </span>
             ) : null}
+            {props.message && audio.length > 0 ? (
+              <UserMessageAudio
+                files={audio}
+                audioOnly={audioOnly}
+                voice={voice}
+                time={formatDayAwareTimestamp(
+                  DateTime.formatIso(props.message.createdAt),
+                  props.timestampFormat,
+                )}
+                environmentId={props.environmentId}
+                onOpen={props.onFileOpen}
+              />
+            ) : null}
             {/* In full, like a sent turn: a queued message is read before it is sent. */}
-            {props.previewText ? (
+            {props.previewText && !audioOnly ? (
               <p className="whitespace-pre-wrap wrap-anywhere">{props.previewText}</p>
             ) : null}
           </div>

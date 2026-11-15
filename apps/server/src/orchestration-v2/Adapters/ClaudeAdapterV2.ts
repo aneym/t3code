@@ -340,7 +340,6 @@ export function claudeProviderTurnTokenUsage(
 
 type ClaudeMessageUsage = Parameters<typeof claudeProviderTurnTokenUsage>[0];
 
-// message_delta usage is per-message cumulative; null or absent fields retain message_start values and zeros replace them.
 function mergeClaudeStreamUsage(
   current: ClaudeMessageUsage,
   delta: {
@@ -887,7 +886,6 @@ const CLAUDE_MCP_APP_CAPABILITIES = [
   "mcp_read_resource_v1",
   "mcp_call_result_not_for_model_v1",
 ] as const;
-// Captured inline, unlike Codex's shared app-server: a slow read delays only this session's stream, and only this long.
 const CLAUDE_MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
 
 function claudeSupportsMcpApps(capabilities: ReadonlySet<string>): boolean {
@@ -2335,7 +2333,6 @@ function textFromClaudeContent(content: SDKAssistantMessage["message"]["content"
   return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 }
 
-// Claude 5.1+ emits at most one pre-tool text block as thinking; treat only a second consecutive thinking block as text.
 function claudeWritesUpdatesAsThinking(model: string): boolean {
   const match = /claude-[a-z]+-(\d+)(?:-(\d{1,2}))?(?!\d)/u.exec(model);
   if (match === null) return false;
@@ -4642,6 +4639,7 @@ interface ActiveClaudeTurnContext {
       readonly messageId: MessageId;
       readonly text: string;
       readonly liveQuery: ClaudeLiveQueryContext;
+      readonly atBoundary: boolean;
     }
   >;
   // Claude may settle a turn with a result that echoes only a steer's uuid.
@@ -11053,7 +11051,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const completedAt = yield* DateTime.now;
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
-            if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
+            if (
+              !interrupted &&
+              wasSteered &&
+              (isClaudeActiveSteeringAbortResult(message) ||
+                (terminalStatusFromResult(message) === "completed" &&
+                  [...context.pendingSteers.values()].some((steer) => steer.atBoundary)))
+            ) {
               const cutOffReply = context.assistant.lastReply;
               context.assistant.lastReply = null;
               if (message.terminal_reason === "aborted_streaming") {
@@ -12877,7 +12881,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ).promptEffort,
               ),
               attachments: turnInput.message.attachments,
-              priority: "now",
+              priority: turnInput.atBoundary ? "next" : "now",
               uuid: steerUuid,
               attachmentsDir,
               fileSystem,
@@ -12912,6 +12916,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               messageId,
               text: turnInput.message.text,
               liveQuery: existing,
+              atBoundary: turnInput.atBoundary === true,
             });
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);

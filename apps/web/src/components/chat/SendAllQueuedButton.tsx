@@ -47,7 +47,7 @@ export function SendAllQueuedButton(props: {
         (
           await promote({
             environmentId: props.environmentId,
-            input: { ...input, queuedRunId, targetRunId },
+            input: { ...input, queuedRunId, targetRunId, atBoundary: true },
           })
         )._tag === "Success",
       activeRunId,

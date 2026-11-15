@@ -53,7 +53,7 @@ export function ThreadQueueSendAll(props: {
               (
                 await promote({
                   environmentId,
-                  input: { ...input, queuedRunId, targetRunId },
+                  input: { ...input, queuedRunId, targetRunId, atBoundary: true },
                 })
               )._tag === "Success",
             activeRunId: () => activeRunId.current,

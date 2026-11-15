@@ -43,6 +43,7 @@ import {
 } from "@t3tools/contracts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
+import { latestUnheldRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -484,7 +485,7 @@ export function isTerminalRunStatus(
 export function latestRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | undefined {
-  return projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
+  return latestUnheldRun(projection.runs) ?? undefined;
 }
 
 function latestRestartContinuation(
@@ -1081,7 +1082,6 @@ const make = Effect.gen(function* () {
             providerSessionId,
             ownProviderThreadIds,
             throughRunOrdinal,
-            // A promoted follow-up may not have marked its turn busy yet.
             keepIf: laterRunActive(providerSessionId),
             reason: "manual_shutdown",
             detail: FORCE_STOP_REASON,

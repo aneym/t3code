@@ -3018,22 +3018,21 @@ export default function ChatView(props: ChatViewProps) {
   });
   const queuedRunsControl =
     isServerThread && activeThread ? (
-      <>
-        <QueuedRunsControl
-          ref={queuedRunsControlRef}
-          environmentId={activeThread.environmentId}
-          threadId={activeThread.id}
-          optimisticMessages={optimisticUserMessages}
-          editingRunId={queuedRunEdit.editingRunId}
-          editBlockedReason={queuedRunEditBlockedReason({
-            openQuestionCount: pendingUserInputs.length,
-          })}
-          onEditQueuedRun={queuedRunEdit.beginEdit}
-          onCancelEdit={queuedRunEdit.cancelEdit}
-          timestampFormat={timestampFormat}
-          onOpenThread={onOpenRelatedThreadStable}
-        />
-      </>
+      <QueuedRunsControl
+        ref={queuedRunsControlRef}
+        environmentId={activeThread.environmentId}
+        threadId={activeThread.id}
+        optimisticMessages={optimisticUserMessages}
+        editingRunId={queuedRunEdit.editingRunId}
+        editBlockedReason={queuedRunEditBlockedReason({
+          openQuestionCount: pendingUserInputs.length,
+        })}
+        onEditQueuedRun={queuedRunEdit.beginEdit}
+        onCancelEdit={queuedRunEdit.cancelEdit}
+        timestampFormat={timestampFormat}
+        onOpenThread={onOpenRelatedThreadStable}
+        onFileOpen={openFileAttachmentStable}
+      />
     ) : null;
   const resendAfterWorkLocally = () => {
     setWorkLocallyResendDraftId(null);
