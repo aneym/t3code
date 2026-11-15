@@ -128,6 +128,12 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
+import {
+  composerSendGateRefusal,
+  holdComposerAnnotation,
+  refuseComposerSend,
+  THREAD_NOT_LOADED,
+} from "./composerSendRefusal";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -425,52 +431,38 @@ export function useComposerSend(input: ComposerSendInput) {
       Boolean(activePendingProgress) && sendCtx?.answeringPendingUserInput !== false;
     const startsSideChat =
       onSideChat !== undefined && sideChatCommand !== null && sideChatDisabledReason === null;
+    const gateRefusal = composerSendGateRefusal({
+      canOperate: readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
+      threadReady: activeThread !== undefined,
+      reverting: isRevertingCheckpoint,
+      settingsHydrated: clientSettingsHydrated,
+      messagesLoading: threadDetailLoading,
+      environmentChanging: readPendingEnvironmentChange() !== null,
+      feedbackUploading: feedbackUploadsInFlightRef.current.has(routeThreadKey),
+    });
     // An answer responds to the open request rather than starting a turn, so the new-message
     // guards below (loading, busy, provider) must not swallow it.
     if (answeringQuestion && !startsSideChat && !directAnnotation) {
-      if (readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) && activeThread) {
-        onAdvanceActivePendingUserInput();
-      }
+      if (gateRefusal !== null && (!activeThread || gateRefusal[0] === "no-operate-scope")) {
+        refuseComposerSend(gateRefusal);
+      } else onAdvanceActivePendingUserInput();
       return;
     }
-
-    const notifyDirectAnnotationAttached = () => {
-      if (!directAnnotation) return;
-      toastManager.add(
-        stackedThreadToast({
-          type: "info",
-          title: "Annotation attached to draft",
-          description: "Sending is unavailable right now. Finish the current action, then send.",
-        }),
-      );
-    };
-    if (
-      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
-      !activeThread ||
-      isRevertingCheckpoint ||
-      !clientSettingsHydrated ||
-      threadDetailLoading ||
-      readPendingEnvironmentChange() !== null ||
-      feedbackUploadsInFlightRef.current.has(routeThreadKey)
-    ) {
-      notifyDirectAnnotationAttached();
+    const annotation = directAnnotation !== undefined;
+    if (gateRefusal !== null || !activeThread) {
+      refuseComposerSend(gateRefusal ?? THREAD_NOT_LOADED, annotation);
       return;
     }
     if ((isSendBusy && !sendQueuesBehindSetup) || sendInFlightRef.current) {
-      if (directAnnotation) {
-        notifyDirectAnnotationAttached();
-      } else {
-        toastManager.add(
-          stackedThreadToast({
-            type: "info",
-            title: "Still sending your previous message.",
-            description: "Send again once it goes through or fails.",
-          }),
-        );
-      }
+      const busy = ["send-in-flight", "Still sending your previous message."] as const;
+      refuseComposerSend(
+        [...busy, "Send again once it goes through or fails.", "info"],
+        annotation,
+      );
       return;
     }
     if (needsLoadBalancing) {
+      console.warn("[composer-send] not sent: no-machine-picked");
       const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
       toastManager.add({
         type: "warning",
@@ -496,6 +488,7 @@ export function useComposerSend(input: ComposerSendInput) {
         const held = { routeThreadKey, thread, promptAtSend, composerDraftTarget };
         return holdOrSendThroughHost({ ...held, promptRef, composerRef });
       }
+      console.warn("[composer-send] not sent: environment-unavailable");
       const toastSlot = environmentUnavailableSendToastSlotRef.current;
       environmentUnavailableSendToastSlotRef.current =
         (toastSlot + 1) % ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE;
@@ -517,13 +510,11 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     // Where side chats are unavailable, `/side` text can still be a literal answer.
     if (sideChatDisabledReason !== null && sideChatCommand && !answeringQuestion) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "warning",
-          title: "Side chat not started",
-          description: sideChatDisabledReason,
-        }),
-      );
+      refuseComposerSend([
+        "side-chat-unavailable",
+        "Side chat not started",
+        sideChatDisabledReason,
+      ]);
       return;
     }
     if (onSideChat && sendCtx && sideChatCommand && sideChatDisabledReason === null) {
@@ -537,13 +528,11 @@ export function useComposerSend(input: ComposerSendInput) {
         sendCtx.environmentContexts.length > 0 ||
         useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo
       ) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "Side chats take text only",
-            description: "Remove the attachments and context, then send it again.",
-          }),
-        );
+        const textOnly = ["side-chat-attachments", "Side chats take text only"] as const;
+        refuseComposerSend([
+          ...textOnly,
+          "Remove the attachments and context, then send it again.",
+        ]);
         return;
       }
       const started = await onSideChat(sideChatCommand.prompt);
@@ -560,15 +549,13 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     if (answeringQuestion) {
-      if (directAnnotation) {
-        notifyDirectAnnotationAttached();
-        return;
-      }
+      if (directAnnotation) return holdComposerAnnotation("answering-question");
       onAdvanceActivePendingUserInput();
       return;
     }
     if (!sendCtx?.providerAvailable) {
-      notifyDirectAnnotationAttached();
+      const noModel = ["no-provider", "Not sent: no model available"] as const;
+      refuseComposerSend([...noModel, "Choose an available model, then send again."], annotation);
       return;
     }
     const multipleModelSelections = sendCtx.multipleModelSelections;
@@ -593,14 +580,11 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     if (multipleModelBlock === "needs-new-git-thread") {
-      toastManager.add(
-        stackedThreadToast({
-          type: "warning",
-          title: "Choose models and a base branch",
-          description:
-            "Multiple models need a new thread in a Git project. Each gets its own worktree.",
-        }),
-      );
+      refuseComposerSend([
+        "multiple-models-need-git-thread",
+        "Choose models and a base branch",
+        "Multiple models need a new thread in a Git project. Each gets its own worktree.",
+      ]);
       return;
     }
     const {
@@ -649,13 +633,11 @@ export function useComposerSend(input: ComposerSendInput) {
       const owner =
         readEnvironmentPresentation(strandedThread.environmentId)?.entry.target.label ??
         "its machine";
-      toastManager.add(
-        stackedThreadToast({
-          type: "warning",
-          title: "Attached thread is on another machine",
-          description: `This machine's agent can't read "${strandedThread.title}". Remove it, or switch back to ${owner} to send.`,
-        }),
-      );
+      refuseComposerSend([
+        "attached-thread-elsewhere",
+        "Attached thread is on another machine",
+        `This machine's agent can't read "${strandedThread.title}". Remove it, or switch back to ${owner} to send.`,
+      ]);
       return;
     }
     if (queuedRunEdit.isEditing) {
@@ -705,13 +687,8 @@ export function useComposerSend(input: ComposerSendInput) {
         : null;
     if (feedbackCommand && multipleModelSelections === null) {
       if (!isServerThread || activeThread.activeProviderThreadId === null) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "Start a Codex thread first",
-            description: "Send a message before you submit feedback.",
-          }),
-        );
+        const codexFirst = ["feedback-before-codex-thread", "Start a Codex thread first"] as const;
+        refuseComposerSend([...codexFirst, "Send a message before you submit feedback."]);
         return;
       }
       feedbackUploadsInFlightRef.current.add(routeThreadKey);
@@ -773,23 +750,15 @@ export function useComposerSend(input: ComposerSendInput) {
           expiredTerminalContextCount,
           "empty",
         );
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: toastCopy.title,
-            description: toastCopy.description,
-          }),
-        );
+        refuseComposerSend(["expired-terminal-context", toastCopy.title, toastCopy.description]);
       }
       return;
     }
     if (!activeProject) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "warning",
-          title: "Choose a project first",
-          description: "This draft no longer points to an available project.",
-        }),
+      refuseComposerSend(
+        isServerThread
+          ? ["no-project", "Not sent: project not loaded", "Reload the chat, then send again."]
+          : ["no-project", "Choose a project first", "This draft no longer points to a project."],
       );
       return;
     }

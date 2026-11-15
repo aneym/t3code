@@ -57,6 +57,9 @@ export function makeChatShellFilter(threads: ReadonlySet<ThreadId>): ChatShellFi
                 .filter((project) => projectIds.has(project.id))
                 .map(chatProject),
             },
+            ...(item.resolvedRepositoryIdentityRoots === undefined
+              ? {}
+              : { resolvedRepositoryIdentityRoots: [] }),
           };
         }
         case "project.updated":

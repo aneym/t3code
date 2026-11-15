@@ -17,6 +17,7 @@ import { environmentShell } from "../../state/shell";
 import { environmentThreads } from "../../state/threads";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { ConfirmDialogHost } from "../ConfirmDialogHost";
+import { EmbedConnectionNotice } from "./EmbedConnectionNotice";
 import "./EmbedPage.css";
 import { ThreadRouteView } from "../ThreadRouteView";
 import { SidebarProvider } from "../ui/sidebar";
@@ -98,6 +99,9 @@ export function EmbedPage({
   return (
     <>
       {target?.kind === "server" ? <EmbedPrefetch threadRef={target.threadRef} /> : null}
+      {target?.kind === "server" ? (
+        <EmbedConnectionNotice environmentId={target.threadRef.environmentId} />
+      ) : null}
       <EmbedContent settings={settings} threadId={threadId}>
         {children}
       </EmbedContent>
