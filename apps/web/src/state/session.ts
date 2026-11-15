@@ -1,9 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
 import {
+  AuthOrchestrationOperateScope,
   type AuthEnvironmentScope,
   type AuthSessionState,
   type EnvironmentId,
+  isChatSessionScopes,
   sessionGrantsScope,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -39,7 +41,13 @@ export function sessionHasScope(
   scope: AuthEnvironmentScope,
 ): boolean {
   const session = AsyncResult.getOrElse(result, () => null);
-  return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
+  if (result._tag === "Failure" || session === null) return false;
+  if (sessionGrantsScope(session, scope)) return true;
+  return (
+    scope === AuthOrchestrationOperateScope &&
+    session.authenticated &&
+    isChatSessionScopes(session.permissions ?? session.scopes)
+  );
 }
 
 const environmentsWithScopeAtom = Atom.family((key: string) => {

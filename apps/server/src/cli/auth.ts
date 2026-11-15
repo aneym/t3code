@@ -1,4 +1,10 @@
-import { AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  AuthChatThreadsScope,
+  AuthSessionId,
+  AuthStandardClientScopes,
+  ChatSessionThreadIds,
+  chatSessionSubject,
+} from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -6,8 +12,11 @@ import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ChatThreadSets from "../chatSession/ChatThreadSets.ts";
 
 import {
   formatIssuedPairingCredential,
@@ -26,7 +35,9 @@ import {
 
 const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E>(
   flags: CliAuthLocationFlags,
-  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  run: (
+    environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
+  ) => Effect.Effect<A, E, SqlClient.SqlClient | SecureRandom.SecureRandom>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -82,6 +93,23 @@ const baseUrlFlag = Flag.String("base-url").pipe(
   Flag.optional,
 );
 
+const chatThreadFlag = Flag.String("chat-thread").pipe(
+  Flag.withDescription(
+    "Thread id for a chat-only session. Repeat for each thread; replaces --scope with chat:threads.",
+  ),
+  Flag.atLeast(0),
+);
+
+const decodeChatThreadIds = Schema.decodeEffect(ChatSessionThreadIds);
+
+const chatPairingTarget = Effect.fn("auth.chatPairingTarget")(function* (
+  threadIds: ReadonlyArray<string>,
+) {
+  const ids = yield* decodeChatThreadIds(threadIds);
+  const setId = yield* (yield* ChatThreadSets.ChatThreadSets).create(ids);
+  return { scopes: [AuthChatThreadsScope], subject: chatSessionSubject(setId) };
+});
+
 const tokenOnlyFlag = Flag.Boolean("token-only").pipe(
   Flag.withDescription("Print only the issued bearer token."),
   Flag.withDefault(false),
@@ -90,6 +118,7 @@ const tokenOnlyFlag = Flag.Boolean("token-only").pipe(
 const pairingCreateCommand = Command.make("create", {
   ...authLocationFlags,
   scopes: authScopesFlag(AuthStandardClientScopes),
+  chatThreads: chatThreadFlag,
   ttl: ttlFlag,
   label: labelFlag,
   baseUrl: baseUrlFlag,
@@ -101,9 +130,14 @@ const pairingCreateCommand = Command.make("create", {
       flags,
       (environmentAuth) =>
         Effect.gen(function* () {
+          const target =
+            flags.chatThreads.length > 0
+              ? yield* chatPairingTarget(flags.chatThreads).pipe(
+                  Effect.provide(ChatThreadSets.layer),
+                )
+              : { scopes: flags.scopes, subject: "one-time-token" };
           const issued = yield* environmentAuth.createPairingLink({
-            scopes: flags.scopes,
-            subject: "one-time-token",
+            ...target,
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
           });

@@ -1,0 +1,292 @@
+import {
+  ORCHESTRATION_V2_WS_METHODS,
+  WS_METHODS,
+  type AssetCreateUrlInput,
+  type AttachmentDeleteInput,
+  type OrchestrationV2Command,
+  type ThreadId,
+  type WsRpcGroup,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
+
+import { chatCommandAttachmentIds, chatCommandThreadIds } from "./chatSessionCommands.ts";
+import type { ChatSessionAccess } from "./ChatSessionAccess.ts";
+
+type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
+
+type ChatRule = (payload: unknown, access: ChatSessionAccess) => Effect.Effect<boolean>;
+
+const refuse: ChatRule = () => Effect.succeed(false);
+const filtered: ChatRule = () => Effect.succeed(true);
+const sessionBound: ChatRule = () => Effect.succeed(true);
+const inThread: ChatRule = (payload, access) =>
+  Effect.succeed(access.inSet((payload as { readonly threadId: ThreadId }).threadId));
+const ownUpload: ChatRule = (payload, access) =>
+  access.ownsUpload((payload as AttachmentDeleteInput).attachmentId);
+
+const asset: ChatRule = (payload, access) => {
+  const { resource } = payload as AssetCreateUrlInput;
+  switch (resource._tag) {
+    case "attachment":
+      return access.attachmentVisible(resource.attachmentId);
+    case "tool-output-image":
+      return Effect.succeed(access.inSet(resource.threadId));
+    case "media-file":
+      return access.inSet(resource.threadId)
+        ? access.messageShowsImage(resource.threadId, resource.path)
+        : Effect.succeed(false);
+    default:
+      return Effect.succeed(false);
+  }
+};
+
+const dispatch: ChatRule = Effect.fn("chatSessionRpc.dispatch")(function* (payload, access) {
+  const command = payload as OrchestrationV2Command;
+  const threadIds = chatCommandThreadIds(command);
+  if (threadIds === null || !threadIds.every(access.inSet)) return false;
+  const threadId = threadIds[0];
+  const attachmentIds = chatCommandAttachmentIds(command);
+  if (attachmentIds.length === 0) return true;
+  if (threadId === undefined) return false;
+  const allowed = yield* Effect.forEach(attachmentIds, (id) =>
+    access.attachmentUsable(threadId, id),
+  );
+  return allowed.every(Boolean);
+});
+
+const CHAT_SESSION_RPC = {
+  [WS_METHODS.providerAuthRemoveMethod]: refuse,
+  [WS_METHODS.serverUpdateServer]: refuse,
+  [WS_METHODS.serverUpdateServerWithProgress]: refuse,
+  [WS_METHODS.serverListForkReleases]: refuse,
+  [WS_METHODS.previewClose]: refuse,
+  [WS_METHODS.previewStopLocalServer]: refuse,
+  [WS_METHODS.serverRunStorageCleanup]: refuse,
+  [WS_METHODS.serverReclaimDatabaseSpace]: refuse,
+  [WS_METHODS.serverCheckOtlpEndpoint]: refuse,
+  [WS_METHODS.serverCheckSecretSource]: refuse,
+  [WS_METHODS.serverListTextGeneratorModels]: refuse,
+  [WS_METHODS.serverRefreshProviders]: refuse,
+  [WS_METHODS.pullRequestsRunAction]: refuse,
+  [WS_METHODS.pullRequestsUpdate]: refuse,
+  [WS_METHODS.pullRequestsComment]: refuse,
+  [WS_METHODS.pullRequestsUpdateComment]: refuse,
+  [WS_METHODS.pullRequestsSubmitReview]: refuse,
+  [WS_METHODS.pullRequestsReplyToThread]: refuse,
+  [WS_METHODS.pullRequestsSetThreadResolution]: refuse,
+  [WS_METHODS.pullRequestsSetReaction]: refuse,
+  [WS_METHODS.pullRequestsSetFilesViewed]: refuse,
+  [WS_METHODS.pullRequestsRequestReviewers]: refuse,
+  [WS_METHODS.pullRequestsSetLabels]: refuse,
+  [WS_METHODS.pullRequestsGenerateReviewGuide]: refuse,
+  [WS_METHODS.projectsCreateFromThread]: refuse,
+  [WS_METHODS.sourceControlCloneRepository]: refuse,
+  [WS_METHODS.sourceControlPublishRepository]: refuse,
+  [WS_METHODS.sourceControlStar]: refuse,
+  [WS_METHODS.sourceControlSignInStart]: refuse,
+  [WS_METHODS.sourceControlSignInWait]: refuse,
+  [WS_METHODS.sourceControlSignInCancel]: refuse,
+  [WS_METHODS.projectCloneStart]: refuse,
+  [WS_METHODS.projectCloneCancel]: refuse,
+  [WS_METHODS.projectCloneRetry]: refuse,
+  [WS_METHODS.vcsPull]: refuse,
+  [WS_METHODS.gitRunStackedAction]: refuse,
+  [WS_METHODS.gitPreparePullRequestThread]: refuse,
+  [WS_METHODS.vcsCreateWorktree]: refuse,
+  [WS_METHODS.vcsRemoveWorktree]: refuse,
+  [WS_METHODS.vcsCreateRef]: refuse,
+  [WS_METHODS.vcsSwitchRef]: refuse,
+  [WS_METHODS.vcsInit]: refuse,
+  [WS_METHODS.serverPrepareTriage]: refuse,
+  [WS_METHODS.scheduledTasksUpsert]: refuse,
+  [WS_METHODS.scheduledTasksSetEnabled]: refuse,
+  [WS_METHODS.scheduledTasksDelete]: refuse,
+  [WS_METHODS.scheduledTasksRunNow]: refuse,
+  [WS_METHODS.scheduledTasksRotateWebhookToken]: refuse,
+  [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: refuse,
+  [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: refuse,
+  [WS_METHODS.guestShareCreate]: refuse,
+  [WS_METHODS.peerLinksLink]: refuse,
+  [WS_METHODS.peerLinksUnlink]: refuse,
+  [WS_METHODS.peerLinksRenew]: refuse,
+  [WS_METHODS.peerLinksAnswerRequest]: refuse,
+  [WS_METHODS.peerLinksPairClient]: refuse,
+  [WS_METHODS.providerInstallStart]: refuse,
+  [WS_METHODS.providerInstallCancel]: refuse,
+  [WS_METHODS.providerInstallRemove]: refuse,
+  [WS_METHODS.providerAuthStart]: refuse,
+  [WS_METHODS.providerAuthRespond]: refuse,
+  [WS_METHODS.providerAuthComplete]: refuse,
+  [WS_METHODS.providerAuthCancel]: refuse,
+  [WS_METHODS.providerAuthLogout]: refuse,
+  [WS_METHODS.providerAuthSubscribe]: refuse,
+  [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: dispatch,
+  [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: refuse,
+  [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: refuse,
+  [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: refuse,
+  [ORCHESTRATION_V2_WS_METHODS.searchThreads]: refuse,
+  [ORCHESTRATION_V2_WS_METHODS.searchThread]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: refuse,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: filtered,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: filtered,
+  [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: refuse,
+  [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: refuse,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.launchThread]: refuse,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: filtered,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: inThread,
+  [WS_METHODS.projectsMutate]: refuse,
+  [WS_METHODS.agentsSubscribeHomes]: refuse,
+  [WS_METHODS.serverProbe]: refuse,
+  [WS_METHODS.serverGetConfig]: filtered,
+  [WS_METHODS.serverGetNpmRelease]: refuse,
+  [WS_METHODS.serverUpdateProvider]: refuse,
+  [WS_METHODS.providerConsumeResetCredit]: refuse,
+  [WS_METHODS.chatGptReconnectProfile]: refuse,
+  [WS_METHODS.chatGptImportProfile]: refuse,
+  [WS_METHODS.chatGptHandoffSubscribe]: refuse,
+  [WS_METHODS.providerInstallSubscribe]: refuse,
+  [WS_METHODS.serverCommitDesktopUpdate]: refuse,
+  [WS_METHODS.serverUpsertKeybinding]: refuse,
+  [WS_METHODS.serverRemoveKeybinding]: refuse,
+  [WS_METHODS.serverGetStorageCleanupReport]: refuse,
+  [WS_METHODS.serverGetDatabaseStorage]: refuse,
+  [WS_METHODS.peerLinksList]: refuse,
+  [WS_METHODS.serverUpdateSettings]: refuse,
+  [WS_METHODS.serverSearchAcpRegistry]: refuse,
+  [WS_METHODS.serverPrepareAcpRegistryAgent]: refuse,
+  [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: refuse,
+  [WS_METHODS.serverAcceptAcpRegistryUrlAuth]: refuse,
+  [WS_METHODS.serverListAcpRegistrySessions]: refuse,
+  [WS_METHODS.serverImportAcpRegistrySession]: refuse,
+  [WS_METHODS.serverDeleteAcpRegistrySession]: refuse,
+  [WS_METHODS.serverListAcpRegistryProviders]: refuse,
+  [WS_METHODS.serverSetAcpRegistryProvider]: refuse,
+  [WS_METHODS.serverDisableAcpRegistryProvider]: refuse,
+  [WS_METHODS.serverLogoutAcpRegistry]: refuse,
+  [WS_METHODS.serverDiscoverSourceControl]: refuse,
+  [WS_METHODS.serverGetTraceDiagnostics]: refuse,
+  [WS_METHODS.serverGetProcessDiagnostics]: refuse,
+  [WS_METHODS.serverGetHostResources]: refuse,
+  [WS_METHODS.serverGetProcessResourceHistory]: refuse,
+  [WS_METHODS.serverGetResourceTelemetryHistory]: refuse,
+  [WS_METHODS.serverRetryResourceTelemetry]: refuse,
+  [WS_METHODS.serverGetUsageSummary]: refuse,
+  [WS_METHODS.serverRefreshUsageRates]: refuse,
+  [WS_METHODS.serverSignalProcess]: refuse,
+  [WS_METHODS.serverReportClientActivity]: sessionBound,
+  [WS_METHODS.scheduledTasksSubscribe]: refuse,
+  [WS_METHODS.secretsAnswerRequest]: inThread,
+  [WS_METHODS.scheduledTasksListWebhookDeliveries]: refuse,
+  [WS_METHODS.scheduledTasksGetWebhookDelivery]: refuse,
+  [WS_METHODS.cloudGetRelayClientStatus]: refuse,
+  [WS_METHODS.cloudInstallRelayClient]: refuse,
+  [WS_METHODS.pullRequestsList]: refuse,
+  [WS_METHODS.pullRequestsListStats]: refuse,
+  [WS_METHODS.pullRequestsFilterOptions]: refuse,
+  [WS_METHODS.pullRequestsSummary]: refuse,
+  [WS_METHODS.pullRequestsRouting]: refuse,
+  [WS_METHODS.pullRequestsRoutingIdentity]: refuse,
+  [WS_METHODS.pullRequestsStack]: refuse,
+  [WS_METHODS.pullRequestsLinkedThreads]: refuse,
+  [WS_METHODS.pullRequestsDetail]: refuse,
+  [WS_METHODS.pullRequestsPreview]: refuse,
+  [WS_METHODS.pullRequestsChecks]: refuse,
+  [WS_METHODS.pullRequestsActivity]: refuse,
+  [WS_METHODS.pullRequestsReviewGuide]: refuse,
+  [WS_METHODS.pullRequestsThreadComments]: refuse,
+  [WS_METHODS.pullRequestsDiffFileContents]: refuse,
+  [WS_METHODS.pullRequestsFilesViewed]: refuse,
+  [WS_METHODS.pullRequestsChangeBreakdown]: refuse,
+  [WS_METHODS.pullRequestsInvalidate]: refuse,
+  [WS_METHODS.pullRequestsReportState]: refuse,
+  [WS_METHODS.pullRequestsSubscribeRefreshes]: refuse,
+  [WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes]: refuse,
+  [WS_METHODS.pullRequestsReviewerCandidates]: refuse,
+  [WS_METHODS.pullRequestsLabelCandidates]: refuse,
+  [WS_METHODS.sourceControlLookupRepository]: refuse,
+  [WS_METHODS.sourceControlAppAccess]: refuse,
+  [WS_METHODS.sourceControlStarred]: refuse,
+  [WS_METHODS.subscribeProjectClones]: refuse,
+  [WS_METHODS.projectsListEntries]: refuse,
+  [WS_METHODS.projectsListIgnoredFiles]: refuse,
+  [WS_METHODS.projectsReadFile]: refuse,
+  [WS_METHODS.projectsSearchContents]: refuse,
+  [WS_METHODS.projectsSearchEntries]: refuse,
+  [WS_METHODS.projectsWriteFile]: refuse,
+  [WS_METHODS.projectsEnsureScratch]: refuse,
+  [WS_METHODS.projectsCreateNew]: refuse,
+  [WS_METHODS.shellOpenInEditor]: refuse,
+  [WS_METHODS.filesystemBrowse]: refuse,
+  [WS_METHODS.filesystemGetMetadata]: refuse,
+  [WS_METHODS.agentSessionsScan]: refuse,
+  [WS_METHODS.agentSessionsImport]: refuse,
+  [WS_METHODS.assetsCreateUrl]: asset,
+  [WS_METHODS.assetsPersistChatAttachments]: inThread,
+  [WS_METHODS.attachmentsCreateUploadUrl]: sessionBound,
+  [WS_METHODS.attachmentsDelete]: ownUpload,
+  [WS_METHODS.providerUploadFeedback]: refuse,
+  [WS_METHODS.mcpAppsCallTool]: refuse,
+  [WS_METHODS.mcpAppsToolInfo]: refuse,
+  [WS_METHODS.mcpAppsReadResource]: refuse,
+  [WS_METHODS.mcpAppsUpdateModelContext]: refuse,
+  [WS_METHODS.subscribeVcsStatus]: refuse,
+  [WS_METHODS.subscribeVcsBranch]: refuse,
+  [WS_METHODS.vcsRefreshBranch]: refuse,
+  [WS_METHODS.subscribeWorktreeSetup]: refuse,
+  [WS_METHODS.worktreeSetupCancel]: refuse,
+  [WS_METHODS.subscribeResourceTelemetry]: refuse,
+  [WS_METHODS.vcsRefreshStatus]: refuse,
+  [WS_METHODS.gitResolvePullRequest]: refuse,
+  [WS_METHODS.vcsListRefs]: refuse,
+  [WS_METHODS.reviewGetBranchCommits]: refuse,
+  [WS_METHODS.reviewGetDiffPreview]: refuse,
+  [WS_METHODS.reviewGetDiffFileContents]: refuse,
+  [WS_METHODS.terminalOpen]: refuse,
+  [WS_METHODS.terminalAttach]: refuse,
+  [WS_METHODS.terminalObserve]: refuse,
+  [WS_METHODS.terminalWrite]: refuse,
+  [WS_METHODS.terminalResize]: refuse,
+  [WS_METHODS.terminalClear]: refuse,
+  [WS_METHODS.terminalClose]: refuse,
+  [WS_METHODS.subscribeTerminalMetadata]: refuse,
+  [WS_METHODS.previewOpen]: refuse,
+  [WS_METHODS.previewResize]: refuse,
+  [WS_METHODS.previewAdjust]: refuse,
+  [WS_METHODS.previewList]: refuse,
+  [WS_METHODS.previewClearProfile]: refuse,
+  [WS_METHODS.previewReportProfiles]: refuse,
+  [WS_METHODS.previewReportStatus]: refuse,
+  [WS_METHODS.subscribePreviewEvents]: refuse,
+  [WS_METHODS.subscribeDiscoveredLocalServers]: refuse,
+  [WS_METHODS.deviceConfigure]: refuse,
+  [WS_METHODS.deviceTestHost]: refuse,
+  [WS_METHODS.deviceEasAccount]: refuse,
+  [WS_METHODS.deviceSimlockIdentity]: refuse,
+  [WS_METHODS.deviceList]: refuse,
+  [WS_METHODS.deviceOpen]: refuse,
+  [WS_METHODS.deviceClose]: refuse,
+  [WS_METHODS.deviceShutdown]: refuse,
+  [WS_METHODS.deviceDetail]: refuse,
+  [WS_METHODS.deviceAction]: refuse,
+  [WS_METHODS.subscribeDeviceState]: refuse,
+  [WS_METHODS.subscribeServerConfig]: filtered,
+  [WS_METHODS.subscribeServerLifecycle]: filtered,
+  [WS_METHODS.subscribeAuthAccess]: refuse,
+} as const satisfies Record<WsRpcMethod, ChatRule>;
+
+export const admitChatRpc = (
+  method: string,
+  payload: unknown,
+  access: ChatSessionAccess,
+): Effect.Effect<boolean> =>
+  Object.hasOwn(CHAT_SESSION_RPC, method)
+    ? CHAT_SESSION_RPC[method as WsRpcMethod](payload, access)
+    : Effect.succeed(false);

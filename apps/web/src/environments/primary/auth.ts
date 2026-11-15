@@ -19,6 +19,7 @@ import {
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { applyChatSessionState } from "../../chatSessionMode";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "fetch-session-state",
@@ -173,11 +174,13 @@ function getDesktopBootstrapCredential(): string | null {
 export async function fetchSessionState(): Promise<AuthSessionState> {
   return retryTransientBootstrap(async () => {
     try {
-      return await runPrimaryHttp(
+      const state = await runPrimaryHttp(
         PrimaryEnvironmentHttpClient.pipe(
           Effect.flatMap((client) => client.auth.session({ headers: {} })),
         ),
       );
+      applyChatSessionState(state);
+      return state;
     } catch (error) {
       throw PrimaryEnvironmentRequestError.fromCause({
         operation: "fetch-session-state",

@@ -574,6 +574,10 @@
     "./provider-instance-ids": {
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
+    },
+    "./chat-session": {
+      "types": "./src/chatSession.ts",
+      "default": "./src/chatSession.ts"
     }
   },
   "scripts": {

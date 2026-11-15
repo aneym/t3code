@@ -7,6 +7,7 @@ import {
   unknownThreadLinkLabel,
 } from "@t3tools/shared/threadLinks";
 
+import { useChatSession } from "../../chatSessionMode";
 import { configuredHostedAppUrl } from "../../hostedPairing";
 import { useThreadRefs, useThreadShell } from "../../state/entities";
 import { useEnvironmentIdentities } from "../../state/environments";
@@ -55,6 +56,16 @@ export function MarkdownThreadLink(props: {
     : null;
   const remote = useThreadShell(remoteRef);
   const resolved = target ?? (remoteRef && remote ? { ref: remoteRef, metadata: remote } : null);
+  const chatSession = useChatSession();
+  if (chatSession) {
+    const name = resolved?.metadata.title.trim() || props.label || "Thread";
+    return (
+      <UnresolvedChip
+        label={`${name} (opens on that computer)`}
+        tooltip="This thread opens in T3 Code on that computer."
+      />
+    );
+  }
   if (missing && resolved === null) {
     const unknown = unknownThreadLinkLabel(props.link, props.environmentId);
     return <UnresolvedChip label={props.label ?? unknown} tooltip={unknown} />;

@@ -40,12 +40,12 @@ export const AuthTerminalOperateScope = "terminal:operate" as const;
 export const AuthSourceControlWriteScope = "source-control:write" as const;
 export const AuthFilesystemReadScope = "filesystem:read" as const;
 export const AuthFilesystemWriteScope = "filesystem:write" as const;
-/** Retained for decoding existing credentials; grants no current RPC access. */
 const AuthReviewWriteScope = "review:write" as const;
 export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
+export const AuthChatThreadsScope = "chat:threads" as const;
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -64,6 +64,7 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthAccessWriteScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  AuthChatThreadsScope,
 ]);
 export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
@@ -85,6 +86,7 @@ const legacyScopes = new Set<AuthEnvironmentScope>([
   AuthAccessWriteScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  AuthChatThreadsScope,
 ]);
 
 export function authScopeResponse(scopes: ReadonlyArray<AuthEnvironmentScope>) {
@@ -96,7 +98,6 @@ const authScopeResponseFields = {
   permissions: Schema.optionalKey(ForwardCompatibleArray(AuthEnvironmentScope)),
 };
 
-// Client-only fallback for old servers. Servers never expand grants; empty permissions grant nothing.
 const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>> = {
   [AuthFilesystemReadScope]: AuthOrchestrationReadScope,
   [AuthDiagnosticsReadScope]: AuthOrchestrationReadScope,
@@ -191,6 +192,7 @@ export const AuthBrowserSessionResult = Schema.Struct({
   authenticated: Schema.Literal(true),
   ...authScopeResponseFields,
   sessionMethod: ServerAuthSessionMethod,
+  sessionId: Schema.optionalKey(AuthSessionId),
   expiresAt: Schema.DateTimeUtc,
 });
 export type AuthBrowserSessionResult = typeof AuthBrowserSessionResult.Type;

@@ -26,6 +26,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as PayloadSigner from "./PayloadSigner.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import { sessionRecheckMs, sessionTtlFor } from "../chatSession/chatSessionTtl.ts";
 import {
   REUSABLE_DEV_SESSION_EXPIRES_AT,
   REUSABLE_DEV_SESSION_PREFIX,
@@ -408,7 +409,6 @@ export class SessionStore extends Context.Service<
       SessionCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
-    /** Completes when a live socket's session is revoked or expires without a renewal for its DPoP key. */
     readonly awaitInvalidation: (
       sessionId: AuthSessionId,
       proofKeyThumbprint?: string,
@@ -650,7 +650,9 @@ const make = Effect.gen(function* () {
       );
       const issuedAt = yield* DateTime.now;
       const expiresAt = DateTime.add(issuedAt, {
-        milliseconds: Duration.toMillis(input?.ttl ?? DEFAULT_SESSION_TTL),
+        milliseconds: Duration.toMillis(
+          sessionTtlFor(input?.scopes, input?.ttl ?? DEFAULT_SESSION_TTL),
+        ),
       });
       const claims: SessionClaims = {
         v: 1,
@@ -1045,7 +1047,6 @@ const make = Effect.gen(function* () {
   ) {
     return yield* Effect.scoped(
       Effect.gen(function* () {
-        // Subscribe before reading: revocation can race with the WebSocket upgrade.
         const subscription = yield* PubSub.subscribe(changesPubSub);
         const readRow = (id: AuthSessionId) =>
           authSessions
@@ -1074,7 +1075,10 @@ const make = Effect.gen(function* () {
           const now = yield* DateTime.now;
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
-            yield* Effect.raceFirst(nextRemoval, Effect.sleep(Duration.millis(remaining)));
+            yield* Effect.raceFirst(
+              nextRemoval,
+              Effect.sleep(Duration.millis(sessionRecheckMs(original.value.scopes, remaining))),
+            );
             continue;
           }
           const successorId =
@@ -1083,7 +1087,6 @@ const make = Effect.gen(function* () {
               : latestSessionByProofKey.get(proofKeyThumbprint);
           if (successorId === undefined || successorId === current.sessionId) return;
           const successor = yield* readRow(successorId);
-          // The socket keeps its original scopes, so the renewal must still grant all of them.
           if (
             Option.isNone(successor) ||
             successor.value.subject !== original.value.subject ||

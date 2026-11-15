@@ -105,6 +105,7 @@ import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import { boundDispatchAdmission } from "./orchestration-v2/DispatchAdmissionBound.ts";
 import { layerEmbedFrameAncestors } from "./embedFrameAncestors.ts";
+import * as ChatSessionHttp from "./chatSession/chatSessionHttp.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -828,6 +829,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(layerCommandReadiness),
   Layer.provide(layerEmbedFrameAncestors),
+  Layer.provide(ChatSessionHttp.layer),
   Layer.provide(ServerHttp.layerBrowserApiCors),
   Layer.provide(ServerHttp.layerHttpCompression),
   Layer.provide(RequestLog.layer),
@@ -1049,7 +1051,6 @@ const layerMakeServer = Layer.unwrap(
           ),
           Effect.asVoid,
         );
-        // Trials own cleanup immediately after the old server exits, retaining tunnels for commit/rollback unless explicitly stopped.
         // Other runtimes wait for activation so failed standbys cannot tear down active tunnels.
         const cleanupBeforeActivation = yield* pendingServiceUpdateExists;
         if (cleanupBeforeActivation) {

@@ -16,6 +16,7 @@ import PeerLinkRenewal from "./ForkMigrations/012_PeerLinkRenewal.ts";
 import CommandReadIndexes from "./ForkMigrations/013_CommandReadIndexes.ts";
 import MessageThreadRunIndex from "./ForkMigrations/014_MessageThreadRunIndex.ts";
 import RetireRestartHandoffEffects from "./ForkMigrations/015_RetireRestartHandoffEffects.ts";
+import ChatThreadSets from "./ForkMigrations/016_ChatThreadSets.ts";
 
 const run = Migrator.make({});
 const loader = Migrator.fromRecord({
@@ -33,6 +34,7 @@ const loader = Migrator.fromRecord({
   "13_CommandReadIndexes": CommandReadIndexes,
   "14_MessageThreadRunIndex": MessageThreadRunIndex,
   "15_RetireRestartHandoffEffects": RetireRestartHandoffEffects,
+  "16_ChatThreadSets": ChatThreadSets,
 });
 
 export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {

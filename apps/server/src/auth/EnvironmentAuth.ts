@@ -22,6 +22,7 @@ import {
   DpopFailureReason,
   type DpopFailureReason as DpopFailureReasonType,
   mcpClientScopes,
+  isChatSessionScopes,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
@@ -902,6 +903,7 @@ export const make = Effect.gen(function* () {
         authenticated: true,
         ...authScopeResponse(session.scopes),
         sessionMethod: session.method,
+        ...(isChatSessionScopes(session.scopes) ? { sessionId: session.sessionId } : {}),
         expiresAt: DateTime.toUtc(session.expiresAt),
       } satisfies AuthBrowserSessionResult,
       sessionToken: session.token,
@@ -1054,7 +1056,6 @@ export const make = Effect.gen(function* () {
   const createPairingLink: EnvironmentAuth["Service"]["createPairingLink"] = Effect.fn(
     "EnvironmentAuth.createPairingLink",
   )(function* (input) {
-    // The startup link is for a browser on this machine; every other link lets a device pair.
     if (input?.purpose !== "startup" && !ManagedLimits.allowsRemoteClients(managedPolicy)) {
       return yield* ManagedLimits.refuseRemoteClients(
         managedPolicy,
@@ -1275,7 +1276,6 @@ export const make = Effect.gen(function* () {
           }
           if (session.proofKeyThumbprint) {
             // WebSocket clients cannot set headers, so the proof travels in the query.
-            // The proof hashes the ticket; consuming its jti prevents replay after first use.
             // Only encrypted transport prevents an active interceptor from racing that use.
             const proof = request.headers.dpop ?? (query.dpop && Redacted.value(query.dpop));
             if (!proof) {

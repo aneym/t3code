@@ -29,11 +29,15 @@ import {
   RpcScopeAuthorization,
   WS_METHODS,
   WsRpcGroup,
+  isChatSessionScopes,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
+
+import type { ChatSessionAccess } from "../chatSession/ChatSessionAccess.ts";
+import { admitChatRpc } from "../chatSession/chatSessionRpc.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
@@ -291,14 +295,34 @@ const requiredScopesForRpcCall = (
 export const layer = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   onAuthorized?: (method: string, payload: unknown) => Effect.Effect<void>,
+  chat?: ChatSessionAccess,
 ) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
+    const authorized =
+      onAuthorized === undefined
+        ? effect
+        : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
+    if (chat !== undefined || isChatSessionScopes(scopes)) {
+      const admitted =
+        chat === undefined ? Effect.succeed(false) : admitChatRpc(rpc._tag, payload, chat);
+      return Effect.flatMap(admitted, (allowed) =>
+        allowed ? authorized : Effect.fail(chatSessionRefusal(rpc._tag)),
+      );
+    }
     const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
     const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
     if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
-    return onAuthorized === undefined
-      ? effect
-      : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
+    return authorized;
+  });
+
+const chatSessionRefusal = (method: string) =>
+  new EnvironmentAuthorizationError({
+    message: "A chat session cannot make this request.",
+    ...authScopeRequiredResponse(
+      Object.hasOwn(RPC_REQUIRED_SCOPES, method)
+        ? requiredScopeForRpcMethod(method)
+        : AuthOrchestrationReadScope,
+    ),
   });
 
 /** Retrying can install or restart tools even though ordinary listing is readable. */

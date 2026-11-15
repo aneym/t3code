@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { RpcClientError } from "effect/rpc";
 
+import { chatSessionAllows, chatSessionRefusal } from "../chatSession.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
@@ -167,7 +168,6 @@ export const getInitialServerConfig = Effect.fn("EnvironmentRpc.getInitialServer
   },
 );
 
-/** Installed by the shared command boundary. A missing boundary denies protected writes. */
 export class RpcPermissionGuard extends Context.Reference<{
   readonly authorize: (
     environmentId: EnvironmentId,
@@ -194,6 +194,7 @@ const authorizeRequest = Effect.fn("EnvironmentRpc.authorize")(function* (
   method: string,
   input: unknown,
 ) {
+  if (!chatSessionAllows(method)) return yield* chatSessionRefusal(method);
   if (clientRpcRequiredScopes(method, input).length === 0) return;
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const guard = yield* RpcPermissionGuard;
@@ -221,7 +222,6 @@ export const requestInSession = Effect.fn("EnvironmentRpc.request")(function* <
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });
 
-// The session-bound request owns the existing EnvironmentRpc.request span.
 export const requestGuarded = Effect.fnUntraced(function* <TTag extends EnvironmentUnaryRpcTag>(
   tag: TTag,
   input: EnvironmentRpcInput<TTag>,
@@ -264,7 +264,6 @@ export function runStreamInSession<TTag extends EnvironmentStreamCommandRpcTag>(
 }
 
 interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
-  /** Reports defects; the subscription then waits for the next session or resubscribe. */
   readonly onDefect?: (
     cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
   ) => Effect.Effect<void, never, never>;
@@ -302,6 +301,7 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                 Stream.mapEffect(() => SubscriptionRef.get(supervisor.session)),
               ),
             );
+      if (!chatSessionAllows(tag)) return Stream.never;
       return sessions.pipe(
         Stream.switchMap(
           Option.match({
