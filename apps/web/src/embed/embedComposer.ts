@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 
+import { chatSessionActive } from "@t3tools/client-runtime/chat-session";
+
 import { postToEmbedHost } from "./embedHost";
 import {
   EMBED_CONTROLS_MESSAGE,
@@ -30,7 +32,8 @@ function keep(next: EmbedControls): void {
   }
 }
 
-function apply(next: EmbedControls): void {
+function apply(requested: EmbedControls): void {
+  const next = chatSessionActive() ? "hidden" : requested;
   controls = next;
   document.documentElement.dataset.embedControls = next;
   for (const listener of listeners) listener();
@@ -48,6 +51,7 @@ export function applyEmbedComposerMessage(message: EmbedComposerMessage): void {
 }
 
 export function toggleEmbedControls(): void {
+  if (chatSessionActive()) return;
   const next = controls === "shown" ? "hidden" : "shown";
   keep(next);
   apply(next);

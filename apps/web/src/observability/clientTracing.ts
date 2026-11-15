@@ -1,3 +1,4 @@
+import { chatSessionActive } from "@t3tools/client-runtime/chat-session";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -94,6 +95,7 @@ function flushWhenHidden(): void {
 }
 
 export function configureClientTracing(): Promise<void> {
+  if (chatSessionActive()) return Promise.resolve();
   if (activeConfigKey !== null) {
     return pendingConfiguration;
   }

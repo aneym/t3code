@@ -242,6 +242,8 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
+import * as ChatSession from "./chatSession/ChatSessionAccess.ts";
+import { chatSessionHandlers } from "./chatSession/chatSessionHandlers.ts";
 import { RpcInstrumentation, rpcInstrumentationLayer } from "./observability/RpcInstrumentation.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
@@ -1224,7 +1226,6 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       ),
     );
 
-    // Subscribe before loading for racing enrichments; initial refresh covers pre-subscription completions and cold HTTP snapshots.
     const completionMarker =
       input.requestCompletionMarker === true
         ? Stream.make({ kind: "synchronized" as const })
@@ -1345,6 +1346,7 @@ export const layerWsRpc = (
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   reportProfiles: ServerBrowser.ProfileReporter,
   settingsClient: { readonly secretReferences: boolean },
+  chat?: ChatSession.ChatSessionContext,
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
@@ -1872,7 +1874,7 @@ export const layerWsRpc = (
         return yield* mutateProjectWithClone(projectService, projectCloneTracker, mutation);
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const allHandlers = ServerWsRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3263,7 +3265,6 @@ export const layerWsRpc = (
                       )
                     : Effect.succeed(commandProviders),
                 ),
-                // Compare initial paired values with the snapshot; blindly dropping them loses changes between snapshot and subscription.
                 (updates) => Stream.concat(rpcInitialItems([config.providers]), updates),
                 Stream.changesWith(
                   (previous, next) => JSON.stringify(previous) === JSON.stringify(next),
@@ -3417,6 +3418,7 @@ export const layerWsRpc = (
             ),
           ),
       });
+      const handlers = chatSessionHandlers(allHandlers, chat);
       const splitHandlers: Pick<typeof handlers, SplitWsRpc["_tag"]> = handlers;
       const otherHandlers: Pick<typeof handlers, Exclude<ServerWsRpc, SplitWsRpc>["_tag"]> =
         handlers;
@@ -3427,7 +3429,6 @@ export const layerWsRpc = (
     }),
   );
 
-// Default socket-level Defect frames end every pending client request.
 export const WS_RPC_SERVER_OPTIONS = {
   disableTracing: true,
   disableFatalDefects: true,
@@ -3444,6 +3445,7 @@ export const layer = Layer.unwrap(
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
     const sql = yield* SqlClient.SqlClient;
+    const chatSessions = yield* ChatSession.ChatSessionResolver;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -3477,27 +3479,30 @@ export const layer = Layer.unwrap(
         const clientAnalyticsProps = readClientAnalyticsProps(request);
         yield* analytics.recordOwners(readClientOwners(request), "client");
         const reportProfiles = yield* serverBrowser.profileReporter;
+        const chat = yield* chatSessions.resolve(session);
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
             Effect.provideService(RpcServer.Protocol, protocol),
             Effect.provide(
               Layer.merge(
-                RpcAuthorization.layer(session.scopes, (method, payload) => {
-                  // Anonymous product signal: the feature and its enum variant,
-                  // credited to the connecting client's surface only.
-                  const usage = featureUsage(method, payload);
-                  return usage === undefined
-                    ? Effect.void
-                    : analytics
-                        .record("feature.used", {
-                          ...usage,
-                          ...(clientAnalyticsProps.surface === undefined
-                            ? {}
-                            : { surface: clientAnalyticsProps.surface }),
-                        })
-                        .pipe(Effect.ignore);
-                }),
+                RpcAuthorization.layer(
+                  session.scopes,
+                  (method, payload) => {
+                    const usage = featureUsage(method, payload);
+                    return usage === undefined
+                      ? Effect.void
+                      : analytics
+                          .record("feature.used", {
+                            ...usage,
+                            ...(clientAnalyticsProps.surface === undefined
+                              ? {}
+                              : { surface: clientAnalyticsProps.surface }),
+                          })
+                          .pipe(Effect.ignore);
+                  },
+                  chat?.access,
+                ),
                 rpcInstrumentationLayer,
               ),
             ),
@@ -3512,9 +3517,9 @@ export const layer = Layer.unwrap(
               serverBrowser,
               reportProfiles,
               readSettingsClient(url.value),
+              chat,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
-              // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AcpRegistrySessions.layer),
