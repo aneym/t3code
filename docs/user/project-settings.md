@@ -240,6 +240,10 @@ ignored files to be deleted. Branches and thread history stay; starting another 
 Merge cleanup requires a merged pull request whose commits are included in the remote default
 branch. A squash or rebase merge on GitHub also counts when the pull request targeted the default
 branch and the worktree is still at the pull request's last commit.
+**Delete landed worktrees** needs no pull request: it removes a worktree once every commit on its
+branch is on the default branch, merged or as a rebased or cherry-picked copy, and its thread has
+been idle for the chosen number of days, settled or not. Ages can be fractions, so 0.25 days is
+6 hours; settled retention takes fractions too.
 
 Enable **Delete worktrees with deleted threads** to remove safe worktrees after their last
 thread is deleted, including archived threads and worktrees left by earlier deletions. The

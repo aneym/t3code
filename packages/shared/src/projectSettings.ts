@@ -11,6 +11,7 @@ import {
   type ResolvedServerSettings,
   type ServerSettings,
   type T3ProjectFile,
+  storageCleanupWorktreeRules,
   type ThreadEnvMode,
   type WorktreeCleanupRules,
 } from "@t3tools/contracts";
@@ -238,23 +239,9 @@ export function resolveWorktreeCleanup(
       worktreeAfterDays: null,
       worktreeSettledAfterDays: null,
       worktreeOnMerge: false,
+      worktreeLandedAfterDays: null,
       worktreeOnDelete: false,
       worktreeUnchanged: false,
     };
-  const {
-    worktreeKeepWhen,
-    worktreeAfterDays,
-    worktreeSettledAfterDays,
-    worktreeOnMerge,
-    worktreeOnDelete,
-    worktreeUnchanged,
-  } = settings.storageCleanup;
-  return {
-    worktreeKeepWhen,
-    worktreeAfterDays,
-    worktreeSettledAfterDays,
-    worktreeOnMerge,
-    worktreeOnDelete,
-    worktreeUnchanged,
-  };
+  return storageCleanupWorktreeRules(settings.storageCleanup);
 }

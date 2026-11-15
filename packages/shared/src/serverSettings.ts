@@ -22,6 +22,7 @@ import {
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
+  storageCleanupWorktreeRules,
   withIdleCompaction,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -514,12 +515,7 @@ export function applyServerSettingsPatch(
               ? {
                   mode: "custom" as const,
                   rules: {
-                    worktreeKeepWhen: next.storageCleanup.worktreeKeepWhen,
-                    worktreeAfterDays: next.storageCleanup.worktreeAfterDays,
-                    worktreeSettledAfterDays: next.storageCleanup.worktreeSettledAfterDays,
-                    worktreeOnMerge: next.storageCleanup.worktreeOnMerge,
-                    worktreeOnDelete: next.storageCleanup.worktreeOnDelete,
-                    worktreeUnchanged: next.storageCleanup.worktreeUnchanged,
+                    ...storageCleanupWorktreeRules(next.storageCleanup),
                     ...(current.worktreeCleanup?.mode === "custom"
                       ? current.worktreeCleanup.rules
                       : {}),

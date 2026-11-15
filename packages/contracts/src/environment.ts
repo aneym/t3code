@@ -111,6 +111,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   secretSourceCheck: Schema.optionalKey(Schema.Boolean),
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   settledWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
+  landedWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
   /** Sent by macOS servers, which honor the fastWorktreeCheckout setting. */
   fastWorktreeCheckout: Schema.optionalKey(Schema.Boolean),

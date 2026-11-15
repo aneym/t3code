@@ -5,7 +5,7 @@ export const StorageRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
 );
 export const SettledWorktreeRetentionDays = Schema.NullOr(
-  Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3650 })),
+  Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 3650 })),
 );
 
 export const WorktreeKeepWhen = Schema.Literals([
@@ -24,6 +24,9 @@ export const WorktreeCleanupRules = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   worktreeOnMerge: Schema.Boolean,
+  worktreeLandedAfterDays: SettledWorktreeRetentionDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   worktreeOnDelete: Schema.Boolean,
   worktreeUnchanged: Schema.Boolean,
 });
@@ -33,6 +36,7 @@ export const WorktreeCleanupRulesPatchFields = {
   worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
   worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
   worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
+  worktreeLandedAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
   worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
   worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
 };
@@ -54,6 +58,9 @@ export const StorageCleanupSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  worktreeLandedAfterDays: SettledWorktreeRetentionDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeUnchanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   browserArtifactsAfterDays: StorageRetentionDays.pipe(
@@ -68,3 +75,26 @@ export const StorageCleanupSettingsPatch = Schema.Struct({
   browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
   logsAfterDays: Schema.optionalKey(StorageRetentionDays),
 });
+
+export function storageCleanupWorktreeRules(
+  storageCleanup: StorageCleanupSettings,
+): WorktreeCleanupRules {
+  const {
+    worktreeKeepWhen,
+    worktreeAfterDays,
+    worktreeSettledAfterDays,
+    worktreeOnMerge,
+    worktreeLandedAfterDays,
+    worktreeOnDelete,
+    worktreeUnchanged,
+  } = storageCleanup;
+  return {
+    worktreeKeepWhen,
+    worktreeAfterDays,
+    worktreeSettledAfterDays,
+    worktreeOnMerge,
+    worktreeLandedAfterDays,
+    worktreeOnDelete,
+    worktreeUnchanged,
+  };
+}
