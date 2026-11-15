@@ -50,6 +50,7 @@ import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
+import { makeWorktreeIntegrationCheck } from "./worktreeIntegration.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { isNonRepositoryGitStderr } from "./vcs/GitVcsDriverCore.ts";
 import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
@@ -112,6 +113,7 @@ const worktreeCleanupEnabled = (rules: WorktreeCleanupRules) =>
   rules.worktreeAfterDays !== null ||
   rules.worktreeSettledAfterDays !== null ||
   rules.worktreeOnMerge ||
+  rules.worktreeLandedAfterDays !== null ||
   rules.worktreeOnDelete ||
   rules.worktreeUnchanged;
 
@@ -1027,8 +1029,7 @@ const make = Effect.gen(function* () {
     )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
     const snapshot = yield* readThreads();
     const threadsById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
-    const refreshedDefaultRefs = new Map<string, Set<string>>();
-    const defaultBranches = new Map<string, string | null>();
+    const integration = makeWorktreeIntegrationCheck(git);
     // Threads may store one checkout through different symlinked spellings; compare real paths.
     // Keys are only compared, never opened, so they take pathKey's Windows case folding.
     const canonicalPaths = new Map<string, string>();
@@ -1169,7 +1170,8 @@ const make = Effect.gen(function* () {
           settledThread?.settledAt == null
             ? null
             : now - Math.max(DateTime.toEpochMillis(settledThread.settledAt), activityAt);
-        const settledDays = settledFor === null ? null : Math.floor(settledFor / DAY_MS);
+        const days = (ms: number) => Number((ms / DAY_MS).toFixed(2));
+        const settledDays = settledFor === null ? null : days(settledFor);
         const settled =
           settledFor !== null &&
           settings.worktreeSettledAfterDays !== null &&
@@ -1177,28 +1179,40 @@ const make = Effect.gen(function* () {
         // A worktree is unchanged before its first commit, so only finished threads qualify.
         const unchangedApplies =
           settings.worktreeUnchanged && (settledThread !== undefined || thread.archivedAt !== null);
+        const idleFor =
+          now -
+          Math.max(
+            activityAt,
+            settledThread?.settledAt == null ? 0 : DateTime.toEpochMillis(settledThread.settledAt),
+          );
+        const landedApplies =
+          settings.worktreeLandedAfterDays !== null &&
+          idleFor >= settings.worktreeLandedAfterDays * DAY_MS;
         let eligible = deleted || old || settled;
         let removalReason = deleted
           ? "thread was deleted"
           : old
             ? `inactive for ${Math.floor((now - activityAt) / DAY_MS)} days`
             : `settled for ${settledDays} days`;
-        const notDueReason =
+        let notDueReason =
           !deleted && settings.worktreeAfterDays !== null
             ? `inactive for ${Math.floor((now - activityAt) / DAY_MS)} of ${settings.worktreeAfterDays} days`
-            : settings.worktreeSettledAfterDays !== null
-              ? settledFor === null
-                ? "not settled"
-                : `settled for ${settledDays} of ${settings.worktreeSettledAfterDays} days`
-              : settings.worktreeOnMerge
-                ? "not merged"
-                : unchangedApplies
-                  ? "has commits beyond the default branch"
-                  : settings.worktreeUnchanged
-                    ? "not settled"
-                    : "no rules apply";
+            : settings.worktreeSettledAfterDays !== null && settledFor !== null
+              ? `settled for ${settledDays} of ${settings.worktreeSettledAfterDays} days`
+              : settings.worktreeLandedAfterDays !== null && !landedApplies
+                ? `idle for ${days(idleFor)} of ${settings.worktreeLandedAfterDays} days`
+                : settings.worktreeSettledAfterDays !== null
+                  ? "not settled"
+                  : settings.worktreeOnMerge || landedApplies
+                    ? "not merged"
+                    : unchangedApplies
+                      ? "has commits beyond the default branch"
+                      : settings.worktreeUnchanged
+                        ? "not settled"
+                        : "no rules apply";
         // Only Git-based rules can make a not-yet-due worktree eligible, so skip Git otherwise.
-        if (!eligible && !unchangedApplies && !settings.worktreeOnMerge) return keep(notDueReason);
+        if (!eligible && !unchangedApplies && !landedApplies && !settings.worktreeOnMerge)
+          return keep(notDueReason);
         const pathReason = yield* worktreePathReason(worktreePath);
         if (pathReason !== null) return keep(pathReason);
         if (yield* containsProjectRoot(worktreePaths, [project, ...snapshot.projects]))
@@ -1209,87 +1223,32 @@ const make = Effect.gen(function* () {
         if (changes !== null) return keep(changes);
         const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
         if (!eligible) {
-          const repositoryCwd = path.resolve(project.workspaceRoot);
-          const remotes = yield* git.execute({
-            operation: "StorageCleanup.listRemotes",
-            cwd: repositoryCwd,
-            args: ["remote"],
+          const landed = yield* integration({
+            repositoryCwd: path.resolve(project.workspaceRoot),
+            worktreePath,
+            headSha: head.commitSha,
+            localDefault: unchangedApplies || landedApplies,
+            matchPatches: landedApplies,
           });
-          const remote =
-            remotes.stdout.trim() === ""
-              ? null
-              : yield* git.resolvePrimaryRemoteName(repositoryCwd);
-          let branch: string | null | undefined;
-          let defaultRef: string;
-          if (remote === null) {
-            if (!unchangedApplies)
-              return keep(
-                settings.worktreeUnchanged
-                  ? notDueReason
-                  : "no remote is configured for merged-worktree cleanup",
-              );
-            const projectHead = yield* git.execute({
-              operation: "StorageCleanup.resolveProjectBranch",
-              cwd: repositoryCwd,
-              args: ["symbolic-ref", "--quiet", "HEAD"],
-              allowNonZeroExit: true,
-            });
-            if (projectHead.exitCode !== 0) return keep("project branch is unavailable");
-            defaultRef = projectHead.stdout.trim();
-            branch = defaultRef.slice("refs/heads/".length);
-          } else {
-            const defaultBranchKey = `${repositoryCwd}\0${remote}`;
-            branch = defaultBranches.get(defaultBranchKey);
-            if (branch === undefined) {
-              branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
-              // Without a local HEAD ref, only the remote can identify its default;
-              // a conventional name may be a feature branch.
-              if (branch === null) {
-                branch = yield* git
-                  .execute({
-                    operation: "StorageCleanup.resolveDefaultBranch",
-                    cwd: repositoryCwd,
-                    args: ["ls-remote", "--symref", "--", remote, "HEAD"],
-                    timeoutMs: 20_000,
-                  })
-                  .pipe(
-                    Effect.map(
-                      (result) =>
-                        /^ref: refs\/heads\/(.+)\tHEAD\r?$/m.exec(result.stdout)?.[1] ?? null,
-                    ),
-                    Effect.orElseSucceed(() => null),
-                  );
-              }
-              defaultBranches.set(defaultBranchKey, branch);
-            }
-            if (branch === null) return keep("default branch is unavailable");
-            defaultRef = `refs/remotes/${remote}/${branch}`;
-            const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
-            if (!refreshed.has(defaultRef)) {
-              yield* git.fetchRemoteTrackingBranch({
-                cwd: repositoryCwd,
-                remoteName: remote,
-                remoteBranch: branch,
-              });
-              refreshed.add(defaultRef);
-              refreshedDefaultRefs.set(repositoryCwd, refreshed);
-            }
-          }
-          const base = yield* git.resolveCommit({
-            cwd: worktreePath,
-            revision: defaultRef,
-          });
-          const ancestor = yield* git.execute({
-            operation: "StorageCleanup.integratedBranch",
-            cwd: worktreePath,
-            args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
-            allowNonZeroExit: true,
-          });
-          const integrated = ancestor.exitCode === 0;
-          eligible = integrated && unchangedApplies;
+          if (landed.status === "no-remote")
+            return keep(
+              settings.worktreeUnchanged
+                ? notDueReason
+                : "no remote is configured for merged-worktree cleanup",
+            );
+          if (landed.status === "unavailable")
+            return keep(
+              landed.remote === null
+                ? "project branch is unavailable"
+                : "default branch is unavailable",
+            );
+          const { remote, integrated } = landed;
+          if (landedApplies && !integrated) notDueReason = "has commits not on the default branch";
+          eligible = integrated && (unchangedApplies || landedApplies);
           if (eligible)
-            removalReason =
-              remote === null
+            removalReason = landed.byPatch
+              ? "branch landed on the default branch by rebase or cherry-pick"
+              : remote === null
                 ? "no commits beyond the project branch"
                 : "no commits beyond the default branch";
           if (!eligible && remote !== null && settings.worktreeOnMerge && thread.branch !== null) {
@@ -1299,7 +1258,7 @@ const make = Effect.gen(function* () {
             );
             eligible = storageCleanupPullRequestMerged(pullRequest, {
               branch: thread.branch,
-              defaultBranch: branch,
+              defaultBranch: landed.defaultBranch,
               headSha: head.commitSha,
               integrated,
             });

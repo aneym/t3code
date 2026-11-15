@@ -150,6 +150,7 @@ describe("scoped settings writes", () => {
           rules: {
             worktreeAfterDays: 12,
             worktreeSettledAfterDays: null,
+            worktreeLandedAfterDays: null,
             worktreeOnDelete: true,
             worktreeOnMerge: true,
             worktreeUnchanged: false,
@@ -175,6 +176,7 @@ describe("scoped settings writes", () => {
       {
         worktreeAfterDays: 12,
         worktreeSettledAfterDays: null,
+        worktreeLandedAfterDays: null,
         worktreeOnDelete: false,
         worktreeOnMerge: true,
         worktreeUnchanged: false,
@@ -183,6 +185,7 @@ describe("scoped settings writes", () => {
       {
         worktreeAfterDays: null,
         worktreeSettledAfterDays: null,
+        worktreeLandedAfterDays: null,
         worktreeOnDelete: false,
         worktreeOnMerge: false,
         worktreeUnchanged: false,
@@ -377,6 +380,7 @@ describe("scoped settings writes", () => {
               rules: {
                 worktreeAfterDays: 8,
                 worktreeSettledAfterDays: null,
+                worktreeLandedAfterDays: null,
                 worktreeOnDelete: false,
                 worktreeOnMerge: true,
                 worktreeUnchanged: false,
@@ -408,6 +412,7 @@ describe("scoped settings writes", () => {
             rules: {
               worktreeAfterDays: 8,
               worktreeSettledAfterDays: null,
+              worktreeLandedAfterDays: null,
               worktreeOnDelete: true,
               worktreeOnMerge: true,
               worktreeUnchanged: false,
@@ -423,6 +428,7 @@ describe("scoped settings writes", () => {
             rules: {
               worktreeAfterDays: 30,
               worktreeSettledAfterDays: null,
+              worktreeLandedAfterDays: null,
               worktreeOnDelete: true,
               worktreeOnMerge: false,
               worktreeUnchanged: false,
