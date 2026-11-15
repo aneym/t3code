@@ -1,8 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the agent home's own files are the boundary.
-import { AGENT_HOME_HANDLE_PATTERN } from "@t3tools/contracts";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { agentHomeOfPath } from "./AgentHomeOfPath.ts";
 import { parseDocument, readDocumentText } from "./AgentHomeFiles.ts";
 import { agentHomeSealing } from "./AgentHomeSealing.ts";
 
@@ -10,9 +9,6 @@ export interface SealedAgentHome {
   readonly home: string;
   readonly mcpServers: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 }
-
-const homesRoot = () =>
-  process.env.T3CODE_AGENT_HOMES_DIR ?? NodePath.join(NodeOS.homedir(), ".agent-rails", "agents");
 
 const isServer = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" &&
@@ -34,15 +30,9 @@ const readMcpServers = async (home: string) => {
 };
 
 export const sealedAgentHomeFor = async (cwd: string | null): Promise<SealedAgentHome | null> => {
-  if (cwd === null) return null;
-  const root = await NodeFSP.realpath(homesRoot()).catch(() => null);
-  if (root === null) return null;
-  const dir = await NodeFSP.realpath(cwd).catch(() => NodePath.resolve(cwd));
-  const relative = NodePath.relative(root, dir);
-  const handle = relative.split(NodePath.sep)[0] ?? "";
-  if (relative === "" || NodePath.isAbsolute(relative) || !AGENT_HOME_HANDLE_PATTERN.test(handle))
-    return null;
-  const home = NodePath.join(root, handle);
+  const location = await agentHomeOfPath(cwd);
+  if (location === null) return null;
+  const { root, handle, home } = location;
   const text = await readDocumentText(root, handle).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return null;
     throw new Error(

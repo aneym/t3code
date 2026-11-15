@@ -81,11 +81,19 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
   }
 >()("t3/orchestration-v2/ProviderRuntimeRecoveryService") {}
 
+const childStartHeldRunIds = (projection: ProjectionStore.ProjectionRuntimeRecoveryState) =>
+  new Set(
+    projection.runs.flatMap((run) =>
+      run.status === "preparing" && run.childStartHeld === true ? [run.id] : [],
+    ),
+  );
+
 function nonterminalRuns(projection: ProjectionStore.ProjectionRuntimeRecoveryState) {
+  const held = childStartHeldRunIds(projection);
   return projection.runs.filter((run) => {
     const status: string = run.status;
     return (
-      status === "preparing" ||
+      (status === "preparing" && !held.has(run.id)) ||
       run.status === "starting" ||
       run.status === "running" ||
       run.status === "waiting"
@@ -693,7 +701,10 @@ export const make = Effect.gen(function* () {
           payload: { ...task, completionWake: "always", updatedAt: now },
         });
       }
-      const recoveredNonterminalRunIds = new Set(runs.map((run) => run.id));
+      const recoveredNonterminalRunIds = new Set([
+        ...runs.map((run) => run.id),
+        ...childStartHeldRunIds(projection),
+      ]);
       const cancelledStaleNodeIds = new Set<string>();
       for (const item of projection.turnItems ?? []) {
         if (item.runId !== null && recoveredNonterminalRunIds.has(item.runId)) {

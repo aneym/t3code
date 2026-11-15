@@ -9090,7 +9090,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         attachments: [],
         modelSelection: command.modelSelection,
         dispatchMode:
-          command.workspaceStrategy === undefined
+          command.workspaceStrategy === undefined && command.startHeld !== true
             ? { type: "start_immediately" }
             : { type: "defer_start", workspaceStrategy: command.workspaceStrategy },
       } satisfies Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>;
@@ -9103,6 +9103,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause: `Delegated child thread ${childThreadId} did not create a run.`,
+        });
+      }
+      if (command.startHeld === true) {
+        yield* emitEvent({
+          type: "run.updated",
+          threadId: childThreadId,
+          runId: childRun.id,
+          ...(childRun.rootNodeId === null ? {} : { nodeId: childRun.rootNodeId }),
+          providerInstanceId: childRun.providerInstanceId,
+          occurredAt: now,
+          payload: { ...childRun, childStartHeld: true },
         });
       }
       const spawnTransferId = yield* mapDispatchError(command)(
