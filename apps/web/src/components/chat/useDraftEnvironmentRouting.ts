@@ -36,6 +36,7 @@ import type { DraftSessionState } from "../../composerDraftStore";
 import { loadBalancingSendWarning } from "./composerSend.logic";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
+import { refuseComposerSend } from "./composerSendRefusal";
 
 interface DraftEnvironmentRoutingInput {
   readonly draftId: DraftId | null;
@@ -157,12 +158,19 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         current.loadBalancingCandidates.join("\n") !== loadBalancingCandidates.join("\n") ||
         getDraftSession(draftId) !== originalDraft ||
         useComposerDraftStore.getState().getComposerDraft(draftId) !== composerDraft
-      )
+      ) {
+        refuseComposerSend([
+          "draft-changed-while-routing",
+          "Not sent: the draft changed",
+          "It changed while a machine was picked. Check it, then send again.",
+        ]);
         return false;
+      }
       const target = current.input.logicalProjectEnvironments.find(
         (candidate) => candidate.environmentId === environmentId,
       );
       if (!target?.projectId) {
+        console.warn("[composer-send] not sent: no-machine-picked");
         toastManager.add({
           type: "warning",
           ...loadBalancingSendWarning({
