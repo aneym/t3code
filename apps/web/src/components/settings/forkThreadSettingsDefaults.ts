@@ -3,6 +3,7 @@ import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contrac
 export const forkThreadSettingsDefaults = {
   showChatChangedFiles: DEFAULT_UNIFIED_SETTINGS.showChatChangedFiles,
   batchQueuedMessages: DEFAULT_UNIFIED_SETTINGS.batchQueuedMessages,
+  queueSendAll: DEFAULT_UNIFIED_SETTINGS.queueSendAll,
   quietThreadNotes: DEFAULT_UNIFIED_SETTINGS.quietThreadNotes,
   childCompletionNotes: DEFAULT_UNIFIED_SETTINGS.childCompletionNotes,
   headlessSubagentStreaming: DEFAULT_UNIFIED_SETTINGS.headlessSubagentStreaming,
@@ -19,6 +20,7 @@ export function changedForkThreadSettings(settings: UnifiedSettings): ReadonlyAr
     settings.batchQueuedMessages !== forkThreadSettingsDefaults.batchQueuedMessages
       ? "Send queued messages together"
       : null,
+    settings.queueSendAll !== forkThreadSettingsDefaults.queueSendAll ? "Send all queued" : null,
     settings.quietThreadNotes !== forkThreadSettingsDefaults.quietThreadNotes
       ? "Quiet thread notes"
       : null,

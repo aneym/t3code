@@ -22,6 +22,13 @@ export const queueSettingsSearch: ReadonlyArray<SettingsSearchItem> = [
     searchTerms: ["queue queued messages batch combine together one turn release drain follow up"],
   },
   {
+    id: "queue-send-all",
+    title: "Send all queued",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["queue queued messages send all bulk steer start every release"],
+  },
+  {
     id: "quiet-thread-notes",
     title: "Quiet thread notes",
     to: "/settings/chat",
