@@ -72,6 +72,7 @@ const baseProps = {
   onCancelEdit: () => undefined,
   timestampFormat: "locale",
   onOpenThread: () => undefined,
+  onFileOpen: () => undefined,
 } satisfies ComponentProps<typeof QueuedRunsControl>;
 
 async function renderQueue(props: Partial<ComponentProps<typeof QueuedRunsControl>> = {}) {

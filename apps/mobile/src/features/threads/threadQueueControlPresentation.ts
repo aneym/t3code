@@ -1,6 +1,6 @@
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
-import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
+import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 
 export const REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL = "Remove queued message";
 
@@ -36,9 +36,9 @@ export function resolveThreadQueueRowControls(input: {
     canSend: mutationEnabled && (input.canPromoteToSteer || input.canSendNow) && !isEditing,
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
     // Editing and sending keep the original text so quoted citations stay linked.
-    displayText: isAttachmentOnlyBootstrapPrompt(input.text)
-      ? ""
-      : assistantCitationsToPlainText(input.text),
+    displayText: assistantCitationsToPlainText(
+      resolveUserMessagePresentation({ role: "user", text: input.text }).text,
+    ),
     isEditing,
   };
 }

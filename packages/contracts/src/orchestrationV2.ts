@@ -528,7 +528,6 @@ export const OrchestrationV2AppThread = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-  /** Absent on threads written before tags existed; read as empty. */
   tags: Schema.optional(StoredThreadTags),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -717,6 +716,7 @@ export const OrchestrationV2Run = Schema.Struct({
   ...QueueHoldState.fields,
   retainBlockedCompletionHolds: Schema.optional(Schema.Boolean),
   steerWhenReadyRunId: Schema.optional(RunId),
+  steerWhenReadyAtBoundary: Schema.optional(Schema.Boolean),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -753,7 +753,6 @@ export function orchestrationV2RunWorkStartedAt(
 
 export const OrchestrationV2RunAttempt = Schema.Struct({
   id: RunAttemptId,
-  // Provider-thread rows can be reused after recovery; retain the native input destination.
   nativeThreadId: Schema.optional(Schema.String),
   runId: RunId,
   attemptOrdinal: PositiveInt,
@@ -3238,7 +3237,6 @@ export const OrchestrationV2Command = Schema.Union([
     ...MessageSender.fields,
     linkedSender: Schema.optional(OrchestrationV2LinkedSender),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
-    /** Start a new provider session without the thread's earlier context. Never steers. */
     freshContext: Schema.optional(Schema.Boolean),
     commandId: CommandId,
     threadId: ThreadId,
@@ -3254,6 +3252,7 @@ export const OrchestrationV2Command = Schema.Union([
     manualContinuationOfRunId: Schema.optional(RunId),
     steerFollowUpOfRunId: Schema.optional(RunId),
     steerFollowUpAfterRunOrdinal: Schema.optional(NonNegativeInt),
+    steerDropped: Schema.optional(Schema.Boolean),
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
     delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionRef),
@@ -3323,6 +3322,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     queuedRunId: RunId,
     targetRunId: RunId,
+    atBoundary: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("queue.resume"),

@@ -340,7 +340,6 @@ export function claudeProviderTurnTokenUsage(
 
 type ClaudeMessageUsage = Parameters<typeof claudeProviderTurnTokenUsage>[0];
 
-// message_delta usage is per-message cumulative; null or absent fields retain message_start values and zeros replace them.
 function mergeClaudeStreamUsage(
   current: ClaudeMessageUsage,
   delta: {
@@ -887,7 +886,6 @@ const CLAUDE_MCP_APP_CAPABILITIES = [
   "mcp_read_resource_v1",
   "mcp_call_result_not_for_model_v1",
 ] as const;
-// Captured inline, unlike Codex's shared app-server: a slow read delays only this session's stream, and only this long.
 const CLAUDE_MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
 
 function claudeSupportsMcpApps(capabilities: ReadonlySet<string>): boolean {
@@ -2335,7 +2333,6 @@ function textFromClaudeContent(content: SDKAssistantMessage["message"]["content"
   return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 }
 
-// Claude 5.1+ emits at most one pre-tool text block as thinking; treat only a second consecutive thinking block as text.
 function claudeWritesUpdatesAsThinking(model: string): boolean {
   const match = /claude-[a-z]+-(\d+)(?:-(\d{1,2}))?(?!\d)/u.exec(model);
   if (match === null) return false;
@@ -4633,15 +4630,11 @@ interface ActiveClaudeTurnContext {
   nativeWakeStarted: boolean;
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
-  // Steers Claude has not started or echoed yet, by prompt uuid. Claude holds
-  // a steer behind a running foreground tool call without saying so, and Stop
-  // drops it unread.
   readonly pendingSteers: Map<
     string,
     {
       readonly messageId: MessageId;
-      readonly text: string;
-      readonly liveQuery: ClaudeLiveQueryContext;
+      readonly atBoundary: boolean;
     }
   >;
   // Claude may settle a turn with a result that echoes only a steer's uuid.
@@ -8709,47 +8702,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
           }
 
-          if (input.status === "interrupted") {
-            for (const [uuid, { text, liveQuery }] of droppedSteers) {
-              // Only a CLI proven to echo prompt uuids can leave a steer unconfirmed.
-              if (
-                liveQuery.promptEchoMode !== "early" &&
-                liveQuery.promptEchoMode !== "result_only"
-              ) {
-                continue;
-              }
-              const nativeItemId = `unread-steer:${uuid}`;
-              const notice = `Claude did not confirm reading your steer before Stop. It may not have been delivered. Resend it if needed: "${text}"`;
-              yield* emitProviderEvent({
-                type: "turn_item.updated",
-                driver: CLAUDE_PROVIDER,
-                turnItem: {
-                  id: idAllocator.derive.turnItemFromProviderItem({
-                    driver: CLAUDE_PROVIDER,
-                    nativeItemId,
-                  }),
-                  threadId: input.context.input.threadId,
-                  runId: input.context.input.runId,
-                  nodeId: input.context.input.rootNodeId,
-                  providerThreadId: input.context.input.providerThread.id,
-                  providerTurnId: input.context.providerTurnId,
-                  nativeItemRef: {
-                    driver: CLAUDE_PROVIDER,
-                    nativeId: nativeItemId,
-                    strength: "weak",
-                  },
-                  parentItemId: null,
-                  ordinal: yield* resolveItemOrdinal(input.context, nativeItemId),
-                  type: "system_notice",
-                  status: "completed",
-                  title: "Steer delivery not confirmed",
-                  message: notice,
-                  startedAt: input.completedAt,
-                  completedAt: input.completedAt,
-                  updatedAt: input.completedAt,
-                },
-              });
-            }
+          const liveAfterDrop = yield* Ref.get(queryContext);
+          if (
+            droppedSteers.length > 0 &&
+            input.status !== "completed" &&
+            liveAfterDrop !== null &&
+            !liveAfterDrop.stopping &&
+            !(yield* Ref.get(interruptedTurns)).has(input.context.providerTurnId)
+          ) {
+            liveAfterDrop.stopping = true;
+            yield* liveAfterDrop.query.close.pipe(Effect.ignore, Effect.forkIn(sessionScope));
           }
 
           const threadDisposition = input.threadDisposition ?? "reusable";
@@ -11053,7 +11015,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const completedAt = yield* DateTime.now;
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
-            if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
+            if (
+              !interrupted &&
+              wasSteered &&
+              (isClaudeActiveSteeringAbortResult(message) ||
+                (terminalStatusFromResult(message) === "completed" &&
+                  [...context.pendingSteers.values()].some((steer) => steer.atBoundary)))
+            ) {
               const cutOffReply = context.assistant.lastReply;
               context.assistant.lastReply = null;
               if (message.terminal_reason === "aborted_streaming") {
@@ -12877,7 +12845,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ).promptEffort,
               ),
               attachments: turnInput.message.attachments,
-              priority: "now",
+              priority: turnInput.atBoundary ? "next" : "now",
               uuid: steerUuid,
               attachmentsDir,
               fileSystem,
@@ -12910,8 +12878,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             currentTurn.steerUuids.add(steerUuid);
             currentTurn.pendingSteers.set(steerUuid, {
               messageId,
-              text: turnInput.message.text,
-              liveQuery: existing,
+              atBoundary: turnInput.atBoundary === true,
             });
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);

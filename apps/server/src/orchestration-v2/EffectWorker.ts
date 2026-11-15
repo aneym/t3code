@@ -266,6 +266,7 @@ export const layerExecutor: Layer.Layer<
                 ...(effect.request.modelSelection === undefined
                   ? {}
                   : { modelSelection: effect.request.modelSelection }),
+                ...(effect.request.atBoundary ? { atBoundary: true } : {}),
               })
               .pipe(
                 Effect.tap(() =>
@@ -352,7 +353,6 @@ export const layerExecutor: Layer.Layer<
                           : { linkedSender: message.linkedSender }),
                       })
                       .pipe(
-                        // A disabled instance cannot retry this completed turn; its result stands.
                         Effect.catchTags({
                           ThreadManagementProviderInstanceDisabledError: (disabledError) =>
                             Effect.logInfo(

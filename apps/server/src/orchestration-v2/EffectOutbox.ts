@@ -68,6 +68,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     messageId: MessageId,
     modelSelection: Schema.optional(ModelSelection),
     steerFollowUpAfterRunOrdinal: Schema.optional(NonNegativeInt),
+    atBoundary: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.restart"),
@@ -210,7 +211,6 @@ const isEffectOutboxError = Schema.is(EffectOutboxError);
 export interface EffectOutboxV2Shape extends DispatchGateShape {
   readonly awaitAvailable: Effect.Effect<void>;
   readonly notifyAvailable: (count?: number) => Effect.Effect<void>;
-  /** Persist rows only. Notify workers after the surrounding transaction commits. */
   readonly enqueue: (
     effects: ReadonlyArray<PendingOrchestrationEffectV2>,
   ) => Effect.Effect<void, EffectOutboxError>;

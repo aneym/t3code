@@ -1,6 +1,6 @@
 import { queuedRunRows } from "./queuedRunRows";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { withoutRailsDeskContext } from "@t3tools/client-runtime/user-message";
+import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import {
@@ -10,6 +10,7 @@ import {
 import {
   mcpEventOfMessage,
   type ChatAttachment as ContractChatAttachment,
+  type ChatFileAttachment as ContractChatFileAttachment,
   type EnvironmentId,
   type MessageId,
   type RunId,
@@ -80,6 +81,7 @@ export function QueuedRunsControl({
   readonly onCancelEdit: () => void;
   readonly timestampFormat: TimestampFormat;
   readonly onOpenThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
+  readonly onFileOpen: (file: ContractChatFileAttachment) => void;
 }) {
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
@@ -252,7 +254,7 @@ export function QueuedRunsControl({
       ) : null}
       <ol ref={listRef} className="flex flex-col items-end gap-3" id={queueListId}>
         {visibleItems.map((item, position) => {
-          const ownText = withoutRailsDeskContext(item.text);
+          const ownText = resolveUserMessagePresentation({ role: "user", text: item.text }).text;
           const previewText = isAttachmentOnlyBootstrapPrompt(ownText)
             ? ""
             : assistantCitationsToPlainText(
@@ -290,6 +292,7 @@ export function QueuedRunsControl({
                 isEditing={isEditing}
                 timestampFormat={props.timestampFormat}
                 onOpenThread={props.onOpenThread}
+                onFileOpen={props.onFileOpen}
               >
                 {canSendRun(item.freshContext) && !isEditing && !item.isBackgroundResult ? (
                   <>

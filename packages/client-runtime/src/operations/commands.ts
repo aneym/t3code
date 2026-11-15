@@ -197,7 +197,6 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
   readonly dispatchMode?: "auto" | "queue" | "steer" | "restart" | "start";
   /** Start a new provider session; needs the server's `freshContext` capability. */
   readonly freshContext?: boolean;
-  /** Defaults to true. Callers with their own retry queue opt out so a dead socket fails fast. */
   readonly resendAfterSocketLoss?: boolean;
 }
 
@@ -260,6 +259,7 @@ export interface ResumeThreadQueueInput extends ThreadCommandInput {
 export interface PromoteQueuedRunInput extends ThreadCommandInput {
   readonly queuedRunId: RunId;
   readonly targetRunId: RunId;
+  readonly atBoundary?: boolean;
 }
 
 export interface CancelQueuedRunInput extends ThreadCommandInput {
@@ -1131,6 +1131,7 @@ export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun"
     threadId: input.threadId,
     queuedRunId: input.queuedRunId,
     targetRunId: input.targetRunId,
+    ...(input.atBoundary ? { atBoundary: true } : {}),
   });
 });
 
