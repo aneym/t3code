@@ -66,7 +66,13 @@ const layerGate = HttpRouter.middleware(
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const chatTokens = credentials(request, cookieNames).filter(claimsChatScope);
-        if (chatTokens.length === 0) return yield* httpEffect;
+        const unchat = Effect.gen(function* () {
+          const path = Option.map(requestUrl(request), (url) => url.pathname);
+          return Option.isSome(path) && (yield* grants.isBound(path.value))
+            ? forbidden()
+            : yield* httpEffect;
+        });
+        if (chatTokens.length === 0) return yield* unchat;
         const verified = yield* Effect.forEach(chatTokens, (token) =>
           sessions.verify(token).pipe(Effect.option),
         );
@@ -77,7 +83,7 @@ const layerGate = HttpRouter.middleware(
               : [],
           )
           .at(0);
-        if (session === undefined) return yield* httpEffect;
+        if (session === undefined) return yield* unchat;
         const setId = chatSessionSetId(session.subject);
         const url = requestUrl(request);
         if (setId === null || Option.isNone(url)) return forbidden();
