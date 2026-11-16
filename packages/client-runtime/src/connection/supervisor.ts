@@ -37,7 +37,7 @@ import {
   retryDelayMs,
   type SilentRoute,
 } from "./retryDelay.ts";
-import { announcedRestartRetryDelayMs } from "./restartNotice.ts";
+import { announcedRestartRetryDelayMs, noteServerStarting } from "./restartNotice.ts";
 import {
   connectionRouteId,
   connectionRouteKind,
@@ -1196,6 +1196,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       failureCount += 1;
       const failedAt = yield* Clock.currentTimeMillis;
       outageStartedAt ??= failedAt;
+      noteServerStarting(target.environmentId, error, failedAt);
       const delayMs = firstLoss
         ? Math.round(SESSION_LOSS_RETRY_DELAY_MS * (0.5 + (yield* Random.next) / 2))
         : (announcedRestartRetryDelayMs(target.environmentId, failedAt) ??

@@ -42,7 +42,6 @@ const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(3);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.millis(DEFAULT_RESTART_STOP_WAIT_MS);
-// SIGKILL and the spawner exit wait follow the grace, so quit never orphans a hung backend.
 export const BACKEND_QUIT_STOP_TIMEOUT = Duration.sum(
   DEFAULT_BACKEND_TERMINATE_GRACE,
   Duration.seconds(2),

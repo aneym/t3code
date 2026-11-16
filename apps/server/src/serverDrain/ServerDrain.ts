@@ -19,26 +19,15 @@ const ANNOUNCE_FLUSH = Duration.millis(250);
 interface DrainState {
   readonly draining: boolean;
   readonly inFlight: number;
-  readonly held: ReadonlySet<string>;
 }
 
 export class ServerDrain extends Context.Service<
   ServerDrain,
   {
     readonly draining: Effect.Effect<boolean>;
-    readonly guardTurnStart: <A, E, R>(
-      runId: string,
-      start: Effect.Effect<A, E, R>,
-    ) => Effect.Effect<A, E, R>;
+    readonly countTurnStart: <A, E, R>(start: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
 >()("t3/serverDrain/ServerDrain") {}
-
-const withHeld = (held: ReadonlySet<string>, runId: string, add: boolean) => {
-  const next = new Set(held);
-  if (add) next.add(runId);
-  else next.delete(runId);
-  return next;
-};
 
 export const layer = Layer.effect(
   ServerDrain,
@@ -48,20 +37,20 @@ export const layer = Layer.effect(
     const drainSeconds = restartDrainSeconds(
       Option.getOrUndefined(yield* Config.String(RESTART_DRAIN_ENV).pipe(Config.option)),
     );
-    const state = yield* Ref.make<DrainState>({ draining: false, inFlight: 0, held: new Set() });
+    const state = yield* Ref.make<DrainState>({ draining: false, inFlight: 0 });
     const stopRequested = yield* Deferred.make<void>();
 
-    const executingRuns = sql<{ readonly run_id: string }>`
-      SELECT run_id FROM orchestration_v2_projection_runs WHERE status IN ('starting', 'running')
+    const executingRuns = sql<{ readonly open: number }>`
+      SELECT COUNT(*) AS open FROM orchestration_v2_projection_runs
+      WHERE status IN ('starting', 'running')
     `.pipe(
-      Effect.map((rows) => rows.map((row) => row.run_id)),
-      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+      Effect.map((rows) => rows[0]?.open ?? 0),
+      Effect.orElseSucceed(() => 0),
     );
 
     const openWork = Effect.gen(function* () {
-      const runIds = yield* executingRuns;
-      const { inFlight, held } = yield* Ref.get(state);
-      return inFlight + runIds.filter((runId) => !held.has(runId)).length;
+      const { inFlight } = yield* Ref.get(state);
+      return inFlight + (yield* executingRuns);
     });
 
     const drain = Effect.gen(function* () {
@@ -100,25 +89,10 @@ export const layer = Layer.effect(
 
     return ServerDrain.of({
       draining: Ref.get(state).pipe(Effect.map((current) => current.draining)),
-      guardTurnStart: Effect.fn("ServerDrain.guardTurnStart")(function* <A, E, R>(
-        runId: string,
+      countTurnStart: Effect.fn("ServerDrain.countTurnStart")(function* <A, E, R>(
         start: Effect.Effect<A, E, R>,
       ) {
-        const hold = yield* Ref.modify(state, (current) =>
-          current.draining
-            ? ([true, { ...current, held: withHeld(current.held, runId, true) }] as const)
-            : ([false, { ...current, inFlight: current.inFlight + 1 }] as const),
-        );
-        if (hold) {
-          return yield* Effect.never.pipe(
-            Effect.ensuring(
-              Ref.update(state, (current) => ({
-                ...current,
-                held: withHeld(current.held, runId, false),
-              })),
-            ),
-          );
-        }
+        yield* Ref.update(state, (current) => ({ ...current, inFlight: current.inFlight + 1 }));
         return yield* start.pipe(
           Effect.ensuring(
             Ref.update(state, (current) => ({ ...current, inFlight: current.inFlight - 1 })),

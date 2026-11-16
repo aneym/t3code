@@ -9,6 +9,18 @@ export function noteRestartAnnounced(environmentId: string, at: number): void {
   for (const listener of listeners) listener();
 }
 
+export function noteServerStarting(
+  environmentId: string,
+  failure: { readonly _tag: string; readonly httpStatus?: number; readonly via?: string },
+  at: number,
+): void {
+  if (failure._tag !== "ConnectionTransientError" || failure.httpStatus !== 503) return;
+  if (failure.via === "relay") return;
+  const prior = announcedAt.get(environmentId);
+  if (prior !== undefined && at - prior < 2 * ANNOUNCED_RESTART_WINDOW_MS) return;
+  noteRestartAnnounced(environmentId, at);
+}
+
 function restartAnnouncedSince(environmentId: string, now: number): number | null {
   const at = announcedAt.get(environmentId);
   return at !== undefined && now - at < ANNOUNCED_RESTART_WINDOW_MS ? at : null;

@@ -3,9 +3,6 @@ const RETRY_MAX_DELAY_MS = 300_000;
 const OUTAGE_SHARE = 10;
 export const SESSION_LOSS_RETRY_DELAY_MS = 250;
 export const BETTER_ROUTE_CHECK_INTERVAL_MS = 60_000;
-// Each check of a dead route can wait out the full probe timeout, so a route
-// that keeps failing is checked half as often each time, until the network
-// changes and it may answer again.
 const SILENT_ROUTE_BACKOFF_MAX_MS = 1_800_000;
 
 export interface SilentRoute {

@@ -1,10 +1,12 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Console from "effect/Console";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as References from "effect/References";
 import * as Runtime from "effect/Runtime";
 import * as Schedule from "effect/Schedule";
@@ -19,11 +21,18 @@ import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
 import { resolveCliAuthConfig } from "./config.ts";
 import { openOwnerCliSession } from "./ownerCliSessionCache.ts";
 
+const SERVER_UNAVAILABLE_EXIT_CODE = 3;
+
+const isServerUnavailable = (error: unknown) =>
+  Predicate.isTagged(error, "McpServerNotRunningError") ||
+  Predicate.isTagged(error, "McpServerUnreachableError");
+
 export class McpServerNotRunningError extends Schema.TaggedError<McpServerNotRunningError>()(
   "McpServerNotRunningError",
   { baseDir: Schema.String },
 ) {
   override readonly [Runtime.errorReported] = false;
+  override readonly [Runtime.errorExitCode] = SERVER_UNAVAILABLE_EXIT_CODE;
   override get message(): string {
     return `No running T3 Code server uses ${this.baseDir}. Start T3 Code, then retry.`;
   }
@@ -34,6 +43,7 @@ export class McpServerUnreachableError extends Schema.TaggedError<McpServerUnrea
   { origin: Schema.String, cause: Schema.Defect() },
 ) {
   override readonly [Runtime.errorReported] = false;
+  override readonly [Runtime.errorExitCode] = SERVER_UNAVAILABLE_EXIT_CODE;
   override get message(): string {
     const reason = this.cause instanceof Error ? ` ${this.cause.message}` : "";
     return `Could not reach the T3 Code server at ${this.origin}.${reason}`;
@@ -114,6 +124,7 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
   flags: { readonly baseDir: Option.Option<string> },
   run: (tools: OwnerMcpTools) => Effect.Effect<A, E, R>,
   headers?: Readonly<Record<string, string>>,
+  serverWait?: Duration.Duration,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
@@ -122,7 +133,7 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
   const serviceInstalled = yield* fileSystem
     .exists(path.join(config.baseDir, "runtime", SERVICE_STATE_FILE))
     .pipe(Effect.orElseSucceed(() => false));
-  return yield* Effect.gen(function* () {
+  const attempt = Effect.gen(function* () {
     const connect = Effect.gen(function* () {
       const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
       if (Option.isNone(runtimeState)) {
@@ -143,7 +154,7 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
       return { session, origin };
     });
     let told = false;
-    const { session, origin } = yield* serviceInstalled
+    const { session, origin } = yield* serviceInstalled && serverWait === undefined
       ? connect.pipe(
           Effect.tapError(() =>
             Effect.suspend(() => {
@@ -165,8 +176,27 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
         )
       : connect;
     return yield* run(makeOwnerMcpTools(session, origin));
-  }).pipe(
-    Effect.scoped,
+  }).pipe(Effect.scoped);
+  let waiting = false;
+  const delivered =
+    serverWait === undefined
+      ? attempt
+      : attempt.pipe(
+          Effect.tapError((error) =>
+            Effect.suspend(() => {
+              if (waiting || !isServerUnavailable(error)) return Effect.void;
+              waiting = true;
+              return Console.error(
+                `T3 Code at ${config.baseDir} is not answering. Retrying for up to ${Duration.format(serverWait)}.`,
+              );
+            }),
+          ),
+          Effect.retry({
+            schedule: Schedule.spaced("500 millis").pipe(Schedule.upTo({ duration: serverWait })),
+            while: isServerUnavailable,
+          }),
+        );
+  return yield* delivered.pipe(
     Effect.provide(
       EnvironmentAuth.layerRuntime.pipe(
         Layer.provide(ServerConfig.layer(config)),
