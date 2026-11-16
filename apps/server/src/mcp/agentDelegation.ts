@@ -51,6 +51,7 @@ const localOnlyReason = Effect.fn("AgentDelegation.localOnlyReason")(function* (
       : "The task's base reference is local to this environment.";
   if (
     parent === undefined ||
+    input.worktreeBase !== "parent" ||
     (input.target?.projectId !== undefined && input.target.projectId !== parent.projectId)
   )
     return undefined;

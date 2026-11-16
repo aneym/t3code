@@ -22,7 +22,10 @@ import * as WorktreeTransfer from "./WorktreeTransfer.ts";
 type ThreadScope = McpInvocationContext.McpThreadInvocationScope;
 type LaunchParams = Tool.Parameters<typeof ProjectToolkit.tools.t3_thread_launch>;
 type LaunchResult = Tool.Success<typeof ProjectToolkit.tools.t3_thread_launch>;
-type WorkspaceRequest = Pick<OrchestratorMcpDelegateTaskInput, "isolation" | "baseRef">;
+type WorkspaceRequest = Pick<
+  OrchestratorMcpDelegateTaskInput,
+  "isolation" | "baseRef" | "worktreeBase"
+>;
 interface ParentCheckout {
   readonly projectId: ProjectId;
   readonly worktreePath: string | null;
@@ -105,27 +108,44 @@ const make = Effect.gen(function* () {
         return { launched: yield* launchOn(undefined) };
       }
       if (request.baseRef !== undefined) return { launched: yield* launchOn(request.baseRef) };
+      const readTarget = () =>
+        params.projectId === undefined
+          ? Effect.undefined
+          : forwarding.call(scope, ProjectToolkit.tools.t3_project_read, environmentId, {
+              projectId: params.projectId,
+            });
+      const launchFrom = (baseRef: string, startFromOrigin: boolean) =>
+        forwarding.call(scope, ProjectToolkit.tools.t3_thread_launch, environmentId, {
+          ...params,
+          message: `${params.message ?? ""}${COMMIT_ONLY}`,
+          workspaceStrategy: { type: "worktree", baseRef, startFromOrigin },
+        });
       const cwd = yield* checkoutOf(parent);
+      const sameRepository = Effect.fn("RemoteWorktreeTask.sameRepository")(function* () {
+        const targetKey =
+          params.projectId === undefined
+            ? undefined
+            : yield* repositoryKeyThere(scope, environmentId, params.projectId);
+        const parentKey =
+          targetKey === undefined || cwd === undefined
+            ? undefined
+            : (yield* repositoryIdentities.resolve(cwd))?.canonicalKey;
+        return targetKey === undefined || targetKey === parentKey;
+      });
+      const defaultBase =
+        request.worktreeBase === "parent" ? undefined : (yield* readTarget())?.defaultBaseRef;
+      if (defaultBase !== undefined) {
+        if (cwd === undefined || !(yield* sameRepository()))
+          return { launched: yield* launchOn(defaultBase) };
+        return { launched: yield* launchFrom(defaultBase, true), worktreeBase: defaultBase };
+      }
       const commitBase =
         cwd === undefined
           ? undefined
           : yield* transfer.resolveBase(cwd).pipe(Effect.orElseSucceed(() => undefined));
-      const targetKey =
-        commitBase === undefined || params.projectId === undefined
-          ? undefined
-          : yield* repositoryKeyThere(scope, environmentId, params.projectId);
-      const parentKey =
-        targetKey === undefined || cwd === undefined
-          ? undefined
-          : (yield* repositoryIdentities.resolve(cwd))?.canonicalKey;
-      const base = targetKey !== undefined && targetKey !== parentKey ? undefined : commitBase;
+      const base = commitBase === undefined || !(yield* sameRepository()) ? undefined : commitBase;
       if (base === undefined) {
-        const target =
-          params.projectId === undefined
-            ? undefined
-            : yield* forwarding.call(scope, ProjectToolkit.tools.t3_project_read, environmentId, {
-                projectId: params.projectId,
-              });
+        const target = yield* readTarget();
         if (target?.defaultBaseRef === undefined)
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
@@ -133,12 +153,6 @@ const make = Effect.gen(function* () {
           });
         return { launched: yield* launchOn(target.defaultBaseRef) };
       }
-      const launchFrom = (baseRef: string, startFromOrigin: boolean) =>
-        forwarding.call(scope, ProjectToolkit.tools.t3_thread_launch, environmentId, {
-          ...params,
-          message: `${params.message ?? ""}${COMMIT_ONLY}`,
-          workspaceStrategy: { type: "worktree", baseRef, startFromOrigin },
-        });
       const { commit, fetchable } = base;
       return yield* launchFrom(commit, false).pipe(
         Effect.map((launched) => ({ launched, worktreeBase: commit })),
@@ -170,15 +184,9 @@ const make = Effect.gen(function* () {
     const branches =
       cwd === undefined
         ? []
-        : yield* transfer.remoteBranchesContaining(cwd, remote.worktreeBase).pipe(
-            Effect.mapError(
-              (error) =>
-                new OrchestratorMcpFailure({
-                  code: "orchestration_error",
-                  message: error.message,
-                }),
-            ),
-          );
+        : yield* transfer
+            .remoteBranchesContaining(cwd, remote.worktreeBase)
+            .pipe(Effect.orElseSucceed(() => []));
     const exported = yield* forwarding
       .call(scope, WorktreeToolkit.tools.t3_worktree_export, remote.environmentId, {
         threadId: remote.threadId,

@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import type * as ProjectService from "../project/ProjectService.ts";
+import { resolveDefaultBaseRef } from "../vcs/defaultBaseRef.ts";
 import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { failure } from "./threadManagementFailure.ts";
 
@@ -16,7 +17,10 @@ interface ParentCheckout {
   readonly worktreePath: string | null;
 }
 
-type Request = Pick<OrchestratorMcpDelegateTaskInput, "target" | "isolation" | "baseRef">;
+type Request = Pick<
+  OrchestratorMcpDelegateTaskInput,
+  "target" | "isolation" | "baseRef" | "worktreeBase"
+>;
 
 const defaultBranchRevisions = Effect.fn("DelegatedTaskWorkspace.defaultBranchRevisions")(
   function* (git: Services["git"], cwd: string) {
@@ -76,6 +80,19 @@ export const resolveDelegatedTaskWorkspace = Effect.fn("DelegatedTaskWorkspace.r
   );
   if (input.isolation !== "worktree") return { projectId, command };
   const root = project.workspaceRoot;
+  const origin =
+    input.baseRef === undefined && input.worktreeBase !== "parent"
+      ? yield* resolveDefaultBaseRef(git, root)
+      : null;
+  if (origin !== null) {
+    return {
+      projectId,
+      command: {
+        ...command,
+        workspaceStrategy: { type: "worktree" as const, baseRef: origin, startFromOrigin: true },
+      },
+    };
+  }
   const cwd = crossProject ? root : (parent.worktreePath ?? root);
   const revisions =
     input.baseRef !== undefined
