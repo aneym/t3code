@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Fiber from "effect/Fiber";
+import * as Latch from "effect/Latch";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -95,6 +96,9 @@ export const mcpToolSession = (
   let sessionId: string | null = null;
   let protocolVersion: string | null = null;
   let nextId = 0;
+  let inFlight = 0;
+  let closing = false;
+  const idle = Latch.makeUnsafe(true);
 
   const headers = () => ({
     accept: "application/json, text/event-stream",
@@ -153,15 +157,43 @@ export const mcpToolSession = (
     return envelope;
   });
 
-  const terminate = Effect.suspend(() =>
-    sessionId === null
+  const tracked = <A>(effect: Effect.Effect<A, AcpMcpBridgeError>) =>
+    Effect.suspend(() => {
+      if (closing) {
+        return Effect.fail(
+          new AcpMcpBridgeError({
+            message: "The T3 Code MCP session is closed; the call was not sent.",
+          }),
+        );
+      }
+      inFlight += 1;
+      idle.closeUnsafe();
+      return effect.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            inFlight -= 1;
+            if (inFlight === 0) idle.openUnsafe();
+          }),
+        ),
+      );
+    });
+
+  const terminate = Effect.suspend(() => {
+    closing = true;
+    return sessionId === null
       ? Effect.void
-      : Effect.tryPromise({
-          try: () =>
-            fetchImplementation(options.endpoint, { method: "DELETE", headers: headers() }),
-          catch: bridgeError,
-        }).pipe(Effect.flatMap(discardResponseBody), Effect.ignore),
-  );
+      : idle.await.pipe(
+          Effect.andThen(
+            Effect.tryPromise({
+              try: () =>
+                fetchImplementation(options.endpoint, { method: "DELETE", headers: headers() }),
+              catch: bridgeError,
+            }),
+          ),
+          Effect.flatMap(discardResponseBody),
+          Effect.ignore,
+        );
+  });
 
   // Registered before the handshake so a session the server opened is ended
   // even when the handshake fails, and the handshake stays interruptible.
@@ -175,7 +207,7 @@ export const mcpToolSession = (
     yield* send({ jsonrpc: "2.0", method: "notifications/initialized" });
     return {
       call: (tool, args) =>
-        request("tools/call", { name: tool, arguments: args }).pipe(
+        tracked(request("tools/call", { name: tool, arguments: args })).pipe(
           Effect.map((envelope) => envelope.result),
         ),
     } satisfies McpToolSession;
