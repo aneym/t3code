@@ -31,6 +31,14 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 import {
+  BETTER_ROUTE_CHECK_INTERVAL_MS,
+  SESSION_LOSS_RETRY_DELAY_MS,
+  backOffSilentRoute,
+  retryDelayMs,
+  type SilentRoute,
+} from "./retryDelay.ts";
+import { announcedRestartRetryDelayMs, noteServerStarting } from "./restartNotice.ts";
+import {
   connectionRouteId,
   connectionRouteKind,
   connectionRoutes,
@@ -40,9 +48,6 @@ import {
   type ReportedEndpoint,
 } from "./routes.ts";
 
-const RETRY_BASE_DELAY_MS = 1_000;
-const RETRY_MAX_DELAY_MS = 300_000;
-const SESSION_LOSS_RETRY_DELAY_MS = 250;
 // A cold server with a large database can take longer than 15 seconds to
 // answer, and that is not a reason to drop a working connection.
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
@@ -64,11 +69,6 @@ const FRAME_CHECK_EVERY = "100 millis";
 // instead of timing out.
 const REMOTE_SILENT_SOCKET_AFTER = "2500 millis";
 const BACKOFF_RESET_AFTER_MS = 30_000;
-const BETTER_ROUTE_CHECK_INTERVAL_MS = 60_000;
-// Each check of a dead route can wait out the full probe timeout, so a route
-// that keeps failing is checked half as often each time, until the network
-// changes and it may answer again.
-const SILENT_ROUTE_BACKOFF_MAX_MS = 1_800_000;
 // A better route that answered the check but then failed to connect is not
 // tried again for this long, so a flaky LAN cannot bounce the connection.
 const BETTER_ROUTE_COOLDOWN_MS = 300_000;
@@ -146,25 +146,6 @@ export interface EnvironmentSupervisorOptions {
     readonly activeRoute: ConnectionRoute;
     readonly reported: ReadonlyArray<ReportedEndpoint>;
   }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
-}
-
-function retryDelayMs(failureCount: number, random: number): number {
-  const ceiling = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failureCount + 1));
-  return Math.round(ceiling / 2 + (ceiling / 2) * random);
-}
-
-interface SilentRoute {
-  readonly failures: number;
-  readonly until: bigint;
-}
-
-function backOffSilentRoute(previous: SilentRoute | undefined, now: bigint): SilentRoute {
-  const failures = (previous?.failures ?? 0) + 1;
-  const delayMs = Math.min(
-    SILENT_ROUTE_BACKOFF_MAX_MS,
-    BETTER_ROUTE_CHECK_INTERVAL_MS * 2 ** failures,
-  );
-  return { failures, until: now + BigInt(delayMs) * 1_000_000n };
 }
 
 function annotateTarget(target: ConnectionTarget) {
@@ -1118,20 +1099,21 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
   const run = Effect.fnUntraced(function* () {
     let failureCount = 0;
+    let outageStartedAt: number | null = null;
     let generation = 0;
     let latestFailure: ConnectionAttemptError | null = null;
     let pendingRetry = Option.none<PendingRetryTrace>();
     const resetRetryLadder = () => {
       failureCount = 0;
+      outageStartedAt = null;
       pendingRetry = Option.none();
     };
     let replacing = false;
 
     for (;;) {
       if (yield* Ref.getAndSet(resetRetryState, false)) {
-        failureCount = 0;
+        resetRetryLadder();
         latestFailure = null;
-        pendingRetry = Option.none();
       }
       const currentIntent = yield* Ref.get(intent);
       if (!currentIntent.desired) {
@@ -1212,9 +1194,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       // still counts it, so a host that keeps dropping sessions backs off.
       const firstLoss = outcome.established && failureCount === 0;
       failureCount += 1;
+      const failedAt = yield* Clock.currentTimeMillis;
+      outageStartedAt ??= failedAt;
+      noteServerStarting(target.environmentId, error, failedAt);
       const delayMs = firstLoss
         ? Math.round(SESSION_LOSS_RETRY_DELAY_MS * (0.5 + (yield* Random.next) / 2))
-        : retryDelayMs(failureCount - 1, yield* Random.next);
+        : (announcedRestartRetryDelayMs(target.environmentId, failedAt) ??
+          retryDelayMs(failedAt - outageStartedAt, yield* Random.next));
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({
         previousAttempt,
         failureCount,
@@ -1230,7 +1216,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         attempt,
         generation,
         lastFailure: latestFailure,
-        retryAt: (yield* Clock.currentTimeMillis) + delayMs,
+        retryAt: failedAt + delayMs,
       });
       const applicationActivated = yield* waitForRetrySignal(delayMs);
       if (applicationActivated) {

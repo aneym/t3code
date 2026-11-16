@@ -4,6 +4,11 @@ import {
 } from "./bootServiceAssociation.ts";
 import { selfUpdateOffPlistLines, selfUpdateOffUnitLines } from "./selfUpdateSwitch.ts";
 import { SERVICE_UNIT_ENV } from "./serviceProtocol.ts";
+import {
+  RESTART_DRAIN_ENV,
+  restartDrainSeconds,
+  serviceStopTimeoutSeconds,
+} from "@t3tools/shared/restartDrain";
 import { CliError } from "effect/cli";
 import * as Schema from "effect/Schema";
 
@@ -60,12 +65,16 @@ export interface BootServicePlan {
   readonly logPath: string;
   readonly unitPath: string;
   readonly installBinDir?: string;
+  readonly drainSeconds?: number;
   /** The manager accepted a detached install; its outcome is written to `logPath`. */
   readonly handedOff?: boolean;
 }
 
 // systemd refuses an executable with a quote, backslash or control character even when
 // quoted. The executable lives under the T3 home, so this also catches a home with a newline.
+const drainSecondsOf = (plan: BootServicePlan) =>
+  plan.drainSeconds ?? restartDrainSeconds(undefined);
+
 export const systemdUnsafeValue = (plan: BootServicePlan) =>
   /[\x00-\x1f\x7f"'\\]/.test(plan.program[0] ?? "");
 
@@ -102,12 +111,14 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
       ? []
       : [`Environment=T3CODE_INSTALL_BIN_DIR=${quoteSystemdValue(plan.installBinDir)}`]),
     `Environment=${SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
+    `Environment=${RESTART_DRAIN_ENV}=${drainSecondsOf(plan)}`,
     ...customNameUnitLines,
     ...selfUpdateOffUnitLines,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark the stop before it signals the server.
     // Past TimeoutStopSec, systemd SIGKILLs the cgroup.
     "KillMode=mixed",
+    `TimeoutStopSec=${serviceStopTimeoutSeconds(drainSecondsOf(plan))}`,
     // Helpers share this cgroup; default OOMPolicy=stop would stop the unit if one is OOM-killed.
     "OOMPolicy=continue",
     "Restart=always",
@@ -137,7 +148,6 @@ export function renderBootServicePlist(
   plan: BootServicePlan,
   options: { readonly homeDir: string; readonly environmentPath: string },
 ): string {
-  // Allow 90s stops for update handoffs.
   // Interactive avoids background throttling.
   // AbandonProcessGroup=false reaps agents only on launcher exit, preserving them across child updates.
   return [
@@ -165,6 +175,8 @@ export function renderBootServicePlist(
         ]),
     `    <key>${SERVICE_UNIT_ENV}</key>`,
     `    <string>${BOOT_SERVICE_PLIST_FILE}</string>`,
+    `    <key>${RESTART_DRAIN_ENV}</key>`,
+    `    <string>${drainSecondsOf(plan)}</string>`,
     ...customNamePlistLines,
     ...associatedBundleEnvironmentPlistLines,
     ...selfUpdateOffPlistLines,
@@ -178,7 +190,7 @@ export function renderBootServicePlist(
     `  <key>ThrottleInterval</key>`,
     `  <integer>5</integer>`,
     `  <key>ExitTimeOut</key>`,
-    `  <integer>90</integer>`,
+    `  <integer>${serviceStopTimeoutSeconds(drainSecondsOf(plan))}</integer>`,
     `  <key>ProcessType</key>`,
     `  <string>Interactive</string>`,
     `  <key>StandardOutPath</key>`,

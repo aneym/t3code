@@ -53,6 +53,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import { onShutdownSignals } from "../serverDrain/stopSignal.ts";
 import * as EventSink from "./EventSink.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -496,15 +497,8 @@ export const layerWithOptions = (
         shutdownSignal.received = true;
       };
       yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          process.on("SIGINT", onShutdownSignal);
-          process.on("SIGTERM", onShutdownSignal);
-        }),
-        () =>
-          Effect.sync(() => {
-            process.off("SIGINT", onShutdownSignal);
-            process.off("SIGTERM", onShutdownSignal);
-          }),
+        Effect.sync(() => onShutdownSignals(onShutdownSignal)),
+        (off) => Effect.sync(off),
       );
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
       // Retry per released entry; reusing ids must not lose cleanup for earlier threads.

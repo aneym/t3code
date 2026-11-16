@@ -510,10 +510,7 @@ it.effect.each([
   "starting-scheduled",
 ] as const)("recovers $0 work after restart", (scenario) => {
   const status = scenario.startsWith("starting") ? "starting" : scenario;
-  const terminalized =
-    status === "preparing" ||
-    scenario === "starting-own-request" ||
-    scenario === "starting-scheduled";
+  const terminalized = status === "preparing" || scenario === "starting-own-request";
   const threadId = ThreadId.make("thread_queued_restart");
   const runId = RunId.make("run_queued_restart");
   const attemptId = RunAttemptId.make("attempt_queued_restart");

@@ -6,8 +6,10 @@ import {
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
 
@@ -89,7 +91,7 @@ const receiptText = (sent: OrchestratorMcpThreadSendResult) =>
 const deliveryText = (sent: OrchestratorMcpThreadSendResult) =>
   sent.delivery === "held"
     ? `Held (${sent.holdReason ?? "manual"}).${receiptText(sent)} ${sent.next ?? "Send with mode auto to start now."}`
-    : `${sent.delivery === "queued" ? "Queued" : sent.delivery === "noted" ? "Noted" : "Sent"}.${receiptText(sent)}`;
+    : `${sent.delivery === "queued" ? "Queued" : sent.delivery === "noted" ? "Noted" : "Sent"}.${receiptText(sent)}${sent.next === undefined ? "" : ` ${sent.next}`}`;
 
 export const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
@@ -118,6 +120,12 @@ export const threadSendCommand = Command.make("send", {
     Flag.withDefault(false),
   ),
   wait: waitFlag,
+  waitServerS: Flag.Int("wait-server-s").pipe(
+    Flag.withDescription(
+      "Seconds to keep resending with the same request id while T3 Code is down or restarting. Exits 3 if it never answers.",
+    ),
+    Flag.withDefault(90),
+  ),
   json: jsonFlag,
 }).pipe(
   Command.withDescription(
@@ -164,6 +172,14 @@ export const threadSendCommand = Command.make("send", {
           yield* flags.json ? printJson(sent) : Console.log(deliveryText(sent));
         }),
         senderHeaders,
+        Duration.seconds(Math.max(0, flags.waitServerS)),
+      ).pipe(
+        Effect.tapError((error) =>
+          Predicate.isTagged(error, "McpServerNotRunningError") ||
+          Predicate.isTagged(error, "McpServerUnreachableError")
+            ? Console.error(`Not delivered. Rerun with --request-id ${clientRequestId}.`)
+            : Effect.void,
+        ),
       );
     }).pipe(reportThreadErrors),
   ),

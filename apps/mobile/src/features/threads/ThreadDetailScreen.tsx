@@ -381,7 +381,7 @@ const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
 );
 
 // Connection failures survive retries and app suspension.
-const RECONNECT_ERROR_DELAY_MS = 5_000;
+const RECONNECT_ERROR_DELAY_MS = 30000;
 
 // Anchors, the submitted message, follow state and pending scrolls belong to
 // one thread, so the body remounts when the thread changes.

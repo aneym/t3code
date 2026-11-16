@@ -14,14 +14,11 @@ import { environmentCatalog } from "../../connection/catalog";
 import { ConnectionDiagnosisHeadline } from "../settings/ConnectionDiagnosisDetails";
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { inEmbedPage } from "../../embed/embedProtocol";
-import {
-  useEnvironmentDisconnectDelay,
-  useEnvironmentStateHeldFor,
-} from "../../hooks/useEnvironmentDisconnectDelay";
+import { useEnvironmentDisconnectDelay } from "../../hooks/useEnvironmentDisconnectDelay";
+import { useConnectionOutage } from "../../hooks/useConnectionOutage";
 import { serverEnvironment } from "../../state/server";
 import { type EnvironmentPresentation } from "../../state/environments";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
-import { ENVIRONMENT_RECONNECT_WARNING_GRACE_MS } from "../ChatView.logic";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { ServerUpdateAction, serverUpdateStageLabel } from "../ServerUpdateAction";
@@ -72,17 +69,9 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
     reportFailure: false,
   });
-  const activeEnvironmentConnectionPhase = activeEnvironment?.connection.phase ?? "available";
-  const activeReconnectingEnvironmentId =
-    activeEnvironmentConnectionPhase === "connecting" ||
-    activeEnvironmentConnectionPhase === "reconnecting"
-      ? (activeEnvironment?.environmentId ?? null)
-      : null;
-  // Each reconnect attempt gets its own grace period, including a later one to
-  // the same environment.
-  const reconnectWarningGraceElapsed = useEnvironmentStateHeldFor(
-    activeReconnectingEnvironmentId,
-    ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
+  const outage = useConnectionOutage(
+    activeEnvironment?.environmentId ?? null,
+    activeEnvironment?.connection.phase ?? "available",
   );
   const handleReconnectActiveEnvironment = async (environmentId: EnvironmentId) => {
     // A retry does nothing while the environment is switched off.
@@ -179,8 +168,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       unavailableConnection !== null &&
       (unavailableConnection.phase === "connecting" ||
         unavailableConnection.phase === "reconnecting");
-    const suppressUnavailableBanner =
-      environmentReconnecting && (updateRunning || !reconnectWarningGraceElapsed);
+    const suppressUnavailableBanner = environmentReconnecting && (updateRunning || !outage.loud);
     const showUnavailableBanner =
       activeEnvironmentUnavailableState !== null &&
       unavailableConnection !== null &&

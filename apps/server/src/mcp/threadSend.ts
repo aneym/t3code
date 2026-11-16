@@ -16,6 +16,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import { type McpInvocationScope, threadLinkFor } from "./McpInvocationContext.ts";
 import { requestPrincipal } from "./ownerCliSession.ts";
+import { stopRequested } from "../serverDrain/stopSignal.ts";
 import {
   dispatchBusyFailure,
   errorMessage,
@@ -134,6 +135,8 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
       clientRequestId: requestKey,
       receipt,
     } satisfies OrchestratorMcpThreadSendResult;
+  const afterRestart =
+    stopRequested() && (result.delivery === "started" || result.delivery === "queued");
   return {
     threadId: request.threadId,
     link: threadLinkFor(scope, request.threadId, target.thread.title),
@@ -141,7 +144,10 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
     runId: result.run.id,
     ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
     status: result.run.status,
-    delivery: result.delivery,
+    delivery: afterRestart ? "queued" : result.delivery,
+    ...(afterRestart
+      ? { holdReason: "restart" as const, next: "It starts after the server restarts." }
+      : {}),
     ...(result.holdReason === undefined ? {} : { holdReason: result.holdReason }),
     ...(result.next === undefined ? {} : { next: result.next }),
     clientRequestId: requestKey,

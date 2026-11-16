@@ -296,7 +296,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       Prompt.Confirm({
         message: update
           ? "Update and restart T3 Code? Running agent turns will stop."
-          : "Apply changes and restart? Running agent turns will stop.",
+          : "Apply changes and restart? Running turns finish first.",
         initial: true,
       }),
     ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));
@@ -400,7 +400,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
         (yield* Prompt.run(
           Prompt.Confirm({
             message:
-              "The running service still has T3 Connect on. Restart it? Running agent turns will stop.",
+              "The running service still has T3 Connect on. Restart it? Running turns finish first.",
             initial: true,
           }),
         ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) })));
@@ -409,7 +409,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
         yield* Console.log(`Run \`${command}\` to turn T3 Connect off.`);
       } else {
         if (!interactive && !stopped) {
-          yield* Console.log("Restarting T3 Code. Running agent turns will stop.");
+          yield* Console.log("Restarting T3 Code. Running turns finish first.");
         }
         const outcome = yield* service.restart.pipe(Effect.tapError(() => rollBack));
         if (outcome === "queued") {

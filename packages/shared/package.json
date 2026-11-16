@@ -7,6 +7,10 @@
       "types": "./src/pullRequestAnchor.ts",
       "import": "./src/pullRequestAnchor.ts"
     },
+    "./restartDrain": {
+      "types": "./src/restartDrain.ts",
+      "import": "./src/restartDrain.ts"
+    },
     "./queuedMessages": {
       "types": "./src/queuedMessages.ts",
       "import": "./src/queuedMessages.ts"

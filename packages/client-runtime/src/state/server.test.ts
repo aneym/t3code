@@ -50,10 +50,8 @@ import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
-  applyServerWelcomeEvent,
   createServerEnvironmentAtoms,
   type FetchedMachineCatalog,
-  makeEnvironmentServerWelcomeState,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
   recordFetchedWorkspaceSnapshot,
@@ -62,7 +60,6 @@ import {
   matchesServerUpdateResumeEvent,
   nudgeReconnectDuringUpdateRestart,
   resolveServerConfigValue,
-  resolveServerWelcomeState,
   resolveServerUpdateProgressResult,
   serverUpdateStateForProgressEvent,
   serverUpdateStateAtom,
@@ -72,6 +69,11 @@ import {
   waitForDesktopUpdateTarget,
   runDesktopCommitWithReconnectObserver,
 } from "./server.ts";
+import {
+  applyServerWelcomeEvent,
+  makeEnvironmentServerWelcomeState,
+  resolveServerWelcomeState,
+} from "./serverWelcome.ts";
 import { applyServerConfigProjection } from "./serverConfigProjection.ts";
 
 vi.mock("./commandPermissions.ts", async () => {
@@ -279,7 +281,6 @@ describe("accepted server update recovery", () => {
       let requested = false;
       const client = {
         [WS_METHODS.subscribeServerConfig]: () => Stream.never,
-        // Before the request, a boot-service update reads the accepting server's ready.
         [WS_METHODS.subscribeServerLifecycle]: () =>
           requested
             ? Stream.fromEffect(Deferred.succeed(observing, undefined)).pipe(

@@ -769,10 +769,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* discoveredService.uninstall).toBe(true);
       expect(yield* fs.exists(unitPath)).toBe(false);
       expect((yield* discoveredService.status).installed).toBe(false);
-      // systemd can take 90s to stop, exceeding the runner's 60s default.
-      expect(timeouts.get("systemctl --user disable --now t3code.service")).toEqual(
-        Duration.seconds(120),
-      );
+      expect(timeouts.get("systemctl --user disable --now t3code.service")).toEqual("32 minutes");
     }),
   );
 
@@ -1395,9 +1392,8 @@ process.disconnect();
       expect(yield* service.uninstall).toBe(true);
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
-      // launchd can take 90s to bootout; the runner's 60s default could let bootstrap race it.
       expect(timeouts.get("launchctl bootout --wait gui/501/com.t3tools.t3code.service")).toEqual(
-        Duration.seconds(120),
+        "32 minutes",
       );
     }),
   );

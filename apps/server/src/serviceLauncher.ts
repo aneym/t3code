@@ -12,12 +12,17 @@ import { BOOT_SERVICE_ASSOCIATED_BUNDLE_IDS_ENV } from "./cloud/bootServiceAssoc
 import { BOOT_SERVICE_NAME_ENV } from "./cloud/bootServiceRender.ts";
 import { SELF_UPDATE_ENV } from "./cloud/selfUpdateSwitch.ts";
 import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
+import {
+  RESTART_DRAIN_ENV,
+  restartDrainSeconds,
+  restartStopWaitMs,
+} from "@t3tools/shared/restartDrain";
+import { sendMessage, signalChild, terminateChild } from "./serviceChildStop.ts";
 
 import type {
   PendingServiceUpdate,
   ServiceLauncherChildMessage,
   ServiceLauncherContext,
-  ServiceLauncherParentMessage,
   ServiceState,
   ServiceUpdateRecord,
 } from "./cloud/serviceProtocol.ts";
@@ -46,13 +51,11 @@ import {
   legacyOwnerStartTimeCommand,
 } from "./legacyServerOwner.ts";
 
-const HANDOFF_DELAY_MS = 2_000;
 /**
  * Migrations count toward it and can scale with the database: tens of GB on a cold page cache
  * take minutes. A missed window rolls back the database, so the next attempt pays the same cost.
  */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
-const TERMINATE_GRACE_MS = 5_000;
 // A replacement started by a handoff waits up to two minutes for the stopping launcher.
 const LOCK_RETRY_MS = 500;
 const LOCK_ATTEMPTS = 240;
@@ -699,43 +702,6 @@ function terminalUpdate<S extends TerminalStatus>(input: {
   };
 }
 
-function sendMessage(
-  child: NodeChildProcess.ChildProcess,
-  message: ServiceLauncherParentMessage,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (!child.connected || child.send === undefined) {
-      reject(new Error("service child IPC is disconnected."));
-      return;
-    }
-    child.send(message, (error) => (error === null ? resolve() : reject(error)));
-  });
-}
-
-function waitForExit(child: NodeChildProcess.ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-  return new Promise((resolve) => child.once("exit", () => resolve()));
-}
-
-async function terminateChild(
-  child: NodeChildProcess.ChildProcess,
-  signal: NodeJS.Signals,
-  overIpc: boolean,
-): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  if (overIpc) {
-    await sendMessage(child, { type: "stop" }).catch(() => child.kill(signal));
-  } else {
-    child.kill(signal);
-  }
-  const force = setTimeout(() => child.kill("SIGKILL"), TERMINATE_GRACE_MS);
-  try {
-    await waitForExit(child);
-  } finally {
-    clearTimeout(force);
-  }
-}
-
 /** Task Scheduler names are machine-wide, so each Windows account runs its own task. */
 export const serviceTaskName = (domain: string, userName: string) => `t3code-${domain}-${userName}`;
 
@@ -844,6 +810,8 @@ export class Launcher {
   readonly #output: number | undefined;
   readonly #lockPath: string | undefined;
   readonly #stopChildOverIpc: boolean;
+  #terminating: NodeChildProcess.ChildProcess | undefined;
+  #skipDrain = false;
 
   constructor(
     baseDir: string,
@@ -877,8 +845,8 @@ export class Launcher {
   async run(): Promise<void> {
     const onSigterm = () => void this.stop("SIGTERM");
     const onSigint = () => void this.stop("SIGINT");
-    process.once("SIGTERM", onSigterm);
-    process.once("SIGINT", onSigint);
+    process.on("SIGTERM", onSigterm);
+    process.on("SIGINT", onSigint);
     try {
       const lock =
         this.#lockPath === undefined ? undefined : await this.#acquireLock(this.#lockPath);
@@ -913,8 +881,18 @@ export class Launcher {
     return undefined;
   }
 
-  #terminate(child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals = "SIGTERM") {
-    return terminateChild(child, signal, this.#stopChildOverIpc);
+  async #terminate(child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals = "SIGTERM") {
+    this.#terminating = child;
+    try {
+      await terminateChild(child, {
+        signal,
+        overIpc: this.#stopChildOverIpc,
+        waitMs: restartStopWaitMs(restartDrainSeconds(this.#environment[RESTART_DRAIN_ENV])),
+        skipDrain: this.#skipDrain,
+      });
+    } finally {
+      this.#terminating = undefined;
+    }
   }
 
   #log(line: string): void {
@@ -947,6 +925,10 @@ export class Launcher {
       NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
     } catch {}
     if (this.#stopRequested || this.#stopping) {
+      this.#skipDrain = true;
+      if (this.#terminating !== undefined) {
+        await signalChild(this.#terminating, signal, this.#stopChildOverIpc).catch(() => undefined);
+      }
       await this.#completion.promise.catch(() => undefined);
       return;
     }
@@ -1192,7 +1174,7 @@ export class Launcher {
       return;
     }
     await sendMessage(child.process, { type: "update-accepted", updateId: pending.id });
-    this.#timer = setTimeout(() => this.#enqueue(() => this.#beginTrial(child)), HANDOFF_DELAY_MS);
+    this.#enqueue(() => this.#beginTrial(child));
   }
 
   async #beginTrial(child: ManagedChild): Promise<void> {
@@ -1200,7 +1182,6 @@ export class Launcher {
     if (this.#child !== child || child.role !== "active" || pending?.status !== "pending") {
       return;
     }
-    this.#timer = undefined;
     // Anything thrown outside its own fallback still leaves the offline backup to run.
     const finishOnlineBackup = await startOnlineDatabaseBackup(
       this.#baseDir,

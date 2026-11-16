@@ -27,6 +27,7 @@ import {
 } from "@t3tools/contracts";
 import { isRunningDatabaseMigrations } from "@t3tools/shared/databaseMigrationLog";
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
+import { DEFAULT_RESTART_STOP_WAIT_MS } from "@t3tools/shared/restartDrain";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
@@ -40,10 +41,7 @@ const MAX_PREFLIGHT_FAILURE_ATTEMPTS = 5;
 const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(3);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
-// Match the service launcher's grace period so backends can stop provider sessions.
-const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(5);
-// Allow SIGKILL and the spawner exit wait after the SIGTERM grace so quit cannot
-// orphan a backend whose shutdown hangs.
+const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.millis(DEFAULT_RESTART_STOP_WAIT_MS);
 export const BACKEND_QUIT_STOP_TIMEOUT = Duration.sum(
   DEFAULT_BACKEND_TERMINATE_GRACE,
   Duration.seconds(2),

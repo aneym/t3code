@@ -1,25 +1,38 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Console from "effect/Console";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as References from "effect/References";
 import * as Runtime from "effect/Runtime";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { GlobalFlag } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { SERVICE_STATE_FILE } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import type { McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
 import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
 import { resolveCliAuthConfig } from "./config.ts";
 import { openOwnerCliSession } from "./ownerCliSessionCache.ts";
 
+const SERVER_UNAVAILABLE_EXIT_CODE = 3;
+
+const isServerUnavailable = (error: unknown) =>
+  Predicate.isTagged(error, "McpServerNotRunningError") ||
+  Predicate.isTagged(error, "McpServerUnreachableError");
+
 export class McpServerNotRunningError extends Schema.TaggedError<McpServerNotRunningError>()(
   "McpServerNotRunningError",
   { baseDir: Schema.String },
 ) {
   override readonly [Runtime.errorReported] = false;
+  override readonly [Runtime.errorExitCode] = SERVER_UNAVAILABLE_EXIT_CODE;
   override get message(): string {
     return `No running T3 Code server uses ${this.baseDir}. Start T3 Code, then retry.`;
   }
@@ -30,6 +43,7 @@ export class McpServerUnreachableError extends Schema.TaggedError<McpServerUnrea
   { origin: Schema.String, cause: Schema.Defect() },
 ) {
   override readonly [Runtime.errorReported] = false;
+  override readonly [Runtime.errorExitCode] = SERVER_UNAVAILABLE_EXIT_CODE;
   override get message(): string {
     const reason = this.cause instanceof Error ? ` ${this.cause.message}` : "";
     return `Could not reach the T3 Code server at ${this.origin}.${reason}`;
@@ -103,33 +117,86 @@ const makeOwnerMcpTools = (session: McpToolSession, origin: string) => {
 };
 export type OwnerMcpTools = ReturnType<typeof makeOwnerMcpTools>;
 
+const SERVICE_RESTART_WAIT = "2 minutes";
+
 export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(function* <A, E, R>(
   command: string,
   flags: { readonly baseDir: Option.Option<string> },
   run: (tools: OwnerMcpTools) => Effect.Effect<A, E, R>,
   headers?: Readonly<Record<string, string>>,
+  serverWait?: Duration.Duration,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
-  return yield* Effect.gen(function* () {
-    const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
-    if (Option.isNone(runtimeState)) {
-      return yield* new McpServerNotRunningError({ baseDir: config.baseDir });
-    }
-    const origin = runtimeState.value.origin;
-    const session = yield* openOwnerCliSession(
-      config.secretsDir,
-      new URL("/mcp", origin).href,
-      command,
-      headers,
-    ).pipe(
-      Effect.catchTags({
-        AcpMcpBridgeError: (cause) => Effect.fail(new McpServerUnreachableError({ origin, cause })),
-      }),
-    );
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const serviceInstalled = yield* fileSystem
+    .exists(path.join(config.baseDir, "runtime", SERVICE_STATE_FILE))
+    .pipe(Effect.orElseSucceed(() => false));
+  const attempt = Effect.gen(function* () {
+    const connect = Effect.gen(function* () {
+      const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
+      if (Option.isNone(runtimeState)) {
+        return yield* new McpServerNotRunningError({ baseDir: config.baseDir });
+      }
+      const origin = runtimeState.value.origin;
+      const session = yield* openOwnerCliSession(
+        config.secretsDir,
+        new URL("/mcp", origin).href,
+        command,
+        headers,
+      ).pipe(
+        Effect.catchTags({
+          AcpMcpBridgeError: (cause) =>
+            Effect.fail(new McpServerUnreachableError({ origin, cause })),
+        }),
+      );
+      return { session, origin };
+    });
+    let told = false;
+    const { session, origin } = yield* serviceInstalled && serverWait === undefined
+      ? connect.pipe(
+          Effect.tapError(() =>
+            Effect.suspend(() => {
+              if (told) return Effect.void;
+              told = true;
+              return Console.error(
+                `T3 Code at ${config.baseDir} is restarting. Waiting up to ${SERVICE_RESTART_WAIT} for it.`,
+              );
+            }),
+          ),
+          Effect.retry({
+            schedule: Schedule.spaced("250 millis").pipe(
+              Schedule.upTo({ duration: SERVICE_RESTART_WAIT }),
+            ),
+            while: (error) =>
+              error._tag === "McpServerNotRunningError" ||
+              error._tag === "McpServerUnreachableError",
+          }),
+        )
+      : connect;
     return yield* run(makeOwnerMcpTools(session, origin));
-  }).pipe(
-    Effect.scoped,
+  }).pipe(Effect.scoped);
+  let waiting = false;
+  const delivered =
+    serverWait === undefined
+      ? attempt
+      : attempt.pipe(
+          Effect.tapError((error) =>
+            Effect.suspend(() => {
+              if (waiting || !isServerUnavailable(error)) return Effect.void;
+              waiting = true;
+              return Console.error(
+                `T3 Code at ${config.baseDir} is not answering. Retrying for up to ${Duration.format(serverWait)}.`,
+              );
+            }),
+          ),
+          Effect.retry({
+            schedule: Schedule.spaced("500 millis").pipe(Schedule.upTo({ duration: serverWait })),
+            while: isServerUnavailable,
+          }),
+        );
+  return yield* delivered.pipe(
     Effect.provide(
       EnvironmentAuth.layerRuntime.pipe(
         Layer.provide(ServerConfig.layer(config)),

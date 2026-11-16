@@ -244,12 +244,19 @@ export function mapRemoteEnvironmentError(
         via,
       });
     case "RemoteEnvironmentAuthInvalidJsonError":
+      return new ConnectionTransientError({
+        reason: "remote-unavailable",
+        detail: error.message,
+        hop: "server",
+        via,
+      });
     case "RemoteEnvironmentAuthUndeclaredStatusError":
       return new ConnectionTransientError({
         reason: "remote-unavailable",
         detail: error.message,
         hop: "server",
         via,
+        httpStatus: error.status,
       });
   }
 }

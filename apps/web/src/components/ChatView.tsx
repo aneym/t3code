@@ -3138,14 +3138,12 @@ export default function ChatView(props: ChatViewProps) {
         {hostSends > 0 && serverProjection ? (
           <EmbedPendingSends projection={serverProjection} />
         ) : null}
-        {heldSend.held !== null ? (
-          <HeldSendNotice
-            threadKey={routeThreadKey}
-            held={heldSend.held}
-            label={activeEnvironment?.label ?? "the server"}
-            onRetry={heldSend.retry}
-          />
-        ) : null}
+        <HeldSendNotice
+          threadKey={routeThreadKey}
+          held={heldSend.held}
+          environment={activeEnvironment}
+          onRetry={heldSend.retry}
+        />
       </>
     );
 
