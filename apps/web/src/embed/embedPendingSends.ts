@@ -10,16 +10,20 @@ import {
 
 export type EmbedPendingState = "sending" | "waiting" | "failed";
 
-export interface EmbedPendingSend {
+export type EmbedHostState = EmbedPendingState | "delivered";
+
+interface EmbedSendItem<State> {
   readonly requestId: string;
   readonly text: string;
-  readonly state: EmbedPendingState;
+  readonly state: State;
   readonly reason: string | null;
   readonly messageId: string | null;
   readonly since: number;
 }
 
-export interface EmbedHostSend extends EmbedPendingSend {
+export type EmbedPendingSend = EmbedSendItem<EmbedPendingState>;
+
+export interface EmbedHostSend extends EmbedSendItem<EmbedHostState> {
   readonly sendNow: boolean;
   readonly discard: boolean;
 }
@@ -45,6 +49,7 @@ const REQUEST_ID = /^[A-Za-z0-9_-]{8,100}$/;
 const THREAD = /^[A-Za-z0-9:._-]{1,128}$/;
 const EMBED_PENDING_SENDS_MESSAGE = "t3-embed/pending-sends";
 const EMPTY: ReadonlyArray<never> = [];
+const HOST_STATES: ReadonlyArray<EmbedHostState> = ["sending", "waiting", "failed", "delivered"];
 
 const useStore = create<PendingSendsState>()(
   persist(() => ({ local: {}, host: {}, handed: {} }), {
@@ -143,10 +148,10 @@ export function useEmbedShownRows<Row extends { readonly id: string }>(
 function readItem(raw: unknown): EmbedHostSend | null {
   if (typeof raw !== "object" || raw === null) return null;
   const item = raw as Record<string, unknown>;
-  const { requestId, text, state } = item;
+  const { requestId, text } = item;
   if (typeof requestId !== "string" || !REQUEST_ID.test(requestId)) return null;
   if (typeof text !== "string" || text.trim() === "" || text.length > MAX_TEXT_LENGTH) return null;
-  if (state !== "sending" && state !== "waiting" && state !== "failed") return null;
+  const state = HOST_STATES.find((known) => known === item.state) ?? "sending";
   const reason =
     typeof item.reason === "string" && item.reason.trim() !== ""
       ? item.reason.trim().slice(0, MAX_REASON_LENGTH)
