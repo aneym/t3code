@@ -54,6 +54,8 @@ import {
   DESKTOP_RENDERER_ORIGINS,
 } from "./httpCors.ts";
 import { requestUrl } from "./requestUrl.ts";
+import * as ClientExtras from "./clientExtras/ClientExtras.ts";
+import { loadImmutableBuildAssets, openStaticFile, streamStaticFile } from "./staticFiles.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -500,72 +502,11 @@ export const layerAttachmentUploadRoute = HttpRouter.add(
   }),
 );
 
-const decodeBuildManifest = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    Schema.Record(
-      Schema.String,
-      Schema.Struct({
-        file: Schema.String,
-        css: Schema.optional(Schema.Array(Schema.String)),
-        assets: Schema.optional(Schema.Array(Schema.String)),
-      }),
-    ),
-  ),
-);
-
-const loadImmutableBuildAssets = Effect.gen(function* () {
-  const config = yield* ServerConfig.ServerConfig;
-  const staticDir =
-    config.staticDir ?? (config.devUrl ? yield* ServerConfig.resolveStaticDir() : undefined);
-  if (!staticDir) return new Set<string>();
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  return yield* fileSystem.readFileString(path.join(staticDir, ".vite", "manifest.json")).pipe(
-    Effect.flatMap(decodeBuildManifest),
-    Effect.map(
-      (manifest) =>
-        new Set(
-          Object.values(manifest).flatMap((entry) => [
-            entry.file,
-            ...(entry.css ?? []),
-            ...(entry.assets ?? []),
-          ]),
-        ),
-    ),
-    Effect.orElseSucceed(() => new Set<string>()),
-  );
-});
-
-const openStaticFile = Effect.fn("openStaticFile")(function* (filePath: string) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const pathInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
-  if (pathInfo?.type !== "File") return null;
-  const file = yield* fileSystem.open(filePath, { flag: "r" }).pipe(
-    Effect.catchTags({
-      PlatformError: (error) =>
-        error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
-    }),
-  );
-  // Electron asar can stat and read files even when opening a handle returns NotFound.
-  // Refresh path metadata because the file may have been replaced since the first stat.
-  const info = yield* file === null ? fileSystem.stat(filePath) : file.stat;
-  return info.type === "File" ? { file, info } : null;
-});
-
-const streamStaticFile = (file: FileSystem.File, size: bigint) =>
-  Stream.unfold(
-    0n,
-    Effect.fnUntraced(function* (offset: bigint) {
-      if (offset >= size) return;
-      const remaining = size - offset;
-      const bytes = yield* file.readAlloc(Number(remaining < 65_536n ? remaining : 65_536n));
-      if (Option.isNone(bytes)) return;
-      return [bytes.value, offset + BigInt(bytes.value.byteLength)] as const;
-    }),
-  );
-
 const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
-  function* (immutableBuildAssets: ReadonlySet<string>) {
+  function* (
+    immutableBuildAssets: ReadonlySet<string>,
+    clientExtras: ClientExtras.ClientExtras["Service"],
+  ) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = requestUrl(request);
 
@@ -634,6 +575,11 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     }
 
     let opened = yield* openStaticFile(filePath);
+    if (!opened) {
+      const extra = yield* clientExtras.lookup(staticRelativePath.replaceAll("\\", "/"));
+      if (extra._tag === "Respond") return extra.response;
+      if (extra._tag === "Ready") opened = yield* openStaticFile((filePath = extra.filePath));
+    }
     if (!opened) {
       filePath = path.resolve(staticRoot, "index.html");
       opened = yield* openStaticFile(filePath);
@@ -723,7 +669,9 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
 );
 
 export const layerStaticAndDevRoute = Layer.unwrap(
-  loadImmutableBuildAssets.pipe(
-    Effect.map((assets) => HttpRouter.add("GET", "*", handleStaticAndDevRequest(assets))),
+  Effect.all([loadImmutableBuildAssets, ClientExtras.ClientExtras]).pipe(
+    Effect.map(([assets, extras]) =>
+      HttpRouter.add("GET", "*", handleStaticAndDevRequest(assets, extras)),
+    ),
   ),
-);
+).pipe(Layer.provide(ClientExtras.layer));

@@ -9,7 +9,6 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/cli";
@@ -27,6 +26,12 @@ import {
   resolveFffNativeDependencies,
   STAGE_INSTALL_ARGS,
 } from "./build-desktop-artifact.ts";
+import {
+  pruneRuntimeNodeModules,
+  removeNestedBinDirectories,
+  stageWebClient,
+} from "./lib/cli-archive-staging.ts";
+import { deferClientExtras } from "./lib/client-extras-archive.ts";
 import { assertLinuxArm64PageCompatibility } from "./lib/linux-arm64-sea.ts";
 import { selectCliRuntimeExternalDependencies } from "./lib/cli-external-packages.ts";
 import { signWithJsign } from "./lib/windows-jsign.ts";
@@ -224,41 +229,8 @@ const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (inpu
   ]) {
     yield* fs.remove(path.join(input.stageDir, entry), { recursive: true, force: true });
   }
-  // Nested .bin shims are unused symlinks, which the npm registry rejects in tarballs.
   yield* removeNestedBinDirectories(fs, path, path.join(input.stageDir, "node_modules"));
-});
-
-const removeNestedBinDirectories = Effect.fn("build-cli-archive.removeNestedBinDirectories")(
-  function* (
-    fs: FileSystem.FileSystem,
-    path: Path.Path,
-    root: string,
-  ): Effect.fn.Return<void, PlatformError.PlatformError> {
-    const entries = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => []));
-    for (const entry of entries) {
-      const child = path.join(root, entry);
-      if (entry === ".bin") {
-        yield* fs.remove(child, { recursive: true, force: true });
-        continue;
-      }
-      const info = yield* fs.stat(child).pipe(Effect.option);
-      if (Option.isSome(info) && info.value.type === "Directory") {
-        yield* removeNestedBinDirectories(fs, path, child);
-      }
-    }
-  },
-);
-
-const stageWebClient = Effect.fn("stageWebClient")(function* (source: string, target: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  yield* fs.copy(source, target);
-  const maps = (yield* fs.readDirectory(target, { recursive: true })).filter((entry) =>
-    entry.endsWith(".map"),
-  );
-  for (const entry of maps) {
-    yield* fs.remove(path.join(target, entry), { force: true });
-  }
+  yield* pruneRuntimeNodeModules(path.join(input.stageDir, "node_modules"));
 });
 
 /** Node links libatomic.so.1, which Ubuntu server and container images lack, so t3 carries its own. */
@@ -591,6 +563,7 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   readonly outputDir: string;
   readonly resourceMonitorDir: Option.Option<string>;
   readonly notarySubmissionFile: Option.Option<string>;
+  readonly deferClientExtras: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -635,6 +608,15 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   yield* Effect.log(`[cli-archive] Staging ${stem}...`);
   yield* fs.copyFile(builtExecutable, path.join(contentDir, executableName));
   yield* stageWebClient(webClient, path.join(contentDir, "client"));
+  if (input.deferClientExtras) {
+    const { version, outputDir } = input;
+    yield* deferClientExtras({
+      repoRoot,
+      clientDir: path.join(contentDir, "client"),
+      version,
+      outputDir,
+    });
+  }
   yield* fs.copy(resourceMonitorDir, path.join(contentDir, "resource-monitor"));
   yield* stageRuntimeExternals({
     repoRoot,
@@ -730,6 +712,10 @@ const command = Command.make(
         "macOS: submit for notarization without waiting and write the submission id here. Publish only after await-notarization succeeds.",
       ),
       Flag.optional,
+    ),
+    deferClientExtras: Flag.Boolean("defer-client-extras").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription("Move Office viewer fonts and engines into a separate extras archive."),
     ),
   },
   (input) => buildCliArchive(input).pipe(Effect.scoped),
