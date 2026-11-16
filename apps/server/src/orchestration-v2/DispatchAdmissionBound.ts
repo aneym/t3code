@@ -11,3 +11,6 @@ export const DispatchAdmissionBound = Context.Reference<number | undefined>(
 
 export const boundDispatchAdmission = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.provideService(effect, DispatchAdmissionBound, BOUND_MS);
+
+export const unboundDispatchAdmission = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.provideService(effect, DispatchAdmissionBound, undefined);

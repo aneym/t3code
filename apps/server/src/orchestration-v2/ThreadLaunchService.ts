@@ -56,6 +56,7 @@ import type * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
+import { unboundDispatchAdmission } from "./DispatchAdmissionBound.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
@@ -949,6 +950,7 @@ const make = Effect.gen(function* () {
             }),
           })
           .pipe(
+            unboundDispatchAdmission,
             Effect.catchCause((persistCause) =>
               Effect.logWarning("Failed to persist thread workspace preparation failure", {
                 commandId: input.commandId,
@@ -1016,6 +1018,7 @@ const make = Effect.gen(function* () {
       ),
       Effect.ignoreCause,
       Effect.ensuring(releasePreparation(input.commandId)),
+      unboundDispatchAdmission,
       Effect.forkIn(preparationScope),
     );
   });
@@ -1189,10 +1192,8 @@ const make = Effect.gen(function* () {
               creationSource: input.creationSource,
             })
             .pipe(
-              // An agent's launch can land on a thread that a replay, or a concurrent
-              // launch with the same key, created with broader modes. The orchestrator
-              // refuses the message under the thread's lock; the user's own clients
-              // launch into their own drafts, whatever modes those hold.
+              unboundDispatchAdmission,
+              // A replay or same-key launch may have created the thread with broader modes.
               input.createdBy === "agent"
                 ? Effect.provideService(DispatchModeLimit, {
                     runtimeMode: input.runtimeMode,
