@@ -85,6 +85,12 @@ function redact(text: string) {
     .replace(/[?#][^\s'"()]*=[^\s'"()]*?((?::\d+){1,2})?(?=[\s'"()]|$)/g, "$1");
 }
 
+export interface BootRecovery {
+  readonly summary: string | null;
+  readonly everySeconds: number;
+  readonly tryAgain: () => Promise<string | null>;
+}
+
 export interface BootErrorEnvironment {
   readonly version: string;
   readonly channel: string;
@@ -256,7 +262,34 @@ function mountUpdateButton(
   }
 }
 
-export function showBootError(error: unknown) {
+function startCountdown(recovery: BootRecovery, countdown: HTMLElement, reason: HTMLElement) {
+  let left = recovery.everySeconds;
+  let busy = false;
+  const tick = async () => {
+    if (busy) return;
+    if (left > 0) {
+      countdown.textContent = `Trying again in ${left}s`;
+      left -= 1;
+      return;
+    }
+    busy = true;
+    countdown.textContent = "Trying again now";
+    const summary = await recovery.tryAgain().catch(() => reason.textContent);
+    if (summary === null) return;
+    if (summary && summary !== reason.textContent) reason.textContent = summary;
+    left = recovery.everySeconds;
+    busy = false;
+    void tick();
+  };
+  void tick();
+  setInterval(() => void tick(), 1000);
+  window.addEventListener("online", () => {
+    left = 0;
+    void tick();
+  });
+}
+
+export function showBootError(error: unknown, recovery?: BootRecovery) {
   console.error("T3 Code failed to start.", error);
   const bootShell = document.getElementById("boot-shell");
   if (!bootShell) return;
@@ -276,23 +309,29 @@ export function showBootError(error: unknown) {
     announcement = setTimeout(() => (status.textContent = text), 100);
   };
 
+  const reason = element("p", {
+    textContent: offline
+      ? recovery
+        ? "This browser appears to be offline. Check the connection."
+        : "This browser appears to be offline. Check the connection, then reload."
+      : recovery
+        ? (recovery.summary ?? "Something stopped the app from starting.")
+        : "We are not sure why. Try a reload first.",
+  });
   const message = element("div", {}, [
     element("h1", {
       textContent: embedded ? "This chat failed to start" : "T3 Code failed to start",
     }),
-    element("p", {
-      textContent: offline
-        ? "This browser appears to be offline. Check the connection, then reload."
-        : "We are not sure why. Try a reload first.",
-    }),
+    reason,
   ]);
   message.setAttribute("role", "alert");
 
   const reload = element("button", {
     id: "boot-error-reload",
     type: "button",
-    textContent: "Reload",
+    textContent: recovery ? "Try now" : "Reload",
   });
+  const countdown = element("p", { id: "boot-error-countdown", hidden: !recovery });
   reload.addEventListener("click", () => window.location.reload());
   const update = element("button", { id: "boot-error-update", type: "button", hidden: true });
   const updateNote = element("p", { id: "boot-error-update-note", hidden: true });
@@ -357,7 +396,7 @@ export function showBootError(error: unknown) {
     element("a", { href, textContent, target: "_blank", rel: "noreferrer" });
   const nightly = environment.channel === "nightly";
 
-  const more = element("details", { open: isRepeatFailure(Date.now()) }, [
+  const more = element("details", { open: isRepeatFailure(Date.now()) && !recovery }, [
     element("summary", { textContent: "More options if it keeps failing" }),
     ...(bridge
       ? [
@@ -397,9 +436,11 @@ export function showBootError(error: unknown) {
     element("div", { id: "boot-error" }, [
       message,
       element("div", { id: "boot-error-actions" }, [reload, update]),
+      countdown,
       updateNote,
       more,
       status,
     ]),
   );
+  if (recovery) startCountdown(recovery, countdown, reason);
 }

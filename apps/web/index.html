@@ -132,8 +132,6 @@
           }
         };
 
-        // The runtime decodes the same literal CSS formats into OKLCH. Keep
-        // contextual colors out: they cannot be resolved from stored data.
         const SYSTEM_COLOR_KEYWORD =
           /^(?:accentcolor(?:text)?|active(?:border|caption|text)|appworkspace|background|button(?:border|face|highlight|shadow|text)|canvas(?:text)?|captiontext|field(?:text)?|graytext|highlight(?:text)?|inactive(?:border|caption(?:text)?)|info(?:background|text)|linktext|mark(?:text)?|menu(?:text)?|scrollbar|selecteditem(?:text)?|threed(?:darkshadow|face|highlight|lightshadow|shadow)|visitedtext|window(?:frame|text)?)$/i;
         const isThemeColor = (value) => {
@@ -242,9 +240,6 @@
                 : theme === "system"
                   ? "system"
                   : preferenceMode;
-          // A valid mix half for the wanted appearance takes over: it decides
-          // light vs dark even when the base theme cannot render that mode.
-          // Mirrors the runtime's halves-aware resolveThemeAppearance.
           const wantedMode = appearanceMode === "system" ? systemMode : appearanceMode;
           let halfThemeId = null;
           let halfCustomTheme = null;
@@ -302,8 +297,6 @@
             effectiveCustomTheme && effectiveThemeMode
               ? DEFAULT_THEME_PALETTES[effectiveThemeMode]
               : null;
-          // The runtime tolerates individual malformed colors, so fall back
-          // per role rather than dropping the theme.
           const builtInSplash =
             effectiveIsThemed && !effectiveCustomTheme && effectiveThemeMode
               ? (BUILT_IN_THEME_PALETTES[effectiveThemeId]?.[effectiveThemeMode] ?? null)
@@ -329,8 +322,6 @@
           } else {
             delete document.documentElement.dataset.themeId;
           }
-          // A resolved half is a selection even when the base theme is gone
-          // (deleting the base leaves the mix pointing at a real theme).
           const hasSelection = halfThemeId !== null || (isKnownTheme && storedTheme !== null);
           if (hasSelection) {
             document.documentElement.dataset.themeSelected = "true";
@@ -672,6 +663,26 @@
         </div>
       </div>
     </div>
-    <script type="module" src="/src/bootstrap.ts"></script>
+    <script
+      type="module"
+      src="/src/bootstrap.ts"
+      onerror="
+        var s = sessionStorage,
+          k = 't3code:boot-retry',
+          n = parseInt(s.getItem(k)) || 0;
+        s.setItem(k, n + 1 + ':' + Date.now());
+        if (n > 3)
+          document.getElementById('boot-shell').textContent =
+            'Could not load the app files from ' +
+            this.getAttribute('src').split('?')[0] +
+            '. Trying again every 15 seconds.';
+        setTimeout(
+          function () {
+            location.reload();
+          },
+          1e3 * Math.min(1 << n, 15),
+        );
+      "
+    ></script>
   </body>
 </html>
