@@ -376,14 +376,13 @@ export const make = Effect.gen(function* () {
         queuedMessages
           .filter(
             (message) =>
-              message.createdBy === "user" &&
+              (message.createdBy === "user" || message.creationSource === "mcp") &&
               message.scheduledTaskId === undefined &&
               message.notification === undefined &&
               message.delegatedCompletion === undefined,
           )
           .map((message) => message.id),
       );
-      // A saved user message the provider never accepted stays available through the held queue.
       const retryableRuns = unstartedRuns.filter((run) =>
         retryableMessageIds.has(run.userMessageId),
       );

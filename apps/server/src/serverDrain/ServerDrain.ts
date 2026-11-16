@@ -18,14 +18,17 @@ const ANNOUNCE_FLUSH = Duration.millis(250);
 
 interface DrainState {
   readonly draining: boolean;
-  readonly inFlight: number;
+  readonly executing: ReadonlySet<string>;
 }
 
 export class ServerDrain extends Context.Service<
   ServerDrain,
   {
     readonly draining: Effect.Effect<boolean>;
-    readonly countTurnStart: <A, E, R>(start: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+    readonly guardTurnStart: <A, E, R>(
+      runId: string,
+      start: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
   }
 >()("t3/serverDrain/ServerDrain") {}
 
@@ -37,24 +40,25 @@ export const layer = Layer.effect(
     const drainSeconds = restartDrainSeconds(
       Option.getOrUndefined(yield* Config.String(RESTART_DRAIN_ENV).pipe(Config.option)),
     );
-    const state = yield* Ref.make<DrainState>({ draining: false, inFlight: 0 });
+    const state = yield* Ref.make<DrainState>({ draining: false, executing: new Set() });
     const stopRequested = yield* Deferred.make<void>();
 
-    const executingRuns = sql<{ readonly open: number }>`
-      SELECT COUNT(*) AS open FROM orchestration_v2_projection_runs
-      WHERE status IN ('starting', 'running')
+    const executingRuns = sql<{ readonly run_id: string }>`
+      SELECT run_id FROM orchestration_v2_projection_runs WHERE status IN ('starting', 'running')
     `.pipe(
-      Effect.map((rows) => rows[0]?.open ?? 0),
-      Effect.orElseSucceed(() => 0),
+      Effect.map((rows) => rows.map((row) => row.run_id)),
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
     );
 
     const openWork = Effect.gen(function* () {
-      const { inFlight } = yield* Ref.get(state);
-      return inFlight + (yield* executingRuns);
+      const { executing } = yield* Ref.get(state);
+      return (yield* executingRuns).filter((runId) => executing.has(runId)).length;
     });
 
     const drain = Effect.gen(function* () {
       yield* Ref.update(state, (current) => ({ ...current, draining: true }));
+      const executing = new Set(yield* executingRuns);
+      yield* Ref.update(state, (current) => ({ ...current, executing }));
       const startedAt = DateTime.toEpochMillis(yield* DateTime.now);
       const deadline = startedAt + drainSeconds * 1000;
       let open = yield* openWork;
@@ -89,15 +93,14 @@ export const layer = Layer.effect(
 
     return ServerDrain.of({
       draining: Ref.get(state).pipe(Effect.map((current) => current.draining)),
-      countTurnStart: Effect.fn("ServerDrain.countTurnStart")(function* <A, E, R>(
+      guardTurnStart: Effect.fn("ServerDrain.guardTurnStart")(function* <A, E, R>(
+        runId: string,
         start: Effect.Effect<A, E, R>,
       ) {
-        yield* Ref.update(state, (current) => ({ ...current, inFlight: current.inFlight + 1 }));
-        return yield* start.pipe(
-          Effect.ensuring(
-            Ref.update(state, (current) => ({ ...current, inFlight: current.inFlight - 1 })),
-          ),
-        );
+        const { draining, executing } = yield* Ref.get(state);
+        if (!draining || executing.has(runId)) return yield* start;
+        yield* Effect.logInfo("Holding a turn start until the next server", { runId });
+        return yield* Effect.never;
       }),
     });
   }),

@@ -65,7 +65,7 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
-import { layerCountingTurnStarts } from "../serverDrain/countingExecutor.ts";
+import { layerHoldingTurnStarts } from "../serverDrain/holdingExecutor.ts";
 import { layerQueueGate } from "../serverDrain/queueGate.ts";
 import * as ServerDrain from "../serverDrain/ServerDrain.ts";
 import * as ServerLifecycleEvents from "../serverLifecycleEvents.ts";
@@ -352,7 +352,7 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
     ),
   ),
 );
-const layerEffectExecutorProvided = layerCountingTurnStarts.pipe(
+const layerEffectExecutorProvided = layerHoldingTurnStarts.pipe(
   Layer.provide(layerServerDrainProvided),
   Layer.provide(EffectWorker.layerExecutor),
   Layer.provide(
