@@ -313,6 +313,10 @@ const threadPromoteCommand = Command.make("promote", {
   targetRunId: Argument.String("targetRunId").pipe(
     Argument.withDescription("Run id of the running turn to steer."),
   ),
+  atBoundary: Flag.Boolean("at-boundary").pipe(
+    Flag.withDescription("Hold the steer until the running tool call finishes."),
+    Flag.withDefault(false),
+  ),
   json: jsonFlag,
 }).pipe(
   Command.withDescription("Send one queued message now as steering to the given running turn."),
@@ -327,7 +331,13 @@ const threadPromoteCommand = Command.make("promote", {
         Effect.fn("cli.thread.promote")(function* (tools) {
           const promoted = yield* tools.call(
             "t3_queue",
-            { action: "promote_to_steer", threadId, queuedRunId, targetRunId },
+            {
+              action: "promote_to_steer",
+              threadId,
+              queuedRunId,
+              targetRunId,
+              ...(flags.atBoundary ? { atBoundary: true } : {}),
+            },
             OrchestrationV2DispatchCommandResult,
           );
           yield* flags.json ? printJson(promoted) : Console.log("Promoted.");
