@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  type OrchestrationV2TaskCancel,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -48,6 +49,7 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeThreadLinkOrigin?: string | null | undefined;
+  taskCancel?: OrchestrationV2TaskCancel | null | undefined;
   isServerThread: boolean;
   activeProject: EnvironmentProject | null;
   parentThreadLink: { threadId: ThreadId; title: string } | null;
@@ -73,6 +75,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
   activeThreadLinkOrigin,
+  taskCancel,
   isServerThread,
   activeProject,
   parentThreadLink,
@@ -388,6 +391,16 @@ export const ChatHeader = memo(function ChatHeader({
               </TooltipTrigger>
               <TooltipPopup side="top">
                 Started by an agent on {activeThreadLinkOrigin} through a linked environment.
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {renamingTitle === null && taskCancel ? (
+            <Tooltip>
+              <TooltipTrigger render={<Badge variant="secondary" size="sm" />}>
+                Cancelled by {taskCancel.parentTitle}
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {`Its parent cancelled this task ${new Date(taskCancel.cancelledAt).toLocaleString()}. Agent messages and wakes start no run here. Send a message to reopen it.`}
               </TooltipPopup>
             </Tooltip>
           ) : null}

@@ -11,6 +11,10 @@ import {
 } from "./baseSchemas.ts";
 import { OrchestrationV2Actor, OrchestrationV2CreationSource } from "./orchestrationV2.ts";
 import {
+  OrchestrationV2DelegatedFrom,
+  OrchestrationV2TaskCancel,
+} from "./orchestrationV2DelegatedChild.ts";
+import {
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpProjectTarget,
   OrchestratorMcpThreadBackgroundTask,
@@ -74,6 +78,8 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestratorMcpThreadBackgroundTask)),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
+  delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  taskCancel: Schema.optional(OrchestrationV2TaskCancel),
   itemCount: NonNegativeInt,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

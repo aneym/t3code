@@ -148,6 +148,8 @@ import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import { resolveDelegatedTaskWorkspace } from "./delegatedTaskWorkspace.ts";
 import { runExecutedModel, threadRun } from "./threadRunSummary.ts";
+import { recordTaskCancelAndStop } from "./taskCancelStop.ts";
+import { delegatedTaskFields } from "../orchestration-v2/TaskCancel.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 // Nothing is written while a task wait blocks, and Node fetch drops a silent call at 300 s.
@@ -681,6 +683,7 @@ function listItemFromShell(
     ...threadBackgroundWork(shell),
     parentThreadId: shell.lineage.parentThreadId,
     relationshipToParent: shell.lineage.relationshipToParent,
+    ...delegatedTaskFields(shell),
     itemCount: shell.visibleItemCount,
     createdAt: DateTime.formatIso(shell.createdAt),
     updatedAt: DateTime.formatIso(shell.updatedAt),
@@ -735,6 +738,7 @@ function threadDetail(
     worktreePath: projection.thread.worktreePath,
     parentThreadId: projection.thread.lineage.parentThreadId,
     relationshipToParent: projection.thread.lineage.relationshipToParent,
+    ...delegatedTaskFields(projection.thread),
     runCount: projection.runs.length,
     itemCount,
     pendingRequestCount: projection.runtimeRequests.filter(
@@ -2364,9 +2368,6 @@ const make = Effect.gen(function* () {
           runtimeMode,
           interactionMode,
           ...workspace.command,
-          // Async delegations wake the parent on every child terminal; wait
-          // delegations deliver through the blocking tool call until `awaitTask`
-          // gives up the wait (timeout, cancelled call) and upgrades the wake.
           completionWake: input.mode === "wait" ? "settled_only" : "always",
           ...awaitedFor(input),
           ...(held ? { startHeld: true } : {}),
@@ -2446,9 +2447,6 @@ const make = Effect.gen(function* () {
       }
       const key = yield* requestKey(input.clientRequestId);
       const parentProjection = yield* loadThreadRecords(scope.thread.threadId, []);
-      // Cancelling stops the child and every task under it, each a write to a
-      // thread its user may have raised above the parent's modes since it was
-      // delegated. All of them are checked before anything is stopped.
       const assertStoppable = Effect.fn("OrchestratorMcpService.assertStoppable")(function* (
         threadId: ThreadId,
       ): Effect.fn.Return<void, OrchestratorMcpFailure> {
@@ -2536,8 +2534,6 @@ const make = Effect.gen(function* () {
             (run.delegatedTaskId !== input.taskId && run.id !== current.childRunId)
           )
             continue;
-          // Stop preserves the queue for Resume. Cancelling a task must also
-          // remove that task's queued turn, including a previously held one.
           yield* threadManagement
             .dispatch({
               type: "queued-run.cancel",
@@ -2552,10 +2548,20 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError(threadManagementFailure));
         }
       });
-      // Checked above; a user raising one of these threads meanwhile is
-      // caught again under that thread's lock, which leaves it running.
       const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
       const stopWithinLimit = stopChild.pipe(
+        Effect.andThen(
+          recordTaskCancelAndStop(threadManagement, {
+            commandId: stableCommandId({ scope, requestKey: key, operation: "cancel-task" }),
+            threadId: childThreadId,
+            cancel: {
+              taskId: input.taskId,
+              parentThreadId: scope.thread.threadId,
+              parentTitle: parentProjection.thread.title,
+              ...(input.reason === undefined ? {} : { reason: input.reason }),
+            },
+          }),
+        ),
         Effect.provideService(DispatchModeLimit, {
           runtimeMode: parentProjection.thread.runtimeMode,
           interactionMode: parentProjection.thread.interactionMode,
@@ -2576,8 +2582,6 @@ const make = Effect.gen(function* () {
           ),
         ),
       );
-      // A follow-up that lost its child run stays running on the parent, while its
-      // status here comes from the child's last run. Stop on the parent cancels that task.
       const cancelOrphan = Effect.gen(function* () {
         if (parentTask?.runId == null || !isOrchestrationV2WorkActive(parentTask.status))
           return false;
@@ -2600,7 +2604,6 @@ const make = Effect.gen(function* () {
         return subagents.some((task) => task.id === input.taskId && task.status === "cancelled");
       }).pipe(Effect.mapError(threadManagementFailure));
       if (isTerminalTaskStatus(current.status)) {
-        // The child can still run work for another turn, so it is stopped either way.
         yield* stopWithinLimit;
         const cancelled = yield* cancelOrphan;
         yield* disposeCompletionDelivery;
@@ -3037,12 +3040,9 @@ const make = Effect.gen(function* () {
       yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
       const key = yield* requestKey(input.clientRequestId);
-      // A peer from before `stop` drops it when decoding, so it interrupts
-      // the run instead, as this call did then.
       if (input.stop === true) {
         const commandId = stableCommandId({ scope, requestKey: key, operation: "thread-stop" });
         const reason = agentStopReason(input.reason);
-        // The cause goes to the log; the caller learns only that the stop failed.
         const stopFailed = (error: unknown) =>
           Effect.logWarning("orchestrator-mcp.thread-stop-failed", {
             threadId: input.threadId,
@@ -3062,14 +3062,23 @@ const make = Effect.gen(function* () {
             reason,
           })
           .pipe(Effect.catch(stopFailed));
-        // A retry with the same clientRequestId repeats only the stops that failed.
         yield* threadManagement
           .stopDelegatedTasks({ threadId: input.threadId, commandId, reason })
           .pipe(Effect.catch(stopFailed));
-        // The run this stop interrupted, from its own events, so a retry
-        // reports the same run even if another has started since. Stop also
-        // holds queued runs and marks runs it could not interrupt, with no
-        // provider turn; neither is the run it interrupted.
+        const parentLink = target.thread.delegatedFrom;
+        if (input.cancelTask !== undefined && parentLink != null) {
+          yield* recordTaskCancelAndStop(threadManagement, {
+            commandId,
+            threadId: input.threadId,
+            cancel: {
+              taskId: input.cancelTask,
+              parentThreadId: parentLink.threadId,
+              parentTitle: parentLink.title,
+              parentEnvironmentId: parentLink.environmentId,
+              ...(input.reason === undefined ? {} : { reason: input.reason }),
+            },
+          });
+        }
         const interrupted = stopped.storedEvents.find(
           ({ event }) =>
             (event.type === "run.updated" && event.payload.status === "interrupted") ||

@@ -84,6 +84,7 @@ import {
 } from "./ThreadSend.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
+import { reopenCancelledTask } from "./TaskCancel.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -616,7 +617,6 @@ const make = Effect.gen(function* () {
     ensureProjectionTranscript(threadId).pipe(
       Effect.andThen(orchestrator.getThreadSnapshot(threadId)),
     );
-  // Full-thread exports can otherwise hold every SQLite reader and stall ordinary thread opens.
   const transcriptExportPermits = yield* Semaphore.make(2);
   const getThreadTranscript = Effect.fn("orchestrationV2.threadManagement.getThreadTranscript")(
     function* (threadId: ThreadId) {
@@ -707,6 +707,13 @@ const make = Effect.gen(function* () {
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
     ensureCommandTranscripts(command).pipe(
       Effect.andThen(assertDispatchTargetEnabled(command)),
+      Effect.andThen(
+        reopenCancelledTask(
+          command,
+          (id) => orchestrator.getThreadRecords(id, []).pipe(Effect.map(({ thread }) => thread)),
+          orchestrator.dispatch,
+        ),
+      ),
       Effect.andThen(orchestrator.dispatch(command)),
     );
 
@@ -771,8 +778,6 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         cause,
       });
-    // Taken before the first read, so a run update between that read and
-    // the subscription below still replays.
     const afterSequence = yield* orchestrator
       .getThreadEventSequence(input.threadId)
       .pipe(Effect.mapError(loadError));
@@ -790,9 +795,6 @@ const make = Effect.gen(function* () {
     if (selectedRun === undefined) {
       return { threadId: input.threadId, run: null, timedOut: false };
     }
-    // A restart cuts a run and continues it as a new run. Follow that chain,
-    // so a cut run is not the answer while its continuation is pending.
-    // Runs per matching event and is already covered by the waitForThread span.
     const outcome = Effect.fnUntraced(function* (runs: ReadonlyArray<OrchestrationV2Run>) {
       const current = runs.find((candidate) => candidate.id === selectedRun.id);
       if (current === undefined) {
@@ -814,7 +816,6 @@ const make = Effect.gen(function* () {
         { messageRoles: ["user"], monitorNotificationsOnly: true },
       );
       const progress = delegatedTaskProgress(records);
-      // A thread rolled back past all its work, with nothing left running, has no answer to wait for.
       if (
         progress.resultRun === undefined &&
         records.runs.every((run) => isTerminalRunStatus(run.status))
@@ -1064,7 +1065,6 @@ const make = Effect.gen(function* () {
       }> = [];
       for (const providerSessionId of sessionIds) {
         if (!(yield* sessions.isLive(providerSessionId))) continue;
-        // Decided just before teardown, so the reply matches what happens to the process.
         const others = yield* sessions.otherWorkingThreads({
           providerSessionId,
           threadId: input.threadId,
@@ -1089,7 +1089,6 @@ const make = Effect.gen(function* () {
           .pipe(Effect.forkIn(layerScope));
         releases.push({ providerSessionId, fiber });
       }
-      // Teardown waits on the provider's own exit paths; past this bound it keeps going on its own.
       let releasing = false;
       for (const release of releases) {
         const released = yield* Fiber.join(release.fiber).pipe(
@@ -1132,7 +1131,6 @@ const make = Effect.gen(function* () {
       if (records.thread.deletedAt !== null) {
         return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "unavailable" });
       }
-      // Check mode limits under the lock so users cannot raise modes between validation and Stop.
       const limit = yield* DispatchModeLimit;
       const exceeded =
         limit === undefined ? undefined : exceededDispatchModeLimit(limit, records.thread);
@@ -1187,7 +1185,6 @@ const make = Effect.gen(function* () {
       if (runtime.value.stopTask === undefined) {
         return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "unsupported" });
       }
-      // Bounded so a provider that never answers cannot hold the thread lock.
       yield* runtime.value.stopTask({ providerThread, taskId }).pipe(
         Effect.timeout("15 seconds"),
         Effect.mapError(

@@ -14,6 +14,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import type * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
+import { isTaskCancelled } from "./TaskCancel.ts";
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
 
@@ -140,10 +141,16 @@ export const layer = Layer.effectDiscard(
                 : [request.delegatedCompletion.messageId],
           },
         );
-        if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
+        const cancelled = isTaskCancelled(projection.thread);
+        if (
+          cancelled ||
+          projection.thread.archivedAt !== null ||
+          projection.thread.deletedAt !== null
+        ) {
           yield* Effect.logInfo("orchestration-v2.provider-continuation.thread-archived", {
             threadId: request.threadId,
             providerThreadId: request.providerThreadId,
+            cancelled,
           });
           if (request.delegatedCompletion !== undefined) {
             yield* clearRetryAttempt(
