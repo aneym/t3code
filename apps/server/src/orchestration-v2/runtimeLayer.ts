@@ -65,6 +65,10 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import { layerHoldingTurnStarts } from "../serverDrain/holdingExecutor.ts";
+import { layerQueueGate } from "../serverDrain/queueGate.ts";
+import * as ServerDrain from "../serverDrain/ServerDrain.ts";
+import * as ServerLifecycleEvents from "../serverLifecycleEvents.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -230,9 +234,12 @@ const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
   Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, layerProjectionStore)),
 );
 
+const layerServerDrainProvided = ServerDrain.layer.pipe(Layer.provide(ServerLifecycleEvents.layer));
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
+  Layer.provide(layerQueueGate),
   Layer.provide(
     Layer.mergeAll(
+      layerServerDrainProvided,
       layerCheckpointServiceProvided,
       CommandPolicy.layer,
       layerStores,
@@ -345,7 +352,9 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
     ),
   ),
 );
-const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
+const layerEffectExecutorProvided = layerHoldingTurnStarts.pipe(
+  Layer.provide(layerServerDrainProvided),
+  Layer.provide(EffectWorker.layerExecutor),
   Layer.provide(
     Layer.mergeAll(
       layerRunFinalizationServiceProvided,

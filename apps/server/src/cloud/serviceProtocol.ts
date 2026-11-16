@@ -1,4 +1,11 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
+import {
+  RESTART_DRAIN_ENV,
+  SERVICE_STOP_STEP_MINUTES,
+  restartDrainSeconds,
+} from "@t3tools/shared/restartDrain";
+import * as Config from "effect/Config";
+import * as Option from "effect/Option";
 
 // Protocol 4 launchers coordinate selection writes and reconcile the unit. A remote update
 // replaces only the child, so an installed protocol-3 launcher stays until a local update or
@@ -23,6 +30,11 @@ export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
 export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
 /** Held by a Windows launcher while it runs: Task Scheduler tracks only the task's console host. */
 export const SERVICE_LAUNCHER_LOCK_FILE = "service-launcher.lock";
+export const STOP_STEP_TIMEOUT = `${SERVICE_STOP_STEP_MINUTES} minutes` as const;
+export const configuredRestartDrainSeconds = Config.String(RESTART_DRAIN_ENV).pipe(
+  Config.option,
+  Config.map((value) => restartDrainSeconds(Option.getOrUndefined(value))),
+);
 
 const unquoteSystemdValue = (raw: string) =>
   (raw.startsWith('"') && raw.endsWith('"')
@@ -48,7 +60,7 @@ export const disabledServiceTask = (taskXml: string): string =>
 
 export function serviceUnitEnvironmentValueOf(
   contents: string,
-  name: "T3CODE_HOME" | "T3CODE_INSTALL_BIN_DIR",
+  name: "T3CODE_HOME" | "T3CODE_INSTALL_BIN_DIR" | typeof RESTART_DRAIN_ENV,
 ): string | undefined {
   const systemd = new RegExp(`^Environment=${name}=(.*)$`, "m").exec(contents)?.[1];
   if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());

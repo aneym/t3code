@@ -1,14 +1,18 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Runtime from "effect/Runtime";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { GlobalFlag } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { SERVICE_STATE_FILE } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import type { McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
 import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
@@ -103,6 +107,8 @@ const makeOwnerMcpTools = (session: McpToolSession, origin: string) => {
 };
 export type OwnerMcpTools = ReturnType<typeof makeOwnerMcpTools>;
 
+const SERVICE_RESTART_WAIT = "2 minutes";
+
 export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(function* <A, E, R>(
   command: string,
   flags: { readonly baseDir: Option.Option<string> },
@@ -111,22 +117,53 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const serviceInstalled = yield* fileSystem
+    .exists(path.join(config.baseDir, "runtime", SERVICE_STATE_FILE))
+    .pipe(Effect.orElseSucceed(() => false));
   return yield* Effect.gen(function* () {
-    const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
-    if (Option.isNone(runtimeState)) {
-      return yield* new McpServerNotRunningError({ baseDir: config.baseDir });
-    }
-    const origin = runtimeState.value.origin;
-    const session = yield* openOwnerCliSession(
-      config.secretsDir,
-      new URL("/mcp", origin).href,
-      command,
-      headers,
-    ).pipe(
-      Effect.catchTags({
-        AcpMcpBridgeError: (cause) => Effect.fail(new McpServerUnreachableError({ origin, cause })),
-      }),
-    );
+    const connect = Effect.gen(function* () {
+      const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
+      if (Option.isNone(runtimeState)) {
+        return yield* new McpServerNotRunningError({ baseDir: config.baseDir });
+      }
+      const origin = runtimeState.value.origin;
+      const session = yield* openOwnerCliSession(
+        config.secretsDir,
+        new URL("/mcp", origin).href,
+        command,
+        headers,
+      ).pipe(
+        Effect.catchTags({
+          AcpMcpBridgeError: (cause) =>
+            Effect.fail(new McpServerUnreachableError({ origin, cause })),
+        }),
+      );
+      return { session, origin };
+    });
+    let told = false;
+    const { session, origin } = yield* serviceInstalled
+      ? connect.pipe(
+          Effect.tapError(() =>
+            Effect.suspend(() => {
+              if (told) return Effect.void;
+              told = true;
+              return Console.error(
+                `T3 Code at ${config.baseDir} is restarting. Waiting up to ${SERVICE_RESTART_WAIT} for it.`,
+              );
+            }),
+          ),
+          Effect.retry({
+            schedule: Schedule.spaced("250 millis").pipe(
+              Schedule.upTo({ duration: SERVICE_RESTART_WAIT }),
+            ),
+            while: (error) =>
+              error._tag === "McpServerNotRunningError" ||
+              error._tag === "McpServerUnreachableError",
+          }),
+        )
+      : connect;
     return yield* run(makeOwnerMcpTools(session, origin));
   }).pipe(
     Effect.scoped,

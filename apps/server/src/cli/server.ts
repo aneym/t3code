@@ -7,11 +7,15 @@ import * as Schema from "effect/Schema";
 import { Command, GlobalFlag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
-import { awaitServiceLauncherStop } from "../cloud/serviceLauncherClient.ts";
+import {
+  awaitServiceLauncherStop,
+  resolveServiceLauncherMode,
+} from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { awaitLauncherLoss } from "../launcherWatch.ts";
 import * as DatabaseMaintenance from "../persistence/DatabaseMaintenance.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { requestStop, takeOverStopSignal } from "../serverDrain/stopSignal.ts";
 import * as AutomaticPort from "./automaticPort.ts";
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
 import { reportServerFailureToStderr } from "./serverFailureReport.ts";
@@ -38,9 +42,17 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
   const logLevel = yield* GlobalFlag.LogLevel;
   const selectAutomaticPort = yield* AutomaticPort.make.pipe(Effect.provide(ProcessRunner.layer));
   const config = yield* resolveServerConfig(flags, logLevel, { ...options, selectAutomaticPort });
+  const desktopLaunched = config.mode === "desktop" && config.desktopBootstrapToken !== undefined;
+  if (
+    desktopLaunched ||
+    (yield* resolveServiceLauncherMode().pipe(Effect.orElseSucceed(() => ({ managed: false }))))
+      .managed
+  ) {
+    takeOverStopSignal();
+  }
   const run = Effect.raceFirst(
     runServer.pipe(Effect.provideService(ServerConfig.ServerConfig, config)),
-    awaitServiceLauncherStop().pipe(Effect.andThen(Effect.interrupt)),
+    Effect.forever(awaitServiceLauncherStop().pipe(Effect.andThen(Effect.sync(requestStop)))),
   ).pipe(
     // Settings' Reclaim stops the server; repair once the database is closed, before the restart.
     Effect.ensuring(
@@ -49,7 +61,7 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
       ),
     ),
   );
-  if (config.mode !== "desktop" || config.desktopBootstrapToken === undefined) return yield* run;
+  if (!desktopLaunched) return yield* run;
   return yield* Effect.raceFirst(
     run,
     awaitLauncherLoss().pipe(

@@ -1,12 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
-import { AVAILABLE_CONNECTION_STATE } from "@t3tools/client-runtime/connection";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  presentConnectionState,
+} from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
-
-const REPEATED_LOSS_ATTEMPT = 3;
+import { useConnectionOutage } from "../../hooks/useConnectionOutage";
 
 export function EmbedConnectionNotice({
   environmentId,
@@ -18,10 +20,8 @@ export function EmbedConnectionNotice({
     () => AVAILABLE_CONNECTION_STATE,
   );
   const blocked = state.phase === "blocked";
-  const failing =
-    blocked ||
-    (state.attempt >= REPEATED_LOSS_ATTEMPT &&
-      (state.phase === "backoff" || state.phase === "connecting"));
+  const outage = useConnectionOutage(environmentId, presentConnectionState(state).phase);
+  const failing = blocked || outage.loud;
   const detail = state.lastFailure?.message ?? null;
   const attempt = state.attempt;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- names each failed attempt in the console once

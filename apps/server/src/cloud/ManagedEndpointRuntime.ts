@@ -28,6 +28,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { onShutdownSignals } from "../serverDrain/stopSignal.ts";
 
 export type CloudManagedEndpointRuntimeStatus =
   | {
@@ -234,15 +235,8 @@ export const make = Effect.gen(function* () {
     shutdownSignalReceived = true;
   };
   yield* Effect.acquireRelease(
-    Effect.sync(() => {
-      process.on("SIGINT", onShutdownSignal);
-      process.on("SIGTERM", onShutdownSignal);
-    }),
-    () =>
-      Effect.sync(() => {
-        process.off("SIGINT", onShutdownSignal);
-        process.off("SIGTERM", onShutdownSignal);
-      }),
+    Effect.sync(() => onShutdownSignals(onShutdownSignal)),
+    (off) => Effect.sync(off),
   );
   // An explicit cloudflared transport in the environment is the user's choice.
   const env = yield* HostProcess.Environment;

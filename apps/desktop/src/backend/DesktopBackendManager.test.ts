@@ -10,6 +10,7 @@ import {
   DATABASE_MIGRATIONS_FINISHED_MESSAGE,
   DATABASE_MIGRATIONS_STARTED_MESSAGE,
 } from "@t3tools/shared/databaseMigrationLog";
+import { DEFAULT_RESTART_STOP_WAIT_MS } from "@t3tools/shared/restartDrain";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -309,7 +310,7 @@ describe("DesktopBackendManager", () => {
       assert.equal(spawnedCommand.options.additionalFds?.fd5?.type, "output");
       assert.equal(
         Duration.toMillis(Duration.fromInputUnsafe(spawnedCommand.options.forceKillAfter)),
-        5_000,
+        DEFAULT_RESTART_STOP_WAIT_MS,
       );
 
       assert.deepEqual(yield* decodeBootstrap(bootstrapJson), configWithObservability);
@@ -767,14 +768,12 @@ describe("DesktopBackendManager", () => {
       yield* instance.start;
       yield* Deferred.await(spawned);
 
-      // App quit and the updater stop every backend with this deadline.
       const quitDone = yield* Deferred.make<void>();
       const quitFiber = yield* instance
         .stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT })
         .pipe(Effect.andThen(Deferred.succeed(quitDone, undefined)), Effect.forkChild);
 
       yield* Deferred.await(teardownStarted);
-      // Past the quit deadline, quit must still wait for the backend to exit.
       yield* TestClock.adjust(Duration.seconds(9));
       assert.isFalse(yield* Deferred.isDone(quitDone));
 

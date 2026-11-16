@@ -50,8 +50,10 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
+  STOP_STEP_TIMEOUT,
   SERVICE_UNIT_ENV,
   compareExactServiceVersions,
+  configuredRestartDrainSeconds,
   disabledServiceTask,
   serviceTaskIsDisabled,
   serviceUnitBaseDirOf as bootServiceBaseDirOf,
@@ -89,9 +91,6 @@ export type BootServiceStep = {
   /** A step no command can do, such as waiting for the Windows launcher to exit. */
   | { readonly run: Effect.Effect<void, BootServiceCommandError> }
 );
-
-/** Must exceed systemd TimeoutStopSec and launchd ExitTimeOut (both 90s) to avoid shutdown races. */
-const STOP_STEP_TIMEOUT = Duration.seconds(120);
 
 export interface BootServiceManager {
   readonly kind: "systemd" | "launchd" | "schtasks";
@@ -600,6 +599,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const installBinDir = Option.getOrUndefined(
     yield* Config.String("T3CODE_INSTALL_BIN_DIR").pipe(Config.option),
   );
+  const drainSeconds = yield* configuredRestartDrainSeconds;
   const xdgRuntimeDir = yield* Config.String("XDG_RUNTIME_DIR").pipe(Config.withDefault(""));
   // Root under sudo must not reach or start a separate root service.
   const rootUnderSudo =
@@ -781,6 +781,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       baseDir: input.baseDir,
       logPath,
       unitPath,
+      drainSeconds,
     };
     return { manager, unitPath, plan };
   };
