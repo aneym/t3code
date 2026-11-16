@@ -66,17 +66,30 @@ export const forkSourceBusy = (
   target: { readonly thread: Pick<OrchestrationV2AppThread, "lineage"> },
 ) => target.thread.lineage.askOnly !== true && laterSourceRuns.some(isActiveRun);
 
+type ForkSourceProjection = Pick<OrchestrationV2ThreadProjection, "thread"> & {
+  readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
+};
+
 function askOnlyForkRefusal(input: {
   readonly sideChat?: boolean;
+  readonly sourceProjection: ForkSourceProjection;
   readonly sourceRun: OrchestrationV2Run | null;
   readonly sourceProviderThread: OrchestrationV2ProviderThread | undefined;
 }): string | null {
   if (input.sideChat !== true) return "An ask-only fork must be a side chat.";
+  if (input.sourceRun === null) {
+    const active = input.sourceProjection.providerThreads?.find(
+      (candidate) => candidate.id === input.sourceProjection.thread.activeProviderThreadId,
+    );
+    return active?.driver === CLAUDE_ASK_ONLY_DRIVER
+      ? null
+      : "An ask-only fork needs a Claude thread whose first run has started.";
+  }
   const ref = input.sourceProviderThread?.nativeThreadRef;
   if (ref != null && ref.driver !== CLAUDE_ASK_ONLY_DRIVER) {
     return `Ask-only forks are not supported for ${ref.driver} threads; only Claude threads can fork ask-only.`;
   }
-  if (input.sourceRun === null || ref?.strength !== "strong") {
+  if (ref?.strength !== "strong") {
     return "An ask-only fork needs a finished Claude run with a native session to fork from.";
   }
   return null;
@@ -84,7 +97,7 @@ function askOnlyForkRefusal(input: {
 
 export interface ThreadForkServiceV2Shape {
   readonly plan: (input: {
-    readonly sourceProjection: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly sourceProjection: ForkSourceProjection;
     /** Null only for a side chat whose parent has no stable run yet. */
     readonly sourceRun: OrchestrationV2Run | null;
     readonly sourceProviderThread: OrchestrationV2ProviderThread | undefined;
