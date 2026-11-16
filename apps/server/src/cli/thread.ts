@@ -7,6 +7,8 @@ import {
   OrchestratorMcpThreadStatus,
   RunId,
   TrimmedNonEmptyString,
+  messageSender,
+  quietNoteOf,
   type OrchestratorMcpThreadListItem,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
@@ -452,6 +454,16 @@ const threadShowCommand = Command.make("show", {
                 role: item.type === "user_message" ? "user" : "assistant",
                 runId: item.runId,
                 text,
+                messageId: item.messageId,
+                createdBy: item.createdBy,
+                creationSource: item.creationSource,
+                ...messageSender(item),
+                ...quietNoteOf(item),
+                ...(item.notification === undefined ? {} : { notification: item.notification }),
+                ...(item.delegatedCompletion === undefined
+                  ? {}
+                  : { delegatedCompletion: item.delegatedCompletion }),
+                updatedAt: item.updatedAt,
               })),
             ),
           );
