@@ -939,8 +939,8 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
         environmentId: laptop.environmentId,
         threadId: parentThreadId,
         title: "Laptop parent",
+        taskId: delegated.taskId,
       });
-      // A retry with the same key launches nothing new and records nothing new.
       const retried = yield* delegateToBox(a);
       expect(retried.taskId).toBe(delegated.taskId);
       expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(1);

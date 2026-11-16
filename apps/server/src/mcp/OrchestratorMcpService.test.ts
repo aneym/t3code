@@ -600,7 +600,6 @@ describe("OrchestratorMcpService", () => {
             stopDelegatedTasks: () => Effect.void,
             cancelDelegatedTask: ({ command }) =>
               Ref.update(dispatched, (commands) => [...commands, command]),
-            // The orchestrator's subagent.stop repair is covered in ThreadStop.test.ts.
             dispatch: (command) =>
               Ref.update(dispatched, (commands) => [...commands, command]).pipe(
                 Effect.andThen(
@@ -835,7 +834,7 @@ describe("OrchestratorMcpService", () => {
         assert.equal(result.status, "cancel_requested");
         assert.deepEqual(
           (yield* Ref.get(dispatched)).map((command) => (command as { type: string }).type),
-          ["thread.stop", "delegated_task.completion-delivery.dispose"],
+          ["thread.stop", "thread.metadata.update", "delegated_task.completion-delivery.dispose"],
         );
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
