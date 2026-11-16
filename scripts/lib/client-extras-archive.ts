@@ -16,6 +16,8 @@ import {
 
 const OFFICE_PACKAGES_DIR = "apps/web/node_modules/@betteroffice";
 const DEFERRED_EXTENSION = /\.(?:otf|ttf|wasm)$/;
+const GZIP_OS_BYTE = 9;
+const GZIP_OS_UNIX = 3;
 const encodeManifest = Schema.encodeEffect(Schema.fromJsonString(ClientExtrasManifest));
 
 export class ClientExtrasBuildError extends Schema.TaggedError<ClientExtrasBuildError>()(
@@ -106,6 +108,7 @@ export const deferClientExtras = Effect.fn("deferClientExtras")(function* (input
   }
   chunks.push(new Uint8Array(1024));
   const archive = NodeZlib.gzipSync(Buffer.concat(chunks), { level: 9 });
+  archive[GZIP_OS_BYTE] = GZIP_OS_UNIX;
   yield* fs.makeDirectory(input.outputDir, { recursive: true });
   const archivePath = path.join(input.outputDir, clientExtrasArchiveFileName(input.version));
   yield* fs.writeFile(archivePath, archive);
