@@ -25,21 +25,25 @@ export const THREAD_NOT_LOADED: ComposerSendRefusal = [
   TRY_AGAIN,
 ];
 
+export const NO_OPERATE_SCOPE_REFUSAL: ComposerSendRefusal = [
+  "no-operate-scope",
+  "Not sent: still connecting",
+  `This chat has not finished signing in, or it can only read. ${TRY_AGAIN}`,
+];
+
+export const MESSAGES_LOADING_REFUSAL: ComposerSendRefusal = [
+  "thread-detail-loading",
+  "Not sent: messages still loading",
+  TRY_AGAIN,
+];
+
 export function composerSendGateRefusal(gate: ComposerSendGate): ComposerSendRefusal | null {
-  if (!gate.canOperate) {
-    return [
-      "no-operate-scope",
-      "Not sent: still connecting",
-      `This chat has not finished signing in, or it can only read. ${TRY_AGAIN}`,
-    ];
-  }
+  if (!gate.canOperate) return NO_OPERATE_SCOPE_REFUSAL;
   if (!gate.threadReady) return THREAD_NOT_LOADED;
   if (!gate.settingsHydrated) {
     return ["settings-not-hydrated", "Not sent: settings still loading", TRY_AGAIN];
   }
-  if (gate.messagesLoading) {
-    return ["thread-detail-loading", "Not sent: messages still loading", TRY_AGAIN];
-  }
+  if (gate.messagesLoading) return MESSAGES_LOADING_REFUSAL;
   if (gate.environmentChanging) {
     return ["environment-changing", "Not sent: preparing the machine", TRY_AGAIN];
   }

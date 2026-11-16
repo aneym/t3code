@@ -281,6 +281,7 @@ import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 import { usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
+import { MESSAGES_LOADING, useBlockedComposerSubmit } from "./useBlockedComposerSubmit";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
@@ -1827,7 +1828,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
   const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
-  // A compact footer gives the dictation capsule the whole row beside the send button.
   const dictationTakesFooter = isComposerFooterCompact && speechInput.state.phase !== "idle";
   const submissionTarget = activePendingProgress ? "pending-user-input" : "provider-turn";
   const submissionBlocked = isComposerSubmissionBlocked({
@@ -1837,7 +1837,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     attachmentBlockReason,
     environmentUnavailable: environmentUnavailable !== null,
   });
-  // The pending Submit button follows the answer's own blockers, matching submitComposer.
+  const blockedSubmit = useBlockedComposerSubmit({
+    environmentId,
+    thread: activeThreadId,
+    loading:
+      externalSendDisabledReason === MESSAGES_LOADING ||
+      (sendDisabledReason === null && providerCatalogPending),
+    reason: sendDisabledReason,
+    noProvider: noProviderAvailable,
+  });
   const primaryActionSendDisabledReason =
     (activePendingProgress ? attachmentBlockReason : sendDisabledReason) ??
     (speechInput.preparing ? "Preparing voice input" : null);
@@ -2115,11 +2123,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
       event?.preventDefault();
-      return false;
+      return blockedSubmit(() => submitComposerRef.current(dispatchMode, submissionIntent));
     }
-    // A send while a pasted image is still compressing would strand that image:
-    // the turn snapshot wouldn't include it, and it would surface in the *next*
-    // draft instead.
     if (activeThreadId && countPreparingComposerImages(attachmentTargetKey) > 0) {
       event?.preventDefault();
       toastManager.add({
@@ -2138,7 +2143,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       return false;
     }
-    // An empty draft has nothing to send; Enter does what the Resume thread button does.
     if (showResumeAction && !activePendingProgress) {
       event?.preventDefault();
       if (isSendBusy || environmentUnavailable !== null) return false;
@@ -2231,8 +2235,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const submitCitationAndSendStable = useStableCallback(submitCitationAndSend);
-  // A question took the editor while a citation comment was
-  // unsaved. Keep the comment in the prompt that comes back afterward.
   const saveCitationDraftToPrompt = (replacedValue: string, savedValue: string) => {
     if (replacedValue !== prompt) return;
     if (promptRef.current === replacedValue) promptRef.current = savedValue;
