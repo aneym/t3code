@@ -55,6 +55,7 @@ export * from "./delegatedCompletionDelivery.ts";
 export * from "./delegatedTaskOutcome.ts";
 export * from "./threadWaitResultRun.ts";
 export * from "./orchestrationV2RemoteTaskChild.ts";
+export * from "./orchestrationV2DelegatedChild.ts";
 export * from "./guestShare.ts";
 export * from "./guestStream.ts";
 export * from "./applicationEvent.ts";

@@ -4,6 +4,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { OrchestratorMcpThreadTimelineItem } from "./orchestratorMcpTimeline.ts";
 import { OrchestratorMcpThreadRun } from "./orchestratorMcpThreadRun.ts";
+import {
+  OrchestrationV2DelegatedFrom,
+  OrchestrationV2TaskCancel,
+} from "./orchestrationV2DelegatedChild.ts";
 import { ThreadWaitResultRun } from "./threadWaitResultRun.ts";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
@@ -137,7 +141,6 @@ export const OrchestratorMcpTerminalDelegatedTaskStatus = Schema.Literals([
 export type OrchestratorMcpTerminalDelegatedTaskStatus =
   typeof OrchestratorMcpTerminalDelegatedTaskStatus.Type;
 
-// Set only on results for still-running tasks whose completion will wake the parent.
 export const ORCHESTRATOR_MCP_RUNNING_TASK_NEXT =
   "Completion wakes this thread, so end your turn. Do not wait on it or poll it.";
 
@@ -230,7 +233,6 @@ export const OrchestratorMcpEnvironmentTarget = Schema.optional(
   }),
 );
 
-/** state is null until the host is read. */
 export const OrchestratorMcpThreadPullRequest = Schema.Struct({
   ...ThreadPullRequestKey.fields,
   url: TrimmedNonEmptyString,
@@ -241,12 +243,10 @@ export const OrchestratorMcpThreadPullRequest = Schema.Struct({
 });
 export type OrchestratorMcpThreadPullRequest = typeof OrchestratorMcpThreadPullRequest.Type;
 
-/** Background work still open on the thread, as its provider reported it. */
 export const OrchestratorMcpThreadBackgroundTask = Schema.Struct({
   taskId: TrimmedNonEmptyString,
   kind: Schema.Literals(["subagent", "command", "monitor", "background_task"]),
   description: Schema.optional(TrimmedNonEmptyString),
-  /** The agent waits on this command or monitor. Other kinds always hold the thread. */
   awaited: Schema.optional(Schema.Literal(true)),
   childThreadId: Schema.optional(ThreadId),
 });
@@ -296,7 +296,6 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
-  /** Open linked pull requests, on the first page only; list_thread_pull_requests has all of them. */
   pullRequests: Schema.optional(Schema.Array(OrchestratorMcpThreadPullRequest)),
   pullRequestCount: Schema.optional(NonNegativeInt),
   titleRegeneration: Schema.NullOr(ThreadTitleRegeneration),
@@ -305,13 +304,13 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
+  delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  taskCancel: Schema.optional(OrchestrationV2TaskCancel),
   runCount: NonNegativeInt,
   itemCount: NonNegativeInt,
   pendingRequestCount: NonNegativeInt,
   awaitedBackgroundTaskCount: Schema.optional(NonNegativeInt),
-  /** Absent from linked environments that predate it. */
   blockedOnThreadWait: Schema.optional(Schema.Boolean),
-  /** Absent from linked environments that predate it. */
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestratorMcpThreadBackgroundTask)),
   ...ThreadLifecycleFields,
 });
@@ -323,7 +322,6 @@ export const OrchestratorMcpThreadReadResult = Schema.Struct({
   items: Schema.Array(OrchestratorMcpThreadTimelineItem),
   nextPosition: Schema.NullOr(NonNegativeInt),
   hasMore: Schema.Boolean,
-  /** null when nothing is older than the page. Missing from peers that only read forward. */
   earlierPosition: Schema.optional(Schema.NullOr(NonNegativeInt)),
 });
 export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadResult.Type;
@@ -363,6 +361,7 @@ export const OrchestratorMcpThreadInterruptInput = Schema.Struct({
    * watches and stop every task it delegated. `runId` is then not used.
    */
   stop: Schema.optional(Schema.Boolean),
+  cancelTask: Schema.optional(NodeId),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpThreadInterruptInput = typeof OrchestratorMcpThreadInterruptInput.Type;
@@ -407,7 +406,6 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
       options: Schema.optional(Schema.Array(OrchestratorMcpModelOption)),
     }),
   ),
-  /** Models left out of `models`: unlisted visible models, or matches past the cap with `search`. */
   omittedModels: Schema.optional(NonNegativeInt),
   runtimeModes: Schema.optional(Schema.Array(RuntimeMode)),
   canRunChildTask: Schema.Boolean,
@@ -566,7 +564,6 @@ export const OrchestratorMcpRequestSecretInput = Schema.Struct({
   value: Schema.optional(PastedSecretValue).annotate({
     description: "Pasted in this thread; no card.",
   }),
-  /** Default 10 minutes. */
   timeoutMs: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60 * 60 * 1_000 })),
   ),

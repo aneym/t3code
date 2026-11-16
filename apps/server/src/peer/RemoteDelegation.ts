@@ -32,6 +32,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tool from "effect/ai/Tool";
 import { withExecutedModelNote } from "@t3tools/provider-core/server/subagentProjection";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
@@ -312,12 +313,12 @@ const make = Effect.gen(function* () {
         parent.thread.projectId,
         target.projectId,
       );
-      // One key for the launch there and the record here, so a retry finds both.
-      // Both are scoped to the provider session, as every key a caller passes is:
-      // the forwarder scopes the launch's, and the record's names it.
       const key = input.clientRequestId ?? (yield* random.uuidV4());
       const task = taskPrompt(input, childCompletionNotes);
       const title = input.title ?? parent.thread.title;
+      const commandId = CommandId.make(
+        `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
+      );
       const { launched, worktreeBase } = yield* worktrees.launch(
         scope,
         target.environmentId,
@@ -331,20 +332,17 @@ const make = Effect.gen(function* () {
           ...(interactionMode === undefined ? {} : { interactionMode }),
           message: task,
           clientRequestId: `delegate:${scope.thread.threadId}:${key}`,
-          // The thread there shows it is this thread's subagent, with a way back.
           delegatedFrom: {
             environmentId: hereId,
             threadId: parent.thread.id,
             title: parent.thread.title,
+            taskId: IdAllocator.derive.delegatedTaskNode({ commandId }),
           },
         },
       );
       const link = yield* links.get(target.environmentId).pipe(
         Effect.map(Option.getOrUndefined),
         Effect.orElseSucceed(() => undefined),
-      );
-      const commandId = CommandId.make(
-        `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
       );
       const remoteChild: OrchestrationV2RemoteTaskChild = {
         environmentId: target.environmentId,
@@ -385,9 +383,6 @@ const make = Effect.gen(function* () {
                 message: "Unable to record the delegated task.",
               }),
           ),
-          // Nothing here follows a thread the task was never recorded for, so stop it there.
-          // A crash between the launch and this record still leaves it running there
-          // until a retry with the same clientRequestId records it.
           Effect.tapError(() =>
             stopThere(followScope(scope.thread, remoteChild), remoteChild, "stop").pipe(
               Effect.ignoreCause({ log: true }),
@@ -571,12 +566,14 @@ const make = Effect.gen(function* () {
     remote: OrchestrationV2RemoteTaskChild,
     key: string,
     reason?: string,
+    cancelTask?: NodeId,
   ) =>
     forwarding
       .interruptThread(scope, remote.environmentId, {
         threadId: remote.threadId,
         stop: true,
         ...(reason === undefined ? {} : { reason }),
+        ...(cancelTask === undefined ? {} : { cancelTask }),
         clientRequestId: `${key}:${remote.threadId}`,
       })
       .pipe(Effect.asVoid);
@@ -884,7 +881,7 @@ const make = Effect.gen(function* () {
       }`;
       if (task.result !== null) {
         // Best effort: the result stands whether or not the stop gets there.
-        yield* stopThere(there, remote, key, reason).pipe(
+        yield* stopThere(there, remote, key, reason, task.id).pipe(
           Effect.andThen(
             complete(
               task.threadId,
@@ -907,7 +904,7 @@ const make = Effect.gen(function* () {
       }
       // A link that is gone or a machine that is down still cancels the task
       // here; its follower keeps trying to stop it there, across restarts.
-      const unstopped = yield* stopThere(there, remote, key, reason).pipe(
+      const unstopped = yield* stopThere(there, remote, key, reason, task.id).pipe(
         Effect.as(undefined),
         Effect.catch((error) => Effect.succeed(error.message)),
       );

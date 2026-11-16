@@ -20,6 +20,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { MessageSender } from "./messageSender.ts";
+import {
+  OrchestrationV2DelegatedFrom,
+  OrchestrationV2TaskCancel,
+} from "./orchestrationV2DelegatedChild.ts";
 import { QuietNoteDispatchMode, QuietNoteFields } from "./threadNote.ts";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
@@ -157,17 +161,6 @@ export type OrchestrationV2LinkOrigin = typeof OrchestrationV2LinkOrigin.Type;
  */
 export const linkOriginIsFenced = (origin: OrchestrationV2LinkOrigin) =>
   origin.access !== "full-access";
-
-/**
- * The thread in a linked environment that delegated this one, when it did:
- * this thread is that parent's subagent, run here instead of there.
- */
-export const OrchestrationV2DelegatedFrom = Schema.Struct({
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-  title: Schema.String,
-});
-export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
 
 /**
  * The thread in a linked environment whose agent sent this message here, and its title
@@ -494,6 +487,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  taskCancel: Schema.optional(Schema.NullOr(OrchestrationV2TaskCancel)),
   lineage: OrchestrationV2AppThreadLineage,
   automationTaskId: Schema.optional(Schema.NullOr(ScheduledTaskId)),
   automationPlacementAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2129,6 +2123,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  taskCancel: Schema.optional(Schema.NullOr(OrchestrationV2TaskCancel)),
   latestRunId: Schema.NullOr(RunId),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -3138,8 +3133,8 @@ export const OrchestrationV2Command = Schema.Union([
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
-    /** Link (object) or unlink (null) a pull request; absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+    taskCancel: Schema.optional(Schema.NullOr(OrchestrationV2TaskCancel)),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.link"),

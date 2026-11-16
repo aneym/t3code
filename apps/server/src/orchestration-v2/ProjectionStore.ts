@@ -1434,8 +1434,6 @@ function isTurnItemAtOrBeforeRun(input: {
   return ordinal !== undefined && ordinal <= input.sourceRunOrdinal;
 }
 
-// Run ordinals enforce the fork cutoff; this keeps later rollbacks from hiding
-// inherited history while retaining cancellation evidence for undelivered input.
 function createInheritedTurnItemVisibility(
   source: Parameters<typeof createOrchestrationV2TurnItemVisibility>[0],
 ) {
@@ -1632,8 +1630,6 @@ export function threadShellFromProjection(
         (left, right) =>
           DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
       )[0] ?? null;
-  // T3 Code's own idle compactions stay out of the shell unless they fail, so thread lists,
-  // notifications and the relay keep presenting the user's last turn.
   const runs = projection.runs.filter((run) => !isSilentRunForShell(run, projection));
   const latestRun =
     usageLimitRunPresentedAsLatest(
@@ -1740,6 +1736,7 @@ export function threadShellFromProjection(
     ...(projection.thread.delegatedFrom === undefined
       ? {}
       : { delegatedFrom: projection.thread.delegatedFrom }),
+    ...(projection.thread.taskCancel == null ? {} : { taskCancel: projection.thread.taskCancel }),
     latestRunId: latestRun?.id ?? null,
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
@@ -2057,6 +2054,7 @@ function shellFromState(input: {
     ...(input.state.thread.delegatedFrom === undefined
       ? {}
       : { delegatedFrom: input.state.thread.delegatedFrom }),
+    ...(input.state.thread.taskCancel == null ? {} : { taskCancel: input.state.thread.taskCancel }),
     latestRunId: input.state.latestRunId,
     latestRunRequestedAt: input.state.latestRunRequestedAt,
     latestRunStartedAt: input.state.latestRunStartedAt,

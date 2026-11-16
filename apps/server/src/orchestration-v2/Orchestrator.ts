@@ -238,6 +238,7 @@ import {
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
+import { taskCancelAdmission, taskCancelRefusal } from "./TaskCancel.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -3719,7 +3720,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is settled or archived and cannot watch pull requests.`,
       });
     }
-    // Child tasks report to their parent, which owns PR monitoring; child watches would cause unrelated wakes.
     if (
       command.type === "thread.pull-request.watch" &&
       command.watching &&
@@ -4223,7 +4223,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
         }
         case "thread.snooze": {
-          // Re-snoozing acknowledges the latest wake even at the same time; commandId deduplicates retries.
           return {
             ...thread,
             snoozedUntil,
@@ -4362,6 +4361,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+            ...(command.taskCancel === undefined ? {} : { taskCancel: command.taskCancel }),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {
@@ -4957,7 +4957,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                         : command.type === "thread.runtime-mode.set"
                           ? "Runtime mode changed."
                           : "Provider or model selection changed.",
-                // Terminal detaches revoke MCP credentials; reattachments need other detach reasons to preserve them.
                 ...(command.type === "thread.archive" ? { revokeMcpCredential: true } : {}),
               },
             } satisfies PendingOrchestrationEffectV2;
@@ -9141,7 +9140,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
       .at(-1);
     if (message?.runId == null) return;
-    // Only new attempts can own tasks; steers join an existing snapshot that cannot settle newly bound tasks.
     const startsAttempt = pending.some(
       (event) =>
         (event.type === "run.created" && event.payload.id === message.runId) ||
@@ -13488,7 +13486,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         offer: false,
       };
     }
-    // settled_only relies on a blocking wait that ends with the spawning turn; later results need another delivery path.
     if (
       (input.task.completionWake ?? "settled_only") === "settled_only" &&
       hasLiveRun({ runs: [input.parentRun] })
@@ -13550,7 +13547,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         };
       }
       if (deliveryRun !== undefined) {
-        // The terminal-run listener reserves successor wakes; keep racing siblings pending to avoid competing deliveries.
         return {
           task: {
             ...input.updatedTask,
@@ -14445,6 +14441,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
           });
         }
+        if (thread.taskCancel != null && taskCancelAdmission(thread, command) === "refuse") {
+          return yield* new OrchestratorCommandRejectedError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: taskCancelRefusal(command.threadId, thread.taskCancel),
+          });
+        }
         if (command.dispatchMode.type === "note") {
           const [message, item] = quietNoteEvents(command, yield* DateTime.now, {
             id: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
@@ -15041,9 +15044,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
   );
 
-  // Projections already contain historical terminals; replaying them delays startup queue promotion with database size.
   const terminalEventsAfterSequence = yield* eventSink.latestSequence().pipe(Effect.orDie);
-  // Filter run updates before buffering so blocked queue promotion does not retain unrelated tool bodies.
   yield* eventSink
     .stream({ afterSequence: terminalEventsAfterSequence, eventType: "run.updated" })
     .pipe(
