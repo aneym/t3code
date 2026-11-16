@@ -1,7 +1,7 @@
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import type { ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
 import { useBlocker } from "@tanstack/react-router";
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
 import { startEmbedAudience } from "../../embed/embedAudience";
 import { startEmbedControls } from "../../embed/embedComposer";
@@ -12,6 +12,7 @@ import { useEmbedHostBridge } from "../../embed/useEmbedHostBridge";
 import { useEmbedNavigationPrefetch } from "../../embed/useEmbedNavigationPrefetch";
 import { useEmbedDocumentTitle } from "../../embed/useEmbedDocumentTitle";
 import { useEmbedReadyReport } from "../../embed/useEmbedReadyReport";
+import { releaseEmbedThreadPrefetch } from "../../embed/embedThreadPrefetch";
 import { primaryServerConfigAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { environmentThreads } from "../../state/threads";
@@ -40,6 +41,8 @@ function EmbedNotice({ text }: { readonly text: string }) {
 function EmbedPrefetch({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   useAtomMount(environmentShell.stateAtom(threadRef.environmentId));
   useAtomMount(environmentThreads.stateAtom(threadRef.environmentId, threadRef.threadId));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands the boot-time thread subscription to this mount once it holds the same atom
+  useEffect(releaseEmbedThreadPrefetch, []);
   useEmbedNavigationPrefetch();
   return null;
 }

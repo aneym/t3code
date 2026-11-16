@@ -71,7 +71,7 @@ import { optimisticUserMessage, withoutOptimisticUserMessage } from "./optimisti
 import { heldIdsFor, holdSend, releaseHeldSend } from "./heldSendStore";
 import { holdOrSendThroughHost, sendComposerThroughHost } from "../../embed/embedComposerSend";
 import { isEmbedHostSendOn } from "../../embed/embedHostSend";
-import { embedSendEnter, embedSendFailed } from "../../embed/embedSendMarks";
+import { embedSendEnter, embedSendFailed, takeHeldEmbedSend } from "../../embed/embedSendMarks";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -422,7 +422,6 @@ export function useComposerSend(input: ComposerSendInput) {
     }
 
     const sendCtx = composerRef.current?.getSendContext();
-    // `/side` beats an open question and a plan follow-up, which would send the text to main.
     const sideChatCommand =
       sendCtx && !directAnnotation && !queuedRunEdit.isEditing
         ? parseSideChatCommand(promptAtSend)
@@ -508,7 +507,6 @@ export function useComposerSend(input: ComposerSendInput) {
       composerRef.current?.resetCursorState();
       return;
     }
-    // Where side chats are unavailable, `/side` text can still be a literal answer.
     if (sideChatDisabledReason !== null && sideChatCommand && !answeringQuestion) {
       refuseComposerSend([
         "side-chat-unavailable",
@@ -815,7 +813,10 @@ export function useComposerSend(input: ComposerSendInput) {
       composerEnvironmentContextsSnapshot.length === 0 &&
       messageTextForSend.trim() !== "";
     const heldIds = isServerThread ? heldIdsFor(routeThreadKey, messageTextForSend) : null;
-    const messageIdForSend = embedSendEnter(threadIdForSend, heldIds?.messageId ?? newMessageId());
+    const messageIdForSend = embedSendEnter(
+      threadIdForSend,
+      heldIds?.messageId ?? takeHeldEmbedSend(threadIdForSend) ?? newMessageId(),
+    );
     const commandIdForSend = heldIds?.commandId ?? CommandId.make(randomUUID());
     const threadRef = scopeThreadRef(activeThread.environmentId, threadIdForSend);
     const rowFor = (text: string, createdAt: string, extra?: Partial<ChatMessage>) => {

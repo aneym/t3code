@@ -1,3 +1,4 @@
+import { refuseEmbedSend } from "../../embed/embedSendMarks";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
 export interface ComposerSendGate {
@@ -31,7 +32,7 @@ export const NO_OPERATE_SCOPE_REFUSAL: ComposerSendRefusal = [
   `This chat has not finished signing in, or it can only read. ${TRY_AGAIN}`,
 ];
 
-export const MESSAGES_LOADING_REFUSAL: ComposerSendRefusal = [
+const MESSAGES_LOADING_REFUSAL: ComposerSendRefusal = [
   "thread-detail-loading",
   "Not sent: messages still loading",
   TRY_AGAIN,
@@ -79,5 +80,6 @@ export function refuseComposerSend(refusal: ComposerSendRefusal, annotation = fa
   const [condition, title, description, type = "warning"] = refusal;
   if (annotation) return holdComposerAnnotation(condition);
   console.warn(`[composer-send] not sent: ${condition}`);
+  refuseEmbedSend();
   toastManager.add(stackedThreadToast({ type, title, description }));
 }

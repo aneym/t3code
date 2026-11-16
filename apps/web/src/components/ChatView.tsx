@@ -326,7 +326,7 @@ import { usePendingGuestMessageFollow } from "./chat/usePendingGuestMessageFollo
 import { useEmbedPendingSendCount, useEmbedShownRows } from "../embed/embedPendingSends";
 import { HeldSendNotice } from "./chat/HeldSendNotice";
 import { useHeldSend } from "./chat/useHeldSend";
-import { MESSAGES_LOADING } from "./chat/useBlockedComposerSubmit";
+import { MESSAGES_LOADING } from "./chat/useComposerSendHold";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";

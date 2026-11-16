@@ -1,4 +1,4 @@
-import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import type { MessageId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
 import { MCP_APP_CARD_HOST_TOKEN } from "@t3tools/shared/mcpAppCard";
 import {
@@ -7,6 +7,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
+import { newMessageId } from "../lib/utils";
 import { postToEmbedHost } from "./embedHost";
 import {
   EMBED_SEND_MARK_MESSAGE,
@@ -33,6 +34,8 @@ const USER_ROW = '[data-timeline-row-kind="message"][data-message-role="user"]';
 const SCROLL = { capture: true, passive: true } as const;
 const MILESTONES = 5;
 const sends = new Map<string, OpenSend>();
+const held = new Map<string, MessageId>();
+let composerThread: string | null = null;
 let observer: MutationObserver | null = null;
 let frame: number | null = null;
 const railsShell =
@@ -213,4 +216,25 @@ export function followEmbedSends(
     }
   }
   schedule();
+}
+
+export function noteEmbedComposerThread(thread: string | null): void {
+  composerThread = thread;
+}
+
+export function holdEmbedSend(thread: string, reason: string): void {
+  const messageId = held.get(thread) ?? embedSendEnter(thread, newMessageId());
+  held.set(thread, messageId);
+  if (sends.has(messageId)) postEmbedSendMark(thread, { mark: "waiting", messageId, reason });
+}
+
+export function takeHeldEmbedSend(thread: string): MessageId | undefined {
+  const messageId = held.get(thread);
+  held.delete(thread);
+  return messageId;
+}
+
+export function refuseEmbedSend(thread = composerThread): void {
+  if (thread === null) return;
+  failEmbedSend(takeHeldEmbedSend(thread) ?? embedSendEnter(thread, newMessageId()), "rejected");
 }

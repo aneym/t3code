@@ -281,7 +281,7 @@ import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 import { usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
-import { MESSAGES_LOADING, useBlockedComposerSubmit } from "./useBlockedComposerSubmit";
+import { useComposerSendHold } from "./useComposerSendHold";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
@@ -1837,13 +1837,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     attachmentBlockReason,
     environmentUnavailable: environmentUnavailable !== null,
   });
-  const blockedSubmit = useBlockedComposerSubmit({
+  const sendHold = useComposerSendHold({
     environmentId,
+    holdKey: attachmentTargetKey,
     thread: activeThreadId,
-    loading:
-      externalSendDisabledReason === MESSAGES_LOADING ||
-      (sendDisabledReason === null && providerCatalogPending),
     reason: sendDisabledReason,
+    providerPending: providerCatalogPending,
     noProvider: noProviderAvailable,
   });
   const primaryActionSendDisabledReason =
@@ -2121,9 +2120,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
       return false;
     }
-    if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+    if (
+      submissionBlocked ||
+      sendHold.blocks ||
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+    ) {
       event?.preventDefault();
-      return blockedSubmit(() => submitComposerRef.current(dispatchMode, submissionIntent));
+      return sendHold.submit(() => submitComposerRef.current(dispatchMode, submissionIntent));
     }
     if (activeThreadId && countPreparingComposerImages(attachmentTargetKey) > 0) {
       event?.preventDefault();
@@ -2172,6 +2175,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerSubmissionError(submission.validationMessage);
     if (!submission.didDispatch) return false;
     onTypingGuardSend();
+    sendHold.clear();
     if (shouldBlurMobileComposerOnSubmit()) {
       blurMobileComposerAfterSend();
     }
@@ -2499,9 +2503,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     : [];
   const bannerItems: readonly ComposerBannerStackItem[] =
     runtimeModeCeilingDenial === undefined || activePendingProgress
-      ? [...props.bannerItems, ...replyBannerItems]
+      ? [...props.bannerItems, ...sendHold.banners, ...replyBannerItems]
       : [
           ...props.bannerItems,
+          ...sendHold.banners,
           ...replyBannerItems,
           {
             id: "managed-runtime-mode",
