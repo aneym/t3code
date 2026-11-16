@@ -714,6 +714,7 @@ const command = Command.make(
       Flag.optional,
     ),
     deferClientExtras: Flag.Boolean("defer-client-extras").pipe(
+      Flag.withDefault(false),
       Flag.withDescription("Move Office viewer fonts and engines into a separate extras archive."),
     ),
   },
