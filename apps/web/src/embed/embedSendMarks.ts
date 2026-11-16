@@ -104,7 +104,10 @@ function onScreen(row: Element): boolean {
 }
 
 function userRowShown(messageId: string): boolean {
-  const row = document.querySelector(`${USER_ROW}[data-message-id="${CSS.escape(messageId)}"]`);
+  const id = CSS.escape(messageId);
+  const row = document.querySelector(
+    `${USER_ROW}[data-message-id="${id}"], [data-pending-message-id="${id}"]`,
+  );
   return row !== null && (row.textContent ?? "").trim() !== "" && onScreen(row);
 }
 

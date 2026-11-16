@@ -323,7 +323,7 @@ import { queuedRunShortcutContext, useQueuedRunShortcuts } from "./chat/queuedRu
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { EmbedPendingSends } from "./chat/EmbedPendingSends";
 import { usePendingGuestMessageFollow } from "./chat/usePendingGuestMessageFollow";
-import { useEmbedPendingSendCount } from "../embed/embedPendingSends";
+import { useEmbedPendingSendCount, useEmbedShownRows } from "../embed/embedPendingSends";
 import { HeldSendNotice } from "./chat/HeldSendNotice";
 import { useHeldSend } from "./chat/useHeldSend";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
@@ -681,7 +681,7 @@ export default function ChatView(props: ChatViewProps) {
     optimisticBlobPreviews.handOff(optimisticState);
     setHeldOptimisticUserMessages(optimisticState);
   }
-  const optimisticUserMessages = optimisticState.messages;
+  const optimisticUserMessages = useEmbedShownRows(threadId, optimisticState.messages);
   const setOptimisticUserMessages = (action: SetStateAction<ChatMessage[]>) =>
     setHeldOptimisticUserMessages((state) =>
       applyOptimisticUserMessagesAction(state, threadId, action),
@@ -3099,7 +3099,7 @@ export default function ChatView(props: ChatViewProps) {
       .join(" · ") || null;
   // The end of the timeline holds the thread's present and next turns: what it is doing now,
   // its lifecycle status, guest messages awaiting you, then your queued messages.
-  const hostSends = useEmbedPendingSendCount(serverProjection, optimisticUserMessages);
+  const hostSends = useEmbedPendingSendCount(serverProjection?.thread.id);
   const timelineFooter =
     pendingHandoff === null &&
     !hasThreadNow &&
@@ -3136,12 +3136,7 @@ export default function ChatView(props: ChatViewProps) {
         ) : null}
         {hasQueuedTurns ? queuedRunsControl : null}
         {hostSends > 0 && serverProjection ? (
-          <EmbedPendingSends
-            projection={serverProjection}
-            rows={optimisticUserMessages}
-            composerRef={composerRef}
-            composerDraftTarget={composerDraftTarget}
-          />
+          <EmbedPendingSends projection={serverProjection} />
         ) : null}
         {heldSend.held !== null ? (
           <HeldSendNotice

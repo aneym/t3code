@@ -20,6 +20,7 @@ import {
   settleLocalSend,
   trackLocalSend,
 } from "./embedPendingSends";
+import { PENDING_WORDS } from "./embedPendingWords";
 import type { EmbedSendOutcome, EmbedSendWhen } from "./embedProtocol";
 import { embedSendEnter, failEmbedSend } from "./embedSendMarks";
 
@@ -45,8 +46,8 @@ function unshow(input: Row): void {
   input.rows(withoutOptimisticUserMessage(input.row.id));
 }
 
-const NO_ANSWER = "No answer from the app, so this wasn't sent.";
-const NOT_CONNECTED = "The app isn't connected, so this wasn't sent.";
+const NO_ANSWER = PENDING_WORDS.noAnswer;
+const NOT_CONNECTED = PENDING_WORDS.notConnected;
 
 const draftStore = useComposerDraftStore.getState;
 
@@ -179,7 +180,7 @@ function settleComposerSend(
   toastManager.add({
     ...stackedThreadToast({
       type: "warning",
-      title: "Not sent",
+      title: PENDING_WORDS.notSentToast,
       description: `${NO_ANSWER} ${input.text.trim().slice(0, 200)}`,
     }),
     id: `embed-host-not-sent:${input.ids.messageId}`,
