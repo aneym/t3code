@@ -37,6 +37,7 @@ export type EmbedSendFailure =
 export type EmbedSendMark =
   | { readonly mark: EmbedSendMilestone; readonly messageId: string }
   | { readonly mark: "failed"; readonly messageId: string; readonly reason: EmbedSendFailure }
+  | { readonly mark: "waiting"; readonly messageId: string; readonly reason: string }
   | {
       readonly mark: "uploads";
       readonly messageId: string | null;

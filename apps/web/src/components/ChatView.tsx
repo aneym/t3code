@@ -326,6 +326,7 @@ import { usePendingGuestMessageFollow } from "./chat/usePendingGuestMessageFollo
 import { useEmbedPendingSendCount, useEmbedShownRows } from "../embed/embedPendingSends";
 import { HeldSendNotice } from "./chat/HeldSendNotice";
 import { useHeldSend } from "./chat/useHeldSend";
+import { MESSAGES_LOADING } from "./chat/useComposerSendHold";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
@@ -537,7 +538,6 @@ export default function ChatView(props: ChatViewProps) {
     status: threadStatus,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
-  // Held back briefly, so a quick sync does not flash a status line at the end of the timeline.
   const delayedThreadSyncPhase = useDelayedStatus(routeThreadKey, threadSyncPhase);
   const activeProviderThread = serverProjection?.providerThreads.find(
     (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
@@ -3642,7 +3642,7 @@ export default function ChatView(props: ChatViewProps) {
                                         : feedbackUploading
                                           ? "Sending feedback"
                                           : threadDetailLoading
-                                            ? "Messages loading"
+                                            ? MESSAGES_LOADING
                                             : worktreeSetupBlocksSend
                                               ? "Preparing worktree"
                                               : projectCloneSendBlockReason

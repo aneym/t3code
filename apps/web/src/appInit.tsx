@@ -21,6 +21,7 @@ import { startKeybindingsUpdateToasts } from "./components/KeybindingsUpdateToas
 import { startLegacyThreadMigrationToast } from "./components/LegacyThreadMigrationToast";
 import { startPermissionUpdateNotices } from "./components/PermissionUpdateNotice";
 import { isEmbedPath } from "./embed/embedProtocol";
+import { startEmbedThreadPrefetch } from "./embed/embedThreadPrefetch";
 import { startAgentOpenedPreviews } from "./components/preview/agentOpenedPreviews";
 import { startMainAppLocationTracking } from "./components/sidebar/mainAppLocation";
 import { startDesktopUpdateLaunchNotice } from "./components/sidebar/updateEverythingRun";
@@ -292,6 +293,7 @@ export function startAppServices(): AppRouter {
   startMainAppLocationTracking(router);
   startWorkspaceFocus(router);
   startThreadVisitedMigration(appAtomRegistry);
+  startEmbedThreadPrefetch(router, appAtomRegistry);
   startSshPasswordPromptQueue();
 
   if (!isEmbedPath(window.location.pathname)) {
