@@ -30,8 +30,11 @@ export interface ChatShellFilter {
   ) => OrchestrationV2ShellStreamItem | undefined;
 }
 
-export function makeChatShellFilter(threads: ReadonlySet<ThreadId>): ChatShellFilter {
-  const projectIds = new Set<ProjectId>();
+export function makeChatShellFilter(
+  threads: ReadonlySet<ThreadId>,
+  seedProjectIds: ReadonlySet<ProjectId>,
+): ChatShellFilter {
+  const projectIds = new Set<ProjectId>(seedProjectIds);
   const keep = (thread: OrchestrationV2ThreadShell) => {
     if (!threads.has(thread.id)) return false;
     projectIds.add(thread.projectId);

@@ -72,21 +72,27 @@ export function chatSessionHandlers<H extends ChatHandlers>(
   } = {
     [O.dispatchCommand]: (command, options) =>
       handlers[O.dispatchCommand](rebuildChatCommand(command), options),
-    [O.subscribeShell]: (input, options) => {
-      const filter = makeChatShellFilter(threads);
-      return mapStream(
-        handlers[O.subscribeShell](
-          {
-            ...(input.afterSequence === undefined ? {} : { afterSequence: input.afterSequence }),
-            ...(input.requestCompletionMarker === undefined
-              ? {}
-              : { requestCompletionMarker: input.requestCompletionMarker }),
-          },
-          options,
+    [O.subscribeShell]: (input, options) =>
+      Stream.unwrap(
+        access.projectIds.pipe(
+          Effect.map((projectIds) =>
+            mapStream(
+              handlers[O.subscribeShell](
+                {
+                  ...(input.afterSequence === undefined
+                    ? {}
+                    : { afterSequence: input.afterSequence }),
+                  ...(input.requestCompletionMarker === undefined
+                    ? {}
+                    : { requestCompletionMarker: input.requestCompletionMarker }),
+                },
+                options,
+              ),
+              makeChatShellFilter(threads, projectIds).apply,
+            ),
+          ),
         ),
-        filter.apply,
-      );
-    },
+      ),
     [O.getThreadTitles]: (input, options) =>
       handlers[O.getThreadTitles]({ threadIds: input.threadIds.filter(access.inSet) }, options),
     [O.getThreadLinkMetadata]: (input, options) =>

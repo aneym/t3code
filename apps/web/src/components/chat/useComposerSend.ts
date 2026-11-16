@@ -754,14 +754,6 @@ export function useComposerSend(input: ComposerSendInput) {
       }
       return;
     }
-    if (!activeProject) {
-      refuseComposerSend(
-        isServerThread
-          ? ["no-project", "Not sent: project not loaded", "Reload the chat, then send again."]
-          : ["no-project", "Choose a project first", "This draft no longer points to a project."],
-      );
-      return;
-    }
     const threadIdForSend = activeThread.id;
     const sendSnapshot = snapshotComposerSend({
       prompt: promptForSend,
@@ -862,6 +854,14 @@ export function useComposerSend(input: ComposerSendInput) {
       });
       sendInFlightRef.current = false;
       if (hostSend !== null) return hostSend.done;
+    }
+    if (!activeProject) {
+      refuseComposerSend(
+        isServerThread
+          ? ["no-project", "Not sent: project not loaded", "Reload the chat, then send again."]
+          : ["no-project", "Choose a project first", "This draft no longer points to a project."],
+      );
+      return;
     }
     // Records bind attachments by the id each side knows: the local id for the optimistic
     // row, the upload id (or local id on the data-URL path) on the wire; the server

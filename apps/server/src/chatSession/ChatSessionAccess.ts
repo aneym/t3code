@@ -1,4 +1,4 @@
-import type { AuthEnvironmentScope, ThreadId } from "@t3tools/contracts";
+import type { AuthEnvironmentScope, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -19,6 +19,7 @@ const ATTACHMENT_CACHE_MS = 15_000;
 export interface ChatSessionAccess {
   readonly session: ChatSession;
   readonly inSet: (threadId: ThreadId) => boolean;
+  readonly projectIds: Effect.Effect<ReadonlySet<ProjectId>>;
   readonly ownsUpload: (attachmentId: string) => Effect.Effect<boolean>;
   readonly attachmentVisible: (attachmentId: string) => Effect.Effect<boolean>;
   readonly attachmentUsable: (threadId: ThreadId, attachmentId: string) => Effect.Effect<boolean>;
@@ -37,6 +38,21 @@ const makeChatSessionAccess = (
 
   const inSet = (threadId: ThreadId) => session.threads.has(threadId);
   const ownsUpload = (attachmentId: string) => grants.ownsUpload(session.setId, attachmentId);
+
+  const projectIds =
+    session.threads.size === 0
+      ? Effect.succeed<ReadonlySet<ProjectId>>(new Set())
+      : projections.getShellSnapshot({ threadIds: [...session.threads] }).pipe(
+          Effect.map(
+            (snapshot): ReadonlySet<ProjectId> =>
+              new Set(
+                [...snapshot.threads, ...snapshot.archivedThreads].flatMap((thread) =>
+                  session.threads.has(thread.id) ? [thread.projectId] : [],
+                ),
+              ),
+          ),
+          Effect.orElseSucceed((): ReadonlySet<ProjectId> => new Set()),
+        );
 
   const threadAttachmentIds = Effect.fnUntraced(function* (threadId: ThreadId) {
     const now = yield* Clock.currentTimeMillis;
@@ -89,6 +105,7 @@ const makeChatSessionAccess = (
   return {
     session,
     inSet,
+    projectIds,
     ownsUpload,
     attachmentVisible,
     attachmentUsable,
