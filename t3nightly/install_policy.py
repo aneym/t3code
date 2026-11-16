@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-DEFAULT_DRAIN_S = 30
+DEFAULT_DRAIN_S = 60
+DRAIN_GRACE_S = 15
+IDLE_GATE_MAX_S = 1800
 
 LIVE_SERVICES = {"t3code.service", "com.t3tools.t3code.service"}
 MAX_ADMISSION_AGE_S = 7200

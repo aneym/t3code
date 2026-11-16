@@ -3,11 +3,13 @@ import time
 
 from .install_land_gate import LandActive, active as land_locks, patterns as land_patterns, wait as land_wait
 from .install_protected import ProtectedRunActive, threads, wait
+from .install_policy import DRAIN_GRACE_S
 from .live_query import bounded
 
 FINISHING = ("preparing", "starting", "running")
 WAITING = ("waiting",)
 POLL_S = 1.0
+IDLE_POLL_S = 15.0
 OPEN_RUNS = ("SELECT r.thread_id, r.run_id, r.status, t.title, json_extract(t.payload_json, '$.lineage.rootThreadId') FROM orchestration_v2_projection_runs r "
              "LEFT JOIN orchestration_v2_projection_threads t ON t.thread_id = r.thread_id WHERE r.status IN (?,?,?,?) ORDER BY r.thread_id, r.ordinal")
 
@@ -17,11 +19,41 @@ def open_runs(db):
     return [{"threadId": thread_id, "runId": run_id, "status": status, "title": title, "rootThreadId": root} for thread_id, run_id, status, title, root in rows]
 
 
+class IdleGateHeld(ValueError):
+    pass
+
+
+def idle_gate(run):
+    bound = getattr(run.args, "idle_gate_s", 0)
+    if not bound:
+        return None
+    started = time.monotonic()
+    while True:
+        try:
+            busy, error = [row for row in open_runs(run.db) if row["status"] in FINISHING], None
+        except sqlite3.Error as failure:
+            busy, error = [], str(failure)[:300]
+        waited = time.monotonic() - started
+        if (not busy and error is None) or waited >= bound:
+            break
+        time.sleep(max(0.0, min(IDLE_POLL_S, bound - waited)))
+    record = {"outcome": "idle" if not busy and error is None else "held", "waitedSeconds": round(waited, 3), "boundSeconds": bound,
+              "activeRunIds": [row["runId"] for row in busy], **({"error": error} if error else {})}
+    run.report["idleGate"] = record
+    run.step("idle-gate", **record)
+    if record["outcome"] == "held":
+        failure = IdleGateHeld(f"host not idle within the {bound} s --idle-gate-s bound: {len(busy)} runs open" + (f" ({error})" if error else "") + "; install held, nothing stopped")
+        failure.record = record
+        refuse(run, failure, "idle-gate-held", record["activeRunIds"])
+        raise failure
+    return record
+
+
 def refuse(run, error, outcome, active, extra=None):
     run.report["restartDrain"] = {
         **(extra or {}), "outcome": outcome, "drained": False, "waitedMs": round(error.record["waitedSeconds"] * 1000), "deadlineS": run.args.drain_s,
         "activeRunIds": active, "cutRuns": [], "cutRunTitles": [], "waitingRuns": (extra or {}).get("waitingRuns", []),
-        "protected" if outcome == "protected-run" else "land": error.record, "stopRefused": True, "retryable": True, "error": str(error),
+        {"protected-run": "protected", "idle-gate-held": "idleGate"}.get(outcome, "land"): error.record, "stopRefused": True, "retryable": True, "error": str(error),
     }
     run.step("restart-drain", **run.report["restartDrain"])
 
@@ -44,12 +76,13 @@ def guarded(rows, chosen):
 
 
 def drain(run):
-    deadline_s = run.args.drain_s
+    deadline_s = run.args.drain_s + (DRAIN_GRACE_S if run.args.drain_s else 0)
     gated = hasattr(run.args, "protected_wait_s")
     chosen = set(threads(run.args)) if gated else set()
     locks_from = land_patterns(run.args) if gated else []
     if gated:
         hold(run, "before-drain")
+    idle_gate(run)
     protected_left = max(0.0, run.args.protected_wait_s - getattr(run, "protected_waited_s", 0.0)) if gated else 0.0
     land_left = max(0.0, run.args.land_wait_s - getattr(run, "land_waited_s", 0.0)) if gated else 0.0
     started = time.monotonic()

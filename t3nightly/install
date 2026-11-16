@@ -13,7 +13,7 @@ from t3nightly.install_preflight import checked_assets
 from t3nightly.install_assets import serve_assets
 from t3nightly.install_payload_gc import payload_lifecycle
 
-from t3nightly.install_policy import DEFAULT_DRAIN_S
+from t3nightly.install_policy import DEFAULT_DRAIN_S, IDLE_GATE_MAX_S
 from t3nightly.install_land_gate import DEFAULT_WAIT_S as LAND_WAIT_S, MAX_WAIT_S as LAND_MAX_S
 from t3nightly.install_protected import DEFAULT_WAIT_S as PROTECTED_WAIT_S, MAX_WAIT_S as PROTECTED_MAX_S
 
@@ -79,7 +79,8 @@ def parse():
     parser.add_argument("--chat-model", default="claude-sonnet-4-6")
     parser.add_argument("--chat-timeout", type=int, default=90)
     parser.add_argument("--rpc-tree", default="")
-    parser.add_argument("--drain-s", type=int, default=DEFAULT_DRAIN_S)
+    parser.add_argument("--drain-s", type=int, default=DEFAULT_DRAIN_S, help="drain bound before the stop, plus a 15 s grace (install_policy.DRAIN_GRACE_S); 0 to 300")
+    parser.add_argument("--idle-gate-s", type=int, default=0, help="for a serving build without a restart drain (.95 and older): before the drain, wait up to this many seconds until no run on the host is preparing, starting or running; past it the install holds, nothing stopped; 0 (default) for .96 onward, where the drain is the gate")
     parser.add_argument("--node", default="node")
     parser.add_argument("--no-pin-launcher", action="store_true")
     parser.add_argument("--offbox", default="")
@@ -100,6 +101,8 @@ def parse():
         parser.error("--backup-keep must be at least one")
     if not 0 <= args.drain_s <= 300:
         parser.error("--drain-s must be between 0 and 300")
+    if not 0 <= args.idle_gate_s <= IDLE_GATE_MAX_S:
+        parser.error(f"--idle-gate-s must be between 0 and {IDLE_GATE_MAX_S}")
     if not 0 <= args.protected_wait_s <= PROTECTED_MAX_S:
         parser.error(f"--protected-wait-s must be between 0 and {PROTECTED_MAX_S}")
     if not 0 <= args.land_wait_s <= LAND_MAX_S:
