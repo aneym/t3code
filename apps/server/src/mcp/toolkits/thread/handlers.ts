@@ -309,6 +309,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               type: "queued-message.promote-to-steer",
               queuedRunId: runId,
               targetRunId,
+              ...(input.atBoundary === true ? { atBoundary: true } : {}),
             }));
           }
           default:
