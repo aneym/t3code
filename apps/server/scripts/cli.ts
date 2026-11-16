@@ -43,6 +43,22 @@ const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Stan
   }
 });
 
+const stripHostNode = Effect.fn("stripHostNode")(function* (
+  outputPath: string,
+  platform: "darwin" | "linux",
+) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.copyFile(process.execPath, outputPath);
+  yield* fs.chmod(outputPath, 0o755);
+  if (platform === "darwin") {
+    yield* runCommand(ChildProcess.make("codesign", ["--remove-signature", outputPath]));
+    yield* runCommand(ChildProcess.make("strip", ["-x", outputPath]));
+  } else {
+    yield* runCommand(ChildProcess.make("strip", [outputPath]));
+  }
+  return outputPath;
+});
+
 const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")(function* (
   repoRoot: string,
   serverDir: string,
@@ -123,12 +139,21 @@ const buildExeCmd = Command.make(
       yield* Effect.log("[cli] Building single-executable...");
       const target = Option.getOrUndefined(config.target);
       // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
-      const linuxArm64 =
-        !target &&
-        (yield* HostProcess.Platform) === "linux" &&
-        (yield* HostProcess.Architecture) === "arm64";
+      const hostPlatform = yield* HostProcess.Platform;
+      const hostArch = yield* HostProcess.Architecture;
+      const linuxArm64 = !target && hostPlatform === "linux" && hostArch === "arm64";
       const spawnCommand = yield* resolveSpawnCommand("vp", ["pack"]);
       const cliAssetDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-asset-" });
+      const strippedNode =
+        !linuxArm64 &&
+        (hostPlatform === "darwin" || hostPlatform === "linux") &&
+        (target === undefined || target === `${hostPlatform}-${hostArch}`) &&
+        process.versions.node === rootPackageJson.engines.node
+          ? yield* stripHostNode(
+              path.join(yield* fs.makeTempDirectoryScoped({ prefix: "t3-sea-node-" }), "node"),
+              hostPlatform,
+            )
+          : undefined;
       const pack = (packMode: "bundle" | "bootstrap" | "1") =>
         runCommand(
           ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -138,6 +163,7 @@ const buildExeCmd = Command.make(
               T3CODE_PACK_EXE: packMode,
               T3CODE_CLI_ASSET_DIR: cliAssetDir,
               T3CODE_PACK_EXE_TARGET: target ?? "",
+              T3CODE_PACK_EXE_NODE: strippedNode ?? "",
             },
             stdout: config.verbose ? "inherit" : "ignore",
             stderr: "inherit",

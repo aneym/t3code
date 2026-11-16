@@ -49,6 +49,7 @@ const SEA_TARGETS = {
   "win-x64": { platform: "win", arch: "x64" },
 } as const;
 const packExecutableTarget = process.env.T3CODE_PACK_EXE_TARGET?.trim();
+const packExecutableNode = process.env.T3CODE_PACK_EXE_NODE?.trim();
 const cliNodeVersion = rootPackageJson.engines.node;
 if (packExecutable && !packExecutableTarget && process.versions.node !== cliNodeVersion) {
   throw new Error(
@@ -60,14 +61,15 @@ if (packExecutableTarget && !Object.hasOwn(SEA_TARGETS, packExecutableTarget)) {
     `T3CODE_PACK_EXE_TARGET must be one of ${Object.keys(SEA_TARGETS).join(", ")}, got "${packExecutableTarget}".`,
   );
 }
-const packExecutableTargets = packExecutableTarget
-  ? [
-      {
-        ...SEA_TARGETS[packExecutableTarget as keyof typeof SEA_TARGETS],
-        nodeVersion: cliNodeVersion,
-      },
-    ]
-  : undefined;
+const packExecutableTargets =
+  packExecutableTarget && !packExecutableNode
+    ? [
+        {
+          ...SEA_TARGETS[packExecutableTarget as keyof typeof SEA_TARGETS],
+          nodeVersion: cliNodeVersion,
+        },
+      ]
+    : undefined;
 
 // The root config's `projects` route repo-root runs to package configs,
 // including this one. Inheriting them would make this config a container.
@@ -111,6 +113,7 @@ export default mergeConfig(
                 // The bootstrap loads the embedded CLI with require(esm).
                 execArgv: ["--require-module"],
                 assets: { "binMain.mjs": NodePath.join(cliAssetDir, "binMain.mjs") },
+                ...(packExecutableNode ? { executable: packExecutableNode } : {}),
               },
             },
           }
