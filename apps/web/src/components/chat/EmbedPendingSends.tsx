@@ -1,18 +1,17 @@
 import { withoutRailsDeskContext } from "@t3tools/client-runtime/user-message";
 import * as DateTime from "effect/DateTime";
+import { CircleAlertIcon, Clock3Icon } from "lucide-react";
 import { useEffect } from "react";
 
-import type { ComposerHandleRef } from "../../composerHandleContext";
-import { type ComposerThreadTarget, useComposerDraftStore } from "../../composerDraftStore";
 import { retryLocalSend } from "../../embed/embedComposerSend";
 import {
   actOnHostPendingSend,
-  drawnAsRow,
   dropLocalSends,
   type EmbedPendingSend,
   useEmbedHostPendingSends,
   useEmbedLocalSends,
 } from "../../embed/embedPendingSends";
+import { PENDING_STATE_WORDS, PENDING_WORDS } from "../../embed/embedPendingWords";
 import { cn } from "~/lib/utils";
 import { InlineButton } from "../ui/button";
 
@@ -24,7 +23,6 @@ type CommittedMessage = {
 };
 
 const CLOCK_SKEW_MS = 5_000;
-const STATE_LABEL = { sending: "Sending", waiting: "Waiting to send", failed: "Not sent" } as const;
 
 function deliveredIn(messages: ReadonlyArray<CommittedMessage>, send: EmbedPendingSend): boolean {
   return messages.some(
@@ -38,50 +36,51 @@ function deliveredIn(messages: ReadonlyArray<CommittedMessage>, send: EmbedPendi
 
 function PendingSendRow(props: {
   readonly send: EmbedPendingSend;
-  readonly onRetry: () => void;
-  readonly onEdit: () => void;
-  readonly onDiscard: () => void;
+  readonly onSendNow: (() => void) | null;
+  readonly onDiscard: (() => void) | null;
 }) {
-  const failed = props.send.state === "failed";
+  const { state, reason } = props.send;
+  const failed = state === "failed";
+  const Icon = state === "waiting" ? Clock3Icon : failed ? CircleAlertIcon : null;
   return (
     <li
-      className="flex w-full flex-col items-end gap-1"
-      aria-label={`${STATE_LABEL[props.send.state]}: your message`}
-      data-pending-send={props.send.state}
+      className="flex w-full min-w-0 flex-col items-end gap-1"
+      aria-label={PENDING_WORDS.row(state)}
+      data-pending-send={state}
       data-pending-message-id={props.send.messageId ?? undefined}
       data-message-id={props.send.messageId ?? undefined}
     >
       <div
         className={cn(
-          "min-w-0 max-w-[80%] rounded-2xl border border-dashed px-3 py-2 text-sm",
-          failed
-            ? "border-destructive/50 text-foreground"
-            : "border-muted-foreground/40 text-muted-foreground",
+          "min-w-0 max-w-[80%] rounded-2xl bg-message px-3 py-2 text-message-foreground text-sm",
+          failed && "border border-dashed border-destructive",
         )}
       >
         <p className="whitespace-pre-wrap wrap-anywhere">{props.send.text}</p>
       </div>
-      <div className="flex flex-wrap items-center justify-end gap-x-1.5 pe-1 text-muted-foreground text-xs">
-        <span className={cn(failed && "text-foreground")}>{STATE_LABEL[props.send.state]}</span>
-        {failed && props.send.reason ? (
-          <>
-            <span aria-hidden>·</span>
-            <span className="wrap-anywhere">{props.send.reason}</span>
-          </>
+      <div
+        aria-live="polite"
+        className="flex min-w-0 max-w-[80%] flex-wrap items-center justify-end gap-x-1.5 pe-1 text-end text-muted-foreground text-xs"
+      >
+        {Icon ? (
+          <Icon aria-hidden className={cn("size-3.5 shrink-0", failed && "text-destructive")} />
         ) : null}
-        {failed ? (
-          <>
-            <span aria-hidden>·</span>
-            <InlineButton onClick={props.onRetry}>Retry</InlineButton>
-            <span aria-hidden>·</span>
-            <InlineButton tone="muted" onClick={props.onEdit}>
-              Edit
-            </InlineButton>
-            <span aria-hidden>·</span>
-            <InlineButton tone="muted" onClick={props.onDiscard}>
-              Discard
-            </InlineButton>
-          </>
+        <span className={cn(failed && "text-destructive")}>{PENDING_STATE_WORDS[state]}</span>
+        {reason && state !== "sending" ? (
+          <span className="min-w-0 wrap-anywhere">
+            <span aria-hidden>{PENDING_WORDS.separator.trimStart()}</span>
+            {reason}
+          </span>
+        ) : null}
+        {props.onSendNow ? (
+          <InlineButton touchTarget="narrow" onClick={props.onSendNow}>
+            {PENDING_WORDS.sendNow}
+          </InlineButton>
+        ) : null}
+        {props.onDiscard ? (
+          <InlineButton tone="muted" touchTarget="narrow" onClick={props.onDiscard}>
+            {PENDING_WORDS.discard}
+          </InlineButton>
         ) : null}
       </div>
     </li>
@@ -90,16 +89,11 @@ function PendingSendRow(props: {
 
 export function EmbedPendingSends({
   projection,
-  rows,
-  ...props
 }: {
   readonly projection: {
     readonly thread: { readonly id: string };
     readonly messages: ReadonlyArray<CommittedMessage>;
   };
-  readonly rows: ReadonlyArray<{ readonly id: string }>;
-  readonly composerRef: ComposerHandleRef;
-  readonly composerDraftTarget: ComposerThreadTarget;
 }) {
   const thread = projection.thread.id;
   const local = useEmbedLocalSends(thread);
@@ -110,21 +104,12 @@ export function EmbedPendingSends({
   useEffect(() => {
     if (deliveredKey !== "") dropLocalSends(thread, deliveredKey.split(","));
   }, [deliveredKey, thread]);
-  const shownLocal = local.filter((send) => !delivered.includes(send) && !drawnAsRow(send, rows));
-  const shownHost = host.filter(
-    (send) => !deliveredIn(projection.messages, send) && !drawnAsRow(send, rows),
-  );
+  const shownLocal = local.filter((send) => !delivered.includes(send));
+  const shownHost = host.filter((send) => !deliveredIn(projection.messages, send));
   if (shownLocal.length === 0 && shownHost.length === 0) return null;
-  const edit = (text: string, release: () => void) => {
-    const drafts = useComposerDraftStore.getState();
-    const current = drafts.getComposerDraft(props.composerDraftTarget)?.prompt.trimEnd() ?? "";
-    drafts.setPrompt(props.composerDraftTarget, current === "" ? text : `${current}\n\n${text}`);
-    release();
-    requestAnimationFrame(() => props.composerRef.current?.focusAtEnd());
-  };
   return (
     <ol
-      aria-label="Your messages not sent yet"
+      aria-label={PENDING_WORDS.list}
       className="mx-auto flex w-full max-w-(--chat-content-max-width) flex-col items-end gap-3 pb-4"
       data-embed-pending-sends=""
     >
@@ -132,20 +117,22 @@ export function EmbedPendingSends({
         <PendingSendRow
           key={send.requestId}
           send={send}
-          onRetry={() => actOnHostPendingSend(thread, send.requestId, "retry")}
-          onEdit={() =>
-            edit(send.text, () => actOnHostPendingSend(thread, send.requestId, "discard"))
+          onSendNow={
+            send.sendNow ? () => actOnHostPendingSend(thread, send.requestId, "retry") : null
           }
-          onDiscard={() => actOnHostPendingSend(thread, send.requestId, "discard")}
+          onDiscard={
+            send.discard ? () => actOnHostPendingSend(thread, send.requestId, "discard") : null
+          }
         />
       ))}
       {shownLocal.map((send) => (
         <PendingSendRow
           key={send.messageId}
           send={send}
-          onRetry={() => retryLocalSend(thread, send.messageId)}
-          onEdit={() => edit(send.text, () => dropLocalSends(thread, [send.messageId]))}
-          onDiscard={() => dropLocalSends(thread, [send.messageId])}
+          onSendNow={send.state === "failed" ? () => retryLocalSend(thread, send.messageId) : null}
+          onDiscard={
+            send.state === "failed" ? () => dropLocalSends(thread, [send.messageId]) : null
+          }
         />
       ))}
     </ol>

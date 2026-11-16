@@ -107,6 +107,7 @@ const inlineButtonVariants = cva(
     variants: {
       touchTarget: {
         padded: "pointer-coarse:min-h-11 pointer-coarse:px-1.5",
+        narrow: "pointer-coarse:min-h-11 pointer-coarse:px-1.5 max-md:min-h-11 max-md:px-1.5",
       },
       tone: {
         default: "text-foreground",
