@@ -8,7 +8,8 @@
       "Extracted device bodies and a separate Magic Keyboard accessory; excluded unrelated parts and presentation duplicates.",
       "Normalized conventional device portrait axes, centered their screen and uniformly scaled its height to 2.2 scene units. The Duo retains its upstream centimeter hinge rig.",
       "Replaced the baked marketing screen with a named placeholder for the live framebuffer.",
-      "Resized textures to at most 1024 pixels and encoded them as WebP; retained body geometry."
+      "Resized textures to at most 1024 pixels and encoded them as WebP; retained body geometry.",
+      "Quantized and compressed geometry with EXT_meshopt_compression (gltf-transform meshopt --level high)."
     ]
   },
   "models": [

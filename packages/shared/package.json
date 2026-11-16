@@ -467,6 +467,14 @@
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"
     },
+    "./clientExtras": {
+      "types": "./src/clientExtras.ts",
+      "import": "./src/clientExtras.ts"
+    },
+    "./clientExtrasExtract": {
+      "types": "./src/clientExtrasExtract.ts",
+      "import": "./src/clientExtrasExtract.ts"
+    },
     "./gitPatchPath": {
       "types": "./src/gitPatchPath.ts",
       "import": "./src/gitPatchPath.ts"

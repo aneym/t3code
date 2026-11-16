@@ -23,6 +23,7 @@ import {
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
+import { isCursorSdkInstalled } from "./sdk.ts";
 
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
@@ -34,6 +35,14 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 });
 
 const CURSOR_SDK_CATALOG_TIMEOUT_MS = 15_000;
+
+const CURSOR_SDK_MISSING_PROBE = {
+  installed: false,
+  version: null,
+  status: "error",
+  auth: { status: "unknown" },
+  message: "The Cursor SDK (`@cursor/sdk`) is not installed in this T3 build.",
+} as const;
 
 export const buildInitialCursorProviderSnapshot = Effect.fn(
   "CursorProviderStatus.buildInitialCursorProviderSnapshot",
@@ -54,6 +63,16 @@ export const buildInitialCursorProviderSnapshot = Effect.fn(
         auth: { status: "unknown" },
         message: "Cursor is turned off in settings.",
       },
+    });
+  }
+
+  if (!isCursorSdkInstalled()) {
+    return buildServerProvider({
+      presentation: CURSOR_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models,
+      probe: CURSOR_SDK_MISSING_PROBE,
     });
   }
 
@@ -266,6 +285,16 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         auth: { status: "unknown" },
         message: "Cursor is turned off in settings.",
       },
+    });
+  }
+
+  if (!isCursorSdkInstalled()) {
+    return buildServerProvider({
+      presentation: CURSOR_PRESENTATION,
+      enabled: cursorSettings.enabled,
+      checkedAt,
+      models: fallbackModels,
+      probe: CURSOR_SDK_MISSING_PROBE,
     });
   }
 

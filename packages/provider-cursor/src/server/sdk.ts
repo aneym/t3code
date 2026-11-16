@@ -16,6 +16,16 @@ export function loadCursorSdk(): typeof import("@cursor/sdk") {
   return sdk;
 }
 
+export function isCursorSdkInstalled(): boolean {
+  if (sdk !== undefined) return true;
+  try {
+    requireCursorSdk.resolve("@cursor/sdk");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function loadCursorSqlite(): typeof import("@cursor/sdk/sqlite") {
   if (sqlite !== undefined) return sqlite;
   const start = performance.now();
