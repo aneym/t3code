@@ -22,6 +22,10 @@ export function requestStop(): void {
   drainer();
 }
 
+export function stopRequested(): boolean {
+  return requested;
+}
+
 export function proceedStop(): void {
   if (proceeded) return;
   proceeded = true;

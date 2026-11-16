@@ -372,19 +372,19 @@ export const make = Effect.gen(function* () {
       const bufferedMessageIds = new Set(
         queuedMessages.filter(isBufferedProviderNotification).map((message) => message.id),
       );
+      const resendsResume = projection.thread.limitRecovery?.autoResume === true;
       const retryableMessageIds = new Set(
-        queuedMessages
-          .filter(
-            (message) =>
-              (message.createdBy === "user" || message.creationSource === "mcp") &&
-              message.scheduledTaskId === undefined &&
-              message.notification === undefined &&
-              message.delegatedCompletion === undefined,
-          )
-          .map((message) => message.id),
+        queuedMessages.flatMap((message) =>
+          bufferedMessageIds.has(message.id) ||
+          (resendsResume && message.creationSource === "server" && !message.notification)
+            ? []
+            : [message.id],
+        ),
       );
-      const retryableRuns = unstartedRuns.filter((run) =>
-        retryableMessageIds.has(run.userMessageId),
+      const retryableRuns = unstartedRuns.filter(
+        (run) =>
+          retryableMessageIds.has(run.userMessageId) &&
+          run.usageLimitContinuationOfRunId === undefined,
       );
       const retryableRunIds = new Set(retryableRuns.map((run) => run.id));
       const retryableItems =

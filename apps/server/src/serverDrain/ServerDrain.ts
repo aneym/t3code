@@ -25,10 +25,10 @@ export class ServerDrain extends Context.Service<
   ServerDrain,
   {
     readonly draining: Effect.Effect<boolean>;
-    readonly guardTurnStart: <A, E, R>(
+    readonly guardTurnStart: <E, R>(
       runId: string,
-      start: Effect.Effect<A, E, R>,
-    ) => Effect.Effect<A, E, R>;
+      start: Effect.Effect<void, E, R>,
+    ) => Effect.Effect<void, E, R>;
   }
 >()("t3/serverDrain/ServerDrain") {}
 
@@ -93,14 +93,13 @@ export const layer = Layer.effect(
 
     return ServerDrain.of({
       draining: Ref.get(state).pipe(Effect.map((current) => current.draining)),
-      guardTurnStart: Effect.fn("ServerDrain.guardTurnStart")(function* <A, E, R>(
+      guardTurnStart: Effect.fn("ServerDrain.guardTurnStart")(function* <E, R>(
         runId: string,
-        start: Effect.Effect<A, E, R>,
+        start: Effect.Effect<void, E, R>,
       ) {
         const { draining, executing } = yield* Ref.get(state);
         if (!draining || executing.has(runId)) return yield* start;
         yield* Effect.logInfo("Holding a turn start until the next server", { runId });
-        return yield* Effect.never;
       }),
     });
   }),

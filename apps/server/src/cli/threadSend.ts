@@ -91,7 +91,7 @@ const receiptText = (sent: OrchestratorMcpThreadSendResult) =>
 const deliveryText = (sent: OrchestratorMcpThreadSendResult) =>
   sent.delivery === "held"
     ? `Held (${sent.holdReason ?? "manual"}).${receiptText(sent)} ${sent.next ?? "Send with mode auto to start now."}`
-    : `${sent.delivery === "queued" ? "Queued" : sent.delivery === "noted" ? "Noted" : "Sent"}.${receiptText(sent)}`;
+    : `${sent.delivery === "queued" ? "Queued" : sent.delivery === "noted" ? "Noted" : "Sent"}.${receiptText(sent)}${sent.next === undefined ? "" : ` ${sent.next}`}`;
 
 export const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
