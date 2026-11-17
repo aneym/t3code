@@ -36,7 +36,11 @@ export type StoredDevice = typeof StoredDevice.Type;
 
 const StoredDeviceJson = Schema.fromJsonString(StoredDevice);
 const KeyFileDocument = fromLenientJson(
-  Schema.Struct({ version: Schema.Literal(1), encryptedDevice: Schema.String }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    encryptedDevice: Schema.optionalKey(Schema.String),
+    devPlainDevice: Schema.optionalKey(Schema.String),
+  }),
 );
 const decodeKeyFile = Schema.decodeEffect(KeyFileDocument);
 const encodeKeyFile = Schema.encodeEffect(KeyFileDocument);
@@ -103,15 +107,16 @@ const make = Effect.gen(function* () {
   const fail = (operation: RailsDeviceKeyError["operation"]) => (cause: unknown) =>
     new RailsDeviceKeyError({ operation, cause });
 
-  const storageUsable = Effect.gen(function* () {
+  const storageMode = Effect.gen(function* () {
     const available = yield* safeStorage.isEncryptionAvailable.pipe(
       Effect.orElseSucceed(() => false),
     );
-    if (!available) return false;
     const backend = yield* safeStorage.selectedStorageBackend;
     const plainText = Option.isSome(backend) && backend.value === "basic_text";
-    return !plainText || environment.isDevelopment;
+    if (!plainText) return available ? "safe" : "none";
+    return environment.isDevelopment ? "devPlain" : "none";
   });
+  const storageUsable = Effect.map(storageMode, (mode) => mode !== "none");
 
   const load = Effect.gen(function* () {
     const raw = yield* fileSystem
@@ -125,21 +130,30 @@ const make = Effect.gen(function* () {
       );
     if (raw === null) return Option.none<StoredDevice>();
     const document = yield* decodeKeyFile(raw).pipe(Effect.mapError(fail("decode")));
-    const bytes = yield* Effect.fromResult(Base64.decode(document.encryptedDevice)).pipe(
-      Effect.mapError(fail("decode")),
-    );
-    const json = yield* safeStorage.decryptString(bytes).pipe(Effect.mapError(fail("storage")));
+    const bytes = yield* Effect.fromResult(
+      Base64.decode(document.encryptedDevice ?? document.devPlainDevice ?? ""),
+    ).pipe(Effect.mapError(fail("decode")));
+    const json =
+      document.encryptedDevice === undefined
+        ? new TextDecoder().decode(bytes)
+        : yield* safeStorage.decryptString(bytes).pipe(Effect.mapError(fail("storage")));
     return Option.some(yield* decodeStoredDevice(json).pipe(Effect.mapError(fail("decode"))));
   }).pipe(Effect.withSpan("RailsDeviceKey.load"));
 
   const store = Effect.fn("RailsDeviceKey.store")(function* (device: StoredDevice) {
-    if (!(yield* storageUsable)) return yield* new RailsDeviceKeyError({ operation: "storage" });
+    const mode = yield* storageMode;
+    if (mode === "none") return yield* new RailsDeviceKeyError({ operation: "storage" });
     const json = yield* encodeStoredDevice(device).pipe(Effect.mapError(fail("write")));
-    const encrypted = yield* safeStorage.encryptString(json).pipe(Effect.mapError(fail("storage")));
-    const document = yield* encodeKeyFile({
-      version: 1,
-      encryptedDevice: Base64.encode(encrypted),
-    }).pipe(Effect.mapError(fail("write")));
+    const document = yield* encodeKeyFile(
+      mode === "safe"
+        ? {
+            version: 1,
+            encryptedDevice: Base64.encode(
+              yield* safeStorage.encryptString(json).pipe(Effect.mapError(fail("storage"))),
+            ),
+          }
+        : { version: 1, devPlainDevice: Base64.encode(new TextEncoder().encode(json)) },
+    ).pipe(Effect.mapError(fail("write")));
     const tempPath = `${keyPath}.${(yield* random.uuidV4()).replace(/-/g, "")}.tmp`;
     yield* fileSystem
       .makeDirectory(path.dirname(keyPath), { recursive: true })
