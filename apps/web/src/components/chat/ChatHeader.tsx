@@ -50,6 +50,7 @@ interface ChatHeaderProps {
   activeThreadTitle: string;
   activeThreadLinkOrigin?: string | null | undefined;
   taskCancel?: OrchestrationV2TaskCancel | null | undefined;
+  firstTaskCancel?: OrchestrationV2TaskCancel | undefined;
   isServerThread: boolean;
   activeProject: EnvironmentProject | null;
   parentThreadLink: { threadId: ThreadId; title: string } | null;
@@ -76,6 +77,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadTitle,
   activeThreadLinkOrigin,
   taskCancel,
+  firstTaskCancel,
   isServerThread,
   activeProject,
   parentThreadLink,
@@ -400,7 +402,7 @@ export const ChatHeader = memo(function ChatHeader({
                 Cancelled by {taskCancel.parentTitle}
               </TooltipTrigger>
               <TooltipPopup side="top">
-                {`Its parent cancelled this task ${new Date(taskCancel.cancelledAt).toLocaleString()}. Agent messages and wakes start no run here. Send a message to reopen it.`}
+                {`Its parent cancelled this task ${new Date(taskCancel.cancelledAt).toLocaleString()}.${firstTaskCancel ? ` ${firstTaskCancel.parentTitle} first cancelled it ${new Date(firstTaskCancel.cancelledAt).toLocaleString()}.` : ""} Agent messages and wakes start no run here. Send a message to reopen it.`}
               </TooltipPopup>
             </Tooltip>
           ) : null}

@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { MessageSender } from "./messageSender.ts";
 import {
+  OrchestrationV2DelegatedChildFields,
   OrchestrationV2DelegatedFrom,
   OrchestrationV2TaskCancel,
 } from "./orchestrationV2DelegatedChild.ts";
@@ -486,8 +487,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
-  delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
-  taskCancel: Schema.optional(Schema.NullOr(OrchestrationV2TaskCancel)),
+  ...OrchestrationV2DelegatedChildFields,
   lineage: OrchestrationV2AppThreadLineage,
   automationTaskId: Schema.optional(Schema.NullOr(ScheduledTaskId)),
   automationPlacementAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2122,8 +2122,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
-  delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
-  taskCancel: Schema.optional(Schema.NullOr(OrchestrationV2TaskCancel)),
+  ...OrchestrationV2DelegatedChildFields,
   latestRunId: Schema.NullOr(RunId),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),

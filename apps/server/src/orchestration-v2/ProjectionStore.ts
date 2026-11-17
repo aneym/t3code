@@ -27,6 +27,7 @@ import {
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
+import { cancelledThreadStatus, delegatedTaskFields } from "./TaskCancel.ts";
 import type {
   OrchestrationV2ThreadLinkMetadata,
   OrchestrationV2SearchThreadInput,
@@ -1733,10 +1734,7 @@ export function threadShellFromProjection(
     ...(projection.thread.linkOrigin === undefined
       ? {}
       : { linkOrigin: projection.thread.linkOrigin }),
-    ...(projection.thread.delegatedFrom === undefined
-      ? {}
-      : { delegatedFrom: projection.thread.delegatedFrom }),
-    ...(projection.thread.taskCancel == null ? {} : { taskCancel: projection.thread.taskCancel }),
+    ...delegatedTaskFields(projection.thread),
     latestRunId: latestRun?.id ?? null,
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
@@ -1753,7 +1751,7 @@ export function threadShellFromProjection(
     activityRunStatus: activityRun?.status ?? null,
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
-    status: latestRun?.status ?? "idle",
+    status: cancelledThreadStatus(projection.thread, latestRun?.status ?? "idle"),
     ...threadErrorSummary(
       latestRootProviderFailure(latestRun, projection.turnItems),
       providerSession?.lastError ?? null,
@@ -2051,10 +2049,7 @@ function shellFromState(input: {
     ...(input.state.thread.linkOrigin === undefined
       ? {}
       : { linkOrigin: input.state.thread.linkOrigin }),
-    ...(input.state.thread.delegatedFrom === undefined
-      ? {}
-      : { delegatedFrom: input.state.thread.delegatedFrom }),
-    ...(input.state.thread.taskCancel == null ? {} : { taskCancel: input.state.thread.taskCancel }),
+    ...delegatedTaskFields(input.state.thread),
     latestRunId: input.state.latestRunId,
     latestRunRequestedAt: input.state.latestRunRequestedAt,
     latestRunStartedAt: input.state.latestRunStartedAt,
@@ -2065,7 +2060,7 @@ function shellFromState(input: {
     blockedOnThreadWait: input.state.blockedOnThreadWait,
     activityRunStatus: input.state.activityRunStatus,
     activityRunStartedAt: input.state.activityRunStartedAt,
-    status: input.state.latestRunStatus,
+    status: cancelledThreadStatus(input.state.thread, input.state.latestRunStatus),
     lastError: input.state.lastError,
     lastErrorClass: input.state.lastErrorClass,
     lastErrorCode: input.state.lastErrorCode,

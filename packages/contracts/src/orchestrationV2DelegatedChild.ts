@@ -18,3 +18,15 @@ export const OrchestrationV2TaskCancel = Schema.Struct({
   reason: Schema.optional(Schema.String),
 });
 export type OrchestrationV2TaskCancel = typeof OrchestrationV2TaskCancel.Type;
+
+export const OrchestrationV2DelegatedChildFields = {
+  delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  taskCancel: Schema.optional(Schema.NullOr(OrchestrationV2TaskCancel)),
+  firstTaskCancel: Schema.optional(OrchestrationV2TaskCancel),
+};
+
+export const OrchestratorMcpDelegatedChildFields = {
+  delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  taskCancel: Schema.optional(OrchestrationV2TaskCancel),
+  firstTaskCancel: Schema.optional(OrchestrationV2TaskCancel),
+};
