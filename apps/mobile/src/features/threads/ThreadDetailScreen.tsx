@@ -506,6 +506,8 @@ function ThreadDetailBody(
   const toolCallVisibility = AsyncResult.isSuccess(preferences)
     ? (preferences.value.toolCallVisibility ?? "showAll")
     : "showAll";
+  const hideTrailingStageLine =
+    !AsyncResult.isSuccess(preferences) || preferences.value.hideTrailingStageLine !== false;
   const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
@@ -1478,6 +1480,7 @@ function ThreadDetailBody(
               <ColumnWidth width={columnWidth}>
                 <ThreadFeed
                   toolCallVisibility={toolCallVisibility}
+                  hideTrailingStageLine={hideTrailingStageLine}
                   environmentId={props.environmentId}
                   threadId={props.selectedThread.id}
                   detailRef={props.selectedThreadDetailRef}

@@ -9,6 +9,7 @@ import { TerminalAppearanceSection } from "./appearance/sections/TerminalAppeara
 import { TextAppearanceSection } from "./appearance/sections/TextAppearanceSection";
 import { ThemeAppearanceSection } from "./appearance/sections/ThemeAppearanceSection";
 import { ToolCallsAppearanceSection } from "./appearance/sections/ToolCallsAppearanceSection";
+import { StageLineAppearanceSection } from "./appearance/sections/StageLineAppearanceSection";
 
 export function SettingsAppearanceRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -30,6 +31,7 @@ export function SettingsAppearanceRouteScreen() {
         <TerminalAppearanceSection />
         <CodeAppearanceSection />
         <ToolCallsAppearanceSection />
+        <StageLineAppearanceSection />
       </ScrollView>
     </SettingsScreen>
   );

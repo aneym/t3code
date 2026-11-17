@@ -538,6 +538,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.toolCallVisibility !== DEFAULT_UNIFIED_SETTINGS.toolCallVisibility
       ? ["Tool calls in chat"]
       : []),
+    ...(settings.hideTrailingStageLine !== DEFAULT_UNIFIED_SETTINGS.hideTrailingStageLine
+      ? ["Hide stage lines"]
+      : []),
     ...(settings.screenReaderAnnouncements !== DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements
       ? ["Screen reader announcements"]
       : []),
@@ -663,6 +666,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       toolCallVisibility: DEFAULT_UNIFIED_SETTINGS.toolCallVisibility,
+      hideTrailingStageLine: DEFAULT_UNIFIED_SETTINGS.hideTrailingStageLine,
       screenReaderAnnouncements: DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements,
       screenReaderWindowTitle: DEFAULT_UNIFIED_SETTINGS.screenReaderWindowTitle,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
@@ -1297,6 +1301,7 @@ export function ChatSettingsPanel() {
 
       <SettingsSection id="activity" title="Activity">
         <ToolCallVisibilityRow />
+        <HideTrailingStageLineRow />
       </SettingsSection>
 
       <SettingsSection id="screen-reader" title="Screen reader">
@@ -1410,6 +1415,36 @@ function ScreenReaderAnnouncementsRow() {
             ))}
           </SelectPopup>
         </Select>
+      }
+    />
+  );
+}
+
+function HideTrailingStageLineRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("hide-trailing-stage-line")}
+      description="Hide the last line of an agent reply when it is a stage line like Done · or Working ·. Copy still includes it."
+      resetAction={
+        settings.hideTrailingStageLine !== DEFAULT_UNIFIED_SETTINGS.hideTrailingStageLine ? (
+          <SettingResetButton
+            label="hide stage lines"
+            onClick={() =>
+              updateSettings({
+                hideTrailingStageLine: DEFAULT_UNIFIED_SETTINGS.hideTrailingStageLine,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.hideTrailingStageLine}
+          onCheckedChange={(checked) => updateSettings({ hideTrailingStageLine: checked })}
+          aria-label="Hide stage lines"
+        />
       }
     />
   );

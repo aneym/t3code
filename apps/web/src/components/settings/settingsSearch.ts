@@ -496,6 +496,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "hide-trailing-stage-line",
+    title: "Hide stage lines",
+    to: "/settings/chat",
+    searchTerms: ["agent status line done working review blocked scope live last line reply"],
+  },
+  {
     id: "screen-reader-window-title",
     title: "Screen reader window title",
     to: "/settings/chat",

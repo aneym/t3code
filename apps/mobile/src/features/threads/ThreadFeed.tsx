@@ -61,6 +61,7 @@ import {
 } from "@t3tools/contracts";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
+import { withoutTrailingStageLine } from "@t3tools/shared/stageLine";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { hostedThreadLink, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
@@ -311,6 +312,7 @@ export interface ThreadFeedHistoryControls {
 
 export interface ThreadFeedProps {
   readonly toolCallVisibility?: ToolCallVisibility;
+  readonly hideTrailingStageLine?: boolean;
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
@@ -1634,6 +1636,7 @@ function renderFeedEntry(
     | "onEditPendingMessage"
     | "threadId"
     | "workspaceRoot"
+    | "hideTrailingStageLine"
   > & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
@@ -1861,6 +1864,10 @@ function renderFeedEntry(
     const isUser = message.role === "user";
     const presentation = resolveUserMessagePresentation(message);
     const renderedText = renderAssistantCitationsAsText(presentation.text);
+    const displayText =
+      !isUser && props.hideTrailingStageLine
+        ? withoutTrailingStageLine(renderedText)
+        : renderedText;
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTimestamp(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
@@ -2239,7 +2246,7 @@ function renderFeedEntry(
       );
     }
 
-    if (renderedText.trim().length === 0 && attachments.length === 0) {
+    if (displayText.trim().length === 0 && attachments.length === 0) {
       return null;
     }
 
@@ -2254,10 +2261,10 @@ function renderFeedEntry(
         )}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
-        {renderedText.trim().length > 0 ? (
+        {displayText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
-              markdown={renderedText}
+              markdown={displayText}
               environmentId={props.environmentId}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
@@ -3258,6 +3265,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // Include turn completion so unchanged message rows reveal their footer and spacing
   // even when the final message update arrives before the turn settles.
   const listAppearanceData = {
+    hideTrailingStageLine: props.hideTrailingStageLine,
     disclosureLayout,
     reduceMotion,
     worktreeSetup: props.worktreeSetup,
@@ -3709,6 +3717,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             threadTitle: props.threadTitle,
             skills: props.skills,
             workspaceRoot: props.workspaceRoot,
+            hideTrailingStageLine: props.hideTrailingStageLine,
             workflowOpening,
           })}
           {props.worktreeSetup && info.index === setupAnchorIndex ? (
