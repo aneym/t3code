@@ -274,15 +274,17 @@ export function McpAppFrame(props: {
         if (!info.value.callable)
           throw new McpAppHostRefusal({ message: "This app cannot call that tool." });
         const { readOnly, destructive } = info.value;
-        const consented =
+        let pressed =
           destructive === false && clickConsentAllowed(app.server, name) && clicks.take(click);
-        if (!readOnly && !consented) {
+        if (!readOnly && !pressed) {
+          const cardPress = frameActivated(frame) && !pageInputRecent();
           const approved = await ask(
             `Allow ${app.server} to run ${info.value.title ?? name}?\n${JSON.stringify(args, null, 2)}`,
           );
           if (approved !== true) throw new McpAppHostRefusal({ message: "Declined by the user." });
+          pressed = cardPress;
         }
-        if (consented) {
+        if (pressed) {
           const { threadId: thread, itemId: item } = input;
           await reportEmbedPress({ thread, item, server: app.server, tool: name, arguments: args });
         }
