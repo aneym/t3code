@@ -13,6 +13,7 @@ const NOTICE_TEXT: Record<DesktopRailsWordsNotice, string> = {
   "disconnected-here": "Disconnected here. Remove this device in Rails settings too.",
   "connect-refused": "Rails refused the connection. Start again from Rails settings.",
   "connect-failed": "Couldn't reach Rails. Click Connect in Rails settings again.",
+  "connect-full": "Rails already has 20 computers connected. Remove one there, then connect again.",
   "storage-unavailable": "This computer has no secure key storage, so it can't connect to Rails.",
 };
 
@@ -27,7 +28,8 @@ function describe(state: DesktopRailsWordsState | null, enabled: boolean): strin
     : state.lastSentAt
       ? `Last sent ${formatRelativeTimeLabel(state.lastSentAt)}.`
       : "Nothing sent yet.";
-  return `Connected to Rails as ${state.deviceName ?? "this device"}${since}. ${status}`;
+  const rails = state.personName ? `${state.personName}'s Rails` : "Rails";
+  return `Connected to ${rails} as ${state.deviceName ?? "this device"}${since}. ${status}`;
 }
 
 export function RailsConnectionRow() {

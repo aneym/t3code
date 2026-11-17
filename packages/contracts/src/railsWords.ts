@@ -5,6 +5,7 @@ export const DesktopRailsWordsNotice = Schema.Literals([
   "disconnected-here",
   "connect-refused",
   "connect-failed",
+  "connect-full",
   "storage-unavailable",
 ]);
 export type DesktopRailsWordsNotice = typeof DesktopRailsWordsNotice.Type;
@@ -12,6 +13,7 @@ export type DesktopRailsWordsNotice = typeof DesktopRailsWordsNotice.Type;
 export const DesktopRailsWordsState = Schema.Struct({
   connected: Schema.Boolean,
   deviceName: Schema.NullOr(Schema.String),
+  personName: Schema.NullOr(Schema.String),
   connectedAt: Schema.NullOr(Schema.String),
   lastSentAt: Schema.NullOr(Schema.String),
   unreachableSince: Schema.NullOr(Schema.String),

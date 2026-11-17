@@ -45,7 +45,10 @@ const RailsDevice = Schema.Struct({
 });
 export type RailsDevice = typeof RailsDevice.Type;
 
-const DeviceAnswer = Schema.Struct({ device: RailsDevice });
+const DeviceAnswer = Schema.Struct({
+  device: RailsDevice,
+  person_name: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
 const ErrorAnswer = Schema.Struct({
   error: Schema.String,
   message: Schema.optionalKey(Schema.String),
@@ -55,19 +58,26 @@ const decodeDeviceAnswer = Schema.decodeUnknownOption(DeviceAnswer);
 const decodeErrorAnswer = Schema.decodeUnknownOption(ErrorAnswer);
 
 export type RailsAnswer =
-  | { readonly kind: "ok"; readonly device: RailsDevice | null }
+  | {
+      readonly kind: "ok";
+      readonly device: RailsDevice | null;
+      readonly personName: string | null;
+    }
   | { readonly kind: "retry" }
   | { readonly kind: "clock"; readonly railsEpoch: number }
+  | { readonly kind: "replayed" }
   | { readonly kind: "removed" }
   | { readonly kind: "refused"; readonly error: string };
 
 export const readRailsAnswer = (status: number, body: unknown): RailsAnswer => {
   if (status >= 200 && status < 300) {
-    return { kind: "ok", device: Option.getOrNull(decodeDeviceAnswer(body))?.device ?? null };
+    const answer = Option.getOrNull(decodeDeviceAnswer(body));
+    return { kind: "ok", device: answer?.device ?? null, personName: answer?.person_name ?? null };
   }
   if (status >= 500 || status === 0) return { kind: "retry" };
   const error = Option.getOrNull(decodeErrorAnswer(body));
   if (error?.error === "device_unknown") return { kind: "removed" };
+  if (error?.error === "proof_replayed") return { kind: "replayed" };
   if (error?.error === "proof_clock" && error.rails_epoch !== undefined) {
     return { kind: "clock", railsEpoch: error.rails_epoch };
   }

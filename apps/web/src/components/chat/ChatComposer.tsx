@@ -2129,9 +2129,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
     ) {
       event?.preventDefault();
-      return sendHold.submit(() =>
-        submitComposerRef.current(dispatchMode, submissionIntent, press),
-      );
+      return sendHold.submit(() => submitComposerRef.current(dispatchMode, submissionIntent));
     }
     if (activeThreadId && countPreparingComposerImages(attachmentTargetKey) > 0) {
       event?.preventDefault();

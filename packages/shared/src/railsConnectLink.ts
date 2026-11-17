@@ -3,7 +3,7 @@ const TICKET_PATTERN = /^[A-Za-z0-9._~-]{16,512}$/;
 
 export interface RailsConnectLink {
   readonly ticket: string;
-  readonly origin: string | null;
+  readonly origin: string;
 }
 
 export const readRailsConnectLink = (value: string): RailsConnectLink | null => {
@@ -14,8 +14,7 @@ export const readRailsConnectLink = (value: string): RailsConnectLink | null => 
   const ticket = url.searchParams.get("ticket");
   if (ticket === null || !TICKET_PATTERN.test(ticket)) return null;
   const rails = url.searchParams.get("rails");
-  if (rails === null) return { ticket, origin: null };
-  if (!URL.canParse(rails)) return null;
+  if (rails === null || !URL.canParse(rails)) return null;
   const origin = new URL(rails).origin;
   return origin === "null" ? null : { ticket, origin };
 };

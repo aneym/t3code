@@ -50,7 +50,6 @@ interface QueuedSaid {
   readonly typedAtMs: number;
   attempts: number;
   notBefore: number;
-  clockRetried: boolean;
 }
 
 interface Connected {
@@ -95,6 +94,7 @@ const make = Effect.gen(function* () {
   let state: DesktopRailsWordsState = {
     connected: false,
     deviceName: null,
+    personName: null,
     connectedAt: null,
     lastSentAt: null,
     unreachableSince: null,
@@ -126,8 +126,10 @@ const make = Effect.gen(function* () {
       ...state,
       connected: connected !== null,
       deviceName: connected?.device.deviceName ?? null,
+      personName: connected?.device.personName ?? null,
       connectedAt: connected?.device.connectedAt ?? null,
     };
+    if (connected) yield* checkDevice(connected).pipe(Effect.forkIn(scope));
     return connected;
   });
 
@@ -140,6 +142,7 @@ const make = Effect.gen(function* () {
     yield* publish({
       connected: false,
       deviceName: null,
+      personName: null,
       connectedAt: null,
       unreachableSince: null,
       notice,
@@ -181,15 +184,24 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed((): RailsAnswer => ({ kind: "retry" })));
   });
 
-  const sendWithClock = Effect.fn("RailsWords.sendWithClock")(function* (
+  const sendChecked = Effect.fn("RailsWords.sendChecked")(function* (
     route: RailsRoute,
-    body: SaidBody | ConnectBody,
+    body: SaidBody | ConnectBody | undefined,
     key: Connected["key"],
   ) {
     const answer = yield* send(route, body, key);
-    if (answer.kind !== "clock") return answer;
-    clockOffsetSeconds = answer.railsEpoch - Math.floor((yield* Clock.currentTimeMillis) / 1_000);
+    if (answer.kind === "clock") {
+      clockOffsetSeconds = answer.railsEpoch - Math.floor((yield* Clock.currentTimeMillis) / 1_000);
+    } else if (answer.kind !== "replayed") {
+      return answer;
+    }
     return yield* send(route, body, key);
+  });
+
+  const checkDevice = Effect.fn("RailsWords.checkDevice")(function* (current: Connected) {
+    if (!(yield* enabled)) return;
+    const answer = yield* sendChecked(RailsRoute.device, undefined, current.key);
+    if (answer.kind === "removed" && connected === current) yield* forget("removed-in-rails");
   });
 
   const pumpOnce = Effect.gen(function* () {
@@ -208,7 +220,7 @@ const make = Effect.gen(function* () {
       queue.length = 0;
       return false;
     }
-    const answer = yield* send(RailsRoute.said, item.body, current.key);
+    const answer = yield* sendChecked(RailsRoute.said, item.body, current.key);
     switch (answer.kind) {
       case "ok":
         queue.shift();
@@ -224,16 +236,15 @@ const make = Effect.gen(function* () {
         }
         return true;
       }
-      case "clock":
-        clockOffsetSeconds = answer.railsEpoch - Math.floor(now / 1_000);
-        if (item.clockRetried) queue.shift();
-        item.clockRetried = true;
-        return true;
       case "removed":
         yield* forget("removed-in-rails");
         return false;
+      case "clock":
+      case "replayed":
       case "refused":
-        yield* Effect.logWarning("Rails refused a typed turn.", { error: answer.error });
+        yield* Effect.logWarning("Rails refused a typed turn.", {
+          error: answer.kind === "refused" ? answer.error : answer.kind,
+        });
         queue.shift();
         return true;
     }
@@ -277,7 +288,7 @@ const make = Effect.gen(function* () {
       if (Option.isNone(body) || encodeBody(body.value).byteLength > SAID_BODY_MAX_BYTES) return;
       if (queue.some((item) => item.body.message_id === body.value.message_id)) return;
       if (queue.length >= QUEUE_LIMIT) queue.shift();
-      queue.push({ body: body.value, typedAtMs, attempts: 0, notBefore: 0, clockRetried: false });
+      queue.push({ body: body.value, typedAtMs, attempts: 0, notBefore: 0 });
       yield* kick;
     },
     Effect.catchCause((cause) => Effect.logWarning("Rails words dropped a turn.", cause)),
@@ -292,6 +303,7 @@ const make = Effect.gen(function* () {
         type: "question",
         message: "Connect T3 Code on this computer to Rails?",
         detail: [
+          `Rails at ${new URL(origin).host} asked to connect.`,
           "Continue only if you just clicked Connect in Rails settings.",
           replacing === null ? null : `This replaces the connection "${replacing}".`,
         ]
@@ -313,7 +325,7 @@ const make = Effect.gen(function* () {
   });
 
   const connect = Effect.fn("RailsWords.connect")(function* (link: RailsConnectLink) {
-    if (link.origin !== null && link.origin !== origin) {
+    if (link.origin !== origin) {
       yield* Effect.logWarning("Ignored a Rails connect link for another origin.");
       return;
     }
@@ -337,15 +349,23 @@ const make = Effect.gen(function* () {
     const pair = RailsDeviceKey.generateKeyPair();
     const key = RailsDeviceKey.proofKey(pair);
     const name = `T3 Code on ${NodeOS.hostname()}`.slice(0, DEVICE_NAME_MAX_LENGTH);
-    const answer = yield* sendWithClock(RailsRoute.connect, { ticket: link.ticket, name }, key);
+    const answer = yield* sendChecked(RailsRoute.connect, { ticket: link.ticket, name }, key);
     if (answer.kind !== "ok" || answer.device === null) {
-      yield* publish({ notice: answer.kind === "retry" ? "connect-failed" : "connect-refused" });
+      yield* publish({
+        notice:
+          answer.kind === "retry"
+            ? "connect-failed"
+            : answer.kind === "refused" && answer.error === "too_many_devices"
+              ? "connect-full"
+              : "connect-refused",
+      });
       return;
     }
     const device: RailsDeviceKey.StoredDevice = {
       ...pair,
       deviceId: answer.device.id,
       deviceName: answer.device.name,
+      personName: answer.personName,
       connectedAt: answer.device.created_at,
     };
     const stored = yield* deviceKey.store(device).pipe(
@@ -363,11 +383,18 @@ const make = Effect.gen(function* () {
     yield* publish({
       connected: true,
       deviceName: device.deviceName,
+      personName: device.personName,
       connectedAt: device.connectedAt,
       lastSentAt: null,
       unreachableSince: null,
       notice: null,
     });
+    yield* tell(
+      device.personName === null
+        ? "Connected to Rails."
+        : `Connected to ${device.personName}'s Rails.`,
+      `T3 Code on this computer now sends what you type in your agents' main chats to Rails at ${new URL(origin).host}. Disconnect any time in Settings, Connections.`,
+    );
   });
 
   const runFork = Effect.runForkWith(context);

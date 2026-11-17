@@ -1319,7 +1319,7 @@ export function useComposerSend(input: ComposerSendInput) {
         : null;
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
       reportSaid({
-        typedAt,
+        typedAt: shouldQueueBehindActiveRun ? null : typedAt,
         environmentId,
         threadId: threadIdForSend,
         messageId: messageIdForSend,

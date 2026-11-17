@@ -30,6 +30,7 @@ const StoredDevice = Schema.Struct({
   publicJwk: DpopPublicJwk,
   deviceId: Schema.String,
   deviceName: Schema.String,
+  personName: Schema.NullOr(Schema.String),
   connectedAt: Schema.String,
 });
 export type StoredDevice = typeof StoredDevice.Type;
