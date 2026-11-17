@@ -166,6 +166,10 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { claudeRulesMayCoverMcpTool } from "./ClaudeMcpRuleScope.ts";
+import {
+  CLAUDE_HEADLESS_CHILD_NOTICE_TITLE,
+  claudeBypassAskRefusal,
+} from "./ClaudeBypassAskRefusal.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import {
@@ -6391,40 +6395,59 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return ordinal;
           });
 
+        const emitSystemNotice = Effect.fn("ClaudeAdapterV2.emitSystemNotice")(function* (input: {
+          readonly context: ActiveClaudeTurnContext;
+          readonly nativeItemId: string;
+          readonly title: string;
+          readonly message: string;
+          readonly strength?: "weak" | "strong";
+          readonly at?: DateTime.Utc;
+        }) {
+          const { context, nativeItemId } = input;
+          const at = input.at ?? (yield* DateTime.now);
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CLAUDE_PROVIDER,
+            turnItem: {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId,
+              }),
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: {
+                driver: CLAUDE_PROVIDER,
+                nativeId: nativeItemId,
+                strength: input.strength ?? "weak",
+              },
+              parentItemId: null,
+              ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+              type: "system_notice",
+              status: "completed",
+              title: input.title,
+              message: input.message,
+              startedAt: at,
+              completedAt: at,
+              updatedAt: at,
+            },
+          });
+        });
+
         const emitSessionRestartNotice = Effect.fn("ClaudeAdapterV2.emitSessionRestartNotice")(
           function* (notice: string) {
             const context = yield* Ref.get(activeTurn);
             if (context === null) return;
             const now = yield* DateTime.now;
             const nativeItemId = `session-restart:${context.providerTurnId}`;
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CLAUDE_PROVIDER,
-              turnItem: {
-                id: idAllocator.derive.turnItemFromProviderItem({
-                  driver: CLAUDE_PROVIDER,
-                  nativeItemId,
-                }),
-                threadId: context.input.threadId,
-                runId: context.input.runId,
-                nodeId: context.input.rootNodeId,
-                providerThreadId: context.input.providerThread.id,
-                providerTurnId: context.providerTurnId,
-                nativeItemRef: {
-                  driver: CLAUDE_PROVIDER,
-                  nativeId: nativeItemId,
-                  strength: "weak",
-                },
-                parentItemId: null,
-                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
-                type: "system_notice",
-                status: "completed",
-                title: "Session restarted",
-                message: notice,
-                startedAt: now,
-                completedAt: now,
-                updatedAt: now,
-              },
+            yield* emitSystemNotice({
+              context,
+              nativeItemId,
+              title: "Session restarted",
+              message: notice,
+              at: now,
             });
           },
         );
@@ -9775,34 +9798,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   DateTime.toEpochMillis(now),
                   names,
                 );
-                yield* emitProviderEvent({
-                  type: "turn_item.updated",
-                  driver: CLAUDE_PROVIDER,
-                  turnItem: {
-                    id: idAllocator.derive.turnItemFromProviderItem({
-                      driver: CLAUDE_PROVIDER,
-                      nativeItemId,
-                    }),
-                    threadId: context.input.threadId,
-                    runId: context.input.runId,
-                    nodeId: context.input.rootNodeId,
-                    providerThreadId: context.input.providerThread.id,
-                    providerTurnId: context.providerTurnId,
-                    nativeItemRef: {
-                      driver: CLAUDE_PROVIDER,
-                      nativeId: nativeItemId,
-                      strength: "weak",
-                    },
-                    parentItemId: null,
-                    ordinal: yield* resolveItemOrdinal(context, nativeItemId),
-                    type: "system_notice",
-                    status: "completed",
-                    title: notice,
-                    message: notice,
-                    startedAt: now,
-                    completedAt: now,
-                    updatedAt: now,
-                  },
+                yield* emitSystemNotice({
+                  context,
+                  nativeItemId,
+                  title: notice,
+                  message: notice,
+                  at: now,
                 });
               }
             }
@@ -10280,34 +10281,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             const now = yield* DateTime.now;
             const nativeItemId = message.uuid;
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CLAUDE_PROVIDER,
-              turnItem: {
-                id: idAllocator.derive.turnItemFromProviderItem({
-                  driver: CLAUDE_PROVIDER,
-                  nativeItemId,
-                }),
-                threadId: context.input.threadId,
-                runId: context.input.runId,
-                nodeId: context.input.rootNodeId,
-                providerThreadId: context.input.providerThread.id,
-                providerTurnId: context.providerTurnId,
-                nativeItemRef: {
-                  driver: CLAUDE_PROVIDER,
-                  nativeId: nativeItemId,
-                  strength: "strong",
-                },
-                parentItemId: null,
-                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
-                type: "system_notice",
-                status: "completed",
-                title: message.content,
-                message: message.content,
-                startedAt: now,
-                completedAt: now,
-                updatedAt: now,
-              },
+            yield* emitSystemNotice({
+              context,
+              nativeItemId,
+              title: message.content,
+              message: message.content,
+              strength: "strong",
+              at: now,
             });
             return;
           }
@@ -11514,24 +11494,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           const activePermissionMode =
             (yield* Ref.get(queryContext))?.permissionMode ?? context.queryPolicy.permissionMode;
-          const safetyReason = NodeUtil.stripVTControlCharacters(
-            callbackOptions.decisionReason ?? "",
-          ).trim();
-          // The SDK omits the CLI's dangerousRemoval discriminator, so match its removal warnings.
-          if (
-            toolName === "Bash" &&
-            activePermissionMode === "bypassPermissions" &&
-            callbackOptions.matchedAskRule === undefined &&
-            (/^Dangerous rm(?:dir)?\b/i.test(safetyReason) ||
-              safetyReason === "This shell -c script runs rm and could not be checked" ||
-              safetyReason === "A permission rule denies a command in this shell -c script")
-          ) {
-            return {
-              behavior: "deny",
-              message: `Claude Code's removal safety check denied this command; the user did not reject it. The command did not run. Do not bypass the check by splitting the removal, putting it in a script, or using another tool or shell. If the warning below supplies a safe rewrite, use it and let the same check evaluate it. Otherwise continue the rest of the task without the removal and tell the user what you needed to delete and why. Warning: ${safetyReason}`,
-              toolUseID: callbackOptions.toolUseID,
-            } satisfies PermissionResult;
+          const refusal = claudeBypassAskRefusal({
+            toolName,
+            toolUseID: callbackOptions.toolUseID,
+            reason: NodeUtil.stripVTControlCharacters(callbackOptions.decisionReason ?? "").trim(),
+            bypassRefused:
+              activePermissionMode === "bypassPermissions" &&
+              callbackOptions.matchedAskRule === undefined,
+            delegatedChild: isDelegatedAppThread(context.input.appThread),
+          });
+          if (refusal?.notice !== undefined) {
+            yield* emitSystemNotice({
+              context,
+              nativeItemId: `headless-check:${nativeRequestId}`,
+              title: CLAUDE_HEADLESS_CHILD_NOTICE_TITLE,
+              message: refusal.notice,
+            });
           }
+          if (refusal !== undefined) return refusal.result;
 
           const requestKind = providerRequestKindFromClaudeTool(toolName);
           // The user approves the command itself; Claude's title and description only summarize it.
@@ -12433,34 +12413,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 const nativeItemId = `bypass-policy-downgrade:${context.providerTurnId}`;
                 const notice =
                   "T3 could not confirm Claude bypass permissions here, so Full access is running with approval checks.";
-                yield* emitProviderEvent({
-                  type: "turn_item.updated",
-                  driver: CLAUDE_PROVIDER,
-                  turnItem: {
-                    id: idAllocator.derive.turnItemFromProviderItem({
-                      driver: CLAUDE_PROVIDER,
-                      nativeItemId,
-                    }),
-                    threadId: turnInput.threadId,
-                    runId: turnInput.runId,
-                    nodeId: turnInput.rootNodeId,
-                    providerThreadId: turnInput.providerThread.id,
-                    providerTurnId: context.providerTurnId,
-                    nativeItemRef: {
-                      driver: CLAUDE_PROVIDER,
-                      nativeId: nativeItemId,
-                      strength: "weak",
-                    },
-                    parentItemId: null,
-                    ordinal: yield* resolveItemOrdinal(context, nativeItemId),
-                    type: "system_notice",
-                    status: "completed",
-                    title: notice,
-                    message: notice,
-                    startedAt,
-                    completedAt: startedAt,
-                    updatedAt: startedAt,
-                  },
+                yield* emitSystemNotice({
+                  context,
+                  nativeItemId,
+                  title: notice,
+                  message: notice,
+                  at: startedAt,
                 });
               }
               yield* emitProviderEvent({
