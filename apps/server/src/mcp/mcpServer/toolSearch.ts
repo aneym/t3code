@@ -6,7 +6,7 @@ import { McpServer } from "effect/ai";
 
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolExposure from "../McpToolExposure.ts";
-import { OWNER_CLI_TOOL_NAMES } from "./serverDatabaseTools.ts";
+import { OWNER_CLI_TOOL_NAMES } from "./ownerCliTools.ts";
 import * as ToolSearchHandlers from "../toolkits/toolSearch/handlers.ts";
 import { ToolSearchToolkit } from "../toolkits/toolSearch/tools.ts";
 import { toolkitRegistration } from "./toolkitRegistration.ts";

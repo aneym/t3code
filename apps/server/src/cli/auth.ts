@@ -4,8 +4,12 @@ import {
   AuthStandardClientScopes,
   ChatSessionThreadIds,
   chatSessionSubject,
+  ServerAuthIssuedSession,
+  ServerAuthSessionList,
+  ServerAuthSessionRevokeResult,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -32,6 +36,13 @@ import {
   DurationFromString,
   resolveCliAuthConfig,
 } from "./config.ts";
+import {
+  McpServerNotRunningError,
+  McpServerUnreachableError,
+  McpToolFailedError,
+  reportCliErrors,
+  withOwnerMcpTools,
+} from "./ownerMcpTools.ts";
 
 const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E>(
   flags: CliAuthLocationFlags,
@@ -200,6 +211,15 @@ const pairingCommand = Command.make("pairing").pipe(
   Command.withSubcommands([pairingCreateCommand, pairingListCommand, pairingRevokeCommand]),
 );
 
+const IssuedSessionJson = Schema.toCodecJson(ServerAuthIssuedSession);
+const SessionListJson = Schema.toCodecJson(ServerAuthSessionList);
+
+const reportSessionErrors = reportCliErrors(
+  Schema.is(
+    Schema.Union([McpServerNotRunningError, McpServerUnreachableError, McpToolFailedError]),
+  ),
+);
+
 const sessionIssueCommand = Command.make("issue", {
   ...authLocationFlags,
   scopes: authScopesFlag(AuthStandardClientScopes),
@@ -209,29 +229,32 @@ const sessionIssueCommand = Command.make("issue", {
   tokenOnly: tokenOnlyFlag,
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("Issue a scoped bearer access token for headless or remote clients."),
+  Command.withDescription(
+    "Have the running server issue a scoped bearer access token for headless or remote clients.",
+  ),
   Command.withHandler((flags) =>
-    runWithEnvironmentAuth(
-      flags,
-      (environmentAuth) =>
-        Effect.gen(function* () {
-          const issued = yield* environmentAuth.issueSession({
+    withOwnerMcpTools(
+      "auth",
+      { ...flags, quietLogs: flags.json || flags.tokenOnly },
+      Effect.fn("cli.auth.session.issue")(function* (tools) {
+        const issued = yield* tools.call(
+          "t3_auth_session_issue",
+          {
             scopes: flags.scopes,
-            ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
+            ...Option.match(flags.ttl, {
+              onNone: () => ({}),
+              onSome: (ttl) => ({ ttlMs: Math.max(1, Math.round(Duration.toMillis(ttl))) }),
+            }),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
             ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),
-          });
-          yield* Console.log(
-            formatIssuedSession(issued, {
-              json: flags.json,
-              tokenOnly: flags.tokenOnly,
-            }),
-          );
-        }),
-      {
-        quietLogs: flags.json || flags.tokenOnly,
-      },
-    ),
+          },
+          IssuedSessionJson,
+        );
+        yield* Console.log(
+          formatIssuedSession(issued, { json: flags.json, tokenOnly: flags.tokenOnly }),
+        );
+      }),
+    ).pipe(reportSessionErrors),
   ),
 );
 
@@ -239,19 +262,18 @@ const sessionListCommand = Command.make("list", {
   ...authLocationFlags,
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("List active sessions without revealing bearer tokens."),
+  Command.withDescription(
+    "List the running server's active sessions without revealing bearer tokens.",
+  ),
   Command.withHandler((flags) =>
-    runWithEnvironmentAuth(
-      flags,
-      (environmentAuth) =>
-        Effect.gen(function* () {
-          const sessions = yield* environmentAuth.listSessions();
-          yield* Console.log(formatSessionList(sessions, { json: flags.json }));
-        }),
-      {
-        quietLogs: flags.json,
-      },
-    ),
+    withOwnerMcpTools(
+      "auth",
+      { ...flags, quietLogs: flags.json },
+      Effect.fn("cli.auth.session.list")(function* (tools) {
+        const { sessions } = yield* tools.call("t3_auth_session_list", {}, SessionListJson);
+        yield* Console.log(formatSessionList(sessions, { json: flags.json }));
+      }),
+    ).pipe(reportSessionErrors),
   ),
 );
 
@@ -262,18 +284,24 @@ const sessionRevokeCommand = Command.make("revoke", {
     Argument.withSchema(AuthSessionId),
   ),
 }).pipe(
-  Command.withDescription("Revoke an active session."),
+  Command.withDescription("Have the running server revoke an active session."),
   Command.withHandler((flags) =>
-    runWithEnvironmentAuth(flags, (environmentAuth) =>
-      Effect.gen(function* () {
-        const revoked = yield* environmentAuth.revokeSession(flags.sessionId);
+    withOwnerMcpTools(
+      "auth",
+      flags,
+      Effect.fn("cli.auth.session.revoke")(function* (tools) {
+        const { revoked } = yield* tools.call(
+          "t3_auth_session_revoke",
+          { sessionId: flags.sessionId },
+          ServerAuthSessionRevokeResult,
+        );
         yield* Console.log(
           revoked
             ? `Revoked session ${flags.sessionId}.\n`
             : `No active session found for ${flags.sessionId}.\n`,
         );
       }),
-    ),
+    ).pipe(reportSessionErrors),
   ),
 );
 

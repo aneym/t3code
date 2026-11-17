@@ -616,10 +616,7 @@ describe("t3 pair", () => {
 });
 
 describe("auth scope options", () => {
-  it.effect.each([
-    { group: "pairing", action: "create" },
-    { group: "session", action: "issue" },
-  ] as const)(
+  it.effect.each([{ group: "pairing", action: "create" }] as const)(
     "issues and persists only the selected scopes for auth $group $action",
     ({ group, action }) =>
       Effect.gen(function* () {
@@ -747,11 +744,10 @@ describe("auth pairing create --base-url", () => {
 
 describe("scripted auth output", () => {
   it.effect.each(
-    [
-      ["auth", "session", "issue", "--token-only"],
-      ["auth", "session", "list", "--json"],
-      ["auth", "pairing", "list", "--json"],
-    ].map((command) => ({ command, label: command.join(" ") })),
+    [["auth", "pairing", "list", "--json"]].map((command) => ({
+      command,
+      label: command.join(" "),
+    })),
   )("prints only the result for $label after removing an abandoned upload", ({ command }) =>
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-quiet-test-"));

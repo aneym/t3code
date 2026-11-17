@@ -38,7 +38,7 @@ import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import { DeviceStandardToolkit } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlRenderToolkit } from "./toolkits/html/tools.ts";
-import { layerServerDatabaseTools } from "./mcpServer/serverDatabaseTools.ts";
+import { layerOwnerCliTools } from "./mcpServer/ownerCliTools.ts";
 import * as ServerDatabase from "../serverDatabase/ServerDatabase.ts";
 
 export const layerHtmlToolkit = Layer.mergeAll(
@@ -133,6 +133,6 @@ export const layer = layerMcpTransport(
   Layer.mergeAll(
     layerTools,
     layerToolSearch,
-    layerServerDatabaseTools.pipe(Layer.provide(ServerDatabase.layer)),
+    layerOwnerCliTools.pipe(Layer.provide(ServerDatabase.layer)),
   ),
 );

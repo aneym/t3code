@@ -121,18 +121,22 @@ const SERVICE_RESTART_WAIT = "2 minutes";
 
 export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(function* <A, E, R>(
   command: string,
-  flags: { readonly baseDir: Option.Option<string> },
+  flags: { readonly baseDir: Option.Option<string>; readonly quietLogs?: boolean },
   run: (tools: OwnerMcpTools) => Effect.Effect<A, E, R>,
   headers?: Readonly<Record<string, string>>,
   serverWait?: Duration.Duration,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const config = yield* resolveCliAuthConfig(flags, logLevel, {
+    quietLogs: flags.quietLogs === true,
+  });
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const authLayer = EnvironmentAuth.layerRuntime.pipe(
     Layer.provide(ServerConfig.layer(config)),
-    Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
+    Layer.provide(
+      Layer.succeed(References.MinimumLogLevel, flags.quietLogs ? "Error" : config.logLevel),
+    ),
   );
   const serviceInstalled = yield* fileSystem
     .exists(path.join(config.baseDir, "runtime", SERVICE_STATE_FILE))
