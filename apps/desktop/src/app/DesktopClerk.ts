@@ -23,6 +23,7 @@ import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
+import * as RailsWords from "../railsWords/RailsWords.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
 
@@ -61,6 +62,7 @@ export class DesktopClerk extends Context.Service<
       | ElectronApp.ElectronApp
       | ElectronWindow.ElectronWindow
       | DesktopWebLinks.DesktopWebLinks
+      | RailsWords.RailsWords
       | Scope.Scope
     >;
   }
@@ -167,6 +169,7 @@ export const make = Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+      const railsWords = yield* RailsWords.RailsWords;
       const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
       const runPromise = Effect.runPromiseWith(context);
 
@@ -215,6 +218,7 @@ export const make = Effect.gen(function* () {
         return true;
       };
       const openAppLink = (value: string | undefined) => {
+        if (value && railsWords.receiveLink(value)) return true;
         if (!value || (promptLinkAppPath(value) === null && readPairingAppLink(value) === null))
           return false;
         void runPromise(webLinks.receive(value));

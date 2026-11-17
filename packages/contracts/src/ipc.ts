@@ -14,6 +14,7 @@ import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
+import type { DesktopRailsWordsBridge } from "./railsWords.ts";
 import { KeybindingShortcut, type PreviewForwardedShortcut } from "./keybindings.ts";
 
 import type {
@@ -369,10 +370,8 @@ export const DesktopUpdateCheckResultSchema = Schema.Struct({
 export const PRIMARY_LOCAL_ENVIRONMENT_ID = "primary";
 
 export interface DesktopEnvironmentBootstrap {
-  // Stable backend identity used to reopen routed projects.
   id: string;
   label: string;
-  // Actual distro for this run; id stays wsl:default when tracking the default.
   runningDistro?: string | null;
   httpBaseUrl: string | null;
   wsBaseUrl: string | null;
@@ -1160,6 +1159,7 @@ export interface DesktopBridge {
   /** With a version, installs only that downloaded build. */
   installUpdate: (expectedVersion?: string) => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  railsWords: DesktopRailsWordsBridge;
   cliCommand: {
     getState: () => Promise<DesktopCliCommandState>;
     install: () => Promise<DesktopCliCommandState>;

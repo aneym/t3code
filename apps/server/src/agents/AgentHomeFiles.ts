@@ -66,6 +66,14 @@ const binding = (value: unknown, strict: boolean): AgentHomeBinding | null => {
     return null;
   }
 };
+const railsAgentId = (doc: Record<string, unknown>) => {
+  const rails = doc.rails;
+  const id =
+    typeof rails === "object" && rails !== null
+      ? text((rails as Record<string, unknown>).agent_id)
+      : null;
+  return id === null ? {} : { railsAgentId: id };
+};
 export const homeFromDocument = (
   root: string,
   handle: string,
@@ -89,6 +97,7 @@ export const homeFromDocument = (
     ),
     office: binding(t3Field(doc, "office"), false),
     ...(agentHomeSealing(doc) === "sealed" ? { sealed: true } : {}),
+    ...railsAgentId(doc),
   });
 export const isLaneThread = async (root: string, threadId: string) => {
   const lanes = NodePath.join(root, "..", "lanes");

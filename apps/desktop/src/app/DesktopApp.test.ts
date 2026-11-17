@@ -64,6 +64,7 @@ import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "../ssh/DesktopSshPasswordPrompts.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
+import * as RailsWords from "../railsWords/RailsWords.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -229,6 +230,7 @@ it.effect.each([false, true])(
             Layer.mock(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {}),
             Layer.mock(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {}),
             Layer.mock(DesktopWebLinks.DesktopWebLinks, {}),
+            Layer.mock(RailsWords.RailsWords, { receiveLink: () => false }),
             Layer.mock(DesktopWslEnvironment.DesktopWslEnvironment, {}),
             Layer.mock(ElectronMenu.ElectronMenu, {}),
             Layer.mock(ElectronShell.ElectronShell, {}),

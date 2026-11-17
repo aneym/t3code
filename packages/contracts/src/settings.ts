@@ -1,5 +1,6 @@
 import * as ForkEmbed from "./forkEmbedSettings.ts";
 import * as ForkSidebarThread from "./forkSidebarThreadSettings.ts";
+import * as ForkRailsWords from "./forkRailsWordsSettings.ts";
 import { ForkThreadSettingsFields, ForkThreadSettingsPatchFields } from "./forkThreadSettings.ts";
 import {
   WorktreeCleanupRulesPatchFields,
@@ -553,6 +554,7 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   ...ForkSidebarThread.Client,
+  ...ForkRailsWords.Client,
   hideTrailingStageLine: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
@@ -994,18 +996,15 @@ export const ListTextGeneratorModelsInput = Schema.Struct({
    * the one saved under `id`.
    */
   config: Schema.optional(TextGeneratorConfig),
-  /** Skip the server's cached list and ask the API again. */
   refresh: Schema.optional(Schema.Boolean),
   /** Also have a model answer a tiny prompt, which proves the key, endpoint, and model. */
   test: Schema.optional(Schema.Boolean),
-  /** With `test`, the model to try; a cheap listed one when omitted. */
   model: Schema.optional(TrimmedNonEmptyString),
 });
 export type ListTextGeneratorModelsInput = typeof ListTextGeneratorModelsInput.Type;
 
 export const ListTextGeneratorModelsResult = Schema.Struct({
   models: Schema.Array(TextGeneratorModel),
-  /** The model that answered, when `test` was set. */
   testedModel: Schema.optional(TrimmedNonEmptyString),
 });
 export type ListTextGeneratorModelsResult = typeof ListTextGeneratorModelsResult.Type;
@@ -2007,6 +2006,7 @@ export const ClientSettingsPatch = Schema.Struct({
   threadDetailsItems: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   ...ForkSidebarThread.ClientPatch,
+  ...ForkRailsWords.ClientPatch,
   hideTrailingStageLine: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(

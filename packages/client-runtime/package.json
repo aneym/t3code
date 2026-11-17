@@ -67,6 +67,10 @@
       "types": "./src/projectFaviconCache.ts",
       "default": "./src/projectFaviconCache.ts"
     },
+    "./rails-words/said-wire": {
+      "types": "./src/railsWords/saidWire.ts",
+      "default": "./src/railsWords/saidWire.ts"
+    },
     "./rails-voice": {
       "types": "./src/railsVoice.ts",
       "default": "./src/railsVoice.ts"
@@ -166,6 +170,10 @@
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
+    },
+    "./state/agent-homes": {
+      "types": "./src/state/agentHomes.ts",
+      "default": "./src/state/agentHomes.ts"
     },
     "./state/auth": {
       "types": "./src/state/auth.ts",

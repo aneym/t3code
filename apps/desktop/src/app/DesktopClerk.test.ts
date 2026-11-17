@@ -43,6 +43,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
+import * as RailsWords from "../railsWords/RailsWords.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
 
@@ -107,6 +108,7 @@ const layerDesktopClerk = (
         fileSystemLayer,
       ),
     ),
+    Layer.merge(Layer.mock(RailsWords.RailsWords, { receiveLink: () => false })),
   );
 };
 

@@ -13,6 +13,7 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 import { mergeLegacyLocalStorage } from "./legacyLocalStorageMerge.ts";
+import { railsWordsBridge } from "./railsWords/railsWordsPreload.ts";
 
 const SNAP_SHOT_EVENT_TYPES = new Set([
   "requested",
@@ -46,7 +47,6 @@ try {
 const clientPlatform = process.platform;
 
 if (clientPlatform === "darwin") {
-  // Native buttons ignore Chromium zoom; reserve native points even after reload.
   const syncWindowControlInset = () => {
     document.documentElement.style.setProperty(
       "--desktop-window-controls-inset",
@@ -59,7 +59,6 @@ if (clientPlatform === "darwin") {
 
 const syncHtmlFullscreen = () => {
   const element = document.fullscreenElement;
-  // A preview guest's fullscreen surfaces here as its <webview>, which stays inside the window.
   void ipcRenderer.invoke(
     IpcChannels.SYNC_HTML_FULLSCREEN_CHANNEL,
     element !== null && element.tagName !== "WEBVIEW",
@@ -323,6 +322,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.UPDATE_INSTALL_CHANNEL, expectedVersion),
   installDesktopVersion: (version) =>
     ipcRenderer.invoke(IpcChannels.UPDATE_INSTALL_VERSION_CHANNEL, version),
+  railsWords: railsWordsBridge,
   cliCommand: {
     getState: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_GET_STATE_CHANNEL),
     install: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_INSTALL_CHANNEL),

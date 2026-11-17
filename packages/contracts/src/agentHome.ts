@@ -34,6 +34,7 @@ export const AgentHome = Schema.Struct({
   previous: Schema.NullOr(AgentHomeBinding),
   office: Schema.optionalKey(Schema.NullOr(AgentHomeBinding)),
   sealed: Schema.optionalKey(Schema.Literal(true)),
+  railsAgentId: Schema.optionalKey(Schema.String),
 });
 export type AgentHome = typeof AgentHome.Type;
 
