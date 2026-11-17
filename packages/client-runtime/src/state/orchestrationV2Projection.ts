@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import { applyThreadPullRequestLinkUpdate } from "../threadPullRequests.ts";
 import type {
   OrchestrationV2DomainEvent,
@@ -279,6 +280,35 @@ function restoreQueuedUserItems(
   return visibleTurnItems;
 }
 
+function keepsTrimmedHistory(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.parentItemId === null &&
+    (item.type === "user_message" || item.type === "assistant_message")
+  );
+}
+
+function trimHistory(
+  projection: OrchestrationV2ThreadProjection,
+  thread: OrchestrationV2ThreadProjection["thread"],
+): OrchestrationV2ThreadProjection {
+  const turnItems = projection.turnItems.filter(keepsTrimmedHistory);
+  const shown = new Set(
+    turnItems.flatMap((item) => ("messageId" in item ? [String(item.messageId)] : [])),
+  );
+  return {
+    ...projection,
+    thread,
+    turnItems,
+    messages: projection.messages.filter((message) => shown.has(String(message.id))),
+    plans: [],
+    visibleTurnItems: renumberVisibleItems(
+      projection.visibleTurnItems.filter(
+        (row) => row.visibility !== "local" || keepsTrimmedHistory(row.item),
+      ),
+    ),
+  };
+}
+
 export function applyOrchestrationV2ProjectionEvent(
   projection: OrchestrationV2ThreadProjection | null,
   event: OrchestrationV2DomainEvent,
@@ -290,6 +320,12 @@ export function applyOrchestrationV2ProjectionEvent(
   const latestLocalTurnOrdinal = options?.latestLocalTurnOrdinal;
   const base = { ...projection, updatedAt: event.occurredAt };
   switch (event.type) {
+    case "thread.metadata-updated":
+      return event.payload.historyTrimmedAt != null &&
+        (projection.thread.historyTrimmedAt == null ||
+          !DateTime.Equivalence(event.payload.historyTrimmedAt, projection.thread.historyTrimmedAt))
+        ? trimHistory(base, event.payload)
+        : { ...base, thread: event.payload };
     case "thread.pull-request-link-updated":
       return {
         ...base,
@@ -308,7 +344,6 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.unpinned":
     case "thread.pin-reordered":
     case "thread.active-reordered":
-    case "thread.metadata-updated":
     case "thread.pull-request-synced":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":

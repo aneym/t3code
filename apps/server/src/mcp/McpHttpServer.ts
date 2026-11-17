@@ -14,6 +14,8 @@ import { McpEventsToolkit } from "./toolkits/mcpEvents/tools.ts";
 import * as McpEventsHandlers from "./toolkits/mcpEvents/handlers.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
+import { ArchivedThreadsToolkit } from "./toolkits/archivedThreads/tools.ts";
+import * as ArchivedThreadsHandlers from "./toolkits/archivedThreads/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
@@ -117,6 +119,7 @@ export const layerTools = Layer.mergeAll(
   layerAttachmentToolkit,
   layerProjectRegistration,
   layerEnvironmentToolkit,
+  toolkitRegistration(ArchivedThreadsToolkit, ArchivedThreadsHandlers.layer),
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,

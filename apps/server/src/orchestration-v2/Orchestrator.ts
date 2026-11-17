@@ -1,4 +1,5 @@
 import { delegatedChildWorkspace } from "./DelegatedChildWorkspace.ts";
+import { decideHistoryMarkTrimmed } from "./ThreadHistoryTrimDecision.ts";
 import {
   OrchestratorCommandRejectedError,
   OrchestratorDispatchError,
@@ -549,6 +550,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "checkpoint.rollback":
     case "checkpoint.rollback.fail":
     case "thread.background-work.settle":
+    case "thread.history.mark-trimmed":
     case "thread.interrupt.unresponsive":
     case "thread.stop":
     case "provider.switch":
@@ -14621,6 +14623,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.interrupt.unresponsive":
         yield* dispatchInterruptUnresponsive(command, events);
+        break;
+      case "thread.history.mark-trimmed":
+        yield* emit(events, command)(yield* decideHistoryMarkTrimmed(command, projectionStore));
         break;
       case "thread.fork":
         yield* dispatchThreadFork(command, events);

@@ -1,4 +1,5 @@
 import { threadSettlement } from "./threadSettlement.ts";
+import { threadHistoryTrim } from "./threadHistoryTrim.ts";
 import { listedThreadStatus, listThreadPage } from "./ThreadListPage.ts";
 import {
   messageSender,
@@ -747,6 +748,7 @@ function threadDetail(
     awaitedBackgroundTaskCount:
       shell.pendingBackgroundTasks?.filter((task) => task.awaited === true).length ?? 0,
     archived: projection.thread.archivedAt !== null,
+    ...threadHistoryTrim(projection.thread),
     ...threadSettlement(projection.thread),
     ...threadSnooze(shell, nowMs),
     ...threadBackgroundWork(shell),

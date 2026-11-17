@@ -31,4 +31,5 @@ export const ThreadLifecycleFields = {
   snoozedUntil: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  historyTrimmedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
 };

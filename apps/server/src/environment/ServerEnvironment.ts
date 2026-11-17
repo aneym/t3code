@@ -237,6 +237,7 @@ export const make = Effect.gen(function* () {
       threadAutoSettlement: true,
       storageCleanup: true,
       storageCleanupRun: true,
+      archivedHistoryRetention: true,
       databaseStorage: true,
       otlpEndpointCheck: true,
       secretSourceCheck: true,

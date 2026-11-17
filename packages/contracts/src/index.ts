@@ -34,6 +34,8 @@ export * from "./serverLifecycle.ts";
 export * from "./desktopReleaseSwitch.ts";
 export * from "./settings.ts";
 export * from "./storageCleanupSettings.ts";
+export * from "./archivedThreads.ts";
+export * from "./threadHistoryTrim.ts";
 export * from "./sidebarAgents.ts";
 export * from "./managedPolicy.ts";
 export * from "./git.ts";
