@@ -3,23 +3,19 @@ import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
-import * as References from "effect/References";
 import * as Runtime from "effect/Runtime";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { GlobalFlag } from "effect/cli";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { SERVICE_STATE_FILE } from "../cloud/serviceProtocol.ts";
-import * as ServerConfig from "../config.ts";
 import type { McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
 import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
 import { resolveCliAuthConfig } from "./config.ts";
-import { openOwnerCliSession } from "./ownerCliSessionCache.ts";
+import { openOwnerCliSession } from "./ownerCliSession.ts";
 
 const SERVER_UNAVAILABLE_EXIT_CODE = 3;
 
@@ -132,12 +128,6 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
   });
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const authLayer = EnvironmentAuth.layerRuntime.pipe(
-    Layer.provide(ServerConfig.layer(config)),
-    Layer.provide(
-      Layer.succeed(References.MinimumLogLevel, flags.quietLogs ? "Error" : config.logLevel),
-    ),
-  );
   const serviceInstalled = yield* fileSystem
     .exists(path.join(config.baseDir, "runtime", SERVICE_STATE_FILE))
     .pipe(Effect.orElseSucceed(() => false));
@@ -148,13 +138,7 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
         return yield* new McpServerNotRunningError({ baseDir: config.baseDir });
       }
       const origin = runtimeState.value.origin;
-      const session = yield* openOwnerCliSession(
-        config.secretsDir,
-        new URL("/mcp", origin).href,
-        command,
-        authLayer,
-        headers,
-      ).pipe(
+      const session = yield* openOwnerCliSession(config.secretsDir, origin, command, headers).pipe(
         Effect.catchTags({
           AcpMcpBridgeError: (cause) =>
             Effect.fail(new McpServerUnreachableError({ origin, cause })),
