@@ -7,5 +7,5 @@ export function withoutTrailingStageLine(text: string): string {
   while (at >= 0 && !STAGE_LINE.test(lines[at] ?? "")) at--;
   if (at < 0 || !lines.slice(at + 1).every((line) => !line.trim() || LIST_ITEM.test(line)))
     return text;
-  return lines.slice(0, at).join("\n").trimEnd();
+  return lines.slice(0, at).join("\n").trimEnd() || text;
 }
