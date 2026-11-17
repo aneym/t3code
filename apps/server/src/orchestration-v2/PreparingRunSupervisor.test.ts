@@ -116,7 +116,7 @@ it.effect("fails a run whose workspace setup hangs past the deadline and names i
       assert.ok(failure?.type === "error");
       assert.equal(
         failure.failure.message,
-        "Workspace setup did not finish within 10 minutes, so the agent never started. 1 queued message was not delivered; it runs only if the setup is retried.",
+        "Workspace setup did not finish within 10 minutes, so the agent never started on this message. The message queued behind it starts next.",
       );
     }).pipe(Effect.provide(harness.layer), Effect.scoped);
   }),

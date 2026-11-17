@@ -27,10 +27,10 @@ const preparing = (run: Pick<OrchestrationV2Run, "status" | "workspacePreparatio
   run.status === "preparing" && run.workspacePreparation !== undefined;
 
 const deadlineMessage = (queued: number) =>
-  `Workspace setup did not finish within ${DEADLINE_MINUTES} minutes, so the agent never started.` +
+  `Workspace setup did not finish within ${DEADLINE_MINUTES} minutes, so the agent never started on this message.` +
   (queued === 0
     ? ""
-    : ` ${queued} queued ${queued === 1 ? "message was" : "messages were"} not delivered; ${queued === 1 ? "it runs" : "they run"} only if the setup is retried.`);
+    : ` The ${queued === 1 ? "message" : `${queued} messages`} queued behind it ${queued === 1 ? "starts" : "start"} next.`);
 
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
