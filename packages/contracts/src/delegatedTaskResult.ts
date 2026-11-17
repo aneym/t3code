@@ -14,6 +14,7 @@ import { AgentPlacementReceipt } from "./agentPlacement.ts";
 import { OrchestratorMcpExecutedModel } from "./orchestratorMcpThreadRun.ts";
 const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "queued",
+  "preparing",
   "running",
   "waiting",
   "completed",

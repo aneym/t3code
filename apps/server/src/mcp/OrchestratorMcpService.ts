@@ -357,6 +357,7 @@ function taskStatusForRun(
     case "interrupted":
       return "interrupted";
     case "preparing":
+      return "preparing";
     case "starting":
     case "running":
     case undefined:
@@ -1430,6 +1431,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(threadManagementFailure)));
     const workState =
       task.result !== null ? "result_available" : heldForRestart ? "working" : taskWorkState;
+    const latest = taskStatusForRun(taskResultRun ?? childRun);
     const status =
       task.result !== null
         ? taskStatusForRun(
@@ -1442,12 +1444,11 @@ const make = Effect.gen(function* () {
           )
         : workState === "result_available"
           ? // A cancelled task's finished turn settles it as interrupted.
-            task.cancelledRunId !== undefined &&
-            taskStatusForRun(taskResultRun ?? childRun) === "completed"
+            task.cancelledRunId !== undefined && latest === "completed"
             ? "interrupted"
-            : taskStatusForRun(taskResultRun ?? childRun)
-          : taskStatusForRun(taskResultRun ?? childRun) === "queued"
-            ? "queued"
+            : latest
+          : latest === "queued" || latest === "preparing"
+            ? latest
             : "running";
     const derivedResult =
       task.result !== null
@@ -1497,10 +1498,7 @@ const make = Effect.gen(function* () {
       ),
       childRunId: childRun?.id ?? null,
       childNodeId: task.id,
-      status:
-        status === "running" && childRun !== undefined && childStartGate?.isHeld(childRun)
-          ? "queued"
-          : status,
+      status: childRun !== undefined && childStartGate?.isHeld(childRun) ? "queued" : status,
       workState,
       hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
       providerInstanceId: modelSelection.instanceId,
@@ -2411,11 +2409,13 @@ const make = Effect.gen(function* () {
           ({ event }) => event.type === "run.updated" && event.payload.childStartHeld === true,
         )
       ) {
-        yield* threadLaunch.prepareRun({
-          commandId,
-          threadId: childThreadId,
-          runId: childRunEvent.event.payload.id,
-        });
+        yield* Effect.uninterruptible(
+          threadLaunch.prepareRun({
+            commandId,
+            threadId: childThreadId,
+            runId: childRunEvent.event.payload.id,
+          }),
+        );
       }
 
       return yield* input.mode === "wait"
