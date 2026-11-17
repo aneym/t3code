@@ -21,6 +21,7 @@ export const EMBED_PENDING_SEND_ACTION_MESSAGE = "t3-embed/pending-send-action";
 export const EMBED_SEND_MARK_MESSAGE = "t3-embed/send-mark";
 export const EMBED_PRESS_MESSAGE = "t3-embed/press";
 const EMBED_PRESS_RESULT_MESSAGE = "t3-embed/press-result";
+const EMBED_HOST_PRESS_MESSAGE = "t3-embed/host-press";
 
 export type EmbedPendingSendAction = "retry" | "discard";
 
@@ -312,6 +313,10 @@ export function readEmbedRevealMessage(data: unknown): EmbedRevealRequest | null
 export function readEmbedPressResultMessage(data: unknown): { readonly requestId: string } | null {
   const requestId = readMessage(data, EMBED_PRESS_RESULT_MESSAGE)?.requestId;
   return typeof requestId === "string" && SEND_REQUEST_ID.test(requestId) ? { requestId } : null;
+}
+
+export function readEmbedHostPressMessage(data: unknown): boolean {
+  return readMessage(data, EMBED_HOST_PRESS_MESSAGE)?.version === 1;
 }
 
 const MAX_REFUSAL_LENGTH = 400;

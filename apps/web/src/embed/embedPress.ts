@@ -7,13 +7,20 @@ const PRESS_TOOLS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ["rails", new Set(["answer"])],
 ]);
 const waiting = new Map<string, () => void>();
+let hostListening = false;
+
+export function applyEmbedHostPress(): void {
+  hostListening = true;
+}
 
 export function applyEmbedPressResult(requestId: string): void {
   waiting.get(requestId)?.();
 }
 
 export function reportEmbedPress(press: EmbedPress): Promise<void> {
-  if (PRESS_TOOLS.get(press.server)?.has(press.tool) !== true) return Promise.resolve();
+  if (!hostListening || PRESS_TOOLS.get(press.server)?.has(press.tool) !== true) {
+    return Promise.resolve();
+  }
   const requestId = `p_${randomUUID()}`;
   return new Promise((resolve) => {
     const settle = () => {

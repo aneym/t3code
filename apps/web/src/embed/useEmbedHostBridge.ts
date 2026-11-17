@@ -21,7 +21,7 @@ import { revealEmbedRow } from "./embedReveal";
 import { applyEmbedComposerMessage, embedControlsKey, toggleEmbedControls } from "./embedComposer";
 import { applyEmbedSendResult, setEmbedHostSend } from "./embedHostSend";
 import { applyEmbedPendingSendsMessage } from "./embedPendingSends";
-import { applyEmbedPressResult } from "./embedPress";
+import { applyEmbedHostPress, applyEmbedPressResult } from "./embedPress";
 import { watchEmbedUploads } from "./embedUploads";
 import {
   EMBED_COMPOSER_FOCUS_MESSAGE,
@@ -31,6 +31,7 @@ import {
   readEmbedAudienceMessage,
   readEmbedClearMessage,
   readEmbedComposerMessage,
+  readEmbedHostPressMessage,
   readEmbedHostSendMessage,
   readEmbedKeysMessage,
   readEmbedPressResultMessage,
@@ -120,6 +121,7 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       if (sendResult !== null) applyEmbedSendResult(sendResult);
       const pressResult = readEmbedPressResultMessage(event.data);
       if (pressResult !== null) applyEmbedPressResult(pressResult.requestId);
+      if (readEmbedHostPressMessage(event.data)) applyEmbedHostPress();
       applyEmbedLinksMessage(event.data);
       applyEmbedPendingSendsMessage(event.data);
     };
