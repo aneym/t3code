@@ -3496,7 +3496,7 @@ export default function ChatView(props: ChatViewProps) {
                   {...(threadHistoryControls === undefined
                     ? {}
                     : { historyControls: threadHistoryControls })}
-                  historyTrimmedAt={activeThreadShell?.historyTrimmedAt}
+                  historyTrimmedAt={serverThread?.historyTrimmedAt}
                 />
               </WorkspaceMutationIdContext>
 
