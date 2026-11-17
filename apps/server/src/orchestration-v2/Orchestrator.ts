@@ -238,7 +238,7 @@ import {
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
-import { taskCancelAdmission, taskCancelRefusal } from "./TaskCancel.ts";
+import { taskCancelAdmission, taskCancelRefusal, taskCancelUpdate } from "./TaskCancel.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -4361,7 +4361,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
-            ...(command.taskCancel === undefined ? {} : { taskCancel: command.taskCancel }),
+            ...taskCancelUpdate(thread, command.taskCancel),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {

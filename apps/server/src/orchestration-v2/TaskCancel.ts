@@ -69,8 +69,24 @@ export const reopenCancelledTask = <E, R, E2, R2>(
       );
 
 export const delegatedTaskFields = (
-  thread: Pick<OrchestrationV2AppThread, "delegatedFrom" | "taskCancel">,
+  thread: Pick<OrchestrationV2AppThread, "delegatedFrom" | "taskCancel" | "firstTaskCancel">,
 ) => ({
   ...(thread.delegatedFrom == null ? {} : { delegatedFrom: thread.delegatedFrom }),
   ...(thread.taskCancel == null ? {} : { taskCancel: thread.taskCancel }),
+  ...(thread.firstTaskCancel == null ? {} : { firstTaskCancel: thread.firstTaskCancel }),
 });
+
+export const taskCancelUpdate = (
+  thread: Pick<OrchestrationV2AppThread, "taskCancel" | "firstTaskCancel">,
+  taskCancel: OrchestrationV2TaskCancel | null | undefined,
+) => {
+  if (taskCancel === undefined) return {};
+  const first = thread.firstTaskCancel ?? thread.taskCancel;
+  return first == null ? { taskCancel } : { taskCancel, firstTaskCancel: first };
+};
+
+export const cancelledThreadStatus = <S extends string>(
+  thread: Pick<OrchestrationV2AppThread, "taskCancel">,
+  status: S,
+): S | "interrupted" =>
+  thread.taskCancel != null && status === "completed" ? "interrupted" : status;

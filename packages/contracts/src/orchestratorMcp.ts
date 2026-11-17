@@ -4,10 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { OrchestratorMcpThreadTimelineItem } from "./orchestratorMcpTimeline.ts";
 import { OrchestratorMcpThreadRun } from "./orchestratorMcpThreadRun.ts";
-import {
-  OrchestrationV2DelegatedFrom,
-  OrchestrationV2TaskCancel,
-} from "./orchestrationV2DelegatedChild.ts";
+import { OrchestratorMcpDelegatedChildFields } from "./orchestrationV2DelegatedChild.ts";
 import { ThreadWaitResultRun } from "./threadWaitResultRun.ts";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
@@ -304,8 +301,7 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
-  delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
-  taskCancel: Schema.optional(OrchestrationV2TaskCancel),
+  ...OrchestratorMcpDelegatedChildFields,
   runCount: NonNegativeInt,
   itemCount: NonNegativeInt,
   pendingRequestCount: NonNegativeInt,
