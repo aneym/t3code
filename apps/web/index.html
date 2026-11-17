@@ -647,8 +647,6 @@
       }
     </style>
     <script>
-      // Desktop's preload injects branding before page scripts. Titling before the <title> below
-      // parses keeps Electron from reporting the web build's channel to the window first.
       const desktopDisplayName = window.desktopBridge?.getAppBranding?.()?.displayName;
       if (desktopDisplayName) document.title = desktopDisplayName;
     </script>
@@ -663,26 +661,31 @@
         </div>
       </div>
     </div>
-    <script
-      type="module"
-      src="/src/bootstrap.ts"
-      onerror="
-        var s = sessionStorage,
-          k = 't3code:boot-retry',
-          n = parseInt(s.getItem(k)) || 0;
-        s.setItem(k, n + 1 + ':' + Date.now());
-        if (n > 3)
-          document.getElementById('boot-shell').textContent =
-            'Could not load the app files from ' +
-            this.getAttribute('src').split('?')[0] +
-            '. Trying again every 15 seconds.';
-        setTimeout(
-          function () {
-            location.reload();
-          },
-          1e3 * Math.min(1 << n, 15),
-        );
-      "
-    ></script>
+    <script>
+      addEventListener(
+        "error",
+        function (e) {
+          var t = e.target,
+            s = sessionStorage,
+            k = "t3code:boot-retry",
+            n = parseInt(s.getItem(k)) || 0,
+            d = Math.min(1 << n, 15);
+          if (!(t instanceof HTMLScriptElement) || t.type != "module") return;
+          s.setItem(k, n + 1 + ":" + Date.now());
+          (function f() {
+            if (n > 3)
+              document.getElementById("boot-shell").textContent =
+                "Could not load the app files from " +
+                t.getAttribute("src").split("?")[0] +
+                ". Trying again in " +
+                d +
+                "s.";
+            d-- > 0 ? setTimeout(f, 1e3) : location.reload();
+          })();
+        },
+        true,
+      );
+    </script>
+    <script type="module" src="/src/bootstrap.ts"></script>
   </body>
 </html>
