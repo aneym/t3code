@@ -2,7 +2,9 @@ import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  isDelegatedAppThread,
   isOrchestrationV2WorkActive,
+  isProviderNativeSubagentThread,
   latestProviderTurnForAttempt,
   MessageId,
   type OrchestrationV2Run,
@@ -60,17 +62,20 @@ function restartContinuationBlocked(
     (turn.status === "completed" || turn.status === "failed" || turn.status === "interrupted")
   )
     return true;
-  const waitingRequest = projection.runtimeRequests.some(
-    (request) =>
-      request.kind !== "dynamic_tool_call" &&
-      request.kind !== "auth_refresh" &&
-      request.responseCapability.type !== "message" &&
-      (request.status === "pending" ||
-        ((request.status === "expired" || request.status === "cancelled") &&
-          request.responseCapability.type === "not_resumable" &&
-          turn !== undefined &&
-          turn.id === request.providerTurnId)),
-  );
+  const delegatedChild = isDelegatedAppThread(thread) && !isProviderNativeSubagentThread(thread);
+  const waitingRequest =
+    !delegatedChild &&
+    projection.runtimeRequests.some(
+      (request) =>
+        request.kind !== "dynamic_tool_call" &&
+        request.kind !== "auth_refresh" &&
+        request.responseCapability.type !== "message" &&
+        (request.status === "pending" ||
+          ((request.status === "expired" || request.status === "cancelled") &&
+            request.responseCapability.type === "not_resumable" &&
+            turn !== undefined &&
+            turn.id === request.providerTurnId)),
+    );
   if (waitingRequest) return true;
   return projection.turnItems.some(
     (item) =>
