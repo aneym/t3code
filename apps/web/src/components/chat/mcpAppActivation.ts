@@ -36,7 +36,9 @@ export const trackFrameClicks = (frame: HTMLIFrameElement): FrameClicks => {
     peek: () =>
       armedAt !== undefined &&
       performance.now() - armedAt <= CLICK_CONSENT_MS &&
-      frameActivated(frame)
+      lastPageInputAt < armedAt &&
+      navigator.userActivation?.isActive === true &&
+      (document.activeElement === frame || !document.hasFocus())
         ? armedAt
         : undefined,
     take: (click) => {

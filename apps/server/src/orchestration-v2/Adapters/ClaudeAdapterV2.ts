@@ -170,6 +170,7 @@ import {
   CLAUDE_HEADLESS_CHILD_NOTICE_TITLE,
   claudeBypassAskRefusal,
 } from "./ClaudeBypassAskRefusal.ts";
+import { claudeMcpCallResult, claudeMcpCallToolResult } from "./ClaudeMcpCallResult.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import {
@@ -970,27 +971,6 @@ function claudeMcpToolForApps(
         : { destructiveHint: annotations.destructive }),
       ...(annotations.openWorld === undefined ? {} : { openWorldHint: annotations.openWorld }),
     },
-  };
-}
-
-/** A model-turn MCP `tool_use_result` flattens text `content` to a string; app calls return MCP's raw `CallToolResult`. */
-function claudeMcpCallToolResult(
-  value: unknown,
-): ProviderAdapter.ProviderAdapterV2McpCallToolResult {
-  const record = Predicate.isObject(value) && !Array.isArray(value) ? value : undefined;
-  const content = record === undefined ? value : record.content;
-  return {
-    content:
-      typeof content === "string"
-        ? [{ type: "text", text: content }]
-        : Array.isArray(content)
-          ? content
-          : [],
-    ...(record?.structuredContent === undefined
-      ? {}
-      : { structuredContent: record.structuredContent }),
-    ...(record?.isError === true ? { isError: true } : {}),
-    ...(record?._meta === undefined ? {} : { _meta: record._meta }),
   };
 }
 
@@ -13132,22 +13112,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   detail: `A Claude deny rule may cover ${tool}, so it was not called.`,
                 });
               }
-              return claudeMcpCallToolResult(
-                yield* liveQuery.query
-                  .callMcpTool({
-                    tool,
-                    arguments: call.arguments,
-                  })
-                  .pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new ProviderAdapter.ProviderAdapterProtocolError({
-                          driver: CLAUDE_PROVIDER,
-                          detail: "Claude MCP tool call failed.",
-                          cause,
-                        }),
-                    ),
-                  ),
+              return yield* claudeMcpCallResult(
+                CLAUDE_PROVIDER,
+                liveQuery.query.callMcpTool({ tool, arguments: call.arguments }),
               );
             }),
             readResource: Effect.fn("ClaudeAdapterV2.readMcpResource")(function* (read) {
