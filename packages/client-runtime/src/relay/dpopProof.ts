@@ -46,6 +46,7 @@ export const createProof = Effect.fn("DpopProof.createProof")(function* (input: 
   readonly url: string;
   readonly accessToken?: string | undefined;
   readonly key: DpopProofKey;
+  readonly claims?: Readonly<Record<string, string | number>> | undefined;
 }) {
   const htu = normalizeDpopHtu(input.url);
   if (htu === null) return yield* new DpopProofError({ message: "DPoP URL is invalid." });
@@ -57,6 +58,7 @@ export const createProof = Effect.fn("DpopProof.createProof")(function* (input: 
     jti: yield* random.uuidV4(),
     iat: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
     ...(input.accessToken ? { ath: yield* sha256Base64Url(utf8(input.accessToken)) } : {}),
+    ...input.claims,
   });
   const signature = yield* input.key.sign(utf8(`${header}.${payload}`));
   return `${header}.${payload}.${Base64Url.encode(signature)}`;

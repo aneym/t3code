@@ -67,6 +67,10 @@
       "types": "./src/projectFaviconCache.ts",
       "default": "./src/projectFaviconCache.ts"
     },
+    "./rails-words/said-wire": {
+      "types": "./src/railsWords/saidWire.ts",
+      "default": "./src/railsWords/saidWire.ts"
+    },
     "./rails-voice": {
       "types": "./src/railsVoice.ts",
       "default": "./src/railsVoice.ts"
