@@ -167,6 +167,7 @@ describe("McpAppRequests", () => {
       assert.deepEqual(yield* requests.toolInfo({ threadId, itemId, name: "refresh" }), {
         callable: true,
         readOnly: true,
+        destructive: false,
         tool: {
           name: "refresh",
           inputSchema: { type: "object" },

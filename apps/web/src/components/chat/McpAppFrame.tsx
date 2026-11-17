@@ -37,6 +37,8 @@ import { useTurnItemDetail } from "~/state/queries";
 import { mcpAppEnvironment } from "~/state/mcpApps";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { observeResize } from "~/lib/observeResize";
+import { frameActivated, pageInputRecent, trackFrameClicks } from "./mcpAppActivation";
+import { clickConsentAllowed } from "./mcpAppClickConsent";
 
 const commandFailure = (result: {
   readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"];
@@ -52,21 +54,6 @@ const fullscreenSupported =
   typeof HTMLElement !== "undefined" && "popover" in HTMLElement.prototype;
 
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
-// Exclude activation left by input elsewhere in T3.
-const PAGE_ACTIVATION_MS = 5_000;
-
-// Frame input does not bubble here. An app can refocus itself, so focus
-// alone cannot exclude activation from input elsewhere in T3.
-let lastPageInputAt = Number.NEGATIVE_INFINITY;
-if (typeof window !== "undefined") {
-  const note = () => {
-    lastPageInputAt = performance.now();
-  };
-  if (navigator.userActivation?.isActive) note();
-  for (const type of ["pointerdown", "pointerup", "touchend", "keydown"] as const) {
-    window.addEventListener(type, note, true);
-  }
-}
 
 function saveBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -228,6 +215,7 @@ export function McpAppFrame(props: {
   // The host belongs to this frame element, which is replaced when the document is reopened.
   const attachFrame = (frame: HTMLIFrameElement) => {
     frameRef.current = frame;
+    const clicks = trackFrameClicks(frame);
     const hostContext = (): McpAppHostContext => {
       const current = readLive();
       return {
@@ -277,12 +265,16 @@ export function McpAppFrame(props: {
       post: (message) => target()?.postMessage(message, "*"),
       hostContext,
       callTool: async ({ name, arguments: args }) => {
+        const click = clicks.peek();
         const { environmentId, input } = scope();
         const info = await readLive().toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
         if (!info.value.callable)
           throw new McpAppHostRefusal({ message: "This app cannot call that tool." });
-        if (!info.value.readOnly) {
+        const { readOnly, destructive } = info.value;
+        const consented =
+          destructive === false && clickConsentAllowed(app.server, name) && clicks.take(click);
+        if (!readOnly && !consented) {
           const approved = await ask(
             `Allow ${app.server} to run ${info.value.title ?? name}?\n${JSON.stringify(args, null, 2)}`,
           );
@@ -305,7 +297,7 @@ export function McpAppFrame(props: {
         return result.value;
       },
       openLink: async (url) => {
-        if (document.activeElement !== frameRef.current || !navigator.userActivation?.isActive) {
+        if (!frameActivated(frameRef.current)) {
           throw new McpAppHostRefusal({ message: "Links open only from a click in the app." });
         }
         if (!openThroughEmbedHost(url)) window.open(url, "_blank", "noopener,noreferrer");
@@ -335,9 +327,8 @@ export function McpAppFrame(props: {
         if (
           mode === "fullscreen" &&
           (!fullscreenSupported ||
-            document.activeElement !== frameRef.current ||
-            !navigator.userActivation?.isActive ||
-            performance.now() - lastPageInputAt < PAGE_ACTIVATION_MS ||
+            !frameActivated(frameRef.current) ||
+            pageInputRecent() ||
             readLive().props.awaitingUser === true ||
             isConfirmDialogActive() ||
             (otherFullscreen !== null && otherFullscreen !== boxRef.current))
@@ -396,6 +387,7 @@ export function McpAppFrame(props: {
     window.addEventListener("message", receive);
     return () => {
       window.removeEventListener("message", receive);
+      clicks.dispose();
       void host.teardown();
       hostRef.current = null;
       frameRef.current = null;

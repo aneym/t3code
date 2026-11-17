@@ -32,6 +32,7 @@ export type McpAppToolInfoInput = typeof McpAppToolInfoInput.Type;
 export const McpAppToolInfo = Schema.Struct({
   callable: Schema.Boolean,
   readOnly: Schema.Boolean,
+  destructive: Schema.optional(Schema.Boolean),
   title: Schema.optional(Schema.String),
   tool: Schema.optional(Schema.Unknown),
 });

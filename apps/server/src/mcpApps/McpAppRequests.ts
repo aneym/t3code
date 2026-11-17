@@ -51,6 +51,9 @@ const utf8 = new TextEncoder();
 const readOnlyHint = (tool: ProviderAdapter.ProviderAdapterV2McpTool) =>
   Predicate.isObject(tool.annotations) && tool.annotations.readOnlyHint === true;
 
+const destructiveHint = (tool: ProviderAdapter.ProviderAdapterV2McpTool) =>
+  Predicate.isObject(tool.annotations) && tool.annotations.destructiveHint === true;
+
 const toolTitle = (tool: ProviderAdapter.ProviderAdapterV2McpTool) =>
   Predicate.isObject(tool.annotations) && typeof tool.annotations.title === "string"
     ? tool.annotations.title
@@ -129,6 +132,7 @@ const make = Effect.gen(function* () {
     return {
       callable: tool !== undefined && mcpAppToolCallableByApp(tool._meta),
       readOnly: tool !== undefined && readOnlyHint(tool),
+      destructive: tool === undefined || destructiveHint(tool),
       ...(title === undefined ? {} : { title }),
       ...(tool === undefined ? {} : { tool }),
     } satisfies McpAppToolInfo;
