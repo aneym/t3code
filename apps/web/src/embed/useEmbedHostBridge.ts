@@ -21,6 +21,7 @@ import { revealEmbedRow } from "./embedReveal";
 import { applyEmbedComposerMessage, embedControlsKey, toggleEmbedControls } from "./embedComposer";
 import { applyEmbedSendResult, setEmbedHostSend } from "./embedHostSend";
 import { applyEmbedPendingSendsMessage } from "./embedPendingSends";
+import { applyEmbedPressResult } from "./embedPress";
 import { watchEmbedUploads } from "./embedUploads";
 import {
   EMBED_COMPOSER_FOCUS_MESSAGE,
@@ -32,6 +33,7 @@ import {
   readEmbedComposerMessage,
   readEmbedHostSendMessage,
   readEmbedKeysMessage,
+  readEmbedPressResultMessage,
   readEmbedRevealMessage,
   readEmbedSendResultMessage,
   readEmbedThemeMessage,
@@ -116,6 +118,8 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       if (reveal !== null) revealEmbedRow(reveal);
       const sendResult = readEmbedSendResultMessage(event.data);
       if (sendResult !== null) applyEmbedSendResult(sendResult);
+      const pressResult = readEmbedPressResultMessage(event.data);
+      if (pressResult !== null) applyEmbedPressResult(pressResult.requestId);
       applyEmbedLinksMessage(event.data);
       applyEmbedPendingSendsMessage(event.data);
     };

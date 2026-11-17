@@ -27,6 +27,7 @@ import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
 import { APP_VERSION } from "~/branding";
 import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
 import { openThroughEmbedHost } from "~/embed/embedHost";
+import { reportEmbedPress } from "~/embed/embedPress";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
@@ -280,6 +281,10 @@ export function McpAppFrame(props: {
             `Allow ${app.server} to run ${info.value.title ?? name}?\n${JSON.stringify(args, null, 2)}`,
           );
           if (approved !== true) throw new McpAppHostRefusal({ message: "Declined by the user." });
+        }
+        if (consented) {
+          const { threadId: thread, itemId: item } = input;
+          await reportEmbedPress({ thread, item, server: app.server, tool: name, arguments: args });
         }
         const result = await readLive().callTool({
           environmentId,

@@ -19,6 +19,8 @@ const EMBED_REVEAL_MESSAGE = "t3-embed/reveal";
 export const EMBED_REVEALED_MESSAGE = "t3-embed/revealed";
 export const EMBED_PENDING_SEND_ACTION_MESSAGE = "t3-embed/pending-send-action";
 export const EMBED_SEND_MARK_MESSAGE = "t3-embed/send-mark";
+export const EMBED_PRESS_MESSAGE = "t3-embed/press";
+const EMBED_PRESS_RESULT_MESSAGE = "t3-embed/press-result";
 
 export type EmbedPendingSendAction = "retry" | "discard";
 
@@ -58,6 +60,14 @@ export type EmbedThemeMessage = {
 
 export type EmbedRevealRequest = { readonly requestId: string; readonly id: string };
 
+export type EmbedPress = {
+  readonly thread: string;
+  readonly item: string;
+  readonly server: string;
+  readonly tool: string;
+  readonly arguments: Readonly<Record<string, unknown>>;
+};
+
 export type EmbedOutboundMessage =
   | { readonly type: typeof EMBED_READY_MESSAGE; readonly threadId: string }
   | (EmbedSendMark & {
@@ -66,6 +76,7 @@ export type EmbedOutboundMessage =
       readonly at: number;
     })
   | (EmbedRevealRequest & { readonly type: typeof EMBED_REVEALED_MESSAGE; readonly found: boolean })
+  | (EmbedPress & { readonly type: typeof EMBED_PRESS_MESSAGE; readonly requestId: string })
   | { readonly type: typeof EMBED_KEY_MESSAGE; readonly key: string }
   | { readonly type: typeof EMBED_OPEN_MESSAGE; readonly url: string; readonly tab?: true }
   | { readonly type: typeof EMBED_LINK_ASK_MESSAGE; readonly urls: ReadonlyArray<string> }
@@ -297,6 +308,12 @@ export function readEmbedRevealMessage(data: unknown): EmbedRevealRequest | null
   if (typeof id !== "string" || id.length === 0 || id.length > MAX_ITEM_LENGTH) return null;
   return { requestId, id };
 }
+
+export function readEmbedPressResultMessage(data: unknown): { readonly requestId: string } | null {
+  const requestId = readMessage(data, EMBED_PRESS_RESULT_MESSAGE)?.requestId;
+  return typeof requestId === "string" && SEND_REQUEST_ID.test(requestId) ? { requestId } : null;
+}
+
 const MAX_REFUSAL_LENGTH = 400;
 
 export function readEmbedSendResultMessage(data: unknown): EmbedSendOutcome | null {
