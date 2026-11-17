@@ -70,6 +70,7 @@ export * from "./delegatedTaskResult.ts";
 export * from "./orchestratorMcpScheduledTask.ts";
 export * from "./orchestratorMcpThreadList.ts";
 export * from "./serverDatabase.ts";
+export * from "./serverAuthSessions.ts";
 export * from "./orchestratorMcpThreadSend.ts";
 export * from "./threadSendDelivery.ts";
 export * from "./peerLink.ts";

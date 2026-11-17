@@ -1,16 +1,29 @@
-import { DATABASE_COMPACTION_RECOMMENDED_BYTES } from "@t3tools/contracts";
+import { DATABASE_COMPACTION_RECOMMENDED_BYTES, ServerDatabaseInfo } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as BootService from "../cloud/bootService.ts";
 import * as DatabaseMaintenance from "../persistence/DatabaseMaintenance.ts";
 import * as ServerOwnership from "../serverOwnership.ts";
-import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import {
+  isProcessAlive,
+  readLiveServerRuntimeState,
+  readPersistedServerRuntimeState,
+} from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import {
+  McpServerUnreachableError,
+  McpToolFailedError,
+  ownerMcpToolsAt,
+  reportCliErrors,
+} from "./ownerMcpTools.ts";
 import * as CliService from "./service.ts";
 
 const formatBytes = (bytes: number) =>
@@ -58,13 +71,53 @@ const lockServerHome = Effect.fn("runDoctor.lockServerHome")(function* (paths: {
   );
 });
 
-export const runDoctor = Effect.fn("runDoctor")(function* (
+type DoctorStatus = Effect.Success<
+  ReturnType<DatabaseMaintenance.DatabaseMaintenance["Service"]["inspect"]>
+>;
+
+const inspectStoppedHome = (paths: {
+  readonly dbPath: string;
+  readonly serverRuntimeStatePath: string;
+}) =>
+  Effect.scoped(
+    lockServerHome(paths).pipe(
+      Effect.andThen(DatabaseMaintenance.DatabaseMaintenance),
+      Effect.flatMap((maintenance) => maintenance.inspect(paths.dbPath)),
+    ),
+  );
+
+const inspectThroughServer = Effect.fn("runDoctor.inspectThroughServer")(function* (
+  paths: { readonly dbPath: string; readonly secretsDir: string },
+  origin: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const info = yield* Effect.scoped(
+    ownerMcpToolsAt(paths.secretsDir, origin, "doctor").pipe(
+      Effect.flatMap((tools) => tools.call("t3_db_info", {}, ServerDatabaseInfo)),
+    ),
+  );
+  const legacy = path.join(path.dirname(paths.dbPath), "state.sqlite");
+  const legacyDatabaseBytes = yield* fs.stat(legacy).pipe(
+    Effect.map((stat) => Number(stat.size)),
+    Effect.orElseSucceed(() => null),
+  );
+  return {
+    databaseBytes: info.pageCount * info.pageSize,
+    reclaimableBytes: info.freePageCount * info.pageSize,
+    incrementalVacuumEnabled: info.incrementalVacuumEnabled,
+    legacyDatabaseBytes,
+  } satisfies DoctorStatus;
+});
+
+export const runDoctor = Effect.fn("runDoctor")(function* <E = never, R = never>(
   paths: { readonly dbPath: string; readonly serverRuntimeStatePath: string },
   options: { readonly fix: boolean; readonly dryRun: boolean; readonly interactive?: boolean },
+  inspect?: Effect.Effect<DoctorStatus, E, R>,
 ) {
   const databasePath = paths.dbPath;
   const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
-  const status = yield* maintenance.inspect(databasePath);
+  const status = yield* inspect ?? inspectStoppedHome(paths);
   yield* Console.log(
     `Database: ${formatBytes(status.databaseBytes)}, ${formatBytes(status.reclaimableBytes)} reclaimable.`,
   );
@@ -175,6 +228,10 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
   }
 });
 
+const reportDoctorErrors = reportCliErrors(
+  Schema.is(Schema.Union([McpServerUnreachableError, McpToolFailedError])),
+);
+
 export const doctorCommand = Command.make("doctor", {
   ...projectLocationFlags,
   fix: Flag.Boolean("fix").pipe(
@@ -193,7 +250,13 @@ export const doctorCommand = Command.make("doctor", {
     Effect.gen(function* () {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
-      yield* runDoctor(config, { fix: flags.fix, dryRun: flags.dryRun }).pipe(
+      const live = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
+      yield* runDoctor(
+        config,
+        { fix: flags.fix, dryRun: flags.dryRun },
+        Option.isSome(live) ? inspectThroughServer(config, live.value.origin) : undefined,
+      ).pipe(
+        reportDoctorErrors,
         Effect.provide(Layer.merge(DatabaseMaintenance.layer, CliService.layer(config))),
       );
     }),

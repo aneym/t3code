@@ -38,8 +38,10 @@ import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import { DeviceStandardToolkit } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlRenderToolkit } from "./toolkits/html/tools.ts";
-import { layerServerDatabaseTools } from "./mcpServer/serverDatabaseTools.ts";
+import { layerOwnerCliTools } from "./mcpServer/ownerCliTools.ts";
 import * as ServerDatabase from "../serverDatabase/ServerDatabase.ts";
+import * as ChatThreadSets from "../chatSession/ChatThreadSets.ts";
+import * as OwnerCliCredentialPublisher from "../auth/OwnerCliCredentialPublisher.ts";
 
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
@@ -129,10 +131,15 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
 );
 
-export const layer = layerMcpTransport(
-  Layer.mergeAll(
-    layerTools,
-    layerToolSearch,
-    layerServerDatabaseTools.pipe(Layer.provide(ServerDatabase.layer)),
+export const layer = Layer.merge(
+  layerMcpTransport(
+    Layer.mergeAll(
+      layerTools,
+      layerToolSearch,
+      layerOwnerCliTools.pipe(
+        Layer.provide(Layer.mergeAll(ServerDatabase.layer, ChatThreadSets.layer)),
+      ),
+    ),
   ),
+  OwnerCliCredentialPublisher.layer,
 );

@@ -4,6 +4,7 @@ import {
   ExecutionEnvironmentDescriptor,
   ORCHESTRATION_PROTOCOL_VERSION,
   PortSchema,
+  ServerAuthPairingLink,
 } from "@t3tools/contracts";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -23,14 +24,11 @@ import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -49,6 +47,12 @@ import {
 import { authScopesFlag } from "./authScopes.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
 import { hostShellWord, resolveHostCliCommand } from "./invocation.ts";
+import {
+  McpServerUnreachableError,
+  McpToolFailedError,
+  ownerMcpToolsAt,
+  reportCliErrors,
+} from "./ownerMcpTools.ts";
 import {
   DevServerNotProxiableError,
   IncompatibleServerProtocolError,
@@ -362,29 +366,35 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
   },
 );
 
-const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
-  readonly config: ServerConfig.ServerConfig["Service"];
-  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
-  readonly ttl: Option.Option<Duration.Duration>;
-  readonly label: Option.Option<string>;
-}) {
-  return yield* Effect.gen(function* () {
-    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    return yield* environmentAuth.createPairingLink({
-      scopes: input.scopes,
-      subject: "one-time-token",
-      label: Option.getOrElse(input.label, () => "t3 pair"),
-      ...(Option.isSome(input.ttl) ? { ttl: input.ttl.value } : {}),
-    });
-  }).pipe(
-    Effect.provide(
-      EnvironmentAuth.layerRuntime.pipe(
-        Layer.provide(ServerConfig.layer(input.config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, input.config.logLevel)),
-      ),
-    ),
-  );
-});
+const PairingLinkJson = Schema.toCodecJson(ServerAuthPairingLink);
+const reportPairMintErrors = reportCliErrors(
+  Schema.is(Schema.Union([McpServerUnreachableError, McpToolFailedError])),
+);
+
+const mintPairingLink = Effect.fn("pair.mintPairingLink")(
+  function* (input: {
+    readonly config: ServerConfig.ServerConfig["Service"];
+    readonly origin: string;
+    readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+    readonly ttl: Option.Option<Duration.Duration>;
+    readonly label: Option.Option<string>;
+  }) {
+    const tools = yield* ownerMcpToolsAt(input.config.secretsDir, input.origin, "pair");
+    return yield* tools.call(
+      "t3_auth_pairing_create",
+      {
+        scopes: input.scopes,
+        label: Option.getOrElse(input.label, () => "t3 pair"),
+        ...(Option.isSome(input.ttl)
+          ? { ttlMs: Math.max(1, Math.round(Duration.toMillis(input.ttl.value))) }
+          : {}),
+      },
+      PairingLinkJson,
+    );
+  },
+  Effect.scoped,
+  reportPairMintErrors,
+);
 
 const ttlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),
@@ -430,9 +440,7 @@ export const pairCommand = Command.make("pair", {
 
       const explicitBaseDir = Option.getOrUndefined(flags.baseDir);
       const target = yield* discoverPairTarget(explicitBaseDir);
-      // Each protocol keeps auth in its own database, so a token minted here
-      // for another protocol's server would never be accepted by it. Refuse
-      // before any local layer opens (and migrates) that database.
+      // A server on another protocol predates the pairing tool; name the CLI that matches it.
       const serverProtocolVersion = target.descriptor.orchestrationProtocolVersion ?? 1;
       if (serverProtocolVersion !== ORCHESTRATION_PROTOCOL_VERSION) {
         const platform = yield* HostProcess.Platform;
@@ -485,6 +493,7 @@ export const pairCommand = Command.make("pair", {
       const config = yield* makePairServerConfig({ target, logLevel });
       const issued = yield* mintPairingLink({
         config,
+        origin: target.state.origin,
         scopes: flags.scopes,
         ttl: flags.ttl,
         label: flags.label,

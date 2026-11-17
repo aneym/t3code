@@ -65,6 +65,9 @@ export const PeerLinkSummary = Schema.Struct({
 });
 export type PeerLinkSummary = typeof PeerLinkSummary.Type;
 
+export const PeerLinkListResult = Schema.Struct({ links: Schema.Array(PeerLinkSummary) });
+export type PeerLinkListResult = typeof PeerLinkListResult.Type;
+
 export const PeerLinkCreateInput = Schema.Struct({
   /** Where the peer answers: an https, Tailscale, LAN or loopback base URL. */
   url: TrimmedNonEmptyString,

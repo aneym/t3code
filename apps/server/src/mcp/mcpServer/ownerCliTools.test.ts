@@ -5,13 +5,16 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
+import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
+import * as ChatThreadSets from "../../chatSession/ChatThreadSets.ts";
+import * as PeerLinks from "../../peer/PeerLinks.ts";
 import * as ServerDatabase from "../../serverDatabase/ServerDatabase.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { McpClientAuthenticator } from "../McpAuthMiddleware.ts";
 import type * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpSessionRegistry from "../McpSessionRegistry.ts";
 import * as McpToolAccessTestkit from "../McpToolAccess.testkit.ts";
-import { layerServerDatabaseTools } from "./serverDatabaseTools.ts";
+import { layerOwnerCliTools } from "./ownerCliTools.ts";
 import { layerToolSearch } from "./toolSearch.ts";
 import { layerMcpTransport } from "./transport.ts";
 
@@ -51,12 +54,32 @@ const scopes = new Map<string, McpInvocationContext.McpInvocationScope>([
   ],
 ]);
 
-it.effect("shows and runs the server database tools for the owner CLI alone", () =>
+it.effect("shows and runs the owner CLI tools for the owner CLI alone", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      const issued: Array<unknown> = [];
       const serverLayer = layerMcpTransport(
-        Layer.mergeAll(layerServerDatabaseTools, layerToolSearch),
+        Layer.mergeAll(layerOwnerCliTools, layerToolSearch),
       ).pipe(
+        Layer.provide(
+          Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+            listSessions: () => Effect.succeed([]),
+            issueSession: (input) => {
+              issued.push(input);
+              return Effect.die("issued");
+            },
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(PeerLinks.PeerLinks)({
+            list: Effect.succeed([]),
+            unlink: (environmentId) => {
+              issued.push(environmentId);
+              return Effect.die("unlinked");
+            },
+          }),
+        ),
+        Layer.provide(Layer.mock(ChatThreadSets.ChatThreadSets)({})),
         Layer.provide(
           Layer.mock(ServerDatabase.ServerDatabase)({
             listRuns: () => Effect.succeed({ runs: [] }),
@@ -138,6 +161,20 @@ it.effect("shows and runs the server database tools for the owner CLI alone", ()
             Effect.map((body) => (body.result?.tools ?? []).map((tool) => tool.name).toSorted()),
           ),
           runs: rpc("tools/call", { name: "t3_runs_list", arguments: { open: true } }),
+          sessions: rpc("tools/call", { name: "t3_auth_session_list", arguments: {} }),
+          issue: rpc("tools/call", {
+            name: "t3_auth_session_issue",
+            arguments: { scopes: ["orchestration:read"] },
+          }),
+          pairing: rpc("tools/call", {
+            name: "t3_auth_pairing_create",
+            arguments: { scopes: ["orchestration:read"] },
+          }),
+          links: rpc("tools/call", { name: "t3_peer_link_list", arguments: {} }),
+          unlink: rpc("tools/call", {
+            name: "t3_peer_link_unlink",
+            arguments: { environmentId: "environment-other" },
+          }),
           search: rpc("tools/call", {
             name: "tool_search",
             arguments: { query: "runs db snapshot" },
@@ -146,15 +183,41 @@ it.effect("shows and runs the server database tools for the owner CLI alone", ()
       });
 
       const owner = yield* session("ownerToken");
-      expect(yield* owner.listed).toEqual(["t3_db_info", "t3_db_snapshot", "t3_runs_list"]);
+      expect(yield* owner.listed).toEqual([
+        "t3_auth_pairing_create",
+        "t3_auth_pairing_list",
+        "t3_auth_pairing_revoke",
+        "t3_auth_session_issue",
+        "t3_auth_session_list",
+        "t3_auth_session_revoke",
+        "t3_db_info",
+        "t3_db_snapshot",
+        "t3_peer_link_create",
+        "t3_peer_link_list",
+        "t3_peer_link_renew",
+        "t3_peer_link_unlink",
+        "t3_runs_list",
+      ]);
+      expect((yield* owner.links).result?.structuredContent).toEqual({ links: [] });
       expect((yield* owner.runs).result?.structuredContent).toEqual({ runs: [] });
+      expect((yield* owner.sessions).result?.structuredContent).toEqual({ sessions: [] });
 
       for (const token of ["agentToken", "clientToken"]) {
         const other = yield* session(token);
-        expect(yield* other.listed).not.toContain("t3_runs_list");
+        const listed = yield* other.listed;
+        expect(listed).not.toContain("t3_runs_list");
+        expect(listed).not.toContain("t3_auth_session_issue");
+        expect(listed).not.toContain("t3_auth_pairing_create");
+        expect(listed).not.toContain("t3_peer_link_list");
         const refused = yield* other.runs;
         expect(refused.result?.structuredContent).toBeUndefined();
+        expect((yield* other.sessions).result?.structuredContent).toBeUndefined();
+        expect((yield* other.issue).result?.structuredContent).toBeUndefined();
+        expect((yield* other.pairing).result?.structuredContent).toBeUndefined();
+        expect((yield* other.links).result?.structuredContent).toBeUndefined();
+        expect((yield* other.unlink).result?.structuredContent).toBeUndefined();
       }
+      expect(issued).toEqual([]);
       const agent = yield* session("agentToken");
       expect((yield* agent.search).result?.structuredContent).toEqual({ tools: [] });
     }),

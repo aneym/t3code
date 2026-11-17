@@ -19,6 +19,7 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
+import { ownerMcpFetch } from "./ownerMcp.testkit.ts";
 
 const hooks = vi.hoisted(() => ({
   importsAttempted: [] as string[],
@@ -78,22 +79,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imp
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-deferred-project-" });
       const baseDir = NodePath.join(root, "state");
       const runtimeStatePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+      const state = yield* makePersistedServerRuntimeState({
+        config: { host: "127.0.0.1", devUrl: undefined },
+        port: 3_773,
+      });
       yield* persistServerRuntimeState({
         path: runtimeStatePath,
-        state: yield* makePersistedServerRuntimeState({
-          config: { host: "127.0.0.1", devUrl: undefined },
-          port: 3_773,
-        }),
+        state: { ...state, pid: 4_194_305 },
       });
-      const unreachable: typeof globalThis.fetch = () =>
-        Promise.reject(new Error("connection refused"));
 
-      const exit = yield* runCli(["project", "add", root, "--base-dir", baseDir]).pipe(
-        Effect.provideService(FetchHttpClient.Fetch, unreachable),
-        Effect.exit,
-      );
+      hooks.importsAttempted.length = 0;
+      const exit = yield* runCli(["project", "add", root, "--base-dir", baseDir]).pipe(Effect.exit);
 
       assert.isTrue(Exit.hasDies(exit));
+      assert.deepEqual(hooks.importsAttempted, ["runtimeLayer"]);
       assert.isTrue(yield* fs.exists(runtimeStatePath));
     }),
   );
@@ -135,7 +134,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imp
       };
 
       const exit = yield* runCli(["project", "add", workspaceRoot, "--base-dir", baseDir]).pipe(
-        Effect.provideService(FetchHttpClient.Fetch, fetch),
+        Effect.provideService(FetchHttpClient.Fetch, ownerMcpFetch(baseDir, fetch)),
         Effect.exit,
       );
 

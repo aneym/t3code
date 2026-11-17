@@ -29,7 +29,6 @@ import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -57,6 +56,7 @@ import {
 } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
+import { withServerIssuedSession } from "./serverIssuedSession.ts";
 import * as CliService from "./service.ts";
 
 const jsonFlag = Flag.Boolean("json").pipe(
@@ -286,18 +286,14 @@ export const acquireRelayClientForLink = Effect.fn("cloud.cli.acquire_relay_clie
 );
 
 const withCloudCliSessionToken = <A, E, R>(
-  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
+  target: { readonly secretsDir: string; readonly origin: string },
   scope: AuthEnvironmentScope,
   run: (token: string) => Effect.Effect<A, E, R>,
 ) =>
-  Effect.acquireUseRelease(
-    environmentAuth.issueSession({
-      scopes: [scope],
-      subject: "cloud-cli",
-      label: "t3 connect cli",
-    }),
-    (issued) => run(issued.token),
-    (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
+  withServerIssuedSession(
+    { ...target, command: "connect" },
+    { scopes: [scope], subject: "cloud-cli", label: "t3 connect cli" },
+    run,
   );
 
 type LiveCloudActionResult =
@@ -317,17 +313,20 @@ const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
     return { status: "server-gone" } satisfies LiveCloudActionResult;
   }
 
-  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const origin = runtimeState.value.origin;
   const result = yield* Effect.exit(
-    withCloudCliSessionToken(environmentAuth, AuthRelayWriteScope, (token) =>
-      HttpApiClient.make(EnvironmentHttpApi, {
-        baseUrl: runtimeState.value.origin,
-      }).pipe(
-        Effect.flatMap((client) =>
-          client.connect.unlink({ headers: { authorization: `Bearer ${token}` } }),
+    withCloudCliSessionToken(
+      { secretsDir: config.secretsDir, origin },
+      AuthRelayWriteScope,
+      (token) =>
+        HttpApiClient.make(EnvironmentHttpApi, {
+          baseUrl: runtimeState.value.origin,
+        }).pipe(
+          Effect.flatMap((client) =>
+            client.connect.unlink({ headers: { authorization: `Bearer ${token}` } }),
+          ),
+          Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
         ),
-        Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
-      ),
     ),
   );
   return Exit.isSuccess(result)
@@ -345,8 +344,8 @@ const checkLiveReachability = Effect.fn("cloud.cli.check_live_reachability")(fun
   const config = yield* ServerConfig.ServerConfig;
   const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
   if (Option.isNone(runtimeState)) return null;
-  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  return yield* withCloudCliSessionToken(environmentAuth, AuthRelayReadScope, (token) =>
+  const target = { secretsDir: config.secretsDir, origin: runtimeState.value.origin };
+  return yield* withCloudCliSessionToken(target, AuthRelayReadScope, (token) =>
     HttpApiClient.make(EnvironmentHttpApi, { baseUrl: runtimeState.value.origin }).pipe(
       Effect.flatMap((client) =>
         client.connect.checkReachability({ headers: { authorization: `Bearer ${token}` } }),
@@ -531,7 +530,6 @@ export const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function
     | ServerSecretStore.ServerSecretStore
     | CliTokenManager.CloudCliTokenManager
     | RelayClient.RelayClient
-    | EnvironmentAuth.EnvironmentAuth
     | BootService.BootService
     | SecureRandom.SecureRandom
     | FileSystem.FileSystem
@@ -556,7 +554,8 @@ export const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function
       Layer.provide(ExternalLauncher.layer),
     ),
     RelayClient.layerCloudflared({ baseDir: config.baseDir }),
-    EnvironmentAuth.layerRuntime,
+    ServerEnvironment.layerIdentity,
+    ManagedPolicy.layer,
     CliService.layer(config),
     RelayTracing.layerHeadlessRelayClient.pipe(Layer.provide(ManagedPolicy.layer)),
   ).pipe(

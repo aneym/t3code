@@ -51,6 +51,8 @@ export const ServerDatabaseInfo = Schema.Struct({
   schemaObjects: NonNegativeInt,
   pageCount: NonNegativeInt,
   pageSize: PositiveInt,
+  freePageCount: NonNegativeInt,
+  incrementalVacuumEnabled: Schema.Boolean,
   eventsMaxRowid: Schema.NullOr(NonNegativeInt),
   threadCount: NonNegativeInt,
   messageCount: NonNegativeInt,

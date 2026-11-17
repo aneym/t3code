@@ -48,6 +48,7 @@ import {
 import * as ServerSettings from "../serverSettings.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { ownerMcpFetch } from "./ownerMcp.testkit.ts";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer);
 const runCli = (args: ReadonlyArray<string>) =>
@@ -155,7 +156,7 @@ it.effect.each(["snapshot", "mutation"] as const)(
       const releaseResponse = Promise.withResolvers<void>();
       let snapshotRequests = 0;
       let mutations = 0;
-      const fetch: typeof globalThis.fetch = async (_input, init) => {
+      const fetch = ownerMcpFetch(baseDir, async (_input, init) => {
         const isMutation = init?.method === "POST";
         if (isMutation) mutations++;
         else snapshotRequests++;
@@ -177,7 +178,7 @@ it.effect.each(["snapshot", "mutation"] as const)(
               }
             : { projects: [], updatedAt: now },
         );
-      };
+      });
 
       const add = yield* runCli(["project", "add", workspaceRoot, "--base-dir", baseDir]).pipe(
         Effect.provideService(FetchHttpClient.Fetch, fetch),
@@ -207,7 +208,6 @@ it.effect("does not send a token to whatever took over a dead server's port", ()
     });
     yield* persistServerRuntimeState({
       path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
-      // Above Linux's PID ceiling, as in pair.test.ts: no process can hold it.
       state: { ...state, pid: 4_194_305 },
     });
     let requests = 0;

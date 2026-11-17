@@ -35,6 +35,11 @@ import {
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import { resolveHostCliCommand } from "./invocation.ts";
+import {
+  makeOwnerMcpFake,
+  type OwnerMcpFake,
+  publishOwnerCliCredential,
+} from "./ownerMcp.testkit.ts";
 import { resolveTailscaleLocalTarget } from "./pair.ts";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -93,13 +98,15 @@ const testDescriptor = {
 };
 
 const withDescriptorServer = <A, E, R>(
-  run: (origin: string) => Effect.Effect<A, E, R>,
+  run: (origin: string, ownerMcp: OwnerMcpFake) => Effect.Effect<A, E, R>,
   host = "127.0.0.1",
   descriptor: object = testDescriptor,
 ) =>
   Effect.acquireUseRelease(
-    Effect.callback<NodeHttp.Server>((resume) => {
+    Effect.callback<readonly [NodeHttp.Server, OwnerMcpFake]>((resume) => {
+      const ownerMcp = makeOwnerMcpFake();
       const server = NodeHttp.createServer((request, response) => {
+        if (ownerMcp.handle(request, response)) return;
         if (request.url === "/.well-known/t3/environment") {
           response.writeHead(200, { "content-type": "application/json" });
           response.end(JSON.stringify(descriptor));
@@ -108,17 +115,35 @@ const withDescriptorServer = <A, E, R>(
         response.writeHead(404);
         response.end();
       });
-      server.listen(0, host, () => resume(Effect.succeed(server)));
+      server.listen(0, host, () => resume(Effect.succeed([server, ownerMcp])));
     }),
-    (server) => {
+    ([server, ownerMcp]) => {
       const address = server.address();
       if (address === null || typeof address === "string") {
         return Effect.die(new Error("Expected a TCP address"));
       }
-      return run(`http://${host === "::1" ? "[::1]" : host}:${String(address.port)}`);
+      return run(`http://${host === "::1" ? "[::1]" : host}:${String(address.port)}`, ownerMcp);
     },
-    (server) => Effect.sync(() => server.close()),
+    ([server]) => Effect.sync(() => server.close()),
   );
+
+const withLiveOwnerServer = <A, E, R>(
+  run: (baseDir: string, ownerMcp: OwnerMcpFake) => Effect.Effect<A, E, R>,
+) =>
+  withDescriptorServer((origin, ownerMcp) =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-live-"));
+      publishOwnerCliCredential(NodePath.join(baseDir, "userdata"));
+      yield* persistServerRuntimeState({
+        path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+        state: yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: Number(new URL(origin).port),
+        }),
+      });
+      return yield* run(baseDir, ownerMcp);
+    }),
+  ).pipe(Effect.provide(layerCliRuntime));
 
 describe("t3 pair", () => {
   it.effect("publishes an IPv6-only server through Tailscale Serve when pairing", () =>
@@ -158,6 +183,7 @@ describe("t3 pair", () => {
           );
 
           const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-ipv6-test-"));
+          publishOwnerCliCredential(NodePath.join(baseDir, "userdata"));
           yield* persistServerRuntimeState({
             path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
             state: yield* makePersistedServerRuntimeState({
@@ -271,9 +297,10 @@ describe("t3 pair", () => {
   );
 
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
-    withDescriptorServer((origin) =>
+    withDescriptorServer((origin, ownerMcp) =>
       Effect.gen(function* () {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-test-"));
+        publishOwnerCliCredential(NodePath.join(baseDir, "userdata"));
         const port = Number(new URL(origin).port);
         const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
         yield* persistServerRuntimeState({
@@ -295,16 +322,10 @@ describe("t3 pair", () => {
         assert.isString(token);
         assert.include(output, `App link: ${buildPairingAppLink(`${origin}/pair#token=${token}`)}`);
 
-        const listed = yield* captureStdout(
-          runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
-        );
-        const credentials = JSON.parse(listed) as ReadonlyArray<{
-          readonly label?: string;
-          readonly scopes: ReadonlyArray<string>;
-        }>;
-        assert.equal(credentials.length, 1);
-        assert.equal(credentials[0]?.label, "t3 pair");
-        assert.deepEqual(credentials[0]?.scopes, AuthStandardClientScopes);
+        assert.deepEqual(ownerMcp.calls, ["t3_auth_pairing_create"]);
+        assert.deepEqual(ownerMcp.callArguments, [
+          { scopes: AuthStandardClientScopes, label: "t3 pair" },
+        ]);
       }),
     ).pipe(
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -328,6 +349,7 @@ describe("t3 pair", () => {
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-dev-test-"));
+        publishOwnerCliCredential(NodePath.join(baseDir, "dev"));
         const port = Number(new URL(origin).port);
         const statePath = NodePath.join(baseDir, "dev", "server-runtime.json");
         yield* persistServerRuntimeState({
@@ -419,8 +441,7 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  // regression: #10516 minting opens the target database with this checkout's
-  // migrations, so a worktree must never fall back to the live install.
+  // regression: #10516 a worktree must never pair against the live install.
   it.effect("does not fall back to the shared home from a linked worktree", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
@@ -459,8 +480,7 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  // regression: #15492 an older CLI minted into a V1 database the protocol 2
-  // server never reads, so pairing must refuse before opening the database.
+  // regression: #15492
   it.effect("rejects a server on another protocol before opening its database", () =>
     withDescriptorServer(
       (origin) =>
@@ -616,44 +636,17 @@ describe("t3 pair", () => {
 });
 
 describe("auth scope options", () => {
-  it.effect.each([
-    { group: "pairing", action: "create" },
-    { group: "session", action: "issue" },
-  ] as const)(
-    "issues and persists only the selected scopes for auth $group $action",
-    ({ group, action }) =>
+  it.effect("passes only the selected scopes to the server for auth pairing create", () =>
+    withLiveOwnerServer((baseDir, ownerMcp) =>
       Effect.gen(function* () {
-        const baseDir = NodeFS.mkdtempSync(
-          NodePath.join(NodeOS.tmpdir(), "t3-cli-auth-scopes-test-"),
-        );
-        const output = yield* captureStdout(
-          runCli([
-            "auth",
-            group,
-            action,
-            "--base-dir",
-            baseDir,
-            "--json",
-            "--scope",
-            "orchestration:read",
-            "--scope",
-            "access:read",
-            "--scope",
-            "orchestration:read",
-          ]),
-        );
-        const issued = JSON.parse(output) as { readonly scopes: ReadonlyArray<string> };
-        const listOutput = yield* captureStdout(
-          runCli(["auth", group, "list", "--base-dir", baseDir, "--json"]),
-        );
-        const listed = JSON.parse(listOutput) as ReadonlyArray<{
-          readonly scopes: ReadonlyArray<string>;
-        }>;
-
-        assert.deepEqual(issued.scopes, ["orchestration:read", "access:read"]);
-        assert.lengthOf(listed, 1);
-        assert.deepEqual(listed[0]?.scopes, issued.scopes);
+        const scopes = ["orchestration:read", "access:read", "orchestration:read"];
+        const args = scopes.flatMap((scope) => ["--scope", scope]);
+        yield* captureStdout(runCli(["auth", "pairing", "create", "--base-dir", baseDir, ...args]));
+        assert.deepEqual(ownerMcp.callArguments, [
+          { scopes: ["orchestration:read", "access:read"] },
+        ]);
       }),
+    ),
   );
 
   it.effect.each(
@@ -710,76 +703,75 @@ describe("auth pairing create --base-url", () => {
         }
         assert.equal(flagError.option, "base-url");
         assert.equal(flagError.value, baseUrl);
-
-        const listOutput = yield* captureStdout(
-          runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
-        );
-        assert.deepEqual(JSON.parse(listOutput), []);
       }),
   );
 
   it.effect.each(["http://192.168.1.5:3773", "https://example.com", "http:localhost:3773"])(
     "prints a pair URL for %s",
     (baseUrl) =>
-      Effect.gen(function* () {
-        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-base-url-test-"));
-        const output = yield* captureStdout(
-          runCli([
-            "auth",
-            "pairing",
-            "create",
-            "--base-dir",
-            baseDir,
-            "--base-url",
-            baseUrl,
-            "--json",
-          ]),
-        );
-        const issued = JSON.parse(output) as {
-          readonly credential: string;
-          readonly pairUrl: string;
-        };
+      withLiveOwnerServer((baseDir) =>
+        Effect.gen(function* () {
+          const output = yield* captureStdout(
+            runCli([
+              "auth",
+              "pairing",
+              "create",
+              "--base-dir",
+              baseDir,
+              "--base-url",
+              baseUrl,
+              "--json",
+            ]),
+          );
+          const issued = JSON.parse(output) as {
+            readonly credential: string;
+            readonly pairUrl: string;
+          };
 
-        assert.equal(issued.pairUrl, `${new URL(baseUrl).origin}/pair#token=${issued.credential}`);
-      }),
+          assert.equal(
+            issued.pairUrl,
+            `${new URL(baseUrl).origin}/pair#token=${issued.credential}`,
+          );
+        }),
+      ),
   );
 });
 
 describe("scripted auth output", () => {
   it.effect.each(
-    [
-      ["auth", "session", "issue", "--token-only"],
-      ["auth", "session", "list", "--json"],
-      ["auth", "pairing", "list", "--json"],
-    ].map((command) => ({ command, label: command.join(" ") })),
+    [["auth", "pairing", "list", "--json"]].map((command) => ({
+      command,
+      label: command.join(" "),
+    })),
   )("prints only the result for $label after removing an abandoned upload", ({ command }) =>
-    Effect.gen(function* () {
-      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-quiet-test-"));
-      const attachmentsDir = NodePath.join(baseDir, "userdata", "attachments");
-      NodeFS.mkdirSync(attachmentsDir, { recursive: true });
-      // An abandoned upload makes config resolution log that it removed it.
-      const abandoned = NodePath.join(attachmentsDir, "abandoned.part");
-      NodeFS.writeFileSync(abandoned, "");
-      const jan2020Seconds = 1_577_836_800;
-      NodeFS.utimesSync(abandoned, jan2020Seconds, jan2020Seconds);
-      // The sweep reads Clock, so a week past the upload's mtime makes it expired.
-      yield* TestClock.setTime((jan2020Seconds + 7 * 24 * 60 * 60) * 1000);
+    withLiveOwnerServer((baseDir) =>
+      Effect.gen(function* () {
+        const attachmentsDir = NodePath.join(baseDir, "userdata", "attachments");
+        NodeFS.mkdirSync(attachmentsDir, { recursive: true });
+        // An abandoned upload makes config resolution log that it removed it.
+        const abandoned = NodePath.join(attachmentsDir, "abandoned.part");
+        NodeFS.writeFileSync(abandoned, "");
+        const jan2020Seconds = 1_577_836_800;
+        NodeFS.utimesSync(abandoned, jan2020Seconds, jan2020Seconds);
+        // The sweep reads Clock, so a week past the upload's mtime makes it expired.
+        yield* TestClock.setTime((jan2020Seconds + 7 * 24 * 60 * 60) * 1000);
 
-      const lines = yield* provideCliTestLayers(
-        Effect.gen(function* () {
-          yield* runCli([...command, "--base-dir", baseDir]);
-          return yield* TestConsole.logLines;
-        }),
-      );
+        const lines = yield* provideCliTestLayers(
+          Effect.gen(function* () {
+            yield* runCli([...command, "--base-dir", baseDir]);
+            return yield* TestConsole.logLines;
+          }),
+        );
 
-      assert.isFalse(NodeFS.existsSync(abandoned));
-      assert.lengthOf(lines, 1);
-      const output = String(lines[0]);
-      if (command.includes("--json")) {
-        assert.deepEqual(JSON.parse(output), []);
-      } else {
-        assert.match(output.trim(), /^[\w-]+\.[\w-]+/);
-      }
-    }),
+        assert.isFalse(NodeFS.existsSync(abandoned));
+        assert.lengthOf(lines, 1);
+        const output = String(lines[0]);
+        if (command.includes("--json")) {
+          assert.deepEqual(JSON.parse(output), []);
+        } else {
+          assert.match(output.trim(), /^[\w-]+\.[\w-]+/);
+        }
+      }),
+    ),
   );
 });

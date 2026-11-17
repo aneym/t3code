@@ -87,6 +87,8 @@ const info = () => {
       schemaObjects: current.schemaObjects,
       pageCount: current.pageCount,
       pageSize: Number(one(db, "PRAGMA page_size")),
+      freePageCount: Number(one(db, "PRAGMA freelist_count")),
+      incrementalVacuumEnabled: Number(one(db, "PRAGMA auto_vacuum")) === 2,
       eventsMaxRowid: current.eventsMaxRowid,
       threadCount: count("orchestration_v2_projection_threads"),
       messageCount: count("orchestration_v2_projection_messages"),
