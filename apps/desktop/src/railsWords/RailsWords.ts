@@ -175,7 +175,7 @@ const make = Effect.gen(function* () {
           headers: request.headers,
           credentials: "omit",
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-          ...(request.method === "GET" ? {} : { body: Buffer.from(request.body) }),
+          ...(body === undefined ? {} : { body: Buffer.from(request.body) }),
         });
         const answer: unknown = await response.json().catch(() => null);
         return readRailsAnswer(response.status, answer);
@@ -403,8 +403,21 @@ const make = Effect.gen(function* () {
     getState: ensureLoaded.pipe(Effect.map(() => state)),
     said,
     disconnect: Effect.gen(function* () {
-      yield* ensureLoaded;
-      yield* forget("disconnected-here");
+      const current = yield* ensureLoaded;
+      queue.length = 0;
+      connected = null;
+      const answer = current
+        ? yield* sendChecked(RailsRoute.revoke, undefined, current.key).pipe(
+            Effect.orElseSucceed((): RailsAnswer => ({ kind: "retry" })),
+          )
+        : null;
+      const told = answer === null || answer.kind === "ok" || answer.kind === "removed";
+      if (!told) {
+        yield* Effect.logWarning("Rails was not told about the disconnect.", {
+          answer: answer.kind === "refused" ? answer.error : answer.kind,
+        });
+      }
+      yield* forget(told ? "disconnected" : "disconnected-here");
       return state;
     }).pipe(Effect.withSpan("RailsWords.disconnect")),
     receiveLink: (value) => {

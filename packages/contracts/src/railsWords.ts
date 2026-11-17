@@ -1,7 +1,10 @@
 import * as Schema from "effect/Schema";
 
+export const RAILS_AGENT_ID_PATTERN = /^[0-9a-f]{12}$/;
+
 export const DesktopRailsWordsNotice = Schema.Literals([
   "removed-in-rails",
+  "disconnected",
   "disconnected-here",
   "connect-refused",
   "connect-failed",
@@ -24,7 +27,7 @@ export type DesktopRailsWordsState = typeof DesktopRailsWordsState.Type;
 export const DesktopRailsWordsSaid = Schema.Struct({
   environmentId: Schema.String,
   threadId: Schema.String,
-  agent: Schema.String,
+  agent: Schema.String.check(Schema.isPattern(RAILS_AGENT_ID_PATTERN)),
   messageId: Schema.String,
   text: Schema.String,
   typedAt: Schema.String,

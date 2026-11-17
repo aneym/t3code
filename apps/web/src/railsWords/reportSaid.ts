@@ -1,5 +1,5 @@
 import { createAgentHomesAtoms } from "@t3tools/client-runtime/state/agent-homes";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { RAILS_AGENT_ID_PATTERN, type EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -9,6 +9,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { readRailsWordsState, useRailsWordsState } from "./railsWordsState";
 
 const agentHomes = createAgentHomesAtoms(connectionAtomRuntime);
+const warnedHomes = new Set<string>();
 
 export function useRailsWordsAgentHomes(environmentId: EnvironmentId | null, enabled: boolean) {
   const connected = useRailsWordsState()?.connected === true;
@@ -41,10 +42,19 @@ export function reportSaid(input: {
           candidate.binding.environmentId === input.environmentId),
     );
     if (home === undefined) return;
+    const agent = home.railsAgentId;
+    if (agent === undefined || !RAILS_AGENT_ID_PATTERN.test(agent)) {
+      const key = `${input.environmentId}:${home.handle}`;
+      if (!warnedHomes.has(key)) {
+        warnedHomes.add(key);
+        console.warn(`[rails-words] not sent: agent ${home.handle} has no valid rails.agent_id`);
+      }
+      return;
+    }
     bridge.said({
       environmentId: input.environmentId,
       threadId: input.threadId,
-      agent: home.handle,
+      agent,
       messageId: input.messageId,
       text: input.text,
       typedAt: input.typedAt,

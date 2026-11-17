@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { RAILS_AGENT_ID_PATTERN } from "@t3tools/contracts";
 
 import { createProof, type DpopProofKey } from "../relay/dpopProof.ts";
 
@@ -17,6 +18,7 @@ export const DEVICE_NAME_MAX_LENGTH = 80;
 export const RailsRoute = {
   connect: { method: "POST", path: "/api/t3/connect" },
   device: { method: "GET", path: "/api/t3/device" },
+  revoke: { method: "DELETE", path: "/api/t3/device" },
   said: { method: "POST", path: "/api/t3/said" },
 } as const;
 export type RailsRoute = (typeof RailsRoute)[keyof typeof RailsRoute];
@@ -24,7 +26,7 @@ export type RailsRoute = (typeof RailsRoute)[keyof typeof RailsRoute];
 export const SaidBody = Schema.Struct({
   environment: Schema.String.check(Schema.isNonEmpty()),
   thread: Schema.String.check(Schema.isNonEmpty()),
-  agent: Schema.String.check(Schema.isNonEmpty()),
+  agent: Schema.String.check(Schema.isPattern(RAILS_AGENT_ID_PATTERN)),
   message_id: Schema.String.check(Schema.isNonEmpty()),
   text: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(SAID_TEXT_MAX_LENGTH)),
   typed_at: Schema.String.check(Schema.isNonEmpty()),

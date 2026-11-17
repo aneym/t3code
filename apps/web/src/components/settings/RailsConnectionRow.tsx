@@ -10,7 +10,9 @@ import { SettingsRow } from "./settingsLayout";
 
 const NOTICE_TEXT: Record<DesktopRailsWordsNotice, string> = {
   "removed-in-rails": "This device was removed in Rails. Connect again from Rails settings.",
-  "disconnected-here": "Disconnected here. Remove this device in Rails settings too.",
+  disconnected: "Disconnected. Rails removed this device too.",
+  "disconnected-here":
+    "Disconnected here, but Rails couldn't be told. Remove this device in Rails Settings > Computers.",
   "connect-refused": "Rails refused the connection. Start again from Rails settings.",
   "connect-failed": "Couldn't reach Rails. Click Connect in Rails settings again.",
   "connect-full": "Rails already has 20 computers connected. Remove one there, then connect again.",
