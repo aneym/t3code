@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import { onStopNow } from "../serverDrain/stopSignal.ts";
 
 const ProcessIdentity = Schema.Struct({
   pid: Schema.Int.check(Schema.isBetween({ minimum: 2, maximum: Number.MAX_SAFE_INTEGER })),
@@ -131,6 +132,14 @@ const make = Effect.gen(function* () {
       signalProcessGroup(pid, signal);
     } catch {}
   };
+  yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      onStopNow((signal) => {
+        for (const group of [...live.values()].filter(matches)) signalGroup(group.pid, signal);
+      }),
+    ),
+    (forget) => Effect.sync(forget),
+  );
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
       const groups = [...live.values()].filter(matches);
