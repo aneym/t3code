@@ -115,6 +115,21 @@ function hasOpenAwaitedWork(
   );
 }
 
+export function sessionsLiveAtStart(
+  projection: Pick<ProjectionRuntimeRecoveryState, "providerSessions" | "providerThreads">,
+  stoppedThisPass: ReadonlyMap<string, ProjectionRuntimeRecoveryState["providerSessions"][number]>,
+) {
+  const sessions = new Map(projection.providerSessions.map((session) => [session.id, session]));
+  for (const providerThread of projection.providerThreads) {
+    const stopped =
+      providerThread.providerSessionId === null
+        ? undefined
+        : stoppedThisPass.get(providerThread.providerSessionId);
+    if (stopped !== undefined) sessions.set(stopped.id, stopped);
+  }
+  return [...sessions.values()];
+}
+
 /** Settled runs require a live session so stale crash records cannot wake them. */
 export function restartContinuationRun(
   projection: Pick<
