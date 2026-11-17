@@ -374,13 +374,11 @@ const threadVisitTracker = createThreadVisitTracker({
   visit: threadEnvironment.visit,
 });
 
-// Past the composer's 180 ms height animation.
 const COMPOSER_HEIGHT_SETTLE_MS = 220;
 const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
   Atom.withLabel("mobile-thread-run-stop:empty"),
 );
 
-// Connection failures survive retries and app suspension.
 const RECONNECT_ERROR_DELAY_MS = 30000;
 
 // Anchors, the submitted message, follow state and pending scrolls belong to
@@ -506,6 +504,8 @@ function ThreadDetailBody(
   const toolCallVisibility = AsyncResult.isSuccess(preferences)
     ? (preferences.value.toolCallVisibility ?? "showAll")
     : "showAll";
+  const hideTrailingStageLine =
+    !AsyncResult.isSuccess(preferences) || preferences.value.hideTrailingStageLine !== false;
   const queued = useThreadQueuedCount(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
@@ -600,7 +600,6 @@ function ThreadDetailBody(
       ? NO_RUN_STOP_ATOM
       : environmentThreadDetails.runStopAtom(props.selectedThreadDetailRef),
   );
-  // A background Stop matters only while that work is still pending.
   const runStop =
     anyRunStop?.background && props.selectedThread.pendingBackgroundTasks.length === 0
       ? null
@@ -1011,7 +1010,6 @@ function ThreadDetailBody(
           },
     );
   const dismissUsageLimits = () => setUsageLimitsPanel(null);
-  // Late sends clear only their originating thread's limits panel.
   const clearUsageLimitsFor = (threadKey: string) =>
     setUsageLimitsPanel((current) =>
       current !== null && current.threadKey === threadKey ? null : current,
@@ -1478,6 +1476,7 @@ function ThreadDetailBody(
               <ColumnWidth width={columnWidth}>
                 <ThreadFeed
                   toolCallVisibility={toolCallVisibility}
+                  hideTrailingStageLine={hideTrailingStageLine}
                   environmentId={props.environmentId}
                   threadId={props.selectedThread.id}
                   detailRef={props.selectedThreadDetailRef}

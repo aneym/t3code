@@ -535,6 +535,10 @@
       "types": "./src/generatedImageMarkdown.ts",
       "import": "./src/generatedImageMarkdown.ts"
     },
+    "./stageLine": {
+      "types": "./src/stageLine.ts",
+      "import": "./src/stageLine.ts"
+    },
     "./markdownPipeline": {
       "types": "./src/markdownPipeline.ts",
       "import": "./src/markdownPipeline.ts"

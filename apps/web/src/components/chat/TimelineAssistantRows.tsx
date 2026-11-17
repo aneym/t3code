@@ -1,4 +1,5 @@
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+import { withoutTrailingStageLine } from "@t3tools/shared/stageLine";
 import { type RunId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { memo, use, useState } from "react";
@@ -39,9 +40,12 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
     row.message.streaming ? ctx.threadRef : null,
     row.projectedItem?.item.id,
   );
-  const text = liveText ?? row.message.text;
+  const hideStageLine = useClientSettings((settings) => settings.hideTrailingStageLine);
+  const rawText = liveText ?? row.message.text;
+  const text = hideStageLine ? withoutTrailingStageLine(rawText) : rawText;
   const messageText =
-    text || (row.message.streaming || row.suppressEmptyResponse ? "" : "(empty response)");
+    text ||
+    (row.message.streaming || row.suppressEmptyResponse || rawText ? "" : "(empty response)");
 
   return (
     <>

@@ -61,6 +61,7 @@ import {
 } from "@t3tools/contracts";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
+import { withoutTrailingStageLine } from "@t3tools/shared/stageLine";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { hostedThreadLink, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
@@ -311,6 +312,7 @@ export interface ThreadFeedHistoryControls {
 
 export interface ThreadFeedProps {
   readonly toolCallVisibility?: ToolCallVisibility;
+  readonly hideTrailingStageLine?: boolean;
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
@@ -1171,7 +1173,6 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   );
 });
 
-// Folds split first, so an artifact card inside a fold stays inside it.
 function AssistantMarkdownBlocks(props: {
   readonly markdown: string;
   readonly markdownStyles: MarkdownStyleSet;
@@ -1634,6 +1635,7 @@ function renderFeedEntry(
     | "onEditPendingMessage"
     | "threadId"
     | "workspaceRoot"
+    | "hideTrailingStageLine"
   > & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
@@ -1861,6 +1863,10 @@ function renderFeedEntry(
     const isUser = message.role === "user";
     const presentation = resolveUserMessagePresentation(message);
     const renderedText = renderAssistantCitationsAsText(presentation.text);
+    const displayText =
+      !isUser && props.hideTrailingStageLine
+        ? withoutTrailingStageLine(renderedText)
+        : renderedText;
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTimestamp(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
@@ -1887,7 +1893,6 @@ function renderFeedEntry(
       );
     }
     if (isCompactionCommandFeedEntry(entry)) {
-      // Stands in for the compaction item until the provider reports it.
       const active = props.unsettledTurnId !== null && message.runId === props.unsettledTurnId;
       const reason = idleCompactionOf(message);
       return (
@@ -1931,7 +1936,6 @@ function renderFeedEntry(
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
       const foldRowId = presentation.attribution === "agent" ? `agent:${message.id}` : null;
-      // A linked environment's agent sent it from a thread there.
       const senderRef =
         message.linkedSender ??
         (message.senderThreadId
@@ -2239,7 +2243,7 @@ function renderFeedEntry(
       );
     }
 
-    if (renderedText.trim().length === 0 && attachments.length === 0) {
+    if (displayText.trim().length === 0 && attachments.length === 0) {
       return null;
     }
 
@@ -2254,10 +2258,10 @@ function renderFeedEntry(
         )}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
-        {renderedText.trim().length > 0 ? (
+        {displayText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
-              markdown={renderedText}
+              markdown={displayText}
               environmentId={props.environmentId}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
@@ -2842,7 +2846,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.environmentId,
     );
     if (resolved !== null || link.environmentId !== null) return resolved;
-    // A v1 link names no environment, so it falls back to this message's.
     return scopeThreadRef(props.environmentId, link.threadId);
   };
   // The file a chat link names: in this workspace, else in the one other project that has it.
@@ -3258,6 +3261,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // Include turn completion so unchanged message rows reveal their footer and spacing
   // even when the final message update arrives before the turn settles.
   const listAppearanceData = {
+    hideTrailingStageLine: props.hideTrailingStageLine,
     disclosureLayout,
     reduceMotion,
     worktreeSetup: props.worktreeSetup,
@@ -3400,7 +3404,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     return new Set(terminalIdsByTurn.values());
   })();
-  // An interrupted run unfolds; a run that is no longer latest folds back.
   const [previousLatestRun, setPreviousLatestRun] = useState(props.latestRun);
   if (previousLatestRun !== props.latestRun) {
     setPreviousLatestRun(props.latestRun);
@@ -3709,6 +3712,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             threadTitle: props.threadTitle,
             skills: props.skills,
             workspaceRoot: props.workspaceRoot,
+            hideTrailingStageLine: props.hideTrailingStageLine,
             workflowOpening,
           })}
           {props.worktreeSetup && info.index === setupAnchorIndex ? (
@@ -3788,7 +3792,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // as a user scroll and drops end following before the keyboard closes.
             scrollsChildToFocus={false}
             keyboardLiftBehavior={props.sendingWithKeyboard ? "persistent" : "whenAtEnd"}
-            // Seed the initial viewport before native onLayout.
             {...(viewportHeight > 0 && viewportWidth > 0
               ? { estimatedListSize: { height: viewportHeight, width: viewportWidth } }
               : {})}

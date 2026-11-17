@@ -495,6 +495,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "hide-trailing-stage-line",
+    title: "Hide stage lines",
+    to: "/settings/chat",
+    searchTerms: ["agent status line done working review blocked scope live last line reply"],
+  },
+  {
     id: "screen-reader-window-title",
     title: "Screen reader window title",
     to: "/settings/chat",
@@ -1404,7 +1410,6 @@ const SPLIT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
   "/settings/connections",
   ...Object.keys(RENAMED_SETTINGS_PATHS),
 ]);
-// Section anchors that moved but are not search results themselves.
 const MOVED_SECTION_ANCHORS: Readonly<Record<string, SettingsPath>> = {
   "authorized-clients": "/settings/access",
   "text-generation": "/settings/threads",
@@ -1550,7 +1555,6 @@ export function searchSettings(
       const fields = [
         title,
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
-        // The labels as displayed, so search also works in the active language.
         normalizeSearchText(translate(item.title)),
         normalizeSearchText(translate(SETTINGS_SECTION_LABELS[item.to])),
         ...(item.searchTerms ?? []).map(normalizeSearchText),
@@ -1581,7 +1585,6 @@ export function searchSettings(
     .map(({ item }) => item);
 }
 
-// These rows only exist with separate fonts on, so a search jump to one turns them on.
 const ADVANCED_TYPOGRAPHY_TARGET_IDS: ReadonlySet<string> = new Set([
   "prompt-font",
   "terminal-font",
