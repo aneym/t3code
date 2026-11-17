@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -12,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import { onStopNow } from "../serverDrain/stopSignal.ts";
 
 const ProcessIdentity = Schema.Struct({
   pid: Schema.Int.check(Schema.isBetween({ minimum: 2, maximum: Number.MAX_SAFE_INTEGER })),
@@ -25,6 +27,7 @@ const OwnershipRecord = Schema.Struct({
   owner: ProcessIdentity,
   processes: Schema.Array(Schema.Struct({ ...ProcessIdentity.fields, pgid: Schema.Int })),
 });
+const STOP_GRACE_POLLS = 100;
 const decodeRecord = Schema.decodeUnknownSync(Schema.fromJsonString(OwnershipRecord));
 
 // A concurrent exit can remove the record. Incomplete/unknown records never authorize a signal.
@@ -123,16 +126,46 @@ const make = Effect.gen(function* () {
     NodeFS.rmSync(recordPath, { force: true });
   }
 
+  const live = new Map<number, typeof ProcessIdentity.Type>();
+  const signalGroup = (pid: number, signal: NodeJS.Signals) => {
+    try {
+      signalProcessGroup(pid, signal);
+    } catch {}
+  };
+  yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      onStopNow((signal) => {
+        for (const group of [...live.values()].filter(matches)) signalGroup(group.pid, signal);
+      }),
+    ),
+    (forget) => Effect.sync(forget),
+  );
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      const groups = [...live.values()].filter(matches);
+      for (const group of groups) signalGroup(group.pid, "SIGTERM");
+      for (let attempt = 0; attempt < STOP_GRACE_POLLS && groups.some(matches); attempt++) {
+        yield* Effect.sleep("10 millis");
+      }
+      for (const group of groups) signalGroup(group.pid, "SIGKILL");
+    }),
+  );
+
   return {
     hasOtherLiveOwner,
     register: (pid: number) => {
       const provider = identity(pid);
-      if (provider === undefined || provider.ppid !== process.pid) {
+      if (provider === undefined || provider.ppid !== process.pid || provider.pgid !== pid) {
         throw new Error("Cannot identify spawned provider");
       }
+      live.set(pid, { pid, startTime: provider.startTime });
       // A rename keeps startup from seeing a partial write. The child is gated
       // until this returns, so an abrupt death cannot leave an unrecorded CLI.
-      return writeRecord([{ pid, startTime: provider.startTime, pgid: provider.pgid }]);
+      const forget = writeRecord([{ pid, startTime: provider.startTime, pgid: provider.pgid }]);
+      return () => {
+        live.delete(pid);
+        forget();
+      };
     },
   };
 });
