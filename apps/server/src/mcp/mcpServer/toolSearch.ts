@@ -6,6 +6,7 @@ import { McpServer } from "effect/ai";
 
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolExposure from "../McpToolExposure.ts";
+import { OWNER_CLI_TOOL_NAMES } from "./serverDatabaseTools.ts";
 import * as ToolSearchHandlers from "../toolkits/toolSearch/handlers.ts";
 import { ToolSearchToolkit } from "../toolkits/toolSearch/tools.ts";
 import { toolkitRegistration } from "./toolkitRegistration.ts";
@@ -16,7 +17,9 @@ const layerToolExposure = Layer.effect(
     const server = yield* McpServer.McpServer;
     return McpToolExposure.make(
       () =>
-        server.tools.map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
+        server.tools
+          .filter(({ tool }) => !OWNER_CLI_TOOL_NAMES.has(tool.name))
+          .map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
       () => server.notifications["notifications/tools/list_changed"]({}),
     );
   }),
