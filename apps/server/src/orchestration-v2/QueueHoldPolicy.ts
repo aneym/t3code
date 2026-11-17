@@ -21,7 +21,7 @@ const WAKEABLE_FAILURES: ReadonlySet<OrchestrationV2ProviderFailureClass> = new 
   "transport_error",
 ]);
 
-export function clearQueueHold(run: OrchestrationV2Run): OrchestrationV2Run {
+function clearQueueHold(run: OrchestrationV2Run): OrchestrationV2Run {
   const {
     queueHoldReason: _reason,
     queueHeldAt: _heldAt,
@@ -148,9 +148,9 @@ export function releasesStopHoldOf(heldByThreadId: OrchestrationV2Run["queueHeld
 
 export function recoveryQueueHold(
   run: OrchestrationV2Run,
-  trigger: "startup" | "shutdown",
+  holdForRestart: boolean,
 ): OrchestrationV2Run | undefined {
-  if (trigger === "startup") {
+  if (!holdForRestart) {
     return canReleaseQueueHold(run, "restart") ? clearQueueHold(run) : undefined;
   }
   return run.queueHeld === true
@@ -243,12 +243,20 @@ export function queueReleaseEvents(
           payload: projection.thread,
         },
       ]
-    : queued.filter(release).map((run) => ({
-        type: "run.updated" as const,
-        threadId: projection.thread.id,
-        runId: run.id,
-        providerInstanceId: run.providerInstanceId,
-        occurredAt: now,
-        payload: clearQueueHold(run),
-      }));
+    : clearQueueHoldEvents(projection.thread.id, queued.filter(release), now);
+}
+
+export function clearQueueHoldEvents(
+  threadId: OrchestrationV2Run["threadId"],
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  now: DateTime.Utc,
+) {
+  return runs.map((run) => ({
+    type: "run.updated" as const,
+    threadId,
+    runId: run.id,
+    providerInstanceId: run.providerInstanceId,
+    occurredAt: now,
+    payload: clearQueueHold(run),
+  }));
 }

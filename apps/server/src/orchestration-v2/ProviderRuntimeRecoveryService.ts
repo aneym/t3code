@@ -23,7 +23,11 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { restartContinuationRun } from "./RestartContinuation.ts";
+import { restartContinuationRun, sessionsLiveAtStart } from "./RestartContinuation.ts";
+import {
+  latestRunAwaitsRestartContinuation,
+  restartContinuationEffectId,
+} from "./RestartContinuationEffect.ts";
 import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
 import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { recoveryQueueHold } from "./QueueHoldPolicy.ts";
@@ -198,20 +202,6 @@ export const make = Effect.gen(function* () {
   const ids = yield* IdAllocator.IdAllocatorV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   type RecoverySession = ProjectionStore.ProjectionRuntimeRecoveryState["providerSessions"][number];
-  const sessionsLiveAtStart = (
-    projection: ProjectionStore.ProjectionRuntimeRecoveryState,
-    stoppedThisPass: ReadonlyMap<string, RecoverySession>,
-  ) => {
-    const sessions = new Map(projection.providerSessions.map((session) => [session.id, session]));
-    for (const providerThread of projection.providerThreads) {
-      const stopped =
-        providerThread.providerSessionId === null
-          ? undefined
-          : stoppedThisPass.get(providerThread.providerSessionId);
-      if (stopped !== undefined) sessions.set(stopped.id, stopped);
-    }
-    return [...sessions.values()];
-  };
 
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
     function* (
@@ -424,10 +414,27 @@ export const make = Effect.gen(function* () {
         });
       }
       runs = runs.filter((run) => !retryableRunIds.has(run.id));
+      const continuationRun =
+        continueAfterRestart && trigger === "startup"
+          ? restartContinuationRun(
+              { ...projection, providerSessions: sessionsLiveAtStart(projection, stoppedThisPass) },
+              now,
+            )
+          : undefined;
       const heldRuns = [
         ...retryableRuns,
         ...queuedRunsInDeliveryOrder({ runs: queuedRuns, messages: queuedMessages }),
       ];
+      const continuing =
+        continuationRun !== undefined ||
+        (trigger === "startup" &&
+          heldRuns.length > 0 &&
+          (yield* latestRunAwaitsRestartContinuation(
+            projections,
+            outbox,
+            projection.thread.id,
+            new Set(heldRuns.map((run) => run.id)),
+          )));
       for (const [index, run] of heldRuns.entries()) {
         if (bufferedMessageIds.has(run.userMessageId)) {
           runs.push(run);
@@ -435,7 +442,7 @@ export const make = Effect.gen(function* () {
         }
         const recovered =
           retryableRuns.length === 0
-            ? recoveryQueueHold(run, trigger)
+            ? recoveryQueueHold(run, trigger === "shutdown" || continuing)
             : {
                 ...run,
                 queueHeld: true,
@@ -847,17 +854,10 @@ export const make = Effect.gen(function* () {
           },
         });
       }
-      const continuationRun =
-        continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(
-              { ...projection, providerSessions: sessionsLiveAtStart(projection, stoppedThisPass) },
-              now,
-            )
-          : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
             {
-              id: `effect:restart-continuation:${continuationRun.id}`,
+              id: restartContinuationEffectId(continuationRun.id),
               commandId,
               threadId: projection.thread.id,
               request: { type: "provider-runtime.continue", sourceRunId: continuationRun.id },
@@ -1032,7 +1032,7 @@ export const make = Effect.gen(function* () {
             events: [],
             effects: [
               {
-                id: `effect:restart-continuation:${run.id}`,
+                id: restartContinuationEffectId(run.id),
                 commandId,
                 threadId,
                 request: { type: "provider-runtime.continue", sourceRunId: run.id },

@@ -16,7 +16,7 @@ import {
 import {
   blockedQueueHold,
   canReleaseQueueHold,
-  clearQueueHold,
+  clearQueueHoldEvents,
   queueBlock,
   queueReleaseEvents,
   inheritedQueueHold,
@@ -26,6 +26,10 @@ import {
   usageLimitHoldsQueue,
   worktreeSetupPending,
 } from "./QueueHoldPolicy.ts";
+import {
+  restartContinuationEffectId,
+  restartContinuationEffectPending,
+} from "./RestartContinuationEffect.ts";
 import type {
   OrchestrationV2ThreadLinkMetadata,
   GuestShareId,
@@ -1959,19 +1963,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               view,
             ),
         );
-        if (held.length > 0) {
-          const now = yield* DateTime.now;
-          yield* writeSystemEvents(
-            held.map((run) => ({
-              type: "run.updated" as const,
-              threadId,
-              runId: run.id,
-              providerInstanceId: run.providerInstanceId,
-              occurredAt: now,
-              payload: clearQueueHold(run),
-            })),
-          );
-        }
+        if (held.length > 0)
+          yield* writeSystemEvents(clearQueueHoldEvents(threadId, held, yield* DateTime.now));
       }
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
       let projection = yield* readCommandProjection(threadId);
@@ -2836,7 +2829,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       [],
       [
         {
-          id: `effect:restart-continuation:${run.id}`,
+          id: restartContinuationEffectId(run.id),
           commandId,
           threadId,
           request: { type: "provider-runtime.continue", sourceRunId: run.id },
@@ -2875,19 +2868,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .filter((message) => message.createdBy !== "user" || message.scheduledTaskId !== undefined)
         .map((message) => message.id),
     );
-    const now = yield* DateTime.now;
     const released = held.filter((run) => unattended.has(run.userMessageId));
     if (released.length === 0) return;
-    yield* writeSystemEvents(
-      released.map((run) => ({
-        type: "run.updated" as const,
-        threadId,
-        runId: run.id,
-        providerInstanceId: run.providerInstanceId,
-        occurredAt: now,
-        payload: clearQueueHold(run),
-      })),
+    yield* writeSystemEvents(clearQueueHoldEvents(threadId, released, yield* DateTime.now));
+  });
+
+  const releaseRestartHolds = Effect.fn("Orchestrator.releaseRestartHolds")(function* (
+    threadId: ThreadId,
+  ) {
+    const held = (yield* projectionStore.getHeldQueuedRuns(threadId)).filter((run) =>
+      canReleaseQueueHold(run, "restart"),
     );
+    if (held.length === 0) return;
+    yield* writeSystemEvents(clearQueueHoldEvents(threadId, held, yield* DateTime.now));
+    yield* startNextQueuedRun(threadId);
   });
 
   const resumeQueuedRuns = Effect.gen(function* () {
@@ -6971,19 +6965,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? projection.runs.filter((run) => canReleaseQueueHold(run, "client"))
         : [];
     const releasedAt = yield* DateTime.now;
-    for (const held of heldRunsToRelease) {
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "run.updated",
-        threadId: command.threadId,
-        runId: held.id,
-        providerInstanceId: held.providerInstanceId,
-        occurredAt: releasedAt,
-        payload: clearQueueHold(held),
-      });
-    }
+    for (const event of clearQueueHoldEvents(command.threadId, heldRunsToRelease, releasedAt))
+      yield* emit(events, command)(event);
     if (shouldQueue) {
       if (pendingMergeBackTransfers.length > 0) {
         return yield* new OrchestratorDispatchError({
@@ -11528,17 +11511,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: { ...state.run, status: "preparing", completedAt: null },
     });
     const failureOwnsQueue = latestExecutedRun(projection.runs)?.id === state.run.id;
-    for (const run of projection.runs) {
-      if (!failureOwnsQueue || !canReleaseQueueHold(run, "preparation")) continue;
-      yield* emitEvent({
-        type: "run.updated",
-        threadId: command.threadId,
-        runId: run.id,
-        providerInstanceId: run.providerInstanceId,
-        occurredAt: now,
-        payload: clearQueueHold(run),
-      });
-    }
+    const released = failureOwnsQueue
+      ? projection.runs.filter((run) => canReleaseQueueHold(run, "preparation"))
+      : [];
+    for (const event of clearQueueHoldEvents(command.threadId, released, now))
+      yield* emitEvent(event);
   });
 
   const settleBackgroundWork = Effect.fn("Orchestrator.settleBackgroundWork")(function* (input: {
@@ -13420,13 +13397,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   const awaitsRestartContinuation = (run: OrchestrationV2Run) =>
-    effectOutbox
-      .get(`effect:restart-continuation:${run.id}`)
-      .pipe(
-        Effect.map(
-          Option.exists((effect) => effect.status === "pending" || effect.status === "running"),
-        ),
-      );
+    restartContinuationEffectPending(effectOutbox, run.id);
 
   const childAwaitsRestartContinuation = (
     runs: ReadonlyArray<OrchestrationV2Run>,
@@ -15379,6 +15350,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       }
       const sourceRunId = options?.sourceRunId;
+      if (sourceRunId !== undefined)
+        yield* threadDispatch.withLock(threadId, releaseRestartHolds(threadId));
       const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
       if (parentThreadId === undefined) return;
       if (
@@ -15492,7 +15465,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     ),
     awaitRestartContinuation: Effect.fn("OrchestratorV2.awaitRestartContinuation")(function (run) {
-      return effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`).pipe(Effect.ignore);
+      return effectOutbox.awaitSettled(restartContinuationEffectId(run.id)).pipe(Effect.ignore);
     }),
     dispatch: dispatchWithReceipt,
     autoArmLimitRecovery: Effect.fn("OrchestratorV2.autoArmLimitRecovery")(function (input) {
