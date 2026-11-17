@@ -347,9 +347,6 @@ const USER_INPUT_TOGGLE_TIMING = {
   easing: Easing.out(Easing.cubic),
 };
 
-// A scheduled wake can happen without a newer server update, so the tracker
-// is told when one takes effect. The shell's updatedAt ticks while a run
-// streams; the tracker follows it outside React.
 const wakeAwareVisitShell = Atom.family((key: string) => {
   const ref = parseThreadKey(key);
   return Atom.make((get) => {
@@ -1479,6 +1476,7 @@ function ThreadDetailBody(
                   hideTrailingStageLine={hideTrailingStageLine}
                   environmentId={props.environmentId}
                   threadId={props.selectedThread.id}
+                  historyTrimmedAt={props.selectedThread.historyTrimmedAt}
                   detailRef={props.selectedThreadDetailRef}
                   workspaceRoot={props.threadCwd}
                   feed={props.selectedThreadFeed}

@@ -67,6 +67,9 @@ export const StorageCleanupSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   logsAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  archivedHistoryAfterDays: StorageRetentionDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
@@ -74,6 +77,7 @@ export const StorageCleanupSettingsPatch = Schema.Struct({
   ...WorktreeCleanupRulesPatchFields,
   browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
   logsAfterDays: Schema.optionalKey(StorageRetentionDays),
+  archivedHistoryAfterDays: Schema.optionalKey(StorageRetentionDays),
 });
 
 export function storageCleanupWorktreeRules(

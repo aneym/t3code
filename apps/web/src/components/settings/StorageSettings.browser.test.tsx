@@ -106,6 +106,7 @@ function setup() {
       worktreeLandedAfterDays: null,
       worktreeOnMerge: false,
       worktreeOnDelete: false,
+      archivedHistoryAfterDays: null,
       worktreeUnchanged: false,
       browserArtifactsAfterDays: null,
       logsAfterDays: null,

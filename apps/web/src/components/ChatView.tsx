@@ -582,8 +582,6 @@ export default function ChatView(props: ChatViewProps) {
   const clientSettingsHydrated = useClientSettingsHydrated();
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
-  // Selects primitives: an object here is new on every router store update, which
-  // re-renders ChatView on unrelated navigation state changes.
   const citationHref = useLocation({ select: (location) => location.href });
   const citationKey = useLocation({
     select: (location) => location.state.assistantCitationActivation ?? location.state.__TSR_key,
@@ -1017,17 +1015,16 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef?.environmentId ?? null,
   );
   const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
-  const activeThreadShell = serverThread;
   const limitRecoveryRun =
     serverRuntime?.status === "failed" && serverRuntime.lastErrorClass === "usage_limit"
-      ? (activeThreadShell?.latestRun ?? null)
+      ? (serverThread?.latestRun ?? null)
       : null;
   // The recovery banner offers Wake now for a snooze it set.
   const limitRecoveryHoldsSnooze = limitRecoveryOwnsSnooze({
     runId: limitRecoveryRun?.runId,
     resetAt: serverRuntime?.usageLimitResetAt,
-    recovery: activeThreadShell?.limitRecovery,
-    snoozedUntil: activeThreadShell?.snoozedUntil,
+    recovery: serverThread?.limitRecovery,
+    snoozedUntil: serverThread?.snoozedUntil,
   });
   const timelineThreadError =
     limitRecoveryRun !== null && visibleThreadError === serverRuntime?.lastError
@@ -1974,7 +1971,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const supportsThreadPullRequests = serverConfig !== null;
   const visiblePullRequests = visibleThreadPullRequests(
-    (activeThreadShell ?? activeThread)?.pullRequests ?? [],
+    (serverThread ?? activeThread)?.pullRequests ?? [],
   );
   const visiblePullRequestCount = visiblePullRequests.length;
   const pullRequestsSurfaceAvailable =
@@ -1995,7 +1992,7 @@ export default function ChatView(props: ChatViewProps) {
     serverThreadRef: isServerThread ? activeThreadRef : null,
     environmentId: activeThreadRef?.environmentId ?? null,
     persisted: isServerThread
-      ? (activeThreadShell?.linkedPullRequest ?? activeThread?.linkedPullRequest ?? null)
+      ? (serverThread?.linkedPullRequest ?? activeThread?.linkedPullRequest ?? null)
       : (activeThread?.linkedPullRequest ?? null),
     projectId: activeProject?.id ?? null,
     projectRepository: activeProjectRepository,
@@ -2362,7 +2359,7 @@ export default function ChatView(props: ChatViewProps) {
         projectId: activeThread.projectId,
         pullRequests: visiblePullRequests,
         linkedPullRequest: linkedThreadPullRequest,
-        branchPullRequest: activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
+        branchPullRequest: serverThread?.branchPullRequest ?? activeThread.branchPullRequest,
       })
     : null;
   const {
@@ -2439,7 +2436,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef,
     threadDetailRef: routeThreadDetailRef,
     activeThreadKey,
-    activeThreadShell,
+    activeThreadShell: serverThread,
     activeLatestRun,
     limitRecoveryHoldsSnooze,
     activeProjectCwd,
@@ -2563,21 +2560,21 @@ export default function ChatView(props: ChatViewProps) {
     return item ? [item] : [];
   });
   const limitRecoveryBanner =
-    limitRecoveryRun !== null && activeThreadShell !== null
+    limitRecoveryRun !== null && serverThread !== null
       ? usageLimitRecoveryBannerItem({
           runId: limitRecoveryRun.runId,
           errorCode: serverRuntime?.lastErrorCode ?? null,
           resetAt: serverRuntime?.usageLimitResetAt ?? null,
-          stoppedAt: limitRecoveryRun.completedAt ?? activeThreadShell.updatedAt,
-          settled: activeThreadShell.settledOverride === "settled",
+          stoppedAt: limitRecoveryRun.completedAt ?? serverThread.updatedAt,
+          settled: serverThread.settledOverride === "settled",
           requestPending: pendingApprovals.length > 0 || pendingUserInputs.length > 0,
-          recovery: activeThreadShell.limitRecovery ?? null,
-          snoozedUntil: activeThreadShell.snoozedUntil,
+          recovery: serverThread.limitRecovery ?? null,
+          snoozedUntil: serverThread.snoozedUntil,
           timestampFormat,
           onChange: async (limitRecovery) => {
             const result = await updateThreadMetadata({
               environmentId,
-              input: { threadId: activeThreadShell.id, limitRecovery },
+              input: { threadId: serverThread.id, limitRecovery },
             });
             if (result._tag === "Failure") throw squashAtomCommandFailure(result);
           },
@@ -3233,7 +3230,7 @@ export default function ChatView(props: ChatViewProps) {
         projectId: activeThread.projectId,
         pullRequests: visiblePullRequests,
         linkedPullRequest: linkedThreadPullRequest,
-        branchPullRequest: activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
+        branchPullRequest: serverThread?.branchPullRequest ?? activeThread.branchPullRequest,
         onBack:
           pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
             ? addPullRequestsSurfaceStable
@@ -3341,8 +3338,9 @@ export default function ChatView(props: ChatViewProps) {
               activeThreadId={activeThread.id}
               isServerThread={isServerThread}
               activeThreadTitle={activeThread.title}
-              activeThreadLinkOrigin={activeThreadShell?.linkOrigin?.label ?? null}
-              taskCancel={activeThreadShell?.taskCancel ?? null}
+              activeThreadLinkOrigin={serverThread?.linkOrigin?.label ?? null}
+              taskCancel={serverThread?.taskCancel}
+              firstTaskCancel={serverThread?.firstTaskCancel}
               activeProject={activeProject ?? null}
               parentThreadLink={headerParentThreadLink}
               onOpenThread={onOpenRelatedThreadStable}
@@ -3426,7 +3424,7 @@ export default function ChatView(props: ChatViewProps) {
                       ? "approval"
                       : activePendingUserInput !== null ||
                           // A secret request has no runtime request; the shell carries it.
-                          activeThreadShell?.hasPendingUserInput === true
+                          serverThread?.hasPendingUserInput === true
                         ? "input"
                         : null
                   }
@@ -3451,7 +3449,7 @@ export default function ChatView(props: ChatViewProps) {
                   announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
                   detailBehindShell={isDetailBehindShell(
                     activeLatestRun,
-                    activeThreadShell?.latestRun ?? null,
+                    serverThread?.latestRun ?? null,
                   )}
                   runningRunId={activeRunningTurnId}
                   turnDiffSummaries={turnDiffSummaries}
@@ -3498,6 +3496,7 @@ export default function ChatView(props: ChatViewProps) {
                   {...(threadHistoryControls === undefined
                     ? {}
                     : { historyControls: threadHistoryControls })}
+                  historyTrimmedAt={serverThread?.historyTrimmedAt}
                 />
               </WorkspaceMutationIdContext>
 
@@ -3703,9 +3702,7 @@ export default function ChatView(props: ChatViewProps) {
                                 pullRequestRepository={
                                   supportsPullRequests ? activeProjectRepository : null
                                 }
-                                threadPullRequests={
-                                  (activeThreadShell ?? activeThread)?.pullRequests
-                                }
+                                threadPullRequests={(serverThread ?? activeThread)?.pullRequests}
                                 onComposerOverlayHeightChange={publishComposerOverlayHeightStable}
                                 permissionsShownInStrip={
                                   showComposerContextStrip && !isServerThread

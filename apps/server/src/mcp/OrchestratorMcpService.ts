@@ -1,4 +1,5 @@
 import { threadSettlement } from "./threadSettlement.ts";
+import { threadHistoryTrim } from "./threadHistoryTrim.ts";
 import { listedThreadStatus, listThreadPage } from "./ThreadListPage.ts";
 import {
   messageSender,
@@ -147,9 +148,9 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import { resolveDelegatedTaskWorkspace } from "./delegatedTaskWorkspace.ts";
-import { runExecutedModel, threadRun } from "./threadRunSummary.ts";
+import { recentThreadRuns, runExecutedModel } from "./threadRunSummary.ts";
 import { recordTaskCancelAndStop } from "./taskCancelStop.ts";
-import { delegatedTaskFields } from "../orchestration-v2/TaskCancel.ts";
+import { cancelledThreadStatus, delegatedTaskFields } from "../orchestration-v2/TaskCancel.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 // Nothing is written while a task wait blocks, and Node fetch drops a silent call at 300 s.
@@ -710,7 +711,7 @@ function threadDetail(
     link: threadLinkFor(scope, projection.thread.id, projection.thread.title),
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
-    status: active?.status ?? latest?.status ?? "idle",
+    status: cancelledThreadStatus(projection.thread, active?.status ?? latest?.status ?? "idle"),
     latestRunId: latest?.id ?? null,
     activeRunId: active?.id ?? null,
     providerInstanceId: projection.thread.modelSelection.instanceId,
@@ -747,6 +748,7 @@ function threadDetail(
     awaitedBackgroundTaskCount:
       shell.pendingBackgroundTasks?.filter((task) => task.awaited === true).length ?? 0,
     archived: projection.thread.archivedAt !== null,
+    ...threadHistoryTrim(projection.thread),
     ...threadSettlement(projection.thread),
     ...threadSnooze(shell, nowMs),
     ...threadBackgroundWork(shell),
@@ -2892,10 +2894,7 @@ const make = Effect.gen(function* () {
           input.beforePosition === undefined &&
           input.itemId === undefined,
       );
-      const recentRuns = target.runs
-        .toSorted((left, right) => right.ordinal - left.ordinal)
-        .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
-        .map((run) => threadRun(run, target.providerTurns));
+      const recentRuns = recentThreadRuns(target, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT);
       const { items, start } = timelineItemsWithinBudget(
         { thread, recentRuns, nextPosition: null, hasMore: false, earlierPosition: null },
         timeline.items.map((row) => ({

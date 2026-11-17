@@ -282,6 +282,7 @@ import { ZoomableImagePressable } from "./ZoomableImagePressable";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { formatMessageTimestamp } from "./messageTimestamp";
+import { TrimmedHistoryNotice } from "./TrimmedHistoryNotice";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // iOS blockquotes and selectable text measure separately; definite bubble width matches UIKit's drawing width.
@@ -294,7 +295,6 @@ const FEED_PADDING_TOP = 12;
 const VIEWED_IMAGE_GAP = 8;
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
 const ASSISTANT_ROW_HORIZONTAL_PADDING = 3.5;
-// Virtualization remounts old rows; only newly created content should replay an entrance.
 const FRESH_ENTRY_WINDOW_MS = 3_000;
 function isFreshTimestamp(input: string): boolean {
   const timestamp = Date.parse(input);
@@ -342,6 +342,7 @@ export interface ThreadFeedProps {
   readonly fitShortFeedToViewport?: boolean;
   readonly contentBottomInset?: number;
   readonly historyControls?: ThreadFeedHistoryControls;
+  readonly historyTrimmedAt?: string | null | undefined;
   readonly contentMaxWidth?: number;
   readonly contentSideInsets?: { readonly left: number; readonly right: number };
   readonly layoutVariant?: LayoutVariant;
@@ -1052,7 +1053,6 @@ function MessageAttachmentUnknown(props: { readonly name: string }) {
   );
 }
 
-// LegendList only computes hook visibility when the list has a viewability config.
 const THREAD_MEDIA_VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 0 };
 
 // The composer and overlays beside the feed keep UIKit from finding it on its own, so
@@ -2573,8 +2573,6 @@ function ThreadFeedPlaceholder(props: {
   );
 }
 
-// A hook's return value is frozen to the compiler, so ThreadFeed's later
-// hooks can't drag this derivation into an uncached scope.
 function useThreadFeedPresentation(
   props: ThreadFeedProps,
   expandedTurnIds: ReadonlySet<RunId>,
@@ -3812,6 +3810,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
                 {setupAnchorIndex < 0 && props.worktreeSetup ? (
                   <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
+                ) : null}
+                {props.historyTrimmedAt ? (
+                  <TrimmedHistoryNotice trimmedAt={props.historyTrimmedAt} />
                 ) : null}
                 {props.historyControls ? (
                   <ThreadFeedLoadEarlierControl {...props.historyControls} />

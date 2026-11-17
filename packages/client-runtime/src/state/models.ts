@@ -159,6 +159,7 @@ export interface EnvironmentThreadShell {
   /** The thread in a linked environment that delegated this one, if one did. */
   readonly delegatedFrom: OrchestrationV2ThreadShell["delegatedFrom"] | null;
   readonly taskCancel?: OrchestrationV2ThreadShell["taskCancel"];
+  readonly firstTaskCancel?: OrchestrationV2ThreadShell["firstTaskCancel"];
   readonly activeProviderThreadId: OrchestrationV2ThreadShell["activeProviderThreadId"];
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
@@ -189,6 +190,7 @@ export interface EnvironmentThreadShell {
   readonly snoozedAt: string | null;
   readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecovery | null;
   readonly pinnedAt: string | null;
+  readonly historyTrimmedAt?: string | null;
   readonly autoSettleDisabledAt?: string | null;
   readonly pinOrderKey: string | null;
   readonly activeOrderKey: string | null;
@@ -314,6 +316,7 @@ export function presentThreadShell(
     linkOrigin: thread.linkOrigin ?? null,
     delegatedFrom: thread.delegatedFrom ?? null,
     taskCancel: thread.taskCancel ?? null,
+    ...(thread.firstTaskCancel === undefined ? {} : { firstTaskCancel: thread.firstTaskCancel }),
     activeProviderThreadId: thread.activeProviderThreadId,
     latestRun,
     runtime,
@@ -350,6 +353,7 @@ export function presentThreadShell(
     snoozedAt: nullableIso(thread.snoozedAt ?? null),
     limitRecovery: thread.limitRecovery ?? null,
     pinnedAt: nullableIso(thread.pinnedAt ?? null),
+    historyTrimmedAt: nullableIso(thread.historyTrimmedAt ?? null),
     autoSettleDisabledAt: nullableIso(thread.autoSettleDisabledAt ?? null),
     pinOrderKey: thread.pinOrderKey ?? null,
     activeOrderKey: thread.activeOrderKey ?? null,

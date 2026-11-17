@@ -29,6 +29,7 @@ import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayo
 import { DatabaseStorageNotice } from "./DatabaseStorageNotice";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { RetentionControl } from "./RetentionControl";
+import { ArchivedHistoryRetentionRow } from "./ArchivedHistoryRetentionRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { SettingsGroup } from "./SettingsGroup";
@@ -373,7 +374,6 @@ function supportsStorageCleanup(
   );
 }
 
-/** Narrows a mixed selection to the machines that support cleanup. */
 function StorageCleanupScopeNotice() {
   const { connectedEnvironments } = useSettingsScope();
   return (
@@ -671,7 +671,6 @@ export function WorktreeCleanupSection() {
   );
 }
 
-/** Retention for logs and captures, and the manual cleanup run, which covers worktrees too. */
 export function StorageCleanupSections() {
   const { scope, connectedEnvironments, targets } = useSettingsScope();
   const scopedSettings = useScopedSettings();
@@ -760,6 +759,7 @@ export function StorageCleanupSections() {
             }
           />
         </AnimatedHeight>
+        <ArchivedHistoryRetentionRow />
       </SettingsSection>
       <CleanupSection />
     </>

@@ -233,6 +233,11 @@ function ArchivedThreadRow(props: {
             </Text>
           </View>
         ) : null}
+        {props.thread.historyTrimmedAt ? (
+          <Text className="text-2xs text-foreground-tertiary" numberOfLines={1}>
+            History trimmed <RelativeTime timestamp={props.thread.historyTrimmedAt} />
+          </Text>
+        ) : null}
       </View>
     </View>
   );
