@@ -29,7 +29,7 @@ const layerHost = Layer.mergeAll(
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 it.effect(
-  "--fix locks the home while the service is paused, names a server that holds it, keeps the V1 database, and --dry-run changes nothing",
+  "--fix locks the home while the service is paused, refuses to inspect a home a server holds, keeps the V1 database, and --dry-run changes nothing",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -113,7 +113,7 @@ it.effect(
         refused.message,
         `Stop T3 Code server process ${state.pid}, which the background service did not start, before repairing the database.`,
       );
-      assert.deepEqual(calls, ["pause", "resume"]);
+      assert.deepEqual(calls, []);
     }).pipe(Effect.provide(layerHost)),
 );
 

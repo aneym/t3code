@@ -6,6 +6,7 @@ import {
   PeerLink,
   PeerLinkCreateInput,
   PeerLinkError,
+  PeerLinkListResult,
   PeerLinkPairClientInput,
   PeerLinkPairClientResult,
   PeerLinkRemoveInput,
@@ -13,7 +14,6 @@ import {
   PeerLinkRenewInput,
   PeerLinkRequestAnswerInput,
   PeerLinkRequestError,
-  PeerLinkSummary,
 } from "./peerLink.ts";
 
 export const PEER_LINK_WS_METHODS = {
@@ -30,7 +30,7 @@ const PeerLinkRpcError = Schema.Union([PeerLinkError, EnvironmentAuthorizationEr
 export const PeerLinkRpcs = [
   Rpc.make(PEER_LINK_WS_METHODS.peerLinksList, {
     payload: Schema.Struct({}),
-    success: Schema.Struct({ links: Schema.Array(PeerLinkSummary) }),
+    success: PeerLinkListResult,
     error: PeerLinkRpcError,
   }),
   Rpc.make(PEER_LINK_WS_METHODS.peerLinksLink, {

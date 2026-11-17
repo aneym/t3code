@@ -1,26 +1,18 @@
 import {
-  AuthChatThreadsScope,
   AuthSessionId,
   AuthStandardClientScopes,
-  ChatSessionThreadIds,
-  chatSessionSubject,
   ServerAuthIssuedSession,
+  ServerAuthPairingLink,
+  ServerAuthPairingList,
   ServerAuthSessionList,
   ServerAuthSessionRevokeResult,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as References from "effect/References";
 import * as Schema from "effect/Schema";
-import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
-import type * as SecureRandom from "effect/crypto/SecureRandom";
-import type * as SqlClient from "effect/sql/SqlClient";
-
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as ChatThreadSets from "../chatSession/ChatThreadSets.ts";
+import { Argument, Command, Flag } from "effect/cli";
 
 import {
   formatIssuedPairingCredential,
@@ -28,14 +20,8 @@ import {
   formatPairingCredentialList,
   formatSessionList,
 } from "../cliAuthFormat.ts";
-import * as ServerConfig from "../config.ts";
 import { authScopesFlag } from "./authScopes.ts";
-import {
-  authLocationFlags,
-  type CliAuthLocationFlags,
-  DurationFromString,
-  resolveCliAuthConfig,
-} from "./config.ts";
+import { authLocationFlags, DurationFromString } from "./config.ts";
 import {
   McpServerNotRunningError,
   McpServerUnreachableError,
@@ -43,31 +29,6 @@ import {
   reportCliErrors,
   withOwnerMcpTools,
 } from "./ownerMcpTools.ts";
-
-const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E>(
-  flags: CliAuthLocationFlags,
-  run: (
-    environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
-  ) => Effect.Effect<A, E, SqlClient.SqlClient | SecureRandom.SecureRandom>,
-  options?: {
-    readonly quietLogs?: boolean;
-  },
-) {
-  const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel, options);
-  const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
-  return yield* Effect.gen(function* () {
-    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    return yield* run(environmentAuth);
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
-        Layer.provide(ServerConfig.layer(config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
-      ),
-    ),
-  );
-});
 
 const ttlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),
@@ -111,20 +72,25 @@ const chatThreadFlag = Flag.String("chat-thread").pipe(
   Flag.atLeast(0),
 );
 
-const decodeChatThreadIds = Schema.decodeEffect(ChatSessionThreadIds);
-
-const chatPairingTarget = Effect.fn("auth.chatPairingTarget")(function* (
-  threadIds: ReadonlyArray<string>,
-) {
-  const ids = yield* decodeChatThreadIds(threadIds);
-  const setId = yield* (yield* ChatThreadSets.ChatThreadSets).create(ids);
-  return { scopes: [AuthChatThreadsScope], subject: chatSessionSubject(setId) };
-});
-
 const tokenOnlyFlag = Flag.Boolean("token-only").pipe(
   Flag.withDescription("Print only the issued bearer token."),
   Flag.withDefault(false),
 );
+
+const reportSessionErrors = reportCliErrors(
+  Schema.is(
+    Schema.Union([McpServerNotRunningError, McpServerUnreachableError, McpToolFailedError]),
+  ),
+);
+
+const ttlArgument = (ttl: Option.Option<Duration.Duration>) =>
+  Option.match(ttl, {
+    onNone: () => ({}),
+    onSome: (value) => ({ ttlMs: Math.max(1, Math.round(Duration.toMillis(value))) }),
+  });
+
+const PairingLinkJson = Schema.toCodecJson(ServerAuthPairingLink);
+const PairingListJson = Schema.toCodecJson(ServerAuthPairingList);
 
 const pairingCreateCommand = Command.make("create", {
   ...authLocationFlags,
@@ -135,33 +101,30 @@ const pairingCreateCommand = Command.make("create", {
   baseUrl: baseUrlFlag,
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("Issue a new client pairing token."),
+  Command.withDescription("Have the running server issue a new client pairing token."),
   Command.withHandler((flags) =>
-    runWithEnvironmentAuth(
-      flags,
-      (environmentAuth) =>
-        Effect.gen(function* () {
-          const target =
-            flags.chatThreads.length > 0
-              ? yield* chatPairingTarget(flags.chatThreads).pipe(
-                  Effect.provide(ChatThreadSets.layer),
-                )
-              : { scopes: flags.scopes, subject: "one-time-token" };
-          const issued = yield* environmentAuth.createPairingLink({
-            ...target,
-            ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
+    withOwnerMcpTools(
+      "auth",
+      { ...flags, quietLogs: flags.json },
+      Effect.fn("cli.auth.pairing.create")(function* (tools) {
+        const issued = yield* tools.call(
+          "t3_auth_pairing_create",
+          {
+            scopes: flags.scopes,
+            ...(flags.chatThreads.length > 0 ? { chatThreadIds: flags.chatThreads } : {}),
+            ...ttlArgument(flags.ttl),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
-          });
-          const output = formatIssuedPairingCredential(issued, {
+          },
+          PairingLinkJson,
+        );
+        yield* Console.log(
+          formatIssuedPairingCredential(issued, {
             json: flags.json,
             ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value.href } : {}),
-          });
-          yield* Console.log(output);
-        }),
-      {
-        quietLogs: flags.json,
-      },
-    ),
+          }),
+        );
+      }),
+    ).pipe(reportSessionErrors),
   ),
 );
 
@@ -169,21 +132,18 @@ const pairingListCommand = Command.make("list", {
   ...authLocationFlags,
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("List active client pairing tokens without revealing their secrets."),
+  Command.withDescription(
+    "List the running server's active client pairing tokens without revealing their secrets.",
+  ),
   Command.withHandler((flags) =>
-    runWithEnvironmentAuth(
-      flags,
-      (environmentAuth) =>
-        Effect.gen(function* () {
-          const pairingLinks = yield* environmentAuth.listPairingLinks({
-            excludeSubjects: [EnvironmentAuth.INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT],
-          });
-          yield* Console.log(formatPairingCredentialList(pairingLinks, { json: flags.json }));
-        }),
-      {
-        quietLogs: flags.json,
-      },
-    ),
+    withOwnerMcpTools(
+      "auth",
+      { ...flags, quietLogs: flags.json },
+      Effect.fn("cli.auth.pairing.list")(function* (tools) {
+        const { pairingLinks } = yield* tools.call("t3_auth_pairing_list", {}, PairingListJson);
+        yield* Console.log(formatPairingCredentialList(pairingLinks, { json: flags.json }));
+      }),
+    ).pipe(reportSessionErrors),
   ),
 );
 
@@ -191,18 +151,24 @@ const pairingRevokeCommand = Command.make("revoke", {
   ...authLocationFlags,
   id: Argument.String("id").pipe(Argument.withDescription("Pairing credential id to revoke.")),
 }).pipe(
-  Command.withDescription("Revoke an active client pairing token."),
+  Command.withDescription("Have the running server revoke an active client pairing token."),
   Command.withHandler((flags) =>
-    runWithEnvironmentAuth(flags, (environmentAuth) =>
-      Effect.gen(function* () {
-        const revoked = yield* environmentAuth.revokePairingLink(flags.id);
+    withOwnerMcpTools(
+      "auth",
+      flags,
+      Effect.fn("cli.auth.pairing.revoke")(function* (tools) {
+        const { revoked } = yield* tools.call(
+          "t3_auth_pairing_revoke",
+          { id: flags.id },
+          ServerAuthSessionRevokeResult,
+        );
         yield* Console.log(
           revoked
             ? `Revoked pairing credential ${flags.id}.\n`
             : `No active pairing credential found for ${flags.id}.\n`,
         );
       }),
-    ),
+    ).pipe(reportSessionErrors),
   ),
 );
 
@@ -213,12 +179,6 @@ const pairingCommand = Command.make("pairing").pipe(
 
 const IssuedSessionJson = Schema.toCodecJson(ServerAuthIssuedSession);
 const SessionListJson = Schema.toCodecJson(ServerAuthSessionList);
-
-const reportSessionErrors = reportCliErrors(
-  Schema.is(
-    Schema.Union([McpServerNotRunningError, McpServerUnreachableError, McpToolFailedError]),
-  ),
-);
 
 const sessionIssueCommand = Command.make("issue", {
   ...authLocationFlags,
@@ -241,10 +201,7 @@ const sessionIssueCommand = Command.make("issue", {
           "t3_auth_session_issue",
           {
             scopes: flags.scopes,
-            ...Option.match(flags.ttl, {
-              onNone: () => ({}),
-              onSome: (ttl) => ({ ttlMs: Math.max(1, Math.round(Duration.toMillis(ttl))) }),
-            }),
+            ...ttlArgument(flags.ttl),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
             ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),
           },

@@ -34,6 +34,7 @@ const make = Effect.gen(function* () {
     FileSystem.FileSystem | Path.Path | SecureRandom.SecureRandom
   >();
   const lock = yield* Semaphore.make(1);
+  let published = Option.none<OwnerCliCredential["sessionId"]>();
 
   const isValid = Effect.fn("OwnerCliCredentialPublisher.isValid")(function* (
     credential: Option.Option<OwnerCliCredential>,
@@ -49,7 +50,14 @@ const make = Effect.gen(function* () {
 
   const publish = Effect.gen(function* () {
     const current = yield* readOwnerCliCredential(config.secretsDir);
-    if (yield* isValid(current)) return;
+    const replaced = Option.orElse(
+      Option.map(current, (credential) => credential.sessionId),
+      () => published,
+    );
+    if (yield* isValid(current)) {
+      published = Option.map(current, (credential) => credential.sessionId);
+      return;
+    }
     const issued = yield* auth.issueMcpClientSession({
       label: "t3 owner cli",
       access: "full-access",
@@ -62,8 +70,9 @@ const make = Effect.gen(function* () {
       token: issued.token,
       expiresAtMs: issued.expiresAt.epochMilliseconds,
     }).pipe(Effect.tapError(() => auth.revokeSession(issued.sessionId).pipe(Effect.ignore)));
-    if (Option.isSome(current) && current.value.sessionId !== issued.sessionId) {
-      yield* auth.revokeSession(current.value.sessionId).pipe(Effect.ignore);
+    published = Option.some(issued.sessionId);
+    if (Option.isSome(replaced) && replaced.value !== issued.sessionId) {
+      yield* auth.revokeSession(replaced.value).pipe(Effect.ignore);
     }
   }).pipe(
     Effect.provide(context),

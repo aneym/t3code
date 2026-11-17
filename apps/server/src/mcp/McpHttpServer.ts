@@ -40,6 +40,7 @@ import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import { layerOwnerCliTools } from "./mcpServer/ownerCliTools.ts";
 import * as ServerDatabase from "../serverDatabase/ServerDatabase.ts";
+import * as ChatThreadSets from "../chatSession/ChatThreadSets.ts";
 import * as OwnerCliCredentialPublisher from "../auth/OwnerCliCredentialPublisher.ts";
 
 export const layerHtmlToolkit = Layer.mergeAll(
@@ -135,7 +136,9 @@ export const layer = Layer.merge(
     Layer.mergeAll(
       layerTools,
       layerToolSearch,
-      layerOwnerCliTools.pipe(Layer.provide(ServerDatabase.layer)),
+      layerOwnerCliTools.pipe(
+        Layer.provide(Layer.mergeAll(ServerDatabase.layer, ChatThreadSets.layer)),
+      ),
     ),
   ),
   OwnerCliCredentialPublisher.layer,

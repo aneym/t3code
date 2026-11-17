@@ -15,7 +15,11 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import { isOwnerCliSubject } from "./McpClientSubjects.ts";
-import { OWNER_CLI_CREDENTIAL_PATH, readOwnerCliCredential } from "./ownerCliCredential.ts";
+import {
+  OWNER_CLI_CREDENTIAL_PATH,
+  readOwnerCliCredential,
+  writeOwnerCliCredential,
+} from "./ownerCliCredential.ts";
 import * as OwnerCliCredentialPublisher from "./OwnerCliCredentialPublisher.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -34,7 +38,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   "OwnerCliCredentialPublisher",
   (it) => {
     it.effect(
-      "keeps one private owner CLI credential and replaces it only once it stops working",
+      "keeps one private owner CLI credential, replaces it only once it stops working, and revokes the one it replaces",
       () =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -71,6 +75,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
             expect(replaced.sessionId).not.toBe(first.sessionId);
             expect(isOwnerCliSubject((yield* sessions.verify(replaced.token)).subject)).toBe(true);
             expect(yield* sessions.verify(first.token).pipe(Effect.isFailure)).toBe(true);
+
+            yield* fileSystem.remove(path.join(config.secretsDir, "owner-cli-session.json"));
+            const afterMissing = yield* publish;
+            expect(afterMissing.sessionId).not.toBe(replaced.sessionId);
+            expect(yield* sessions.verify(replaced.token).pipe(Effect.isFailure)).toBe(true);
+
+            yield* writeOwnerCliCredential(config.secretsDir, { ...afterMissing, expiresAtMs: 0 });
+            const afterExpiry = yield* publish;
+            expect(afterExpiry.sessionId).not.toBe(afterMissing.sessionId);
+            expect(yield* sessions.verify(afterMissing.token).pipe(Effect.isFailure)).toBe(true);
+            expect(isOwnerCliSubject((yield* sessions.verify(afterExpiry.token)).subject)).toBe(
+              true,
+            );
           }),
         ).pipe(Effect.provide(NodeHttpServer.layerTest)),
     );

@@ -1,73 +1,37 @@
 import {
   AuthMcpClientAccess,
-  EnvironmentId,
+  PeerLink,
+  PeerLinkListResult,
+  PeerLinkRemoveResult,
   type PeerLinkSummary,
   peerLinkRenewalState,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Argument from "effect/cli/Argument";
 import * as Command from "effect/cli/Command";
 import * as Flag from "effect/cli/Flag";
-import * as GlobalFlag from "effect/cli/GlobalFlag";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as ServerConfig from "../config.ts";
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as PeerLinks from "../peer/PeerLinks.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { authLocationFlags, type CliAuthLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { authLocationFlags } from "./config.ts";
 import { environmentShowCommand } from "./environmentShow.ts";
+import {
+  McpServerNotRunningError,
+  McpServerUnreachableError,
+  McpToolFailedError,
+  reportCliErrors,
+  withOwnerMcpTools,
+} from "./ownerMcpTools.ts";
 
-/**
- * Links live in this environment's database and secret store, so these
- * commands work whether or not its server is running.
- */
-const runWithPeerLinks = Effect.fn("environment.runWithPeerLinks")(function* <A, E>(
-  flags: CliAuthLocationFlags,
-  run: (links: PeerLinks.PeerLinks["Service"]) => Effect.Effect<A, E>,
-  options?: { readonly quietLogs?: boolean },
-) {
-  const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel, options);
-  return yield* PeerLinks.PeerLinks.pipe(
-    Effect.flatMap(run),
-    Effect.provide(
-      PeerLinks.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            ServerSecretStore.layer,
-            SqlitePersistence.layerCliConfig,
-            FetchHttpClient.layer,
-          ),
-        ),
-        Layer.provide(ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer))),
-        Layer.provide(
-          ServerSettings.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                ServerSecretStore.layer,
-                SqlitePersistence.layerCliConfig,
-                ManagedPolicy.layer,
-              ),
-            ),
-          ),
-        ),
-        Layer.provide(ServerConfig.layer(config)),
-        Layer.provide(
-          Layer.succeed(References.MinimumLogLevel, options?.quietLogs ? "Error" : config.logLevel),
-        ),
-      ),
-    ),
-  );
-});
+const reportErrors = reportCliErrors(
+  Schema.is(
+    Schema.Union([McpServerNotRunningError, McpServerUnreachableError, McpToolFailedError]),
+  ),
+);
+
+const PeerLinkJson = Schema.toCodecJson(PeerLink);
+const PeerLinkListJson = Schema.toCodecJson(PeerLinkListResult);
 
 const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Emit JSON instead of human-readable output."),
@@ -116,39 +80,42 @@ const environmentLinkCommand = Command.make("link", {
     "Link another T3 Code environment, so agents here can work there. It shows up there under Settings → Connections, where it can be revoked.",
   ),
   Command.withHandler((flags) =>
-    runWithPeerLinks(flags, (links) =>
-      Effect.gen(function* () {
-        const linked = yield* links.link({
-          url: flags.url,
-          alternateUrls: flags.alternateUrl,
-          pairingCode: flags.pairingCode,
-          access: flags.access,
-        });
+    withOwnerMcpTools(
+      "environment",
+      flags,
+      Effect.fn("cli.environment.link")(function* (tools) {
+        const linked = yield* tools.call(
+          "t3_peer_link_create",
+          {
+            url: flags.url,
+            alternateUrls: flags.alternateUrl,
+            pairingCode: flags.pairingCode,
+            access: flags.access,
+          },
+          PeerLinkJson,
+        );
         yield* Console.log(
           `Linked ${linked.label} (${linked.environmentId}) with ${linked.access} access, until ${DateTime.formatIso(linked.expiresAt)}.\n`,
         );
       }),
-    ),
+    ).pipe(reportErrors),
   ),
 );
 
 const environmentListCommand = Command.make("list", { ...authLocationFlags, json: jsonFlag }).pipe(
   Command.withDescription("List linked environments and whether each answers now."),
   Command.withHandler((flags) =>
-    runWithPeerLinks(
-      flags,
-      (links) =>
-        Effect.gen(function* () {
-          const listed = yield* links.list;
-          const now = yield* DateTime.now;
-          yield* Console.log(
-            flags.json
-              ? `${yield* encodeLinks(listed)}\n`
-              : formatLinks(listed, now.epochMilliseconds),
-          );
-        }),
-      { quietLogs: flags.json },
-    ),
+    withOwnerMcpTools(
+      "environment",
+      { ...flags, quietLogs: flags.json },
+      Effect.fn("cli.environment.list")(function* (tools) {
+        const { links } = yield* tools.call("t3_peer_link_list", {}, PeerLinkListJson);
+        const now = yield* DateTime.now;
+        yield* Console.log(
+          flags.json ? `${yield* encodeLinks(links)}\n` : formatLinks(links, now.epochMilliseconds),
+        );
+      }),
+    ).pipe(reportErrors),
   ),
 );
 
@@ -162,16 +129,22 @@ const environmentUnlinkCommand = Command.make("unlink", {
     "Forget a linked environment here. Revoke it in that environment's Connections to end its session there too.",
   ),
   Command.withHandler((flags) =>
-    runWithPeerLinks(flags, (links) =>
-      Effect.gen(function* () {
-        const removed = yield* links.unlink(EnvironmentId.make(flags.environmentId));
+    withOwnerMcpTools(
+      "environment",
+      flags,
+      Effect.fn("cli.environment.unlink")(function* (tools) {
+        const { removed } = yield* tools.call(
+          "t3_peer_link_unlink",
+          { environmentId: flags.environmentId },
+          PeerLinkRemoveResult,
+        );
         yield* Console.log(
           removed
             ? `Forgot ${flags.environmentId}. Revoke it in that environment's Connections to end its session there.\n`
             : `No linked environment ${flags.environmentId}.\n`,
         );
       }),
-    ),
+    ).pipe(reportErrors),
   ),
 );
 
@@ -185,14 +158,20 @@ const environmentRenewCommand = Command.make("renew", {
     "Renew a link for 30 more days without a pairing code. Works only in its last 7 days, and only when the other environment allows renewal. Links renew on their own while the server runs.",
   ),
   Command.withHandler((flags) =>
-    runWithPeerLinks(flags, (links) =>
-      Effect.gen(function* () {
-        const renewed = yield* links.renew(EnvironmentId.make(flags.environmentId));
+    withOwnerMcpTools(
+      "environment",
+      flags,
+      Effect.fn("cli.environment.renew")(function* (tools) {
+        const renewed = yield* tools.call(
+          "t3_peer_link_renew",
+          { environmentId: flags.environmentId },
+          PeerLinkJson,
+        );
         yield* Console.log(
           `Renewed ${renewed.label} (${renewed.environmentId}) until ${DateTime.formatIso(renewed.expiresAt)}.\n`,
         );
       }),
-    ),
+    ).pipe(reportErrors),
   ),
 );
 

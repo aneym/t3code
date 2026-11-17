@@ -1,11 +1,10 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { AuthSessionId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -22,26 +21,11 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
+import { publishOwnerCliCredential } from "./ownerMcp.testkit.ts";
 import type { OwnerMcpTools } from "./ownerMcpTools.ts";
 import { threadCommand } from "./thread.ts";
 import { resolveProject } from "./threadProject.ts";
 import { readLatestMessages, waitForRun } from "./threadRun.ts";
-
-vi.mock("../auth/EnvironmentAuth.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../auth/EnvironmentAuth.ts")>();
-  return {
-    ...actual,
-    layerRuntime: Layer.mock(actual.EnvironmentAuth)({
-      issueMcpClientSession: () =>
-        Effect.map(DateTime.now, (expiresAt) => ({
-          sessionId: AuthSessionId.make("test-session"),
-          token: "synthetic-token",
-          expiresAt,
-        })),
-      revokeSession: () => Effect.succeed(true),
-    }),
-  };
-});
 
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
@@ -69,6 +53,7 @@ it.effect(
         { id: ProjectId.make("nested-project"), title: "Nested", workspaceRoot: nestedRoot },
         { id: ProjectId.make("~/literal-id"), title: "Exact id", workspaceRoot: cwd },
       ];
+      publishOwnerCliCredential(path.join(baseDir, "userdata"));
       yield* persistServerRuntimeState({
         path: path.join(baseDir, "userdata", "server-runtime.json"),
         state: yield* makePersistedServerRuntimeState({

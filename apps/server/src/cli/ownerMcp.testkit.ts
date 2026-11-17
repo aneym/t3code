@@ -9,9 +9,14 @@ const toolResults: Readonly<Record<string, unknown>> = {
   t3_auth_session_issue: { sessionId: "issued-test-session", token: "issued-test-token" },
   t3_auth_session_revoke: { revoked: true },
   t3_auth_pairing_create: {
+    id: "pairing-test",
     credential: FAKE_PAIRING_CREDENTIAL,
+    scopes: ["orchestration:read"],
+    subject: "one-time-token",
+    createdAt: "2026-01-01T00:00:00.000Z",
     expiresAt: "2100-01-01T00:00:00.000Z",
   },
+  t3_auth_pairing_list: { pairingLinks: [] },
 };
 
 export const publishOwnerCliCredential = (stateDir: string) => {

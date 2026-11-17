@@ -384,7 +384,7 @@ const mintPairingLink = Effect.fn("pair.mintPairingLink")(
       "t3_auth_pairing_create",
       {
         scopes: input.scopes,
-        ...(Option.isSome(input.label) ? { label: input.label.value } : {}),
+        label: Option.getOrElse(input.label, () => "t3 pair"),
         ...(Option.isSome(input.ttl)
           ? { ttlMs: Math.max(1, Math.round(Duration.toMillis(input.ttl.value))) }
           : {}),

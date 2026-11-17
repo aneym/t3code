@@ -1,8 +1,13 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import {
+  AuthChatThreadsScope,
+  chatSessionSubject,
+  OrchestratorMcpFailure,
+} from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
 import * as EnvironmentAuth from "../../../auth/EnvironmentAuth.ts";
+import * as ChatThreadSets from "../../../chatSession/ChatThreadSets.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { ServerAuthToolkit } from "./tools.ts";
@@ -19,10 +24,10 @@ const ownerCli = Effect.gen(function* () {
 const asToolFailure = (error: { readonly message: string }) =>
   new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message });
 
-const withAuth = <A>(
+const withAuth = <A, R = never>(
   use: (
     auth: EnvironmentAuth.EnvironmentAuth["Service"],
-  ) => Effect.Effect<A, { readonly message: string }>,
+  ) => Effect.Effect<A, { readonly message: string }, R>,
 ) => ownerCli.pipe(Effect.flatMap((auth) => use(auth).pipe(Effect.mapError(asToolFailure))));
 
 export const layer = McpToolAccess.toLayer(ServerAuthToolkit, {
@@ -44,12 +49,35 @@ export const layer = McpToolAccess.toLayer(ServerAuthToolkit, {
   ),
   t3_auth_pairing_create: McpToolAccess.reads((input) =>
     withAuth((auth) =>
-      auth.createPairingLink({
-        scopes: input.scopes,
-        subject: "one-time-token",
-        label: input.label ?? "t3 pair",
-        ...(input.ttlMs === undefined ? {} : { ttl: Duration.millis(input.ttlMs) }),
+      Effect.gen(function* () {
+        const target =
+          input.chatThreadIds === undefined
+            ? { scopes: input.scopes, subject: "one-time-token" }
+            : {
+                scopes: [AuthChatThreadsScope],
+                subject: chatSessionSubject(
+                  yield* (yield* ChatThreadSets.ChatThreadSets).create(input.chatThreadIds),
+                ),
+              };
+        return yield* auth.createPairingLink({
+          ...target,
+          ...(input.label === undefined ? {} : { label: input.label }),
+          ...(input.ttlMs === undefined ? {} : { ttl: Duration.millis(input.ttlMs) }),
+        });
       }),
     ),
+  ),
+  t3_auth_pairing_list: McpToolAccess.reads(() =>
+    withAuth((auth) =>
+      Effect.map(
+        auth.listPairingLinks({
+          excludeSubjects: [EnvironmentAuth.INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT],
+        }),
+        (pairingLinks) => ({ pairingLinks }),
+      ),
+    ),
+  ),
+  t3_auth_pairing_revoke: McpToolAccess.reads((input) =>
+    withAuth((auth) => Effect.map(auth.revokePairingLink(input.id), (revoked) => ({ revoked }))),
   ),
 });
