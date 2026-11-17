@@ -113,6 +113,19 @@ const makeOwnerMcpTools = (session: McpToolSession, origin: string) => {
 };
 export type OwnerMcpTools = ReturnType<typeof makeOwnerMcpTools>;
 
+export const ownerMcpToolsAt = (
+  secretsDir: string,
+  origin: string,
+  command: string,
+  headers?: Readonly<Record<string, string>>,
+) =>
+  openOwnerCliSession(secretsDir, origin, command, headers).pipe(
+    Effect.map((session) => makeOwnerMcpTools(session, origin)),
+    Effect.catchTags({
+      AcpMcpBridgeError: (cause) => Effect.fail(new McpServerUnreachableError({ origin, cause })),
+    }),
+  );
+
 const SERVICE_RESTART_WAIT = "2 minutes";
 
 export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(function* <A, E, R>(
@@ -137,17 +150,10 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
       if (Option.isNone(runtimeState)) {
         return yield* new McpServerNotRunningError({ baseDir: config.baseDir });
       }
-      const origin = runtimeState.value.origin;
-      const session = yield* openOwnerCliSession(config.secretsDir, origin, command, headers).pipe(
-        Effect.catchTags({
-          AcpMcpBridgeError: (cause) =>
-            Effect.fail(new McpServerUnreachableError({ origin, cause })),
-        }),
-      );
-      return { session, origin };
+      return yield* ownerMcpToolsAt(config.secretsDir, runtimeState.value.origin, command, headers);
     });
     let told = false;
-    const { session, origin } = yield* serviceInstalled && serverWait === undefined
+    const tools = yield* serviceInstalled && serverWait === undefined
       ? connect.pipe(
           Effect.tapError(() =>
             Effect.suspend(() => {
@@ -168,7 +174,7 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
           }),
         )
       : connect;
-    return yield* run(makeOwnerMcpTools(session, origin));
+    return yield* run(tools);
   }).pipe(Effect.scoped);
   let waiting = false;
   const delivered =

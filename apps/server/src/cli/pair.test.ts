@@ -35,6 +35,11 @@ import {
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import { resolveHostCliCommand } from "./invocation.ts";
+import {
+  makeOwnerMcpFake,
+  type OwnerMcpFake,
+  publishOwnerCliCredential,
+} from "./ownerMcp.testkit.ts";
 import { resolveTailscaleLocalTarget } from "./pair.ts";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -93,13 +98,15 @@ const testDescriptor = {
 };
 
 const withDescriptorServer = <A, E, R>(
-  run: (origin: string) => Effect.Effect<A, E, R>,
+  run: (origin: string, ownerMcp: OwnerMcpFake) => Effect.Effect<A, E, R>,
   host = "127.0.0.1",
   descriptor: object = testDescriptor,
 ) =>
   Effect.acquireUseRelease(
-    Effect.callback<NodeHttp.Server>((resume) => {
+    Effect.callback<readonly [NodeHttp.Server, OwnerMcpFake]>((resume) => {
+      const ownerMcp = makeOwnerMcpFake();
       const server = NodeHttp.createServer((request, response) => {
+        if (ownerMcp.handle(request, response)) return;
         if (request.url === "/.well-known/t3/environment") {
           response.writeHead(200, { "content-type": "application/json" });
           response.end(JSON.stringify(descriptor));
@@ -108,16 +115,16 @@ const withDescriptorServer = <A, E, R>(
         response.writeHead(404);
         response.end();
       });
-      server.listen(0, host, () => resume(Effect.succeed(server)));
+      server.listen(0, host, () => resume(Effect.succeed([server, ownerMcp])));
     }),
-    (server) => {
+    ([server, ownerMcp]) => {
       const address = server.address();
       if (address === null || typeof address === "string") {
         return Effect.die(new Error("Expected a TCP address"));
       }
-      return run(`http://${host === "::1" ? "[::1]" : host}:${String(address.port)}`);
+      return run(`http://${host === "::1" ? "[::1]" : host}:${String(address.port)}`, ownerMcp);
     },
-    (server) => Effect.sync(() => server.close()),
+    ([server]) => Effect.sync(() => server.close()),
   );
 
 describe("t3 pair", () => {
@@ -158,6 +165,7 @@ describe("t3 pair", () => {
           );
 
           const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-ipv6-test-"));
+          publishOwnerCliCredential(NodePath.join(baseDir, "userdata"));
           yield* persistServerRuntimeState({
             path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
             state: yield* makePersistedServerRuntimeState({
@@ -271,9 +279,10 @@ describe("t3 pair", () => {
   );
 
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
-    withDescriptorServer((origin) =>
+    withDescriptorServer((origin, ownerMcp) =>
       Effect.gen(function* () {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-test-"));
+        publishOwnerCliCredential(NodePath.join(baseDir, "userdata"));
         const port = Number(new URL(origin).port);
         const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
         yield* persistServerRuntimeState({
@@ -295,16 +304,8 @@ describe("t3 pair", () => {
         assert.isString(token);
         assert.include(output, `App link: ${buildPairingAppLink(`${origin}/pair#token=${token}`)}`);
 
-        const listed = yield* captureStdout(
-          runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
-        );
-        const credentials = JSON.parse(listed) as ReadonlyArray<{
-          readonly label?: string;
-          readonly scopes: ReadonlyArray<string>;
-        }>;
-        assert.equal(credentials.length, 1);
-        assert.equal(credentials[0]?.label, "t3 pair");
-        assert.deepEqual(credentials[0]?.scopes, AuthStandardClientScopes);
+        assert.deepEqual(ownerMcp.calls, ["t3_auth_pairing_create"]);
+        assert.deepEqual(ownerMcp.callArguments, [{ scopes: AuthStandardClientScopes }]);
       }),
     ).pipe(
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -328,6 +329,7 @@ describe("t3 pair", () => {
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-dev-test-"));
+        publishOwnerCliCredential(NodePath.join(baseDir, "dev"));
         const port = Number(new URL(origin).port);
         const statePath = NodePath.join(baseDir, "dev", "server-runtime.json");
         yield* persistServerRuntimeState({
@@ -419,8 +421,7 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  // regression: #10516 minting opens the target database with this checkout's
-  // migrations, so a worktree must never fall back to the live install.
+  // regression: #10516 a worktree must never pair against the live install.
   it.effect("does not fall back to the shared home from a linked worktree", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
@@ -459,8 +460,7 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  // regression: #15492 an older CLI minted into a V1 database the protocol 2
-  // server never reads, so pairing must refuse before opening the database.
+  // regression: #15492
   it.effect("rejects a server on another protocol before opening its database", () =>
     withDescriptorServer(
       (origin) =>

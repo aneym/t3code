@@ -1,6 +1,8 @@
 import {
   OrchestratorMcpFailure,
   ServerAuthIssuedSession,
+  ServerAuthPairingCreateInput,
+  ServerAuthPairingLink,
   ServerAuthSessionIssueInput,
   ServerAuthSessionList,
   ServerAuthSessionRevokeInput,
@@ -39,4 +41,16 @@ const SessionRevokeTool = Tool.make("t3_auth_session_revoke", {
   success: ServerAuthSessionRevokeResult,
 }).annotate(Tool.Destructive, true);
 
-export const ServerAuthToolkit = Toolkit.make(SessionIssueTool, SessionListTool, SessionRevokeTool);
+const PairingCreateTool = Tool.make("t3_auth_pairing_create", {
+  ...shared,
+  description: "Owner CLI only. Create a one-time pairing link on this server.",
+  parameters: ServerAuthPairingCreateInput,
+  success: ServerAuthPairingLink,
+}).annotate(Tool.Destructive, false);
+
+export const ServerAuthToolkit = Toolkit.make(
+  SessionIssueTool,
+  SessionListTool,
+  SessionRevokeTool,
+  PairingCreateTool,
+);

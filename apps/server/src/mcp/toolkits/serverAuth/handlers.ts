@@ -16,13 +16,13 @@ const ownerCli = Effect.gen(function* () {
   });
 });
 
-const asToolFailure = (error: EnvironmentAuth.ServerAuthInternalError) =>
+const asToolFailure = (error: { readonly message: string }) =>
   new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message });
 
 const withAuth = <A>(
   use: (
     auth: EnvironmentAuth.EnvironmentAuth["Service"],
-  ) => Effect.Effect<A, EnvironmentAuth.ServerAuthInternalError>,
+  ) => Effect.Effect<A, { readonly message: string }>,
 ) => ownerCli.pipe(Effect.flatMap((auth) => use(auth).pipe(Effect.mapError(asToolFailure))));
 
 export const layer = McpToolAccess.toLayer(ServerAuthToolkit, {
@@ -41,5 +41,15 @@ export const layer = McpToolAccess.toLayer(ServerAuthToolkit, {
   ),
   t3_auth_session_revoke: McpToolAccess.reads((input) =>
     withAuth((auth) => Effect.map(auth.revokeSession(input.sessionId), (revoked) => ({ revoked }))),
+  ),
+  t3_auth_pairing_create: McpToolAccess.reads((input) =>
+    withAuth((auth) =>
+      auth.createPairingLink({
+        scopes: input.scopes,
+        subject: "one-time-token",
+        label: input.label ?? "t3 pair",
+        ...(input.ttlMs === undefined ? {} : { ttl: Duration.millis(input.ttlMs) }),
+      }),
+    ),
   ),
 });

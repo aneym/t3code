@@ -19,18 +19,21 @@ class OwnerCliCredentialUnavailableError extends Schema.TaggedError<OwnerCliCred
   }
 }
 
-const openSession = (
+const openSession = Effect.fn("cli.ownerSession.connect")(function* (
   endpoint: string,
   token: string,
   command: string,
   headers: Readonly<Record<string, string>> | undefined,
-) =>
-  mcpToolSession({
+) {
+  const fetchImplementation = yield* FetchHttpClient.Fetch;
+  return yield* mcpToolSession({
     endpoint,
     authorization: `Bearer ${token}`,
     clientName: `t3-${command}-cli`,
+    fetchImplementation,
     ...(headers === undefined ? {} : { headers }),
   });
+});
 
 const requestPublish = Effect.fn("cli.ownerSession.requestPublish")(function* (
   origin: string,

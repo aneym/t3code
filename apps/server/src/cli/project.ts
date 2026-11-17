@@ -22,7 +22,6 @@ import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { cliRefusal } from "../cliRefusal.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 
@@ -45,6 +44,7 @@ import {
 } from "../serverRuntimeState.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { withServerIssuedSession } from "./serverIssuedSession.ts";
 
 type ProjectMutationTarget = {
   readonly id: ProjectId;
@@ -232,18 +232,6 @@ const makeProjectCliRuntimeLayer = (layerProjectService: typeof RuntimeLayer.lay
   );
 
 const PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT = Duration.seconds(10);
-const withProjectCliSessionToken = <A, E, R>(
-  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
-  run: (token: string) => Effect.Effect<A, E, R>,
-) =>
-  Effect.acquireUseRelease(
-    environmentAuth.issueSession({
-      scopes: AuthStandardClientScopes,
-      label: "t3 project cli",
-    }),
-    (issued) => run(issued.token),
-    (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
-  );
 
 const makeLiveServerClient = (origin: string) =>
   HttpApiClient.make(EnvironmentHttpApi, {
@@ -395,11 +383,16 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
   const minimumLogLevel = config.logLevel;
 
   return yield* Effect.gen(function* () {
-    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const liveOrigin = yield* liveServerOrigin(config.serverRuntimeStatePath);
 
     if (Option.isSome(liveOrigin)) {
-      return yield* withProjectCliSessionToken(environmentAuth, (token) =>
+      const target = {
+        secretsDir: config.secretsDir,
+        origin: liveOrigin.value,
+        command: "project",
+      };
+      const session = { scopes: AuthStandardClientScopes, label: "t3 project cli" };
+      return yield* withServerIssuedSession(target, session, (token) =>
         Effect.gen(function* () {
           const snapshot = yield* fetchLiveOrchestrationSnapshot(liveOrigin.value, token);
           const output = yield* run({
@@ -444,7 +437,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
   }).pipe(
     Effect.scoped,
     Effect.provide(
-      Layer.mergeAll(EnvironmentAuth.layerRuntime, WorkspacePaths.layer).pipe(
+      WorkspacePaths.layer.pipe(
         Layer.provideMerge(FetchHttpClient.layer),
         Layer.provide(ServerConfig.layer(config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),

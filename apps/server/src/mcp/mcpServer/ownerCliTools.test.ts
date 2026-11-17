@@ -154,6 +154,10 @@ it.effect("shows and runs the owner CLI tools for the owner CLI alone", () =>
             name: "t3_auth_session_issue",
             arguments: { scopes: ["orchestration:read"] },
           }),
+          pairing: rpc("tools/call", {
+            name: "t3_auth_pairing_create",
+            arguments: { scopes: ["orchestration:read"] },
+          }),
           search: rpc("tools/call", {
             name: "tool_search",
             arguments: { query: "runs db snapshot" },
@@ -163,6 +167,7 @@ it.effect("shows and runs the owner CLI tools for the owner CLI alone", () =>
 
       const owner = yield* session("ownerToken");
       expect(yield* owner.listed).toEqual([
+        "t3_auth_pairing_create",
         "t3_auth_session_issue",
         "t3_auth_session_list",
         "t3_auth_session_revoke",
@@ -178,10 +183,12 @@ it.effect("shows and runs the owner CLI tools for the owner CLI alone", () =>
         const listed = yield* other.listed;
         expect(listed).not.toContain("t3_runs_list");
         expect(listed).not.toContain("t3_auth_session_issue");
+        expect(listed).not.toContain("t3_auth_pairing_create");
         const refused = yield* other.runs;
         expect(refused.result?.structuredContent).toBeUndefined();
         expect((yield* other.sessions).result?.structuredContent).toBeUndefined();
         expect((yield* other.issue).result?.structuredContent).toBeUndefined();
+        expect((yield* other.pairing).result?.structuredContent).toBeUndefined();
       }
       expect(issued).toEqual([]);
       const agent = yield* session("agentToken");

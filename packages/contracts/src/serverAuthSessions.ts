@@ -35,3 +35,16 @@ export type ServerAuthSessionRevokeInput = typeof ServerAuthSessionRevokeInput.T
 
 export const ServerAuthSessionRevokeResult = Schema.Struct({ revoked: Schema.Boolean });
 export type ServerAuthSessionRevokeResult = typeof ServerAuthSessionRevokeResult.Type;
+
+export const ServerAuthPairingCreateInput = Schema.Struct({
+  scopes: AuthGrantScopes.check(Schema.isMinLength(1)),
+  ttlMs: Schema.optionalKey(PositiveInt),
+  label: Schema.optionalKey(Schema.String),
+});
+export type ServerAuthPairingCreateInput = typeof ServerAuthPairingCreateInput.Type;
+
+export const ServerAuthPairingLink = Schema.Struct({
+  credential: Schema.String,
+  expiresAt: Schema.DateTimeUtc,
+});
+export type ServerAuthPairingLink = typeof ServerAuthPairingLink.Type;

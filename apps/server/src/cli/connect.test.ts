@@ -22,6 +22,7 @@ import {
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import { acquireRelayClientForLink } from "./connect.ts";
+import { makeOwnerMcpFake, publishOwnerCliCredential } from "./ownerMcp.testkit.ts";
 
 const managedExecutable = {
   status: "available",
@@ -69,9 +70,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       Effect.gen(function* () {
         const requests: Array<string> = [];
         const warnings: Array<string> = [];
+        const ownerMcp = makeOwnerMcpFake();
         const server = yield* Effect.acquireRelease(
           Effect.callback<NodeHttp.Server>((resume) => {
             const listening = NodeHttp.createServer((request, response) => {
+              if (ownerMcp.handle(request, response)) return;
               requests.push(`${request.method} ${request.url}`);
               response.writeHead(200, { "content-type": "application/json" });
               response.end(JSON.stringify({ ok: true, endpointRuntimeStatus: null }));
@@ -92,6 +95,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
 
         const fs = yield* FileSystem.FileSystem;
         const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-connect-unlink-test-" });
+        publishOwnerCliCredential(`${baseDir}/userdata`);
         const state = yield* makePersistedServerRuntimeState({
           config: { host: "127.0.0.1", devUrl: undefined },
           port: address.port,
@@ -124,7 +128,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
           })),
         );
 
-        return { requests, warnings, printed: (yield* TestConsole.logLines).join("\n") };
+        return {
+          requests,
+          toolCalls: ownerMcp.calls,
+          warnings,
+          printed: (yield* TestConsole.logLines).join("\n"),
+        };
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -173,17 +182,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
 
     it.effect("status asks a running server to check reachability", () =>
       Effect.gen(function* () {
-        const { requests } = yield* runConnect(process.pid, { command: "status" });
+        const { requests, toolCalls } = yield* runConnect(process.pid, { command: "status" });
 
         assert.deepEqual(requests, ["POST /api/connect/reachability"]);
+        assert.deepEqual(toolCalls, ["t3_auth_session_issue", "t3_auth_session_revoke"]);
       }),
     );
 
     it.effect("asks a running server to stop its tunnel", () =>
       Effect.gen(function* () {
-        const { requests, printed, warnings } = yield* runConnect(process.pid);
+        const { requests, toolCalls, printed, warnings } = yield* runConnect(process.pid);
 
         assert.deepEqual(requests, ["POST /api/connect/unlink"]);
+        assert.deepEqual(toolCalls, ["t3_auth_session_issue", "t3_auth_session_revoke"]);
         assert.include(printed, "T3 Connect is disabled locally.");
         assert.notInclude(warnings.join("\n"), "cloudflared process");
       }),
