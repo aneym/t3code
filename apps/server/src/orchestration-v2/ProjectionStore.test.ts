@@ -555,7 +555,6 @@ it.effect("record reads restrict provider histories to delivery identities", () 
 it.effect("idle compaction filters keep the latest run, live work and the newest usage", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
-    // Its rolled-back run 1 still has a running item, which background work must ignore.
     const threadId = yield* addRolledBackRecoveryCandidate("idle-compaction");
     const now = yield* DateTime.now;
     const minutes = (count: number) => DateTime.add(now, { minutes: count });
@@ -565,7 +564,6 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       [2, "completed"],
       [3, "completed"],
       [4, "failed"],
-      // A removed or steered queued message.
       [5, "cancelled"],
     ] as const) {
       const runId = RunId.make(`run:idle-compaction:${ordinal}`);
@@ -691,12 +689,18 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
         contextTransferStatuses: ["pending"],
       },
     );
-    // The failed latest run stays, so a completed earlier run is not mistaken for the latest,
-    // and a cancelled queued run never counts as the latest.
     assert.deepEqual(
       records.runs.map((run) => run.id),
       ["run:idle-compaction:rolled-back", "run:idle-compaction:4"],
     );
+    assert.deepEqual(
+      (yield* store.getThreadRecords(threadId, ["runs"], {
+        newestRuns: 2,
+        runStatuses: ["rolled_back"],
+      })).runs.map((run) => run.ordinal),
+      [1, 4, 5],
+    );
+    assert.strictEqual(yield* store.getRunCount(threadId), 5);
     const { statements, tracer } = traceSqlStatements();
     const statusOnly = yield* store
       .getThreadRecords(threadId, ["runs"], {
@@ -712,7 +716,6 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
     );
     assert.isDefined(runQuery);
     const sql = yield* SqlClient.SqlClient;
-    // Read only the matching runs, not every run in ordinal order.
     const runPlan = (yield* sql.unsafe<{ readonly detail: string }>(
       `EXPLAIN QUERY PLAN ${runQuery}`,
     ))
@@ -720,7 +723,6 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       .join("\n");
     assert.notInclude(runPlan, "orchestration_v2_projection_runs_thread_ordinal_idx");
     assert.match(runPlan, /SEARCH orchestration_v2_projection_runs USING INDEX \w*status\w*/);
-    // An id filter reads by primary key, not every row of the thread.
     const byId = traceSqlStatements();
     const found = yield* store
       .getThreadRecords(threadId, ["runs", "nodes", "subagents", "messages"], {

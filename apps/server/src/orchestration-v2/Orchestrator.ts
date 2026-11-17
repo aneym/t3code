@@ -4,7 +4,7 @@ import {
   OrchestratorCommandRejectedError,
   OrchestratorDispatchError,
 } from "./OrchestratorDispatchError.ts";
-import { withPullRequestWatch } from "./ThreadPullRequestWatch.ts";
+import { pullRequestSnapshotEndsWatch, withPullRequestWatch } from "./ThreadPullRequestWatch.ts";
 import { makeCommandDispatchAdmission } from "./CommandDispatchAdmission.ts";
 import { markGatePhase } from "./DispatchGateRecord.ts";
 import {
@@ -327,6 +327,7 @@ export interface OrchestratorV2Shape {
     options: ProjectionTimelinePageOptions,
   ) => Effect.Effect<ProjectionTimelinePage, OrchestratorProjectionError>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, OrchestratorV2Error>;
+  readonly getRunCount: (threadId: ThreadId) => Effect.Effect<number, OrchestratorV2Error>;
   readonly getTranscriptByteFloor: (
     threadId: ThreadId,
     limit: number,
@@ -749,20 +750,6 @@ function queueTailModelSelection(
           projection.messages.find((message) => message.id === run.userMessageId),
         ),
     )?.modelSelection ?? projection.thread.modelSelection
-  );
-}
-
-function pullRequestSnapshotEndsWatch(
-  snapshot: ThreadPullRequestLink["snapshot"],
-  watchStartedAt: ThreadPullRequestWatch["startedAt"],
-): boolean {
-  return (
-    snapshot?.state === "merged" ||
-    (snapshot?.state === "closed" &&
-      DateTime.isGreaterThanOrEqualTo(
-        DateTime.makeUnsafe(snapshot.syncedAt),
-        DateTime.makeUnsafe(watchStartedAt),
-      ))
   );
 }
 
@@ -15526,6 +15513,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     getTimelinePage: Effect.fn("OrchestratorV2.getTimelinePage")(function (threadId, options) {
       return projectionStore
         .getTimelinePage(threadId, options)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+    }),
+    getRunCount: Effect.fn("OrchestratorV2.getRunCount")(function (threadId) {
+      return projectionStore
+        .getRunCount(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
     getMessageCount: Effect.fn("OrchestratorV2.getMessageCount")(function (threadId) {
