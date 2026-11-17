@@ -274,19 +274,23 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => null),
   );
 
-  const passRequests = settingsService.streamChanges.pipe(
-    Stream.mapAccum(
-      () => undefined as number | null | undefined,
-      (previous: number | null | undefined, next) => {
-        const days = next.storageCleanup.archivedHistoryAfterDays;
-        return [
-          days,
-          previous !== undefined && days !== null && (previous === null || days < previous)
-            ? [undefined]
-            : [],
-        ] as const;
-      },
-    ),
+  const passRequests = Stream.unwrap(
+    Effect.gen(function* () {
+      const changes = yield* settingsService.subscribeChanges;
+      const current = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
+      return changes.pipe(
+        Stream.mapAccum(
+          () => current?.storageCleanup.archivedHistoryAfterDays ?? null,
+          (previous: number | null, next) => {
+            const days = next.storageCleanup.archivedHistoryAfterDays;
+            return [
+              days,
+              days !== null && (previous === null || days < previous) ? [undefined] : [],
+            ] as const;
+          },
+        ),
+      );
+    }),
   );
 
   return ArchivedHistoryRetention.of({
