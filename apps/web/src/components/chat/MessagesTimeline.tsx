@@ -1,3 +1,4 @@
+import { TrimmedHistoryNotice } from "./TrimmedHistoryNotice";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
@@ -321,6 +322,7 @@ interface MessagesTimelineProps {
   emptyPlaceholderInset: number;
   topFadeEnabled?: boolean;
   historyControls?: MessagesTimelineHistoryControls | undefined;
+  historyTrimmedAt?: string | null | undefined;
   findExpanded?: boolean;
   findQuery?: string;
   activeFindMatch?: ThreadFindMatch | null;
@@ -417,6 +419,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   emptyPlaceholderInset,
   topFadeEnabled = false,
   historyControls,
+  historyTrimmedAt,
 }: MessagesTimelineProps) {
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   // Snapshot restore positions on identity changes; ongoing scroll writes must not move them.
@@ -661,13 +664,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       );
     }
   }
-  // A cited response folded inside a turn opens its fold once per activation;
-  // the user can fold it again. Only a citation that can still land opens one.
-  // The marker stops the O(entries) fold lookup once the entry is found, since
-  // the href stays in the URL after the citation settles.
   const [citationExpandedFor, setCitationExpandedFor] = useState<string | null>(null);
-  // Back/Forward can restore an earlier activation key, so the marker clears
-  // between activations and a revisit opens the fold again.
   if (!citationRequest && citationExpandedFor !== null) setCitationExpandedFor(null);
   const citedEntry =
     citationRequest &&
@@ -1221,6 +1218,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const listHeader = (
     <>
       {parentThreadLink === null ? listHeaderLeadingContent : null}
+      {historyTrimmedAt ? <TrimmedHistoryNotice trimmedAt={historyTrimmedAt} /> : null}
       {historyControls ? <TimelineHistoryControl {...historyControls} /> : null}
       {parentThreadLink !== null ? listHeaderLeadingContent : null}
     </>

@@ -28,6 +28,7 @@ const PreferenceFields = {
   defaultThreadEnvMode: ServerSettings.fields.defaultThreadEnvMode,
   newWorktreesStartFromOrigin: ServerSettings.fields.newWorktreesStartFromOrigin,
   enableProviderUpdateChecks: ServerSettings.fields.enableProviderUpdateChecks,
+  storageCleanup: ServerSettings.fields.storageCleanup,
   backgroundActivity: Schema.Struct({ profile: BackgroundActivityProfileSelection }),
   sourceControlWritingStyle: Schema.Struct({
     mode: Schema.String,
@@ -78,7 +79,7 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
 const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update", {
   ...shared,
   description:
-    "Update environment-wide preferences. Live full-access or default caller thread only. Omitted fields are unchanged; `customInstructions: ''` clears it.",
+    "Update environment-wide preferences. Live full-access or default caller thread only. Omitted fields are unchanged; `customInstructions: ''` clears it. `storageCleanup` keys merge; `archivedHistoryAfterDays` removes tool output from threads archived that many days (null turns it off).",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     agentLoadBalancingEnabled: ServerSettingsPatch.fields.agentLoadBalancingEnabled,
@@ -90,6 +91,7 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
     enableProviderUpdateChecks: ServerSettingsPatch.fields.enableProviderUpdateChecks,
     backgroundActivity: Schema.optionalKey(Schema.Struct({ profile: BackgroundActivityProfile })),
     sourceControlWritingStyle: ServerSettingsPatch.fields.sourceControlWritingStyle,
+    storageCleanup: ServerSettingsPatch.fields.storageCleanup,
   }),
   success: Schema.Struct(PreferenceFields),
 }).annotate(Tool.Destructive, true);

@@ -237,6 +237,12 @@ export function ArchivedThreadsPanel() {
                     <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
                       {hasMultipleEnvironments ? `${thread.environmentLabel} · ` : null}
                       Archived <RelativeTime timestamp={thread.archivedAt ?? thread.createdAt} />
+                      {thread.historyTrimmedAt ? (
+                        <>
+                          {" \u00b7 History trimmed "}
+                          <RelativeTime timestamp={thread.historyTrimmedAt} />
+                        </>
+                      ) : null}
                       {" \u00b7 Created "}
                       <RelativeTime timestamp={thread.createdAt} />
                     </span>

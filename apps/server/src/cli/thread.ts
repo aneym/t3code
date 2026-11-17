@@ -1,4 +1,5 @@
 import { threadAskCommand } from "./threadAsk.ts";
+import { threadArchivedCommand } from "./threadArchived.ts";
 import {
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListResult,
@@ -489,6 +490,8 @@ const threadShowCommand = Command.make("show", {
           if (thread.worktreePath !== null) {
             yield* Console.log(`${thread.branch ?? "(no branch)"}  ${thread.worktreePath}`);
           }
+          if (thread.historyTrimmedAt != null)
+            yield* Console.log(`Tool output and agent work removed ${thread.historyTrimmedAt}.`);
           if (thread.pendingRequestCount > 0) {
             yield* Console.log(`Waiting for ${thread.pendingRequestCount} answer(s).`);
           }
@@ -539,6 +542,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadContinueCommand,
     threadInterruptCommand,
     threadShowCommand,
+    threadArchivedCommand,
     threadPlacementCommand,
     threadUpdateCommand,
     threadConfigureCommand,

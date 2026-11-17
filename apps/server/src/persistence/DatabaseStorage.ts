@@ -7,6 +7,7 @@ import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -15,6 +16,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { resolveHostCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
+import * as ArchivedHistoryRetention from "../orchestration-v2/ArchivedHistoryRetention.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -51,6 +53,7 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const statusRef = yield* SubscriptionRef.make<DatabaseStorageStatus | null>(null);
   const restart = yield* ServerRestart;
+  const retention = yield* Effect.serviceOption(ArchivedHistoryRetention.ArchivedHistoryRetention);
   const reclaimFiles = DatabaseMaintenance.reclaimFiles(path, config.dbPath);
   let reclaimFailure = Option.getOrUndefined(
     yield* fs.readFileString(reclaimFiles.failure).pipe(Effect.option),
@@ -140,15 +143,20 @@ const make = Effect.gen(function* () {
   // Even a pass that deletes nothing scans the event store. Persist completion
   // so restarting does not trigger another scan before the six-hour interval.
   const compactedAtPath = path.join(path.dirname(config.dbPath), "compacted-at");
-  const compact = Effect.gen(function* () {
+  const makeBetweenPages = Effect.gen(function* () {
     let sliceStarted = yield* Clock.monotonicTimeNanos;
-    const betweenPages = Effect.gen(function* () {
+    return Effect.gen(function* () {
       const elapsed = (yield* Clock.monotonicTimeNanos) - sliceStarted;
       if (elapsed < 25_000_000n) return;
       // Keep background maintenance at 10% duty, including pages that exceed the budget.
       yield* Effect.sleep((Number(elapsed) / 1_000_000) * 9);
       sliceStarted = yield* Clock.monotonicTimeNanos;
     });
+  });
+  const trimArchivedHistory = (betweenPages: Effect.Effect<void>) =>
+    Option.isSome(retention) ? retention.value.runPass(betweenPages) : Effect.void;
+  const compact = Effect.gen(function* () {
+    const betweenPages = yield* makeBetweenPages;
     const result = yield* maintenance.pruneEventStore(betweenPages);
     const completedAt = yield* Clock.currentTimeMillis;
     yield* fs.writeFileString(compactedAtPath, String(completedAt)).pipe(Effect.ignore);
@@ -159,7 +167,32 @@ const make = Effect.gen(function* () {
     Effect.catch((cause) =>
       Effect.logWarning("Orchestration history compaction failed", { cause }),
     ),
+    Effect.andThen(makeBetweenPages.pipe(Effect.flatMap(trimArchivedHistory))),
   );
+  const trimRequests = yield* Queue.sliding<void>(1);
+  if (Option.isSome(retention)) {
+    yield* forkParked(
+      retention.value.passRequests.pipe(
+        Stream.runForEach(() => Queue.offer(trimRequests, undefined)),
+      ),
+    );
+  }
+  const waitForCompaction = Effect.fn("DatabaseStorage.waitForCompaction")(function* (
+    delay: Duration.Duration,
+  ) {
+    const resumeAt = (yield* Clock.currentTimeMillis) + Duration.toMillis(delay);
+    while (true) {
+      const remaining = Math.max(0, resumeAt - (yield* Clock.currentTimeMillis));
+      const requested = yield* Effect.raceFirst(
+        Effect.sleep(Duration.millis(remaining)).pipe(Effect.as(false)),
+        Queue.take(trimRequests).pipe(Effect.as(true)),
+      );
+      if (!requested) return;
+      yield* Effect.sleep("1 minute");
+      yield* makeBetweenPages.pipe(Effect.flatMap(trimArchivedHistory));
+      yield* publishStatus;
+    }
+  });
   const lastCompactedAt = yield* fs.readFileString(compactedAtPath).pipe(
     Effect.map(Number),
     Effect.orElseSucceed(() => Number.NaN),
@@ -173,11 +206,12 @@ const make = Effect.gen(function* () {
   );
 
   yield* forkParked(
-    Effect.sleep(firstCompactionDelay).pipe(
+    waitForCompaction(firstCompactionDelay).pipe(
       Effect.andThen(
         compact.pipe(
           Effect.andThen(publishStatus),
-          Effect.repeat(Schedule.spaced(COMPACTION_INTERVAL)),
+          Effect.andThen(waitForCompaction(COMPACTION_INTERVAL)),
+          Effect.forever,
         ),
       ),
     ),

@@ -257,6 +257,15 @@ Results also list folders in the worktree folder that no thread uses, with their
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
 
+**Trim archived thread history** is off by default. When set, the server removes tool output,
+command output, and agent work from threads archived for that many days. Your messages and the
+agent's replies stay, so an archived thread still reads as a short transcript, and it says when
+its history was trimmed. This cannot be undone. Pinned, snoozed, and scheduled threads, threads
+with running work or live child threads, and threads that a newer thread was forked from are kept.
+Unarchiving a trimmed thread works as usual, and you can keep chatting in it. Agents can list
+archived threads, their sizes, and what a trim would remove with the `t3_thread_archived` tool or
+`t3 thread archived --json`.
+
 ## Project icons
 
 Select the project and open Project to choose an icon, emoji, monogram, or image. The choice applies to
