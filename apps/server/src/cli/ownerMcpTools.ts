@@ -130,6 +130,10 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
   const config = yield* resolveCliAuthConfig(flags, logLevel);
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const authLayer = EnvironmentAuth.layerRuntime.pipe(
+    Layer.provide(ServerConfig.layer(config)),
+    Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
+  );
   const serviceInstalled = yield* fileSystem
     .exists(path.join(config.baseDir, "runtime", SERVICE_STATE_FILE))
     .pipe(Effect.orElseSucceed(() => false));
@@ -144,6 +148,7 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
         config.secretsDir,
         new URL("/mcp", origin).href,
         command,
+        authLayer,
         headers,
       ).pipe(
         Effect.catchTags({
@@ -196,12 +201,5 @@ export const withOwnerMcpTools = Effect.fn("cli.ownerMcp.withOwnerMcpTools")(fun
             while: isServerUnavailable,
           }),
         );
-  return yield* delivered.pipe(
-    Effect.provide(
-      EnvironmentAuth.layerRuntime.pipe(
-        Layer.provide(ServerConfig.layer(config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
-      ),
-    ),
-  );
+  return yield* delivered;
 });
