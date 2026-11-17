@@ -247,6 +247,7 @@ export function McpAppFrame(props: {
     // Return inline so approvals stay visible above the app.
     const ask = async (message: string) => {
       flushSync(() => setDisplayMode("inline"));
+      frame.blur();
       const approved = await requestConfirmDialog(message);
       if (approved === undefined) {
         throw new McpAppHostRefusal({ message: "Could not ask for approval here." });
