@@ -47,7 +47,6 @@ try {
 const clientPlatform = process.platform;
 
 if (clientPlatform === "darwin") {
-  // Native buttons ignore Chromium zoom; reserve native points even after reload.
   const syncWindowControlInset = () => {
     document.documentElement.style.setProperty(
       "--desktop-window-controls-inset",
@@ -60,7 +59,6 @@ if (clientPlatform === "darwin") {
 
 const syncHtmlFullscreen = () => {
   const element = document.fullscreenElement;
-  // A preview guest's fullscreen surfaces here as its <webview>, which stays inside the window.
   void ipcRenderer.invoke(
     IpcChannels.SYNC_HTML_FULLSCREEN_CHANNEL,
     element !== null && element.tagName !== "WEBVIEW",

@@ -70,6 +70,8 @@ import { newMessageId, newThreadId, randomUUID } from "~/lib/utils";
 import { optimisticUserMessage, withoutOptimisticUserMessage } from "./optimisticUserMessages";
 import { heldIdsFor, holdSend, releaseHeldSend } from "./heldSendStore";
 import { holdOrSendThroughHost, sendComposerThroughHost } from "../../embed/embedComposerSend";
+import { typedAtFor, type PersonPress } from "../../railsWords/personPress";
+import { reportSaid } from "../../railsWords/reportSaid";
 import { isEmbedHostSendOn } from "../../embed/embedHostSend";
 import { embedSendEnter, embedSendFailed, takeHeldEmbedSend } from "../../embed/embedSendMarks";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
@@ -384,7 +386,6 @@ export function useComposerSend(input: ComposerSendInput) {
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
   const composerSendGenerationRef = useRef(0);
   const environmentUnavailableSendToastSlotRef = useRef(0);
-  // A send awaits uploads before it declines, so it reads the approvals pending by then.
   const pendingApprovalsRef = useRef(pendingApprovals);
   const respondingRequestIdsRef = useRef(respondingRequestIds);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors approvals into refs that an async send reads after awaiting uploads
@@ -401,8 +402,10 @@ export function useComposerSend(input: ComposerSendInput) {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
+    press?: PersonPress,
   ) => {
     e?.preventDefault();
+    const typedAt = typedAtFor(press, promptRef.current);
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
     const promptAtSend = promptRef.current;
@@ -439,8 +442,6 @@ export function useComposerSend(input: ComposerSendInput) {
       environmentChanging: readPendingEnvironmentChange() !== null,
       feedbackUploading: feedbackUploadsInFlightRef.current.has(routeThreadKey),
     });
-    // An answer responds to the open request rather than starting a turn, so the new-message
-    // guards below (loading, busy, provider) must not swallow it.
     if (answeringQuestion && !startsSideChat && !directAnnotation) {
       if (gateRefusal !== null && (!activeThread || gateRefusal[0] === "no-operate-scope")) {
         refuseComposerSend(gateRefusal);
@@ -534,7 +535,6 @@ export function useComposerSend(input: ComposerSendInput) {
         return;
       }
       const started = await onSideChat(sideChatCommand.prompt);
-      // Clear only what was sent; the user may have edited the draft or left meanwhile.
       if (
         started &&
         currentRouteThreadKeyRef.current === routeThreadKey &&
@@ -606,8 +606,6 @@ export function useComposerSend(input: ComposerSendInput) {
         previewAnnotations: sendContextPreviewAnnotations,
         direct: directAnnotation,
       });
-    // A direct "send annotation" writes the draft and sends in the same tick; the reference
-    // must be in the text now, not after the next render.
     const draftPrompt = directAnnotation
       ? ensureInlineContextReferences(promptRef.current, [
           previewAnnotationContextReference(directAnnotation.annotation),
@@ -740,7 +738,6 @@ export function useComposerSend(input: ComposerSendInput) {
       composerRef.current?.resetCursorState();
       return;
     }
-    // Read once: an arm made while this send is in flight belongs to the next message.
     const freshArm = freshSessionAvailable ? readFreshSessionArm(routeThreadKey) : undefined;
     if (!hasSendableContent) {
       if (expiredTerminalContextCount > 0) {
@@ -1321,6 +1318,13 @@ export function useComposerSend(input: ComposerSendInput) {
           )
         : null;
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
+      reportSaid({
+        typedAt,
+        environmentId,
+        threadId: threadIdForSend,
+        messageId: messageIdForSend,
+        text: outgoingMessageText,
+      });
       const startPromise = startThreadTurn({
         environmentId,
         input: {

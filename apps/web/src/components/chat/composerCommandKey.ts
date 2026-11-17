@@ -21,6 +21,7 @@ import { type PreviewAnnotationPayload } from "@t3tools/contracts";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { composerTargetKey } from "../../composerDraftStore";
 import { isEmbedClearCommand } from "../../embed/embedProtocol";
+import { markSupplied, pressFrom, type PersonPress } from "../../railsWords/personPress";
 import {
   type ComposerListEdit,
   listContinuationForEnter,
@@ -82,6 +83,7 @@ export function composerCommandKeyHandler(input: {
     event: undefined,
     dispatchMode: ComposerDispatchMode,
     submissionIntent: ComposerSubmissionIntent,
+    press: PersonPress | undefined,
   ) => void;
   /** Predicted next prompt that Tab fills into an empty composer; Escape dismisses it. */
   readonly promptSuggestion: string | null;
@@ -258,6 +260,7 @@ export function composerCommandKeyHandler(input: {
       event.keyCode !== 229
     ) {
       // The typing guard must see this draft, so an approval that lands next is not answered with it.
+      markSupplied(promptRef);
       return applyPromptReplacement(0, 0, promptSuggestion);
     }
     if ((key === "ArrowUp" || key === "ArrowDown") && submissionIntent === null) {
@@ -273,6 +276,7 @@ export function composerCommandKeyHandler(input: {
           canSteer,
         }),
         submissionIntent,
+        pressFrom(event, promptRef, promptRef.current),
       );
       return true;
     }

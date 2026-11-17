@@ -6,7 +6,6 @@ export const DesktopRailsWordsNotice = Schema.Literals([
   "connect-refused",
   "connect-failed",
   "storage-unavailable",
-  "turned-off",
 ]);
 export type DesktopRailsWordsNotice = typeof DesktopRailsWordsNotice.Type;
 

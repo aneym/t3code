@@ -58,6 +58,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion
   | typeof ORCHESTRATION_V2_WS_METHODS.searchThreadStream
   | typeof WS_METHODS.subscribeAuthAccess
+  | typeof WS_METHODS.agentsSubscribeHomes
   | typeof WS_METHODS.subscribeServerConfig
   | typeof WS_METHODS.subscribeServerLifecycle
   | typeof WS_METHODS.scheduledTasksSubscribe
@@ -108,7 +109,6 @@ export class EnvironmentRpcSubscriptionObserver extends Context.Reference<{
 export const isRpcClientError = Schema.is(RpcClientError.RpcClientError);
 const isEnvironmentAuthorizationError = Schema.is(EnvironmentAuthorizationError);
 
-/** A subscription never retries an authorization failure on its own. */
 export const isAuthorizationFailure = (cause: Cause.Cause<unknown>) =>
   cause.reasons.some(
     (reason) => reason._tag === "Fail" && isEnvironmentAuthorizationError(reason.error),

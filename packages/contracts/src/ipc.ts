@@ -370,10 +370,8 @@ export const DesktopUpdateCheckResultSchema = Schema.Struct({
 export const PRIMARY_LOCAL_ENVIRONMENT_ID = "primary";
 
 export interface DesktopEnvironmentBootstrap {
-  // Stable backend identity used to reopen routed projects.
   id: string;
   label: string;
-  // Actual distro for this run; id stays wsl:default when tracking the default.
   runningDistro?: string | null;
   httpBaseUrl: string | null;
   wsBaseUrl: string | null;

@@ -39,6 +39,7 @@ import { useAccessEnvironment } from "./useAccessEnvironment";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { ManagedByOrganization } from "../ManagedPolicy";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
+import { RailsConnectionRow } from "./RailsConnectionRow";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
@@ -143,11 +144,9 @@ import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
 
-// Colons are invalid in distro names, keeping picker sentinels collision-free.
 const BACKEND_VALUE_DEFAULT_WSL = "backend:default-wsl";
 const BACKEND_VALUE_WSL_OFF = "backend:wsl-off";
 
-// Subscribes on its own so desktop download progress does not re-render the page.
 function LocalVersionStatusLabel() {
   const updateState = useDesktopUpdateState();
   return (
@@ -1593,6 +1592,7 @@ function ConnectionsSettingsContent({
       {desktopBridge ? (
         <SettingsSection id="this-app" title="This app">
           <LocalEnvironmentSetting />
+          <RailsConnectionRow />
         </SettingsSection>
       ) : null}
       <SettingsSection

@@ -282,6 +282,8 @@ import { composerCommandKeyHandler } from "./composerCommandKey";
 import { usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
 import { useComposerSendHold } from "./useComposerSendHold";
+import { noteTypedChange, pressFrom, type PersonPress } from "../../railsWords/personPress";
+import { useRailsWordsAgentHomes } from "../../railsWords/reportSaid";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
@@ -463,6 +465,8 @@ export interface ChatComposerProps {
     e?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
+    directAnnotation?: undefined,
+    press?: PersonPress,
   ) => void;
   onResume: () => void;
   onInterrupt: () => void;
@@ -595,7 +599,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ...pendingApprovals.map((request) => request.requestId),
     ...incomingPendingUserInputs.map((request) => request.requestId),
   ]);
-  // A layout effect so the timeline never paints a held approval as answerable.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes held requests to the timeline without lifting per-keystroke typing state
   useLayoutEffect(() => {
     onHeldRequestIdsChange(heldRequestIds);
@@ -635,7 +638,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.activeQuestion?.allowCustomAnswer !== false &&
     !activePendingIsResponding;
   const questionRequest = pendingUserInputs[0];
-  // Publish eligibility before async captures can observe a question the UI has already closed.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the open question's attachment draft in the module tracker before async captures read it
   useLayoutEffect(() => {
     if (!questionAttachmentTarget || !questionRequest || !questionTakesSnapShots) return;
@@ -907,7 +909,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     compatibleRuntimeModes,
     managedPolicy,
   );
-  // A thread or draft already above the ceiling would be refused; offer the broadest mode left.
   const runtimeModeCeilingDenial = managedRuntimeModeDenial(managedPolicy, compatibleRuntimeMode);
   const runtimeModeCeilingFallback =
     runtimeModeCeilingDenial === undefined
@@ -1253,7 +1254,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const removeComposerFileFromDraft = (fileId: string) => {
     if (questionAttachmentTarget && activePendingIsResponding) return;
-    // Hydrated uploads use persisted attachment ids, not queue keys.
     const file = composerFilesRef.current.find((candidate) => candidate.id === fileId);
     if (file) {
       releaseDraftAttachment(file);
@@ -1575,6 +1575,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     onTypingGuardDraftChange();
+    noteTypedChange(promptRef, promptRef.current, nextPrompt);
     promptRef.current = nextPrompt;
     setPrompt(nextPrompt);
     if (promptHistoryPositionRef.current?.position.recalled !== nextPrompt) {
@@ -1837,6 +1838,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     attachmentBlockReason,
     environmentUnavailable: environmentUnavailable !== null,
   });
+  useRailsWordsAgentHomes(environmentId, settings.railsWordsEnabled);
   const sendHold = useComposerSendHold({
     environmentId,
     holdKey: attachmentTargetKey,
@@ -2108,16 +2110,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   const submitComposerRef = useRef<
-    (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void
+    (mode?: ComposerDispatchMode, intent?: ComposerSubmissionIntent, press?: PersonPress) => void
   >(() => {});
   const submitComposer = (
     event?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
+    press?: PersonPress,
   ) => {
     if (voiceInputActive) {
       event?.preventDefault();
-      submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
+      submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent, press));
       return false;
     }
     if (
@@ -2126,7 +2129,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
     ) {
       event?.preventDefault();
-      return sendHold.submit(() => submitComposerRef.current(dispatchMode, submissionIntent));
+      return sendHold.submit(() =>
+        submitComposerRef.current(dispatchMode, submissionIntent, press),
+      );
     }
     if (activeThreadId && countPreparingComposerImages(attachmentTargetKey) > 0) {
       event?.preventDefault();
@@ -2168,6 +2173,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               canSteer,
             }),
           submissionIntent,
+          undefined,
+          press,
         );
         return !providerInputRejectedRef.current;
       },
@@ -2184,7 +2191,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const submitComposerStable = useStableCallback(submitComposer);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to the asynchronous dictation completion
   useLayoutEffect(() => {
-    submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
+    submitComposerRef.current = (mode, intent, press) =>
+      submitComposerStable(undefined, mode, intent, press);
   }, [submitComposerStable]);
   useDictationSubmissionShortcut({
     enabled: voiceInputActive && !speechInput.preparing,
@@ -2224,6 +2232,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         activeTurnDefault: followUpBehavior,
         canSteer,
       }),
+      undefined,
+      pressFrom(event, promptRef, promptRef.current),
     );
   };
   const handleSubmitMessageStable = useStableCallback(handleSubmitMessage);
@@ -2285,7 +2295,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const expandMobileComposerStable = useStableCallback(expandMobileComposer);
 
-  // Escape dismisses the suggestion so Tab moves focus again.
   const { suggestion: promptSuggestion, dismiss: dismissPromptSuggestion } = usePromptSuggestion(
     environmentId,
     activeThread,
@@ -2385,7 +2394,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   const hasBlockingComposerTopDrawer = pendingUserInputs.length > 0;
   const composerControlsCollapsed = isComposerCollapsedMobile;
-  // The collapsed mobile web composer keeps a second controls row inside the card.
   const showInlineRestingControls = isComposerCollapsedMobile;
   const composerControlsHidden = showInlineRestingControls && !restingControlsVisible;
   if (composerControlsHidden && isComposerModelPickerOpen) {
@@ -2644,7 +2652,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const insertComposerTextAtEnd: ChatComposerHandle["insertTextAtEnd"] = (text, options) => {
     const inserted = insertComposerText(text, "end", options);
     if (inserted && isComposerCollapsedMobile) {
-      // Reveal the mobile editor before its focus frame.
       expandMobileComposer();
     }
     return inserted;
@@ -2875,7 +2882,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsDragOverComposer(false);
   };
 
-  // Escape can cancel without dragleave; clear highlights on bubbling dragend.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window dragend listener clears the drop highlight when a drag is cancelled without dragleave
   useEffect(() => {
     if (!isDragOverComposer) return;
@@ -2919,7 +2925,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const scheduleComposerCollapseCheckStable = useStableCallback(scheduleComposerCollapseCheck);
 
-  // Question dismissal unmounts focused controls without firing blur.
   const activePendingUserInputRequestId = activePendingUserInput?.requestId ?? null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules the collapse check after a dismissed question unmounts focused controls without a blur
   useEffect(() => {

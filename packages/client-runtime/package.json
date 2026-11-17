@@ -171,6 +171,10 @@
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
     },
+    "./state/agent-homes": {
+      "types": "./src/state/agentHomes.ts",
+      "default": "./src/state/agentHomes.ts"
+    },
     "./state/auth": {
       "types": "./src/state/auth.ts",
       "default": "./src/state/auth.ts"

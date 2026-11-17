@@ -364,6 +364,7 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { markSupplied } from "../railsWords/personPress";
 import { assetEnvironment } from "../state/assets";
 import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -903,7 +904,6 @@ export default function ChatView(props: ChatViewProps) {
   const parentThreadLink = (() => {
     if (sideChatParentRef !== null) {
       const title = sideChatParent?.title ?? "Parent thread";
-      // Embedded, the parent is the view around it.
       if (embedded) return { title, sideChat: true };
       return {
         title,
@@ -945,7 +945,6 @@ export default function ChatView(props: ChatViewProps) {
           }),
     };
   })();
-  // The header's breadcrumb opens a parent in this environment only.
   const headerParentThreadLink =
     parentSubagentThreadRef === null
       ? null
@@ -1861,6 +1860,7 @@ export default function ChatView(props: ChatViewProps) {
 
     const currentDraft = composer.getSendContext().prompt;
     const prompt = codexArtifactTemplatePromptToAppend(currentDraft, template);
+    markSupplied(promptRef);
     if (prompt !== null && !composer.insertTextAtEnd(prompt, { ensureLeadingBoundary: true })) {
       toastManager.add({
         type: "error",
