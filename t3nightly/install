@@ -23,6 +23,8 @@ def parse():
     parser = argparse.ArgumentParser(prog="t3nightly-install")
     parser.add_argument("--version", default="")
     parser.add_argument("--calibrate", action="store_true")
+    parser.add_argument("--refresh-base", action="store_true", help="bring the pre-stop base copy under --backups up to the live database while the server runs, so the next restore-rollback install copies only a short delta; reads the live file under a WAL-bounded read pin; installs nothing")
+    parser.add_argument("--refresh-read-mib-s", type=int, default=160, help="read pace for --refresh-base, both files together")
     parser.add_argument("--home", default="~/.t3")
     parser.add_argument("--port", type=int, default=3773)
     parser.add_argument("--base-url", default=FORK_BASE_URL)
@@ -93,8 +95,10 @@ def parse():
     parser.add_argument("--offbox-window-s", type=int, default=0, help="whole window from installer start; stopped ship refuses before the stop unless the forward path plus a rollback fits")
     parser.add_argument("--offbox-stopped-ship", action="store_true", help="seed from a verified off-box replica and sync only the stopped database; no live stage copy or local restore copy")
     args = parser.parse_args()
-    if not args.version and not args.calibrate:
-        parser.error("--version is required unless --calibrate")
+    if args.refresh_base and any((args.calibrate, args.hard, args.prepare_only, args.rehearsal, args.version, args.wait, args.check_only, args.dry_run)):
+        parser.error("--refresh-base cannot be combined with installation modes, --version, --calibrate, --wait, --check-only or --dry-run")
+    if not args.version and not args.calibrate and not args.refresh_base:
+        parser.error("--version is required unless --calibrate or --refresh-base")
     if args.calibrate and any((args.hard, args.prepare_only, args.rehearsal, args.version, args.wait, args.check_only, args.dry_run)):
         parser.error("--calibrate cannot be combined with installation modes, --version, --wait, --check-only or --dry-run")
     if args.backup_keep < 1:
@@ -154,6 +158,10 @@ if __name__ == "__main__":
     args = parse()
     args.started_monotonic = started_monotonic
     try:
+        if args.refresh_base:
+            from t3nightly.install_base_refresh import command as refresh_base
+
+            sys.exit(refresh_base(args))
         if args.calibrate:
             from t3nightly.install_calibration import calibrate
 

@@ -1,4 +1,5 @@
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -10,7 +11,9 @@ import time
 from contextlib import closing
 from pathlib import Path
 
+from . import install_live_sync as live
 from .db_publish import fsync, wal_bytes
+from .install_disk_room import reflinks, require
 from .install_restore_copy import RecoveryRequired, check_deadline, foreground_io, identity, service_active
 from .install_sqlite_sync import executable, local_sync
 from .install_storage import backup_roots
@@ -22,6 +25,8 @@ ALLOWANCE_S = 30
 HEADER_PAGES = 1
 CHUNK = 1024 * 1024
 STOPPED_WORK = ["sqlite3-rsync-delta", "identity"]
+PINNED_WORK = ["stopped-wal-copy", "wal-replay", "identity"]
+BASE = "prestop-replica"
 AFTER_START = ["identity", "quick_check", "sha256"]
 STOP_PASSES = 1
 ALERTS = Path.home() / ".agent-rails/lanes/t3-fast-release/STATE.md"
@@ -42,10 +47,16 @@ def estimate(size, pass_seconds=None, passes=PASSES):
             "source": f"constant {RSYNC_MIB_S} MiB/s" if pass_seconds is None else "previous install's stopped delta, scaled to size"}
 
 
-def previous_copy(run, target):
+def base_lock(root):
+    return Path(root) / f"{BASE}.lock"
+
+
+def previous_copy(run, target, skip=()):
     found = []
     for root in backup_roots(run.home, run.backups):
         for record in root.glob("*/at-stop.json"):
+            if record.parent in skip:
+                continue
             try:
                 value = json.loads(record.read_text())
             except (OSError, ValueError):
@@ -58,38 +69,100 @@ def previous_copy(run, target):
 
 
 def measured_pass(local, size):
-    seconds, measured = (local.get("delta") or {}).get("seconds"), local.get("bytes")
+    delta = local.get("delta") or {}
+    if delta.get("method") == live.METHOD:
+        return None
+    seconds, measured = delta.get("seconds"), local.get("bytes")
     if not isinstance(seconds, (int, float)) or not isinstance(measured, int) or measured <= 0 or seconds <= 0:
         return None
     return seconds * max(1.0, size / measured)
 
 
+def seed_source(run, target):
+    skip = []
+    for root in backup_roots(run.home, run.backups):
+        lock = base_lock(root)
+        if lock.exists():
+            with lock.open("a") as handle:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    skip.append(root / BASE)
+    return previous_copy(run, target, skip)
+
+
 def seed(run, target, size):
     started = time.monotonic()
-    source, local = previous_copy(run, target)
+    source, local = seed_source(run, target)
+    clone = reflinks(target.parent)
     if source is None:
-        return {"seed": "none", "reason": "no earlier pre-drain copy; the stopped delta copies every page"}
+        require(target.parent, size, "the pre-drain restore copy (no earlier copy to seed from)", run.step)
+        return {"seed": "none", "reflink": clone, "reason": "no earlier pre-drain copy; the live sync copies every page"}
     run.predrain_pass_s = measured_pass(local, size)
+    consume = not clone and source.parent.name == BASE and source.stat().st_dev == target.parent.stat().st_dev
+    if consume:
+        os.replace(source, target)
+        (source.parent / "at-stop.json").unlink(missing_ok=True)
+        run.predrain_consumed = (target, source)
+        return {"seed": "base-moved", "from": str(source), "reflink": False, "bytes": target.stat().st_size, "seconds": round(time.monotonic() - started, 3)}
+    if not clone:
+        require(target.parent, size, "the pre-drain restore copy seed (no reflink on this filesystem)", run.step)
     command = [*NICE, "ionice", "-c3", "cp", "--reflink=auto", "--sparse=always", str(source), str(target)]
     try:
         subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=run.args.offbox_copy_s, check=True)
     except (OSError, subprocess.SubprocessError) as error:
         target.unlink(missing_ok=True)
-        return {"seed": "failed", "from": str(source), "error": f"{type(error).__name__}"[:200], "seconds": round(time.monotonic() - started, 3)}
-    return {"seed": "previous-copy", "from": str(source), "bytes": target.stat().st_size, "seconds": round(time.monotonic() - started, 3)}
+        return {"seed": "failed", "from": str(source), "reflink": clone, "error": f"{type(error).__name__}"[:200], "seconds": round(time.monotonic() - started, 3)}
+    return {"seed": "previous-copy", "from": str(source), "reflink": clone, "bytes": target.stat().st_size, "seconds": round(time.monotonic() - started, 3)}
+
+
+def give_back(run):
+    consumed = getattr(run, "predrain_consumed", None)
+    release(run)
+    if consumed is None:
+        return
+    target, source = consumed
+    run.predrain_consumed = None
+    if target.is_file() and not source.exists():
+        source.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.replace(target, source)
+        mark_base(source, {"returnedBy": "failed-install-before-stop"})
+
+
+def mark_base(path, fields):
+    record = {"method": METHOD, "complete": True, "prestop": True, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "local": {"path": str(path), "bytes": path.stat().st_size, "method": METHOD, **fields}}
+    staged = path.parent / "at-stop.json.tmp"
+    staged.write_text(json.dumps(record) + "\n")
+    staged.chmod(0o600)
+    os.replace(staged, path.parent / "at-stop.json")
+    return record
+
+
+def release(run):
+    pin = getattr(run, "live_pin", None)
+    if pin is not None:
+        pin.release("install ended before the stopped WAL copy")
+        run.live_pin = None
 
 
 def prepare(run, source, target, size, budget):
     seeded = seed(run, target, size)
     run.step("predrain-seed", liveReads=0, **seeded)
-    measured = getattr(run, "predrain_pass_s", None) if seeded["seed"] == "previous-copy" else None
-    work = estimate(size, measured, STOP_PASSES)
+    measured = getattr(run, "predrain_pass_s", None) if seeded["seed"] in ("previous-copy", "base-moved") else None
+    run.live_pin, online = live.start(source, target, run.step, timeout=run.args.offbox_copy_s * 4)
+    run.step("predrain-online-sync", **online)
+    if run.live_pin is not None:
+        seconds = live.stop_estimate(source)
+        work = {"method": live.METHOD, "walCopySeconds": seconds, "allowanceSeconds": ALLOWANCE_S, "totalSeconds": round(seconds + ALLOWANCE_S, 3), "source": f"live WAL at {live.WAL_COPY_MIB_S} MiB/s"}
+    else:
+        work = estimate(size, measured, STOP_PASSES)
     back = estimate(size, measured)
     most = max(work["totalSeconds"], back["totalSeconds"])
-    run.step("hard-backup-estimate", stoppedWork=STOPPED_WORK, afterStart=AFTER_START, localRestoreCopy=work, rollback=back, seed=seeded, estimateSeconds=most, budgetSeconds=budget)
+    run.step("hard-backup-estimate", stoppedWork=PINNED_WORK if run.live_pin is not None else STOPPED_WORK, afterStart=AFTER_START, localRestoreCopy=work, rollback=back, seed=seeded, estimateSeconds=most, budgetSeconds=budget)
     if most > budget:
+        release(run)
         raise ValueError(f"stopped delta sync or rollback estimated at {most:.0f} s exceeds --offbox-stop-s {budget}; nothing stopped")
-    return {"seed": seeded, "stopEstimate": work, "rollbackEstimate": back}
+    return {"seed": seeded, "online": online, "stopEstimate": work, "rollbackEstimate": back}
 
 
 def converge(origin, replica, deadline, what):
@@ -118,11 +191,19 @@ def take(run, source, target, prepared):
     stopped = time.monotonic()
     deadline = run.stop_deadline
     expected = identity(source, deadline=deadline)
-    with foreground_io(run.step):
+    pin, run.live_pin = getattr(run, "live_pin", None), None
+    moved = None
+    if pin is not None:
         try:
-            moved = local_sync(source, target, deadline)
-        except subprocess.TimeoutExpired as error:
-            raise ValueError("restore copy sqlite3_rsync passed its stopped-work deadline") from error
+            moved = {"method": live.METHOD, **live.copy_wal(pin, source, target)}
+        except (OSError, ValueError) as error:
+            run.step("predrain-wal-copy-fallback", loud=True, error=str(error)[:300])
+    if moved is None:
+        with foreground_io(run.step):
+            try:
+                moved = local_sync(source, target, deadline)
+            except subprocess.TimeoutExpired as error:
+                raise ValueError("restore copy sqlite3_rsync passed its stopped-work deadline") from error
     settle_wal(target)
     os.chmod(target, 0o600)
     fsync(target)

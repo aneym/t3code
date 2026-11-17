@@ -172,6 +172,7 @@ def capture(run, previous, stop, rollback_gate, *, keep_local=False):
     try:
         return _capture(run, previous, stop, rollback_gate, keep_local=keep_local)
     except BaseException:
+        predrain.give_back(run)
         for directory in run.backup_attempt_directories:
             if directory.exists() and not (directory / "at-stop.json").exists():
                 shutil.rmtree(directory)
