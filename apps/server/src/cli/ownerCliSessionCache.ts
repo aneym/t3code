@@ -4,6 +4,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
@@ -70,14 +71,14 @@ const openSession = (
     ...(headers === undefined ? {} : { headers }),
   });
 
-export const openOwnerCliSession = Effect.fn("cli.ownerSession.open")(function* (
+export const openOwnerCliSession = Effect.fn("cli.ownerSession.open")(function* <E, R>(
   secretsDir: string,
   endpoint: string,
   command: string,
+  authLayer: Layer.Layer<EnvironmentAuth.EnvironmentAuth, E, R>,
   headers?: Readonly<Record<string, string>>,
 ) {
   const path = yield* Path.Path;
-  const auth = yield* EnvironmentAuth.EnvironmentAuth;
   const cachePath = path.join(secretsDir, CACHE_FILE_NAME);
   const cached = yield* readCredential(cachePath);
   if (Option.isSome(cached) && (yield* isUsable(cached.value))) {
@@ -90,6 +91,11 @@ export const openOwnerCliSession = Effect.fn("cli.ownerSession.open")(function* 
     );
     if (Option.isSome(session)) return session.value;
   }
+  const auth = yield* Layer.build(authLayer).pipe(
+    Effect.flatMap((context) =>
+      Effect.service(EnvironmentAuth.EnvironmentAuth).pipe(Effect.provide(context)),
+    ),
+  );
   const revoke = (sessionId: AuthSessionId) =>
     auth.revokeSession(sessionId).pipe(Effect.ignore({ log: true }));
   const keep = yield* Ref.make(false);
