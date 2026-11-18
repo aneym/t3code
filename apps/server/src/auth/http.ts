@@ -38,32 +38,12 @@ import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/trac
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { requestUrl } from "../requestUrl.ts";
-
-const CREDENTIAL_RESPONSE_HEADERS = {
-  "cache-control": "no-store",
-  pragma: "no-cache",
-} as const;
-
-const appendCredentialResponseHeaders = HttpEffect.appendPreResponseHandler((_request, response) =>
-  Effect.succeed(HttpServerResponse.setHeaders(response, CREDENTIAL_RESPONSE_HEADERS)),
-);
-
-const appendDpopChallengeHeader = HttpEffect.appendPreResponseHandler((_request, response) =>
-  Effect.succeed(HttpServerResponse.setHeader(response, "www-authenticate", "DPoP")),
-);
-
-const appendDpopChallengeOnUnauthorized =
-  /* Request instrumentation already owns the span; keep this helper in that context. */
-  Effect.fnUntraced(function* (error: EnvironmentAuthInvalidError) {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const usesDpop =
-      (request.originalUrl.startsWith("/oauth/token") && request.headers.dpop !== undefined) ||
-      /^DPoP /i.test(request.headers.authorization ?? "");
-    if (usesDpop) {
-      yield* appendDpopChallengeHeader;
-    }
-    return yield* error;
-  });
+import { withChatThreads } from "../chatSession/chatSessionState.ts";
+import {
+  appendCredentialResponseHeaders,
+  appendDpopChallengeHeader,
+  appendDpopChallengeOnUnauthorized,
+} from "./credentialResponse.ts";
 
 const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(
   Effect.map((span) => span.traceId),
@@ -289,7 +269,7 @@ export const layer = HttpApiBuilder.group(
               yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
               yield* appendCredentialResponseHeaders;
             }
-            return result;
+            return yield* withChatThreads(result);
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("internal_error", error),

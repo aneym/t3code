@@ -6,6 +6,7 @@ export * from "./composerContextClipboard.ts";
 export * from "./background.ts";
 export * from "./acpRegistry.ts";
 export * from "./auth.ts";
+export * from "./mcpApprovalCode.ts";
 export * from "./chatSession.ts";
 export * from "./chatSessionMethods.ts";
 export * from "./environment.ts";

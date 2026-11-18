@@ -9,11 +9,15 @@ export interface EmbedKeptViewInput {
   readonly hasData: boolean;
   readonly chatSession: boolean;
   readonly liveConfig: Pick<ServerConfig, "chatSession"> | null;
+  readonly sessionListsThread: boolean;
 }
 
 export function embedKeptView(input: EmbedKeptViewInput): EmbedKeptView {
   if (!input.hasData || input.status === "live" || input.status === "deleted") return "live";
   if (!input.chatSession) return "kept";
-  const threadIds = input.liveConfig?.chatSession?.threadIds ?? [];
-  return threadIds.some((id) => id === input.threadId) ? "kept" : "hold";
+  const listed =
+    input.liveConfig === null
+      ? input.sessionListsThread
+      : (input.liveConfig.chatSession?.threadIds ?? []).some((id) => id === input.threadId);
+  return listed ? "kept" : "hold";
 }
