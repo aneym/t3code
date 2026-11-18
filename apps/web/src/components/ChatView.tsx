@@ -105,7 +105,6 @@ import {
   codexFeedbackMessage,
   deriveWorkspaceMutationId,
   isCompleteTurnItemRow,
-  shouldShowLoadEarlierControl,
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
 import {
@@ -280,7 +279,7 @@ import {
 } from "./chat/ChatOverlayHosts";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { useCitedHistory } from "./chat/citationProcedure";
-import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
+import { useThreadHistoryControls } from "./chat/useThreadHistoryControls";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
@@ -367,7 +366,6 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { markSupplied } from "../railsWords/personPress";
 import { assetEnvironment } from "../state/assets";
 import { readEnvironmentScope, readPreparedConnection } from "../state/session";
-import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { observeResize } from "~/lib/observeResize";
@@ -480,10 +478,6 @@ export default function ChatView(props: ChatViewProps) {
   const interruptThreadTurn = useOrchestrationCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
-  const loadEarlierThreadHistory = useAtomCommand(threadEnvironment.loadEarlierHistory, {
-    label: "load earlier thread history",
-    reportFailure: false,
-  });
   const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -550,25 +544,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const serverVisibleTurnItems = useQuietThreadVisibleTurnItems(routeThreadDetailRef);
   const serverThreadHistory = useThreadHistory(routeThreadDetailRef);
-  const threadHistoryControls = (() => {
-    if (routeThreadDetailRef === null || !shouldShowLoadEarlierControl(serverThreadHistory)) {
-      return undefined;
-    }
-    return {
-      hasMoreHistory: serverThreadHistory.hasMoreHistory,
-      loading: serverThreadHistory.loading,
-      error: serverThreadHistory.error,
-      onLoadEarlier: (throughEntryId) => {
-        void loadEarlierThreadHistory({
-          environmentId: routeThreadDetailRef.environmentId,
-          input: {
-            threadId: routeThreadDetailRef.threadId,
-            ...(throughEntryId === undefined ? {} : { throughEntryId }),
-          },
-        });
-      },
-    };
-  })() as MessagesTimelineHistoryControls | undefined;
+  const threadHistoryControls = useThreadHistoryControls(routeThreadDetailRef, serverThreadHistory);
   const committedServerMessageIds = deriveCommittedServerUserMessageIds(serverVisibleTurnItems);
   // Queued messages have no turn item until starting, so cancellation must retire their optimistic rows
   // separately.

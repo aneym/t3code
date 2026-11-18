@@ -54,6 +54,7 @@ import {
 } from "./threadHistoryMerge.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 import { makeThreadRequestsResolvedAnnouncer } from "./threadRequests.ts";
+import { threadSubscribeAccepts } from "./threadSubscribeAccepts.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   type EnvironmentThreadState,
@@ -1095,14 +1096,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           threadId,
           ...(canResume ? { afterSequence: sequence } : {}),
           requestCompletionMarker: true as const,
-          ...(acceptBoundedSnapshot
-            ? {
-                acceptBoundedSnapshot: true as const,
-                acceptDeferredWork: true as const,
-                acceptCompactTurnItems: true as const,
-                acceptCompactIds: true as const,
-              }
-            : {}),
+          ...threadSubscribeAccepts(acceptBoundedSnapshot),
           acceptDedupedBodies: true as const,
         };
       }),
