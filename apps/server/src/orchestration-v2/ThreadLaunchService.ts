@@ -256,7 +256,7 @@ const make = Effect.gen(function* () {
       ? git.currentBranch(workspaceRoot).pipe(Effect.orElseSucceed(() => null))
       : Effect.succeed(strategy.branch ?? null);
   const preparationScope = yield* Scope.make("sequential");
-  const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
+  const scheduledLaunches = yield* Ref.make<ReadonlySet<string>>(new Set());
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
 
   const mapError =
@@ -961,18 +961,18 @@ const make = Effect.gen(function* () {
             ),
           );
 
-  const reservePreparation = (commandId: CommandId) =>
+  const reservePreparation = (key: string) =>
     Ref.modify(scheduledLaunches, (scheduled) => {
-      if (scheduled.has(commandId)) return [false, scheduled] as const;
+      if (scheduled.has(key)) return [false, scheduled] as const;
       const next = new Set(scheduled);
-      next.add(commandId);
+      next.add(key);
       return [true, next] as const;
     });
 
-  const releasePreparation = (commandId: CommandId) =>
+  const releasePreparation = (key: string) =>
     Ref.update(scheduledLaunches, (scheduled) => {
       const next = new Set(scheduled);
-      next.delete(commandId);
+      next.delete(key);
       return next;
     });
 
@@ -999,8 +999,7 @@ const make = Effect.gen(function* () {
             (stored) =>
               stored.event.type === "run.updated" &&
               stored.event.payload.id === runId &&
-              (stored.event.payload.status === "interrupted" ||
-                stored.event.payload.status === "cancelled"),
+              ["interrupted", "cancelled", "failed"].includes(stored.event.payload.status),
           ),
           Stream.runHead,
           Effect.flatMap((event) => (Option.isSome(event) ? Effect.interrupt : Effect.never)),
@@ -1017,7 +1016,7 @@ const make = Effect.gen(function* () {
         ),
       ),
       Effect.ignoreCause,
-      Effect.ensuring(releasePreparation(input.commandId)),
+      Effect.ensuring(releasePreparation(runId ?? input.commandId)),
       unboundDispatchAdmission,
       Effect.forkIn(preparationScope),
     );
@@ -1237,7 +1236,7 @@ const make = Effect.gen(function* () {
               }
             : workspaceStrategy;
         if (shouldSchedule) {
-          const ownsPreparation = yield* reservePreparation(input.commandId);
+          const ownsPreparation = yield* reservePreparation(runId ?? input.commandId);
           if (ownsPreparation) {
             yield* Effect.gen(function* () {
               const preparationStillRequired =
@@ -1256,9 +1255,9 @@ const make = Effect.gen(function* () {
                   runId,
                 );
               } else {
-                yield* releasePreparation(input.commandId);
+                yield* releasePreparation(runId ?? input.commandId);
               }
-            }).pipe(Effect.onError(() => releasePreparation(input.commandId)));
+            }).pipe(Effect.onError(() => releasePreparation(runId ?? input.commandId)));
           }
         }
 
@@ -1287,9 +1286,9 @@ const make = Effect.gen(function* () {
       const run = runs.find((candidate) => candidate.id === input.runId);
       const workspacePreparation = run?.workspacePreparation;
       if (run?.status !== "preparing" || workspacePreparation === undefined) return;
-      if (!(yield* reservePreparation(input.commandId))) return;
+      if (!(yield* reservePreparation(input.runId))) return;
       yield* scheduleRunPreparation(input, thread, run, workspacePreparation).pipe(
-        Effect.onError(() => releasePreparation(input.commandId)),
+        Effect.onError(() => releasePreparation(input.runId)),
       );
     }).pipe(Effect.exit);
     if (Exit.isFailure(scheduled)) {

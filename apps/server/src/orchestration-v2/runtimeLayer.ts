@@ -36,6 +36,7 @@ import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as PreparingRunSupervisor from "./PreparingRunSupervisor.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadReadCache from "./ThreadReadCache.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
@@ -311,6 +312,11 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
     ),
   ),
 );
+const layerDelegatedChildStartGateProvided = DelegatedChildStartGate.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(layerProjectService, layerThreadManagementProvided, layerThreadLaunchProvided),
+  ),
+);
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
@@ -434,9 +440,15 @@ export const layerProduction = Layer.mergeAll(
     Layer.provide(Layer.mergeAll(layerProjectionStore, layerThreadManagementProvided)),
   ),
   UsageLimitRoomWorker.layer.pipe(Layer.provide(layerThreadManagementProvided)),
-  DelegatedChildStartGate.layer.pipe(
+  layerDelegatedChildStartGateProvided,
+  PreparingRunSupervisor.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(layerProjectService, layerThreadManagementProvided, layerThreadLaunchProvided),
+      Layer.mergeAll(
+        layerDelegatedChildStartGateProvided,
+        layerThreadManagementProvided,
+        layerThreadLaunchProvided,
+        layerEventSink,
+      ),
     ),
   ),
   AskOnlyForkArchiver.layer.pipe(
