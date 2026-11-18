@@ -293,8 +293,8 @@ type DelegateTaskResult = {
   childThreadId: string;
   childRunId: string | null;
   childNodeId: string;
-  status: "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "interrupted";
-  workState: "working" | "waiting_for_children" | "result_available";
+  status: DelegatedTaskStatus;
+  workState: DelegatedTaskWorkState;
   hasPendingChildRuns: boolean;
   providerInstanceId: string;
   model: string | null;
@@ -318,9 +318,10 @@ type DelegateTaskResult = {
 
 Reads a delegated task from the parent thread's durable projection. A task ID
 from another parent thread is rejected. `childRunId` identifies the original
-run. `workState` distinguishes active work, a finished turn waiting for children,
-and an available result. The task remains nonterminal until its known work
-finishes. Its published `summary` and result transfer then remain stable across
+run. `workState` tells a run not started (`queued`, `preparing`), active work, a
+finished turn waiting for children, and a result; both unions are in
+`packages/contracts/src/delegatedTaskResult.ts`. The task stays nonterminal until
+its known work finishes. Its published `summary` and result transfer then remain stable across
 later follow-ups. `hasPendingChildRuns` reports later queued or executing turns;
 `latestTerminal*` exposes later executed, non-monitor results without replacing
 the published task result.

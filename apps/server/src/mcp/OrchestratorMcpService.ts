@@ -1438,8 +1438,7 @@ const make = Effect.gen(function* () {
               : childRun,
           )
         : workState === "result_available"
-          ? // A cancelled task's finished turn settles it as interrupted.
-            task.cancelledRunId !== undefined && latest === "completed"
+          ? task.cancelledRunId !== undefined && latest === "completed"
             ? "interrupted"
             : latest
           : latest === "queued" || latest === "preparing"
@@ -1484,6 +1483,7 @@ const make = Effect.gen(function* () {
         instanceId: task.providerInstanceId,
         model: task.model,
       };
+    const reported = childRun !== undefined && childStartGate?.isHeld(childRun) ? "queued" : status;
     const result = {
       taskId: task.id,
       childThreadId: task.childThreadId,
@@ -1493,8 +1493,8 @@ const make = Effect.gen(function* () {
       ),
       childRunId: childRun?.id ?? null,
       childNodeId: task.id,
-      status: childRun !== undefined && childStartGate?.isHeld(childRun) ? "queued" : status,
-      workState,
+      status: reported,
+      workState: reported === "queued" || reported === "preparing" ? reported : workState,
       hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
       providerInstanceId: modelSelection.instanceId,
       model: modelSelection.model,
