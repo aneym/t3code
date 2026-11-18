@@ -4,7 +4,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 
-import { type GateLabel, makeGateRecorder } from "./DispatchGateRecord.ts";
+import { type BusyNote, type GateLabel, makeGateRecorder } from "./DispatchGateRecord.ts";
 
 export interface DispatchGateShape {
   readonly admit: <A, E, R>(
@@ -19,6 +19,7 @@ export interface DispatchGateShape {
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<Option.Option<A>, E, R>;
   readonly withCommit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  readonly noteBusy: (note: BusyNote) => Effect.Effect<void>;
 }
 
 export const makeDispatchGate = Effect.gen(function* () {
@@ -58,6 +59,7 @@ export const makeDispatchGate = Effect.gen(function* () {
     admit,
     admitWithin,
     withCommit,
+    noteBusy: recorder.busy,
     withClaim: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       admit({ type: "outbox.claim" }, "shared", withCommit(effect)),
   };

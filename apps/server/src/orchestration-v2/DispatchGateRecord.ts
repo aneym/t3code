@@ -20,6 +20,18 @@ interface Waiter {
   readonly since: number;
 }
 
+export interface BusyNote {
+  readonly label: GateLabel;
+  readonly since: number;
+  readonly lock:
+    | "gate"
+    | {
+        readonly thread: string;
+        readonly queue: number;
+        readonly holder: { readonly label: GateLabel; readonly since: number } | undefined;
+      };
+}
+
 interface Holder {
   readonly label: GateLabel;
   readonly waitMs: number;
@@ -166,5 +178,30 @@ export const makeGateRecorder = Effect.gen(function* () {
       },
     );
 
-  return { record };
+  const busy = (note: BusyNote) =>
+    Effect.map(Clock.currentTimeMillis, (now) => {
+      let held: Holder | undefined;
+      if (note.lock === "gate")
+        for (const holder of holders)
+          if (held === undefined || holder.acquiredAt < held.acquiredAt) held = holder;
+      const holder =
+        note.lock !== "gate"
+          ? note.lock.holder
+          : held && { label: held.label, since: held.acquiredAt };
+      write({
+        k: "busy",
+        type: note.label.type,
+        thread: note.label.thread ?? "-",
+        lock: note.lock === "gate" ? "gate" : "thread",
+        ...(note.lock === "gate" ? {} : { lockThread: note.lock.thread }),
+        waitMs: now - note.since,
+        queue: note.lock === "gate" ? waiters.size + 1 : note.lock.queue,
+        holder: holder?.label.type ?? "-",
+        holderThread: holder?.label.thread ?? "-",
+        holdMs: holder === undefined ? 0 : now - holder.since,
+        ...(held === undefined ? {} : { phase: held.phase ?? "-" }),
+      });
+    });
+
+  return { record, busy };
 });
