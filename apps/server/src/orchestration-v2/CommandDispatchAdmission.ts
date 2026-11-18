@@ -8,10 +8,16 @@ import type * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import type { BusyNote, GateLabel } from "./DispatchGateRecord.ts";
 import type { EffectOutboxV2Shape } from "./EffectOutbox.ts";
 import { BUSY_RETRY_AFTER_MS, DispatchAdmissionBound } from "./DispatchAdmissionBound.ts";
 import { OrchestratorDispatchBusyError } from "./OrchestratorDispatchError.ts";
 import { isPlainSend } from "./SharedDispatchPolicy.ts";
+
+interface ThreadLockHolder {
+  readonly label: GateLabel;
+  readonly since: number;
+}
 
 export function makeCommandDispatchAdmission<A, E, R, P>(options: {
   readonly execute: (
@@ -25,39 +31,83 @@ export function makeCommandDispatchAdmission<A, E, R, P>(options: {
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
   ) => boolean;
   readonly parentThreadId: (threadId: ThreadId) => Effect.Effect<ThreadId | undefined, P>;
-  readonly outbox: Pick<EffectOutboxV2Shape, "admit" | "admitWithin">;
+  readonly outbox: Pick<EffectOutboxV2Shape, "admit" | "admitWithin" | "noteBusy">;
   readonly locks: KeyedLock.KeyedLock<ThreadId>;
   readonly intake: KeyedLock.KeyedLock<ThreadId>;
 }) {
   const execute = options.execute;
+  const threadLocks = new Map<ThreadId, { queue: number; holder: ThreadLockHolder | undefined }>();
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
   const route = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
     const label = { type: command.type, thread: options.commandThreadId(command) };
     const bound = yield* DispatchAdmissionBound;
     const startedAt = yield* Clock.currentTimeMillis;
-    const busy = new OrchestratorDispatchBusyError({
-      commandId: command.commandId,
-      commandType: command.type,
-      waitedMs: bound ?? 0,
-      retryAfterMs: BUSY_RETRY_AFTER_MS,
-    });
+    const busy = (lock: BusyNote["lock"]) =>
+      Effect.flatMap(Clock.currentTimeMillis, (now) =>
+        options.outbox.noteBusy({ label, since: startedAt, lock }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new OrchestratorDispatchBusyError({
+                commandId: command.commandId,
+                commandType: command.type,
+                waitedMs: now - startedAt,
+                retryAfterMs: BUSY_RETRY_AFTER_MS,
+              }),
+            ),
+          ),
+        ),
+      );
     const within = <A, E2, R2>(
+      lock: () => BusyNote["lock"],
       bounded: (remainingMs: number) => Effect.Effect<Option.Option<A>, E2, R2>,
     ) =>
       Effect.flatMap(Clock.currentTimeMillis, (now) =>
         bounded(Math.max(0, startedAt + (bound ?? 0) - now)),
       ).pipe(
-        Effect.flatMap(Option.match({ onNone: () => Effect.fail(busy), onSome: Effect.succeed })),
+        Effect.flatMap(
+          Option.match({ onNone: () => busy(lock()), onSome: (value) => Effect.succeed(value) }),
+        ),
       );
     const lockThread = <A, E2, R2>(threadId: ThreadId, effect: Effect.Effect<A, E2, R2>) =>
-      bound === undefined
-        ? options.locks.withLock(threadId, effect)
-        : within((remainingMs) => options.locks.withLockWithin(threadId, remainingMs, effect));
+      Effect.suspend(() => {
+        const state = threadLocks.get(threadId) ?? { queue: 0, holder: undefined };
+        threadLocks.set(threadId, state);
+        state.queue += 1;
+        let queued = true;
+        const leave = () => {
+          if (queued) state.queue -= 1;
+          queued = false;
+        };
+        const settle = Effect.sync(() => {
+          leave();
+          if (state.queue === 0 && state.holder === undefined) threadLocks.delete(threadId);
+        });
+        const held = Effect.flatMap(Clock.currentTimeMillis, (since) => {
+          leave();
+          state.holder = { label, since };
+          return Effect.ensuring(
+            effect,
+            Effect.sync(() => {
+              state.holder = undefined;
+            }),
+          );
+        });
+        return (
+          bound === undefined
+            ? options.locks.withLock(threadId, held)
+            : within(
+                () => ({ thread: threadId, queue: state.queue, holder: state.holder }),
+                (remainingMs) => options.locks.withLockWithin(threadId, remainingMs, held),
+              )
+        ).pipe(Effect.ensuring(settle));
+      });
     const admitted = (mode: FairRwLockMode, sideChatIds?: ReadonlyArray<ThreadId>) =>
       bound === undefined
         ? options.outbox.admit(label, mode, execute(command, sideChatIds))
-        : within((remainingMs) =>
-            options.outbox.admitWithin(label, mode, remainingMs, execute(command, sideChatIds)),
+        : within(
+            () => "gate",
+            (remainingMs) =>
+              options.outbox.admitWithin(label, mode, remainingMs, execute(command, sideChatIds)),
           );
     const execution = lockThread(label.thread, admitted("exclusive"));
     const plainSend = isPlainSend(command);

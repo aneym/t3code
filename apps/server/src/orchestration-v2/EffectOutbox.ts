@@ -396,9 +396,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
 
     const gate = yield* makeDispatchGate;
     const service: EffectOutboxV2Shape = {
-      admit: gate.admit,
-      admitWithin: gate.admitWithin,
-      withCommit: gate.withCommit,
+      ...gate,
       enqueue: Effect.fn("EffectOutbox.enqueue")(
         function* (effects) {
           const now = yield* DateTime.now;

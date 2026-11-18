@@ -7,6 +7,7 @@ import {
 import { pullRequestSnapshotEndsWatch, withPullRequestWatch } from "./ThreadPullRequestWatch.ts";
 import { makeCommandDispatchAdmission } from "./CommandDispatchAdmission.ts";
 import { markGatePhase } from "./DispatchGateRecord.ts";
+import { readDelegatedTaskParent } from "./DelegatedTaskParentRecords.ts";
 import {
   completionDeliveryRun,
   completionDeliveryMessage,
@@ -943,12 +944,10 @@ function providerTurnForRun(
     return undefined;
   }
 
+  const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
   return (
     latestProviderTurnForAttempt(projection.providerTurns, run.activeAttemptId) ??
-    projection.providerTurns.find((turn) => {
-      const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
-      return attempt?.providerTurnId === turn.id;
-    })
+    projection.providerTurns.find((turn) => attempt?.providerTurnId === turn.id)
   );
 }
 
@@ -8819,21 +8818,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     ) {
-      const parentProjection = yield* projectionStore
-        .getThreadRecords(
-          command.parentThreadId,
-          ["runs", "nodes", "providerThreads", "providerTurns", "attempts"],
-          { omitSettledLeafNodes: true },
-        )
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestratorProjectionError({
-                threadId: command.parentThreadId,
-                cause,
-              }),
-          ),
-        );
+      const parentProjection = yield* readDelegatedTaskParent(projectionStore, command).pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),
+        ),
+      );
       const parentRun = parentProjection.runs.find(
         (candidate) => candidate.id === command.parentRunId,
       );
