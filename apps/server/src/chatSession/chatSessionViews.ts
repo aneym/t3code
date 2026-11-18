@@ -128,7 +128,7 @@ export const chatServerConfig = (config: ServerConfig, session: ChatSession): Se
     otlpLogsEnabled: false,
   },
   settings: chatSettings(config.settings),
-  chatSession: { ownerThreadIds: [...session.ownerThreads] },
+  chatSession: { ownerThreadIds: [...session.ownerThreads], threadIds: [...session.threads] },
 });
 
 export function chatServerConfigEvent(

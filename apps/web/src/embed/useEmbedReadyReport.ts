@@ -8,23 +8,30 @@ import { useEmbedHostConnected } from "./embedHost";
 import { embedPaintSource } from "./embedPaintSource";
 import { createEmbedReadyWatch } from "./embedReadyWatch";
 
-export function useEmbedReadyReport(threadRef: ScopedThreadRef | null, threadId: string): void {
+export function useEmbedReadyReport(
+  threadRef: ScopedThreadRef | null,
+  threadId: string,
+  held = false,
+): void {
   const thread = useEnvironmentThread(
     threadRef?.environmentId ?? null,
     threadRef?.threadId ?? null,
   );
   const settled =
-    threadRef === null ||
-    Option.isSome(thread.data) ||
-    Option.isSome(thread.error) ||
-    thread.status === "deleted";
+    !held &&
+    (threadRef === null ||
+      Option.isSome(thread.data) ||
+      Option.isSome(thread.error) ||
+      thread.status === "deleted");
   const drawsRows = Option.exists(
     thread.data,
     (data) => data.messages.length > 0 || data.turnItems.length > 0,
   );
-  const [first, setFirst] = useState(() => ({ threadId, from: embedPaintSource(thread) }));
-  if (first.threadId !== threadId) setFirst({ threadId, from: embedPaintSource(thread) });
-  const from = first.threadId === threadId ? first.from : embedPaintSource(thread);
+  const shown = held ? null : embedPaintSource(thread);
+  const [first, setFirst] = useState(() => ({ threadId, from: shown }));
+  const stale = first.threadId !== threadId || (first.from === null && shown !== null);
+  if (stale) setFirst({ threadId, from: shown });
+  const from = (stale ? shown : first.from) ?? "live";
   const connected = useEmbedHostConnected();
   const router = useRouter();
   const [watch] = useState(createEmbedReadyWatch);
