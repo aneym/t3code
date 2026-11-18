@@ -29,7 +29,10 @@ export function useEmbedReadyReport(
   );
   const shown = held ? null : embedPaintSource(thread);
   const [first, setFirst] = useState(() => ({ threadId, from: shown }));
-  const stale = first.threadId !== threadId || (first.from === null && shown !== null);
+  const stale =
+    first.threadId !== threadId ||
+    (first.from === null && shown !== null) ||
+    (first.from === "live" && shown === "kept");
   if (stale) setFirst({ threadId, from: shown });
   const from = (stale ? shown : first.from) ?? "live";
   const connected = useEmbedHostConnected();
