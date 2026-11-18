@@ -798,9 +798,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
   }).pipe(Effect.provide(layerTest)),
 );
 
-// One thread holds every way a run can still matter after a compaction. A run is requested at
-// its ordinal in minutes and ends 30 seconds later, unless the table says otherwise.
-it.effect("a compacted thread reads every run, and run records only for its recent runs", () =>
+it.effect("a command reads a long thread's records only for its recent runs", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* addRolledBackRecoveryCandidate("compacted");
@@ -830,26 +828,9 @@ it.effect("a compacted thread reads every run, and run records only for its rece
       completedAt: status === "running" ? null : at(ordinal),
       updatedAt: at(ordinal),
     });
-    const compaction = (ordinal: number, status: "completed" | "failed" | "running") =>
-      store.apply({
-        id: EventId.make(`event:compacted:compaction-${ordinal}`),
-        type: "turn-item.updated",
-        threadId,
-        runId: runId(ordinal),
-        nodeId: rootNodeId(ordinal),
-        driver,
-        occurredAt: at(ordinal),
-        payload: {
-          ...item(ordinal, ordinal * 10 + 1, status),
-          id: TurnItemId.make(`item:compacted:compaction-${ordinal}`),
-          type: "compaction",
-          driver,
-        },
-      });
     for (const [ordinal, status, endedAt] of [
       [2, "queued", null],
       [3, "completed"],
-      // A held queue ran this old run after the compactions.
       [4, "completed", at(11.5)],
       [5, "completed"],
       [6, "completed"],
@@ -1002,10 +983,14 @@ it.effect("a compacted thread reads every run, and run records only for its rece
         },
       });
     }
-    // Each collection as the ordinals of the runs it was read for. Run 1 is the helper's.
     const ordinals = (ids: ReadonlyArray<string | null>) =>
       [...new Set(ids.map((id) => Number(id?.split(":").at(-1)) || 1))].toSorted((a, b) => a - b);
-    const read = (keepRunIds: ReadonlyArray<RunId> = [], keepMessageId = messageId(0)) =>
+    const recentRuns = (keepRunIds: ReadonlyArray<RunId> = [], keepMessageId = messageId(0)) => ({
+      newest: 5,
+      keepRunIds,
+      keepMessageId,
+    });
+    const read = (keepRunIds?: ReadonlyArray<RunId>, keepMessageId?: MessageId) =>
       store
         .getThreadRecords(
           threadId,
@@ -1013,12 +998,12 @@ it.effect("a compacted thread reads every run, and run records only for its rece
           {
             messageRoles: ["user"],
             omitSettledLeafNodes: true,
-            sinceLastCompaction: { keepRunIds, keepMessageId },
+            recentRuns: recentRuns(keepRunIds, keepMessageId),
           },
         )
         .pipe(
           Effect.map((records) => ({
-            runs: records.runs.length,
+            runs: ordinals(records.runs.map((run) => run.id)),
             attempts: ordinals(records.attempts.map((attempt) => attempt.runId)),
             nodes: ordinals(records.nodes.map((node) => node.runId)),
             providerTurns: ordinals(records.providerTurns.map((turn) => turn.runAttemptId)),
@@ -1027,37 +1012,16 @@ it.effect("a compacted thread reads every run, and run records only for its rece
           })),
         );
     const all = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-    // Every run and every turn item is read, so a model switch is still measured from the last
-    // prompt. Run 1, the helper's, holds only a command item.
     const expected = (recent: ReadonlyArray<number>) => ({
-      runs: 15,
+      runs: recent,
       attempts: recent,
       nodes: recent,
       providerTurns: recent,
       messages: recent,
-      turnItems: [1, ...all],
+      turnItems: recent,
     });
 
-    // Nothing is compacted yet, so the whole history is current.
-    assert.deepEqual(yield* read(), expected(all));
-
-    // The window starts at the compaction's run. Queued run 2 and held run 4 are older but had
-    // not ended by then.
-    yield* compaction(7, "completed");
-    assert.deepEqual(yield* read(), expected([2, 4, 7, 8, 9, 10, 11, 12, 13, 14, 15]));
-
-    // The latest compaction wins.
-    yield* compaction(11, "completed");
-    const latest = expected([2, 4, 11, 12, 13, 14, 15]);
-    assert.deepEqual(yield* read(), latest);
-
-    // A compaction that was rolled back, failed or is still running does not move the window.
-    yield* compaction(13, "completed");
-    yield* compaction(14, "failed");
-    yield* compaction(15, "running");
-    assert.deepEqual(yield* read(), latest);
-
-    // A named run and the run that holds a re-sent message are read too.
+    assert.deepEqual(yield* read(), expected([2, 4, 11, 12, 13, 14, 15]));
     assert.deepEqual(
       yield* read([runId(3)], messageId(6)),
       expected([2, 3, 4, 6, 11, 12, 13, 14, 15]),
@@ -1196,9 +1160,7 @@ it.effect("a compacted thread reads every run, and run records only for its rece
             messages: names(records.messages.map((message) => message.id)),
           })),
         );
-    const window = {
-      sinceLastCompaction: { keepRunIds: [runId(3)], keepMessageId: messageId(6) },
-    };
+    const window = { recentRuns: recentRuns([runId(3)], messageId(6)) };
     const windowed = yield* readWithTasks(window);
     const unsettled = yield* readWithTasks({ omitSettledSubagentRecords: true });
     const both = yield* readWithTasks({ ...window, omitSettledSubagentRecords: true });
@@ -1209,16 +1171,16 @@ it.effect("a compacted thread reads every run, and run records only for its rece
     assert.deepEqual(unsettled.providerThreads, ["compacted", "old-pending", "recent-pending"]);
     assert.lengthOf(unsettled.rootNodes, all.length);
     assert.lengthOf(unsettled.runs, 15);
-    // Together: every run, every turn item and the provider thread the runs use stay, and the
-    // windowed records are read for the recent and named runs, less each settled task's node.
-    const recentRuns = ["11", "12", "13", "14", "15", "2", "3", "4", "6"];
+    const recent = ["11", "12", "13", "14", "15", "2", "3", "4", "6"];
     assert.deepEqual(both, {
       ...unsettled,
-      attempts: recentRuns,
-      rootNodes: recentRuns,
+      runs: recent,
+      turnItems: recent.map((ordinal) => `prompt-${ordinal}`),
+      attempts: recent,
+      rootNodes: recent,
       taskNodes: ["recent-pending"],
-      providerTurns: recentRuns,
-      messages: recentRuns,
+      providerTurns: recent,
+      messages: recent,
     });
     const keptUnsettled = new Map(Object.entries(unsettled));
     assert.deepEqual(

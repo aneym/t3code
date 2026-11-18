@@ -2361,7 +2361,8 @@ it.effect("queued-message commands read a long thread's history without walking 
       const compiled = statement.compile();
       if (
         /_(nodes|turn_items|runs|run_attempts|provider_turns)\b/.test(compiled[0]) &&
-        /payload_json|GROUP BY/.test(compiled[0])
+        /payload_json|GROUP BY/.test(compiled[0]) &&
+        !compiled[0].trimStart().startsWith("WITH newest AS MATERIALIZED")
       ) {
         statements.push(compiled);
       }
@@ -2376,11 +2377,11 @@ it.effect("queued-message commands read a long thread's history without walking 
             (detail.includes("TEMP B-TREE FOR GROUP BY") && query.includes("json_each")) ||
             (/^SEARCH .*(node|turn_item).* \(thread_id=\?\)$/.test(detail) &&
               !detail.includes("USING COVERING INDEX")) ||
-            (commandType === "delegated_task.request" &&
+            ((commandType === "delegated_task.request" || commandType === "message.dispatch") &&
               /^SEARCH \w+_(runs|run_attempts|provider_turns) .* \(thread_id=\?\)$/.test(detail)) ||
             /^SEARCH .*runs.* \(status=\?\)$/.test(detail) ||
             (/^SEARCH .*turn_items USING INDEX .* \(thread_id=\? AND type=\?\)$/.test(detail) &&
-              query.includes("status IN"))
+              (query.includes("status IN") || commandType === "message.dispatch"))
           ) {
             walks.push(`${commandType}: ${detail}\n  in: ${query.replace(/\s+/g, " ").trim()}`);
           }

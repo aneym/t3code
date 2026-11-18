@@ -1,4 +1,5 @@
 import { delegatedChildWorkspace } from "./DelegatedChildWorkspace.ts";
+import { messageDispatchWindow } from "./CommandRunWindow.ts";
 import { decideHistoryMarkTrimmed } from "./ThreadHistoryTrimDecision.ts";
 import {
   OrchestratorCommandRejectedError,
@@ -8,6 +9,7 @@ import { pullRequestSnapshotEndsWatch, withPullRequestWatch } from "./ThreadPull
 import { makeCommandDispatchAdmission } from "./CommandDispatchAdmission.ts";
 import { markGatePhase } from "./DispatchGateRecord.ts";
 import { readDelegatedTaskParent } from "./DelegatedTaskParentRecords.ts";
+import { readCompletionParent } from "./DelegatedCompletionParentRecords.ts";
 import {
   completionDeliveryRun,
   completionDeliveryMessage,
@@ -1315,7 +1317,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const readCommandProjection = (
     threadId: ThreadId,
-    recent?: ProjectionRecordFilter["sinceLastCompaction"],
+    recent?: ProjectionRecordFilter["recentRuns"],
   ) =>
     projectionStore
       .getThreadRecords(
@@ -1341,7 +1343,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           omitSettledSubagents: true,
           omitSettledSubagentRecords: true,
           contextTransferStatuses: ["pending"],
-          ...(recent === undefined ? {} : { sinceLastCompaction: recent }),
+          ...(recent === undefined ? {} : { recentRuns: recent }),
         },
       )
       .pipe(
@@ -1429,7 +1431,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.fnUntraced(function* (
       threadId: ThreadId,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-      recent?: ProjectionRecordFilter["sinceLastCompaction"],
+      recent?: ProjectionRecordFilter["recentRuns"],
     ) {
       const pending = (yield* Ref.get(events)).filter((event) => event.threadId === threadId);
       const stored = yield* Effect.option(readCommandProjection(threadId, recent));
@@ -1595,14 +1597,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const offerDelegatedCompletionDeliveries =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
     Effect.fnUntraced(function* (threadId: ThreadId) {
-      const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
+      const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
+        completionDeliveryRuns: true,
+      });
       for (const run of projection.runs) {
-        if (
-          run.delegatedCompletion?.delivery !== undefined &&
-          run.delegatedCompletion.delivery !== null
-        ) {
-          yield* offerDelegatedCompletionDelivery(threadId, run.id);
-        }
+        yield* offerDelegatedCompletionDelivery(threadId, run.id);
       }
     });
 
@@ -6210,21 +6209,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     let projection = yield* getProjectionWithPendingEvents(
       command.threadId,
       events,
-      command.idleCompaction === undefined
-        ? {
-            keepRunIds: [
-              command.manualContinuationOfRunId,
-              command.restartContinuationOfRunId,
-              command.usageLimitContinuationOfRunId,
-              command.steerFollowUpOfRunId,
-              ...(command.dispatchMode.type === "steer_active" ||
-              command.dispatchMode.type === "restart_active"
-                ? [command.dispatchMode.targetRunId]
-                : []),
-            ].flatMap((runId) => (runId === undefined ? [] : [runId])),
-            keepMessageId: command.messageId,
-          }
-        : undefined,
+      command.idleCompaction === undefined ? messageDispatchWindow(command) : undefined,
     );
     let stoppedDroppedSteer = false;
     if (command.steerFollowUpOfRunId !== undefined) {
@@ -13732,19 +13717,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         turnItems: childResult.turnItems,
       };
       const parentThreadId = childControls.thread.lineage.parentThreadId;
-      const parentProjection = yield* projectionStore.getThreadRecords(
+      const parentProjection = yield* readCompletionParent(
+        projectionStore,
         parentThreadId,
-        [
-          "runs",
-          "messages",
-          "subagents",
-          "providerThreads",
-          "providerTurns",
-          "nodes",
-          "turnItems",
-          "contextTransfers",
-        ],
-        { turnItemTypes: ["subagent"], messageRoles: ["user"] },
+        options.task,
       );
       const task = parentProjection.subagents.find(
         (candidate) =>

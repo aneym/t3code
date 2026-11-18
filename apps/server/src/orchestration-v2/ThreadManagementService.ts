@@ -872,11 +872,13 @@ const make = Effect.gen(function* () {
   const interruptThread: ThreadManagementServiceShape["interruptThread"] = Effect.fn(
     "ThreadManagementService.interruptThread",
   )(function* (input) {
-    const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
+    const target = yield* getProjectThreadRecords(input, ["runs"], {
+      runStatuses: ACTIVE_RUN_STATUSES,
+    });
     const explicitRun =
       input.runId === undefined
         ? undefined
-        : target.runs.find((candidate) => candidate.id === input.runId);
+        : (yield* getProjectThreadRecords(input, ["runs"], { runIds: [input.runId] })).runs[0];
     if (input.runId !== undefined && explicitRun === undefined) {
       return yield* new ThreadManagementRunNotFoundError({
         threadId: input.threadId,
@@ -892,21 +894,13 @@ const make = Effect.gen(function* () {
       } as const;
     }
     const interruptibleRun = latestActiveRun(target);
-    if (interruptibleRun === undefined) {
-      if (input.runId === undefined) {
-        return { type: "no_active_run" } as const;
-      }
+    if (input.runId !== undefined && interruptibleRun?.id !== input.runId) {
       return yield* new ThreadManagementThreadNotInterruptibleError({
         threadId: input.threadId,
         runId: input.runId,
       });
     }
-    if (input.runId !== undefined && interruptibleRun.id !== input.runId) {
-      return yield* new ThreadManagementThreadNotInterruptibleError({
-        threadId: input.threadId,
-        runId: input.runId,
-      });
-    }
+    if (interruptibleRun === undefined) return { type: "no_active_run" } as const;
     const dispatch = yield* orchestrator.dispatch({
       type: "run.interrupt",
       commandId: input.commandId,

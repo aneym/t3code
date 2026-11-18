@@ -27,6 +27,7 @@ import {
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
+import { type CommandRunWindow, readCommandWindowRunIds } from "./CommandRunWindow.ts";
 import { readMessageOrdinals, sortMessagesByTurnItemOrder } from "./projectionMessageOrder.ts";
 import { cancelledThreadStatus, delegatedTaskFields } from "./TaskCancel.ts";
 import type {
@@ -406,16 +407,9 @@ export interface ProjectionRecordFilter {
    * the thread stays.
    */
   readonly omitSettledSubagentRecords?: boolean;
-  /**
-   * For a compacted thread: reads attempts, nodes, messages and provider turns only for runs from
-   * the latest completed compaction's run on, runs that had not ended when that run was
-   * requested, and the runs named here. Runs and turn items are not narrowed.
-   */
-  readonly sinceLastCompaction?: {
-    readonly keepRunIds: ReadonlyArray<RunId>;
-    /** Keeps the run that already holds this message, for a message that is sent again. */
-    readonly keepMessageId: MessageId;
-  };
+  /** Reads every collection only for the runs `readCommandWindowRunIds` picks. */
+  readonly recentRuns?: CommandRunWindow;
+  readonly completionDeliveryRuns?: true;
 }
 
 // A fork inherits its source's history before it has messages of its own,
@@ -3440,49 +3434,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const threadColumn = (ids: ReadonlyArray<unknown> | undefined, column = "thread_id") =>
       sql.literal(ids === undefined ? column : `+${column}`);
 
-    /** The runs whose records a new message reads. Null when nothing was compacted. */
-    const runIdsSinceLastCompaction = Effect.fn("ProjectionStore.runIdsSinceLastCompaction")(
-      function* (
-        threadId: ThreadId,
-        keep: NonNullable<ProjectionRecordFilter["sinceLastCompaction"]>,
-      ) {
-        // A held queue can run out of ordinal order, so a run that ended after the compaction's
-        // run was requested is recent too. Every run row is read anyway, so this scan reads no
-        // extra pages.
-        const recent = yield* sql<{ readonly run_id: RunId }>`
-          WITH compaction AS (
-            SELECT run.ordinal, run.requested_at
-            FROM orchestration_v2_projection_turn_items AS item
-              INDEXED BY orchestration_v2_projection_turn_items_conversation_idx
-            INNER JOIN orchestration_v2_projection_runs AS run ON run.run_id = item.run_id
-            WHERE item.thread_id = ${threadId}
-              AND item.type = 'compaction' AND item.status = 'completed'
-              AND item.type NOT IN ${CONVERSATION_INDEX_EXCLUDED_TYPES}
-              AND run.status <> 'rolled_back'
-            ORDER BY item.ordinal DESC
-            LIMIT 1
-          )
-          SELECT run.run_id
-          FROM compaction
-          INNER JOIN orchestration_v2_projection_runs AS run ON run.thread_id = ${threadId}
-          WHERE run.ordinal >= compaction.ordinal
-            OR run.completed_at IS NULL
-            OR run.completed_at >= compaction.requested_at
-            OR run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
-          UNION
-          SELECT message.run_id
-          FROM compaction
-          INNER JOIN orchestration_v2_projection_messages AS message
-            ON message.message_id = ${keep.keepMessageId}
-          WHERE message.thread_id = ${threadId} AND message.run_id IS NOT NULL
-        `;
-        // The compaction's own run is always recent, so no rows means no compaction.
-        return recent.length === 0
-          ? null
-          : encodeIdList([...recent.map((row) => row.run_id), ...keep.keepRunIds]);
-      },
-    );
-
     const readCanonicalProjection = Effect.fn("ProjectionStore.readCanonicalProjection")(
       function* (
         threadId: ThreadId,
@@ -3501,8 +3452,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           return yield* new ProjectionStoreThreadNotFoundError({ threadId });
         }
         const recentRunIds =
-          window === undefined && filter?.sinceLastCompaction !== undefined
-            ? yield* runIdsSinceLastCompaction(threadId, filter.sinceLastCompaction)
+          window === undefined && filter?.recentRuns !== undefined
+            ? yield* readCommandWindowRunIds(sql, threadId, filter.recentRuns)
             : null;
         const inRecentRuns = (column: string) =>
           recentRunIds === null
@@ -3535,12 +3486,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
                 ${
-                  filter?.turnItemTypes === undefined
+                  filter?.turnItemTypes === undefined && recentRunIds === null
                     ? sql`WHERE ${turnItemMatch(threadId, filter)}`
                     : // Seeks the type index. Sorted, SQLite would walk the thread by ordinal instead.
                       sql`WHERE rowid IN (
                     SELECT rowid FROM orchestration_v2_projection_turn_items
-                    WHERE ${turnItemMatch(threadId, filter)}
+                    ${recentRunIndex("turn_items_run_ordinal_idx")}
+                    WHERE ${turnItemMatch(threadId, filter)} ${inRecentRuns("run_id")}
+                    ${recentRunIds === null ? sql`` : sql`UNION ALL SELECT rowid FROM orchestration_v2_projection_turn_items INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx WHERE ${turnItemMatch(threadId, filter)} AND run_id IS NULL`}
                   )`
                 }
                 ORDER BY ordinal ASC, turn_item_id ASC
@@ -3733,8 +3686,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_runs
-            WHERE ${threadColumn(filter?.runIds)} = ${threadId}
+            WHERE ${threadColumn(recentRunIds === null ? filter?.runIds : [])} = ${threadId}
               ${filter?.runIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.runIds)}))`}
+              ${inRecentRuns("run_id")}
+              ${filter?.completionDeliveryRuns === true ? sql`AND json_extract(payload_json, '$.delegatedCompletion.delivery') IS NOT NULL` : sql``}
               ${
                 filter?.newestRuns !== undefined
                   ? sql`AND (run_id IN (SELECT run_id FROM orchestration_v2_projection_runs
