@@ -84,7 +84,7 @@ export const DeviceScreenshotTool = Tool.make("device_screenshot", {
 
 const DeviceCloseTool = Tool.make("device_close", {
   description:
-    "Remove a device from this thread's Device panel. `shutdown=true` also turns it off.",
+    "Close a device when you are done. Turns it off if T3 booted it and no other thread has it open; `shutdown=false` keeps it on, `shutdown=true` forces it off.",
   parameters: DeviceToolCloseInput,
   success: Schema.Record(Schema.String, Schema.Never),
   failure: DeviceToolFailure,

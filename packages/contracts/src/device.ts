@@ -356,7 +356,7 @@ export const DeviceCloseInput = Schema.Struct({
   threadId: ThreadId,
   /** Omit to close every device session for the thread. */
   deviceId: Schema.optional(DeviceId),
-  /** Also shut the simulator or emulator down. Defaults to false. */
+  /** Unset: off if T3 booted it and no other thread has it. */
   shutdown: Schema.optional(Schema.Boolean),
 });
 export type DeviceCloseInput = typeof DeviceCloseInput.Type;
@@ -696,7 +696,7 @@ export const DeviceToolCloseInput = Schema.Struct({
   hostId: Schema.optional(DeviceHostId),
   shutdown: Schema.optional(
     Schema.Boolean.annotate({
-      description: "Also turn it off. Default false.",
+      description: "true turns it off, false keeps it on.",
     }),
   ),
 });

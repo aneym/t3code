@@ -1205,13 +1205,11 @@ it.effect.each(["shutdown", "close"] as const)(
       expect(released.every(([, existed]) => existed)).toBe(true);
       // agent-device can close the session's app only while the device is on.
       expect(releasedWhileBooted).toEqual([true, true]);
-      // A device_open that was still preparing when the close landed.
       expect(yield* service.agentLauncher({ ...target(threadId), targetArgs: [] })).toEqual(
         Option.none(),
       );
       expect(launchers).toEqual(new Set());
       expect(yield* bind(input)).toBe(session);
-      // Reopening the same device ends nothing.
       expect(released).toHaveLength(2);
       expect(capture).toBe(2);
       expect((yield* service.state).sessions).toHaveLength(1);
@@ -1228,7 +1226,9 @@ it.effect.each(["shutdown", "close"] as const)(
       yield* Deferred.await(pauseBind.entered);
       const updates = yield* service.subscribe;
       const retiring = yield* Effect.forkChild(
-        operation === "shutdown" ? service.shutdown(input) : service.close({ threadId }),
+        operation === "shutdown"
+          ? service.shutdown(input)
+          : service.close({ threadId, shutdown: false }),
       );
       expect((yield* PubSub.take(updates)).sessions).toEqual([]);
       yield* service.refreshHosts;
@@ -2005,7 +2005,7 @@ describe("agent session release on close", () => {
       const session = yield* openClaim(service, threadId);
       yield* Queue.take(entered);
       const publications = yield* service.subscribe;
-      const closing = yield* service.close({ threadId }).pipe(Effect.forkChild);
+      const closing = yield* service.close({ threadId, shutdown: false }).pipe(Effect.forkChild);
       yield* Deferred.await(releasing);
       const opening = yield* openClaim(service, threadId, session.deviceId).pipe(Effect.forkChild);
       yield* Queue.take(entered);
