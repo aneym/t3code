@@ -310,9 +310,14 @@ export function readEmbedRevealMessage(data: unknown): EmbedRevealRequest | null
   return { requestId, id };
 }
 
-export function readEmbedPressResultMessage(data: unknown): { readonly requestId: string } | null {
-  const requestId = readMessage(data, EMBED_PRESS_RESULT_MESSAGE)?.requestId;
-  return typeof requestId === "string" && SEND_REQUEST_ID.test(requestId) ? { requestId } : null;
+export function readEmbedPressResultMessage(
+  data: unknown,
+): { readonly requestId: string; readonly witnessed: boolean } | null {
+  const message = readMessage(data, EMBED_PRESS_RESULT_MESSAGE);
+  const requestId = message?.requestId;
+  return typeof requestId === "string" && SEND_REQUEST_ID.test(requestId)
+    ? { requestId, witnessed: message?.witnessed === true }
+    : null;
 }
 
 export function readEmbedHostPressMessage(data: unknown): boolean {
