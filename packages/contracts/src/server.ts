@@ -28,6 +28,8 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
 import { ServerSettings } from "./settings.ts";
 import { DesktopUpdateChannelSchema } from "./ipc.ts";
+import { ChatSessionView } from "./chatSession.ts";
+import { EnvironmentTheme } from "./environmentTheme.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -595,54 +597,6 @@ export const ServerSignalProcessResult = Schema.Struct({
 });
 export type ServerSignalProcessResult = typeof ServerSignalProcessResult.Type;
 
-export const EnvironmentThemeColor = Schema.String.check(
-  Schema.isPattern(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/),
-);
-export type EnvironmentThemeColor = typeof EnvironmentThemeColor.Type;
-
-/** Reserve appearance keywords so published themes cannot replace stock preferences. */
-export const EnvironmentThemeId = Schema.String.check(
-  Schema.isPattern(/^(?!(?:system|light|dark)$)[a-z0-9](?:[a-z0-9-]{0,47})$/),
-);
-export type EnvironmentThemeId = typeof EnvironmentThemeId.Type;
-
-const EnvironmentThemeColors = Schema.Record(
-  Schema.String.check(Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9]{0,63}$/)),
-  TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
-);
-
-const environmentThemeFields = {
-  version: Schema.optional(Schema.Literal(1)),
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)),
-  appearance: Schema.Literals(["light", "dark"]),
-  /** Derive the palette from canvas/accent, then overlay colors; without them, colors is the palette. */
-  canvas: Schema.optional(EnvironmentThemeColor),
-  accent: Schema.optional(EnvironmentThemeColor),
-  colors: Schema.optional(EnvironmentThemeColors),
-  variants: Schema.optional(
-    Schema.Struct({
-      light: Schema.optional(EnvironmentThemeColors),
-      dark: Schema.optional(EnvironmentThemeColors),
-    }),
-  ),
-};
-
-export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);
-export type EnvironmentThemeFile = typeof EnvironmentThemeFile.Type;
-
-export const EnvironmentTheme = Schema.Struct({
-  id: EnvironmentThemeId,
-  ...environmentThemeFields,
-});
-export type EnvironmentTheme = typeof EnvironmentTheme.Type;
-
-export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boolean {
-  return (
-    (file.canvas !== undefined && file.accent !== undefined) ||
-    (file.colors !== undefined && Object.keys(file.colors).length > 0)
-  );
-}
-
 /** tailnet means this machine's Tailscale interface; other private addresses are lan. */
 export const ServerDirectEndpointKind = Schema.Literals(["lan", "tailnet"]);
 export type ServerDirectEndpointKind = typeof ServerDirectEndpointKind.Type;
@@ -721,6 +675,7 @@ export const ServerConfig = Schema.Struct({
    * subscriber the same array twice per connect.
    */
   environmentThemes: Schema.optional(Schema.Array(EnvironmentTheme)),
+  chatSession: Schema.optionalKey(ChatSessionView),
   /** Stream-only and opt-in; the source stream emits the current set on subscribe. */
   usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
 });

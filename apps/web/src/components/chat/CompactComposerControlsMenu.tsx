@@ -2,6 +2,7 @@ import type { RuntimeMode } from "@t3tools/contracts";
 import { memo, useRef } from "react";
 import { EllipsisIcon } from "lucide-react";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 import { focusRequestedPermission, useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
@@ -14,6 +15,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   size?: "sm" | "xs";
   /** Close the portaled popup when its trigger hides. */
   hidden?: boolean;
+  disabledReason?: string | undefined;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
@@ -27,19 +29,29 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
       onOpenChange={setOpen}
       onOpenChangeComplete={(isOpen) => focusRequestedPermission(isOpen, triggerRef.current)}
     >
-      <MenuTrigger
-        render={
-          <ComposerControl
-            ref={triggerRef}
-            size={size}
-            className="shrink-0"
-            aria-label="More composer controls"
-            data-composer-shortcut={props.showPermissions ? "composer.mode" : undefined}
-          />
-        }
-      >
-        <ComposerControlIcon icon={EllipsisIcon} size={size} />
-      </MenuTrigger>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              disabled={props.disabledReason !== undefined}
+              render={
+                <ComposerControl
+                  ref={triggerRef}
+                  size={size}
+                  className="shrink-0"
+                  aria-label="More composer controls"
+                  data-composer-shortcut={props.showPermissions ? "composer.mode" : undefined}
+                />
+              }
+            />
+          }
+        >
+          <ComposerControlIcon icon={EllipsisIcon} size={size} />
+        </TooltipTrigger>
+        {props.disabledReason === undefined ? null : (
+          <TooltipPopup side="top">{props.disabledReason}</TooltipPopup>
+        )}
+      </Tooltip>
       <MenuPopup align="start" {...composerFloatingLayerProps}>
         {props.showPermissions ? (
           <ComposerPermissionsSection

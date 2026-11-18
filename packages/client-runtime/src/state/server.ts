@@ -27,6 +27,8 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
+import { noteChatSessionOwners } from "../chatSession.ts";
+
 import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
@@ -568,6 +570,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
           }
           yield* Ref.set(pendingPersistence, Option.some(next.value.config));
           yield* SubscriptionRef.set(state, next);
+          noteChatSessionOwners(next.value.config.chatSession?.ownerThreadIds);
           yield* Queue.offer(persistence, next.value.config);
         }),
       ),

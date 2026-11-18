@@ -31,6 +31,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   accessDisplay?: "label" | "icon" | "hidden";
   /** Draw the icon in the label color, not muted (the mode differs from the user's default). */
   emphasized?: boolean;
+  disabledReason?: string | undefined;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const size = props.size ?? "sm";
@@ -43,7 +44,9 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
     supervisedRuntimeModeOption;
   const RuntimeModeIcon = runtimeModeOption.icon;
   // The chip opens the same Permissions toggle used in the model picker and the overflow menu.
-  const permissionsTooltip = `Permissions: ${runtimeModeOption.label}. ${runtimeModeOption.description}`;
+  const permissionsTooltip =
+    props.disabledReason ??
+    `Permissions: ${runtimeModeOption.label}. ${runtimeModeOption.description}`;
   const permissionsChip = (
     <Menu
       open={open}
@@ -56,6 +59,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
         <TooltipTrigger
           render={
             <MenuTrigger
+              disabled={props.disabledReason !== undefined}
               render={
                 <ComposerControl
                   ref={permissionsChipRef}

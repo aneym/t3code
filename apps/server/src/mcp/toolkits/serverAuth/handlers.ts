@@ -50,13 +50,15 @@ export const layer = McpToolAccess.toLayer(ServerAuthToolkit, {
   t3_auth_pairing_create: McpToolAccess.reads((input) =>
     withAuth((auth) =>
       Effect.gen(function* () {
+        const owners = input.chatOwnerThreadIds ?? [];
+        const members = [...new Set([...(input.chatThreadIds ?? []), ...owners])];
         const target =
-          input.chatThreadIds === undefined
+          members.length === 0
             ? { scopes: input.scopes, subject: "one-time-token" }
             : {
                 scopes: [AuthChatThreadsScope],
                 subject: chatSessionSubject(
-                  yield* (yield* ChatThreadSets.ChatThreadSets).create(input.chatThreadIds),
+                  yield* (yield* ChatThreadSets.ChatThreadSets).create(members, owners),
                 ),
               };
         return yield* auth.createPairingLink({

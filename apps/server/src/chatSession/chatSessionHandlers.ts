@@ -2,6 +2,7 @@
 import {
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
+  type ServerConfigStreamEvent,
   type ThreadId,
   type WsRpcGroup,
 } from "@t3tools/contracts";
@@ -116,10 +117,12 @@ export function chatSessionHandlers<H extends ChatHandlers>(
       mapEffect(
         handlers[W.serverGetConfig](input, options),
         (config: Parameters<typeof chatServerConfig>[0]) =>
-          Effect.succeed(chatServerConfig(config)),
+          Effect.succeed(chatServerConfig(config, access.session)),
       ),
     [W.subscribeServerConfig]: (_input, options) =>
-      mapStream(handlers[W.subscribeServerConfig]({}, options), chatServerConfigEvent),
+      mapStream(handlers[W.subscribeServerConfig]({}, options), (event: ServerConfigStreamEvent) =>
+        chatServerConfigEvent(event, access.session),
+      ),
     [W.subscribeServerLifecycle]: (input, options) =>
       mapStream(handlers[W.subscribeServerLifecycle](input, options), chatLifecycleEvent),
     [W.assetsCreateUrl]: (input, options) =>

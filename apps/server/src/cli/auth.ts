@@ -72,6 +72,13 @@ const chatThreadFlag = Flag.String("chat-thread").pipe(
   Flag.atLeast(0),
 );
 
+const chatOwnerThreadFlag = Flag.String("chat-owner-thread").pipe(
+  Flag.withDescription(
+    "Thread id the chat session may set model, effort and access on. Repeat; each is also a --chat-thread.",
+  ),
+  Flag.atLeast(0),
+);
+
 const tokenOnlyFlag = Flag.Boolean("token-only").pipe(
   Flag.withDescription("Print only the issued bearer token."),
   Flag.withDefault(false),
@@ -96,6 +103,7 @@ const pairingCreateCommand = Command.make("create", {
   ...authLocationFlags,
   scopes: authScopesFlag(AuthStandardClientScopes),
   chatThreads: chatThreadFlag,
+  chatOwnerThreads: chatOwnerThreadFlag,
   ttl: ttlFlag,
   label: labelFlag,
   baseUrl: baseUrlFlag,
@@ -111,7 +119,12 @@ const pairingCreateCommand = Command.make("create", {
           "t3_auth_pairing_create",
           {
             scopes: flags.scopes,
-            ...(flags.chatThreads.length > 0 ? { chatThreadIds: flags.chatThreads } : {}),
+            ...(flags.chatThreads.length + flags.chatOwnerThreads.length > 0
+              ? { chatThreadIds: [...new Set([...flags.chatThreads, ...flags.chatOwnerThreads])] }
+              : {}),
+            ...(flags.chatOwnerThreads.length > 0
+              ? { chatOwnerThreadIds: flags.chatOwnerThreads }
+              : {}),
             ...ttlArgument(flags.ttl),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
           },

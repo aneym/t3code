@@ -46,6 +46,15 @@ const dispatch: ChatRule = Effect.fn("chatSessionRpc.dispatch")(function* (paylo
   const threadIds = chatCommandThreadIds(command);
   if (threadIds === null || !threadIds.every(access.inSet)) return false;
   const threadId = threadIds[0];
+  switch (command.type) {
+    case "thread.model-selection.set":
+      return access.ownsThread(command.threadId)
+        ? yield* access.modelEnabled(command.modelSelection)
+        : false;
+    case "thread.interaction-mode.set":
+    case "thread.runtime-mode.set":
+      return access.ownsThread(command.threadId);
+  }
   const attachmentIds = chatCommandAttachmentIds(command);
   if (attachmentIds.length === 0) return true;
   if (threadId === undefined) return false;

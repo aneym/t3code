@@ -42,6 +42,9 @@ export function chatCommandThreadIds(
     case "thread.user-input.dismiss":
     case "thread.visit":
     case "thread.mark-unread":
+    case "thread.model-selection.set":
+    case "thread.interaction-mode.set":
+    case "thread.runtime-mode.set":
       return [command.threadId];
     default:
       return null;
@@ -143,6 +146,18 @@ export function rebuildChatCommand(command: OrchestrationV2Command): Orchestrati
       return pick(command, ["type", "commandId", "threadId", "visitedAt", "opened", "searchQuery"]);
     case "thread.mark-unread":
       return pick(command, ["type", "commandId", "threadId"]);
+    case "thread.model-selection.set":
+      return pick(command, [
+        "type",
+        "commandId",
+        "threadId",
+        "modelSelection",
+        "expectedModelSelection",
+      ]);
+    case "thread.interaction-mode.set":
+      return pick(command, ["type", "commandId", "threadId", "interactionMode"]);
+    case "thread.runtime-mode.set":
+      return pick(command, ["type", "commandId", "threadId", "runtimeMode"]);
     default:
       return command;
   }

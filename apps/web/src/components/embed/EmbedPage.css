@@ -220,8 +220,3 @@ html[data-embed="true"] [data-chat-composer-form] button[aria-label^="Preview "]
   object-fit: contain;
   background: var(--muted);
 }
-
-html[data-chat-session="true"] [data-chat-composer-footer-controls="true"],
-html[data-chat-session="true"] [data-embed-controls-toggle] {
-  display: none !important;
-}

@@ -12,6 +12,8 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
+import type { ChatSession } from "./ChatThreadSets.ts";
+
 const PLACEHOLDER_PATH = "/";
 
 const chatProject = (project: OrchestrationProjectShell): OrchestrationProjectShell => ({
@@ -80,20 +82,22 @@ export function makeChatShellFilter(
   };
 }
 
-const chatProvider = (provider: ServerProvider): ServerProvider => ({
-  instanceId: provider.instanceId,
-  driver: provider.driver,
-  ...(provider.displayName === undefined ? {} : { displayName: provider.displayName }),
-  enabled: provider.enabled,
-  installed: provider.installed,
-  version: null,
-  status: provider.status,
-  auth: { status: provider.auth.status },
-  checkedAt: provider.checkedAt,
-  models: provider.models,
-  slashCommands: [],
-  skills: [],
-});
+const chatProvider =
+  (session: ChatSession) =>
+  (provider: ServerProvider): ServerProvider => ({
+    instanceId: provider.instanceId,
+    driver: provider.driver,
+    ...(provider.displayName === undefined ? {} : { displayName: provider.displayName }),
+    enabled: provider.enabled,
+    installed: provider.installed,
+    version: null,
+    status: provider.status,
+    auth: { status: provider.auth.status },
+    checkedAt: provider.checkedAt,
+    models: provider.models,
+    slashCommands: session.ownerThreads.size > 0 ? provider.slashCommands : [],
+    skills: session.ownerThreads.size > 0 ? provider.skills : [],
+  });
 
 const chatSettings = (settings: ServerSettings): ServerSettings => ({
   ...DEFAULT_SERVER_SETTINGS,
@@ -107,14 +111,14 @@ const chatSettings = (settings: ServerSettings): ServerSettings => ({
   environmentIcon: settings.environmentIcon,
 });
 
-export const chatServerConfig = (config: ServerConfig): ServerConfig => ({
+export const chatServerConfig = (config: ServerConfig, session: ChatSession): ServerConfig => ({
   environment: config.environment,
   auth: config.auth,
   cwd: PLACEHOLDER_PATH,
   keybindingsConfigPath: PLACEHOLDER_PATH,
   keybindings: [],
   issues: [],
-  providers: config.providers.map(chatProvider),
+  providers: config.providers.map(chatProvider(session)),
   availableEditors: [],
   observability: {
     logsDirectoryPath: PLACEHOLDER_PATH,
@@ -124,19 +128,25 @@ export const chatServerConfig = (config: ServerConfig): ServerConfig => ({
     otlpLogsEnabled: false,
   },
   settings: chatSettings(config.settings),
+  chatSession: { ownerThreadIds: [...session.ownerThreads] },
 });
 
 export function chatServerConfigEvent(
   event: ServerConfigStreamEvent,
+  session: ChatSession,
 ): ServerConfigStreamEvent | undefined {
   switch (event.type) {
     case "snapshot":
-      return { version: event.version, type: event.type, config: chatServerConfig(event.config) };
+      return {
+        version: event.version,
+        type: event.type,
+        config: chatServerConfig(event.config, session),
+      };
     case "providerStatuses":
       return {
         version: event.version,
         type: event.type,
-        payload: { providers: event.payload.providers.map(chatProvider) },
+        payload: { providers: event.payload.providers.map(chatProvider(session)) },
       };
     case "settingsUpdated":
       return {

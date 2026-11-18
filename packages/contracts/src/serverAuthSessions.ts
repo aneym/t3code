@@ -8,7 +8,7 @@ import {
   AuthPairingLink,
 } from "./auth.ts";
 import { AuthSessionId, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { ChatSessionThreadIds } from "./chatSession.ts";
+import { ChatSessionOwnerThreadIds, ChatSessionThreadIds } from "./chatSession.ts";
 
 export const ServerAuthSessionIssueInput = Schema.Struct({
   scopes: AuthGrantScopes.check(Schema.isMinLength(1)),
@@ -41,6 +41,7 @@ export type ServerAuthSessionRevokeResult = typeof ServerAuthSessionRevokeResult
 export const ServerAuthPairingCreateInput = Schema.Struct({
   scopes: AuthGrantScopes.check(Schema.isMinLength(1)),
   chatThreadIds: Schema.optionalKey(ChatSessionThreadIds),
+  chatOwnerThreadIds: Schema.optionalKey(ChatSessionOwnerThreadIds),
   ttlMs: Schema.optionalKey(PositiveInt),
   label: Schema.optionalKey(Schema.String),
 });
