@@ -5,9 +5,9 @@ import { isMacPlatform } from "../lib/utils";
 import {
   channelForSpot,
   connectEmbedHost,
+  fromEmbedHost,
   openThroughEmbedHost,
   postToEmbedHost,
-  type EmbedHostChannel,
 } from "./embedHost";
 import {
   applyEmbedClearMessage,
@@ -76,12 +76,6 @@ function opensStockClient(url: URL): boolean {
   return url.origin === window.location.origin && !isEmbedPath(path) && !isDevProxiedPath(path);
 }
 
-function fromHost(channel: EmbedHostChannel, event: MessageEvent): boolean {
-  return channel.framed
-    ? event.source === channel.target && event.origin === channel.origin
-    : event.source === window && event.origin === window.location.origin;
-}
-
 export function useEmbedHostBridge(origin: string, framed: boolean, threadId: string | null): void {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- connects the host channel and window listeners for the embed's lifetime
   useEffect(() => {
@@ -99,7 +93,7 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
     const onFocusChange = () => queueMicrotask(reportFocus);
     const mac = isMacPlatform(navigator.platform);
     const onMessage = (event: MessageEvent) => {
-      if (!fromHost(channel, event)) return;
+      if (!fromEmbedHost(channel, event)) return;
       const theme = readEmbedThemeMessage(event.data);
       if (theme !== null) {
         applyEmbedTheme(themeFromEmbedMessage(theme));

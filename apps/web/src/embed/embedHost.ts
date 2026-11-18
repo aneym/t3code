@@ -40,6 +40,12 @@ export function channelForSpot(spot: EmbedHostSpot): EmbedHostChannel {
   return { target: spot.framed ? window.parent : window, origin: spot.origin, framed: spot.framed };
 }
 
+export function fromEmbedHost(channel: EmbedHostChannel, event: MessageEvent): boolean {
+  return channel.framed
+    ? event.source === channel.target && event.origin === channel.origin
+    : event.source === window && event.origin === window.location.origin;
+}
+
 export function connectEmbedHost(next: EmbedHostChannel): () => void {
   channel = next;
   notify();
