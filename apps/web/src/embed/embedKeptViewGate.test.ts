@@ -120,6 +120,7 @@ describe("keptTailSnapshot", () => {
     expect(JSON.stringify(kept).length * 2).toBeLessThanOrEqual(64 * 1024);
     expect(tail?.projection.turnItems).toEqual(kept.map((row) => row.item));
     expect(tail?.hasMoreHistory).toBe(true);
+    expect(tail?.snapshotSequence).toBe(0);
     expect(tail?.latestLocalTurnOrdinal).toBe(200);
     expect(decodeCursor(tail?.historyCursor)).toEqual({
       v: 1,
@@ -134,6 +135,7 @@ describe("keptTailSnapshot", () => {
     const rows = Array.from({ length: 3 }, (_, index) => tailRow(index, "x"));
     const tail = keptTailSnapshot(tailSnapshot(rows), 64 * 1024);
     expect(tail?.projection.visibleTurnItems).toEqual(rows);
+    expect(tail?.snapshotSequence).toBe(42);
     expect(tail?.hasMoreHistory).toBe(false);
     expect(tail?.historyCursor).toBeNull();
   });

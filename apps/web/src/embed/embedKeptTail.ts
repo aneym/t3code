@@ -107,7 +107,7 @@ export function keptTailSnapshot(
     null,
   );
   return {
-    snapshotSequence: snapshot.snapshotSequence,
+    snapshotSequence: trimmed ? 0 : snapshot.snapshotSequence,
     projection: {
       ...projection,
       messages: retainedMessages(projection, turnItems),
