@@ -262,7 +262,11 @@ import { restartFailureToast, useRestartThreadSession } from "../../hooks/useRes
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { usePanelAnimationSettings } from "../../panelAnimations";
-import { readEnvironmentScope, readPreparedConnection } from "../../state/session";
+import {
+  readEnvironmentScope,
+  readPreparedConnection,
+  useEnvironmentOperateAccess,
+} from "../../state/session";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { useComposerRestingTransition } from "./useComposerRestingTransition";
 import { ComposerCommandMenuLayer } from "./ComposerCommandMenuLayer";
@@ -1840,12 +1844,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   useRailsWordsAgentHomes(environmentId, settings.railsWordsEnabled);
   const sendHold = useComposerSendHold({
-    environmentId,
     holdKey: attachmentTargetKey,
     thread: activeThreadId,
     reason: sendDisabledReason,
     providerPending: providerCatalogPending,
     noProvider: noProviderAvailable,
+    operate: useEnvironmentOperateAccess(environmentId),
+    prompt,
   });
   const primaryActionSendDisabledReason =
     (activePendingProgress ? attachmentBlockReason : sendDisabledReason) ??
@@ -2123,11 +2128,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent, press));
       return false;
     }
-    if (
-      submissionBlocked ||
-      sendHold.blocks ||
-      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
-    ) {
+    if (submissionBlocked || sendHold.blocks) {
       event?.preventDefault();
       return sendHold.submit(() => submitComposerRef.current(dispatchMode, submissionIntent));
     }
