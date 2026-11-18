@@ -421,6 +421,16 @@ export default defineConfig(() => {
       ...(builtDev ? { watch: { exclude: rolldownWatchExclude } } : {}),
       rolldownOptions: {
         output: {
+          codeSplitting: {
+            groups: [
+              { name: "main", test: /[\\/]apps[\\/]web[\\/]src[\\/]main\.tsx$/, priority: 2 },
+              {
+                name: "thread",
+                test: /[\\/]apps[\\/]web[\\/]src[\\/]components[\\/]ThreadRouteView\.tsx$/,
+                priority: 1,
+              },
+            ],
+          },
           // PDF.js resolves decoder modules and ICC data relative to wasmUrl.
           assetFileNames: (asset) =>
             asset.originalFileNames.some((path) => /[/\\]pdfjs-dist[/\\]wasm[/\\]/.test(path))
