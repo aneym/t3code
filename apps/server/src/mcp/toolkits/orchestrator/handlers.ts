@@ -15,6 +15,7 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 import { reportTaskOutcome } from "../../taskOutcome.ts";
+import { withLiveHold, withThreadHold } from "../../delegatedHold.ts";
 
 const handlers = {
   orchestrator_capabilities: McpToolAccess.reads((input) =>
@@ -30,9 +31,8 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       const status = yield* service.taskStatus(scope, taskId);
-      return yield* withRecordedPlacement(
-        status.remoteChild?.threadId ?? status.childThreadId,
-        status,
+      return yield* withLiveHold(
+        yield* withRecordedPlacement(status.remoteChild?.threadId ?? status.childThreadId, status),
       );
     }),
   ),
@@ -173,7 +173,9 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* withRecordedPlacement(input.threadId, yield* service.readThread(scope, input));
+      return yield* withThreadHold(
+        yield* withRecordedPlacement(input.threadId, yield* service.readThread(scope, input)),
+      );
     }),
   ),
   t3_thread_update: McpToolAccess.writesThreads(

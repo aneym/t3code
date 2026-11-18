@@ -10,7 +10,7 @@ import {
 import { ProviderOptionSelection } from "./model.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { ProviderRequestKind } from "./providerPolicy.ts";
-import { AgentPlacementReceipt } from "./agentPlacement.ts";
+import { AgentPlacementHold, AgentPlacementReceipt } from "./agentPlacement.ts";
 import { OrchestratorMcpExecutedModel } from "./orchestratorMcpThreadRun.ts";
 const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "queued",
@@ -33,6 +33,7 @@ const OrchestratorMcpRunningTaskNext = Schema.Literal(
 );
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   placement: Schema.optional(AgentPlacementReceipt),
+  hold: Schema.optional(AgentPlacementHold),
   taskId: NodeId,
   /** Null for a task that runs in a linked environment; see `remoteChild`. */
   childThreadId: Schema.NullOr(ThreadId),

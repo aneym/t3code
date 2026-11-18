@@ -1,4 +1,15 @@
-import { CommandId, ProjectId, RunId, ThreadId, type OrchestrationV2Run } from "@t3tools/contracts";
+import {
+  type AgentPlacementHold,
+  type AgentPlacementRoom,
+  agentPlacementHealthBreach,
+  agentPlacementResourcesFresh,
+  agentPlacementRoomFull,
+  CommandId,
+  ProjectId,
+  RunId,
+  ThreadId,
+  type OrchestrationV2Run,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -8,6 +19,8 @@ import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import { agentHomeOfPath } from "../agents/AgentHomeOfPath.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as HostResources from "../resourceTelemetry/HostResources.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -29,6 +42,7 @@ interface ChildRow {
   readonly held: number | null;
   readonly worktree: number;
   readonly root_project_id: string | null;
+  readonly requested_at: string;
 }
 
 interface ActiveChild {
@@ -37,6 +51,8 @@ interface ActiveChild {
 }
 
 type HeldRun = Pick<OrchestrationV2Run, "id" | "status" | "childStartHeld">;
+
+type AdmitOwner = { readonly parentThreadId: ThreadId } | { readonly projectId: ProjectId };
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -50,7 +66,7 @@ const childStartLimits = (raw: unknown): ReadonlyMap<string, GroupLimit> => {
   for (const [group, entry] of Object.entries(raw)) {
     if (!isRecord(entry)) continue;
     const limit = {
-      perGroup: positiveInt(entry.perGroup, 1),
+      perGroup: positiveInt(entry.perGroup, 0),
       staggerMs: positiveInt(entry.staggerMs, 0),
     };
     if (limit.perGroup !== undefined || limit.staggerMs !== undefined) limits.set(group, limit);
@@ -62,10 +78,13 @@ export class DelegatedChildStartGate extends Context.Service<
   DelegatedChildStartGate,
   {
     readonly admit: <A, E, R>(
-      parentThreadId: ThreadId,
+      owner: AdmitOwner,
       dispatch: (held: boolean) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E, R>;
     readonly isHeld: (run: HeldRun) => boolean;
+    readonly room: Effect.Effect<AgentPlacementRoom>;
+    readonly hold: (runId: RunId) => Effect.Effect<AgentPlacementHold | undefined>;
+    readonly expired: (runId: RunId, now: number) => Effect.Effect<string | undefined>;
   }
 >()("t3/orchestration-v2/DelegatedChildStartGate") {}
 
@@ -75,16 +94,52 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;
+  const resources = Option.getOrUndefined(yield* Effect.serviceOption(HostResources.HostResources));
+  const environment = Option.getOrUndefined(
+    yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment),
+  );
   const lock = yield* Semaphore.make(1);
   const lastStart = new Map<string, number>();
   const released = new Set<string>();
   const homeByProject = new Map<string, string | null>();
   let pending = true;
 
-  const readLimits = settings.getSettings.pipe(
-    Effect.map((current) => childStartLimits(current.childStart)),
-    Effect.orElseSucceed((): ReadonlyMap<string, GroupLimit> => new Map()),
+  const readConfig = settings.getSettings.pipe(
+    Effect.map((current) => ({
+      limits: childStartLimits(current.childStart),
+      byRoom: current.agentPlacementByRoom,
+      paused: current.agentPlacementPaused,
+      maxHoldMinutes: current.agentPlacementMaxHoldMinutes,
+      line: current.agentPlacementHealthLine,
+    })),
+    Effect.orElseSucceed(() => ({
+      limits: new Map<string, GroupLimit>() as ReadonlyMap<string, GroupLimit>,
+      byRoom: false,
+      paused: null,
+      maxHoldMinutes: 60,
+      line: undefined,
+    })),
   );
+  type Config = Effect.Success<typeof readConfig>;
+
+  const label =
+    environment === undefined
+      ? Effect.succeed("this machine")
+      : environment.getDescriptor.pipe(
+          Effect.map((descriptor) => descriptor.label),
+          Effect.orElseSucceed(() => "this machine"),
+        );
+
+  const breachOf = Effect.fn("DelegatedChildStartGate.breachOf")(function* (
+    config: Config,
+    now: number,
+  ) {
+    if (!config.byRoom || config.line === undefined || resources === undefined) return undefined;
+    const reading = yield* resources.read;
+    return agentPlacementResourcesFresh(reading, now)
+      ? agentPlacementHealthBreach(reading, config.line)
+      : undefined;
+  });
 
   const homeOf = Effect.fn("DelegatedChildStartGate.homeOf")(function* (projectId: string | null) {
     if (projectId === null) return null;
@@ -118,14 +173,15 @@ const make = Effect.gen(function* () {
       WHERE t.thread_id = ${threadId}
     `.pipe(Effect.map((rows) => rows[0]?.project_id ?? null));
 
-  const readChildren = sql<ChildRow>`
+  const readChildren = (remote: boolean) => sql<ChildRow>`
     SELECT
       r.run_id,
       r.thread_id,
       r.status,
       json_extract(r.payload_json, '$.childStartHeld') AS held,
       json_extract(r.payload_json, '$.workspacePreparation') IS NOT NULL AS worktree,
-      root.project_id AS root_project_id
+      root.project_id AS root_project_id,
+      r.requested_at
     FROM orchestration_v2_projection_runs r
     JOIN orchestration_v2_projection_threads t ON t.thread_id = r.thread_id
     LEFT JOIN orchestration_v2_projection_threads root
@@ -133,7 +189,8 @@ const make = Effect.gen(function* () {
     WHERE r.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
       AND r.status <> 'queued'
       AND t.deleted_at IS NULL
-      AND json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+      AND (json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+        OR (${remote ? 1 : 0} = 1 AND json_extract(t.payload_json, '$.delegatedFrom') IS NOT NULL))
       AND COALESCE(json_extract(t.payload_json, '$.creationSource'), '') <> 'provider'
     ORDER BY r.requested_at, r.run_id
   `;
@@ -201,7 +258,74 @@ const make = Effect.gen(function* () {
         running.set(group, (running.get(group) ?? 0) + 1);
       }
     }
-    return { running, queued, groups };
+    return { running, queued, groups, active: activeThreads.size, held: heldThreads.size };
+  });
+
+  const snapshot = Effect.fn("DelegatedChildStartGate.snapshot")(function* (config: Config) {
+    const rows = yield* readChildren(config.byRoom);
+    const activeChildren = yield* readActiveChildren;
+    const counts = yield* tally(rows, activeChildren, config.limits);
+    const cap = config.limits.get(EVERY_CHILD)?.perGroup ?? null;
+    const room: AgentPlacementRoom = {
+      cap,
+      active: counts.active,
+      held: counts.held,
+      free: cap === null ? null : Math.max(0, cap - counts.active - counts.held),
+      ...(config.paused === null ? {} : { paused: config.paused }),
+    };
+    return { rows, counts, room };
+  });
+
+  const room = readConfig.pipe(
+    Effect.flatMap(snapshot),
+    Effect.map((current) => current.room),
+    Effect.orElseSucceed((): AgentPlacementRoom => ({ cap: null, active: 0, held: 0, free: null })),
+  );
+
+  const hold: DelegatedChildStartGate["Service"]["hold"] = Effect.fn(
+    "DelegatedChildStartGate.hold",
+  )(
+    function* (runId) {
+      const config = yield* readConfig;
+      const { rows, counts, room: current } = yield* snapshot(config);
+      const held = rows.filter(heldRow);
+      const index = held.findIndex((row) => row.run_id === runId);
+      const row = held[index];
+      if (row === undefined) return undefined;
+      const now = yield* Clock.currentTimeMillis;
+      const here = yield* label;
+      const blocked = (counts.groups.get(row.run_id) ?? []).find(
+        (group) =>
+          group !== EVERY_CHILD &&
+          (config.limits.get(group)?.perGroup ?? Infinity) <= (counts.running.get(group) ?? 0),
+      );
+      const reason =
+        (yield* breachOf(config, now)) ??
+        (current.cap !== null && current.active >= current.cap
+          ? agentPlacementRoomFull(here, { ...current, free: 0 })
+          : undefined) ??
+        (blocked === undefined ? undefined : `All slots for ${blocked} on ${here} are in use.`) ??
+        (index > 0
+          ? `Queued behind ${index} older ${index === 1 ? "child" : "children"} on ${here}.`
+          : `Starting next on ${here}.`);
+      const since = Date.parse(row.requested_at);
+      return {
+        reason,
+        position: index + 1,
+        since,
+        until: since + config.maxHoldMinutes * 60_000,
+      };
+    },
+    Effect.orElseSucceed(() => undefined),
+  );
+
+  const expired: DelegatedChildStartGate["Service"]["expired"] = Effect.fn(
+    "DelegatedChildStartGate.expired",
+  )(function* (runId, now) {
+    const current = yield* hold(runId);
+    if (current === undefined || now < current.until) return undefined;
+    const config = yield* readConfig;
+    return `No room on ${yield* label} within ${config.maxHoldMinutes} min (${current.reason.replace(/\.$/, "")}). Delegate again to place it elsewhere.`;
   });
 
   const release = (row: ChildRow) => {
@@ -215,30 +339,37 @@ const make = Effect.gen(function* () {
       : threads.dispatch({ type: "prepared-run.release", ...input }).pipe(Effect.asVoid);
   };
 
-  const admit: DelegatedChildStartGate["Service"]["admit"] = (parentThreadId, dispatch) =>
+  const admit: DelegatedChildStartGate["Service"]["admit"] = (owner, dispatch) =>
     lock.withPermit(
       Effect.gen(function* () {
-        const limits = yield* readLimits;
-        if (limits.size === 0) return yield* dispatch(false);
-        const rootProject = yield* rootProjectOf(parentThreadId).pipe(
-          Effect.orElseSucceed(() => null),
-        );
+        const config = yield* readConfig;
+        const { limits } = config;
+        const remote = "projectId" in owner;
+        if ((limits.size === 0 && !config.byRoom) || (remote && !config.byRoom))
+          return yield* dispatch(false);
+        const rootProject = remote
+          ? owner.projectId
+          : yield* rootProjectOf(owner.parentThreadId).pipe(Effect.orElseSucceed(() => null));
         const groups = yield* groupsOf(rootProject, limits);
-        if (groups.length === 0) return yield* dispatch(false);
-        const rows = yield* readChildren.pipe(Effect.orElseSucceed(() => []));
+        if (groups.length === 0 && !config.byRoom) return yield* dispatch(false);
+        const rows = yield* readChildren(config.byRoom).pipe(Effect.orElseSucceed(() => []));
         const activeChildren = yield* readActiveChildren.pipe(Effect.orElseSucceed(() => []));
         const { running, queued } = yield* tally(rows, activeChildren, limits);
         const now = yield* Clock.currentTimeMillis;
-        const held = groups.some(
-          (group) => (queued.get(group) ?? 0) > 0 || !allows(limits, group, running, now),
-        );
+        const breach = yield* breachOf(config, now).pipe(Effect.orElseSucceed(() => undefined));
+        const held =
+          breach !== undefined ||
+          groups.some(
+            (group) => (queued.get(group) ?? 0) > 0 || !allows(limits, group, running, now),
+          );
         const result = yield* dispatch(held);
         if (held) pending = true;
         else for (const group of groups) lastStart.set(group, now);
         yield* Effect.logInfo("orchestration-v2.child-start.admit", {
-          parentThreadId,
+          owner,
           groups,
           held,
+          breach,
         });
         return result;
       }),
@@ -248,7 +379,9 @@ const make = Effect.gen(function* () {
     .withPermit(
       Effect.gen(function* () {
         if (!pending) return;
-        const rows = yield* readChildren;
+        const config = yield* readConfig;
+        const { limits } = config;
+        const rows = yield* readChildren(config.byRoom);
         for (const id of released) {
           if (!rows.some((row) => row.run_id === id && row.status === "preparing")) {
             released.delete(id);
@@ -259,10 +392,10 @@ const make = Effect.gen(function* () {
           pending = false;
           return;
         }
-        const limits = yield* readLimits;
         const activeChildren = yield* readActiveChildren;
         const { running, groups } = yield* tally(rows, activeChildren, limits);
         const now = yield* Clock.currentTimeMillis;
+        if ((yield* breachOf(config, now)) !== undefined) return;
         const blocked = new Set<string>();
         for (const row of held) {
           const rowGroups = groups.get(row.run_id) ?? [];
@@ -304,7 +437,7 @@ const make = Effect.gen(function* () {
 
   yield* forkParked(Effect.forever(Effect.sleep(TICK).pipe(Effect.andThen(tick))));
 
-  return DelegatedChildStartGate.of({ admit, isHeld });
+  return DelegatedChildStartGate.of({ admit, isHeld, room, hold, expired });
 });
 
 export const layer = Layer.effect(DelegatedChildStartGate, make);

@@ -11,6 +11,7 @@ import type * as Invocation from "./McpInvocationContext.ts";
 
 const LaunchInput = Schema.Struct({
   projectId: Schema.optional(ProjectId),
+  repository: Schema.optional(Schema.String),
   scratch: Schema.optional(Schema.Boolean),
   modelSelection: Schema.optional(ModelSelection),
   clientRequestId: Schema.optional(Schema.String),
@@ -49,6 +50,7 @@ export const launch = Effect.fn("AgentLaunchRouting.launch")(function* <E, R>(
   const selected = yield* service.select(scope, {
     operation: "launch",
     projectId: input.projectId,
+    repository: input.repository,
     modelSelection: input.modelSelection,
     clientRequestId: input.clientRequestId,
     ...(input.scratch === true
@@ -70,7 +72,9 @@ export const launch = Effect.fn("AgentLaunchRouting.launch")(function* <E, R>(
       run(selected.placement.environmentId, {
         ...params,
         clientRequestId,
-        projectId: selected.projectId,
+        ...(selected.projectId === undefined
+          ? {}
+          : { projectId: selected.projectId, repository: undefined }),
         modelSelection: selected.modelSelection,
       }),
     run(undefined, params),

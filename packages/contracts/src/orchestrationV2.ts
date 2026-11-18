@@ -554,9 +554,7 @@ export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 /** A thread another agent drives: a local subagent or a task delegated from a linked environment. */
 export const isDelegatedAppThread = (
   thread: Pick<OrchestrationV2AppThread, "lineage" | "delegatedFrom">,
-): boolean =>
-  // MCP-launched threads store `delegatedFrom: null` at runtime, so check both absent shapes.
-  thread.lineage.relationshipToParent === "subagent" || thread.delegatedFrom != null;
+): boolean => thread.lineage.relationshipToParent === "subagent" || thread.delegatedFrom != null;
 
 /** Provider-native children cannot receive messages; T3 delegate_task children can. */
 export function isProviderNativeSubagentThread(
@@ -3259,6 +3257,7 @@ export const OrchestrationV2Command = Schema.Union([
       Schema.Struct({
         type: Schema.Literal("defer_start"),
         workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+        startHeld: Schema.optional(Schema.Boolean),
       }),
       Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
       Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),

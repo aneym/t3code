@@ -1,11 +1,13 @@
 import {
   AgentPlacementReceipt,
+  type AgentPlacementRoom,
   type AgentPlacementScore,
   ProjectId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
@@ -35,6 +37,17 @@ const ThreadPlacementResult = Schema.Struct({
 });
 
 const GIB = 1024 * 1024 * 1024;
+export const formatPlacementRoom = (room: AgentPlacementRoom) =>
+  [
+    room.cap === null
+      ? `${room.active} running, no builder cap`
+      : `${room.free ?? 0} of ${room.cap} free (${room.active} running)`,
+    `${room.held} queued`,
+    room.paused === undefined ? null : `paused: ${room.paused}`,
+  ]
+    .filter((part) => part !== null)
+    .join(", ");
+
 export const formatPlacementScore = (entry: AgentPlacementScore) =>
   [
     `  ${entry.label} (${entry.environmentId})`,
@@ -47,6 +60,7 @@ export const formatPlacementScore = (entry: AgentPlacementScore) =>
       ? null
       : `memory ${Math.round(entry.availableMemoryRatio * 100)}% free`,
     entry.freeDiskBytes === null ? null : `disk ${(entry.freeDiskBytes / GIB).toFixed(0)} GiB free`,
+    entry.room === undefined ? null : `room ${formatPlacementRoom(entry.room)}`,
     entry.note ?? null,
   ]
     .filter((part) => part !== null)
@@ -76,6 +90,10 @@ export const threadPlacementCommand = Command.make("placement", {
             return yield* Console.log("No placement was recorded for this thread.");
           yield* Console.log(`${placement.label}  ${placement.environmentId}`);
           yield* Console.log(placement.reason);
+          if (placement.hold !== undefined)
+            yield* Console.log(
+              `Queued at position ${placement.hold.position}: ${placement.hold.reason} Fails at ${DateTime.formatIso(DateTime.makeUnsafe(placement.hold.until))}.`,
+            );
           for (const entry of placement.scores ?? [])
             yield* Console.log(formatPlacementScore(entry));
         }),

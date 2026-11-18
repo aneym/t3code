@@ -1,11 +1,15 @@
-import { AgentPlacementScore, ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import {
+  AgentPlacementRoom,
+  AgentPlacementScore,
+  ExecutionEnvironmentDescriptor,
+} from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
 
 import { projectLocationFlags } from "./config.ts";
-import { formatPlacementScore } from "./threadPlacement.ts";
+import { formatPlacementRoom, formatPlacementScore } from "./threadPlacement.ts";
 import {
   McpServerNotRunningError,
   McpServerUnreachableError,
@@ -21,6 +25,7 @@ const EnvironmentIdentity = Schema.Struct({
   label: ExecutionEnvironmentDescriptor.fields.label,
   platform: ExecutionEnvironmentDescriptor.fields.platform,
   placementHealth: Schema.optionalKey(AgentPlacementScore),
+  placementRoom: Schema.optionalKey(AgentPlacementRoom),
 });
 
 const reportEnvironmentErrors = reportCliErrors(
@@ -51,6 +56,9 @@ export const environmentShowCommand = Command.make("show", {
                 ...(descriptor.placementHealth === undefined
                   ? []
                   : [`placement:\n${formatPlacementScore(descriptor.placementHealth)}`]),
+                ...(descriptor.placementRoom === undefined
+                  ? []
+                  : [`room: ${formatPlacementRoom(descriptor.placementRoom)}`]),
               ].join("\n"),
             );
       }),

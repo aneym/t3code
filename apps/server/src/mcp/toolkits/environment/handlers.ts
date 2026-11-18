@@ -8,7 +8,8 @@ import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
-import { repositoryIdentityKeys } from "../../../project/RepositoryIdentityKeys.ts";
+import { projectsByRepository } from "../../../project/ProjectsByRepository.ts";
+import * as Gate from "../../../orchestration-v2/DelegatedChildStartGate.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { isProviderAvailable, resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
@@ -25,6 +26,10 @@ export function preferences(settings: ServerSettings) {
     agentLoadBalancingWeights,
     agentPlacementPinnedEnvironmentId,
     agentPlacementHealthLine,
+    agentPlacementByRoom,
+    agentPlacementPaused,
+    agentPlacementMaxHoldMinutes,
+    childStart,
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
@@ -38,6 +43,10 @@ export function preferences(settings: ServerSettings) {
     agentLoadBalancingWeights,
     agentPlacementPinnedEnvironmentId,
     agentPlacementHealthLine,
+    agentPlacementByRoom,
+    agentPlacementPaused,
+    agentPlacementMaxHoldMinutes,
+    childStart,
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
@@ -81,29 +90,19 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         placementProjectId = undefined;
         const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
         if (Option.isSome(projects)) {
-          const matches = [];
-          let cursor: number | null = 0;
-          let pages = 0;
-          while (cursor !== null && pages++ < 10) {
-            const page: Effect.Success<
-              ReturnType<ProjectService.ProjectService["Service"]["listPage"]>
-            > = yield* projects.value
-              .listPage({ cursor, limit: 100 })
-              .pipe(Effect.mapError(unavailable));
-            matches.push(
-              ...page.projects.filter((project) =>
-                repositoryIdentityKeys(project.repositoryIdentity).some((key) => wanted.has(key)),
-              ),
-            );
-            cursor = page.nextCursor;
-          }
-          if (cursor === null) placementProjectCount = matches.length;
-          if (cursor === null && matches.length === 1) placementProjectId = matches[0]?.id;
+          const found = yield* projectsByRepository(projects.value, wanted).pipe(
+            Effect.mapError(unavailable),
+          );
+          if (found.complete) placementProjectCount = found.matches.length;
+          if (found.complete && found.matches.length === 1)
+            placementProjectId = found.matches[0]?.id;
         }
       }
       const hostResources = Option.isSome(resources) ? yield* resources.value.read : null;
       const placementWeight = current.agentLoadBalancingWeights[descriptor.environmentId];
+      const gate = yield* Effect.serviceOption(Gate.DelegatedChildStartGate);
       return {
+        ...(Option.isSome(gate) ? { placementRoom: yield* gate.value.room } : {}),
         ...(placementProjectId === undefined ? {} : { placementProjectId }),
         ...(placementProjectCount === undefined ? {} : { placementProjectCount }),
         ...(placementWeight === undefined ? {} : { placementWeight }),

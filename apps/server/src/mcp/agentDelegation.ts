@@ -1,15 +1,18 @@
 import {
   type ModelSelection,
   type OrchestratorMcpDelegateTaskInput,
+  OrchestratorMcpFailure,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as AgentPlacement from "../peer/AgentPlacement.ts";
+import * as PlacementRoom from "../peer/PlacementRoom.ts";
 import * as WorktreeTransfer from "../peer/WorktreeTransfer.ts";
 import * as Projects from "../project/ProjectService.ts";
 import * as Settings from "../serverSettings.ts";
 import { delegatedChildDefaultModel } from "./delegatedChildModel.ts";
+import { withHold } from "./delegatedHold.ts";
 import * as Invocation from "./McpInvocationContext.ts";
 import * as Orchestrator from "./OrchestratorMcpService.ts";
 import { readCaller } from "./threadAccess.ts";
@@ -58,16 +61,54 @@ const localOnlyReason = Effect.fn("AgentDelegation.localOnlyReason")(function* (
   return yield* unpushedParentCommit(parent);
 });
 
-export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
+const repositoryFailure = (message: string) =>
+  new OrchestratorMcpFailure({ code: "invalid_request", message });
+
+const resolveRepository = Effect.fn("AgentDelegation.resolveRepository")(function* (
   input: OrchestratorMcpDelegateTaskInput,
+  here: string,
+  float = false,
+) {
+  const repository = input.target?.repository;
+  if (repository === undefined) return input;
+  if (input.target?.projectId !== undefined)
+    return yield* repositoryFailure("Pass target.repository or target.projectId, not both.");
+  const settings = yield* Effect.serviceOption(Settings.ServerSettingsService);
+  const current = Option.isNone(settings)
+    ? undefined
+    : yield* settings.value.getSettings.pipe(Effect.orElseSucceed(() => undefined));
+  if (current?.agentPlacementByRoom !== true)
+    return yield* repositoryFailure(
+      "target.repository needs agentPlacementByRoom on this environment; pass target.projectId.",
+    );
+  const environmentId = input.target?.environmentId;
+  if (float || (environmentId !== undefined && environmentId !== here)) return input;
+  const projects = yield* Effect.serviceOption(Projects.ProjectService);
+  const projectId = Option.isNone(projects)
+    ? undefined
+    : yield* PlacementRoom.localProject(projects.value, repository);
+  if (projectId === undefined)
+    return yield* repositoryFailure(
+      `No single project here has repository ${repository}. Omit environmentId to place it on a machine that has it, or pass target.projectId.`,
+    );
+  const { repository: _repository, ...target } = input.target ?? {};
+  return { ...input, target: { ...target, projectId } };
+});
+
+export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
+  request: OrchestratorMcpDelegateTaskInput,
 ) {
   const scope = yield* Invocation.McpInvocationContext;
   const service = yield* Orchestrator.OrchestratorMcpService;
-  if (input.target?.environmentId !== undefined || scope.linkedEnvironments === false)
-    return yield* service.delegateTask(scope, input);
   const placement = yield* Effect.serviceOption(AgentPlacement.AgentPlacement);
-  if (Option.isNone(placement) || !(yield* placement.value.enabled))
-    return yield* service.delegateTask(scope, input);
+  const placed =
+    request.target?.environmentId === undefined &&
+    scope.linkedEnvironments !== false &&
+    Option.isSome(placement) &&
+    (yield* placement.value.enabled);
+  const input = yield* resolveRepository(request, scope.environmentId, placed);
+  if (!placed || Option.isNone(placement))
+    return yield* withHold(yield* service.delegateTask(scope, input));
   const caller = yield* readCaller();
   const inherited = caller.caller?.modelSelection;
   const settings = yield* Effect.serviceOption(Settings.ServerSettingsService);
@@ -101,12 +142,20 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
   const selected = yield* placement.value.select(scope, {
     operation: "delegate",
     projectId: input.target?.projectId,
+    repository: input.target?.repository,
     ...(modelSelection === undefined ? {} : { modelSelection }),
     driverKind: input.target?.driverKind,
     clientRequestId: input.clientRequestId,
     ...(stayReason === undefined ? {} : { localOnlyReason: stayReason }),
   });
-  if (selected === undefined) return yield* service.delegateTask(scope, input);
+  if (
+    input.target?.repository !== undefined &&
+    (selected === undefined || selected.projectId === undefined)
+  )
+    return yield* withHold(
+      yield* service.delegateTask(scope, yield* resolveRepository(input, scope.environmentId)),
+    );
+  if (selected === undefined) return yield* withHold(yield* service.delegateTask(scope, input));
   const { result, placement: receipt } = yield* placement.value.run(
     scope,
     selected,
@@ -121,9 +170,11 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
           projectId: selected.projectId,
         },
       }),
-    service.delegateTask(scope, input),
+    resolveRepository(input, scope.environmentId).pipe(
+      Effect.flatMap((fallback) => service.delegateTask(scope, fallback)),
+    ),
   );
   const childThreadId = result.remoteChild?.threadId ?? result.childThreadId;
   if (childThreadId !== null) yield* placement.value.record(childThreadId, receipt);
-  return { ...result, placement: receipt };
+  return yield* withHold({ ...result, placement: receipt });
 });

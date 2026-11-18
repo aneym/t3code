@@ -1,6 +1,7 @@
 import {
   AgentPlacementHealthLine,
   AgentPlacementProviders,
+  AgentPlacementRoom,
   type EnvironmentId,
   HostResourcesSnapshot,
   ProjectId,
@@ -22,6 +23,7 @@ export const Snapshot = Schema.Struct({
   placementWeight: Schema.optionalKey(Schema.Number),
   placementProviders: Schema.optionalKey(AgentPlacementProviders),
   placementHealthLine: Schema.optionalKey(AgentPlacementHealthLine),
+  placementRoom: Schema.optionalKey(AgentPlacementRoom),
 });
 export type Snapshot = typeof Snapshot.Type;
 

@@ -251,7 +251,6 @@ export class OrchestratorMcpService extends Context.Service<
   OrchestratorMcpServiceShape
 >()("t3/mcp/OrchestratorMcpService") {}
 
-// Without a reason, a Stop reads as the user's (see RunExecutionService.USER_STOP_REASON).
 function agentStopReason(reason: string | undefined): string {
   return reason === undefined ? "Stopped by an agent" : `Stopped by an agent: ${reason}`;
 }
@@ -2370,7 +2369,7 @@ const make = Effect.gen(function* () {
       const result = yield* (
         childStartGate === undefined || isRetryOfAcceptedDelegation
           ? request(false)
-          : childStartGate.admit(scope.thread.threadId, request)
+          : childStartGate.admit({ parentThreadId: scope.thread.threadId }, request)
       ).pipe(
         Effect.mapError((error) =>
           error._tag === "ThreadManagementProviderInstanceDisabledError"
