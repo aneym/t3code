@@ -42,6 +42,7 @@ import {
 } from "./embedProtocol";
 import { loadEmbedFonts, readEmbedFonts } from "./embedFonts";
 import { applyEmbedLinksMessage, isEmbedRailsUrl } from "./embedLinks";
+import { takeEarlyEmbedTheme } from "./embedEarlyTheme";
 import { applyEmbedTheme, themeFromEmbedMessage } from "./embedTheme";
 
 const COMPOSER_SELECTOR = '[data-testid="composer-editor"]';
@@ -119,6 +120,8 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       applyEmbedLinksMessage(event.data);
       applyEmbedPendingSendsMessage(event.data);
     };
+    const early = takeEarlyEmbedTheme();
+    if (early !== null) onMessage(early);
     const onKeyDown = (event: KeyboardEvent) => {
       const controlsKey = embedControlsKey();
       if (controlsKey !== null && pressedHostChord(event, controlsKey, mac)) {

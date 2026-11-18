@@ -2,7 +2,7 @@ import type { EmbedReadyMessage, EmbedRouteRefusedMessage } from "@t3tools/contr
 
 const EMBED_PATH_PREFIX = "/embed/";
 
-const EMBED_THEME_MESSAGE = "t3-embed/theme";
+export const EMBED_THEME_MESSAGE = "t3-embed/theme";
 export const EMBED_KEY_MESSAGE = "t3-embed/key";
 export const EMBED_OPEN_MESSAGE = "t3-embed/open";
 const EMBED_CLEAR_MESSAGE = "t3-embed/clear";

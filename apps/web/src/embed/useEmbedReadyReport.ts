@@ -23,10 +23,11 @@ export function useEmbedReadyReport(
       Option.isSome(thread.data) ||
       Option.isSome(thread.error) ||
       thread.status === "deleted");
-  const drawsRows = Option.exists(
-    thread.data,
-    (data) => data.messages.length > 0 || data.turnItems.length > 0,
-  );
+  const draws = Option.match(thread.data, {
+    onNone: () => "nothing" as const,
+    onSome: (data) =>
+      data.messages.length > 0 || data.turnItems.length > 0 ? ("rows" as const) : ("view" as const),
+  });
   const shown = held ? null : embedPaintSource(thread);
   const [first, setFirst] = useState(() => ({ threadId, from: shown }));
   const stale =
@@ -50,6 +51,6 @@ export function useEmbedReadyReport(
   }, [router, watch]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the host in the commit that draws the routed thread's first rows
   useLayoutEffect(() => {
-    if (connected) watch.report(threadId, settled, drawsRows, from);
-  }, [watch, connected, threadId, settled, drawsRows, from]);
+    if (connected) watch.report(threadId, settled, draws, from);
+  }, [watch, connected, threadId, settled, draws, from]);
 }

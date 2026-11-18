@@ -8,14 +8,18 @@ import {
 import { postToEmbedHost } from "./embedHost";
 
 const ROW = "[data-timeline-row-kind]";
+const EMPTY = "[data-timeline-empty]";
+const DRAWN = `${ROW},${EMPTY},[data-timeline-root]`;
 const NO_ROWS_GRACE_MS = 1000;
+
+export type EmbedDraws = "rows" | "view" | "nothing";
 
 export type EmbedReadyWatch = {
   readonly navigating: () => void;
   readonly report: (
     threadId: string,
     settled: boolean,
-    drawsRows: boolean,
+    draws: EmbedDraws,
     from: EmbedPaintSource,
   ) => void;
   readonly stop: () => void;
@@ -44,13 +48,22 @@ export function createEmbedReadyWatch(): EmbedReadyWatch {
   let reported: string | null = null;
   let waiting: { readonly threadId: string; readonly from: EmbedPaintSource } | null = null;
   let grace: ReturnType<typeof setTimeout> | undefined;
-  const rowsDrawn = () => {
-    for (const row of document.querySelectorAll(ROW)) if (!before.has(row)) return true;
+  let graceOver = false;
+  const fresh = (selector: string) => {
+    for (const element of document.querySelectorAll(selector))
+      if (!before.has(element)) return true;
     return false;
   };
-  const observer = new MutationObserver(() => {
-    if (waiting !== null && rowsDrawn()) send(waiting.threadId, waiting.from);
-  });
+  let draws: EmbedDraws = "nothing";
+  const drawn = () => {
+    if (draws === "nothing") return true;
+    if (graceOver) return document.querySelector(DRAWN) !== null;
+    return fresh(draws === "rows" ? ROW : DRAWN);
+  };
+  const check = () => {
+    if (waiting !== null && drawn()) send(waiting.threadId, waiting.from);
+  };
+  const observer = new MutationObserver(check);
   const stop = () => {
     observer.disconnect();
     waiting = null;
@@ -63,17 +76,27 @@ export function createEmbedReadyWatch(): EmbedReadyWatch {
   return {
     navigating: () => {
       stop();
-      before = new Set(document.querySelectorAll(ROW));
+      before = new Set(document.querySelectorAll(DRAWN));
       reported = null;
       painted = null;
     },
-    report: (threadId, settled, drawsRows, from) => {
+    report: (threadId, settled, next, from) => {
       stop();
       if (!settled || reported === threadId) return;
-      if (!drawsRows || rowsDrawn()) return send(threadId, from);
+      draws = next;
+      graceOver = false;
       waiting = { threadId, from };
-      observer.observe(document.body, { childList: true, subtree: true });
-      grace = setTimeout(() => send(threadId, from), NO_ROWS_GRACE_MS);
+      check();
+      if (waiting === null) return;
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributeFilter: ["data-timeline-row-kind", "data-timeline-empty", "data-timeline-root"],
+      });
+      grace = setTimeout(() => {
+        graceOver = true;
+        check();
+      }, NO_ROWS_GRACE_MS);
     },
     stop,
   };
