@@ -120,7 +120,7 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       const sendResult = readEmbedSendResultMessage(event.data);
       if (sendResult !== null) applyEmbedSendResult(sendResult);
       const pressResult = readEmbedPressResultMessage(event.data);
-      if (pressResult !== null) applyEmbedPressResult(pressResult.requestId);
+      if (pressResult !== null) applyEmbedPressResult(pressResult.requestId, pressResult.witnessed);
       if (readEmbedHostPressMessage(event.data)) applyEmbedHostPress();
       applyEmbedLinksMessage(event.data);
       applyEmbedPendingSendsMessage(event.data);

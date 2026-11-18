@@ -27,7 +27,6 @@ import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
 import { APP_VERSION } from "~/branding";
 import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
 import { openThroughEmbedHost } from "~/embed/embedHost";
-import { reportEmbedPress } from "~/embed/embedPress";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
@@ -39,7 +38,7 @@ import { mcpAppEnvironment } from "~/state/mcpApps";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { observeResize } from "~/lib/observeResize";
 import { frameActivated, pageInputRecent, trackFrameClicks } from "./mcpAppActivation";
-import { clickConsentAllowed } from "./mcpAppClickConsent";
+import { consentToMcpAppCall } from "./mcpAppCallConsent";
 
 const commandFailure = (result: {
   readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"];
@@ -267,27 +266,24 @@ export function McpAppFrame(props: {
       post: (message) => target()?.postMessage(message, "*"),
       hostContext,
       callTool: async ({ name, arguments: args }) => {
-        const click = clicks.peek();
         const { environmentId, input } = scope();
-        const info = await readLive().toolInfo({ environmentId, input: { ...input, name } });
-        if (info._tag !== "Success") throw commandFailure(info);
-        if (!info.value.callable)
-          throw new McpAppHostRefusal({ message: "This app cannot call that tool." });
-        const { readOnly, destructive } = info.value;
-        let pressed =
-          destructive === false && clickConsentAllowed(app.server, name) && clicks.take(click);
-        if (!readOnly && !pressed) {
-          const cardPress = frameActivated(frame) && !pageInputRecent();
-          const approved = await ask(
-            `Allow ${app.server} to run ${info.value.title ?? name}?\n${JSON.stringify(args, null, 2)}`,
-          );
-          if (approved !== true) throw new McpAppHostRefusal({ message: "Declined by the user." });
-          pressed = cardPress;
-        }
-        if (pressed) {
-          const { threadId: thread, itemId: item } = input;
-          await reportEmbedPress({ thread, item, server: app.server, tool: name, arguments: args });
-        }
+        await consentToMcpAppCall({
+          clicks,
+          frame,
+          press: {
+            thread: input.threadId,
+            item: input.itemId,
+            server: app.server,
+            tool: name,
+            arguments: args,
+          },
+          toolInfo: async () => {
+            const info = await readLive().toolInfo({ environmentId, input: { ...input, name } });
+            if (info._tag !== "Success") throw commandFailure(info);
+            return info.value;
+          },
+          ask,
+        });
         const result = await readLive().callTool({
           environmentId,
           input: { ...input, name, arguments: args },
