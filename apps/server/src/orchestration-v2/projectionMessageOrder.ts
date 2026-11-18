@@ -58,17 +58,42 @@ export const readMessageOrdinals = Effect.fn("ProjectionStore.readMessageOrdinal
   threadId: ThreadId,
   messages: ReadonlyArray<OrchestrationV2ConversationMessage>,
   named: boolean,
+  windowRunIds: string | null = null,
 ) {
+  const runIds =
+    windowRunIds ??
+    (named && messages.every((message) => message.runId !== null)
+      ? encodeIdList([...new Set(messages.flatMap((message) => message.runId ?? []))])
+      : null);
+  const types = messages.every((message) => message.role === "user")
+    ? sql`type = 'user_message'`
+    : sql`type IN ('user_message', 'assistant_message')`;
+  const names = named
+    ? sql`AND json_extract(payload_json, '$.messageId') IN (SELECT value FROM json_each(${encodeIdList(messages.map((message) => message.id))}))`
+    : sql``;
+  if (runIds === null) {
+    const rows = yield* sql<{ message_id: string; ordinal: number }>`
+      SELECT json_extract(payload_json, '$.messageId') AS message_id, MIN(ordinal) AS ordinal
+      FROM orchestration_v2_projection_turn_items
+      WHERE thread_id = ${threadId} AND ${types} ${names}
+      GROUP BY json_extract(payload_json, '$.messageId')`;
+    return new Map(rows.map((row) => [row.message_id, row.ordinal]));
+  }
   const rows = yield* sql<{ message_id: string; ordinal: number }>`
-    SELECT json_extract(payload_json, '$.messageId') AS message_id, MIN(ordinal) AS ordinal
+    SELECT json_extract(payload_json, '$.messageId') AS message_id, ordinal
     FROM orchestration_v2_projection_turn_items
-    WHERE thread_id = ${threadId}
-      AND ${
-        messages.every((message) => message.role === "user")
-          ? sql`type = 'user_message'`
-          : sql`type IN ('user_message', 'assistant_message')`
-      }
-      ${named ? sql`AND json_extract(payload_json, '$.messageId') IN (SELECT value FROM json_each(${encodeIdList(messages.map((message) => message.id))}))` : sql``}
-    GROUP BY json_extract(payload_json, '$.messageId')`;
-  return new Map(rows.map((row) => [row.message_id, row.ordinal]));
+    INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
+    WHERE thread_id = ${threadId} AND run_id IN (SELECT value FROM json_each(${runIds}))
+      AND ${types} ${names}
+    UNION ALL
+    SELECT json_extract(payload_json, '$.messageId'), ordinal
+    FROM orchestration_v2_projection_turn_items
+    INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
+    WHERE thread_id = ${threadId} AND run_id IS NULL AND ${types} ${names}`;
+  const ordinals = new Map<string, number>();
+  for (const row of rows) {
+    const known = ordinals.get(row.message_id);
+    if (known === undefined || row.ordinal < known) ordinals.set(row.message_id, row.ordinal);
+  }
+  return ordinals;
 });

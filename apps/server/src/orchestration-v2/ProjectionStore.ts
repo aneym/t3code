@@ -389,6 +389,7 @@ export interface ProjectionRecordFilter {
   readonly latestProviderTurnUsageOnly?: true;
   readonly runtimeRequestStatuses?: ReadonlyArray<OrchestrationV2RuntimeRequest["status"]>;
   readonly contextTransferStatuses?: ReadonlyArray<OrchestrationV2ContextTransfer["status"]>;
+  readonly contextTransferSourceThreadIds?: ReadonlyArray<ThreadId>;
   readonly subagentIds?: ReadonlyArray<NodeId>;
   readonly subagentRunIds?: ReadonlyArray<RunId>;
   readonly nodeIds?: ReadonlyArray<NodeId>;
@@ -407,7 +408,6 @@ export interface ProjectionRecordFilter {
    * the thread stays.
    */
   readonly omitSettledSubagentRecords?: boolean;
-  /** Reads every collection only for the runs `readCommandWindowRunIds` picks. */
   readonly recentRuns?: CommandRunWindow;
   readonly completionDeliveryRuns?: true;
 }
@@ -3459,7 +3459,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           recentRunIds === null
             ? sql``
             : sql`AND ${sql.literal(column)} IN (SELECT value FROM json_each(${recentRunIds}))`;
-        // Without the hint SQLite reads every row of the thread to find the recent runs' rows.
         const recentRunIndex = (index: string) =>
           recentRunIds === null
             ? sql``
@@ -4106,11 +4105,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT payload_json
             FROM orchestration_v2_projection_context_transfers
             WHERE ${
-              filter?.contextTransferStatuses === undefined
-                ? sql`(source_thread_id = ${threadId} OR target_thread_id = ${threadId})`
-                : // Each side seeks its (thread, status) index. One OR over both sides checks the
-                  // status on every row the thread ever sent or received.
-                  sql`rowid IN (
+              filter?.contextTransferSourceThreadIds !== undefined
+                ? sql`source_thread_id IN (SELECT value FROM json_each(${encodeIdList(filter.contextTransferSourceThreadIds)})) AND target_thread_id = ${threadId}`
+                : filter?.contextTransferStatuses === undefined
+                  ? sql`(source_thread_id = ${threadId} OR target_thread_id = ${threadId})`
+                  : sql`rowid IN (
                     SELECT rowid FROM orchestration_v2_projection_context_transfers
                     WHERE source_thread_id = ${threadId}
                       AND status IN (SELECT value FROM json_each(${encodeIdList(filter.contextTransferStatuses)}))
@@ -4190,6 +4189,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       filter.messageRoles.includes("user") &&
                       filter.messageRoles.includes("assistant")
                     )),
+                recentRunIds,
               )
             : new Map<string, number>();
         const orderedMessages = sortMessagesByTurnItemOrder(messages, turnItems, messageOrdinals);

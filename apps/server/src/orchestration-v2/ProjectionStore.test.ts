@@ -873,6 +873,7 @@ it.effect("a command reads a long thread's records only for its recent runs", ()
           completedAt: ended,
           checkpointId: null,
           contextHandoffId: null,
+          ...(status === "queued" ? { restartContinuationOfRunId: runId(7) } : {}),
         },
       });
       yield* store.apply({
@@ -1021,10 +1022,10 @@ it.effect("a command reads a long thread's records only for its recent runs", ()
       turnItems: recent,
     });
 
-    assert.deepEqual(yield* read(), expected([2, 4, 11, 12, 13, 14, 15]));
+    assert.deepEqual(yield* read(), expected([2, 4, 7, 11, 12, 13, 14, 15]));
     assert.deepEqual(
       yield* read([runId(3)], messageId(6)),
-      expected([2, 3, 4, 6, 11, 12, 13, 14, 15]),
+      expected([2, 3, 4, 6, 7, 11, 12, 13, 14, 15]),
     );
 
     // A command also skips the node and the provider thread of each settled task. Tasks ended on
@@ -1171,7 +1172,7 @@ it.effect("a command reads a long thread's records only for its recent runs", ()
     assert.deepEqual(unsettled.providerThreads, ["compacted", "old-pending", "recent-pending"]);
     assert.lengthOf(unsettled.rootNodes, all.length);
     assert.lengthOf(unsettled.runs, 15);
-    const recent = ["11", "12", "13", "14", "15", "2", "3", "4", "6"];
+    const recent = ["11", "12", "13", "14", "15", "2", "3", "4", "6", "7"];
     assert.deepEqual(both, {
       ...unsettled,
       runs: recent,

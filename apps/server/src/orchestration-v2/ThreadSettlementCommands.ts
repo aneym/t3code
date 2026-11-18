@@ -7,6 +7,7 @@ import * as Stream from "effect/Stream";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import { readAgentMainThreads } from "../agents/AgentHomeFiles.ts";
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
+import { runWindow } from "./CommandRunWindow.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { OrchestratorDispatchError } from "./OrchestratorDispatchError.ts";
 import type { ThreadManagementServiceShape } from "./ThreadManagementService.ts";
@@ -68,7 +69,9 @@ export const makeSettlementCommands = Effect.fn("ThreadManagementService.makeSet
       const afterSequence = yield* orchestrator.getThreadEventSequence(input.threadId);
       const trySettle = Effect.gen(function* () {
         const sequence = yield* orchestrator.getThreadEventSequence(input.threadId);
-        const records = yield* loadRecords(input, ["runs"]);
+        const records = yield* loadRecords(input, ["runs"], {
+          recentRuns: runWindow([run.id], { afterOrdinal: run.ordinal }),
+        });
         if (
           threadPullRequestsOf(records.thread).some(
             (link) =>

@@ -12,6 +12,7 @@ export const readCompletionParent = Effect.fn("Orchestrator.readCompletionParent
     threadId,
     ["runs", "nodes", "turnItems", "contextTransfers"],
     {
+      contextTransferSourceThreadIds: task.childThreadId === null ? [] : [task.childThreadId],
       runIds: task.runId === null ? [] : [task.runId],
       nodeIds: [task.id],
       turnItemTypes: ["subagent"],

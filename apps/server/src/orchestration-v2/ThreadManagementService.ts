@@ -83,6 +83,7 @@ import {
   type ThreadSendInput,
   type ThreadSendResult,
 } from "./ThreadSend.ts";
+import { latestRestartContinuation, waitRunsFilter } from "./ThreadWaitRuns.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import { reopenCancelledTask } from "./TaskCancel.ts";
@@ -459,19 +460,6 @@ export function latestRun(
   return latestUnheldRun(projection.runs) ?? undefined;
 }
 
-function latestRestartContinuation(
-  runs: ReadonlyArray<OrchestrationV2Run>,
-  run: OrchestrationV2Run,
-): OrchestrationV2Run {
-  let current = run;
-  for (let hops = 0; hops < runs.length; hops++) {
-    const next = runs.find((candidate) => candidate.restartContinuationOfRunId === current.id);
-    if (next === undefined) break;
-    current = next;
-  }
-  return current;
-}
-
 export function latestActiveRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | undefined {
@@ -751,7 +739,7 @@ const make = Effect.gen(function* () {
     const afterSequence = yield* orchestrator
       .getThreadEventSequence(input.threadId)
       .pipe(Effect.mapError(loadError));
-    const target = yield* getProjectThreadRecords(input, ["runs"]);
+    const target = yield* getProjectThreadRecords(input, ["runs"], waitRunsFilter(input.runId));
     const selectedRun =
       input.runId === undefined
         ? latestRun(target)
@@ -850,7 +838,7 @@ const make = Effect.gen(function* () {
         : Stream.empty,
     ).pipe(
       Stream.mapEffect(() =>
-        getProjectThreadRecords(input, ["runs"]).pipe(
+        getProjectThreadRecords(input, ["runs"], waitRunsFilter(selectedRun.id)).pipe(
           Effect.flatMap((current) => evaluate(current.runs)),
         ),
       ),
@@ -860,7 +848,12 @@ const make = Effect.gen(function* () {
     );
     const waited = Option.flatten(yield* wait);
     if (Option.isSome(waited)) return settledResult(waited.value);
-    return settledResult(yield* evaluate((yield* getProjectThreadRecords(input, ["runs"])).runs));
+    const { runs } = yield* getProjectThreadRecords(
+      input,
+      ["runs"],
+      waitRunsFilter(selectedRun.id),
+    );
+    return settledResult(yield* evaluate(runs));
   });
 
   const { settleAfterRun, settleThread } = yield* makeSettlementCommands(
@@ -920,11 +913,11 @@ const make = Effect.gen(function* () {
       const { records, target, killed } = yield* threadDispatch.withLock(
         input.threadId,
         Effect.gen(function* () {
-          const records = yield* orchestrator.getThreadRecords(input.threadId, [
-            "runs",
-            "providerThreads",
-            "providerTurns",
-          ]);
+          const records = yield* orchestrator.getThreadRecords(
+            input.threadId,
+            ["runs", "providerThreads", "providerTurns"],
+            waitRunsFilter(),
+          );
           // The run Force stop acts on: the active one, else the latest that started. Queued
           // follow-ups never ran, so they neither count as targets nor supersede the request.
           const target =
@@ -992,23 +985,27 @@ const make = Effect.gen(function* () {
       // counts. An unreadable thread counts as one, so its sessions are kept.
       const throughRunOrdinal = target?.ordinal ?? 0;
       const laterRunActive = (providerSessionId: ProviderSessionId) =>
-        orchestrator.getThreadRecords(input.threadId, ["runs", "providerThreads"]).pipe(
-          Effect.map(({ runs, providerThreads }) => {
-            const onSession = new Set(
-              providerThreads.flatMap((providerThread) =>
-                providerThread.providerSessionId === providerSessionId ? [providerThread.id] : [],
-              ),
-            );
-            return runs.some(
-              (run) =>
-                run.ordinal > throughRunOrdinal &&
-                isActiveRun(run) &&
-                run.providerThreadId !== null &&
-                onSession.has(run.providerThreadId),
-            );
-          }),
-          Effect.orElseSucceed(() => true),
-        );
+        orchestrator
+          .getThreadRecords(input.threadId, ["runs", "providerThreads"], {
+            runStatuses: ACTIVE_RUN_STATUSES,
+          })
+          .pipe(
+            Effect.map(({ runs, providerThreads }) => {
+              const onSession = new Set(
+                providerThreads.flatMap((providerThread) =>
+                  providerThread.providerSessionId === providerSessionId ? [providerThread.id] : [],
+                ),
+              );
+              return runs.some(
+                (run) =>
+                  run.ordinal > throughRunOrdinal &&
+                  isActiveRun(run) &&
+                  run.providerThreadId !== null &&
+                  onSession.has(run.providerThreadId),
+              );
+            }),
+            Effect.orElseSucceed(() => true),
+          );
       const detach = (providerSessionId: ProviderSessionId) =>
         sessions
           .detach({ providerSessionId, threadId: input.threadId, detail: FORCE_STOP_REASON })
