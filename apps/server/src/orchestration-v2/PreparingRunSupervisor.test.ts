@@ -1,5 +1,11 @@
 import { assert, it } from "@effect/vitest";
-import { CommandId, MessageId, type OrchestrationV2RunStatus } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  ThreadId,
+  type OrchestrationV2RunStatus,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -9,7 +15,9 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as DelegatedChildStartGate from "./DelegatedChildStartGate.ts";
 import * as PreparingRunSupervisor from "./PreparingRunSupervisor.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { launchInput, makeHarness } from "./testkit/ThreadLaunchHarness.ts";
+import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 const noHeldRuns = Layer.mock(DelegatedChildStartGate.DelegatedChildStartGate)({
@@ -119,5 +127,115 @@ it.effect("fails a run whose workspace setup hangs past the deadline and names i
         "Workspace setup did not finish within 10 minutes, so the agent never started on this message. The message queued behind it starts next.",
       );
     }).pipe(Effect.provide(harness.layer), Effect.scoped);
+  }),
+);
+
+const roomHarness = () =>
+  makeHarness({
+    serverSettings: {
+      childStart: { "*": { perGroup: 1 } },
+      agentPlacementByRoom: true,
+      agentPlacementMaxHoldMinutes: 1,
+    },
+  });
+
+const launchRemoteChildren = (names: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const gate = yield* DelegatedChildStartGate.DelegatedChildStartGate;
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launched = yield* Effect.forEach(
+      names,
+      (name) => {
+        const input = launchInput({
+          command: `command:${name}`,
+          thread: `thread:${name}`,
+          message: name,
+        });
+        return gate.admit({ projectId: input.projectId }, (held) =>
+          launches.launch({
+            ...input,
+            createdBy: "agent",
+            creationSource: "mcp",
+            linkOrigin: { sessionId: "session:caller", label: "caller" },
+            delegatedFrom: {
+              environmentId: EnvironmentId.make("environment:caller"),
+              threadId: ThreadId.make(`thread:parent:${name}`),
+              title: "Parent",
+            },
+            ...(held ? { startHeld: true } : {}),
+          }),
+        );
+      },
+      { concurrency: "unbounded" },
+    );
+    const runs = yield* Effect.forEach(launched, (result) =>
+      threads
+        .getThreadProjection(result.threadId)
+        .pipe(Effect.map((projection) => projection.runs[0]!)),
+    );
+    return { gate, threads, runs, held: runs.filter((run) => run.childStartHeld === true) };
+  });
+
+it.effect("admits two remote children for the last slot one at a time and holds the second", () =>
+  Effect.gen(function* () {
+    const harness = roomHarness();
+    yield* Effect.gen(function* () {
+      const { gate, runs, held } = yield* launchRemoteChildren(["race-a", "race-b"]);
+      assert.equal(held.length, 1);
+      assert.equal(runs.filter((run) => run.childStartHeld !== true).length, 1);
+      assert.deepEqual(yield* gate.room, { cap: 1, active: 1, held: 1, free: 0 });
+      const hold = yield* gate.hold(held[0]!.id);
+      assert.equal(hold?.position, 1);
+      assert.equal(
+        hold?.reason,
+        "All 1 builder slots on this machine are in use (1 running, 1 queued).",
+      );
+    }).pipe(
+      Effect.provide(Layer.provideMerge(DelegatedChildStartGate.layer, harness.layer)),
+      Effect.scoped,
+    );
+  }),
+);
+
+it.effect("starts a held remote child once room frees", () =>
+  Effect.gen(function* () {
+    const harness = roomHarness();
+    yield* Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const { gate, threads, held } = yield* launchRemoteChildren(["free-a", "free-b"]);
+      const child = held[0]!;
+      yield* settings.updateSettings({ childStart: { "*": { perGroup: 2 } } });
+      yield* TestClock.adjust("1 second");
+      const { runs } = yield* threads.getThreadRecords(child.threadId, ["runs"]);
+      assert.notEqual(runs[0]?.status, "preparing");
+      assert.isFalse(gate.isHeld(runs[0]!));
+    }).pipe(
+      Effect.provide(Layer.provideMerge(DelegatedChildStartGate.layer, harness.layer)),
+      Effect.scoped,
+    );
+  }),
+);
+
+it.effect("fails a held child that finds no room within the hold bound", () =>
+  Effect.gen(function* () {
+    const harness = roomHarness();
+    yield* Effect.gen(function* () {
+      const { threads, held } = yield* launchRemoteChildren(["bound-a", "bound-b"]);
+      const child = held[0]!;
+      yield* Layer.build(PreparingRunSupervisor.layer);
+      yield* TestClock.adjust("70 seconds");
+      const projection = yield* threads.getThreadProjection(child.threadId);
+      assert.equal(projection.runs[0]?.status, "failed");
+      const failure = projection.turnItems.find((item) => item.type === "error");
+      assert.ok(failure?.type === "error");
+      assert.equal(
+        failure.failure.message,
+        "No room on this machine within 1 min (All 1 builder slots on this machine are in use (1 running, 1 queued)). Delegate again to place it elsewhere.",
+      );
+    }).pipe(
+      Effect.provide(Layer.provideMerge(DelegatedChildStartGate.layer, harness.layer)),
+      Effect.scoped,
+    );
   }),
 );

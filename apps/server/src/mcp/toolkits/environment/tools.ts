@@ -1,6 +1,7 @@
 import {
   AgentPlacementHealthLine,
   AgentPlacementProviders,
+  AgentPlacementRoom,
   AgentPlacementScore,
   ProjectId,
   HostResourcesSnapshot,
@@ -25,6 +26,10 @@ const PreferenceFields = {
   agentLoadBalancingWeights: ServerSettings.fields.agentLoadBalancingWeights,
   agentPlacementPinnedEnvironmentId: ServerSettings.fields.agentPlacementPinnedEnvironmentId,
   agentPlacementHealthLine: ServerSettings.fields.agentPlacementHealthLine,
+  agentPlacementByRoom: ServerSettings.fields.agentPlacementByRoom,
+  agentPlacementPaused: ServerSettings.fields.agentPlacementPaused,
+  agentPlacementMaxHoldMinutes: ServerSettings.fields.agentPlacementMaxHoldMinutes,
+  childStart: ServerSettings.fields.childStart,
   defaultThreadEnvMode: ServerSettings.fields.defaultThreadEnvMode,
   newWorktreesStartFromOrigin: ServerSettings.fields.newWorktreesStartFromOrigin,
   enableProviderUpdateChecks: ServerSettings.fields.enableProviderUpdateChecks,
@@ -72,6 +77,7 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
     placementProviders: Schema.optionalKey(AgentPlacementProviders),
     placementHealthLine: Schema.optionalKey(AgentPlacementHealthLine),
     placementHealth: Schema.optionalKey(AgentPlacementScore),
+    placementRoom: Schema.optionalKey(AgentPlacementRoom),
   }),
 })
   .annotate(Tool.Readonly, true)
@@ -86,6 +92,10 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
     agentLoadBalancingWeights: ServerSettingsPatch.fields.agentLoadBalancingWeights,
     agentPlacementPinnedEnvironmentId: ServerSettingsPatch.fields.agentPlacementPinnedEnvironmentId,
     agentPlacementHealthLine: ServerSettingsPatch.fields.agentPlacementHealthLine,
+    agentPlacementByRoom: ServerSettingsPatch.fields.agentPlacementByRoom,
+    agentPlacementPaused: ServerSettingsPatch.fields.agentPlacementPaused,
+    agentPlacementMaxHoldMinutes: ServerSettingsPatch.fields.agentPlacementMaxHoldMinutes,
+    childStart: ServerSettingsPatch.fields.childStart,
     defaultThreadEnvMode: ServerSettingsPatch.fields.defaultThreadEnvMode,
     newWorktreesStartFromOrigin: ServerSettingsPatch.fields.newWorktreesStartFromOrigin,
     enableProviderUpdateChecks: ServerSettingsPatch.fields.enableProviderUpdateChecks,

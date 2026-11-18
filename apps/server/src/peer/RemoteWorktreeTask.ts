@@ -17,6 +17,7 @@ import { WorktreeToolkit } from "../mcp/toolkits/worktree/tools.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
+import { rememberHold } from "./RemoteHolds.ts";
 import * as WorktreeTransfer from "./WorktreeTransfer.ts";
 
 type ThreadScope = McpInvocationContext.McpThreadInvocationScope;
@@ -90,89 +91,89 @@ const make = Effect.gen(function* () {
     return undefined;
   });
 
-  const launch: RemoteWorktreeTask["Service"]["launch"] = Effect.fn("RemoteWorktreeTask.launch")(
-    function* (scope, environmentId, parent, request, params) {
-      const launchOn = (baseRef: string | undefined) =>
-        forwarding.call(scope, ProjectToolkit.tools.t3_thread_launch, environmentId, {
-          ...params,
-          ...(baseRef === undefined
-            ? {}
-            : { workspaceStrategy: { type: "worktree" as const, baseRef, startFromOrigin: true } }),
-        });
-      if (request.isolation !== "worktree") {
-        if (request.baseRef !== undefined)
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message: `baseRef needs isolation "worktree".`,
-          });
-        return { launched: yield* launchOn(undefined) };
-      }
-      if (request.baseRef !== undefined) return { launched: yield* launchOn(request.baseRef) };
-      const readTarget = () =>
-        params.projectId === undefined
-          ? Effect.undefined
-          : forwarding.call(scope, ProjectToolkit.tools.t3_project_read, environmentId, {
-              projectId: params.projectId,
-            });
-      const launchFrom = (baseRef: string, startFromOrigin: boolean) =>
-        forwarding.call(scope, ProjectToolkit.tools.t3_thread_launch, environmentId, {
-          ...params,
-          message: `${params.message ?? ""}${COMMIT_ONLY}`,
-          workspaceStrategy: { type: "worktree", baseRef, startFromOrigin },
-        });
-      const cwd = yield* checkoutOf(parent);
-      const sameRepository = Effect.fn("RemoteWorktreeTask.sameRepository")(function* () {
-        const targetKey =
-          params.projectId === undefined
-            ? undefined
-            : yield* repositoryKeyThere(scope, environmentId, params.projectId);
-        const parentKey =
-          targetKey === undefined || cwd === undefined
-            ? undefined
-            : (yield* repositoryIdentities.resolve(cwd))?.canonicalKey;
-        return targetKey === undefined || targetKey === parentKey;
+  const launchThere: RemoteWorktreeTask["Service"]["launch"] = Effect.fn(
+    "RemoteWorktreeTask.launch",
+  )(function* (scope, environmentId, parent, request, params) {
+    const launchOn = (baseRef: string | undefined) =>
+      forwarding.call(scope, ProjectToolkit.tools.t3_thread_launch, environmentId, {
+        ...params,
+        ...(baseRef === undefined
+          ? {}
+          : { workspaceStrategy: { type: "worktree" as const, baseRef, startFromOrigin: true } }),
       });
-      const defaultBase =
-        request.worktreeBase === "parent" ? undefined : (yield* readTarget())?.defaultBaseRef;
-      if (defaultBase !== undefined) {
-        if (cwd === undefined || !(yield* sameRepository()))
-          return { launched: yield* launchOn(defaultBase) };
-        return { launched: yield* launchFrom(defaultBase, true), worktreeBase: defaultBase };
-      }
-      const commitBase =
-        cwd === undefined
-          ? undefined
-          : yield* transfer.resolveBase(cwd).pipe(Effect.orElseSucceed(() => undefined));
-      const base = commitBase === undefined || !(yield* sameRepository()) ? undefined : commitBase;
-      if (base === undefined) {
-        const target = yield* readTarget();
-        if (target?.defaultBaseRef === undefined)
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message: `Isolation "worktree" has no base: project "${target?.title ?? params.projectId}" there has no default branch, and this thread's checkout has no commit of its repository. Pass baseRef (a branch, tag, or commit in that project), or use isolation "shared".`,
+    if (request.isolation !== "worktree") {
+      if (request.baseRef !== undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: `baseRef needs isolation "worktree".`,
+        });
+      return { launched: yield* launchOn(undefined) };
+    }
+    if (request.baseRef !== undefined) return { launched: yield* launchOn(request.baseRef) };
+    const readTarget = () =>
+      params.projectId === undefined
+        ? Effect.undefined
+        : forwarding.call(scope, ProjectToolkit.tools.t3_project_read, environmentId, {
+            projectId: params.projectId,
           });
-        return { launched: yield* launchOn(target.defaultBaseRef) };
-      }
-      const { commit, fetchable } = base;
-      return yield* launchFrom(commit, false).pipe(
-        Effect.map((launched) => ({ launched, worktreeBase: commit })),
-        Effect.catchIf(
-          (error) => error.code === "invalid_request",
-          (error) =>
-            fetchable === null
-              ? Effect.fail(
-                  new OrchestratorMcpFailure({
-                    code: "invalid_request",
-                    message: `Commit ${commit} is not there and is on no remote branch it can fetch. Push it, or omit isolation. Uncommitted edits never go with the task. (${error.message})`,
-                  }),
-                )
-              : launchFrom(fetchable, true).pipe(
-                  Effect.map((launched) => ({ launched, worktreeBase: commit })),
-                ),
-        ),
-      );
-    },
-  );
+    const launchFrom = (baseRef: string, startFromOrigin: boolean) =>
+      forwarding.call(scope, ProjectToolkit.tools.t3_thread_launch, environmentId, {
+        ...params,
+        message: `${params.message ?? ""}${COMMIT_ONLY}`,
+        workspaceStrategy: { type: "worktree", baseRef, startFromOrigin },
+      });
+    const cwd = yield* checkoutOf(parent);
+    const sameRepository = Effect.fn("RemoteWorktreeTask.sameRepository")(function* () {
+      const targetKey =
+        params.projectId === undefined
+          ? undefined
+          : yield* repositoryKeyThere(scope, environmentId, params.projectId);
+      const parentKey =
+        targetKey === undefined || cwd === undefined
+          ? undefined
+          : (yield* repositoryIdentities.resolve(cwd))?.canonicalKey;
+      return targetKey === undefined || targetKey === parentKey;
+    });
+    const defaultBase =
+      request.worktreeBase === "parent" ? undefined : (yield* readTarget())?.defaultBaseRef;
+    if (defaultBase !== undefined) {
+      if (cwd === undefined || !(yield* sameRepository()))
+        return { launched: yield* launchOn(defaultBase) };
+      return { launched: yield* launchFrom(defaultBase, true), worktreeBase: defaultBase };
+    }
+    const commitBase =
+      cwd === undefined
+        ? undefined
+        : yield* transfer.resolveBase(cwd).pipe(Effect.orElseSucceed(() => undefined));
+    const base = commitBase === undefined || !(yield* sameRepository()) ? undefined : commitBase;
+    if (base === undefined) {
+      const target = yield* readTarget();
+      if (target?.defaultBaseRef === undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: `Isolation "worktree" has no base: project "${target?.title ?? params.projectId}" there has no default branch, and this thread's checkout has no commit of its repository. Pass baseRef (a branch, tag, or commit in that project), or use isolation "shared".`,
+        });
+      return { launched: yield* launchOn(target.defaultBaseRef) };
+    }
+    const { commit, fetchable } = base;
+    return yield* launchFrom(commit, false).pipe(
+      Effect.map((launched) => ({ launched, worktreeBase: commit })),
+      Effect.catchIf(
+        (error) => error.code === "invalid_request",
+        (error) =>
+          fetchable === null
+            ? Effect.fail(
+                new OrchestratorMcpFailure({
+                  code: "invalid_request",
+                  message: `Commit ${commit} is not there and is on no remote branch it can fetch. Push it, or omit isolation. Uncommitted edits never go with the task. (${error.message})`,
+                }),
+              )
+            : launchFrom(fetchable, true).pipe(
+                Effect.map((launched) => ({ launched, worktreeBase: commit })),
+              ),
+      ),
+    );
+  });
 
   const bringBack = Effect.fn("RemoteWorktreeTask.bringBack")(function* (
     scope: ThreadScope,
@@ -244,6 +245,12 @@ const make = Effect.gen(function* () {
     );
   };
 
+  const launch: RemoteWorktreeTask["Service"]["launch"] = (...args) =>
+    launchThere(...args).pipe(
+      Effect.tap(({ launched }) =>
+        Effect.sync(() => rememberHold(launched.threadId, launched.hold)),
+      ),
+    );
   return RemoteWorktreeTask.of({ launch, withWork });
 });
 

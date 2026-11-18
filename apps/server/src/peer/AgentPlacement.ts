@@ -6,9 +6,7 @@ import {
   OrchestratorMcpFailure,
   ProjectId,
   type ProviderDriverKind,
-  isProviderAvailable,
   linkOriginIsFenced,
-  resolveProjectProviderInstanceEnabled,
   scoreAgentPlacement,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -36,6 +34,7 @@ import * as PlacementSnapshots from "./PlacementSnapshots.ts";
 import * as PlacementDecisions from "./PlacementDecisions.ts";
 import * as PlacementWeights from "./PlacementWeights.ts";
 import * as PlacementFallback from "./PlacementFallback.ts";
+import * as Room from "./PlacementRoom.ts";
 import * as Invocation from "../mcp/McpInvocationContext.ts";
 import { assertLiveCaller, readCaller, unavailable } from "../mcp/threadAccess.ts";
 import { callerLinkOrigin } from "../mcp/linkOrigin.ts";
@@ -54,6 +53,7 @@ export class AgentPlacement extends Context.Service<
       input: {
         readonly operation: "launch" | "delegate";
         readonly projectId?: ProjectId | undefined;
+        readonly repository?: string | undefined;
         readonly modelSelection?: ModelSelection | undefined;
         readonly driverKind?: ProviderDriverKind | undefined;
         readonly clientRequestId?: string | undefined;
@@ -88,6 +88,7 @@ const make = Effect.gen(function* () {
   const snapshots = yield* PlacementSnapshots.make(peers);
   const encodeKey = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
   const decisions = yield* PlacementDecisions.make(config.stateDir);
+  const claims = Room.makeClaims();
   const enabled = settings.getSettings.pipe(
     Effect.map(
       (current) =>
@@ -113,7 +114,11 @@ const make = Effect.gen(function* () {
         Effect.provideService(Threads.ThreadManagementService, threads),
       );
       const descriptor = yield* environment.getDescriptor;
-      const projectId = input.projectId ?? caller.caller?.projectId;
+      const repository = current.agentPlacementByRoom ? input.repository : undefined;
+      const projectId =
+        repository === undefined
+          ? (input.projectId ?? caller.caller?.projectId)
+          : yield* Room.localProject(projects, repository);
       if (
         input.projectId !== undefined &&
         Option.isNone(
@@ -153,7 +158,7 @@ const make = Effect.gen(function* () {
       if ((origin !== undefined && linkOriginIsFenced(origin)) || scope.client?.linked === true)
         return local("Placement was resolved by the originating environment.");
       if (input.localOnlyReason !== undefined) return local(input.localOnlyReason);
-      if (projectId === undefined || modelSelection === undefined)
+      if ((projectId === undefined && repository === undefined) || modelSelection === undefined)
         return local("No project or model to match across environments.");
       if (
         scope.client?.access === "read-only" ||
@@ -172,7 +177,7 @@ const make = Effect.gen(function* () {
                   requestPrincipal(scope),
                   input.operation,
                   input.clientRequestId,
-                  projectId,
+                  projectId ?? repository ?? "",
                   yield* encodeModel(modelSelection).pipe(Effect.mapError(unavailable)),
                   input.driverKind ?? "",
                 ]).pipe(Effect.mapError(unavailable)),
@@ -188,12 +193,18 @@ const make = Effect.gen(function* () {
           if (saved !== undefined) return keyed(saved);
         }
         const evaluate = Effect.gen(function* () {
-          const project = yield* projects
-            .getById(projectId)
-            .pipe(Effect.map(Option.getOrUndefined));
-          const keys = repositoryIdentityKeys(
-            project === undefined ? undefined : yield* identities.resolve(project.workspaceRoot),
-          );
+          const project =
+            projectId === undefined
+              ? undefined
+              : yield* projects.getById(projectId).pipe(Effect.map(Option.getOrUndefined));
+          const keys =
+            repository === undefined
+              ? repositoryIdentityKeys(
+                  project === undefined
+                    ? undefined
+                    : yield* identities.resolve(project.workspaceRoot),
+                )
+              : [repository];
           if (keys.length === 0)
             return local("No repository identity to match across environments.");
           const localProviders = yield* providers.getProviders;
@@ -206,21 +217,15 @@ const make = Effect.gen(function* () {
             PlacementWeights.callerWeight(current.agentLoadBalancingWeights[environmentId]);
           const scores: Array<AgentPlacementScore> = [];
           const matching = new Map<EnvironmentId, ProjectId>();
-          const localReady =
-            selectedProvider !== undefined &&
-            isProviderAvailable(selectedProvider) &&
-            selectedProvider.enabled &&
-            selectedProvider.installed &&
-            selectedProvider.status !== "error" &&
-            selectedProvider.status !== "disabled" &&
-            selectedProvider.auth.status !== "unauthenticated" &&
-            resolveProjectProviderInstanceEnabled(
-              current,
-              projectId,
-              selectedProvider.instanceId,
-            ) &&
-            selectedProvider.models.some((model) => model.slug === modelSelection.model);
+          const byRoom = current.agentPlacementByRoom;
+          const localReady = Room.localProviderReady(
+            selectedProvider,
+            current,
+            projectId,
+            modelSelection,
+          );
           const localScore = scoreAgentPlacement({
+            room: byRoom ? yield* Room.localRoom : undefined,
             environmentId: scope.environmentId,
             label: descriptor.label,
             resources: yield* resources.read,
@@ -228,7 +233,7 @@ const make = Effect.gen(function* () {
             line,
             now,
           });
-          if (localReady) matching.set(scope.environmentId, projectId);
+          if (localReady && projectId !== undefined) matching.set(scope.environmentId, projectId);
           scores.push(
             localReady
               ? localScore
@@ -262,6 +267,9 @@ const make = Effect.gen(function* () {
                   label: snapshot?.label ?? link.label,
                 };
                 const scored = scoreAgentPlacement({
+                  room: byRoom
+                    ? claims.adjust(link.environmentId, snapshot?.placementRoom, entry?.expiresAt)
+                    : undefined,
                   environmentId: link.environmentId,
                   label: sources.label,
                   resources: snapshot?.hostResources,
@@ -269,24 +277,14 @@ const make = Effect.gen(function* () {
                   line: snapshot?.placementHealthLine ?? line,
                   now: scoredAt,
                 });
-                const skipped =
-                  scored.skipped === "Weight is 0."
-                    ? scored.skipped
-                    : snapshot === undefined
-                      ? (entry?.failure ?? `No reply within ${PlacementSnapshots.READ_SECONDS} s.`)
-                      : snapshot.placementProjectId === undefined
-                        ? (snapshot.placementProjectCount ?? 0) > 1
-                          ? `${snapshot.placementProjectCount} projects there match the repository; name the environment and project to use one.`
-                          : "The project is not registered there."
-                        : !snapshot.placementProviders?.some(
-                              (entry) =>
-                                entry.instanceId === modelSelection.instanceId &&
-                                entry.driver === driver &&
-                                entry.enabled &&
-                                entry.models.includes(modelSelection.model),
-                            )
-                          ? "Provider or model unavailable there."
-                          : undefined;
+                const skipped = Room.peerSkip({
+                  scored,
+                  snapshot,
+                  failure:
+                    entry?.failure ?? `No reply within ${PlacementSnapshots.READ_SECONDS} s.`,
+                  modelSelection,
+                  driver,
+                });
                 if (skipped === undefined && snapshot?.placementProjectId !== undefined)
                   matching.set(link.environmentId, snapshot.placementProjectId);
                 scores.push(
@@ -305,11 +303,14 @@ const make = Effect.gen(function* () {
             environmentId: EnvironmentId,
             mode: "auto" | "pinned",
             reason: string,
+            hold?: PlacementDecisions.Selection["placement"]["hold"],
           ): PlacementDecisions.Selection => {
             const chosen = scores.find((entry) => entry.environmentId === environmentId);
             const mapped = matching.get(environmentId) ?? projectId;
+            if (byRoom && environmentId !== scope.environmentId)
+              claims.claim(environmentId, snapshots.cached(environmentId, keys, now)?.expiresAt);
             return {
-              projectId: mapped,
+              ...(mapped === undefined ? {} : { projectId: mapped }),
               modelSelection,
               placement: {
                 environmentId,
@@ -321,6 +322,7 @@ const make = Effect.gen(function* () {
                 mode,
                 decidedAt: now,
                 scores,
+                ...(hold === undefined ? {} : { hold }),
               },
             };
           };
@@ -341,6 +343,12 @@ const make = Effect.gen(function* () {
           const winner = scores
             .filter((entry) => entry.skipped === undefined && entry.score > 0)
             .toSorted((left, right) => right.score - left.score)[0];
+          const queued =
+            winner === undefined && byRoom
+              ? Room.queuePick(scores, matching, now, current.agentPlacementMaxHoldMinutes)
+              : undefined;
+          if (queued !== undefined)
+            return decided(queued.environmentId, "auto", queued.reason, queued.hold);
           if (winner === undefined)
             return local(
               "No environment is under its health line with a match; launching here.",
@@ -350,7 +358,7 @@ const make = Effect.gen(function* () {
           return decided(
             winner.environmentId,
             "auto",
-            `${pinned === null ? "" : "The pinned environment is unavailable. "}Most weighted headroom (${winner.score.toFixed(2)}).`,
+            `${pinned === null ? "" : "The pinned environment is unavailable. "}${Room.winnerReason(winner)}`,
           );
         });
         const result = yield* evaluate.pipe(

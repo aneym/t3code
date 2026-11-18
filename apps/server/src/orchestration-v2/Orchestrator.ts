@@ -2924,7 +2924,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } = yield* loadProjectionForCommand(command, ["runs"], {
       runIds: task.runId === null ? [] : [task.runId],
     });
-    // A late wait can arrive after finalization held the result for its still-live spawning run.
     if (isUnobservedAcknowledgement(command)) {
       if (
         !isTerminalDelegatedTaskStatus(task.status) ||
@@ -7523,6 +7522,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
         ...(dispatchMode.type === "defer_start" && dispatchMode.workspaceStrategy !== undefined
           ? { workspacePreparation: dispatchMode.workspaceStrategy }
+          : {}),
+        ...(dispatchMode.type === "defer_start" && dispatchMode.startHeld === true
+          ? { childStartHeld: true }
           : {}),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         ...wakeWorkStartedAt(projection, command),
@@ -14311,7 +14313,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchThreadProjectAdoptFolder(command, events);
         break;
       case "message.dispatch": {
-        // Providers own native subagent conversations; messages cannot target them, and adapters ask questions on the parent.
         const thread = yield* projectionStore
           .getThread(command.threadId)
           .pipe(

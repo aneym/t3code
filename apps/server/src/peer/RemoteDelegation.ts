@@ -160,24 +160,23 @@ const make = Effect.gen(function* () {
       .getThreadRecords(parentThreadId, ["subagents"], { subagentIds: [taskId] })
       .pipe(Effect.map(({ thread, subagents }) => ({ thread, task: subagents[0] })));
 
-  /** The peer's project with this thread's repository, or the one the caller named. */
   const resolveRemoteProject = Effect.fn("RemoteDelegation.resolveRemoteProject")(function* (
     scope: ThreadScope,
     environmentId: EnvironmentId,
     parentProjectId: ProjectId,
     requested: ProjectId | undefined,
+    repository: string | undefined,
   ) {
     if (requested !== undefined) return requested;
     const here = yield* projects.getById(parentProjectId).pipe(
       Effect.map(Option.getOrUndefined),
       Effect.orElseSucceed(() => undefined),
     );
-    // The project's own identity is a one-minute cache that reads blank when
-    // cold, so resolve it here, as the other side's t3_project_list does.
     const key =
-      here === undefined
+      repository ??
+      (here === undefined
         ? undefined
-        : (yield* repositoryIdentities.resolve(here.workspaceRoot))?.canonicalKey;
+        : (yield* repositoryIdentities.resolve(here.workspaceRoot))?.canonicalKey);
     if (key === undefined) {
       return yield* new OrchestratorMcpFailure({
         code: "target_required",
@@ -312,6 +311,7 @@ const make = Effect.gen(function* () {
         target.environmentId,
         parent.thread.projectId,
         target.projectId,
+        target.repository,
       );
       const key = input.clientRequestId ?? (yield* random.uuidV4());
       const task = taskPrompt(input, childCompletionNotes);

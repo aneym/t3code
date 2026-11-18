@@ -4,6 +4,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { EnvironmentRow } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { ScopedSwitch } from "./ScopedSwitch";
+import { SettingsRow } from "./settingsLayout";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 const PINNED = -1;
@@ -42,6 +43,41 @@ export function AgentLoadBalancingSettings({
         explicit machine always wins. Preferences apply to launches from the selected server, and
         its preference for itself also caps what other servers send it.
       </p>
+      <SettingsRow
+        title="Place by builder room"
+        description="Count delegated children against each machine's builder cap and health line, send new ones to the machine with the most free slots, and queue them on the shortest queue when every machine is full."
+        serverScoped
+        settingKeys={["agentPlacementByRoom"]}
+        control={
+          <ScopedSwitch
+            settingKeys={["agentPlacementByRoom"]}
+            checked={settings.agentPlacementByRoom}
+            disabled={!settings.agentLoadBalancingEnabled}
+            onCheckedChange={(checked) => update({ agentPlacementByRoom: Boolean(checked) })}
+            aria-label="Place delegated children by builder room"
+          />
+        }
+      />
+      <SettingsRow
+        title="Pause placement here"
+        description={
+          settings.agentPlacementPaused === null
+            ? "Other machines skip this one for automatic placement. Explicit placement still lands here."
+            : `Paused: ${settings.agentPlacementPaused}`
+        }
+        serverScoped
+        settingKeys={["agentPlacementPaused"]}
+        control={
+          <ScopedSwitch
+            settingKeys={["agentPlacementPaused"]}
+            checked={settings.agentPlacementPaused !== null}
+            onCheckedChange={(checked) =>
+              update({ agentPlacementPaused: checked ? "Paused in settings" : null })
+            }
+            aria-label="Pause automatic placement on this machine"
+          />
+        }
+      />
       {environments.map((environment) => (
         <EnvironmentRow
           key={environment.environmentId}

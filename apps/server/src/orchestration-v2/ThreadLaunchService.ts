@@ -104,10 +104,9 @@ export interface ThreadLaunchInput {
   };
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
-  /** The linked environment this launch is for, if one asked for it. */
   readonly linkOrigin?: OrchestrationV2LinkOrigin;
-  /** The parent there, when that environment's agent delegated this as a task. */
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
+  readonly startHeld?: boolean;
 }
 
 type PreparationInput = Pick<
@@ -343,7 +342,6 @@ const make = Effect.gen(function* () {
     "ThreadLaunchService.checkWorktreeBase",
   )(function* (input) {
     const strategy = input.workspaceStrategy;
-    // launch() turns a Scratch worktree request into a root launch.
     if (strategy.type !== "worktree" || (yield* managedFolders.isScratchProject(input.projectId)))
       return;
     if (input.commandId !== undefined) {
@@ -1186,7 +1184,11 @@ const make = Effect.gen(function* () {
               ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
               modelSelection: input.modelSelection,
-              dispatchMode: { type: "defer_start", workspaceStrategy },
+              dispatchMode: {
+                type: "defer_start",
+                workspaceStrategy,
+                ...(input.startHeld === true ? { startHeld: true } : {}),
+              },
               createdBy: input.createdBy,
               creationSource: input.creationSource,
             })
@@ -1222,7 +1224,9 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
         const runIsPreparing =
           runId !== null &&
-          projection.runs.some((run) => run.id === runId && run.status === "preparing");
+          projection.runs.some(
+            (run) => run.id === runId && run.status === "preparing" && run.childStartHeld !== true,
+          );
         const shouldSchedule = runId === null ? Option.isNone(launchReceipt) : runIsPreparing;
         const boundWorktreePath = projection.thread.worktreePath;
         const preparationStrategy: ThreadLaunchWorkspaceStrategy =

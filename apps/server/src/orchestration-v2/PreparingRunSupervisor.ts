@@ -23,8 +23,11 @@ interface Tracked {
   since: number;
 }
 
-const preparing = (run: Pick<OrchestrationV2Run, "status" | "workspacePreparation">) =>
-  run.status === "preparing" && run.workspacePreparation !== undefined;
+const preparing = (
+  run: Pick<OrchestrationV2Run, "status" | "workspacePreparation" | "childStartHeld">,
+) =>
+  run.status === "preparing" &&
+  (run.workspacePreparation !== undefined || run.childStartHeld === true);
 
 const deadlineMessage = (queued: number) =>
   `Workspace setup did not finish within ${DEADLINE_MINUTES} minutes, so the agent never started on this message.` +
@@ -49,8 +52,10 @@ export const layer = Layer.effectDiscard(
       runId: RunId,
       entry: Tracked,
       runs: ReadonlyArray<OrchestrationV2Run>,
+      reason?: string,
     ) {
-      const message = deadlineMessage(runs.filter((run) => run.status === "queued").length);
+      const message =
+        reason ?? deadlineMessage(runs.filter((run) => run.status === "queued").length);
       yield* Effect.logWarning("orchestration-v2.preparing-run.deadline", {
         threadId: entry.threadId,
         runId,
@@ -83,6 +88,13 @@ export const layer = Layer.effectDiscard(
       }
       if (gate.isHeld(run)) {
         entry.since = now;
+        const expired = yield* gate.expired(runId, now);
+        if (expired === undefined) return;
+        tracked.delete(runId);
+        return yield* failAtDeadline(runId, entry, runs, expired);
+      }
+      if (run.workspacePreparation === undefined) {
+        tracked.delete(runId);
         return;
       }
       const age = now - entry.since;
@@ -114,7 +126,8 @@ export const layer = Layer.effectDiscard(
     const recovered = yield* sql<{ readonly run_id: string; readonly thread_id: string }>`
       SELECT run_id, thread_id FROM orchestration_v2_projection_runs
       WHERE status = 'preparing'
-        AND json_extract(payload_json, '$.workspacePreparation') IS NOT NULL
+        AND (json_extract(payload_json, '$.workspacePreparation') IS NOT NULL
+          OR json_extract(payload_json, '$.childStartHeld') = 1)
     `;
     for (const row of recovered) {
       track(ThreadId.make(row.thread_id), RunId.make(row.run_id), startedAt);

@@ -6,9 +6,9 @@ import {
   OrchestratorMcpInteractionMode,
   OrchestratorMcpPrompt,
   OrchestratorMcpRuntimeMode,
-  OrchestratorMcpTarget,
   OrchestratorMcpTitle,
 } from "./orchestratorMcp.ts";
+import { OrchestratorMcpTarget } from "./orchestratorMcpTarget.ts";
 
 export const OrchestratorMcpTaskRole = Schema.Literals([
   "implementation",
