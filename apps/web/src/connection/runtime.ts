@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/reactivity";
 
+import * as EmbedKeptViewCache from "../embed/embedKeptViewCache";
 import { inEmbedPage } from "../embed/embedProtocol";
 import { isGuestPage } from "../guestPage";
 
@@ -16,7 +17,10 @@ import * as Runtime from "../lib/runtime";
 import * as BackgroundActivityReporter from "../lib/backgroundActivityReporter";
 import * as ConnectionPlatform from "./platform";
 
-const layerProvidedConnectionPlatform = ConnectionPlatform.layer.pipe(Layer.provide(Runtime.layer));
+const layerProvidedConnectionPlatform = EmbedKeptViewCache.layer.pipe(
+  Layer.provideMerge(ConnectionPlatform.layer),
+  Layer.provide(Runtime.layer),
+);
 
 const layerSnapshotLoader = Layer.mergeAll(
   BoundedThreadSnapshotLoader.layer,

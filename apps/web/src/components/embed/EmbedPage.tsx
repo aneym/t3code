@@ -11,6 +11,7 @@ import { applyEmbedTheme, themeFromEmbedMessage } from "../../embed/embedTheme";
 import { useEmbedHostBridge } from "../../embed/useEmbedHostBridge";
 import { useEmbedNavigationPrefetch } from "../../embed/useEmbedNavigationPrefetch";
 import { useEmbedDocumentTitle } from "../../embed/useEmbedDocumentTitle";
+import { useEmbedKeptView, useEmbedKeptViewUpkeep } from "../../embed/useEmbedKeptView";
 import { useEmbedReadyReport } from "../../embed/useEmbedReadyReport";
 import { releaseEmbedThreadPrefetch } from "../../embed/embedThreadPrefetch";
 import { primaryServerConfigAtom } from "../../state/server";
@@ -77,8 +78,15 @@ export function EmbeddedThread({
   readonly threadId: string;
 }) {
   const target = resolveThreadRouteTarget({ environmentId, threadId });
-  useEmbedReadyReport(target?.kind === "server" ? target.threadRef : null, threadId);
-  return target ? <ThreadRouteView target={target} /> : null;
+  const threadRef = target?.kind === "server" ? target.threadRef : null;
+  const view = useEmbedKeptView(threadRef);
+  useEmbedReadyReport(threadRef, threadId, view === "hold");
+  if (target === null || view === "hold") return null;
+  return (
+    <div className="contents" data-embed-view={view}>
+      <ThreadRouteView target={target} />
+    </div>
+  );
 }
 
 export function EmbedPage({
@@ -98,6 +106,10 @@ export function EmbedPage({
   const settings = useAtomValue(primaryServerConfigAtom)?.settings ?? null;
   const target = threadId === null ? null : resolveThreadRouteTarget({ environmentId, threadId });
   useEmbedDocumentTitle(authenticated && target?.kind === "server" ? target.threadRef : null);
+  useEmbedKeptViewUpkeep(
+    authenticated,
+    target?.kind === "server" ? target.threadRef.environmentId : null,
+  );
   if (!authenticated) return <EmbedNotice text="Sign in to continue." />;
   return (
     <>

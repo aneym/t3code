@@ -20,6 +20,7 @@ export type ChatSessionOwnerThreadIds = typeof ChatSessionOwnerThreadIds.Type;
 
 export const ChatSessionView = Schema.Struct({
   ownerThreadIds: ChatSessionOwnerThreadIds,
+  threadIds: Schema.optionalKey(ChatSessionOwnerThreadIds),
 });
 export type ChatSessionView = typeof ChatSessionView.Type;
 
