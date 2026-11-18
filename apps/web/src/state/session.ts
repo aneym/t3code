@@ -50,6 +50,20 @@ export function sessionHasScope(
   );
 }
 
+export type OperateAccess = "granted" | "pending" | "read-only";
+
+function operateAccess(result: AsyncResult.AsyncResult<AuthSessionState, unknown>): OperateAccess {
+  if (sessionHasScope(result, AuthOrchestrationOperateScope)) return "granted";
+  const session = AsyncResult.getOrElse(result, () => null);
+  return result._tag === "Failure" || session === null || !session.authenticated
+    ? "pending"
+    : "read-only";
+}
+
+export function useEnvironmentOperateAccess(environmentId: EnvironmentId): OperateAccess {
+  return useAtomValue(environmentSession.sessionStateAtom(environmentId), operateAccess);
+}
+
 const environmentsWithScopeAtom = Atom.family((key: string) => {
   const [scope, idsKey = ""] = key.split(/\n(.*)/s) as [AuthEnvironmentScope, string?];
   const ids = idsKey === "" ? [] : (idsKey.split("\n") as EnvironmentId[]);
