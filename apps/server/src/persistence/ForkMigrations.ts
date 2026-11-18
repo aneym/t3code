@@ -19,6 +19,7 @@ import RetireRestartHandoffEffects from "./ForkMigrations/015_RetireRestartHando
 import ChatThreadSets from "./ForkMigrations/016_ChatThreadSets.ts";
 import ChatSessionUrlGrants from "./ForkMigrations/017_ChatSessionUrlGrants.ts";
 import ArchivedThreadsIndex from "./ForkMigrations/018_ArchivedThreadsIndex.ts";
+import ChatSessionOwnerThreads from "./ForkMigrations/019_ChatSessionOwnerThreads.ts";
 
 const run = Migrator.make({});
 const loader = Migrator.fromRecord({
@@ -39,6 +40,7 @@ const loader = Migrator.fromRecord({
   "16_ChatThreadSets": ChatThreadSets,
   "17_ChatSessionUrlGrants": ChatSessionUrlGrants,
   "18_ArchivedThreadsIndex": ArchivedThreadsIndex,
+  "19_ChatSessionOwnerThreads": ChatSessionOwnerThreads,
 });
 
 export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {

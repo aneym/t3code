@@ -1,4 +1,10 @@
-import type { AuthEnvironmentScope, ProjectId, ThreadId } from "@t3tools/contracts";
+import type {
+  AuthEnvironmentScope,
+  ModelSelection,
+  ProjectId,
+  ServerProvider,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -10,6 +16,7 @@ import {
 } from "../attachmentStore.ts";
 import { guestHostImageType, repliesShowImage } from "../guest/guestAttachments.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ChatSessionGrants from "./ChatSessionGrants.ts";
 import * as ChatThreadSets from "./ChatThreadSets.ts";
 import type { ChatSession } from "./ChatThreadSets.ts";
@@ -19,6 +26,8 @@ const ATTACHMENT_CACHE_MS = 15_000;
 export interface ChatSessionAccess {
   readonly session: ChatSession;
   readonly inSet: (threadId: ThreadId) => boolean;
+  readonly ownsThread: (threadId: ThreadId) => boolean;
+  readonly modelEnabled: (selection: ModelSelection) => Effect.Effect<boolean>;
   readonly projectIds: Effect.Effect<ReadonlySet<ProjectId>>;
   readonly ownsUpload: (attachmentId: string) => Effect.Effect<boolean>;
   readonly attachmentVisible: (attachmentId: string) => Effect.Effect<boolean>;
@@ -30,6 +39,7 @@ const makeChatSessionAccess = (
   session: ChatSession,
   projections: ProjectionStore.ProjectionStoreV2["Service"],
   grants: ChatSessionGrants.ChatSessionGrants["Service"],
+  providers: Effect.Effect<ReadonlyArray<ServerProvider>>,
 ): ChatSessionAccess => {
   const attachmentCache = new Map<
     ThreadId,
@@ -37,7 +47,20 @@ const makeChatSessionAccess = (
   >();
 
   const inSet = (threadId: ThreadId) => session.threads.has(threadId);
+  const ownsThread = (threadId: ThreadId) => inSet(threadId) && session.ownerThreads.has(threadId);
   const ownsUpload = (attachmentId: string) => grants.ownsUpload(session.setId, attachmentId);
+
+  const modelEnabled = (selection: ModelSelection) =>
+    providers.pipe(
+      Effect.map((list) =>
+        list.some(
+          (provider) =>
+            provider.instanceId === selection.instanceId &&
+            provider.enabled &&
+            provider.models.some((model) => model.slug === selection.model),
+        ),
+      ),
+    );
 
   const projectIds =
     session.threads.size === 0
@@ -105,6 +128,8 @@ const makeChatSessionAccess = (
   return {
     session,
     inSet,
+    ownsThread,
+    modelEnabled,
     projectIds,
     ownsUpload,
     attachmentVisible,
@@ -134,11 +159,15 @@ export const layer = Layer.effect(
     const sets = yield* ChatThreadSets.ChatThreadSets;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const grants = yield* ChatSessionGrants.ChatSessionGrants;
+    const registry = yield* ProviderRegistry.ProviderRegistry;
     return ChatSessionResolver.of({
       resolve: Effect.fn("ChatSessionResolver.resolve")(function* (session) {
         const chat = yield* sets.forSession(session).pipe(Effect.orElseSucceed(() => undefined));
         if (chat === undefined) return undefined;
-        return { access: makeChatSessionAccess(chat, projections, grants), grants };
+        return {
+          access: makeChatSessionAccess(chat, projections, grants, registry.getProviders),
+          grants,
+        };
       }),
     });
   }),
