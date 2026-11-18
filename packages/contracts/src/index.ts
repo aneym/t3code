@@ -113,3 +113,4 @@ export * from "./orchestratorMcpTimeline.ts";
 export * from "./mcpEvents.ts";
 export * from "./agentPlacement.ts";
 export { chooseLoadBalancedEnvironment } from "./loadBalancingSettings.ts";
+export * from "./embedRouting.ts";

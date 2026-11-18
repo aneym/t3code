@@ -1,9 +1,10 @@
+import type { EmbedReadyMessage, EmbedRouteRefusedMessage } from "@t3tools/contracts";
+
 const EMBED_PATH_PREFIX = "/embed/";
 
 const EMBED_THEME_MESSAGE = "t3-embed/theme";
 export const EMBED_KEY_MESSAGE = "t3-embed/key";
 export const EMBED_OPEN_MESSAGE = "t3-embed/open";
-export const EMBED_READY_MESSAGE = "t3-embed/ready";
 const EMBED_CLEAR_MESSAGE = "t3-embed/clear";
 const EMBED_KEYS_MESSAGE = "t3-embed/keys";
 export const EMBED_CLEAR_REQUEST_MESSAGE = "t3-embed/clear-request";
@@ -70,7 +71,8 @@ export type EmbedPress = {
 };
 
 export type EmbedOutboundMessage =
-  | { readonly type: typeof EMBED_READY_MESSAGE; readonly threadId: string }
+  | EmbedReadyMessage
+  | EmbedRouteRefusedMessage
   | (EmbedSendMark & {
       readonly type: typeof EMBED_SEND_MARK_MESSAGE;
       readonly thread: string;

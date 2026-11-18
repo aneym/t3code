@@ -12,6 +12,7 @@ import { useEmbedHostBridge } from "../../embed/useEmbedHostBridge";
 import { useEmbedNavigationPrefetch } from "../../embed/useEmbedNavigationPrefetch";
 import { useEmbedDocumentTitle } from "../../embed/useEmbedDocumentTitle";
 import { useEmbedReadyReport } from "../../embed/useEmbedReadyReport";
+import { useEmbedRouting } from "../../embed/useEmbedRouting";
 import { releaseEmbedThreadPrefetch } from "../../embed/embedThreadPrefetch";
 import { primaryServerConfigAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
@@ -49,14 +50,17 @@ function EmbedPrefetch({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
 
 function EmbedFrame({
   spot,
+  environmentId,
   threadId,
   children,
 }: {
   readonly spot: EmbedHostSpot;
+  readonly environmentId: string;
   readonly threadId: string | null;
   readonly children: ReactNode;
 }) {
   useEmbedHostBridge(spot.origin, spot.framed, threadId);
+  useEmbedRouting(spot.origin, spot.framed, environmentId, threadId);
   useBlocker({
     shouldBlockFn: ({ next }) => !isEmbedPath(next.pathname),
     enableBeforeUnload: false,
@@ -105,7 +109,7 @@ export function EmbedPage({
       {target?.kind === "server" ? (
         <EmbedConnectionNotice environmentId={target.threadRef.environmentId} />
       ) : null}
-      <EmbedContent settings={settings} threadId={threadId}>
+      <EmbedContent settings={settings} environmentId={environmentId} threadId={threadId}>
         {children}
       </EmbedContent>
     </>
@@ -114,10 +118,12 @@ export function EmbedPage({
 
 function EmbedContent({
   settings,
+  environmentId,
   threadId,
   children,
 }: {
   readonly settings: ServerConfig["settings"] | null;
+  readonly environmentId: string;
   readonly threadId: string | null;
   readonly children: ReactNode;
 }) {
@@ -132,7 +138,7 @@ function EmbedContent({
     );
   }
   return (
-    <EmbedFrame spot={placement.spot} threadId={threadId}>
+    <EmbedFrame spot={placement.spot} environmentId={environmentId} threadId={threadId}>
       {children}
     </EmbedFrame>
   );
