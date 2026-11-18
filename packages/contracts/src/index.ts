@@ -52,6 +52,7 @@ export * from "./orchestrationDispatch.ts";
 export * from "./orchestrationProject.ts";
 export * from "./orchestrationDispatchResult.ts";
 export * from "./orchestrationV2.ts";
+export * from "./orchestrationV2ThreadItemRpc.ts";
 export * from "./orchestrationV2Lineage.ts";
 export * from "./providerPermissionDenial.ts";
 export * from "./providerFailureClass.ts";

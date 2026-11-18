@@ -228,6 +228,7 @@ import {
   type ActiveShellIndexEntry,
   type OlderSettledThreadsQuery,
   type ShellSnapshotOptions,
+  type ProjectionStoreV2Shape,
 } from "./ProjectionStore.ts";
 import { runIsCompacting } from "./CompactionSteerGuard.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
@@ -329,11 +330,7 @@ export interface OrchestratorV2Shape {
     input: OrchestrationV2SearchThreadInput,
   ) => Effect.Effect<OrchestrationV2SearchThreadResult, OrchestratorV2Error>;
   readonly getThreadHistoryPage: (
-    threadId: ThreadId,
-    cursor: string,
-    throughEntryId?: string,
-    conversationOnly?: boolean,
-    workMode?: "deferred" | "work",
+    ...page: Parameters<ProjectionStoreV2Shape["getThreadHistoryPage"]>
   ) => Effect.Effect<OrchestrationV2ThreadHistoryPage, OrchestratorV2Error>;
   readonly getTimelinePage: (
     threadId: ThreadId,
@@ -15429,13 +15426,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
     }),
-    getThreadHistoryPage: Effect.fn("OrchestratorV2.getThreadHistoryPage")(
-      function (threadId, cursor, throughEntryId, conversationOnly, workMode) {
-        return projectionStore
-          .getThreadHistoryPage(threadId, cursor, throughEntryId, conversationOnly, workMode)
-          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
-      },
-    ),
+    getThreadHistoryPage: Effect.fn("OrchestratorV2.getThreadHistoryPage")(function (...page) {
+      return projectionStore
+        .getThreadHistoryPage(...page)
+        .pipe(
+          Effect.mapError((cause) => new OrchestratorProjectionError({ threadId: page[0], cause })),
+        );
+    }),
     getTimelinePage: Effect.fn("OrchestratorV2.getTimelinePage")(function (threadId, options) {
       return projectionStore
         .getTimelinePage(threadId, options)

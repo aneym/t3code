@@ -1254,21 +1254,13 @@ const make = Effect.gen(function* () {
       );
     }),
     dispatch,
-    getThreadHistoryPage: Effect.fn("ThreadManagementService.getThreadHistoryPage")(
-      function (threadId, cursor, throughEntryId, conversationOnly, workMode) {
-        return ensureProjectionTranscript(threadId).pipe(
-          Effect.andThen(
-            orchestrator.getThreadHistoryPage(
-              threadId,
-              cursor,
-              throughEntryId,
-              conversationOnly,
-              workMode,
-            ),
-          ),
-        );
-      },
-    ),
+    getThreadHistoryPage: Effect.fn("ThreadManagementService.getThreadHistoryPage")(function (
+      ...page
+    ) {
+      return ensureProjectionTranscript(page[0]).pipe(
+        Effect.andThen(orchestrator.getThreadHistoryPage(...page)),
+      );
+    }),
     getTimelinePage: Effect.fn("ThreadManagementService.getTimelinePage")(
       function (threadId, options) {
         return ensureProjectionTranscript(threadId).pipe(
