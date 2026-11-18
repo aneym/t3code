@@ -266,6 +266,7 @@ export const ScheduledTask = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   createdBy: OrchestrationV2Actor,
+  updatedBy: Schema.optional(OrchestrationV2Actor),
   creationSource: OrchestrationV2CreationSource,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

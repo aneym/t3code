@@ -1,3 +1,4 @@
+import { OrchestrationV2Actor } from "./orchestrationV2.ts";
 import * as Schema from "effect/Schema";
 
 import {
@@ -24,6 +25,7 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   lastRunStatus: ScheduledTaskRunStatus,
   lastRunError: Schema.optional(Schema.String),
   runCount: NonNegativeInt,
+  updatedBy: Schema.optional(OrchestrationV2Actor),
   webhookUrl: Schema.optional(Schema.String).annotate({
     description:
       "Public URL for the sender. Absent: no T3 Connect tunnel. The user must enable T3 Connect remote access.",

@@ -227,6 +227,7 @@ interface ScheduledTaskRow {
   readonly runtime_mode: string;
   readonly interaction_mode: string;
   readonly created_by: string;
+  readonly updated_by: string | null;
   readonly creation_source: string;
   readonly created_at: string;
   readonly updated_at: string;
@@ -408,6 +409,7 @@ const decodeRow = Effect.fnUntraced(
       runtimeMode: row.runtime_mode,
       interactionMode: row.interaction_mode,
       createdBy: row.created_by,
+      ...(row.updated_by === null ? {} : { updatedBy: row.updated_by }),
       creationSource: row.creation_source,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -532,6 +534,7 @@ export const layer = Layer.effect(
         runtime_mode,
         interaction_mode,
         created_by,
+        updated_by,
         creation_source,
         created_at,
         updated_at,
@@ -574,6 +577,7 @@ export const layer = Layer.effect(
         runtime_mode,
         interaction_mode,
         created_by,
+        updated_by,
         creation_source,
         created_at,
         updated_at,
@@ -652,6 +656,7 @@ export const layer = Layer.effect(
           runtime_mode,
           interaction_mode,
           created_by,
+          updated_by,
           creation_source,
           created_at,
           updated_at,
@@ -677,6 +682,7 @@ export const layer = Layer.effect(
           ${task.runtimeMode},
           ${task.interactionMode},
           ${task.createdBy},
+          ${task.updatedBy ?? null},
           ${task.creationSource},
           ${task.createdAt},
           ${task.updatedAt},
@@ -708,6 +714,7 @@ export const layer = Layer.effect(
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
+          updated_by = excluded.updated_by,
           creation_source = excluded.creation_source,
           updated_at = excluded.updated_at,
           -- Keep a next_run_at that a finishing run moved during this save, unless
@@ -1525,6 +1532,7 @@ export const layer = Layer.effect(
         runtimeMode: input.runtimeMode,
         interactionMode: input.interactionMode,
         createdBy: existingTask?.createdBy ?? input.createdBy ?? "user",
+        updatedBy: input.createdBy ?? "user",
         creationSource: input.creationSource ?? "web",
         createdAt: existingTask?.createdAt ?? iso(now),
         updatedAt: iso(now),
