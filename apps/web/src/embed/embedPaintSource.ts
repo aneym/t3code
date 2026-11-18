@@ -3,5 +3,6 @@ import type { EmbedPaintSource } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 export function embedPaintSource(firstState: EnvironmentThreadState): EmbedPaintSource {
-  return Option.isSome(firstState.data) ? "memory" : "live";
+  if (Option.isNone(firstState.data)) return "live";
+  return firstState.status === "live" ? "memory" : "kept";
 }
