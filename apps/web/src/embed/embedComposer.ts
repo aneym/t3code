@@ -1,7 +1,5 @@
 import { useSyncExternalStore } from "react";
 
-import { chatSessionActive } from "@t3tools/client-runtime/chat-session";
-
 import { postToEmbedHost } from "./embedHost";
 import {
   EMBED_CONTROLS_MESSAGE,
@@ -14,6 +12,7 @@ const STORAGE_KEY = "t3code:embed-composer-controls";
 
 let controls: EmbedControls = "hidden";
 let key: string | null = null;
+let fromHost: EmbedControls | null = null;
 const listeners = new Set<() => void>();
 
 function stored(): EmbedControls | null {
@@ -32,8 +31,7 @@ function keep(next: EmbedControls): void {
   }
 }
 
-function apply(requested: EmbedControls): void {
-  const next = chatSessionActive() ? "hidden" : requested;
+function apply(next: EmbedControls): void {
   controls = next;
   document.documentElement.dataset.embedControls = next;
   for (const listener of listeners) listener();
@@ -41,18 +39,21 @@ function apply(requested: EmbedControls): void {
 
 export function startEmbedControls(): void {
   const fromUrl = readEmbedControls(new URLSearchParams(window.location.search).get("controls"));
-  apply(fromUrl ?? stored() ?? "hidden");
+  apply(fromHost ?? fromUrl ?? stored() ?? "hidden");
 }
 
 export function applyEmbedComposerMessage(message: EmbedComposerMessage): void {
   key = message.key;
-  if (message.controls !== null) keep(message.controls);
+  if (message.controls !== null) {
+    fromHost = message.controls;
+    keep(message.controls);
+  }
   apply(message.controls ?? controls);
 }
 
 export function toggleEmbedControls(): void {
-  if (chatSessionActive()) return;
   const next = controls === "shown" ? "hidden" : "shown";
+  fromHost = next;
   keep(next);
   apply(next);
   postToEmbedHost({ type: EMBED_CONTROLS_MESSAGE, shown: next === "shown" });

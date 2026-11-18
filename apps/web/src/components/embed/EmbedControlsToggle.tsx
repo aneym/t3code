@@ -5,7 +5,6 @@ import {
   useEmbedControlsKey,
   useEmbedControlsShown,
 } from "../../embed/embedComposer";
-import { useChatSession } from "../../chatSessionMode";
 import { useEmbedHostConnected } from "../../embed/embedHost";
 import { hostChordWords } from "../../embed/embedProtocol";
 import { isMacPlatform } from "../../lib/utils";
@@ -16,8 +15,7 @@ export function EmbedControlsToggle() {
   const embedded = useEmbedHostConnected();
   const shown = useEmbedControlsShown();
   const key = useEmbedControlsKey();
-  const chatSession = useChatSession();
-  if (!embedded || chatSession) return null;
+  if (!embedded) return null;
   const label = shown ? "Hide model and access" : "Show model and access";
   const keyWords = key === null ? null : hostChordWords(key, isMacPlatform(navigator.platform));
   return (

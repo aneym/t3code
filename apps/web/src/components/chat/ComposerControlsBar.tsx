@@ -30,6 +30,8 @@ import {
 } from "./ComposerModelEffort";
 import type { useComposerProviderModel } from "./useComposerProviderModel";
 import { resolveComposerControlsOwnership } from "./composerControlsOwnership";
+import { useChatThreadControls } from "../../chatSessionMode";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /**
  * The composer footer controls: the model picker (which also holds effort, speed and
@@ -38,6 +40,7 @@ import { resolveComposerControlsOwnership } from "./composerControlsOwnership";
  */
 // Model and effort share one trigger; it stays filled while its popup is open.
 const MODEL_TRIGGER_STATES = "data-popup-open:bg-accent data-popup-open:text-foreground";
+const SEAT_CONTROLS_REASON = "Set by this agent's owner";
 
 export function ComposerControlsBar(props: {
   environmentId: EnvironmentId;
@@ -132,6 +135,10 @@ export function ComposerControlsBar(props: {
     getModelDisabledReason,
   } = props;
   const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
+  const threadControls = useChatThreadControls(
+    routeKind === "server" ? routeThreadRef.threadId : null,
+  );
+  const seatReason = threadControls === "seat" ? SEAT_CONTROLS_REASON : undefined;
   const {
     accessDisplay,
     showModeBlock,
@@ -174,6 +181,7 @@ export function ComposerControlsBar(props: {
               hidden={composerControlsHidden || restingHiddenBlockCount > 0}
               accessDisplay={accessDisplay}
               emphasized={!accessMatchesDefault}
+              disabledReason={seatReason}
               onRuntimeModeChange={handleRuntimeModeChange}
             />
           ),
@@ -189,7 +197,7 @@ export function ComposerControlsBar(props: {
       isComposerOwned
       // The trigger grows away from this edge when its model or effort label changes.
       popupAlign={composerControlsCollapsed ? "start" : "end"}
-      disabled={providerCatalogPending || isSendBusy}
+      disabled={providerCatalogPending || isSendBusy || seatReason !== undefined}
       multipleModelsEnabled={multipleModelsEnabled}
       multipleModelSelections={multipleModelSelections}
       onMultipleModelSelectionsChange={onMultipleModelSelectionsChange}
@@ -262,7 +270,16 @@ export function ComposerControlsBar(props: {
     </ComposerControl>
   ) : (
     <>
-      {composerModelPicker}
+      {seatReason === undefined ? (
+        composerModelPicker
+      ) : (
+        <Tooltip>
+          <TooltipTrigger render={<span className="inline-flex min-w-0 shrink" />}>
+            {composerModelPicker}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{seatReason}</TooltipPopup>
+        </Tooltip>
+      )}
 
       <>
         {restingBlockDefs.map((def, index) => {
@@ -303,6 +320,7 @@ export function ComposerControlsBar(props: {
             hidden={composerControlsHidden || hiddenRestingBlockIds.length === 0}
             // Permissions join the overflow only when their normal home is in it.
             showPermissions={overflowShowsPermissions}
+            disabledReason={seatReason}
             onRuntimeModeChange={handleRuntimeModeChange}
           />
         </div>
