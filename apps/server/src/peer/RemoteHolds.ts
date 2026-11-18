@@ -8,4 +8,6 @@ export const rememberHold = (threadId: string, hold: AgentPlacementHold | undefi
   holds.set(threadId, hold);
 };
 
+export const forgetHold = (threadId: string) => holds.delete(threadId);
+
 export const heldThere = (threadId: string) => holds.get(threadId);

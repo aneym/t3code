@@ -1,4 +1,5 @@
 import {
+  AgentPlacementHold,
   AgentPlacementReceipt,
   OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpCapabilitiesResult,
@@ -112,7 +113,7 @@ const TaskStatusTool = Tool.make("task_status", {
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  dependencies: linkDependencies,
 })
   .annotate(Tool.Title, "Get delegated task status")
   .annotate(Tool.Readonly, false)
@@ -269,6 +270,7 @@ const ThreadReadTool = Tool.make("t3_thread_read", {
   success: Schema.Struct({
     ...OrchestratorMcpThreadReadResult.fields,
     placement: Schema.optional(AgentPlacementReceipt),
+    hold: Schema.optional(AgentPlacementHold),
   }),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
