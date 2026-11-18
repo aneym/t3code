@@ -161,6 +161,18 @@ export const makeSendToThread = <LoadError, DispatchError>(
     type: input.mode === "queue" ? "queue_after_active" : "start_immediately",
   });
 
+  const loadSendTarget = Effect.fn("ThreadSend.loadSendTarget")(function* (input: ThreadSendInput) {
+    const active = yield* deps.loadRecords(input, ["runs", "providerThreads"], {
+      runStatuses: ["preparing", "starting", "running", "waiting"],
+    });
+    const { providerTurns } = yield* deps.loadRecords(input, ["providerTurns"], {
+      providerTurnAttemptIds: active.runs.flatMap((run) =>
+        run.activeAttemptId === null ? [] : [run.activeAttemptId],
+      ),
+    });
+    return { ...active, providerTurns };
+  });
+
   const unacceptedRun = Effect.fn("ThreadSend.unacceptedRun")(function* (
     input: ThreadSendInput,
     target: SendTarget & Pick<OrchestrationV2ThreadProjection, "providerThreads">,
@@ -206,7 +218,7 @@ export const makeSendToThread = <LoadError, DispatchError>(
     let recoveredUnacceptedRun = false;
     const stuck = yield* unacceptedRun(input, target);
     if (stuck !== undefined) {
-      target = yield* deps.loadRecords(input, ["runs", "providerTurns", "providerThreads"]);
+      target = yield* loadSendTarget(input);
       if (yield* deps.hasReceipt(input.commandId)) return replayDispatchMode(input);
       if ((yield* unacceptedRun(input, target))?.id === stuck.id) {
         yield* deps.dispatch({
@@ -217,7 +229,7 @@ export const makeSendToThread = <LoadError, DispatchError>(
           reason: "Replaced a run whose provider turn never started.",
         });
         recoveredUnacceptedRun = true;
-        target = yield* deps.loadRecords(input, ["runs", "providerTurns", "providerThreads"]);
+        target = yield* loadSendTarget(input);
       }
     }
     const steerableRun = latestSteerableRun(target);
@@ -259,7 +271,7 @@ export const makeSendToThread = <LoadError, DispatchError>(
       }
       dispatchMode = replayDispatchMode(input);
     } else {
-      const loaded = yield* deps.loadRecords(input, ["runs", "providerTurns", "providerThreads"]);
+      const loaded = yield* loadSendTarget(input);
       if (loaded.thread.archivedAt !== null) {
         return yield* new ThreadManagementThreadArchivedError({ threadId: input.threadId });
       }
@@ -293,11 +305,19 @@ export const makeSendToThread = <LoadError, DispatchError>(
       createdBy: input.createdBy,
       creationSource: input.creationSource,
     });
-    const projection = yield* deps.loadRecords(input, ["runs", "messages", "turnItems"], {
+    const { messages } = yield* deps.loadRecords(input, ["messages"], {
       messageIds: [input.messageId],
-      turnItemTypes: ["user_message"],
     });
-    const message = projection.messages.find((candidate) => candidate.id === input.messageId);
+    const message = messages.find((candidate) => candidate.id === input.messageId);
+    const runIds = message?.runId == null ? [] : [message.runId];
+    const projection = {
+      ...(yield* deps.loadRecords(input, ["runs", "turnItems"], {
+        runIds,
+        turnItemRunIds: runIds,
+        turnItemTypes: ["user_message"],
+      })),
+      messages,
+    };
     if (dispatched.replayed === true && (message === undefined || !isSameSend(message, input)))
       return yield* conflict();
     const run =

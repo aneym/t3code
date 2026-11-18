@@ -2208,7 +2208,6 @@ it.effect("queued-message commands read a long thread's history without walking 
         commandId: CommandId.make(`dispatch:long-history-reads:${name}`),
         threadId,
         messageId: MessageId.make(`message:long-history-reads:${name}`),
-        // A compacting target lets promote skip it without a live provider session.
         text: name === "active" ? "/compact" : `Request ${name}`,
         attachments: [],
         dispatchMode: { type: "defer_start" },
@@ -2221,7 +2220,6 @@ it.effect("queued-message commands read a long thread's history without walking 
         FROM orchestration_v2_projection_turn_items WHERE thread_id = ${threadId}`;
       return row!.ordinal;
     });
-    // Settled history: each run leaves completed leaf nodes, tool output and a reply.
     for (const name of ["1", "2", "3", "active"]) {
       yield* dispatch(name);
       const run = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
@@ -2339,7 +2337,6 @@ it.effect("queued-message commands read a long thread's history without walking 
       }
     }
     const activeRun = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
-    // Stop needs a live provider turn to interrupt.
     yield* projections.apply({
       id: EventId.make("event:long-history-reads:active-turn"),
       type: "provider-turn.updated",
@@ -2362,8 +2359,11 @@ it.effect("queued-message commands read a long thread's history without walking 
     const statements: Array<ReturnType<Statement.Statement<unknown>["compile"]>> = [];
     const observe: Statement.Transformer = (statement) => {
       const compiled = statement.compile();
-      // Row reads and the message-ordering pass; a MAX(ordinal) probe reads one index entry.
-      if (/_(nodes|turn_items)\b/.test(compiled[0]) && /payload_json|GROUP BY/.test(compiled[0])) {
+      if (
+        /_(nodes|turn_items|runs|run_attempts|provider_turns)\b/.test(compiled[0]) &&
+        /payload_json|GROUP BY/.test(compiled[0]) &&
+        !compiled[0].trimStart().startsWith("WITH newest AS MATERIALIZED")
+      ) {
         statements.push(compiled);
       }
       return Effect.succeed(statement);
@@ -2373,19 +2373,15 @@ it.effect("queued-message commands read a long thread's history without walking 
       for (const [query, params] of statements.splice(0)) {
         const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
         for (const { detail } of plan) {
-          // A history-sized read: an ordering pass over every message item for a narrowed
-          // message read, or a node/turn-item row search bounded by nothing but the thread.
-          // Walking only a covering index's ids reads no payloads. Stop still loads every
-          // message, so its ordering pass is no larger than that read.
           if (
             (detail.includes("TEMP B-TREE FOR GROUP BY") && query.includes("json_each")) ||
             (/^SEARCH .*(node|turn_item).* \(thread_id=\?\)$/.test(detail) &&
               !detail.includes("USING COVERING INDEX")) ||
-            // Every active run in the environment, not only this thread's.
+            ((commandType === "delegated_task.request" || commandType === "message.dispatch") &&
+              /^SEARCH \w+_(runs|run_attempts|provider_turns) .* \(thread_id=\?\)$/.test(detail)) ||
             /^SEARCH .*runs.* \(status=\?\)$/.test(detail) ||
-            // A status-filtered read that fetches every typed row to check its status.
             (/^SEARCH .*turn_items USING INDEX .* \(thread_id=\? AND type=\?\)$/.test(detail) &&
-              query.includes("status IN"))
+              (query.includes("status IN") || commandType === "message.dispatch"))
           ) {
             walks.push(`${commandType}: ${detail}\n  in: ${query.replace(/\s+/g, " ").trim()}`);
           }
@@ -2410,6 +2406,22 @@ it.effect("queued-message commands read a long thread's history without walking 
       }),
     );
     walks.push(...(yield* historyWalks("queued-run.edit")));
+    yield* observed(
+      orchestrator.dispatch({
+        type: "delegated_task.request",
+        createdBy: "agent",
+        creationSource: "mcp",
+        commandId: CommandId.make("delegate:long-history-reads"),
+        parentThreadId: threadId,
+        parentRunId: activeRun.id,
+        parentNodeId: activeRun.rootNodeId!,
+        task: "Read the build log",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }),
+    );
+    walks.push(...(yield* historyWalks("delegated_task.request")));
     yield* observed(
       orchestrator.dispatch({
         type: "queued-message.promote-to-steer",
