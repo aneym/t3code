@@ -64,8 +64,12 @@ export function isPathWord(
  * token regexes already refuse to render as skills, plus the punctuation prose puts after
  * one (`$10k.`, `($5)`).
  */
-export function isCurrencyAmountQuery(query: string): boolean {
+function isCurrencyAmountQuery(query: string): boolean {
   return /^\.?[0-9][0-9,._]*(?:[kKmMbBtT]|[eE][0-9]+)?[.,;:!?)]*$/.test(query);
+}
+
+export function isSkillTriggerQuery(query: string): boolean {
+  return /^[0-9]*[a-zA-Z]/.test(query) && !isCurrencyAmountQuery(query);
 }
 
 export function detectComposerTrigger(
@@ -138,7 +142,7 @@ export function detectComposerTrigger(
     };
   const skillPrefix = /^\p{Sc}/u.exec(token);
   if (skillPrefix) {
-    if (isCurrencyAmountQuery(token.slice(skillPrefix[0].length))) return null;
+    if (!isSkillTriggerQuery(token.slice(skillPrefix[0].length))) return null;
     return {
       kind: "skill",
       query: token.slice(skillPrefix[0].length),
