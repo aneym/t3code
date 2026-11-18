@@ -293,8 +293,17 @@ describe("detectComposerTrigger", () => {
     "raise $10k",
     "raise $10k.",
     "is it $5?",
-  ])("does not detect a skill trigger for the amount in %j", (text) => {
+    "$",
+    "$2",
+    "$25",
+    " $",
+    "a$b",
+  ])("opens no skill menu for %j", (text) => {
     expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
+
+  it("opens the skill menu for $a", () => {
+    expect(detectComposerTrigger("$a", 2)).toMatchObject({ kind: "skill", query: "a" });
   });
 
   it("detects a pull request number at a token boundary", () => {
@@ -313,7 +322,6 @@ describe("detectComposerTrigger", () => {
     expect(detectComposerTrigger("issue#123", "issue#123".length)).toBeNull();
   });
 
-  // regression: #936 @file autocomplete used the wrong cursor when typing mid-text
   it("detects @path trigger in the middle of existing text", () => {
     const text = "Please inspect @in this sentence";
     const cursorAfterAt = "Please inspect @".length;
@@ -410,7 +418,6 @@ describe("expandCollapsedComposerCursor", () => {
     );
   });
 
-  // regression: #2625 cursor mapping broke for quoted mentions containing spaces
   it("maps collapsed quoted mention cursor to expanded text cursor", () => {
     const text = 'what is in @"My File.md" please';
     const collapsedCursorAfterMention = "what is in ".length + 2;

@@ -66,11 +66,14 @@ describe("detectComposerTrigger", () => {
     "$1,000",
     "£2e6",
     "raise $10k.",
+    "$",
+    "$2",
+    " $",
   ])("does not open the skill menu for the amount in %j", (text) =>
     expect(detectComposerTrigger(text, text.length)).toBeNull(),
   );
 
-  it.each(["$", "$1password", "$2fa"])("still detects the skill prefix %j", (text) => {
+  it.each(["$a", "$1password", "$2fa"])("still detects the skill prefix %j", (text) => {
     expect(detectComposerTrigger(text, text.length)).toMatchObject({
       kind: "skill",
       query: text.slice(1),
