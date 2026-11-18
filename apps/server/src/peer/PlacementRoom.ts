@@ -20,22 +20,25 @@ import type * as PlacementSnapshots from "./PlacementSnapshots.ts";
 
 const FULL_REASONS = ["All ", "Load per core", "Available memory", "T3 server busy", "Free disk"];
 
-export const localProviderReady = (
+export const localSkip = (
   provider: ServerProvider | undefined,
   settings: ServerSettings,
   projectId: ProjectId | undefined,
   modelSelection: ModelSelection,
-) =>
-  projectId !== undefined &&
-  provider !== undefined &&
-  isProviderAvailable(provider) &&
-  provider.enabled &&
-  provider.installed &&
-  provider.status !== "error" &&
-  provider.status !== "disabled" &&
-  provider.auth.status !== "unauthenticated" &&
-  resolveProjectProviderInstanceEnabled(settings, projectId, provider.instanceId) &&
-  provider.models.some((model) => model.slug === modelSelection.model);
+) => {
+  if (projectId === undefined) return "The project is not registered here.";
+  return provider !== undefined &&
+    isProviderAvailable(provider) &&
+    provider.enabled &&
+    provider.installed &&
+    provider.status !== "error" &&
+    provider.status !== "disabled" &&
+    provider.auth.status !== "unauthenticated" &&
+    resolveProjectProviderInstanceEnabled(settings, projectId, provider.instanceId) &&
+    provider.models.some((model) => model.slug === modelSelection.model)
+    ? undefined
+    : "Provider or model unavailable here.";
+};
 
 export const peerSkip = (input: {
   readonly scored: AgentPlacementScore;
@@ -78,7 +81,10 @@ export const localProject = Effect.fn("PlacementRoom.localProject")(function* (
 });
 
 export const makeClaims = () => {
-  const claims = new Map<EnvironmentId, { readonly expiresAt: number; count: number }>();
+  const claims = new Map<
+    EnvironmentId,
+    { readonly expiresAt: number; active: number; held: number }
+  >();
   const adjust = (
     environmentId: EnvironmentId,
     room: AgentPlacementRoom | undefined,
@@ -88,15 +94,21 @@ export const makeClaims = () => {
     if (room === undefined || claim === undefined || claim.expiresAt !== expiresAt) return room;
     return {
       ...room,
-      active: room.active + claim.count,
-      free: room.free === null ? null : Math.max(0, room.free - claim.count),
+      active: room.active + claim.active,
+      held: room.held + claim.held,
+      free: room.free === null ? null : Math.max(0, room.free - claim.active),
     };
   };
-  const claim = (environmentId: EnvironmentId, expiresAt: number | undefined) => {
+  const claim = (environmentId: EnvironmentId, expiresAt: number | undefined, held: boolean) => {
     if (expiresAt === undefined) return;
     const current = claims.get(environmentId);
-    if (current !== undefined && current.expiresAt === expiresAt) current.count += 1;
-    else claims.set(environmentId, { expiresAt, count: 1 });
+    const next =
+      current !== undefined && current.expiresAt === expiresAt
+        ? current
+        : { expiresAt, active: 0, held: 0 };
+    if (held) next.held += 1;
+    else next.active += 1;
+    claims.set(environmentId, next);
   };
   return { adjust, claim };
 };

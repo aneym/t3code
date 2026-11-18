@@ -218,12 +218,7 @@ const make = Effect.gen(function* () {
           const scores: Array<AgentPlacementScore> = [];
           const matching = new Map<EnvironmentId, ProjectId>();
           const byRoom = current.agentPlacementByRoom;
-          const localReady = Room.localProviderReady(
-            selectedProvider,
-            current,
-            projectId,
-            modelSelection,
-          );
+          const localSkipped = Room.localSkip(selectedProvider, current, projectId, modelSelection);
           const localScore = scoreAgentPlacement({
             room: byRoom ? yield* Room.localRoom : undefined,
             environmentId: scope.environmentId,
@@ -233,11 +228,12 @@ const make = Effect.gen(function* () {
             line,
             now,
           });
-          if (localReady && projectId !== undefined) matching.set(scope.environmentId, projectId);
+          if (localSkipped === undefined && projectId !== undefined)
+            matching.set(scope.environmentId, projectId);
           scores.push(
-            localReady
+            localSkipped === undefined
               ? localScore
-              : { ...localScore, score: 0, skipped: "Provider or model unavailable here." },
+              : { ...localScore, score: 0, skipped: localSkipped },
           );
           if (
             current.linkedEnvironmentsEnabled &&
@@ -308,7 +304,11 @@ const make = Effect.gen(function* () {
             const chosen = scores.find((entry) => entry.environmentId === environmentId);
             const mapped = matching.get(environmentId) ?? projectId;
             if (byRoom && environmentId !== scope.environmentId)
-              claims.claim(environmentId, snapshots.cached(environmentId, keys, now)?.expiresAt);
+              claims.claim(
+                environmentId,
+                snapshots.cached(environmentId, keys, now)?.expiresAt,
+                hold !== undefined,
+              );
             return {
               ...(mapped === undefined ? {} : { projectId: mapped }),
               modelSelection,

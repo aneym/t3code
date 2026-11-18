@@ -19,11 +19,22 @@ interface HoldableResult {
 export const withHold = Effect.fn("DelegatedHold.withHold")(function* <A extends HoldableResult>(
   result: A,
 ): Effect.fn.Return<A & { readonly hold?: AgentPlacementHold }> {
+  const there =
+    result.remoteChild === undefined ? undefined : heldThere(result.remoteChild.threadId);
+  if (there !== undefined && (result.status === "running" || result.status === "queued"))
+    return {
+      ...result,
+      status: "queued",
+      hold: there,
+      ...(result.placement === undefined
+        ? {}
+        : { placement: { ...result.placement, hold: there } }),
+    };
   if (result.status !== "queued" && result.status !== "preparing") return result;
   const gate = yield* Effect.serviceOption(Gate.DelegatedChildStartGate);
   const hold =
     result.remoteChild !== undefined
-      ? (heldThere(result.remoteChild.threadId) ?? result.placement?.hold)
+      ? result.placement?.hold
       : result.childRunId === null || Option.isNone(gate)
         ? undefined
         : yield* gate.value.hold(result.childRunId);
