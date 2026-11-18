@@ -99,8 +99,29 @@ const chatProvider =
     skills: session.ownerThreads.size > 0 ? provider.skills : [],
   });
 
+const chatProviderInstances = (
+  instances: ServerSettings["providerInstances"],
+): ServerSettings["providerInstances"] =>
+  Object.fromEntries(
+    Object.entries(instances).map(([instanceId, instance]) => {
+      const customModels = (instance.config as { customModels?: unknown } | undefined)
+        ?.customModels;
+      return [
+        instanceId,
+        {
+          driver: instance.driver,
+          ...(instance.displayName === undefined ? {} : { displayName: instance.displayName }),
+          ...(instance.accentColor === undefined ? {} : { accentColor: instance.accentColor }),
+          ...(instance.enabled === undefined ? {} : { enabled: instance.enabled }),
+          ...(customModels === undefined ? {} : { config: { customModels } }),
+        },
+      ];
+    }),
+  );
+
 const chatSettings = (settings: ServerSettings): ServerSettings => ({
   ...DEFAULT_SERVER_SETTINGS,
+  providerInstances: chatProviderInstances(settings.providerInstances),
   embedModeEnabled: settings.embedModeEnabled,
   embedAllowedOrigins: settings.embedAllowedOrigins,
   responseStreamingMode: settings.responseStreamingMode,

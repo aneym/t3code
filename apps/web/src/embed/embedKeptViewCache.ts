@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { inEmbedPage } from "./embedProtocol";
+import { KEPT_TAIL_BUDGET_SHARES, keptTailSnapshot } from "./embedKeptTail";
 import {
   KEPT_VIEW_LIMITS,
   clearKeptViewsFor,
@@ -65,15 +66,23 @@ const makeKeptViewCache = Effect.fn("EmbedKeptViewCache.make")(function* () {
     saveThread: Effect.fn("EmbedKeptViewCache.saveThread")(function* (environmentId, snapshot) {
       const threadId = snapshot.projection.thread.id;
       const isLatest = writeOrder.beginSave(environmentId, threadId);
-      const encoded = yield* encode({ environmentId, threadId, snapshot }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new Persistence.ConnectionPersistenceError({
-              operation: "save-thread",
-              message: `Could not encode a kept view: ${String(cause)}`,
-            }),
-        ),
-      );
+      const encodeView = (view: typeof snapshot) =>
+        encode({ environmentId, threadId, snapshot: view }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new Persistence.ConnectionPersistenceError({
+                operation: "save-thread",
+                message: `Could not encode a kept view: ${String(cause)}`,
+              }),
+          ),
+        );
+      let encoded = yield* encodeView(snapshot);
+      for (const share of KEPT_TAIL_BUDGET_SHARES) {
+        if (Option.isSome(encoded) || !isLatest()) break;
+        const tail = keptTailSnapshot(snapshot, KEPT_VIEW_LIMITS.maxEntryLength * share);
+        if (tail === null) break;
+        encoded = yield* encodeView(tail);
+      }
       if (!isLatest()) return;
       yield* keptViewCall("save-thread", () =>
         Option.isSome(encoded)
