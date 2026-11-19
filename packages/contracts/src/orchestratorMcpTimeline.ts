@@ -23,7 +23,9 @@ const { source, outcome, summary } = OrchestrationV2Notification.fields;
 export const OrchestratorMcpTimelineNotification = Schema.Struct({ source, outcome, summary });
 
 export const mcpItemSender = (
-  message: (MessageSender & { readonly linkedSender?: OrchestrationV2LinkedSender }) | undefined,
+  message:
+    | (MessageSender & { readonly linkedSender?: OrchestrationV2LinkedSender | undefined })
+    | undefined,
 ) => ({
   ...messageSender(message),
   ...(message?.linkedSender === undefined ? {} : { linkedSender: message.linkedSender }),

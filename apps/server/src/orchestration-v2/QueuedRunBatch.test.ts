@@ -40,7 +40,7 @@ describe("queued run batch events", () => {
         senderThreadId: "thread:other",
         linkedSender: { environmentId: "env:other", threadId: "thread:other", title: "Other" },
       },
-      itemId: (messageId) => `item:${messageId}`,
+      itemId: (messageId: string) => `item:${messageId}`,
       occurredAt: "2026-11-19T00:00:00.000Z",
     } as never);
 
