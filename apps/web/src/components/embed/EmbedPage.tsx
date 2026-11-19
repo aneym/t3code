@@ -34,7 +34,7 @@ function applyInitialScheme(): void {
 
 function EmbedNotice({ text }: { readonly text: string }) {
   return (
-    <main className="flex h-dvh items-center justify-center bg-background p-6">
+    <main className="flex h-dvh w-full items-center justify-center bg-background p-6">
       <p className="max-w-sm text-center text-sm text-muted-foreground">{text}</p>
     </main>
   );
@@ -84,7 +84,8 @@ export function EmbeddedThread({
   const target = resolveThreadRouteTarget({ environmentId, threadId });
   const threadRef = target?.kind === "server" ? target.threadRef : null;
   const view = useEmbedKeptView(threadRef);
-  useEmbedReadyReport(threadRef, threadId, view === "hold");
+  const unavailable = useEmbedReadyReport(threadRef, threadId, view === "hold");
+  if (unavailable) return <EmbedNotice text="This chat isn't available here." />;
   if (target === null || view === "hold") return null;
   return (
     <div className="contents" data-embed-view={view}>

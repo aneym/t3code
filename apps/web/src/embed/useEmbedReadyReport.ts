@@ -12,7 +12,7 @@ export function useEmbedReadyReport(
   threadRef: ScopedThreadRef | null,
   threadId: string,
   held = false,
-): void {
+): boolean {
   const thread = useEnvironmentThread(
     threadRef?.environmentId ?? null,
     threadRef?.threadId ?? null,
@@ -23,6 +23,11 @@ export function useEmbedReadyReport(
       Option.isSome(thread.data) ||
       Option.isSome(thread.error) ||
       thread.status === "deleted");
+  const unavailable =
+    threadRef !== null &&
+    !held &&
+    Option.isNone(thread.data) &&
+    (Option.isSome(thread.error) || thread.status === "deleted");
   const draws = Option.match(thread.data, {
     onNone: () => "nothing" as const,
     onSome: (data) =>
@@ -51,6 +56,9 @@ export function useEmbedReadyReport(
   }, [router, watch]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the host in the commit that draws the routed thread's first rows
   useLayoutEffect(() => {
-    if (connected) watch.report(threadId, settled, draws, from);
-  }, [watch, connected, threadId, settled, draws, from]);
+    if (!connected) return;
+    if (unavailable) watch.refuse(threadId);
+    else watch.report(threadId, settled, draws, from);
+  }, [watch, connected, threadId, unavailable, settled, draws, from]);
+  return unavailable;
 }

@@ -1,6 +1,7 @@
 import {
   EMBED_CAPABILITIES,
   EMBED_READY_MESSAGE,
+  EMBED_ROUTE_REFUSED_MESSAGE,
   type EmbedPaintSource,
   type EmbedReadyMessage,
 } from "@t3tools/contracts";
@@ -22,6 +23,7 @@ export type EmbedReadyWatch = {
     draws: EmbedDraws,
     from: EmbedPaintSource,
   ) => void;
+  readonly refuse: (threadId: string) => void;
   readonly stop: () => void;
 };
 
@@ -46,6 +48,7 @@ export function repeatEmbedReady(threadId: string): boolean {
 export function createEmbedReadyWatch(): EmbedReadyWatch {
   let before: ReadonlySet<Element> = new Set();
   let reported: string | null = null;
+  let refused: string | null = null;
   let waiting: { readonly threadId: string; readonly from: EmbedPaintSource } | null = null;
   let grace: ReturnType<typeof setTimeout> | undefined;
   let graceOver = false;
@@ -78,6 +81,7 @@ export function createEmbedReadyWatch(): EmbedReadyWatch {
       stop();
       before = new Set(document.querySelectorAll(DRAWN));
       reported = null;
+      refused = null;
       painted = null;
     },
     report: (threadId, settled, next, from) => {
@@ -97,6 +101,18 @@ export function createEmbedReadyWatch(): EmbedReadyWatch {
         graceOver = true;
         check();
       }, NO_ROWS_GRACE_MS);
+    },
+    refuse: (threadId) => {
+      stop();
+      if (refused === threadId) return;
+      if (
+        postToEmbedHost({
+          type: EMBED_ROUTE_REFUSED_MESSAGE,
+          thread: threadId,
+          reason: "not-visible",
+        })
+      )
+        refused = threadId;
     },
     stop,
   };
