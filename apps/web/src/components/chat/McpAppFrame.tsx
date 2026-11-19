@@ -39,6 +39,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { observeResize } from "~/lib/observeResize";
 import { frameActivated, pageInputRecent, trackFrameClicks } from "./mcpAppActivation";
 import { consentToMcpAppCall } from "./mcpAppCallConsent";
+import { McpAppLoadCover, useMcpAppLoad } from "./McpAppLoadCover";
 
 const commandFailure = (result: {
   readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"];
@@ -86,6 +87,12 @@ export function McpAppFrame(props: {
   const [displayMode, setDisplayMode] = useState<McpAppDisplayMode>("inline");
   const [closed, setClosed] = useState(false);
   const [documentGeneration, setDocumentGeneration] = useState(0);
+  const load = useMcpAppLoad();
+  const reload = () => {
+    setSrc(null);
+    setDocumentGeneration((value) => value + 1);
+    load.reset();
+  };
   // Closing and reopening replaces the box, which re-attaches this.
   const attachBox = (box: HTMLDivElement) => {
     boxRef.current = box;
@@ -216,6 +223,7 @@ export function McpAppFrame(props: {
   const attachFrame = (frame: HTMLIFrameElement) => {
     frameRef.current = frame;
     const clicks = trackFrameClicks(frame);
+    const disarm = load.arm();
     const hostContext = (): McpAppHostContext => {
       const current = readLive();
       return {
@@ -386,11 +394,14 @@ export function McpAppFrame(props: {
     });
     hostRef.current = host;
     const receive = (event: MessageEvent) => {
-      if (event.source !== null && event.source === target()) host.receive(event.data);
+      if (event.source === null || event.source !== target()) return;
+      load.observe(event.data);
+      host.receive(event.data);
     };
     window.addEventListener("message", receive);
     return () => {
       window.removeEventListener("message", receive);
+      disarm();
       clicks.dispose();
       void host.teardown();
       hostRef.current = null;
@@ -418,8 +429,7 @@ export function McpAppFrame(props: {
           size="xs"
           variant="ghost"
           onClick={() => {
-            setSrc(null);
-            setDocumentGeneration((value) => value + 1);
+            reload();
             setClosed(false);
           }}
         >
@@ -432,7 +442,7 @@ export function McpAppFrame(props: {
   const fullscreen = displayMode === "fullscreen";
   return (
     // Preserve inline row height during fullscreen to prevent timeline jumps.
-    <div style={{ height }}>
+    <div className="relative" style={{ height }}>
       <div
         ref={attachBox}
         // Preserve the frame's parent to avoid reloads; the top layer escapes timeline containment.
@@ -470,6 +480,7 @@ export function McpAppFrame(props: {
           </p>
         ) : src !== null ? (
           <iframe
+            key={documentGeneration}
             ref={attachFrame}
             src={src}
             title={`${app.server} app`}
@@ -477,7 +488,11 @@ export function McpAppFrame(props: {
             sandbox="allow-scripts allow-forms"
             allow={mcpAppAllowAttribute(app.permissions)}
             onLoad={onFrameLoad}
-            className={cn("block w-full border-0", fullscreen ? "min-h-0 flex-1" : "h-full")}
+            className={cn(
+              "block w-full border-0",
+              fullscreen ? "min-h-0 flex-1" : "h-full",
+              load.state !== "ready" && "opacity-0",
+            )}
             style={{ colorScheme: theme.appearance }}
           />
         ) : asset._tag === "Failure" ? (
@@ -486,6 +501,11 @@ export function McpAppFrame(props: {
           </p>
         ) : null}
       </div>
+      {load.state === "ready" ||
+      navigatedAway ||
+      (src === null && asset._tag === "Failure") ? null : (
+        <McpAppLoadCover server={app.server} state={load.state} onRetry={reload} />
+      )}
     </div>
   );
 }
