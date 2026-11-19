@@ -2,7 +2,7 @@ import { threadSettlement } from "./threadSettlement.ts";
 import { threadHistoryTrim } from "./threadHistoryTrim.ts";
 import { listedThreadStatus, listThreadPage } from "./ThreadListPage.ts";
 import {
-  messageSender,
+  mcpItemSender,
   quietNoteOf,
   CommandId,
   type MessageId,
@@ -872,7 +872,7 @@ function timelineItem(input: {
     messageId,
     createdBy: message?.createdBy ?? null,
     creationSource: message?.creationSource ?? null,
-    ...messageSender(message),
+    ...mcpItemSender(message),
     ...quietNoteOf(item),
     type: item.type,
     status: item.status,
