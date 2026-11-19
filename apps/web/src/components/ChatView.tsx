@@ -122,11 +122,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
-import { useLocation, useNavigate } from "@tanstack/react-router";
-import {
-  assistantCitationFromLocation,
-  useSideChatCitationReveal,
-} from "../lib/assistantCitationNavigation";
+import { useNavigate } from "@tanstack/react-router";
+import { useLocationCitation, useSideChatCitationReveal } from "../lib/assistantCitationNavigation";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useStore } from "zustand";
 import { shallow } from "zustand/vanilla/shallow";
@@ -559,13 +556,7 @@ export default function ChatView(props: ChatViewProps) {
   const clientSettingsHydrated = useClientSettingsHydrated();
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
-  const citationHref = useLocation({ select: (location) => location.href });
-  const citationKey = useLocation({
-    select: (location) => location.state.assistantCitationActivation ?? location.state.__TSR_key,
-  });
-  const citationLocation = { href: citationHref, key: citationKey };
-  const locationCitation = assistantCitationFromLocation(citationLocation.href);
-  const citationActivation = citationLocation.key ?? citationLocation.href;
+  const { citation: locationCitation, activation: citationActivation } = useLocationCitation();
   const citationRequest = (
     locationCitation &&
     locationCitation.environmentId === environmentId &&
@@ -726,6 +717,7 @@ export default function ChatView(props: ChatViewProps) {
   const composerReservedHeightRef = useRef(0);
   const composerExpandedHeightRef = useRef(0);
   const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
+  const scrollToEndClearanceRef = useRef(0);
   const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
   const multipleModelSelections = useAtomValue(fanoutSelectionsAtom);
@@ -2272,14 +2264,15 @@ export default function ChatView(props: ChatViewProps) {
             ),
           })
         : nextHeight;
-    setScrollToEndClearance(clearance);
+    if (scrollToEndClearanceRef.current !== clearance) {
+      scrollToEndClearanceRef.current = clearance;
+      setScrollToEndClearance(clearance);
+    }
   };
   const publishComposerOverlayHeightStable = useStableCallback(publishComposerOverlayHeight);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the composer overlay element before paint for a new thread or composer mount
   useLayoutEffect(() => {
     if (!composerOverlayElement) return;
-    composerTimelineInsetRef.current = 0;
-    composerReservedHeightRef.current = 0;
     composerExpandedHeightRef.current = 0;
     publishComposerOverlayHeightStable(composerOverlayElement.getBoundingClientRect().height);
   }, [

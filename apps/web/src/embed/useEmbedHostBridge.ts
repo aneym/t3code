@@ -82,8 +82,6 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
   useEffect(() => {
     const channel = channelForSpot({ origin, framed });
     const disconnect = connectEmbedHost(channel);
-    const stopClear = threadId === null ? null : startEmbedClear(threadId);
-    const stopUploads = threadId === null ? null : watchEmbedUploads(threadId);
     let focused = false;
     const reportFocus = () => {
       const next = composerFocused();
@@ -170,9 +168,17 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       window.removeEventListener("focusout", onFocusChange);
       window.removeEventListener("focus", onFocusChange);
       window.removeEventListener("blur", onFocusChange);
-      stopClear?.();
-      stopUploads?.();
       disconnect();
     };
-  }, [origin, framed, threadId]);
+  }, [origin, framed]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks the shown thread's clear state and uploads
+  useEffect(() => {
+    if (threadId === null) return;
+    const stopClear = startEmbedClear(threadId);
+    const stopUploads = watchEmbedUploads(threadId);
+    return () => {
+      stopClear();
+      stopUploads();
+    };
+  }, [threadId]);
 }

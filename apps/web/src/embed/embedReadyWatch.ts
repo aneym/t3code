@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 
 import { postToEmbedHost } from "./embedHost";
+import { markEmbedRouteStep, takeEmbedRouteTimings } from "./embedRouteTimings";
 
 const ROW = "[data-timeline-row-kind]";
 const EMPTY = "[data-timeline-empty]";
@@ -30,11 +31,14 @@ export type EmbedReadyWatch = {
 let painted: string | null = null;
 
 function postReady(threadId: string, from: EmbedPaintSource): boolean {
+  markEmbedRouteStep(threadId, "drawn");
+  const timings = takeEmbedRouteTimings(threadId);
   const message: EmbedReadyMessage = {
     type: EMBED_READY_MESSAGE,
     threadId,
     from,
     capabilities: EMBED_CAPABILITIES,
+    ...(timings === undefined ? {} : { timings }),
   };
   if (!postToEmbedHost(message)) return false;
   painted = threadId;

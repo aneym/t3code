@@ -6,7 +6,12 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
-import { useRouter, type AnyRouter } from "@tanstack/react-router";
+import {
+  useLocation,
+  useRouter,
+  type AnyRouter,
+  type ParsedLocation,
+} from "@tanstack/react-router";
 import {
   formatAssistantCitationHref,
   parseAssistantCitationHref,
@@ -47,6 +52,22 @@ export function assistantCitationFromLocation(href: string) {
   } catch {
     return null;
   }
+}
+
+const citedHref = (location: ParsedLocation) =>
+  location.href.includes(`#${CITATION_HASH_PREFIX}`) ? location.href : null;
+
+export function useLocationCitation() {
+  const href = useLocation({ select: citedHref });
+  const key = useLocation({
+    select: (location) =>
+      citedHref(location) &&
+      (location.state.assistantCitationActivation ?? location.state.__TSR_key),
+  });
+  return {
+    citation: href === null ? null : assistantCitationFromLocation(href),
+    activation: key ?? href ?? "",
+  };
 }
 
 /** Return paths drop the quote hash so going back does not reveal its source again. */
