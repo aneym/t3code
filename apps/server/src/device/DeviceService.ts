@@ -32,15 +32,10 @@ import {
   LOCAL_DEVICE_HOST_LABEL,
   type ThreadId,
 } from "@t3tools/contracts";
-import { SshCommandError } from "@t3tools/ssh/errors";
 import * as FileSystem from "effect/FileSystem";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Path from "effect/Path";
-import {
-  DeviceToolchainInstallError,
-  ensureAgentDevice,
-  ensureDeviceHub,
-} from "./DeviceToolchain.ts";
+import { ensureAgentDevice, ensureDeviceHub } from "./DeviceToolchain.ts";
 import {
   agentDeviceCloseOutcome,
   bindAgentDeviceLauncher,
@@ -77,6 +72,7 @@ import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
+import { actionableHostFailure, sshProbeFailureMessage } from "./deviceHostFailure.ts";
 import * as EasDeviceHost from "./EasDeviceHost.ts";
 import * as SimlockDeviceHost from "./SimlockDeviceHost.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -85,41 +81,6 @@ import * as Exit from "effect/Exit";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 
 export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
-
-const isSshCommandError = Schema.is(SshCommandError);
-
-const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
-  const windows = SshDeviceHost.isSshWindowsHostError(error.cause) ? error.cause : null;
-  const cause = windows ? windows.cause : error.cause;
-  if (
-    !isSshCommandError(cause) ||
-    cause.exitCode === null ||
-    cause.exitCode < 1 ||
-    (cause.exitCode > 254 && cause.exitCode !== 9009)
-  )
-    return "Could not connect to this host over SSH.";
-
-  // Only the known bootstrap diagnostic is safe to expose as Node guidance.
-  if (
-    cause.exitCode === 1 &&
-    cause.stderr
-      .split(/\r?\n/u)
-      .some((line) => line.trim() === "Node is missing from the non-interactive SSH PATH")
-  )
-    return "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.";
-  if (windows) return windows.message;
-
-  return `Connected over SSH, but the device host check failed (exit code ${cause.exitCode}).`;
-};
-
-const isToolchainInstallError = Schema.is(DeviceToolchainInstallError);
-
-const actionableHostFailure = (error: DeviceHost.DeviceHostError): string | undefined => {
-  if (error.step === "probe") return sshProbeFailureMessage(error);
-  if (isToolchainInstallError(error.cause) && error.cause.reason === "npm_not_found")
-    return error.cause.message;
-  return undefined;
-};
 
 export interface DeviceScreenshot {
   readonly device: DeviceSummary;
@@ -293,6 +254,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const settings = yield* ServerSettings.ServerSettingsService;
   const digest = yield* Digest.Digest;
   const lifecycleLock = yield* Semaphore.make(1);
+  const bootedDevices = new Set<string>();
+  const deviceKey = (session: { hostId: DeviceHostId; deviceId: DeviceId }) =>
+    `${session.hostId}\u0000${session.deviceId}`;
   const readDeviceSettings = settings.getSettings.pipe(
     Effect.map((value) => ({
       enabled: value.enableDeviceSupport,
@@ -806,7 +770,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           });
         }
       }
-      if (!device.booted && input.boot !== false) {
+      const bootedHere = !device.booted && input.boot !== false;
+      if (bootedHere) {
         const booting = { ...device, threadId: input.threadId };
         yield* publish((current) => ({
           ...current,
@@ -860,6 +825,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               hostLabel: host.label,
               reason: "Device support was turned off while the device was opening.",
             });
+          const { state } = yield* SynchronizedRef.get(stateRef);
+          if (bootedHere) bootedDevices.add(deviceKey(session));
+          else if (!state.sessions.some((held) => deviceKey(held) === deviceKey(session)))
+            bootedDevices.delete(deviceKey(session));
           yield* publish((current) => ({
             ...current,
             sessions: [
@@ -893,6 +862,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     platform: DevicePlatform,
   ) {
     yield* ready.devices.shutdown({ id: deviceId, platform });
+    bootedDevices.delete(deviceKey({ hostId: ready.hostId, deviceId }));
     yield* publish((state) => ({
       ...state,
       devices: state.devices.map((device) =>
@@ -906,7 +876,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const close: DeviceService["Service"]["close"] = Effect.fn("DeviceService.close")(
     function* (input) {
       // Open publishes under the same lock; an old close must not release a reopened claim.
-      const closing = yield* lifecycleLock.withPermit(
+      const stopped = yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
           const { state } = yield* SynchronizedRef.get(stateRef);
           const closing = state.sessions.filter(
@@ -915,14 +885,18 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               (input.hostId === undefined || session.hostId === input.hostId) &&
               (input.deviceId === undefined || session.deviceId === input.deviceId),
           );
-          const ending = input.shutdown
-            ? state.sessions.filter((session) =>
-                closing.some(
-                  (closed) =>
-                    closed.hostId === session.hostId && closed.deviceId === session.deviceId,
-                ),
-              )
-            : closing;
+          const others = state.sessions.filter((session) => !closing.includes(session));
+          const heldElsewhere = (session: DeviceSession) =>
+            others.some((other) => deviceKey(other) === deviceKey(session));
+          const powering = closing.filter(
+            (session) =>
+              input.shutdown ?? (bootedDevices.has(deviceKey(session)) && !heldElsewhere(session)),
+          );
+          const ending = state.sessions.filter(
+            (session) =>
+              closing.includes(session) ||
+              powering.some((closed) => deviceKey(closed) === deviceKey(session)),
+          );
           for (const session of ending) {
             const host = yield* resolveHost(session.hostId);
             const ready = yield* host.current;
@@ -942,34 +916,36 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               yield* ready.releaseAgentSession(name, session.deviceId);
             }
           }
-          if (input.shutdown) yield* releaseLaunchers(ending);
-          if (input.shutdown) {
-            for (const session of closing) {
-              const ready = yield* currentReadiness(session.hostId);
-              if (!ready)
-                return yield* new DeviceHostUnavailableError({
-                  hostId: session.hostId,
-                  reason: "Device host is not running. Reconnect before retrying close.",
-                });
-              yield* shutdownDevice(ready, session.deviceId, session.platform);
-            }
+          if (powering.length > 0) yield* releaseLaunchers(ending);
+          const stopped: Array<DeviceSession> = [];
+          for (const session of powering) {
+            const ready = yield* currentReadiness(session.hostId);
+            if (!ready && !input.shutdown) continue;
+            if (!ready)
+              return yield* new DeviceHostUnavailableError({
+                hostId: session.hostId,
+                reason: "Device host is not running. Reconnect before retrying close.",
+              });
+            yield* shutdownDevice(ready, session.deviceId, session.platform);
+            stopped.push(session);
           }
           yield* publish((current) => ({
             ...current,
             sessions: current.sessions.filter((session) => !ending.includes(session)),
           }));
-          return closing;
+          for (const session of closing)
+            if (!heldElsewhere(session)) bootedDevices.delete(deviceKey(session));
+          return stopped;
         }),
       );
-      if (input.shutdown)
-        yield* Effect.forEach(
-          closing,
-          (session) =>
-            currentReadiness(session.hostId).pipe(
-              Effect.flatMap((ready) => (ready ? refreshAfterShutdown(ready) : Effect.void)),
-            ),
-          { discard: true },
-        );
+      yield* Effect.forEach(
+        stopped,
+        (session) =>
+          currentReadiness(session.hostId).pipe(
+            Effect.flatMap((ready) => (ready ? refreshAfterShutdown(ready) : Effect.void)),
+          ),
+        { discard: true },
+      );
     },
   );
 
