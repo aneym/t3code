@@ -18,7 +18,7 @@ import {
   wipeKeptViews,
 } from "./embedKeptViews";
 
-const liveConfigAtom = Atom.family((environmentId: EnvironmentId) =>
+export const liveConfigAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ServerConfig | null => {
     const projection = AsyncResult.getOrElse(
       get(serverEnvironment.configProjection({ environmentId, input: {} })),

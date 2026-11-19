@@ -424,9 +424,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   historyTrimmedAt,
 }: MessagesTimelineProps) {
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
-  // Snapshot restore positions on identity changes; ongoing scroll writes must not move them.
-  // Find open at the opening is part of the snapshot: opening find later
-  // announces its own navigation (threadFindStore's announceOpening).
   const [listState, setListState] = useState(() => ({
     ...timelineListStateFor(listIdentityKey),
     findOpenAtOpening: findOpen,
@@ -440,8 +437,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [expandedAttemptIds, setExpandedAttemptIds] = useState<ReadonlySet<RunAttemptId>>(
     () => listState.rememberedPosition?.disclosures?.attempts ?? new Set(),
   );
-  // A list that opens on a thread with find open takes the opening step below,
-  // so the restore runs and releases follow once for find.
   const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(() =>
     listState.rememberedPosition?.atEnd === false || findOpen ? null : listIdentityKey,
   );
@@ -469,8 +464,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
     setPositionedThreadKey(null);
     setSettlingListIdentity(listIdentityKey);
-    // A viewer pinned in another thread must not keep live follow off here,
-    // nor when that thread comes back.
     setFullscreenAppRowId(null);
     paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
@@ -494,8 +487,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   } | null>(null);
   const disclosureRevealFrameRef = useRef<number | null>(null);
 
-  // Anchoring keeps the toggled row still, so content that expands below it
-  // near the bottom would otherwise land under the composer.
   const revealExpandedDisclosure = useStableCallback(() => {
     const pending = disclosureRevealRef.current;
     if (!pending || pending.identity !== listIdentityKey) return;
@@ -519,7 +510,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       composerOverlayHeight: contentInsetEndAdjustment,
       anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
     });
-    // Nested lists can finish measuring before their height reaches the outer scroller.
     if (pending.ready && element.scrollTop + delta <= element.scrollHeight - element.clientHeight) {
       disclosureRevealRef.current = null;
     }
@@ -543,7 +533,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   ) => {
     const list = listRef.current;
     disclosureRevealRef.current = null;
-    // An anchor ends end-follow until the reader scrolls, so a streaming turn keeps the live end.
     if (!list || (isWorking && list.getState().isFollowingEnd)) return;
     if (reveal) {
       disclosureRevealRef.current = {
@@ -598,7 +587,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
 
-  // An interrupted run opens its fold; a newer run closes the previous run's.
   const [observedLatestRun, setObservedLatestRun] = useState({
     identity: listIdentityKey,
     runId: latestRun?.runId,
@@ -642,7 +630,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const toolCallVisibility =
     findActive && preferredToolCallVisibility === "zen" ? "hideAll" : preferredToolCallVisibility;
   const revealedMessageId = citationRequest?.citation.messageId ?? null;
-  // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({
         timelineEntries,
@@ -789,10 +776,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const viewportRef = useRef<TimelineViewport | null>(null);
   const navigateTimeline = () => viewportRef.current?.navigate({ releasesFollow: true });
   const restoreReady = restoringThreadPosition && rows.length > 0;
-  // Z: syncs LegendList's scroll position with which thread it shows. The list
-  // is not keyed per thread and reports no "new data" event, and the restore
-  // must land before paint, after LegendList's own layout effects applied the
-  // new data. A citation request that arrives mid-restore takes over.
   const { findOpenAtOpening } = identityChanged ? { findOpenAtOpening: findOpen } : listState;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores LegendList's scroll position for the shown thread before paint, after the list's own layout
   useLayoutEffect(() => {
@@ -847,8 +830,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setFindListReady(true);
   };
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
-  // Every full-screen viewer reports false when it unmounts, so a row that leaves the list
-  // while full screen releases its pin too.
   const onAppFullscreenChange = (rowId: string, fullscreen: boolean) => {
     setFullscreenAppRowId((current) => (fullscreen ? rowId : current === rowId ? null : current));
   };
@@ -857,8 +838,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ...(restoringAlwaysRender?.indices ?? []),
     ...timelineRowSpanIndices(rows, selectedRowIds),
   ];
-  // Screen readers can only reach headings in the DOM. Keeping the first and
-  // last messages mounted lets heading navigation wrap to either end.
   const firstMessageRow = rows.find(isMessageRow);
   const lastMessageRow = rows.findLast(isMessageRow);
   const alwaysRenderKeys = [
@@ -921,7 +900,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const firstBufferedTop =
       firstBufferedIndex == null ? undefined : state.positionAtIndex(firstBufferedIndex);
     const viewport = listRef.current?.getScrollableNode() ?? undefined;
-    // Cached row positions exclude the header and pending scroll adjustments.
     const scroll =
       firstBufferedRow && viewport && firstBufferedTop !== undefined
         ? firstBufferedTop +
@@ -937,13 +915,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
         visibleRange.end,
       );
       const next = inView ? "true" : "false";
-      // Avoid dirtying style state on every scroll tick for unchanged strips.
       if (strip && strip.dataset.inView !== next) {
         strip.dataset.inView = next;
       }
     }
-    // Ignore rows ending within the offset minimap navigation leaves above its target, or
-    // Next turn keeps retargeting the same row. 1px absorbs device-pixel scroll rounding.
     const currentInset = TIMELINE_MINIMAP_TARGET_OFFSET + 1;
     const currentRange = resolveTimelineMinimapVisibleRange({
       ...state,
@@ -958,7 +933,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setMinimapCurrentIndex((current) =>
       current === nextCurrentIndex ? current : nextCurrentIndex,
     );
-    // The exact bottom, not the follow re-arm zone: Next can still scroll inside that zone.
     setMinimapAtEnd(
       viewport !== undefined &&
         viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 1,
@@ -968,7 +942,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const minimapRefreshFrameRef = useRef<number | null>(null);
   const scheduleMinimapRefresh = useStableCallback(() => {
     if (minimapRefreshFrameRef.current !== null) return;
-    // LegendList recycles row containers before React commits their positions.
     minimapRefreshFrameRef.current = requestAnimationFrame(() => {
       minimapRefreshFrameRef.current = null;
       refreshMinimap();
@@ -980,8 +953,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (!restoringThreadPosition) scheduleMinimapRefresh();
   }, [restoringThreadPosition, scheduleMinimapRefresh]);
 
-  // The measurement the last remember wrote, so a follow release can rewrite
-  // it without reading render state from a listener.
   const lastRememberedRef = useRef<{
     readonly data: unknown;
     readonly threadKey: string;
@@ -1015,8 +986,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
     return isAtEnd;
   };
-  // A follow release without a scroll after it would leave the position
-  // remembered as following.
   const rememberReleasedPosition = () => {
     const last = lastRememberedRef.current;
     if (last && listRef.current?.getState().data === last.data) {
@@ -1047,19 +1016,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     );
     setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
   };
-  // Rows added, removed or rewrapped (chat width) change the content size,
-  // which moves the scroll position, the overflow, and the content lane width.
   const handleContentSizeChanged = useStableCallback((laidOutData: unknown) => {
-    // The first laid-out content of a newly shown thread ends its settling; a
-    // frame the previous thread scheduled laid out the previous thread's rows.
     if (laidOutData === rows) {
       setSettlingListIdentity((current) => (current === listIdentityKey ? null : current));
     }
     handleScroll();
   });
-  // The content lane only changes width with the viewport or the chat width
-  // setting, never with streamed content; measuring per content frame would
-  // force a layout on every chunk.
   const measuredLaneWidthRef = useRef<number | null>(null);
   const observeLaneWidth = (lane: HTMLDivElement | null) => {
     if (!lane) return;
@@ -1084,8 +1046,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     };
   };
 
-  // Built from props after the last hook so the compiler can memoize the row context; a map
-  // made before a hook would rebuild it, and re-render every row, on each streamed update.
   const pendingApprovalsByRequestId = new Map(
     pendingApprovals
       .filter(isVisiblePendingApproval)
@@ -1176,8 +1136,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     liveAnswerPreview:
       isWorking && toolCallVisibility === "zen" ? liveAnswerPreview(timelineEntries) : null,
   };
-  // Mounted in both the empty and filled timeline so a thread's first turn
-  // starts from a baseline instead of a fresh, silent region.
   const activityAnnouncer = (
     <ThreadActivityAnnouncer
       threadKey={announceTurnStatus ? listIdentityKey : null}
@@ -1227,7 +1185,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const canvas = useChatCanvas();
   const registerTimeline = canvas?.registerTimeline;
-  // Stable so the list attaches once per mount, not on every render.
   const setTimelineList = useStableCallback((list: LegendListRef | null) => {
     listRef.current = list;
     const scrollNode: HTMLElement | null = list?.getScrollableNode() ?? null;
@@ -1248,7 +1205,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       disclosureRevealRef.current = null;
     });
     let contentSizeFrame: number | null = null;
-    // LegendList lays rows out from layout effects; the next frame sees them settled.
     let scheduledData: unknown = null;
     const scheduleContentSizeChanged = () => {
       if (!list) return;
@@ -1305,8 +1261,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   });
 
   useThreadFindNavigation({
-    // Find reveals its match only after the opening restore settles; both
-    // scroll the list directly, so the restore would otherwise pull it back.
     listReady: findListReady && !restoringThreadPosition,
     historyControls,
     entries: timelineEntries,
@@ -1319,7 +1273,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     contentInsetEndAdjustment,
   });
 
-  // LegendList moves rows one commit late; per-row providers prevent thread context leaks.
   const onAudioPlaybackChange = (rowId: string, event: SyntheticEvent) => {
     const audio = event.target;
     if (!(audio instanceof HTMLAudioElement)) return;
@@ -1340,10 +1293,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return next;
     });
   });
+  const drawnRows = new Set(rows);
   const renderItem = ({ item }: { item: MessagesTimelineRow }) => (
     <TimelineRowCtx value={sharedState}>
       <div
         className="messages-timeline-row-frame"
+        data-timeline-thread={drawnRows.has(item) ? listIdentityKey : undefined}
         onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
@@ -1393,7 +1348,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return (
         <>
           {activityAnnouncer}
-          <div className="h-full min-h-0 bg-background" data-timeline-loading="true" />
+          <div
+            className="h-full min-h-0 bg-background"
+            data-timeline-loading="true"
+            data-timeline-thread={listIdentityKey}
+          />
         </>
       );
     }
@@ -1403,6 +1362,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         <div
           className="flex h-full items-center justify-center ps-(--chat-lane-inset-start) pe-(--chat-lane-inset-end)"
           data-timeline-empty="true"
+          data-timeline-thread={listIdentityKey}
           style={{ paddingBottom: emptyPlaceholderInset }}
         >
           <p className="text-sm text-muted-foreground">Send a message to start the conversation.</p>
@@ -1420,6 +1380,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
             ref={attachTimelineViewportElement}
             className="relative h-full min-h-0"
             data-assistant-citation-viewport="true"
+            data-timeline-thread={rows.length === 0 ? listIdentityKey : undefined}
           >
             {onCiteAssistantText && citationThreadRef ? (
               <AssistantSelectionToolbar
@@ -1439,7 +1400,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
               initialScrollAtEnd={
                 !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
               }
-              // Legend needs a data refresh to mount new pins without a scroll event.
               dataVersion={`${readyCitationRequest?.key ?? listIdentityKey}:${alwaysRenderKeys.join(",")}`}
               {...(alwaysRender ? { alwaysRender } : {})}
               onLoad={handleListLoad}
@@ -1467,7 +1427,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
               onScroll={handleScroll}
               onItemSizeChanged={scheduleMinimapRefresh}
               onMetricsChange={scheduleMinimapRefresh}
-              // Keyboard scrolling only moves the focused element; F6 and clicks land here.
               tabIndex={-1}
               data-workspace-focus-default
               className={cn(
@@ -1545,8 +1504,6 @@ function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
 }
 
-// LegendList estimates unmeasured rows from their type's average. Long messages of equal length
-// can differ in height by orders of magnitude, so each gets its own type to avoid nested-update loops.
 function getItemType(item: MessagesTimelineRow) {
   if (item.kind !== "message") return item.kind;
   const lengthBucket = Math.max(0, Math.floor(Math.log2(item.message.text.length / 1000)));

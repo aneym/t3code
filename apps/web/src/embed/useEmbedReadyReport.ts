@@ -1,3 +1,4 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -28,11 +29,8 @@ export function useEmbedReadyReport(
     !held &&
     Option.isNone(thread.data) &&
     (Option.isSome(thread.error) || thread.status === "deleted");
-  const draws = Option.match(thread.data, {
-    onNone: () => "nothing" as const,
-    onSome: (data) =>
-      data.messages.length > 0 || data.turnItems.length > 0 ? ("rows" as const) : ("view" as const),
-  });
+  const key = threadRef !== null && Option.isSome(thread.data) ? scopedThreadKey(threadRef) : null;
+  const refused = held || unavailable;
   const shown = held ? null : embedPaintSource(thread);
   const [first, setFirst] = useState(() => ({ threadId, from: shown }));
   const stale =
@@ -57,8 +55,9 @@ export function useEmbedReadyReport(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the host in the commit that draws the routed thread's first rows
   useLayoutEffect(() => {
     if (!connected) return;
-    if (unavailable) watch.refuse(threadId);
-    else watch.report(threadId, settled, draws, from);
-  }, [watch, connected, threadId, unavailable, settled, draws, from]);
+    if (refused) watch.refuse(threadId);
+    else if (settled) watch.report(threadId, key, from);
+    else watch.stop();
+  }, [watch, connected, threadId, refused, settled, key, from]);
   return unavailable;
 }
