@@ -14,6 +14,8 @@ import * as Scope from "effect/Scope";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { ownsChatThreads } from "../chatSession/chatSessionDictation.ts";
+import * as ChatThreadSets from "../chatSession/ChatThreadSets.ts";
 import * as SpeechService from "./SpeechService.ts";
 
 const decodeCommand = Schema.decodeUnknownEffect(Schema.fromJsonString(SpeechStreamCommand));
@@ -93,6 +95,7 @@ export const speechStreamRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const speech = yield* SpeechService.SpeechService;
+    const sets = yield* ChatThreadSets.ChatThreadSets;
     return HttpRouter.add(
       "GET",
       SPEECH_STREAM_PATH,
@@ -102,7 +105,10 @@ export const speechStreamRouteLayer = Layer.unwrap(
           .authenticateWebSocketUpgrade(request, "media")
           .pipe(Effect.result);
         if (session._tag === "Failure") return HttpServerResponse.empty({ status: 401 });
-        if (!session.success.scopes.includes(AuthOrchestrationOperateScope))
+        if (
+          !session.success.scopes.includes(AuthOrchestrationOperateScope) &&
+          !(yield* ownsChatThreads(sets, session.success))
+        )
           return HttpServerResponse.empty({ status: 403 });
         const socket = yield* request.upgrade;
         yield* runSpeechSocket(socket, speech).pipe(Effect.scoped);

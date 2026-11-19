@@ -23,6 +23,8 @@ import {
   failEnvironmentInvalidRequest,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import { ownsChatThreads } from "../chatSession/chatSessionDictation.ts";
+import * as ChatThreadSets from "../chatSession/ChatThreadSets.ts";
 import * as SpeechPostProcessing from "./postProcessing.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as SpeechService from "./SpeechService.ts";
@@ -78,11 +80,19 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       yield* annotateEnvironmentRequest(endpoint);
       yield* requireEnvironmentScope(scope);
     });
+    const sets = yield* ChatThreadSets.ChatThreadSets;
+    const dictate = Effect.fnUntraced(function* (endpoint: string) {
+      yield* annotateEnvironmentRequest(endpoint);
+      const session = yield* EnvironmentAuthenticatedPrincipal;
+      if (session.scopes.has(AuthOrchestrationOperateScope)) return;
+      if (yield* ownsChatThreads(sets, session)) return;
+      yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+    });
     return handlers
       .handle(
         "cloudKeys",
         Effect.fn("environment.voice.cloudKeys")(function* (args) {
-          yield* guard(args.endpoint.name);
+          yield* dictate(args.endpoint.name);
           return yield* cloud.configured.pipe(
             Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
           );
@@ -100,14 +110,14 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       .handle(
         "cloudModels",
         Effect.fn("environment.voice.cloudModels")(function* (args) {
-          yield* guard(args.endpoint.name);
+          yield* dictate(args.endpoint.name);
           return { models: yield* cloud.models };
         }),
       )
       .handle(
         "transcribeCloud",
         Effect.fn("environment.voice.transcribeCloud")(function* (args) {
-          yield* guard(args.endpoint.name);
+          yield* dictate(args.endpoint.name);
           const decoded = parseAudio(args.payload);
           if (Option.isNone(decoded)) return yield* failEnvironmentInvalidRequest("invalid_audio");
           const text = yield* cloud
@@ -129,7 +139,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       .handle(
         "status",
         Effect.fn("environment.voice.status")(function* (args) {
-          yield* guard(args.endpoint.name);
+          yield* dictate(args.endpoint.name);
           return yield* speech.status.pipe(mapSpeechError);
         }),
       )
@@ -143,7 +153,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       .handle(
         "models",
         Effect.fn("environment.voice.models")(function* (args) {
-          yield* guard(args.endpoint.name);
+          yield* dictate(args.endpoint.name);
           return yield* speech
             .models(args.query.benchmarks === "1")
             .pipe(mapSpeechError, Effect.flatMap(withoutHostPaths));
@@ -211,7 +221,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       .handle(
         "transcribe",
         Effect.fn("environment.voice.transcribe")(function* (args) {
-          yield* guard(args.endpoint.name);
+          yield* dictate(args.endpoint.name);
           const decoded = parseAudio(args.payload);
           if (Option.isNone(decoded)) return yield* failEnvironmentInvalidRequest("invalid_audio");
           const text = yield* speech

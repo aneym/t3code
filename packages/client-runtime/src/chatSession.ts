@@ -58,6 +58,10 @@ export function chatSessionActive(): boolean {
   return active;
 }
 
+export function chatSessionOwnsThreads(): boolean {
+  return active && ownerThreadIds.size > 0;
+}
+
 export function subscribeChatSession(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);

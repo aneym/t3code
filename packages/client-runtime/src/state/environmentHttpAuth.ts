@@ -10,7 +10,7 @@ import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import { FetchHttpClient, type HttpMethod } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
-import { chatSessionActive } from "../chatSession.ts";
+import { chatSessionActive, chatSessionOwnsThreads } from "../chatSession.ts";
 import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
@@ -176,7 +176,11 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   RemoteEnvironmentRequestError,
   Effect.Services<ReturnType<typeof makeEnvironmentHttpApiGroupClient<Group>>> | R
 > {
-  if (input.group !== "auth" && chatSessionActive()) {
+  if (
+    input.group !== "auth" &&
+    chatSessionActive() &&
+    !(input.group === "voice" && chatSessionOwnsThreads())
+  ) {
     return yield* new RemoteEnvironmentAuthFetchError({
       message: "A chat session reads over its socket.",
       cause: input.group,

@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { expect, vi } from "vite-plus/test";
 import {
+  AuthChatThreadsScope,
   AuthSessionId,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -16,6 +17,7 @@ import {
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentVoiceHttpApi,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -31,23 +33,38 @@ import * as CloudSpeech from "./CloudSpeech.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ChatThreadSets from "../chatSession/ChatThreadSets.ts";
 import { speechHttpApiLayer } from "./http.ts";
 
 const decodeSessionId = Schema.decodeUnknownSync(AuthSessionId);
 
-const principal = (...scopes: AuthEnvironmentScope[]) =>
+const principalAs = (subject: string, ...scopes: AuthEnvironmentScope[]) =>
   Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
     effect.pipe(
       Effect.provideService(EnvironmentAuthenticatedPrincipal, {
         sessionId: decodeSessionId("voice-test"),
-        subject: "test",
+        subject,
         method: "bearer-access-token",
         scopes: new Set(scopes),
       }),
     ),
   );
+const principal = (...scopes: AuthEnvironmentScope[]) => principalAs("test", ...scopes);
+
+const ownedThread = ThreadId.make("thread:owned");
+const chatSets = Layer.mock(ChatThreadSets.ChatThreadSets)({
+  forSession: ({ subject }) =>
+    Effect.succeed(
+      subject === "chat-session:owner"
+        ? { setId: "owner", threads: new Set([ownedThread]), ownerThreads: new Set([ownedThread]) }
+        : subject === "chat-session:seat"
+          ? { setId: "seat", threads: new Set([ownedThread]), ownerThreads: new Set<ThreadId>() }
+          : undefined,
+    ),
+});
 
 const dependencies = Layer.mergeAll(
+  chatSets,
   Layer.mock(CloudSpeech.CloudSpeech)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
   Layer.mock(ServerSettings.ServerSettingsService)({
@@ -362,4 +379,48 @@ effectIt.effect.each([
         reason,
       });
     }),
+);
+
+effectIt.effect.each([
+  { subject: "chat-session:owner", status: 200, transcribe: 200 },
+  { subject: "chat-session:seat", status: 403, transcribe: 403 },
+])("a chat session dictates only when it owns a thread: $subject", ({ subject, ...expected }) =>
+  Effect.gen(function* () {
+    const { handler, dispose } = HttpRouter.toWebHandler(
+      HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
+        Layer.provide(speechHttpApiLayer),
+        Layer.provide(principalAs(subject, AuthChatThreadsScope)),
+        Layer.provide(
+          Layer.mock(SpeechService.SpeechService)({
+            status: Effect.succeed({ supported: false as const, reason: "test" }),
+            transcribe: () => Effect.succeed("dictated"),
+            selectModel: () => Effect.succeed({ models: [] }),
+          }),
+        ),
+        Layer.provide(dependencies),
+        Layer.provide(HttpServer.layerServices),
+        Layer.provide(NodeServices.layer),
+      ),
+      { disableLogger: true },
+    );
+    yield* Effect.addFinalizer(() => Effect.promise(dispose));
+    const context = yield* Layer.build(NodeServices.layer);
+    const call = (path: string, init?: RequestInit) =>
+      Effect.promise(() =>
+        handler(new Request(`http://localhost/api/voice/${path}`, init), context),
+      );
+    expect((yield* call("status")).status).toBe(expected.status);
+    const transcribed = yield* call("transcribe", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: encodeSpeechPcmRequest(new Uint8Array(4), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
+    });
+    expect(transcribed.status).toBe(expected.transcribe);
+    const select = yield* call("models/select", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ modelId: "test" }),
+    });
+    expect(select.status).toBe(403);
+  }),
 );

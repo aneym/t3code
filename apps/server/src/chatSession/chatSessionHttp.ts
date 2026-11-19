@@ -11,6 +11,7 @@ import { base64UrlDecodeUtf8 } from "../auth/utils.ts";
 import { requestUrl } from "../requestUrl.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ChatSessionAccess from "./ChatSessionAccess.ts";
+import { isDictationRoute, ownsChatThreads } from "./chatSessionDictation.ts";
 import * as ChatSessionGrants from "./ChatSessionGrants.ts";
 import { ChatRequestThreads } from "./chatSessionState.ts";
 import * as ChatThreadSets from "./ChatThreadSets.ts";
@@ -100,7 +101,8 @@ const layerGate = HttpRouter.middleware(
             (yield* grants.allowsPath(setId, path))) ||
           (request.method === "POST" &&
             path.startsWith(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`) &&
-            (yield* grants.allowsPath(setId, path)));
+            (yield* grants.allowsPath(setId, path))) ||
+          (isDictationRoute(request.method, path) && (yield* ownsChatThreads(sets, session)));
         if (!allowed) return forbidden();
         if (path !== SESSION_PATH) return yield* httpEffect;
         const chat = yield* sets.forSession(session).pipe(Effect.orElseSucceed(() => undefined));
