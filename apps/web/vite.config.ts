@@ -428,13 +428,38 @@ export default defineConfig(() => {
               {
                 name: "boot",
                 test: /^\0vite\/|[\\/]apps[\\/]web[\\/]src[\\/]lib[\\/]bootRetry\.ts$/,
-                priority: 3,
+                priority: 10,
               },
-              { name: "main", test: /[\\/]apps[\\/]web[\\/]src[\\/]main\.tsx$/, priority: 2 },
+              {
+                name: "react",
+                test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+                priority: 9,
+              },
+              {
+                name: "effect",
+                test: /[\\/]node_modules[\\/](effect|@effect[\\/][^\\/]+)[\\/]/,
+                priority: 8,
+              },
+              {
+                name: "ui",
+                test: /[\\/]node_modules[\\/](@base-ui[\\/][^\\/]+|@floating-ui[\\/][^\\/]+|lucide-react|@legendapp[\\/][^\\/]+)[\\/]/,
+                priority: 7,
+              },
+              {
+                name: "runtime",
+                test: /[\\/]packages[\\/](contracts|shared)[\\/]src[\\/]/,
+                priority: 6,
+              },
+              { name: "main", test: /[\\/]apps[\\/]web[\\/]src[\\/]main\.tsx$/, priority: 5 },
+              {
+                name: "editor",
+                test: /[\\/]node_modules[\\/](@pierre[\\/]diffs|@tiptap[\\/][^\\/]+|prosemirror-[^\\/]+|parse5|unbash)[\\/]/,
+                priority: 4,
+              },
               {
                 name: "thread",
                 test: /[\\/]apps[\\/]web[\\/]src[\\/]components[\\/]ThreadRouteView\.tsx$/,
-                priority: 1,
+                priority: 3,
               },
             ],
           },
