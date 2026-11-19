@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { useChatSession, useChatSessionListsThread } from "../chatSessionMode";
 import { environmentCatalog } from "../connection/catalog";
 import { fetchSessionState } from "../environments/primary/auth";
+import { useThreadShell } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { useEnvironmentThread } from "../state/threads";
 import { embedConnectionRefused, embedKeptView, type EmbedKeptView } from "./embedKeptViewGate";
@@ -17,8 +18,9 @@ import {
   retainKeptViewsOf,
   wipeKeptViews,
 } from "./embedKeptViews";
+import { embedSessionAdmitsThread } from "./embedParentThread";
 
-const liveConfigAtom = Atom.family((environmentId: EnvironmentId) =>
+export const liveConfigAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ServerConfig | null => {
     const projection = AsyncResult.getOrElse(
       get(serverEnvironment.configProjection({ environmentId, input: {} })),
@@ -57,6 +59,7 @@ export function useEmbedKeptView(threadRef: ScopedThreadRef | null): EmbedKeptVi
   const environmentId = threadRef?.environmentId ?? null;
   const threadId = threadRef?.threadId ?? null;
   const sessionListsThread = useChatSessionListsThread(threadId);
+  const shell = useThreadShell(threadRef);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records when this thread was last shown, for least recently shown eviction in IndexedDB
   useEffect(() => {
     if (environmentId !== null && threadId !== null) noteKeptViewShown(environmentId, threadId);
@@ -69,6 +72,10 @@ export function useEmbedKeptView(threadRef: ScopedThreadRef | null): EmbedKeptVi
     chatSession,
     liveConfig,
     sessionListsThread,
+    sessionChild:
+      chatSession &&
+      shell?.lineage.relationshipToParent === "subagent" &&
+      embedSessionAdmitsThread(threadRef, liveConfig),
   });
 }
 
