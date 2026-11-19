@@ -5,8 +5,10 @@ import { useEffect, useLayoutEffect, useState } from "react";
 
 import { useEnvironmentThread } from "../state/threads";
 import { useEmbedHostConnected } from "./embedHost";
+import { readEmbedLocation } from "./embedLocation";
 import { embedPaintSource } from "./embedPaintSource";
 import { createEmbedReadyWatch } from "./embedReadyWatch";
+import { markEmbedRouteStep } from "./embedRouteTimings";
 
 export function useEmbedReadyReport(
   threadRef: ScopedThreadRef | null,
@@ -44,13 +46,19 @@ export function useEmbedReadyReport(
     const unsubscribe = router.subscribe("onBeforeNavigate", (event) => {
       if (event.pathChanged) watch.navigating();
     });
+    const unsubscribeLoad = router.subscribe("onLoad", (event) => {
+      const routed = readEmbedLocation(event.toLocation.pathname)?.threadId;
+      if (routed) markEmbedRouteStep(routed, "navigate");
+    });
     return () => {
       unsubscribe();
+      unsubscribeLoad();
       watch.stop();
     };
   }, [router, watch]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the host in the commit that draws the routed thread's first rows
   useLayoutEffect(() => {
+    if (settled) markEmbedRouteStep(threadId, "mounted");
     if (connected) watch.report(threadId, settled, draws, from);
   }, [watch, connected, threadId, settled, draws, from]);
 }

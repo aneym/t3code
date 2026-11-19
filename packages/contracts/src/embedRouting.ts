@@ -39,10 +39,19 @@ export const EmbedRouteRefusedMessage = Schema.Struct({
 });
 export type EmbedRouteRefusedMessage = typeof EmbedRouteRefusedMessage.Type;
 
+export const EmbedRouteTimings = Schema.Struct({
+  navigate: Schema.Number,
+  mounted: Schema.Number,
+  drawn: Schema.Number,
+  ready: Schema.Number,
+});
+export type EmbedRouteTimings = typeof EmbedRouteTimings.Type;
+
 export const EmbedReadyMessage = Schema.Struct({
   type: Schema.Literal(EMBED_READY_MESSAGE),
   threadId: Schema.String,
   from: EmbedPaintSource,
   capabilities: Schema.Array(EmbedCapability),
+  timings: Schema.optionalKey(EmbedRouteTimings),
 });
 export type EmbedReadyMessage = typeof EmbedReadyMessage.Type;

@@ -15,6 +15,7 @@ import { environmentThreads } from "../state/threads";
 import { channelForSpot, fromEmbedHost, postToEmbedHost } from "./embedHost";
 import { readEmbedLocation } from "./embedLocation";
 import { repeatEmbedReady } from "./embedReadyWatch";
+import { startEmbedRouteTimings } from "./embedRouteTimings";
 import {
   embedThreadVisibility,
   planEmbedRoute,
@@ -55,6 +56,7 @@ export function useEmbedRouting(
       const plan = planEmbedRoute(thread, current, visibility());
       if (plan.kind === "refused") return refuse(thread, plan.reason);
       if (plan.kind === "same") return repeatEmbedReady(thread);
+      startEmbedRouteTimings(thread);
       warmSet.show(thread);
       void router.navigate({
         to: "/embed/$environmentId/$threadId",
