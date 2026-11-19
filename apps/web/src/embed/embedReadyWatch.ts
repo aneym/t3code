@@ -9,20 +9,13 @@ import {
 import { postToEmbedHost } from "./embedHost";
 import { markEmbedRouteStep, takeEmbedRouteTimings } from "./embedRouteTimings";
 
-const ROW = "[data-timeline-row-kind]";
-const EMPTY = "[data-timeline-empty]";
-const DRAWN = `${ROW},${EMPTY},[data-timeline-root]`;
-const SHOWN = `${DRAWN},[data-embed-view]`;
-const NO_ROWS_GRACE_MS = 1000;
-
-export type EmbedDraws = "rows" | "view" | "nothing";
+const DRAWN_ATTRIBUTE = "data-timeline-thread";
 
 export type EmbedReadyWatch = {
   readonly navigating: () => void;
   readonly report: (
     threadId: string,
-    settled: boolean,
-    draws: EmbedDraws,
+    key: string | null,
     from: EmbedPaintSource,
     parentThreadId?: string,
   ) => void;
@@ -31,6 +24,7 @@ export type EmbedReadyWatch = {
 };
 
 let painted: { readonly threadId: string; readonly parentThreadId?: string } | null = null;
+let refusedThread: string | null = null;
 
 function postReady(threadId: string, from: EmbedPaintSource, parentThreadId?: string): boolean {
   markEmbedRouteStep(threadId, "drawn");
@@ -48,41 +42,37 @@ function postReady(threadId: string, from: EmbedPaintSource, parentThreadId?: st
   return true;
 }
 
-export function repeatEmbedReady(threadId: string): boolean {
-  return painted?.threadId === threadId && postReady(threadId, "memory", painted.parentThreadId);
+function postRefusal(threadId: string): boolean {
+  return postToEmbedHost({
+    type: EMBED_ROUTE_REFUSED_MESSAGE,
+    thread: threadId,
+    reason: "not-visible",
+  });
+}
+
+export function repeatEmbedAnswer(threadId: string): boolean {
+  if (painted?.threadId === threadId)
+    return postReady(threadId, "memory", painted.parentThreadId);
+  if (refusedThread === threadId) return postRefusal(threadId);
+  return false;
 }
 
 export function createEmbedReadyWatch(): EmbedReadyWatch {
-  let before: ReadonlySet<Element> = new Set();
   let reported: string | null = null;
-  let refused: string | null = null;
   let waiting: {
     readonly threadId: string;
+    readonly selector: string;
     readonly from: EmbedPaintSource;
     readonly parentThreadId: string | undefined;
   } | null = null;
-  let grace: ReturnType<typeof setTimeout> | undefined;
-  let graceOver = false;
-  const fresh = (selector: string) => {
-    for (const element of document.querySelectorAll(selector))
-      if (!before.has(element)) return true;
-    return false;
-  };
-  let draws: EmbedDraws = "nothing";
-  const drawn = (child: boolean) => {
-    if (draws === "nothing") return true;
-    if (graceOver) return document.querySelector(child ? SHOWN : DRAWN) !== null;
-    return fresh(draws === "rows" ? ROW : DRAWN);
-  };
   const check = () => {
-    if (waiting !== null && drawn(waiting.parentThreadId !== undefined))
+    if (waiting !== null && document.querySelector(waiting.selector) !== null)
       send(waiting.threadId, waiting.from, waiting.parentThreadId);
   };
   const observer = new MutationObserver(check);
   const stop = () => {
     observer.disconnect();
     waiting = null;
-    clearTimeout(grace);
   };
   const send = (threadId: string, from: EmbedPaintSource, parentThreadId?: string) => {
     stop();
@@ -91,40 +81,32 @@ export function createEmbedReadyWatch(): EmbedReadyWatch {
   return {
     navigating: () => {
       stop();
-      before = new Set(document.querySelectorAll(DRAWN));
       reported = null;
-      refused = null;
+      refusedThread = null;
       painted = null;
     },
-    report: (threadId, settled, next, from, parentThreadId) => {
+    report: (threadId, key, from, parentThreadId) => {
       stop();
-      if (!settled || reported === threadId) return;
-      draws = next;
-      graceOver = false;
-      waiting = { threadId, from, parentThreadId };
+      if (reported === threadId) return;
+      if (key === null) return send(threadId, from, parentThreadId);
+      waiting = {
+        threadId,
+        selector: `[${DRAWN_ATTRIBUTE}="${CSS.escape(key)}"]`,
+        from,
+        parentThreadId,
+      };
       check();
       if (waiting === null) return;
       observer.observe(document.body, {
         childList: true,
         subtree: true,
-        attributeFilter: ["data-timeline-row-kind", "data-timeline-empty", "data-timeline-root"],
+        attributeFilter: [DRAWN_ATTRIBUTE],
       });
-      grace = setTimeout(() => {
-        graceOver = true;
-        check();
-      }, NO_ROWS_GRACE_MS);
     },
     refuse: (threadId) => {
       stop();
-      if (refused === threadId) return;
-      if (
-        postToEmbedHost({
-          type: EMBED_ROUTE_REFUSED_MESSAGE,
-          thread: threadId,
-          reason: "not-visible",
-        })
-      )
-        refused = threadId;
+      if (refusedThread === threadId) return;
+      if (postRefusal(threadId)) refusedThread = threadId;
     },
     stop,
   };
