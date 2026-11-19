@@ -51,8 +51,7 @@ function postRefusal(threadId: string): boolean {
 }
 
 export function repeatEmbedAnswer(threadId: string): boolean {
-  if (painted?.threadId === threadId)
-    return postReady(threadId, "memory", painted.parentThreadId);
+  if (painted?.threadId === threadId) return postReady(threadId, "memory", painted.parentThreadId);
   if (refusedThread === threadId) return postRefusal(threadId);
   return false;
 }

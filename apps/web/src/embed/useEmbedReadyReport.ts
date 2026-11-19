@@ -76,6 +76,17 @@ export function useEmbedReadyReport(
         ? undefined
         : embedParentThreadId(scopeThreadRef(refEnvironmentId, refThreadId));
     watch.report(threadId, key, from, parentThreadId);
-  }, [watch, connected, threadId, refused, refEnvironmentId, refThreadId, settled, key, from]);
+  }, [
+    watch,
+    connected,
+    threadId,
+    refused,
+    unavailable,
+    refEnvironmentId,
+    refThreadId,
+    settled,
+    key,
+    from,
+  ]);
   return unavailable;
 }
