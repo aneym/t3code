@@ -1,9 +1,14 @@
-import type { EmbedReadyMessage, EmbedRouteRefusedMessage } from "@t3tools/contracts";
+import {
+  EMBED_KEY_MESSAGE,
+  EMBED_NUMBER_KEYS,
+  type EmbedNumberKeyMessage,
+  type EmbedReadyMessage,
+  type EmbedRouteRefusedMessage,
+} from "@t3tools/contracts";
 
 const EMBED_PATH_PREFIX = "/embed/";
 
 export const EMBED_THEME_MESSAGE = "t3-embed/theme";
-export const EMBED_KEY_MESSAGE = "t3-embed/key";
 export const EMBED_OPEN_MESSAGE = "t3-embed/open";
 const EMBED_CLEAR_MESSAGE = "t3-embed/clear";
 const EMBED_KEYS_MESSAGE = "t3-embed/keys";
@@ -73,6 +78,7 @@ export type EmbedPress = {
 export type EmbedOutboundMessage =
   | EmbedReadyMessage
   | EmbedRouteRefusedMessage
+  | EmbedNumberKeyMessage
   | (EmbedSendMark & {
       readonly type: typeof EMBED_SEND_MARK_MESSAGE;
       readonly thread: string;
@@ -265,16 +271,20 @@ const LETTER_CHORDS: Readonly<Record<string, string>> = {
   KeyT: "mod+t",
   Comma: "mod+,",
 };
-const DIGIT_CODE = /^Digit([1-9])$/;
 
 export function reservedEmbedChord(event: KeyboardEvent, mac: boolean): string | null {
   const mod = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   if (!mod || event.altKey) return null;
   if (event.shiftKey) return SHIFT_CHORDS[event.code] ?? null;
-  const letter = LETTER_CHORDS[event.code];
-  if (letter !== undefined) return letter;
-  const digit = DIGIT_CODE.exec(event.code);
-  return digit ? `mod+${digit[1]}` : null;
+  return LETTER_CHORDS[event.code] ?? null;
+}
+
+export function embedNumberKey(event: KeyboardEvent): EmbedNumberKeyMessage | null {
+  if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) return null;
+  const key = EMBED_NUMBER_KEYS.find((digit) => event.code === `Digit${digit}`);
+  return key === undefined
+    ? null
+    : { type: EMBED_KEY_MESSAGE, key, meta: event.metaKey, ctrl: event.ctrlKey };
 }
 
 export function normalizeEmbedOrigins(entries: ReadonlyArray<string>): ReadonlySet<string> {
