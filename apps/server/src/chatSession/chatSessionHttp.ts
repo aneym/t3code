@@ -12,11 +12,14 @@ import { requestUrl } from "../requestUrl.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ChatSessionAccess from "./ChatSessionAccess.ts";
 import * as ChatSessionGrants from "./ChatSessionGrants.ts";
+import { ChatRequestThreads } from "./chatSessionState.ts";
 import * as ChatThreadSets from "./ChatThreadSets.ts";
 
 const AUTHORIZATION_SCHEMES = ["Bearer ", "DPoP "];
 const READ_METHODS = new Set(["GET", "HEAD"]);
 const STATIC_PREFIXES = ["/embed/", "/assets/"];
+const SESSION_PATH = "/api/auth/session";
+const PUBLIC_READ_PATHS = new Set([SESSION_PATH, "/ws", "/.well-known/t3/environment"]);
 
 const claimsChatScope = (token: string): boolean => {
   try {
@@ -59,6 +62,7 @@ const layerGate = HttpRouter.middleware(
   Effect.gen(function* () {
     const sessions = yield* SessionStore;
     const grants = yield* ChatSessionGrants.ChatSessionGrants;
+    const sets = yield* ChatThreadSets.ChatThreadSets;
     const cookieNames = [sessions.cookieName, sessions.legacyCookieName].filter(
       (name): name is string => name !== undefined,
     );
@@ -90,14 +94,19 @@ const layerGate = HttpRouter.middleware(
         const path = url.value.pathname;
         const allowed =
           (READ_METHODS.has(request.method) &&
-            (path === "/api/auth/session" || path === "/ws" || isStaticPath(path))) ||
+            (PUBLIC_READ_PATHS.has(path) || isStaticPath(path))) ||
           (READ_METHODS.has(request.method) &&
             path.startsWith(`${ASSET_ROUTE_PREFIX}/`) &&
             (yield* grants.allowsPath(setId, path))) ||
           (request.method === "POST" &&
             path.startsWith(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`) &&
             (yield* grants.allowsPath(setId, path)));
-        return allowed ? yield* httpEffect : forbidden();
+        if (!allowed) return forbidden();
+        if (path !== SESSION_PATH) return yield* httpEffect;
+        const chat = yield* sets.forSession(session).pipe(Effect.orElseSucceed(() => undefined));
+        return yield* chat === undefined
+          ? httpEffect
+          : httpEffect.pipe(Effect.provideService(ChatRequestThreads, [...chat.threads]));
       });
   }),
   { global: true },

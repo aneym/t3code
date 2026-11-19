@@ -1,3 +1,5 @@
+import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { FetchHttpClient } from "effect/http";
@@ -7,6 +9,12 @@ import { environmentEndpointUrl } from "./endpoint.ts";
 import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiGroupClient } from "../rpc/http.ts";
 
 const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 10_000;
+const SHARED_DESCRIPTOR_MS = 5_000;
+
+const handedOff = new Map<
+  string,
+  { readonly at: number; readonly descriptor: ExecutionEnvironmentDescriptor }
+>();
 
 export const fetchRemoteEnvironmentDescriptor = Effect.fn(
   "clientRuntime.environment.fetchRemoteEnvironmentDescriptor",
@@ -25,4 +33,23 @@ export const fetchRemoteEnvironmentDescriptor = Effect.fn(
       credentials: "omit",
     }),
   );
+});
+
+export const fetchSharedEnvironmentDescriptor = Effect.fn(
+  "clientRuntime.environment.fetchSharedEnvironmentDescriptor",
+)(function* (input: { readonly httpBaseUrl: string; readonly timeoutMs?: number }) {
+  const descriptor = yield* fetchRemoteEnvironmentDescriptor(input);
+  handedOff.set(input.httpBaseUrl, { at: yield* Clock.currentTimeMillis, descriptor });
+  return descriptor;
+});
+
+export const takeSharedEnvironmentDescriptor = Effect.fn(
+  "clientRuntime.environment.takeSharedEnvironmentDescriptor",
+)(function* (input: { readonly httpBaseUrl: string }) {
+  const shared = handedOff.get(input.httpBaseUrl);
+  handedOff.delete(input.httpBaseUrl);
+  if (shared !== undefined && (yield* Clock.currentTimeMillis) - shared.at < SHARED_DESCRIPTOR_MS) {
+    return shared.descriptor;
+  }
+  return yield* fetchRemoteEnvironmentDescriptor(input);
 });

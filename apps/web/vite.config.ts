@@ -21,6 +21,7 @@ import {
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
+import { embedPreloadPlugin } from "./vite/embedPreload";
 import { warmBundledDevPlugin } from "./vite/warmBundledDev";
 import { formatAppDisplayName, resolveWebAppStageLabel } from "./src/branding.logic";
 
@@ -311,6 +312,7 @@ export default defineConfig(() => {
       bootstrapTitlePlugin(),
       devCompressionPlugin(),
       chunkCycleGuardPlugin(),
+      embedPreloadPlugin(),
       builtDev
         ? undefined
         : thirdPartyLicensesPlugin({

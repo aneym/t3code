@@ -49,7 +49,7 @@ import {
   orchestrationProtocolCompatibilityError,
 } from "./compatibility.ts";
 import { credentialConnectionId } from "./routes.ts";
-import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
+import { takeSharedEnvironmentDescriptor } from "../environment/descriptor.ts";
 
 export class ConnectionResolver extends Context.Service<
   ConnectionResolver,
@@ -296,7 +296,7 @@ export const make = Effect.gen(function* () {
     const { descriptor: authorizedDescriptor, ...prepared } = authorized;
     const descriptor =
       authorizedDescriptor ??
-      (yield* fetchRemoteEnvironmentDescriptor({
+      (yield* takeSharedEnvironmentDescriptor({
         httpBaseUrl: prepared.httpBaseUrl,
       }).pipe(
         Effect.mapError(mapRemoteEnvironmentError),

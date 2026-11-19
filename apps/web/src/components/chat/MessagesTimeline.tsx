@@ -556,7 +556,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     list.anchorVisibleContent({ key: anchorKey });
   };
 
-  // Turn and attempt folds reveal later rows rather than growing their own row.
   const onToggleTurnFold = (runId: RunId) => {
     preserveDisclosurePosition(`turn-fold:${runId}`);
     setExpandedRunIds((existing) => {
@@ -1401,6 +1400,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         {activityAnnouncer}
         <div
           className="flex h-full items-center justify-center ps-(--chat-lane-inset-start) pe-(--chat-lane-inset-end)"
+          data-timeline-empty="true"
           style={{ paddingBottom: emptyPlaceholderInset }}
         >
           <p className="text-sm text-muted-foreground">Send a message to start the conversation.</p>

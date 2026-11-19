@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect } from "react";
 
-import { useChatSession } from "../chatSessionMode";
+import { useChatSession, useChatSessionListsThread } from "../chatSessionMode";
 import { serverEnvironment } from "../state/server";
 import { useEnvironmentThread } from "../state/threads";
 import { embedKeptView, type EmbedKeptView } from "./embedKeptViewGate";
@@ -36,6 +36,7 @@ export function useEmbedKeptView(threadRef: ScopedThreadRef | null): EmbedKeptVi
   const liveConfig = useLiveConfig(threadRef?.environmentId ?? null);
   const environmentId = threadRef?.environmentId ?? null;
   const threadId = threadRef?.threadId ?? null;
+  const sessionListsThread = useChatSessionListsThread(threadId);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records when this thread was last shown, for least recently shown eviction in IndexedDB
   useEffect(() => {
     if (environmentId !== null && threadId !== null) noteKeptViewShown(environmentId, threadId);
@@ -47,6 +48,7 @@ export function useEmbedKeptView(threadRef: ScopedThreadRef | null): EmbedKeptVi
     hasData: Option.isSome(thread.data),
     chatSession,
     liveConfig,
+    sessionListsThread,
   });
 }
 

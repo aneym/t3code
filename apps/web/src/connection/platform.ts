@@ -20,7 +20,7 @@ import {
   Wakeups,
 } from "@t3tools/client-runtime/connection";
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
-import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
+import { fetchSharedEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import { EnvironmentRpcRequestObserver } from "@t3tools/client-runtime/rpc";
 import {
@@ -426,7 +426,7 @@ const layerCapabilities = Layer.effectContext(
 const loadPrimaryConnectionRegistration = Effect.fn(
   "web.connectionPlatform.loadPrimaryConnectionRegistration",
 )(function* (resolved: PrimaryEnvironmentTarget) {
-  const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+  const descriptor = yield* fetchSharedEnvironmentDescriptor({
     httpBaseUrl: resolved.target.httpBaseUrl,
   }).pipe(
     Effect.provide(PrimaryEnvironmentHttpLayer.layer),
@@ -457,7 +457,7 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   }
   const httpBaseUrl = entry.httpBaseUrl;
   const wsBaseUrl = entry.wsBaseUrl;
-  const descriptor = yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
+  const descriptor = yield* fetchSharedEnvironmentDescriptor({ httpBaseUrl }).pipe(
     Effect.mapError(mapRemoteEnvironmentError),
   );
   const issuedAtEpochMs = yield* Clock.currentTimeMillis;

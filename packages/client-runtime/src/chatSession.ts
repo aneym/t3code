@@ -11,6 +11,7 @@ export type ChatThreadControls = "full" | "owner" | "seat";
 
 let active = false;
 let ownerThreadIds: ReadonlySet<string> = new Set();
+let sessionThreadIds: ReadonlySet<string> = new Set();
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -24,11 +25,25 @@ export function noteChatSessionScopes(scopes: ReadonlyArray<string> | undefined)
   notify();
 }
 
+const sameIds = (a: ReadonlySet<string>, b: ReadonlySet<string>) =>
+  a.size === b.size && [...a].every((id) => b.has(id));
+
 export function noteChatSessionOwners(ids: ReadonlyArray<ThreadId> | undefined): void {
   const next = new Set<string>(ids ?? []);
-  if (next.size === ownerThreadIds.size && [...next].every((id) => ownerThreadIds.has(id))) return;
+  if (sameIds(next, ownerThreadIds)) return;
   ownerThreadIds = next;
   notify();
+}
+
+export function noteChatSessionThreads(ids: ReadonlyArray<ThreadId> | undefined): void {
+  const next = new Set<string>(ids ?? []);
+  if (sameIds(next, sessionThreadIds)) return;
+  sessionThreadIds = next;
+  notify();
+}
+
+export function chatSessionListsThread(threadId: string): boolean {
+  return sessionThreadIds.has(threadId);
 }
 
 export function chatThreadControls(threadId: string | null | undefined): ChatThreadControls {

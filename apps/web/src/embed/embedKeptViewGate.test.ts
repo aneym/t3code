@@ -13,6 +13,7 @@ const base: EmbedKeptViewInput = {
   hasData: true,
   chatSession: true,
   liveConfig: sessionSees,
+  sessionListsThread: false,
 };
 
 describe("embedKeptView", () => {
@@ -22,8 +23,18 @@ describe("embedKeptView", () => {
     ["hands over to live data in place", { status: "live" }, "live"],
     ["holds a kept view the session does not list", { threadId: other }, "hold"],
     [
-      "holds a kept view until the live config names the session's threads",
+      "holds a kept view until the session or live config names the session's threads",
       { liveConfig: null },
+      "hold",
+    ],
+    [
+      "paints a kept view the signed-in session lists before the live config",
+      { liveConfig: null, sessionListsThread: true },
+      "kept",
+    ],
+    [
+      "holds it once the live config no longer lists it",
+      { threadId: other, sessionListsThread: true },
       "hold",
     ],
     [
