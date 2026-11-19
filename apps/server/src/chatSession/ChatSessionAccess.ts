@@ -17,6 +17,7 @@ import {
 import { guestHostImageType, repliesShowImage } from "../guest/guestAttachments.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { climbToSet, type LineageEntry } from "./ChatSessionDescendants.ts";
 import * as ChatSessionGrants from "./ChatSessionGrants.ts";
 import * as ChatThreadSets from "./ChatThreadSets.ts";
 import type { ChatSession } from "./ChatThreadSets.ts";
@@ -27,6 +28,7 @@ export interface ChatSessionAccess {
   readonly session: ChatSession;
   readonly inSet: (threadId: ThreadId) => boolean;
   readonly ownsThread: (threadId: ThreadId) => boolean;
+  readonly admits: (threadId: ThreadId) => Effect.Effect<boolean>;
   readonly modelEnabled: (selection: ModelSelection) => Effect.Effect<boolean>;
   readonly projectIds: Effect.Effect<ReadonlySet<ProjectId>>;
   readonly ownsUpload: (attachmentId: string) => Effect.Effect<boolean>;
@@ -49,6 +51,23 @@ const makeChatSessionAccess = (
   const inSet = (threadId: ThreadId) => session.threads.has(threadId);
   const ownsThread = (threadId: ThreadId) => inSet(threadId) && session.ownerThreads.has(threadId);
   const ownsUpload = (attachmentId: string) => grants.ownsUpload(session.setId, attachmentId);
+
+  const descendantHops = new Map<ThreadId, number>();
+  const hopsOf = (threadId: ThreadId) => (inSet(threadId) ? 0 : descendantHops.get(threadId));
+  const lineageOf = (threadId: ThreadId) =>
+    projections.getThreadShell(threadId).pipe(
+      Effect.map((shell) => shell?.lineage ?? null),
+      Effect.orElseSucceed(() => null),
+    );
+  const admits = (threadId: ThreadId): Effect.Effect<boolean> =>
+    hopsOf(threadId) !== undefined
+      ? Effect.succeed(true)
+      : climbToSet(threadId, hopsOf, lineageOf).pipe(
+          Effect.map((found) => {
+            for (const [id, hops] of found) descendantHops.set(id, hops);
+            return found.length > 0;
+          }),
+        );
 
   const modelEnabled = (selection: ModelSelection) =>
     providers.pipe(
@@ -129,6 +148,7 @@ const makeChatSessionAccess = (
     session,
     inSet,
     ownsThread,
+    admits,
     modelEnabled,
     projectIds,
     ownsUpload,
@@ -141,6 +161,7 @@ const makeChatSessionAccess = (
 export interface ChatSessionContext {
   readonly access: ChatSessionAccess;
   readonly grants: ChatSessionGrants.ChatSessionGrants["Service"];
+  readonly lineageIndex: Effect.Effect<ReadonlyArray<LineageEntry>>;
 }
 
 export class ChatSessionResolver extends Context.Service<
@@ -167,6 +188,9 @@ export const layer = Layer.effect(
         return {
           access: makeChatSessionAccess(chat, projections, grants, registry.getProviders),
           grants,
+          lineageIndex: projections
+            .listActiveShellIndex({ liveness: false })
+            .pipe(Effect.orElseSucceed((): ReadonlyArray<LineageEntry> => [])),
         };
       }),
     });

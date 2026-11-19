@@ -13,11 +13,13 @@ import * as Stream from "effect/Stream";
 
 import type { ChatSessionContext } from "./ChatSessionAccess.ts";
 import { rebuildChatCommand } from "./chatSessionCommands.ts";
+import { subagentClosure, type LineageEntry } from "./ChatSessionDescendants.ts";
 import {
   chatLifecycleEvent,
   chatServerConfig,
   chatServerConfigEvent,
   makeChatShellFilter,
+  setHops,
 } from "./chatSessionViews.ts";
 
 type Handlers = RpcGroup.HandlersFrom<RpcGroup.Rpcs<typeof WsRpcGroup>>;
@@ -58,12 +60,17 @@ const mapEffect = <A, B>(result: object, f: (value: A) => Effect.Effect<B>) => {
     : Effect.die(new Error("A chat session handler returned no effect."));
 };
 
+const admitted = (
+  threadIds: ReadonlyArray<ThreadId>,
+  admits: (id: ThreadId) => Effect.Effect<boolean>,
+) => Effect.filter(threadIds, admits, { concurrency: 4 });
+
 export function chatSessionHandlers<H extends ChatHandlers>(
   handlers: H,
   chat: ChatSessionContext | undefined,
 ): H {
   if (chat === undefined) return handlers;
-  const { access, grants } = chat;
+  const { access, grants, lineageIndex } = chat;
   const { setId, threads } = access.session;
   const overrides: {
     readonly [K in Overridden]: (
@@ -75,8 +82,11 @@ export function chatSessionHandlers<H extends ChatHandlers>(
       handlers[O.dispatchCommand](rebuildChatCommand(command), options),
     [O.subscribeShell]: (input, options) =>
       Stream.unwrap(
-        access.projectIds.pipe(
-          Effect.map((projectIds) =>
+        Effect.all([
+          access.projectIds,
+          input.afterSequence === undefined ? Effect.succeed([]) : lineageIndex,
+        ]).pipe(
+          Effect.map(([projectIds, seedEntries]) =>
             mapStream(
               handlers[O.subscribeShell](
                 {
@@ -89,29 +99,40 @@ export function chatSessionHandlers<H extends ChatHandlers>(
                 },
                 options,
               ),
-              makeChatShellFilter(threads, projectIds).apply,
+              makeChatShellFilter(threads, projectIds, seedEntries).apply,
             ),
           ),
         ),
       ),
     [O.getThreadTitles]: (input, options) =>
-      handlers[O.getThreadTitles]({ threadIds: input.threadIds.filter(access.inSet) }, options),
+      admitted(input.threadIds, access.admits).pipe(
+        Effect.flatMap(
+          (threadIds) =>
+            unwrap(handlers[O.getThreadTitles]({ threadIds }, options)) as Effect.Effect<unknown>,
+        ),
+      ),
     [O.getThreadLinkMetadata]: (input, options) =>
-      handlers[O.getThreadLinkMetadata](
-        { threadIds: input.threadIds.filter(access.inSet) },
-        options,
+      admitted(input.threadIds, access.admits).pipe(
+        Effect.flatMap(
+          (threadIds) =>
+            unwrap(
+              handlers[O.getThreadLinkMetadata]({ threadIds }, options),
+            ) as Effect.Effect<unknown>,
+        ),
       ),
     [O.getThreadFamily]: (input, options) =>
       mapEffect(
         handlers[O.getThreadFamily]({ threadId: input.threadId }, options),
         (family: {
           readonly snapshotSequence: number;
-          readonly threads: ReadonlyArray<{ readonly id: ThreadId }>;
-        }) =>
-          Effect.succeed({
+          readonly threads: ReadonlyArray<LineageEntry>;
+        }) => {
+          const kept = subagentClosure(setHops(threads), family.threads);
+          return Effect.succeed({
             snapshotSequence: family.snapshotSequence,
-            threads: family.threads.filter((thread) => access.inSet(thread.id)),
-          }),
+            threads: family.threads.filter((thread) => kept.has(thread.id)),
+          });
+        },
       ),
     [W.serverGetConfig]: (input, options) =>
       mapEffect(

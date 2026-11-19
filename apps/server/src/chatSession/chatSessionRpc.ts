@@ -4,6 +4,7 @@ import {
   type AssetCreateUrlInput,
   type AttachmentDeleteInput,
   type OrchestrationV2Command,
+  type SecretRequestAnswerInput,
   type ThreadId,
   type WsRpcGroup,
 } from "@t3tools/contracts";
@@ -22,6 +23,12 @@ const filtered: ChatRule = () => Effect.succeed(true);
 const sessionBound: ChatRule = () => Effect.succeed(true);
 const inThread: ChatRule = (payload, access) =>
   Effect.succeed(access.inSet((payload as { readonly threadId: ThreadId }).threadId));
+const readable: ChatRule = (payload, access) =>
+  access.admits((payload as { readonly threadId: ThreadId }).threadId);
+const secretAnswer: ChatRule = (payload, access) => {
+  const { answer } = payload as SecretRequestAnswerInput;
+  return answer.type === "reference" ? inThread(payload, access) : readable(payload, access);
+};
 const ownUpload: ChatRule = (payload, access) =>
   access.ownsUpload((payload as AttachmentDeleteInput).attachmentId);
 
@@ -31,21 +38,39 @@ const asset: ChatRule = (payload, access) => {
     case "attachment":
       return access.attachmentVisible(resource.attachmentId);
     case "tool-output-image":
-      return Effect.succeed(access.inSet(resource.threadId));
+      return access.admits(resource.threadId);
     case "media-file":
-      return access.inSet(resource.threadId)
-        ? access.messageShowsImage(resource.threadId, resource.path)
-        : Effect.succeed(false);
+      return access
+        .admits(resource.threadId)
+        .pipe(
+          Effect.flatMap((admitted) =>
+            admitted
+              ? access.messageShowsImage(resource.threadId, resource.path)
+              : Effect.succeed(false),
+          ),
+        );
     default:
       return Effect.succeed(false);
   }
 };
 
+const DESCENDANT_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
+  "runtime-request.respond",
+  "thread.user-input.dismiss",
+  "thread.visit",
+]);
+
 const dispatch: ChatRule = Effect.fn("chatSessionRpc.dispatch")(function* (payload, access) {
   const command = payload as OrchestrationV2Command;
   const threadIds = chatCommandThreadIds(command);
-  if (threadIds === null || !threadIds.every(access.inSet)) return false;
+  if (threadIds === null) return false;
   const threadId = threadIds[0];
+  if (!threadIds.every(access.inSet)) {
+    if (threadId === undefined || threadIds.length !== 1) return false;
+    if (!DESCENDANT_COMMANDS.has(command.type)) return false;
+    if (chatCommandAttachmentIds(command).length > 0) return false;
+    return yield* access.admits(threadId);
+  }
   switch (command.type) {
     case "thread.model-selection.set":
       return access.ownsThread(command.threadId)
@@ -132,25 +157,25 @@ const CHAT_SESSION_RPC = {
   [WS_METHODS.providerAuthSubscribe]: refuse,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: dispatch,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: refuse,
-  [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: readable,
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: refuse,
   [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: refuse,
   [ORCHESTRATION_V2_WS_METHODS.searchThreads]: refuse,
-  [ORCHESTRATION_V2_WS_METHODS.searchThread]: inThread,
-  [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.searchThread]: readable,
+  [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: readable,
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: refuse,
-  [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: readable,
   [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: filtered,
   [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: filtered,
   [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: refuse,
   [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: refuse,
-  [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: inThread,
-  [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: inThread,
-  [ORCHESTRATION_V2_WS_METHODS.getThreadHistoryPage]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: readable,
+  [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: readable,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadHistoryPage]: readable,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: refuse,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: filtered,
-  [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: inThread,
-  [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: readable,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: readable,
   [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: inThread,
   [WS_METHODS.projectsMutate]: refuse,
   [WS_METHODS.agentsSubscribeHomes]: refuse,
@@ -193,7 +218,7 @@ const CHAT_SESSION_RPC = {
   [WS_METHODS.serverSignalProcess]: refuse,
   [WS_METHODS.serverReportClientActivity]: sessionBound,
   [WS_METHODS.scheduledTasksSubscribe]: refuse,
-  [WS_METHODS.secretsAnswerRequest]: inThread,
+  [WS_METHODS.secretsAnswerRequest]: secretAnswer,
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: refuse,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: refuse,
   [WS_METHODS.cloudGetRelayClientStatus]: refuse,
