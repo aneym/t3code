@@ -10,6 +10,7 @@ import { postToEmbedHost } from "./embedHost";
 const ROW = "[data-timeline-row-kind]";
 const EMPTY = "[data-timeline-empty]";
 const DRAWN = `${ROW},${EMPTY},[data-timeline-root]`;
+const SHOWN = `${DRAWN},[data-embed-view]`;
 const NO_ROWS_GRACE_MS = 1000;
 
 export type EmbedDraws = "rows" | "view" | "nothing";
@@ -63,7 +64,7 @@ export function createEmbedReadyWatch(): EmbedReadyWatch {
   let draws: EmbedDraws = "nothing";
   const drawn = () => {
     if (draws === "nothing") return true;
-    if (graceOver) return document.querySelector(DRAWN) !== null;
+    if (graceOver) return document.querySelector(SHOWN) !== null;
     return fresh(draws === "rows" ? ROW : DRAWN);
   };
   const check = () => {

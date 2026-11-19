@@ -151,7 +151,7 @@ import {
 import { type LegendListRef } from "@legendapp/list/react";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { DEFAULT_INTERACTION_MODE, type ChatMessage } from "../types";
-import { buildThreadRouteParams } from "../threadRoutes";
+import { buildThreadRouteParams, threadRouteLink } from "../threadRoutes";
 import { useTheme } from "../hooks/useTheme";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
@@ -898,10 +898,7 @@ export default function ChatView(props: ChatViewProps) {
       return {
         title: parentSubagentThread?.title ?? "Parent thread",
         open: (): void => {
-          void navigate({
-            to: "/$environmentId/$threadId",
-            params: buildThreadRouteParams(parentSubagentThreadRef),
-          });
+          void navigate(threadRouteLink(parentSubagentThreadRef));
         },
       };
     }
