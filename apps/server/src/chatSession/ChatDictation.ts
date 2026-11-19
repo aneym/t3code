@@ -1,4 +1,6 @@
 import {
+  CHAT_DICTATION_BUDGET_MINUTES,
+  CHAT_DICTATION_REFUSALS,
   isChatSessionScopes,
   type AuthEnvironmentScope,
   type AuthSessionId,
@@ -21,7 +23,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ChatThreadSets from "./ChatThreadSets.ts";
 
 const AUDIO_BYTES_PER_SECOND = 16_000 * Float32Array.BYTES_PER_ELEMENT;
-const CHAT_DICTATION_BUDGET_SECONDS = 30 * 60;
+const CHAT_DICTATION_BUDGET_SECONDS = CHAT_DICTATION_BUDGET_MINUTES * 60;
 const BUDGET_WINDOW_MS = 24 * 60 * 60_000;
 const VOICE_TICKET_TTL_MS = 30_000;
 
@@ -33,14 +35,8 @@ export class ChatDictationRefusedError extends Schema.TaggedError<ChatDictationR
   },
 ) {}
 
-const refusals = {
-  not_owner: "This chat session does not own a thread in this environment.",
-  dictation_busy: "This chat session is already transcribing. Wait for it to finish.",
-  dictation_limit: `This chat session used its ${CHAT_DICTATION_BUDGET_SECONDS / 60} minutes of dictation for the last 24 hours.`,
-} as const;
-
-const refuse = (reason: keyof typeof refusals) =>
-  new ChatDictationRefusedError({ reason, message: refusals[reason] });
+const refuse = (reason: keyof typeof CHAT_DICTATION_REFUSALS) =>
+  new ChatDictationRefusedError({ reason, message: CHAT_DICTATION_REFUSALS[reason] });
 
 export interface ChatDictationSession {
   readonly sessionId: AuthSessionId;

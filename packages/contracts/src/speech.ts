@@ -355,3 +355,10 @@ export const SpeechStreamEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
 ]);
 export type SpeechStreamEvent = typeof SpeechStreamEvent.Type;
+
+export const CHAT_DICTATION_BUDGET_MINUTES = 30;
+export const CHAT_DICTATION_REFUSALS = {
+  not_owner: "This chat session does not own a thread in this environment.",
+  dictation_busy: "This chat session is already transcribing. Wait for it to finish.",
+  dictation_limit: `This chat session used its ${CHAT_DICTATION_BUDGET_MINUTES} minutes of dictation for the last 24 hours.`,
+} as const;
