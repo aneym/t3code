@@ -423,6 +423,11 @@ export default defineConfig(() => {
         output: {
           codeSplitting: {
             groups: [
+              {
+                name: "boot",
+                test: /^\0vite\/|[\\/]apps[\\/]web[\\/]src[\\/]lib[\\/]bootRetry\.ts$/,
+                priority: 3,
+              },
               { name: "main", test: /[\\/]apps[\\/]web[\\/]src[\\/]main\.tsx$/, priority: 2 },
               {
                 name: "thread",
