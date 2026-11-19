@@ -1,4 +1,5 @@
 import { withoutRailsDeskContext } from "@t3tools/client-runtime/user-message";
+import type { ServerProviderSkill } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { CircleAlertIcon, Clock3Icon } from "lucide-react";
 import { useEffect } from "react";
@@ -14,7 +15,15 @@ import {
 } from "../../embed/embedPendingSends";
 import { PENDING_STATE_WORDS, PENDING_WORDS } from "../../embed/embedPendingWords";
 import { cn } from "~/lib/utils";
+import { markdownProseDirection } from "~/textDirection";
 import { InlineButton } from "../ui/button";
+import {
+  BUBBLE_CHIP_CLASS_NAME,
+  CollapsibleUserMessageBody,
+  USER_BUBBLE_CLASS_NAME,
+} from "./UserMessageBody";
+
+const NO_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 
 type CommittedMessage = {
   readonly id: string;
@@ -54,14 +63,27 @@ function SentBubble(props: { readonly text: string; readonly failed?: boolean })
   return (
     <div
       className={cn(
-        "min-w-0 max-w-[80%] rounded-2xl bg-message px-3 py-2 text-message-foreground text-sm",
-        props.failed && "border border-dashed border-destructive",
+        USER_BUBBLE_CLASS_NAME,
+        BUBBLE_CHIP_CLASS_NAME,
+        "bg-message p-3",
+        props.failed && "outline-1 -outline-offset-1 outline-dashed outline-destructive",
       )}
     >
-      <p className="whitespace-pre-wrap wrap-anywhere">{props.text}</p>
+      <div dir={markdownProseDirection(props.text)}>
+        <CollapsibleUserMessageBody
+          text={props.text}
+          skills={NO_SKILLS}
+          markdownCwd={undefined}
+          threadRef={undefined}
+        />
+      </div>
     </div>
   );
 }
+
+const ROW_CLASS_NAME = "flex w-full min-w-0 flex-col items-end gap-1 pb-4";
+const STATUS_CLASS_NAME =
+  "flex min-h-7 w-full min-w-0 max-w-[80%] sm:min-h-6 items-center justify-end pe-1 text-end text-muted-foreground text-xs";
 
 function PendingSendRow(props: {
   readonly send: EmbedPendingSend | EmbedHostSend;
@@ -75,8 +97,9 @@ function PendingSendRow(props: {
   };
   if (state === "delivered") {
     return (
-      <li className="flex w-full min-w-0 flex-col items-end" data-pending-send={state} {...ids}>
+      <li className={ROW_CLASS_NAME} data-pending-send={state} {...ids}>
         <SentBubble text={props.send.text} />
+        <div aria-hidden className={STATUS_CLASS_NAME} />
       </li>
     );
   }
@@ -85,17 +108,14 @@ function PendingSendRow(props: {
   const actions = props.onSendNow !== null || props.onDiscard !== null;
   return (
     <li
-      className="flex w-full min-w-0 flex-col items-end gap-1"
+      className={ROW_CLASS_NAME}
       aria-label={PENDING_WORDS.row(state)}
       data-pending-send={state}
       {...ids}
     >
       <SentBubble text={props.send.text} failed={failed} />
-      <div
-        aria-live="polite"
-        className="min-w-0 max-w-[80%] pe-1 text-end text-muted-foreground text-xs"
-      >
-        <div className="overflow-x-clip">
+      <div aria-live="polite" className={STATUS_CLASS_NAME}>
+        <div className="min-w-0 overflow-x-clip">
           <div className="-me-[calc(0.8em_-_2px)] flex flex-wrap items-center justify-end">
             <span className="flex shrink-0 items-center whitespace-nowrap">
               <span className={cn("flex items-center gap-1.5", failed && "text-destructive")}>
@@ -161,7 +181,7 @@ export function EmbedPendingSends({
   return (
     <ol
       aria-label={PENDING_WORDS.list}
-      className="mx-auto flex w-full max-w-(--chat-content-max-width) flex-col items-end gap-3 pb-4"
+      className="mx-auto flex w-full max-w-(--chat-content-max-width) flex-col items-end"
       data-embed-pending-sends=""
     >
       {shownHost.map((send) => (
