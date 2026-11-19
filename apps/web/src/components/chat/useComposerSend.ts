@@ -72,7 +72,11 @@ import { heldIdsFor, holdSend, releaseHeldSend } from "./heldSendStore";
 import { holdOrSendThroughHost, sendComposerThroughHost } from "../../embed/embedComposerSend";
 import { typedAtFor, type PersonPress } from "../../railsWords/personPress";
 import { reportSaid } from "../../railsWords/reportSaid";
-import { isEmbedHostSendOn } from "../../embed/embedHostSend";
+import {
+  embedSendShape,
+  isEmbedHostSendOn,
+  postDirectToEmbedHost,
+} from "../../embed/embedHostSend";
 import { embedSendEnter, embedSendFailed, takeHeldEmbedSend } from "../../embed/embedSendMarks";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -796,19 +800,13 @@ export function useComposerSend(input: ComposerSendInput) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }
-    const plainText =
+    const shape =
       isServerThread &&
       !directAnnotation &&
       submissionIntent !== "background" &&
-      multipleModelSelections === null &&
-      composerAttachmentsSnapshot.length === 0 &&
-      composerFilesSnapshot.length === 0 &&
-      composerTerminalContextsSnapshot.length === 0 &&
-      composerPreviewAnnotationsSnapshot.length === 0 &&
-      composerReviewCommentsSnapshot.length === 0 &&
-      composerThreadContextsSnapshot.length === 0 &&
-      composerEnvironmentContextsSnapshot.length === 0 &&
-      messageTextForSend.trim() !== "";
+      multipleModelSelections === null
+        ? embedSendShape(sendSnapshot)
+        : null;
     const heldIds = isServerThread ? heldIdsFor(routeThreadKey, messageTextForSend) : null;
     const messageIdForSend = embedSendEnter(
       threadIdForSend,
@@ -828,7 +826,7 @@ export function useComposerSend(input: ComposerSendInput) {
       if (!shouldQueueBehindActiveRun) anchorNewTurn(scopedThreadKey(threadRef), row.id);
       return row;
     };
-    if (plainText && heldIds?.hostUnanswered !== true && isEmbedHostSendOn()) {
+    if (shape === "text" && heldIds?.hostUnanswered !== true && isEmbedHostSendOn()) {
       sendInFlightRef.current = true;
       const hostSend = await sendComposerThroughHost({
         row: rowFor(messageTextForSend, new Date().toISOString()),
@@ -1386,6 +1384,15 @@ export function useComposerSend(input: ComposerSendInput) {
           );
         }
         if (isServerThread) releaseHeldSend(routeThreadKey);
+        if (shape === "files") {
+          postDirectToEmbedHost({
+            thread: threadIdForSend,
+            commandId: commandIdForSend,
+            messageId: messageIdForSend,
+            text: messageTextForSend,
+            steer: turnDispatchMode === "steer",
+          });
+        }
         setKeepFullHistory(routeThreadKey, false);
         if (freshArm !== undefined) disarmFreshSession(routeThreadKey, freshArm);
         clearUsageLimitsFor(routeThreadKey);
