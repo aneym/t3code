@@ -20,6 +20,7 @@ import ChatThreadSets from "./ForkMigrations/016_ChatThreadSets.ts";
 import ChatSessionUrlGrants from "./ForkMigrations/017_ChatSessionUrlGrants.ts";
 import ArchivedThreadsIndex from "./ForkMigrations/018_ArchivedThreadsIndex.ts";
 import ChatSessionOwnerThreads from "./ForkMigrations/019_ChatSessionOwnerThreads.ts";
+import ScheduledTaskUpdatedBy from "./ForkMigrations/020_ScheduledTaskUpdatedBy.ts";
 
 const run = Migrator.make({});
 const loader = Migrator.fromRecord({
@@ -41,6 +42,7 @@ const loader = Migrator.fromRecord({
   "17_ChatSessionUrlGrants": ChatSessionUrlGrants,
   "18_ArchivedThreadsIndex": ArchivedThreadsIndex,
   "19_ChatSessionOwnerThreads": ChatSessionOwnerThreads,
+  "20_ScheduledTaskUpdatedBy": ScheduledTaskUpdatedBy,
 });
 
 export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {

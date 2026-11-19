@@ -2018,7 +2018,7 @@ const make = Effect.gen(function* () {
           modelSelection: existing.modelSelection,
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
-          createdBy: existing.createdBy,
+          createdBy: "agent",
           creationSource: existing.creationSource,
         };
         const { task } = yield* scheduledTasks
