@@ -6,6 +6,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  quietNoteOf,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -117,6 +118,8 @@ export function queuedRunBatchEvents(input: {
       senderEnvironmentId: _environment,
       senderEnvironmentLabel: _label,
       mcpEvent: _event,
+      linkedSender: _linked,
+      quietNote: _quiet,
       ...base
     } = item;
     return [
@@ -156,6 +159,8 @@ export function queuedRunBatchEvents(input: {
           ...base,
           ...(message.context ? { context: message.context } : {}),
           ...messageSender(message),
+          ...(message.linkedSender === undefined ? {} : { linkedSender: message.linkedSender }),
+          ...quietNoteOf(message),
         },
       },
     ];
