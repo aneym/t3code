@@ -59,6 +59,21 @@ export function AgentLoadBalancingSettings({
         }
       />
       <SettingsRow
+        title="Send to another machine when full"
+        description="When this machine has no free builder slot or is over its health line, a child that names no machine starts on a linked machine with room. Agent homes use the same folder there."
+        serverScoped
+        settingKeys={["agentPlacementSpillWhenFull"]}
+        control={
+          <ScopedSwitch
+            settingKeys={["agentPlacementSpillWhenFull"]}
+            checked={settings.agentPlacementSpillWhenFull}
+            disabled={!settings.agentLoadBalancingEnabled}
+            onCheckedChange={(checked) => update({ agentPlacementSpillWhenFull: Boolean(checked) })}
+            aria-label="Send children to another machine when this one is full"
+          />
+        }
+      />
+      <SettingsRow
         title="Pause placement here"
         description={
           settings.agentPlacementPaused === null

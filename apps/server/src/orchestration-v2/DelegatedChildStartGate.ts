@@ -24,6 +24,7 @@ import * as HostResources from "../resourceTelemetry/HostResources.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { ClaimedSlot, type ClaimResult, makeClaims } from "./DelegatedChildClaims.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
@@ -82,6 +83,8 @@ export class DelegatedChildStartGate extends Context.Service<
       dispatch: (held: boolean) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E, R>;
     readonly isHeld: (run: HeldRun) => boolean;
+    readonly claim: (owner: AdmitOwner) => Effect.Effect<ClaimResult>;
+    readonly unclaim: (token: number) => Effect.Effect<void>;
     readonly room: Effect.Effect<AgentPlacementRoom>;
     readonly hold: (runId: RunId) => Effect.Effect<AgentPlacementHold | undefined>;
     readonly expired: (runId: RunId, now: number) => Effect.Effect<string | undefined>;
@@ -102,6 +105,7 @@ const make = Effect.gen(function* () {
   const lastStart = new Map<string, number>();
   const released = new Set<string>();
   const homeByProject = new Map<string, string | null>();
+  const claims = makeClaims();
   let pending = true;
 
   const readConfig = settings.getSettings.pipe(
@@ -276,9 +280,12 @@ const make = Effect.gen(function* () {
     return { rows, counts, room };
   });
 
-  const room = readConfig.pipe(
-    Effect.flatMap(snapshot),
-    Effect.map((current) => current.room),
+  const room = Effect.gen(function* () {
+    const config = yield* readConfig;
+    const current = (yield* snapshot(config)).room;
+    const breach = yield* breachOf(config, yield* Clock.currentTimeMillis);
+    return breach === undefined ? current : { ...current, breach };
+  }).pipe(
     Effect.orElseSucceed((): AgentPlacementRoom => ({ cap: null, active: 0, held: 0, free: null })),
   );
 
@@ -339,29 +346,38 @@ const make = Effect.gen(function* () {
       : threads.dispatch({ type: "prepared-run.release", ...input }).pipe(Effect.asVoid);
   };
 
+  const decide = Effect.fn("DelegatedChildStartGate.decide")(function* (
+    config: Config,
+    owner: AdmitOwner,
+  ) {
+    const { limits } = config;
+    const remote = "projectId" in owner;
+    if ((limits.size === 0 && !config.byRoom) || (remote && !config.byRoom)) return undefined;
+    const rootProject = remote
+      ? owner.projectId
+      : yield* rootProjectOf(owner.parentThreadId).pipe(Effect.orElseSucceed(() => null));
+    const groups = yield* groupsOf(rootProject, limits);
+    if (groups.length === 0 && !config.byRoom) return undefined;
+    const rows = yield* readChildren(config.byRoom).pipe(Effect.orElseSucceed(() => []));
+    const activeChildren = yield* readActiveChildren.pipe(Effect.orElseSucceed(() => []));
+    const { running, queued } = yield* tally(rows, activeChildren, limits);
+    const now = yield* Clock.currentTimeMillis;
+    const counted = claims.count(running, now);
+    const breach = yield* breachOf(config, now).pipe(Effect.orElseSucceed(() => undefined));
+    const held =
+      breach !== undefined ||
+      groups.some((group) => (queued.get(group) ?? 0) > 0 || !allows(limits, group, counted, now));
+    return { groups, held, breach, now };
+  });
+
   const admit: DelegatedChildStartGate["Service"]["admit"] = (owner, dispatch) =>
     lock.withPermit(
       Effect.gen(function* () {
-        const config = yield* readConfig;
-        const { limits } = config;
-        const remote = "projectId" in owner;
-        if ((limits.size === 0 && !config.byRoom) || (remote && !config.byRoom))
-          return yield* dispatch(false);
-        const rootProject = remote
-          ? owner.projectId
-          : yield* rootProjectOf(owner.parentThreadId).pipe(Effect.orElseSucceed(() => null));
-        const groups = yield* groupsOf(rootProject, limits);
-        if (groups.length === 0 && !config.byRoom) return yield* dispatch(false);
-        const rows = yield* readChildren(config.byRoom).pipe(Effect.orElseSucceed(() => []));
-        const activeChildren = yield* readActiveChildren.pipe(Effect.orElseSucceed(() => []));
-        const { running, queued } = yield* tally(rows, activeChildren, limits);
-        const now = yield* Clock.currentTimeMillis;
-        const breach = yield* breachOf(config, now).pipe(Effect.orElseSucceed(() => undefined));
-        const held =
-          breach !== undefined ||
-          groups.some(
-            (group) => (queued.get(group) ?? 0) > 0 || !allows(limits, group, running, now),
-          );
+        const own = yield* Effect.serviceOption(ClaimedSlot);
+        if (Option.isSome(own) && claims.take(own.value.token)) return yield* dispatch(false);
+        const decision = yield* decide(yield* readConfig, owner);
+        if (decision === undefined) return yield* dispatch(false);
+        const { groups, held, breach, now } = decision;
         const result = yield* dispatch(held);
         if (held) pending = true;
         else for (const group of groups) lastStart.set(group, now);
@@ -374,6 +390,25 @@ const make = Effect.gen(function* () {
         return result;
       }),
     );
+
+  const claim: DelegatedChildStartGate["Service"]["claim"] = (owner) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          const decision = yield* decide(yield* readConfig, owner);
+          if (decision === undefined) return {};
+          if (decision.held)
+            return { wouldHold: decision.breach ?? `No free builder slot on ${yield* label}.` };
+          for (const group of decision.groups) lastStart.set(group, decision.now);
+          return { token: claims.add(decision.groups, decision.now) };
+        }),
+      )
+      .pipe(Effect.orElseSucceed((): ClaimResult => ({})));
+
+  const unclaim: DelegatedChildStartGate["Service"]["unclaim"] = (token) =>
+    Effect.sync(() => {
+      claims.take(token);
+    });
 
   const tick = lock
     .withPermit(
@@ -393,8 +428,10 @@ const make = Effect.gen(function* () {
           return;
         }
         const activeChildren = yield* readActiveChildren;
-        const { running, groups } = yield* tally(rows, activeChildren, limits);
+        const counts = yield* tally(rows, activeChildren, limits);
+        const { groups } = counts;
         const now = yield* Clock.currentTimeMillis;
+        const running = claims.count(counts.running, now);
         if ((yield* breachOf(config, now)) !== undefined) return;
         const blocked = new Set<string>();
         for (const row of held) {
@@ -437,7 +474,7 @@ const make = Effect.gen(function* () {
 
   yield* forkParked(Effect.forever(Effect.sleep(TICK).pipe(Effect.andThen(tick))));
 
-  return DelegatedChildStartGate.of({ admit, isHeld, room, hold, expired });
+  return DelegatedChildStartGate.of({ admit, claim, unclaim, isHeld, room, hold, expired });
 });
 
 export const layer = Layer.effect(DelegatedChildStartGate, make);

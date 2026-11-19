@@ -6,6 +6,9 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
+import { agentHomeKeyOfRoot } from "../agents/AgentHomeOfPath.ts";
+import { ClaimedSlot } from "../orchestration-v2/DelegatedChildClaims.ts";
+import * as Gate from "../orchestration-v2/DelegatedChildStartGate.ts";
 import * as AgentPlacement from "../peer/AgentPlacement.ts";
 import * as PlacementRoom from "../peer/PlacementRoom.ts";
 import * as WorktreeTransfer from "../peer/WorktreeTransfer.ts";
@@ -43,11 +46,31 @@ const unpushedParentCommit = Effect.fn("AgentDelegation.unpushedParentCommit")(f
     : `The parent's commit ${base.commit.slice(0, 12)} exists only here; it is on no remote branch.`;
 });
 
-const localOnlyReason = Effect.fn("AgentDelegation.localOnlyReason")(function* (
+const homeProject = Effect.fn("AgentDelegation.homeProject")(function* (
   input: OrchestratorMcpDelegateTaskInput,
   parent: Caller,
 ) {
-  if (input.isolation !== "worktree") return "Shared isolation keeps the parent's workspace.";
+  const projectId = input.target?.projectId ?? parent?.projectId;
+  const projects = yield* Effect.serviceOption(Projects.ProjectService);
+  if (projectId === undefined || Option.isNone(projects)) return false;
+  const project = yield* projects.value
+    .getById(projectId)
+    .pipe(Effect.orElseSucceed(() => Option.none()));
+  return (
+    Option.isSome(project) &&
+    (yield* Effect.promise(() => agentHomeKeyOfRoot(project.value.workspaceRoot))) !== undefined
+  );
+});
+
+const localOnlyReason = Effect.fn("AgentDelegation.localOnlyReason")(function* (
+  input: OrchestratorMcpDelegateTaskInput,
+  parent: Caller,
+  spill: boolean,
+) {
+  if (input.isolation !== "worktree")
+    return spill && (yield* homeProject(input, parent))
+      ? undefined
+      : "Shared isolation keeps the parent's workspace.";
   if (input.baseRef !== undefined)
     return input.baseRef.startsWith("origin/")
       ? undefined
@@ -112,10 +135,10 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
   const caller = yield* readCaller();
   const inherited = caller.caller?.modelSelection;
   const settings = yield* Effect.serviceOption(Settings.ServerSettingsService);
-  const delegatedChildModel = Option.isNone(settings)
-    ? null
-    : ((yield* settings.value.getSettings.pipe(Effect.orElseSucceed(() => undefined)))
-        ?.delegatedChildModel ?? null);
+  const current = Option.isNone(settings)
+    ? undefined
+    : yield* settings.value.getSettings.pipe(Effect.orElseSucceed(() => undefined));
+  const delegatedChildModel = current?.delegatedChildModel ?? null;
   const instanceId =
     input.target?.providerInstanceId ??
     (input.target?.driverKind === undefined
@@ -135,11 +158,42 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
     instanceId === undefined || model === undefined
       ? undefined
       : { instanceId, model, ...(options === undefined ? {} : { options }) };
+  const gate = yield* Effect.serviceOption(Gate.DelegatedChildStartGate);
+  const parentThreadId = scope.thread?.threadId;
+  const claim =
+    current?.agentPlacementSpillWhenFull === true &&
+    Option.isSome(gate) &&
+    parentThreadId !== undefined
+      ? yield* gate.value.claim({ parentThreadId })
+      : {};
+  const spill = claim.wouldHold !== undefined;
+  const token = claim.token;
+  const claimed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    token === undefined || Option.isNone(gate)
+      ? effect
+      : effect.pipe(
+          Effect.provideService(ClaimedSlot, ClaimedSlot.of({ token })),
+          Effect.ensuring(gate.value.unclaim(token)),
+        );
   const stayReason =
     modelSelection === undefined
       ? "No model to match across environments; name target.model to let it move."
-      : yield* localOnlyReason(input, caller.caller);
-  const selected = yield* placement.value.select(scope, {
+      : yield* localOnlyReason(input, caller.caller, spill);
+  return yield* claimed(
+    place(scope, service, placement.value, input, modelSelection, stayReason, spill),
+  );
+});
+
+const place = Effect.fn("AgentDelegation.place")(function* (
+  scope: Invocation.McpInvocationScope,
+  service: Orchestrator.OrchestratorMcpService["Service"],
+  placement: AgentPlacement.AgentPlacement["Service"],
+  input: OrchestratorMcpDelegateTaskInput,
+  modelSelection: ModelSelection | undefined,
+  stayReason: string | undefined,
+  spill: boolean,
+) {
+  const selected = yield* placement.select(scope, {
     operation: "delegate",
     projectId: input.target?.projectId,
     repository: input.target?.repository,
@@ -147,6 +201,7 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
     driverKind: input.target?.driverKind,
     clientRequestId: input.clientRequestId,
     ...(stayReason === undefined ? {} : { localOnlyReason: stayReason }),
+    ...(spill ? { spill } : {}),
   });
   if (
     input.target?.repository !== undefined &&
@@ -156,7 +211,7 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
       yield* service.delegateTask(scope, yield* resolveRepository(input, scope.environmentId)),
     );
   if (selected === undefined) return yield* withHold(yield* service.delegateTask(scope, input));
-  const { result, placement: receipt } = yield* placement.value.run(
+  const { result, placement: receipt } = yield* placement.run(
     scope,
     selected,
     input.clientRequestId,
@@ -175,6 +230,6 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
     ),
   );
   const childThreadId = result.remoteChild?.threadId ?? result.childThreadId;
-  if (childThreadId !== null) yield* placement.value.record(childThreadId, receipt);
+  if (childThreadId !== null) yield* placement.record(childThreadId, receipt);
   return yield* withHold({ ...result, placement: receipt });
 });

@@ -41,6 +41,7 @@ export const AgentPlacementRoom = Schema.Struct({
   held: Schema.Finite,
   free: Schema.NullOr(Schema.Finite),
   paused: Schema.optionalKey(Schema.String),
+  breach: Schema.optionalKey(Schema.String),
 });
 export type AgentPlacementRoom = typeof AgentPlacementRoom.Type;
 

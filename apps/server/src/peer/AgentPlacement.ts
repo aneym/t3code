@@ -25,7 +25,6 @@ import * as Settings from "../serverSettings.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import * as Projects from "../project/ProjectService.ts";
 import * as Identities from "../project/RepositoryIdentityResolver.ts";
-import { repositoryIdentityKeys } from "../project/RepositoryIdentityKeys.ts";
 import * as Resources from "../resourceTelemetry/HostResources.ts";
 import * as Environment from "../environment/ServerEnvironment.ts";
 import * as Peers from "./PeerMcpClient.ts";
@@ -34,6 +33,7 @@ import * as PlacementSnapshots from "./PlacementSnapshots.ts";
 import * as PlacementDecisions from "./PlacementDecisions.ts";
 import * as PlacementWeights from "./PlacementWeights.ts";
 import * as PlacementFallback from "./PlacementFallback.ts";
+import { pickWinner, placementKeys } from "./PlacementSpill.ts";
 import * as Room from "./PlacementRoom.ts";
 import * as Invocation from "../mcp/McpInvocationContext.ts";
 import { assertLiveCaller, readCaller, unavailable } from "../mcp/threadAccess.ts";
@@ -58,6 +58,7 @@ export class AgentPlacement extends Context.Service<
         readonly driverKind?: ProviderDriverKind | undefined;
         readonly clientRequestId?: string | undefined;
         readonly localOnlyReason?: string | undefined;
+        readonly spill?: boolean | undefined;
       },
     ) => Effect.Effect<Selected | undefined, OrchestratorMcpFailure>;
     readonly run: PlacementFallback.Run;
@@ -197,14 +198,8 @@ const make = Effect.gen(function* () {
             projectId === undefined
               ? undefined
               : yield* projects.getById(projectId).pipe(Effect.map(Option.getOrUndefined));
-          const keys =
-            repository === undefined
-              ? repositoryIdentityKeys(
-                  project === undefined
-                    ? undefined
-                    : yield* identities.resolve(project.workspaceRoot),
-                )
-              : [repository];
+          const spill = input.spill === true;
+          const keys = yield* placementKeys(identities, project?.workspaceRoot, repository, spill);
           if (keys.length === 0)
             return local("No repository identity to match across environments.");
           const localProviders = yield* providers.getProviders;
@@ -331,6 +326,7 @@ const make = Effect.gen(function* () {
               environmentId !== scope.environmentId && mapped === projectId,
           );
           if (
+            !spill &&
             input.projectId !== undefined &&
             matching.has(scope.environmentId) &&
             weightOf(scope.environmentId) > 0 &&
@@ -340,18 +336,18 @@ const make = Effect.gen(function* () {
           const pinned = current.agentPlacementPinnedEnvironmentId;
           if (pinned !== null && matching.has(pinned))
             return decided(pinned, "pinned", "Pinned to this environment in settings.");
-          const winner = scores
-            .filter((entry) => entry.skipped === undefined && entry.score > 0)
-            .toSorted((left, right) => right.score - left.score)[0];
+          const winner = pickWinner(scores, scope.environmentId, spill);
           const queued =
-            winner === undefined && byRoom
+            winner === undefined && byRoom && !spill
               ? Room.queuePick(scores, matching, now, current.agentPlacementMaxHoldMinutes)
               : undefined;
           if (queued !== undefined)
             return decided(queued.environmentId, "auto", queued.reason, queued.hold);
           if (winner === undefined)
             return local(
-              "No environment is under its health line with a match; launching here.",
+              spill
+                ? "No other machine has room; holding here."
+                : "No environment is under its health line with a match; launching here.",
               scores,
               now,
             );
