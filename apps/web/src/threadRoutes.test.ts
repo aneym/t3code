@@ -186,6 +186,17 @@ describe("threadRoutes", () => {
         },
       }),
     ).toBe("ready");
+    expect(
+      resolveThreadRouteRenderState({
+        ...route,
+        bootstrapComplete: false,
+        unlistedThreadDetail: {
+          ...EMPTY_ENVIRONMENT_THREAD_STATE,
+          status: "live",
+          data: Option.some(makeThreadProjectionFixture()),
+        },
+      }),
+    ).toBe("ready");
   });
 
   it.each(["missing", "deleted", "archived"] as const)(
