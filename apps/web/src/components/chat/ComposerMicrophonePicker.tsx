@@ -100,6 +100,7 @@ export function ComposerMicrophonePicker(props: { disabled?: boolean | undefined
                   size="icon-xs"
                   variant="ghost"
                   aria-label={label}
+                  data-composer-microphone-picker=""
                   className="shrink-0"
                 />
               }

@@ -121,10 +121,10 @@ export function ComposerSpeechButton(props: {
   );
   if (!embedded || props.size === "compact") return button;
   return (
-    <span className="flex shrink-0 items-center">
+    <>
       {button}
       <ComposerMicrophonePicker disabled={props.disabled} />
-    </span>
+    </>
   );
 }
 
