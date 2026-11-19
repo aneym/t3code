@@ -69,13 +69,14 @@ export function createEmbedReadyWatch(): EmbedReadyWatch {
     return false;
   };
   let draws: EmbedDraws = "nothing";
-  const drawn = () => {
+  const drawn = (child: boolean) => {
     if (draws === "nothing") return true;
-    if (graceOver) return document.querySelector(SHOWN) !== null;
+    if (graceOver) return document.querySelector(child ? SHOWN : DRAWN) !== null;
     return fresh(draws === "rows" ? ROW : DRAWN);
   };
   const check = () => {
-    if (waiting !== null && drawn()) send(waiting.threadId, waiting.from, waiting.parentThreadId);
+    if (waiting !== null && drawn(waiting.parentThreadId !== undefined))
+      send(waiting.threadId, waiting.from, waiting.parentThreadId);
   };
   const observer = new MutationObserver(check);
   const stop = () => {
