@@ -427,7 +427,7 @@ export default defineConfig(() => {
             groups: [
               {
                 name: "boot",
-                test: /^\0vite\/|[\\/]apps[\\/]web[\\/]src[\\/]lib[\\/]bootRetry\.ts$/,
+                test: /^\0vite\/|[\\/]apps[\\/]web[\\/]src[\\/](lib[\\/]bootRetry|embed[\\/]embedEarlyDescriptor)\.ts$/,
                 priority: 10,
               },
               {
