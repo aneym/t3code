@@ -34,3 +34,11 @@ export function useChatSessionListsThread(threadId: string | null): boolean {
     () => false,
   );
 }
+
+export const ANSWER_ONLY_REASON = "Run by its parent agent";
+
+export function useComposerSendGate(canOperateThread: boolean, threadId: string): string | null {
+  const controls = useChatThreadControls(threadId);
+  if (!canOperateThread) return "This connection cannot change threads.";
+  return controls === "answer" ? ANSWER_ONLY_REASON : null;
+}

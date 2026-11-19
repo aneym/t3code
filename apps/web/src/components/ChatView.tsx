@@ -173,7 +173,8 @@ import {
   useThreadPreviewCanvasSource,
 } from "./preview/ThreadPreviewMiniPlayer";
 import { createChatCanvasStore, resolveChatCanvasModel } from "./chat/canvasStore";
-import { usePreviewSession } from "./preview/usePreviewSession";
+import { PreviewSessionSync } from "./preview/PreviewSessionSync";
+import { useComposerSendGate } from "../chatSessionMode";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 
 import {
@@ -445,6 +446,7 @@ export default function ChatView(props: ChatViewProps) {
   const embedHostConnected = useEmbedHostConnected();
   const bare = embedHostConnected || embedded;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const sendGate = useComposerSendGate(canOperateThread, threadId);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
@@ -1798,7 +1800,7 @@ export default function ChatView(props: ChatViewProps) {
   };
   const focusComposerStable = useStableCallback(focusComposer);
   const canInterruptRunningThread =
-    canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
+    sendGate === null && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
   const onInterrupt = async () => {
     if (
       !activeThread ||
@@ -3608,8 +3610,8 @@ export default function ChatView(props: ChatViewProps) {
                                 canResume={canResume}
                                 isRevertingCheckpoint={isRevertingCheckpoint}
                                 sendDisabledReason={
-                                  !canOperateThread
-                                    ? "This connection cannot change threads."
+                                  sendGate !== null
+                                    ? sendGate
                                     : isEnvironmentChanging
                                       ? "Preparing machine"
                                       : isRevertingCheckpoint
@@ -4011,9 +4013,4 @@ export default function ChatView(props: ChatViewProps) {
       {content}
     </FileMetadataThreadProvider>
   );
-}
-
-function PreviewSessionSync(props: { readonly threadRef: ScopedThreadRef }) {
-  usePreviewSession(props.threadRef);
-  return null;
 }

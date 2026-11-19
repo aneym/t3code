@@ -59,7 +59,7 @@ import {
 import { useRef, useState, type ReactNode } from "react";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
-import { buildThreadRouteParams } from "../../threadRoutes";
+import { threadRouteLink } from "../../threadRoutes";
 import {
   useProjects,
   useQuietThreadShell,
@@ -287,8 +287,7 @@ function RemoteSubagentRow(props: {
               onClick={() => {
                 if (environment === null) return;
                 void navigate({
-                  to: "/$environmentId/$threadId",
-                  params: buildThreadRouteParams(
+                  ...threadRouteLink(
                     scopeThreadRef(remoteChild.environmentId, remoteChild.threadId),
                   ),
                 });
@@ -372,8 +371,7 @@ function DelegatedFromRow(props: {
       return;
     }
     void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(parentRef),
+      ...threadRouteLink(parentRef),
     });
   };
   return (
@@ -632,8 +630,7 @@ export function ThreadRelationshipsPanel(props: {
   const openThread = (threadId: ThreadId) => {
     if (openSideChatTab(ref, graph.nodes.get(threadId)?.thread ?? null)) return;
     void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(props.environmentId, threadId)),
+      ...threadRouteLink(scopeThreadRef(props.environmentId, threadId)),
     });
   };
 

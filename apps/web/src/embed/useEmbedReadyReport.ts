@@ -1,3 +1,4 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -6,6 +7,7 @@ import { useEffect, useLayoutEffect, useState } from "react";
 import { useEnvironmentThread } from "../state/threads";
 import { useEmbedHostConnected } from "./embedHost";
 import { embedPaintSource } from "./embedPaintSource";
+import { embedParentThreadId } from "./embedParentThread";
 import { createEmbedReadyWatch } from "./embedReadyWatch";
 
 export function useEmbedReadyReport(
@@ -13,10 +15,9 @@ export function useEmbedReadyReport(
   threadId: string,
   held = false,
 ): void {
-  const thread = useEnvironmentThread(
-    threadRef?.environmentId ?? null,
-    threadRef?.threadId ?? null,
-  );
+  const refEnvironmentId = threadRef?.environmentId ?? null;
+  const refThreadId = threadRef?.threadId ?? null;
+  const thread = useEnvironmentThread(refEnvironmentId, refThreadId);
   const settled =
     !held &&
     (threadRef === null ||
@@ -51,6 +52,11 @@ export function useEmbedReadyReport(
   }, [router, watch]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the host in the commit that draws the routed thread's first rows
   useLayoutEffect(() => {
-    if (connected) watch.report(threadId, settled, draws, from);
-  }, [watch, connected, threadId, settled, draws, from]);
+    if (!connected) return;
+    const parentThreadId =
+      refEnvironmentId === null || refThreadId === null
+        ? undefined
+        : embedParentThreadId(scopeThreadRef(refEnvironmentId, refThreadId));
+    watch.report(threadId, settled, draws, from, parentThreadId);
+  }, [watch, connected, threadId, refEnvironmentId, refThreadId, settled, draws, from]);
 }

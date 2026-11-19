@@ -52,7 +52,7 @@ import { AlarmClockIcon, CheckCircle2Icon } from "lucide-react";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { titleRegenerationToast } from "../threadTitleRegenerationToast";
 import { newMessageId } from "~/lib/utils";
-import { buildThreadRouteParams } from "../../threadRoutes";
+import { threadRouteLink } from "../../threadRoutes";
 import { composerDraftHasUserContent, useComposerDraftStore } from "../../composerDraftStore";
 import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "../../state/threads";
@@ -495,10 +495,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       return;
     }
     if (activeThreadRef && openSideChatTab(activeThreadRef, shell)) return;
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(threadRef),
-    });
+    void navigate(threadRouteLink(threadRef));
   };
   const onOpenRelatedThreadStable = useStableCallback(onOpenRelatedThread);
   const childThreadInputs = useChildThreadInputs(activeThreadRef);
