@@ -34,6 +34,7 @@ import * as McpOAuth from "./McpOAuth.ts";
 import * as McpOAuthHttp from "./mcpOAuthHttp.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as AuthHttp from "./http.ts";
+import * as ChatDictation from "../chatSession/ChatDictation.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 class AuthTestApi extends HttpApi.make("environment")
@@ -65,6 +66,7 @@ const makeLayerRoutes = (
     ),
     HttpApiBuilder.layer(AuthTestApi).pipe(
       Layer.provide(AuthHttp.layer),
+      Layer.provide(Layer.mock(ChatDictation.ChatDictation)({})),
       Layer.provide(
         McpOAuthHttp.layer.pipe(
           Layer.provide(McpOAuth.layer),
@@ -132,7 +134,6 @@ const withRoutes = <A, E>(
 
 const json = <A>(response: Response) => Effect.promise(() => response.json() as Promise<A>);
 
-/** `credential` is a browser cookie, `Bearer <token>`, or the headers of a DPoP request. */
 const postJson = (path: string, body: unknown, credential?: string | Record<string, string>) =>
   at(path, {
     method: "POST",
@@ -548,7 +549,6 @@ it.live("an app approval code approves only an app sign-in, at its own level", (
       const code = issued.credential;
       expect(code).toMatch(/^SUPERVISED-[2-9A-HJ-NP-Z]{12}$/);
 
-      // Signing in a browser, a token exchange and linking all refuse it and leave it unspent.
       const browser = yield* handler(
         at("/api/auth/browser-session", {
           method: "POST",
@@ -579,7 +579,6 @@ it.live("an app approval code approves only an app sign-in, at its own level", (
       });
       expect(linked.status).toBe(400);
 
-      // Supervised and Auto share scopes, so only the code's own level may spend it.
       const otherLevel = yield* decide(handler, params, {
         _tag: "pairing-code",
         access: "auto",

@@ -20,7 +20,7 @@ import {
 } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 
-import { authenticateMediaRequest } from "../auth/http.ts";
+import { authenticateMediaRequest } from "../auth/mediaRequest.ts";
 import { assetResponseHeaders } from "../http.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";

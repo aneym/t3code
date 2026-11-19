@@ -6,6 +6,7 @@ import {
   type AuthEnvironmentScope,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
+  type EnvironmentSessionPrincipalShape,
   type EnvironmentSpeechModels,
   EnvironmentVoiceBodyLimit,
   SPEECH_MAX_OPTIONS_BYTES,
@@ -21,10 +22,10 @@ import {
   annotateEnvironmentRequest,
   failEnvironmentInternal,
   failEnvironmentInvalidRequest,
+  failEnvironmentScopeRequired,
   requireEnvironmentScope,
 } from "../auth/http.ts";
-import { ownsChatThreads } from "../chatSession/chatSessionDictation.ts";
-import * as ChatThreadSets from "../chatSession/ChatThreadSets.ts";
+import * as ChatDictation from "../chatSession/ChatDictation.ts";
 import * as SpeechPostProcessing from "./postProcessing.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as SpeechService from "./SpeechService.ts";
@@ -80,14 +81,25 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       yield* annotateEnvironmentRequest(endpoint);
       yield* requireEnvironmentScope(scope);
     });
-    const sets = yield* ChatThreadSets.ChatThreadSets;
+    const dictation = yield* ChatDictation.ChatDictation;
     const dictate = Effect.fnUntraced(function* (endpoint: string) {
       yield* annotateEnvironmentRequest(endpoint);
       const session = yield* EnvironmentAuthenticatedPrincipal;
-      if (session.scopes.has(AuthOrchestrationOperateScope)) return;
-      if (yield* ownsChatThreads(sets, session)) return;
-      yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+      if (session.scopes.has(AuthOrchestrationOperateScope)) return session;
+      if (yield* dictation.qualifies(session)) return session;
+      return yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
     });
+    const refused = Effect.fnUntraced(function* (error: ChatDictation.ChatDictationRefusedError) {
+      if (error.reason === "not_owner")
+        return yield* failEnvironmentScopeRequired(AuthOrchestrationOperateScope);
+      return yield* failEnvironmentInvalidRequest(error.reason);
+    });
+    const admit = (session: EnvironmentSessionPrincipalShape, audioBytes: number) =>
+      session.scopes.has(AuthOrchestrationOperateScope)
+        ? Effect.void
+        : dictation
+            .admit(session, audioBytes)
+            .pipe(Effect.catchTags({ ChatDictationRefusedError: refused }));
     return handlers
       .handle(
         "cloudKeys",
@@ -117,9 +129,10 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       .handle(
         "transcribeCloud",
         Effect.fn("environment.voice.transcribeCloud")(function* (args) {
-          yield* dictate(args.endpoint.name);
+          const session = yield* dictate(args.endpoint.name);
           const decoded = parseAudio(args.payload);
           if (Option.isNone(decoded)) return yield* failEnvironmentInvalidRequest("invalid_audio");
+          yield* admit(session, decoded.value.pcm.byteLength);
           const text = yield* cloud
             .transcribe(
               args.params.provider,
@@ -134,7 +147,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               }),
             );
           return { text };
-        }),
+        }, Effect.scoped),
       )
       .handle(
         "status",
@@ -221,14 +234,15 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       .handle(
         "transcribe",
         Effect.fn("environment.voice.transcribe")(function* (args) {
-          yield* dictate(args.endpoint.name);
+          const session = yield* dictate(args.endpoint.name);
           const decoded = parseAudio(args.payload);
           if (Option.isNone(decoded)) return yield* failEnvironmentInvalidRequest("invalid_audio");
+          yield* admit(session, decoded.value.pcm.byteLength);
           const text = yield* speech
             .transcribe(decoded.value.pcm, decoded.value.options)
             .pipe(mapSpeechError);
           return { text };
-        }),
+        }, Effect.scoped),
       )
       .handle(
         "postProcess",

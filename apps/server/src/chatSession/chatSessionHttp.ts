@@ -11,7 +11,8 @@ import { base64UrlDecodeUtf8 } from "../auth/utils.ts";
 import { requestUrl } from "../requestUrl.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ChatSessionAccess from "./ChatSessionAccess.ts";
-import { isDictationRoute, ownsChatThreads } from "./chatSessionDictation.ts";
+import * as ChatDictation from "./ChatDictation.ts";
+import { isDictationRoute } from "./chatSessionDictation.ts";
 import * as ChatSessionGrants from "./ChatSessionGrants.ts";
 import { ChatRequestThreads } from "./chatSessionState.ts";
 import * as ChatThreadSets from "./ChatThreadSets.ts";
@@ -64,6 +65,7 @@ const layerGate = HttpRouter.middleware(
     const sessions = yield* SessionStore;
     const grants = yield* ChatSessionGrants.ChatSessionGrants;
     const sets = yield* ChatThreadSets.ChatThreadSets;
+    const dictation = yield* ChatDictation.ChatDictation;
     const cookieNames = [sessions.cookieName, sessions.legacyCookieName].filter(
       (name): name is string => name !== undefined,
     );
@@ -102,7 +104,7 @@ const layerGate = HttpRouter.middleware(
           (request.method === "POST" &&
             path.startsWith(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`) &&
             (yield* grants.allowsPath(setId, path))) ||
-          (isDictationRoute(request.method, path) && (yield* ownsChatThreads(sets, session)));
+          (isDictationRoute(request.method, path) && (yield* dictation.qualifies(session)));
         if (!allowed) return forbidden();
         if (path !== SESSION_PATH) return yield* httpEffect;
         const chat = yield* sets.forSession(session).pipe(Effect.orElseSucceed(() => undefined));
@@ -115,6 +117,10 @@ const layerGate = HttpRouter.middleware(
 );
 
 export const layer = layerGate.pipe(
-  Layer.provideMerge(ChatSessionAccess.layer.pipe(Layer.provide(ProjectionStore.layer))),
+  Layer.provideMerge(
+    Layer.mergeAll(ChatSessionAccess.layer, ChatDictation.layer).pipe(
+      Layer.provide(ProjectionStore.layer),
+    ),
+  ),
   Layer.provideMerge(Layer.mergeAll(ChatSessionGrants.layer, ChatThreadSets.layer)),
 );
