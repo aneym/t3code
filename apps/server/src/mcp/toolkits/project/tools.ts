@@ -161,6 +161,9 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     attachments: Schema.optional(Schema.Array(McpAttachmentInput).check(Schema.isMaxLength(8))),
     clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+    startOrRefuse: Schema.optional(
+      Schema.Boolean.annotate({ description: "With delegatedFrom: refuse instead of queueing." }),
+    ),
   }),
   success: Schema.Struct({
     placement: Schema.optional(AgentPlacementReceipt),

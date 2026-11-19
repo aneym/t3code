@@ -33,7 +33,7 @@ import * as PlacementSnapshots from "./PlacementSnapshots.ts";
 import * as PlacementDecisions from "./PlacementDecisions.ts";
 import * as PlacementWeights from "./PlacementWeights.ts";
 import * as PlacementFallback from "./PlacementFallback.ts";
-import { pickWinner, placementKeys } from "./PlacementSpill.ts";
+import { pickWinner, pinAllowed, placementKeys, spillSkip } from "./PlacementSpill.ts";
 import * as Room from "./PlacementRoom.ts";
 import * as Invocation from "../mcp/McpInvocationContext.ts";
 import { assertLiveCaller, readCaller, unavailable } from "../mcp/threadAccess.ts";
@@ -59,6 +59,7 @@ export class AgentPlacement extends Context.Service<
         readonly clientRequestId?: string | undefined;
         readonly localOnlyReason?: string | undefined;
         readonly spill?: boolean | undefined;
+        readonly exclude?: ReadonlyArray<EnvironmentId> | undefined;
       },
     ) => Effect.Effect<Selected | undefined, OrchestratorMcpFailure>;
     readonly run: PlacementFallback.Run;
@@ -212,7 +213,7 @@ const make = Effect.gen(function* () {
             PlacementWeights.callerWeight(current.agentLoadBalancingWeights[environmentId]);
           const scores: Array<AgentPlacementScore> = [];
           const matching = new Map<EnvironmentId, ProjectId>();
-          const byRoom = current.agentPlacementByRoom;
+          const byRoom = current.agentPlacementByRoom || spill;
           const localSkipped = Room.localSkip(selectedProvider, current, projectId, modelSelection);
           const localScore = scoreAgentPlacement({
             room: byRoom ? yield* Room.localRoom : undefined,
@@ -268,14 +269,16 @@ const make = Effect.gen(function* () {
                   line: snapshot?.placementHealthLine ?? line,
                   now: scoredAt,
                 });
-                const skipped = Room.peerSkip({
-                  scored,
-                  snapshot,
-                  failure:
-                    entry?.failure ?? `No reply within ${PlacementSnapshots.READ_SECONDS} s.`,
-                  modelSelection,
-                  driver,
-                });
+                const skipped =
+                  Room.peerSkip({
+                    scored,
+                    snapshot,
+                    failure:
+                      entry?.failure ?? `No reply within ${PlacementSnapshots.READ_SECONDS} s.`,
+                    modelSelection,
+                    driver,
+                  }) ??
+                  (spill ? spillSkip(scored.room, link.environmentId, input.exclude) : undefined);
                 if (skipped === undefined && snapshot?.placementProjectId !== undefined)
                   matching.set(link.environmentId, snapshot.placementProjectId);
                 scores.push(
@@ -334,7 +337,11 @@ const make = Effect.gen(function* () {
           )
             return decided(scope.environmentId, "pinned", "Pinned by project.");
           const pinned = current.agentPlacementPinnedEnvironmentId;
-          if (pinned !== null && matching.has(pinned))
+          if (
+            pinned !== null &&
+            matching.has(pinned) &&
+            pinAllowed(scores, pinned, scope.environmentId, spill)
+          )
             return decided(pinned, "pinned", "Pinned to this environment in settings.");
           const winner = pickWinner(scores, scope.environmentId, spill);
           const queued =

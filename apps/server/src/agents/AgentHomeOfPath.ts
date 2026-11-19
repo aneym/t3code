@@ -32,6 +32,6 @@ export const agentHomeKeyOfRoot = async (workspaceRoot: string) => {
   if (location === null) return undefined;
   const dir = await NodeFSP.realpath(workspaceRoot).catch(() => NodePath.resolve(workspaceRoot));
   return NodePath.relative(location.root, dir) === location.handle
-    ? `${AGENT_HOME_KEY_PREFIX}${location.handle}`
+    ? `${AGENT_HOME_KEY_PREFIX}${workspaceRoot}`
     : undefined;
 };

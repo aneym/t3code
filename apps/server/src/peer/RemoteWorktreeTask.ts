@@ -17,6 +17,7 @@ import { WorktreeToolkit } from "../mcp/toolkits/worktree/tools.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
+import { SpillLaunch } from "./PlacementSpill.ts";
 import { rememberHold } from "./RemoteHolds.ts";
 import * as WorktreeTransfer from "./WorktreeTransfer.ts";
 
@@ -93,7 +94,10 @@ const make = Effect.gen(function* () {
 
   const launchThere: RemoteWorktreeTask["Service"]["launch"] = Effect.fn(
     "RemoteWorktreeTask.launch",
-  )(function* (scope, environmentId, parent, request, params) {
+  )(function* (scope, environmentId, parent, request, given) {
+    const params = Option.isSome(yield* Effect.serviceOption(SpillLaunch))
+      ? { ...given, startOrRefuse: true }
+      : given;
     const launchOn = (baseRef: string | undefined) =>
       forwarding.call(scope, ProjectToolkit.tools.t3_thread_launch, environmentId, {
         ...params,

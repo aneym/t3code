@@ -8,7 +8,11 @@ import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
-import { projectsByRepository } from "../../../project/ProjectsByRepository.ts";
+import { AGENT_HOME_KEY_PREFIX } from "../../../agents/AgentHomeOfPath.ts";
+import {
+  projectsAtAgentHome,
+  projectsByRepository,
+} from "../../../project/ProjectsByRepository.ts";
 import * as Gate from "../../../orchestration-v2/DelegatedChildStartGate.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { isProviderAvailable, resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
@@ -92,9 +96,12 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         placementProjectId = undefined;
         const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
         if (Option.isSome(projects)) {
-          const found = yield* projectsByRepository(projects.value, wanted).pipe(
-            Effect.mapError(unavailable),
-          );
+          const home = [...wanted].find((key) => key.startsWith(AGENT_HOME_KEY_PREFIX));
+          const found = yield* (
+            home === undefined
+              ? projectsByRepository(projects.value, wanted)
+              : projectsAtAgentHome(projects.value, home.slice(AGENT_HOME_KEY_PREFIX.length))
+          ).pipe(Effect.mapError(unavailable));
           if (found.complete) placementProjectCount = found.matches.length;
           if (found.complete && found.matches.length === 1)
             placementProjectId = found.matches[0]?.id;

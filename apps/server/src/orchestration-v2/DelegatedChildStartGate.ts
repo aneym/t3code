@@ -81,6 +81,7 @@ export class DelegatedChildStartGate extends Context.Service<
     readonly admit: <A, E, R>(
       owner: AdmitOwner,
       dispatch: (held: boolean) => Effect.Effect<A, E, R>,
+      refuse?: (reason: string) => E,
     ) => Effect.Effect<A, E, R>;
     readonly isHeld: (run: HeldRun) => boolean;
     readonly claim: (owner: AdmitOwner) => Effect.Effect<ClaimResult>;
@@ -223,13 +224,14 @@ const make = Effect.gen(function* () {
     limits: ReadonlyMap<string, GroupLimit>,
     group: string,
     running: ReadonlyMap<string, number>,
+    started: ReadonlyMap<string, number>,
     now: number,
   ) => {
     const limit = limits.get(group);
     return (
       limit === undefined ||
       ((limit.perGroup === undefined || (running.get(group) ?? 0) < limit.perGroup) &&
-        (limit.staggerMs === undefined || now - (lastStart.get(group) ?? 0) >= limit.staggerMs))
+        (limit.staggerMs === undefined || now - (started.get(group) ?? 0) >= limit.staggerMs))
     );
   };
 
@@ -349,6 +351,7 @@ const make = Effect.gen(function* () {
   const decide = Effect.fn("DelegatedChildStartGate.decide")(function* (
     config: Config,
     owner: AdmitOwner,
+    own?: number,
   ) {
     const { limits } = config;
     const remote = "projectId" in owner;
@@ -362,22 +365,27 @@ const make = Effect.gen(function* () {
     const activeChildren = yield* readActiveChildren.pipe(Effect.orElseSucceed(() => []));
     const { running, queued } = yield* tally(rows, activeChildren, limits);
     const now = yield* Clock.currentTimeMillis;
-    const counted = claims.count(running, now);
+    const { counted, started } = claims.count(running, lastStart, now, own);
     const breach = yield* breachOf(config, now).pipe(Effect.orElseSucceed(() => undefined));
     const held =
       breach !== undefined ||
-      groups.some((group) => (queued.get(group) ?? 0) > 0 || !allows(limits, group, counted, now));
+      groups.some(
+        (group) => (queued.get(group) ?? 0) > 0 || !allows(limits, group, counted, started, now),
+      );
     return { groups, held, breach, now };
   });
 
-  const admit: DelegatedChildStartGate["Service"]["admit"] = (owner, dispatch) =>
+  const admit: DelegatedChildStartGate["Service"]["admit"] = (owner, dispatch, refuse) =>
     lock.withPermit(
       Effect.gen(function* () {
-        const own = yield* Effect.serviceOption(ClaimedSlot);
-        if (Option.isSome(own) && claims.take(own.value.token)) return yield* dispatch(false);
-        const decision = yield* decide(yield* readConfig, owner);
+        const own = Option.getOrUndefined(yield* Effect.serviceOption(ClaimedSlot))?.token;
+        const config = yield* readConfig;
+        const decision = yield* decide(refuse ? { ...config, byRoom: true } : config, owner, own);
+        if (own !== undefined) claims.take(own);
         if (decision === undefined) return yield* dispatch(false);
         const { groups, held, breach, now } = decision;
+        if (held && refuse !== undefined)
+          return yield* Effect.fail(refuse(breach ?? `No free builder slot on ${yield* label}.`));
         const result = yield* dispatch(held);
         if (held) pending = true;
         else for (const group of groups) lastStart.set(group, now);
@@ -399,7 +407,6 @@ const make = Effect.gen(function* () {
           if (decision === undefined) return {};
           if (decision.held)
             return { wouldHold: decision.breach ?? `No free builder slot on ${yield* label}.` };
-          for (const group of decision.groups) lastStart.set(group, decision.now);
           return { token: claims.add(decision.groups, decision.now) };
         }),
       )
@@ -431,13 +438,13 @@ const make = Effect.gen(function* () {
         const counts = yield* tally(rows, activeChildren, limits);
         const { groups } = counts;
         const now = yield* Clock.currentTimeMillis;
-        const running = claims.count(counts.running, now);
+        const { counted: running, started } = claims.count(counts.running, lastStart, now);
         if ((yield* breachOf(config, now)) !== undefined) return;
         const blocked = new Set<string>();
         for (const row of held) {
           const rowGroups = groups.get(row.run_id) ?? [];
           if (rowGroups.some((group) => blocked.has(group))) continue;
-          const open = rowGroups.every((group) => allows(limits, group, running, now));
+          const open = rowGroups.every((group) => allows(limits, group, running, started, now));
           if (!open) {
             for (const group of rowGroups) blocked.add(group);
             continue;
@@ -462,6 +469,7 @@ const make = Effect.gen(function* () {
           for (const group of rowGroups) {
             running.set(group, (running.get(group) ?? 0) + 1);
             lastStart.set(group, now);
+            started.set(group, now);
           }
         }
       }),

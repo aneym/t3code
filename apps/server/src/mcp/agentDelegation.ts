@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   type ModelSelection,
   type OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpFailure,
@@ -6,13 +7,18 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
-import { agentHomeKeyOfRoot } from "../agents/AgentHomeOfPath.ts";
-import { ClaimedSlot } from "../orchestration-v2/DelegatedChildClaims.ts";
+import {
+  ClaimedSlot,
+  type ClaimResult,
+  SPILL_REFUSED,
+} from "../orchestration-v2/DelegatedChildClaims.ts";
 import * as Gate from "../orchestration-v2/DelegatedChildStartGate.ts";
 import * as AgentPlacement from "../peer/AgentPlacement.ts";
 import * as PlacementRoom from "../peer/PlacementRoom.ts";
+import { SpillLaunch } from "../peer/PlacementSpill.ts";
 import * as WorktreeTransfer from "../peer/WorktreeTransfer.ts";
 import * as Projects from "../project/ProjectService.ts";
+import { projectsAtAgentHome } from "../project/ProjectsByRepository.ts";
 import * as Settings from "../serverSettings.ts";
 import { delegatedChildDefaultModel } from "./delegatedChildModel.ts";
 import { withHold } from "./delegatedHold.ts";
@@ -56,10 +62,11 @@ const homeProject = Effect.fn("AgentDelegation.homeProject")(function* (
   const project = yield* projects.value
     .getById(projectId)
     .pipe(Effect.orElseSucceed(() => Option.none()));
-  return (
-    Option.isSome(project) &&
-    (yield* Effect.promise(() => agentHomeKeyOfRoot(project.value.workspaceRoot))) !== undefined
+  if (Option.isNone(project)) return false;
+  const found = yield* projectsAtAgentHome(projects.value, project.value.workspaceRoot).pipe(
+    Effect.orElseSucceed(() => ({ matches: [], complete: false })),
   );
+  return found.complete && found.matches.length === 1;
 });
 
 const localOnlyReason = Effect.fn("AgentDelegation.localOnlyReason")(function* (
@@ -158,78 +165,107 @@ export const delegate = Effect.fn("AgentDelegation.delegate")(function* (
     instanceId === undefined || model === undefined
       ? undefined
       : { instanceId, model, ...(options === undefined ? {} : { options }) };
-  const gate = yield* Effect.serviceOption(Gate.DelegatedChildStartGate);
+  const gate = Option.getOrUndefined(yield* Effect.serviceOption(Gate.DelegatedChildStartGate));
   const parentThreadId = scope.thread?.threadId;
-  const claim =
+  const unclaim = (token: number | undefined) =>
+    token === undefined || gate === undefined ? Effect.void : gate.unclaim(token);
+  return yield* Effect.acquireUseRelease(
     current?.agentPlacementSpillWhenFull === true &&
-    Option.isSome(gate) &&
-    parentThreadId !== undefined
-      ? yield* gate.value.claim({ parentThreadId })
-      : {};
-  const spill = claim.wouldHold !== undefined;
-  const token = claim.token;
-  const claimed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    token === undefined || Option.isNone(gate)
-      ? effect
-      : effect.pipe(
-          Effect.provideService(ClaimedSlot, ClaimedSlot.of({ token })),
-          Effect.ensuring(gate.value.unclaim(token)),
-        );
-  const stayReason =
-    modelSelection === undefined
-      ? "No model to match across environments; name target.model to let it move."
-      : yield* localOnlyReason(input, caller.caller, spill);
-  return yield* claimed(
-    place(scope, service, placement.value, input, modelSelection, stayReason, spill),
+      gate !== undefined &&
+      parentThreadId !== undefined
+      ? gate.claim({ parentThreadId })
+      : Effect.succeed<ClaimResult>({}),
+    (claim) =>
+      Effect.gen(function* () {
+        const spill = claim.wouldHold !== undefined;
+        const stayReason =
+          modelSelection === undefined
+            ? "No model to match across environments; name target.model to let it move."
+            : yield* localOnlyReason(input, caller.caller, spill);
+        const placing = place(scope, service, placement.value, input, {
+          modelSelection,
+          stayReason,
+          spill,
+          release: unclaim(claim.token),
+        });
+        return yield* claim.token === undefined
+          ? placing
+          : placing.pipe(Effect.provideService(ClaimedSlot, { token: claim.token }));
+      }),
+    (claim) => unclaim(claim.token),
   );
 });
+
+const refused = (error: { readonly message: string }) => error.message.startsWith(SPILL_REFUSED);
 
 const place = Effect.fn("AgentDelegation.place")(function* (
   scope: Invocation.McpInvocationScope,
   service: Orchestrator.OrchestratorMcpService["Service"],
   placement: AgentPlacement.AgentPlacement["Service"],
   input: OrchestratorMcpDelegateTaskInput,
-  modelSelection: ModelSelection | undefined,
-  stayReason: string | undefined,
-  spill: boolean,
+  options: {
+    readonly modelSelection: ModelSelection | undefined;
+    readonly stayReason: string | undefined;
+    readonly spill: boolean;
+    readonly release: Effect.Effect<void>;
+  },
 ) {
-  const selected = yield* placement.select(scope, {
-    operation: "delegate",
-    projectId: input.target?.projectId,
-    repository: input.target?.repository,
-    ...(modelSelection === undefined ? {} : { modelSelection }),
-    driverKind: input.target?.driverKind,
-    clientRequestId: input.clientRequestId,
-    ...(stayReason === undefined ? {} : { localOnlyReason: stayReason }),
-    ...(spill ? { spill } : {}),
-  });
-  if (
-    input.target?.repository !== undefined &&
-    (selected === undefined || selected.projectId === undefined)
-  )
-    return yield* withHold(
-      yield* service.delegateTask(scope, yield* resolveRepository(input, scope.environmentId)),
-    );
-  if (selected === undefined) return yield* withHold(yield* service.delegateTask(scope, input));
-  const { result, placement: receipt } = yield* placement.run(
-    scope,
-    selected,
-    input.clientRequestId,
-    (clientRequestId) =>
-      service.delegateTask(scope, {
-        ...input,
-        clientRequestId,
-        target: {
-          ...input.target,
-          environmentId: selected.placement.environmentId,
-          projectId: selected.projectId,
+  const { modelSelection, stayReason, spill } = options;
+  const exclude: Array<EnvironmentId> = [];
+  for (;;) {
+    const selected = yield* placement.select(scope, {
+      operation: "delegate",
+      projectId: input.target?.projectId,
+      repository: input.target?.repository,
+      ...(modelSelection === undefined ? {} : { modelSelection }),
+      driverKind: input.target?.driverKind,
+      clientRequestId: exclude.length === 0 ? input.clientRequestId : undefined,
+      ...(stayReason === undefined ? {} : { localOnlyReason: stayReason }),
+      ...(spill ? { spill, exclude } : {}),
+    });
+    if (
+      input.target?.repository !== undefined &&
+      (selected === undefined || selected.projectId === undefined)
+    )
+      return yield* withHold(
+        yield* service.delegateTask(scope, yield* resolveRepository(input, scope.environmentId)),
+      );
+    if (selected === undefined) return yield* withHold(yield* service.delegateTask(scope, input));
+    const there = selected.placement.environmentId;
+    if (there !== scope.environmentId) yield* options.release;
+    const attempt = yield* placement
+      .run(
+        scope,
+        selected,
+        input.clientRequestId,
+        (clientRequestId) => {
+          const sent = service.delegateTask(scope, {
+            ...input,
+            clientRequestId,
+            target: { ...input.target, environmentId: there, projectId: selected.projectId },
+          });
+          return spill
+            ? sent.pipe(Effect.provideService(SpillLaunch, { startOrRefuse: true }))
+            : sent;
         },
-      }),
-    resolveRepository(input, scope.environmentId).pipe(
-      Effect.flatMap((fallback) => service.delegateTask(scope, fallback)),
-    ),
-  );
-  const childThreadId = result.remoteChild?.threadId ?? result.childThreadId;
-  if (childThreadId !== null) yield* placement.record(childThreadId, receipt);
-  return yield* withHold({ ...result, placement: receipt });
+        resolveRepository(input, scope.environmentId).pipe(
+          Effect.flatMap((fallback) => service.delegateTask(scope, fallback)),
+        ),
+      )
+      .pipe(
+        Effect.asSome,
+        Effect.catchIf(
+          (error) => spill && refused(error),
+          () => Effect.succeedNone,
+        ),
+      );
+    if (Option.isNone(attempt)) {
+      exclude.push(there);
+      continue;
+    }
+    const { result, placement: receipt } = attempt.value;
+    const childThreadId = result.remoteChild?.threadId ?? result.childThreadId;
+    if (childThreadId !== null) yield* placement.record(childThreadId, receipt);
+    return yield* withHold({ ...result, placement: receipt });
+  }
 });

@@ -55,7 +55,6 @@ import { forkParked } from "../serverActivation.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as RemoteWorktreeTask from "./RemoteWorktreeTask.ts";
-import { remoteProjectMatch } from "./RemoteProjectMatch.ts";
 import { isFinal, isModeRefusal, isTerminal, terminalStatus } from "./RemoteFollowRules.ts";
 
 /** How long one follow of a remote task waits on its thread there before checking again. */
@@ -173,13 +172,12 @@ const make = Effect.gen(function* () {
       Effect.map(Option.getOrUndefined),
       Effect.orElseSucceed(() => undefined),
     );
-    const match = yield* remoteProjectMatch(
-      repositoryIdentities,
-      settings,
-      repository,
-      here?.workspaceRoot,
-    );
-    if (match === undefined) {
+    const key =
+      repository ??
+      (here === undefined
+        ? undefined
+        : (yield* repositoryIdentities.resolve(here.workspaceRoot))?.canonicalKey);
+    if (key === undefined) {
       return yield* new OrchestratorMcpFailure({
         code: "target_required",
         message: "Pass target.projectId: this thread's project has no repository to match there.",
@@ -193,7 +191,9 @@ const make = Effect.gen(function* () {
           cursor,
           limit: 100,
         });
-      matches.push(...listed.projects.filter(match.matches));
+      matches.push(
+        ...listed.projects.filter((project) => project.repositoryIdentity?.canonicalKey === key),
+      );
       cursor = listed.nextCursor;
     }
     if (matches.length === 1) return matches[0]!.id;
@@ -201,7 +201,7 @@ const make = Effect.gen(function* () {
       code: "invalid_request",
       message:
         matches.length === 0
-          ? `No project there has this repository (${match.key}). Pass target.projectId; t3_project_list with this environmentId lists them. To bring the repository there, use t3_project_clone and then t3_project_create with this environmentId.`
+          ? `No project there has this repository (${key}). Pass target.projectId; t3_project_list with this environmentId lists them. To bring the repository there, use t3_project_clone and then t3_project_create with this environmentId.`
           : `Several projects there have this repository: ${matches.map((project) => `${project.title} (${project.id})`).join(", ")}. Pass target.projectId.`,
     });
   });
