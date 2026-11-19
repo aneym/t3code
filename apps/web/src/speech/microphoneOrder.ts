@@ -44,14 +44,29 @@ export function rememberMicrophones(
 ): ReadonlyArray<MicrophoneEntry> {
   let next: MicrophoneEntry[] | null = null;
   let insertAt = order.findIndex((entry) => entry.kind === "default") + 1;
+  const connected = new Set(devices.map((device) => device.deviceId));
   for (const device of devices) {
     if (!device.label || ALIAS_DEVICE_IDS.has(device.deviceId)) continue;
     const current: ReadonlyArray<MicrophoneEntry> = next ?? order;
-    const index = current.findIndex(
+    const byId = current.findIndex(
       (entry) => entry.kind === "device" && entry.deviceId === device.deviceId,
     );
+    const index =
+      byId !== -1
+        ? byId
+        : current.findIndex(
+            (entry) =>
+              entry.kind === "device" &&
+              entry.label === device.label &&
+              !connected.has(entry.deviceId),
+          );
     const existing = current[index];
-    if (existing?.kind === "device" && existing.label === device.label) continue;
+    if (
+      existing?.kind === "device" &&
+      existing.label === device.label &&
+      existing.deviceId === device.deviceId
+    )
+      continue;
     next ??= [...order];
     const entry: MicrophoneEntry = {
       kind: "device",

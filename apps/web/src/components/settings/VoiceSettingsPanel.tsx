@@ -72,6 +72,11 @@ import {
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
 import {
+  OFF,
+  voiceDestinationChoices,
+  voiceDestinationValue,
+} from "../../speech/voiceDestinationChoices";
+import {
   getTextGenerationModelOptionsByInstance,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
@@ -138,7 +143,6 @@ import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeConte
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
-const OFF = "off";
 function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
   if (provider === "openrouter")
     return <ProviderPackageIcon icon={openRouterIcon} aria-hidden className="size-4 shrink-0" />;
@@ -1232,28 +1236,8 @@ export function VoiceSettingsPanel() {
 
   const order = microphoneOrder(settings);
   const selectedMicrophone = preferredMicrophoneId(order, microphones);
-  const environmentChoices = environments.map((environment) => ({
-    environment,
-    value: JSON.stringify(["environment", environment.environmentId]),
-  }));
-  const cloudGroups = environments
-    .filter(
-      (environment) => environment.serverConfig?.environment.capabilities.cloudVoiceTranscription,
-    )
-    .map((environment) => ({
-      environment,
-      choices: CloudSpeechProvider.literals.map((provider) => ({
-        environment,
-        provider,
-        value: JSON.stringify(["cloud", environment.environmentId, provider]),
-      })),
-    }));
-  const cloudChoices = cloudGroups.flatMap((group) => group.choices);
-  const destinationValue = destination.cloudProvider
-    ? JSON.stringify(["cloud", destination.environmentId, destination.cloudProvider])
-    : destination.environmentId
-      ? JSON.stringify(["environment", destination.environmentId])
-      : OFF;
+  const { environmentChoices, cloudGroups, cloudChoices } = voiceDestinationChoices(environments);
+  const destinationValue = voiceDestinationValue(destination);
   const cloudEnvironment = environments.find(
     (env) => env.environmentId === pendingCloud?.environmentId,
   );

@@ -13,6 +13,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { CircleAlertIcon, MicIcon, RefreshCwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useEmbedHostConnected } from "../../embed/embedHost";
 import { useClientSettings } from "../../hooks/useSettings";
 import {
   isSystemDefaultDeviceId,
@@ -46,6 +47,7 @@ export function VoiceInputSetup(props: {
   onStartRecording(): void;
 }) {
   const navigate = useNavigate();
+  const embedded = useEmbedHostConnected();
   const environment = useEnvironment(props.environmentId);
   const canManage = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const order = useClientSettings(microphoneOrder);
@@ -229,9 +231,11 @@ export function VoiceInputSetup(props: {
         {props.step === 0 ? (
           <WizardFooter
             leading={
-              <Button variant="ghost" onClick={() => openSettings("speech-models")}>
-                {model ? "Other models" : "Choose a model"}
-              </Button>
+              embedded ? null : (
+                <Button variant="ghost" onClick={() => openSettings("speech-models")}>
+                  {model ? "Other models" : "Choose a model"}
+                </Button>
+              )
             }
           >
             {props.onRetryCatalog ? (
@@ -260,9 +264,11 @@ export function VoiceInputSetup(props: {
         ) : (
           <WizardFooter
             leading={
-              <Button variant="ghost" onClick={() => openSettings("")}>
-                Voice settings
-              </Button>
+              embedded ? null : (
+                <Button variant="ghost" onClick={() => openSettings("")}>
+                  Voice settings
+                </Button>
+              )
             }
           >
             <Button onClick={props.onStartRecording}>

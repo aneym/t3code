@@ -2,6 +2,9 @@ import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { CheckIcon, MicIcon, XIcon } from "lucide-react";
 import { useEffect, useState, type PointerEvent, type ReactElement } from "react";
 
+import { useEmbedHostConnected } from "../../embed/embedHost";
+import { useVoiceTranscriptionDestination } from "../../speech/useEnvironmentSpeechInput";
+import { ComposerMicrophonePicker } from "./ComposerMicrophonePicker";
 import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
 import { VoiceInputPill, VoiceWaveform } from "./VoiceInputPill";
 import { cn } from "~/lib/utils";
@@ -88,17 +91,43 @@ function ShortcutTooltip(props: {
   );
 }
 
-export function ComposerSpeechButton(props: {
+type SpeechButtonProps = {
   state: VoiceInputState;
   shortcutLabel?: string | null;
   disabled?: boolean;
   /** Compact matches the `xs` buttons beside text-field editors. */
   size?: "default" | "compact";
   onStart(): void;
-}) {
-  if (props.state.phase !== "idle") return null;
-  const label = "Start voice input";
+};
 
+export function ComposerSpeechButton(props: SpeechButtonProps) {
+  const embedded = useEmbedHostConnected();
+  if (props.state.phase !== "idle") return null;
+  if (!embedded || props.size === "compact") return <SpeechStartButton {...props} />;
+  return <EmbedSpeechControls {...props} />;
+}
+
+function EmbedSpeechControls(props: SpeechButtonProps) {
+  const destination = useVoiceTranscriptionDestination();
+  const [menuOpen, setMenuOpen] = useState(false);
+  return (
+    <>
+      <SpeechStartButton
+        {...props}
+        onStart={destination.offerFirstRunSetup ? () => setMenuOpen(true) : props.onStart}
+      />
+      <ComposerMicrophonePicker
+        disabled={props.disabled}
+        destination={destination}
+        open={menuOpen}
+        onOpenChange={setMenuOpen}
+      />
+    </>
+  );
+}
+
+function SpeechStartButton(props: SpeechButtonProps) {
+  const label = "Start voice input";
   return (
     <ShortcutTooltip label={label} shortcut={props.shortcutLabel}>
       <Button
