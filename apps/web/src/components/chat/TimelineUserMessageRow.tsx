@@ -1,15 +1,10 @@
 import { UserMessageAudio } from "./UserMessageAudio";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
-import {
-  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
-  remarkEnableOrderedListNumbers,
-} from "@t3tools/shared/markdownPipeline";
 import { findRevealRef } from "./markdownFindContext";
 import {
   type EnvironmentId,
   type MessageId,
   type ScheduledTaskId,
-  type ServerProviderSkill,
   ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -20,7 +15,7 @@ import { useEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
-import { memo, use, useState, type ReactNode } from "react";
+import { use, useState } from "react";
 import {
   createMessageAttachmentPreviewProjector,
   selectMessageImageResources,
@@ -31,7 +26,6 @@ import {
   isImageAttachment,
   isVideoAttachment,
 } from "../../types";
-import ChatMarkdown from "../ChatMarkdown";
 import {
   CalendarClockIcon,
   ChevronDownIcon,
@@ -84,14 +78,15 @@ import { markdownProseDirection } from "~/textDirection";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
-import { useTallEnoughToFold } from "./useTallEnoughToFold";
 import { useEmbedHostConnected } from "../../embed/embedHost";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
+import { MessageAuthorHeading, TimelineRowTimestamp } from "./TimelineRowParts";
 import {
-  MESSAGE_HEADING_LEVEL,
-  MessageAuthorHeading,
-  TimelineRowTimestamp,
-} from "./TimelineRowParts";
+  BUBBLE_CHIP_CLASS_NAME,
+  CollapsibleUserMessageBody,
+  USER_BUBBLE_CLASS_NAME,
+  UserMessageBody,
+} from "./UserMessageBody";
 import { AppSentNote } from "./AppSentNote";
 import { EmbedQuietMessageRow, useEmbedQuietLine } from "../embed/EmbedQuietMessageRow";
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
@@ -102,9 +97,6 @@ import {
 
 const MEDIA_EDGE_CLASS_NAME =
   "relative after:pointer-events-none after:absolute after:inset-0 after:z-10 after:rounded-[inherit] after:ring-1 after:ring-inset after:ring-black/9 dark:after:ring-white/12";
-
-const BUBBLE_CHIP_CLASS_NAME =
-  "[&_[data-slot=context-chip]]:[--context-chip-ink:var(--context-chip-message,var(--context-chip-accent))]";
 
 function UserFileCard({
   file,
@@ -333,7 +325,12 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             className={cn("px-3 pb-3", !ctx.findActive && "max-h-96 overflow-auto")}
             data-thread-find-text="true"
           >
-            <UserMessageBody text={text} skills={ctx.skills} markdownCwd={ctx.markdownCwd} />
+            <UserMessageBody
+              text={text}
+              skills={ctx.skills}
+              markdownCwd={ctx.markdownCwd}
+              threadRef={ctx.threadRef ?? undefined}
+            />
           </div>
         ) : null}
       </div>
@@ -877,7 +874,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ) : null}
       <div
         className={cn(
-          "relative min-w-0 max-w-[80%] rounded-2xl text-message-foreground",
+          USER_BUBBLE_CLASS_NAME,
           (mediaAboveText || row.groupedWithPrevious) && "rounded-tr-md",
           row.groupedWithNext && "rounded-br-md",
           BUBBLE_CHIP_CLASS_NAME,
@@ -1019,6 +1016,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   renderContextReference={renderContextReference}
                   skills={ctx.skills}
                   markdownCwd={ctx.markdownCwd}
+                  threadRef={ctx.threadRef ?? undefined}
                   collapsible={!folded}
                 />
               </div>
@@ -1116,107 +1114,3 @@ function RevertUserMessageButton({
     </Tooltip>
   );
 }
-
-const COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM = 1.75;
-
-const COLLAPSED_USER_MESSAGE_FADE_MASK = `linear-gradient(to bottom, black calc(100% - ${COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM}rem), transparent)`;
-
-const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
-  text: string;
-  renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
-  skills: ReadonlyArray<ServerProviderSkill>;
-  markdownCwd: string | undefined;
-  collapsible?: boolean;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const revealForFind = () => setExpanded(true);
-  const revealRef = findRevealRef(revealForFind);
-  const hasVisibleBody = props.text.trim().length > 0;
-  const { ref: contentRef, tallEnough: canCollapse } = useTallEnoughToFold(
-    props.collapsible !== false && hasVisibleBody,
-  );
-  const isCollapsed = canCollapse && !expanded;
-  const showCollapseControl = canCollapse;
-
-  return (
-    <div>
-      {hasVisibleBody ? (
-        <div
-          ref={revealRef}
-          className={cn("relative", isCollapsed && "max-h-44 overflow-hidden")}
-          data-user-message-body="true"
-          data-thread-find-text="true"
-          data-thread-find-fold={isCollapsed ? "" : undefined}
-          data-user-message-collapsed={isCollapsed ? "true" : "false"}
-          data-user-message-collapsible={canCollapse ? "true" : "false"}
-          data-user-message-fade={isCollapsed ? "true" : "false"}
-          style={
-            isCollapsed
-              ? {
-                  WebkitMaskImage: COLLAPSED_USER_MESSAGE_FADE_MASK,
-                  maskImage: COLLAPSED_USER_MESSAGE_FADE_MASK,
-                }
-              : undefined
-          }
-        >
-          <div ref={contentRef}>
-            <UserMessageBody
-              text={props.text}
-              renderContextReference={props.renderContextReference}
-              skills={props.skills}
-              markdownCwd={props.markdownCwd}
-            />
-          </div>
-        </div>
-      ) : null}
-      {showCollapseControl ? (
-        <div className="mt-1.5 flex items-center justify-end gap-2" data-user-message-footer="true">
-          {showCollapseControl ? (
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost-muted"
-              aria-expanded={expanded}
-              data-scroll-anchor-ignore
-              onClick={() => setExpanded((value) => !value)}
-              className="-ml-1"
-            >
-              {expanded ? "Show less" : "Show full message"}
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-});
-
-const USER_MESSAGE_REMARK_PLUGINS = [
-  ...CHAT_USER_MARKDOWN_REMARK_PLUGINS,
-  remarkEnableOrderedListNumbers,
-];
-
-const UserMessageBody = memo(function UserMessageBody(props: {
-  text: string;
-  renderContextReference?: (reference: ChatMarkdownContextReference) => ReactNode;
-  skills: ReadonlyArray<ServerProviderSkill>;
-  markdownCwd: string | undefined;
-}) {
-  const ctx = use(TimelineRowCtx);
-  if (props.text.length === 0) {
-    return null;
-  }
-  return (
-    <ChatMarkdown
-      text={props.text}
-      cwd={props.markdownCwd}
-      threadRef={ctx.threadRef ?? undefined}
-      skills={props.skills}
-      className="text-message-foreground user-message-markdown"
-      lineBreaks
-      parseRawHtml={false}
-      extraRemarkPlugins={USER_MESSAGE_REMARK_PLUGINS}
-      renderContextReference={props.renderContextReference}
-      headingLevelOffset={MESSAGE_HEADING_LEVEL}
-    />
-  );
-});
