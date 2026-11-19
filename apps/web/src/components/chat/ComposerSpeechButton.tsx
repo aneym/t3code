@@ -2,6 +2,8 @@ import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { CheckIcon, MicIcon, XIcon } from "lucide-react";
 import { useEffect, useState, type PointerEvent, type ReactElement } from "react";
 
+import { useEmbedHostConnected } from "../../embed/embedHost";
+import { ComposerMicrophonePicker } from "./ComposerMicrophonePicker";
 import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
 import { VoiceInputPill, VoiceWaveform } from "./VoiceInputPill";
 import { cn } from "~/lib/utils";
@@ -96,10 +98,10 @@ export function ComposerSpeechButton(props: {
   size?: "default" | "compact";
   onStart(): void;
 }) {
+  const embedded = useEmbedHostConnected();
   if (props.state.phase !== "idle") return null;
   const label = "Start voice input";
-
-  return (
+  const button = (
     <ShortcutTooltip label={label} shortcut={props.shortcutLabel}>
       <Button
         type="button"
@@ -116,6 +118,13 @@ export function ComposerSpeechButton(props: {
         <MicIcon />
       </Button>
     </ShortcutTooltip>
+  );
+  if (!embedded || props.size === "compact") return button;
+  return (
+    <span className="flex shrink-0 items-center">
+      {button}
+      <ComposerMicrophonePicker disabled={props.disabled} />
+    </span>
   );
 }
 
