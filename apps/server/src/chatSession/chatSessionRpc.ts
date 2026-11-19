@@ -146,6 +146,7 @@ const CHAT_SESSION_RPC = {
   [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: refuse,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: inThread,
   [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: inThread,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadHistoryPage]: inThread,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: refuse,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: filtered,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: inThread,

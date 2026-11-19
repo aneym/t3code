@@ -3714,6 +3714,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   stopWorkflow: "orchestration.stopWorkflow",
   forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
+  getThreadHistoryPage: "orchestration.getThreadHistoryPage",
   launchThread: "orchestration.launchThread",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -4267,18 +4268,6 @@ export class OrchestrationWorkflowFileError extends Schema.TaggedError<Orchestra
   }
 }
 
-export const OrchestrationV2GetTurnItemInput = Schema.Struct({
-  threadId: ThreadId,
-  itemId: TurnItemId,
-  revision: Schema.optional(Schema.String),
-});
-export type OrchestrationV2GetTurnItemInput = typeof OrchestrationV2GetTurnItemInput.Type;
-
-export const OrchestrationV2GetTurnItemResult = Schema.Struct({
-  item: Schema.NullOr(OrchestrationV2TurnItem),
-});
-export type OrchestrationV2GetTurnItemResult = typeof OrchestrationV2GetTurnItemResult.Type;
-
 const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
   "invalid-path": "Workflow scripts must be absolute .js paths.",
   "root-unavailable": "Script root unavailable.",
@@ -4424,10 +4413,6 @@ export const OrchestrationV2RpcSchemas = {
   getNativeChildWork: {
     input: OrchestrationV2GetNativeChildWorkInput,
     output: OrchestrationV2GetNativeChildWorkResult,
-  },
-  getTurnItem: {
-    input: OrchestrationV2GetTurnItemInput,
-    output: OrchestrationV2GetTurnItemResult,
   },
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,

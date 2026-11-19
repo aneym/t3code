@@ -6,8 +6,10 @@ import {
   forgetKeptViews,
   loadKeptView,
   markKeptViewShown,
+  reopenKeptViews,
   retainKeptViewsOf,
   saveKeptView,
+  wipeKeptViews,
 } from "./embedKeptViews";
 
 const keptThreads = async (environmentId: string, count: number) => {
@@ -68,5 +70,20 @@ describe("kept views in IndexedDB", () => {
     expect(await keptThreads("env-b", 1)).toEqual([0]);
     await forgetKeptViews();
     expect(await keptThreads("env-b", 1)).toEqual([]);
+  });
+
+  it("wipes every view on an unauthorized close and keeps later saves out until reopened", async () => {
+    await forgetKeptViews();
+    await saveKeptView("env-a", "thread-0", "a", 1);
+    await saveKeptView("env-b", "thread-0", "b", 2);
+    const late = saveKeptView("env-a", "thread-1", "late", 3);
+    await wipeKeptViews();
+    await late;
+    await saveKeptView("env-a", "thread-2", "after", 4);
+    expect(await keptThreads("env-a", 3)).toEqual([]);
+    expect(await keptThreads("env-b", 1)).toEqual([]);
+    reopenKeptViews();
+    await saveKeptView("env-a", "thread-2", "back", 5);
+    expect(await keptThreads("env-a", 3)).toEqual([2]);
   });
 });

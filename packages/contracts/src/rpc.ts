@@ -19,6 +19,10 @@ import {
 } from "./mcpApps.ts";
 import { PEER_LINK_WS_METHODS, PeerLinkRpcs } from "./peerLinkRpc.ts";
 import {
+  WsOrchestrationV2GetThreadHistoryPageRpc,
+  WsOrchestrationV2GetTurnItemRpc,
+} from "./orchestrationV2ThreadItemRpc.ts";
+import {
   ChatGptReconnectProfileInput,
   ChatGptReconnectProfile,
   ChatGptImportProfileInput,
@@ -1910,12 +1914,6 @@ const WsOrchestrationV2GetNativeChildWorkRpc = Rpc.make(
   },
 );
 
-const WsOrchestrationV2GetTurnItemRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTurnItem, {
-  payload: OrchestrationV2RpcSchemas.getTurnItem.input,
-  success: OrchestrationV2RpcSchemas.getTurnItem.output,
-  error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
-});
-
 const WsOrchestrationV2LaunchThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.launchThread, {
   payload: OrchestrationV2RpcSchemas.launchThread.input,
   success: OrchestrationV2RpcSchemas.launchThread.output,
@@ -2268,6 +2266,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2StopWorkflowRpc,
   WsOrchestrationV2ForceStopThreadRpc,
   WsOrchestrationV2GetTurnItemRpc,
+  WsOrchestrationV2GetThreadHistoryPageRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,
   WsOrchestrationV2SearchThreadsRpc,

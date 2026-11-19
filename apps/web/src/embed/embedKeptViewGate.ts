@@ -1,4 +1,5 @@
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
+import type { SupervisorConnectionState } from "@t3tools/client-runtime/connection";
 import type { ServerConfig } from "@t3tools/contracts";
 
 export type EmbedKeptView = "live" | "kept" | "hold";
@@ -20,4 +21,14 @@ export function embedKeptView(input: EmbedKeptViewInput): EmbedKeptView {
       ? input.sessionListsThread
       : (input.liveConfig.chatSession?.threadIds ?? []).some((id) => id === input.threadId);
   return listed ? "kept" : "hold";
+}
+
+export function embedConnectionRefused(
+  state: Pick<SupervisorConnectionState, "phase" | "lastFailure">,
+): boolean {
+  return (
+    state.phase === "blocked" &&
+    state.lastFailure?._tag === "ConnectionBlockedError" &&
+    (state.lastFailure.reason === "authentication" || state.lastFailure.reason === "permission")
+  );
 }

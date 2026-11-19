@@ -93,6 +93,8 @@ import {
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
+import { timelineRowSpanIndices, useSelectedTimelineRowIds } from "./selectedTimelineRows";
+import { useEmbedScrollLoad } from "../../embed/useEmbedScrollLoad";
 import { TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
@@ -1500,11 +1502,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
 });
 
 function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
+  const scrollLoadRef = useEmbedScrollLoad(
+    props.hasMoreHistory && !props.loading && props.error === null,
+    () => props.onLoadEarlier(),
+  );
   if (!props.hasMoreHistory && props.error === null) {
     return null;
   }
   return (
-    <div className="messages-timeline-row-frame">
+    <div ref={scrollLoadRef} className="messages-timeline-row-frame">
       <div className="chat-content-lane flex flex-col gap-1.5 pb-2">
         {props.hasMoreHistory ? (
           <button
@@ -1533,52 +1539,6 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
 
 function isMessageRow(row: MessagesTimelineRow) {
   return row.kind === "message" && row.message.role !== "system";
-}
-
-// LegendList recycles a row's container once it leaves the draw buffer, which
-// moves a native selection's ends onto other rows. Pin the selected rows.
-function useSelectedTimelineRowIds(viewport: HTMLElement | null) {
-  const [rowIds, setRowIds] = useState<ReadonlyArray<string>>([]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to document selectionchange to track which timeline rows a native selection covers
-  useEffect(() => {
-    if (!viewport) return;
-    const update = () => {
-      const selection = document.getSelection();
-      const range =
-        selection && !selection.isCollapsed && selection.rangeCount > 0
-          ? selection.getRangeAt(0)
-          : null;
-      const next: string[] = [];
-      if (range?.intersectsNode(viewport)) {
-        for (const row of viewport.querySelectorAll<HTMLElement>("[data-timeline-row-id]")) {
-          const rowId = row.dataset.timelineRowId;
-          if (rowId && range.intersectsNode(row)) next.push(rowId);
-        }
-      }
-      setRowIds((current) =>
-        current.length === next.length && current.every((id, i) => id === next[i]) ? current : next,
-      );
-    };
-    document.addEventListener("selectionchange", update);
-    return () => {
-      document.removeEventListener("selectionchange", update);
-      setRowIds([]);
-    };
-  }, [viewport]);
-  return rowIds;
-}
-
-// Rows between the selected ones are covered too, even if not mounted right now.
-function timelineRowSpanIndices(
-  rows: ReadonlyArray<MessagesTimelineRow>,
-  rowIds: ReadonlyArray<string>,
-): number[] {
-  if (rowIds.length === 0) return [];
-  const selected = new Set(rowIds);
-  const first = rows.findIndex((row) => selected.has(row.id));
-  const last = rows.findLastIndex((row) => selected.has(row.id));
-  if (first < 0) return [];
-  return Array.from({ length: last - first + 1 }, (_, i) => first + i);
 }
 
 function keyExtractor(item: MessagesTimelineRow) {

@@ -43,7 +43,12 @@ import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
-import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
+import {
+  fetchThreadHistoryPage,
+  historyPagesPerTrigger,
+  historyPagingAvailable,
+  resumable,
+} from "./threadHistoryPage.ts";
 import {
   applyHistoryPageMeta,
   clearActiveHistoryLoading,
@@ -54,6 +59,8 @@ import {
 } from "./threadHistoryMerge.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 import { makeThreadRequestsResolvedAnnouncer } from "./threadRequests.ts";
+import { settleTurnItems } from "./threadSettleTurnItems.ts";
+import { threadSubscribeAccepts } from "./threadSubscribeAccepts.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   type EnvironmentThreadState,
@@ -140,29 +147,6 @@ function shouldPersistThread(
   return !thread.runs.some(
     (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
   );
-}
-
-// Only still-active local copies take the server's item: events applied meanwhile win,
-// and inherited rows belong to another thread.
-function settleTurnItems(
-  threadId: ThreadIdType,
-  projection: OrchestrationV2ThreadProjection,
-  settled: ReadonlyMap<string, OrchestrationV2TurnItem>,
-): OrchestrationV2ThreadProjection {
-  let changed = false;
-  const settle = (item: OrchestrationV2TurnItem, id: string) => {
-    const server = settled.get(id);
-    if (server === undefined || !isOrchestrationV2WorkActive(item.status)) return item;
-    changed = true;
-    return server;
-  };
-  const turnItems = projection.turnItems.map((item) => settle(item, item.id));
-  const visibleTurnItems = projection.visibleTurnItems.map((row) => {
-    if (row.sourceThreadId !== threadId) return row;
-    const item = settle(row.item, row.sourceItemId);
-    return item === row.item ? row : { ...row, item };
-  });
-  return changed ? { ...projection, turnItems, visibleTurnItems } : projection;
 }
 
 interface ThreadResumeSnapshot {
@@ -294,7 +278,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     persisted: retained?.persisted ?? Option.isSome(cached),
     acceptsBoundedSnapshots: canLoadHistory,
   };
-  if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
+  if (resumeCache?.owner === owner) resumeCache.snapshot = resumable(committed);
   const awaitingCompletion = yield* Ref.make(false);
   const applyLock = yield* Semaphore.make(1);
   // Save only completed data/cursor updates. A canceled scope must not cache
@@ -318,7 +302,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         committed.persisted &&
         matchesThreadSnapshot(committed, Option.getOrNull(current.data), sequence, current.history),
     };
-    if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
+    if (resumeCache?.owner === owner) resumeCache.snapshot = resumable(committed);
   });
   const persistence = yield* Queue.sliding<OrchestrationV2ThreadDetailSnapshot>(1);
   let queuedSnapshot = Option.getOrUndefined(cached);
@@ -358,7 +342,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           )
             return;
           committed = { ...committed, persisted: true };
-          if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
+          if (resumeCache?.owner === owner) resumeCache.snapshot = resumable(committed);
         }),
       ),
       Effect.catch((error) =>
@@ -723,6 +707,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     )
       return { _tag: "noop" };
     if (workAnchorId === undefined && current.history.loading) return { _tag: "busy" };
+    if (!(yield* historyPagingAvailable(supervisor))) return { _tag: "noop" };
     let requestCursor = initialCursor;
     const isCurrent = (latest: EnvironmentThreadState) =>
       workAnchorId === undefined
@@ -763,6 +748,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             : [staleResult(latest), latest],
       );
 
+    let pages = 0;
     const runLoad = Effect.gen(function* () {
       while (true) {
         const preparedOption = yield* SubscriptionRef.get(supervisor.prepared);
@@ -776,7 +762,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               : ["conversation" as const, undefined];
         let nextCursor: string | null = null;
         for (const view of views) {
-          const pageResult = yield* fetchEnvironmentThreadHistoryPage({
+          const pageResult = yield* fetchThreadHistoryPage({
+            supervisor,
             prepared: preparedOption.value,
             threadId,
             cursor: requestCursor,
@@ -788,12 +775,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           if (Result.isFailure(pageResult))
             return yield* failLoad(formatHistoryError(pageResult.failure));
           const page = pageResult.success;
+          pages += 1;
           const complete = view !== "conversation";
           const keepPaging =
             complete &&
             (workAnchorId !== undefined
               ? page.nextCursor !== null
               : throughEntryId === undefined &&
+                pages < historyPagesPerTrigger() &&
                 page.hasMoreHistory &&
                 !page.items.some(({ item }) => startsTurn(item)));
           if (keepPaging && (page.nextCursor === null || page.nextCursor === requestCursor))
@@ -1095,14 +1084,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           threadId,
           ...(canResume ? { afterSequence: sequence } : {}),
           requestCompletionMarker: true as const,
-          ...(acceptBoundedSnapshot
-            ? {
-                acceptBoundedSnapshot: true as const,
-                acceptDeferredWork: true as const,
-                acceptCompactTurnItems: true as const,
-                acceptCompactIds: true as const,
-              }
-            : {}),
+          ...threadSubscribeAccepts(acceptBoundedSnapshot, config),
           acceptDedupedBodies: true as const,
         };
       }),

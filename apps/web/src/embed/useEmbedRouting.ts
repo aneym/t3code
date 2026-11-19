@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
 import { useContext, useEffect } from "react";
 
 import { environmentShell } from "../state/shell";
@@ -32,8 +33,15 @@ export function useEmbedRouting(
   const router = useRouter();
   const registry = useContext(RegistryContext);
   const environment = EnvironmentId.make(environmentId);
-  const warmSet = createEmbedWarmSet(EMBED_WARM_LIMIT, (thread) =>
-    registry.mount(environmentThreads.stateAtom(environment, ThreadId.make(thread))),
+  const threadState = (thread: string) =>
+    environmentThreads.stateAtom(environment, ThreadId.make(thread));
+  const warmSet = createEmbedWarmSet(
+    EMBED_WARM_LIMIT,
+    (thread) => registry.mount(threadState(thread)),
+    (thread) => {
+      const state = registry.get(threadState(thread));
+      return AsyncResult.isSuccess(state) && state.value.history.expanded;
+    },
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the shown thread's subscription in the warm set so a later route back paints from memory
   useEffect(() => {

@@ -521,6 +521,7 @@ export interface ProjectionStoreV2Shape {
     throughEntryId?: string,
     conversationOnly?: boolean,
     workMode?: "deferred" | "work",
+    maxBytes?: number,
   ) => Effect.Effect<OrchestrationV2ThreadHistoryPage, ProjectionStoreV2Error>;
   readonly getTimelinePage: (
     threadId: ThreadId,
@@ -1317,12 +1318,6 @@ function activeLocalTurnItems(
   }));
 }
 
-function localVisibleTurnItems(
-  projection: OrchestrationV2ThreadProjection,
-): Array<OrchestrationV2ProjectedTurnItem> {
-  return activeLocalTurnItems(projection);
-}
-
 function inheritedVisibleTurnItemsFromLocalItems(
   items: ReadonlyArray<OrchestrationV2TurnItem>,
 ): Array<Omit<OrchestrationV2ProjectedTurnItem, "position">> {
@@ -1339,7 +1334,7 @@ function withLocalVisibleTurnItems(
 ): OrchestrationV2ThreadProjection {
   return {
     ...projection,
-    visibleTurnItems: localVisibleTurnItems(projection),
+    visibleTurnItems: activeLocalTurnItems(projection),
   };
 }
 
@@ -1491,7 +1486,7 @@ function buildVisibleTurnItems(input: {
     forkedFrom === null ||
     (input.sourceProjection === null && input.inheritedRowCount === undefined)
   ) {
-    return localVisibleTurnItems(input.projection);
+    return activeLocalTurnItems(input.projection);
   }
 
   const inherited =
@@ -6854,6 +6849,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       throughEntryId,
       conversationOnly,
       workMode,
+      maxBytes,
     ) =>
       sql
         .withTransaction(
@@ -7057,7 +7053,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ? page.items.filter((row) => isConversationHistoryItem(row.item))
                 : page.items,
             );
-            const bounded = selectRecentTimelineWindow({ items, snapshotSequence, policy });
+            const bounded = selectRecentTimelineWindow({
+              items,
+              snapshotSequence,
+              policy: maxBytes === undefined ? policy : { ...policy, maxEncodedBytes: maxBytes },
+            });
             const requests =
               workMode === "work"
                 ? []

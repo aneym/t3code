@@ -14,6 +14,8 @@ import {
   AuthSourceControlWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
+  ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2GetThreadProjectionError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -29,6 +31,7 @@ import {
   requiredScopeForDeviceList,
 } from "./RpcAuthorization.ts";
 import * as RpcAuthorization from "./RpcAuthorization.ts";
+import type { ChatSessionAccess } from "../chatSession/ChatSessionAccess.ts";
 
 describe("RPC authorization scopes", () => {
   it("declares exactly one scope for every RPC in the server group", () => {
@@ -470,5 +473,52 @@ it.effect("denies manual cleanup before the handler without settings permission"
       requiredPermission: AuthSettingsWriteScope,
     });
     expect(handled).toBe(false);
+  }),
+);
+
+it.effect("serves earlier history pages to a chat session only for threads in its set", () =>
+  Effect.gen(function* () {
+    const method = ORCHESTRATION_V2_WS_METHODS.getThreadHistoryPage;
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof method> => tag !== method,
+      ),
+    );
+    const shared = ThreadId.make("thread:shared");
+    const access: ChatSessionAccess = {
+      session: { setId: "set", threads: new Set([shared]), ownerThreads: new Set() },
+      inSet: (threadId) => threadId === shared,
+      ownsThread: () => false,
+      modelEnabled: () => Effect.succeed(false),
+      projectIds: Effect.succeed(new Set()),
+      ownsUpload: () => Effect.succeed(false),
+      attachmentVisible: () => Effect.succeed(false),
+      attachmentUsable: () => Effect.succeed(false),
+      messageShowsImage: () => Effect.succeed(false),
+    };
+    const handled: Array<ThreadId> = [];
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(method, ({ threadId }) =>
+            Effect.sync(() => handled.push(threadId)).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new OrchestrationV2GetThreadProjectionError({ threadId, message: "x" }),
+                ),
+              ),
+            ),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope], undefined, access),
+        ),
+      ),
+    );
+    const page = (threadId: ThreadId) =>
+      client[method]({ threadId, cursor: "c" }).pipe(Effect.flip);
+    expect(yield* page(ThreadId.make("thread:other"))).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+    });
+    expect(yield* page(shared)).toMatchObject({ _tag: "OrchestrationV2GetThreadProjectionError" });
+    expect(handled).toEqual([shared]);
   }),
 );

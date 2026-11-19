@@ -7,6 +7,7 @@ export type EmbedWarmSet = {
 export function createEmbedWarmSet(
   limit: number,
   mount: (thread: string) => () => void,
+  dropOnLeave: (thread: string) => boolean = () => false,
 ): EmbedWarmSet {
   const kept = new Map<string, () => void>();
   let shown: string | null = null;
@@ -25,6 +26,12 @@ export function createEmbedWarmSet(
   };
   return {
     show: (thread) => {
+      const left = shown;
+      const release = left === null || left === thread ? undefined : kept.get(left);
+      if (left !== null && release !== undefined && dropOnLeave(left)) {
+        kept.delete(left);
+        release();
+      }
       shown = thread;
       touch(thread);
       evict();

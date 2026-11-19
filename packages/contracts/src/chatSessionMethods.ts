@@ -13,6 +13,7 @@ export const CHAT_SESSION_METHODS: ReadonlySet<string> = new Set([
   O.getThreadLinkMetadata,
   O.getThreadProjection,
   O.getTurnItem,
+  O.getThreadHistoryPage,
   O.subscribeShell,
   O.subscribeThread,
   O.subscribeCommandOutput,

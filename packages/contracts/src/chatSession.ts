@@ -6,6 +6,7 @@ import { ThreadId } from "./baseSchemas.ts";
 const CHAT_SESSION_SUBJECT_PREFIX = "chat-session:";
 const CHAT_SESSION_MAX_THREADS = 500;
 export const CHAT_SESSION_TTL_MS = 60 * 60_000;
+export const CHAT_SESSION_HISTORY_PAGE_BYTES = 196_608;
 
 export const ChatSessionThreadIds = Schema.Array(ThreadId).check(
   Schema.isMinLength(1),

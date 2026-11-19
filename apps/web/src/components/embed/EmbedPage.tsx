@@ -110,11 +110,11 @@ export function EmbedPage({
   const settings = useAtomValue(primaryServerConfigAtom)?.settings ?? null;
   const target = threadId === null ? null : resolveThreadRouteTarget({ environmentId, threadId });
   useEmbedDocumentTitle(authenticated && target?.kind === "server" ? target.threadRef : null);
-  useEmbedKeptViewUpkeep(
+  const signedIn = useEmbedKeptViewUpkeep(
     authenticated,
     target?.kind === "server" ? target.threadRef.environmentId : null,
   );
-  if (!authenticated) return <EmbedNotice text="Sign in to continue." />;
+  if (!signedIn) return <EmbedNotice text="Sign in to continue." />;
   return (
     <>
       {target?.kind === "server" ? <EmbedPrefetch threadRef={target.threadRef} /> : null}
