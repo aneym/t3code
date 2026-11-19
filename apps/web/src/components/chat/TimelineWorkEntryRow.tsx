@@ -44,6 +44,7 @@ import {
   workEntryReadOutput,
 } from "./MessagesTimeline.logic";
 import { cn } from "~/lib/utils";
+import { threadRouteLink } from "../../threadRoutes";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
 import { SubagentNotificationLink } from "./V2LifecycleRow";
@@ -68,6 +69,7 @@ import {
   THINKING_PREVIEW_PLUGINS,
   THOUGHT_PREVIEW_PLUGINS,
   THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
+  toolCallExpandedBodyClassName,
 } from "./TimelineWorkEntryRow.logic";
 
 export function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {
@@ -97,8 +99,7 @@ export function ThreadReadLabel({
       <span className="shrink-0">{label.prefix} “</span>
       {linked ? (
         <Link
-          to="/$environmentId/$threadId"
-          params={{ environmentId, threadId: label.threadId }}
+          {...threadRouteLink(scopeThreadRef(environmentId, label.threadId))}
           className="min-w-0 truncate rounded-sm text-foreground underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
           onClick={stopRowToggle}
           onKeyDown={stopRowToggle}
@@ -112,9 +113,6 @@ export function ThreadReadLabel({
     </span>
   );
 }
-
-const toolCallExpandedBodyClassName =
-  "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-(length:--font-size-code,var(--text-2xs)) leading-relaxed select-text";
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 

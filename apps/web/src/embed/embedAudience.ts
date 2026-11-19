@@ -99,6 +99,8 @@ function audienceItem(entry: TimelineEntry, inputs: ReadonlyMap<string, unknown>
         to: railsAskTo(entry.mcpApp, inputs.get(entry.id)),
       };
     case "event":
+      if (entry.projectedItem.item.type === "secret_request")
+        return { kind: "request", id: entry.id };
       return { kind: "run", id: entry.id, runId: entry.projectedItem.item.runId ?? null };
   }
 }

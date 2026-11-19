@@ -53,5 +53,6 @@ export const EmbedReadyMessage = Schema.Struct({
   from: EmbedPaintSource,
   capabilities: Schema.Array(EmbedCapability),
   timings: Schema.optionalKey(EmbedRouteTimings),
+  parentThreadId: Schema.optionalKey(Schema.String),
 });
 export type EmbedReadyMessage = typeof EmbedReadyMessage.Type;

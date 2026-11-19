@@ -1,3 +1,4 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -7,6 +8,7 @@ import { useEnvironmentThread } from "../state/threads";
 import { useEmbedHostConnected } from "./embedHost";
 import { readEmbedLocation } from "./embedLocation";
 import { embedPaintSource } from "./embedPaintSource";
+import { embedParentThreadId } from "./embedParentThread";
 import { createEmbedReadyWatch } from "./embedReadyWatch";
 import { markEmbedRouteStep } from "./embedRouteTimings";
 
@@ -15,10 +17,9 @@ export function useEmbedReadyReport(
   threadId: string,
   held = false,
 ): boolean {
-  const thread = useEnvironmentThread(
-    threadRef?.environmentId ?? null,
-    threadRef?.threadId ?? null,
-  );
+  const refEnvironmentId = threadRef?.environmentId ?? null;
+  const refThreadId = threadRef?.threadId ?? null;
+  const thread = useEnvironmentThread(refEnvironmentId, refThreadId);
   const settled =
     !held &&
     (threadRef === null ||
@@ -65,8 +66,25 @@ export function useEmbedReadyReport(
   useLayoutEffect(() => {
     if (settled && !unavailable) markEmbedRouteStep(threadId, "mounted");
     if (!connected) return;
-    if (unavailable) watch.refuse(threadId);
-    else watch.report(threadId, settled, draws, from);
-  }, [watch, connected, threadId, unavailable, settled, draws, from]);
+    if (unavailable) {
+      watch.refuse(threadId);
+      return;
+    }
+    const parentThreadId =
+      refEnvironmentId === null || refThreadId === null
+        ? undefined
+        : embedParentThreadId(scopeThreadRef(refEnvironmentId, refThreadId));
+    watch.report(threadId, settled, draws, from, parentThreadId);
+  }, [
+    watch,
+    connected,
+    threadId,
+    unavailable,
+    refEnvironmentId,
+    refThreadId,
+    settled,
+    draws,
+    from,
+  ]);
   return unavailable;
 }

@@ -12,6 +12,7 @@ import { markEmbedRouteStep, takeEmbedRouteTimings } from "./embedRouteTimings";
 const ROW = "[data-timeline-row-kind]";
 const EMPTY = "[data-timeline-empty]";
 const DRAWN = `${ROW},${EMPTY},[data-timeline-root]`;
+const SHOWN = `${DRAWN},[data-embed-view]`;
 const NO_ROWS_GRACE_MS = 1000;
 
 export type EmbedDraws = "rows" | "view" | "nothing";
@@ -23,14 +24,15 @@ export type EmbedReadyWatch = {
     settled: boolean,
     draws: EmbedDraws,
     from: EmbedPaintSource,
+    parentThreadId?: string,
   ) => void;
   readonly refuse: (threadId: string) => void;
   readonly stop: () => void;
 };
 
-let painted: string | null = null;
+let painted: { readonly threadId: string; readonly parentThreadId?: string } | null = null;
 
-function postReady(threadId: string, from: EmbedPaintSource): boolean {
+function postReady(threadId: string, from: EmbedPaintSource, parentThreadId?: string): boolean {
   markEmbedRouteStep(threadId, "drawn");
   const timings = takeEmbedRouteTimings(threadId);
   const message: EmbedReadyMessage = {
@@ -39,21 +41,26 @@ function postReady(threadId: string, from: EmbedPaintSource): boolean {
     from,
     capabilities: EMBED_CAPABILITIES,
     ...(timings === undefined ? {} : { timings }),
+    ...(parentThreadId === undefined ? {} : { parentThreadId }),
   };
   if (!postToEmbedHost(message)) return false;
-  painted = threadId;
+  painted = parentThreadId === undefined ? { threadId } : { threadId, parentThreadId };
   return true;
 }
 
 export function repeatEmbedReady(threadId: string): boolean {
-  return painted === threadId && postReady(threadId, "memory");
+  return painted?.threadId === threadId && postReady(threadId, "memory", painted.parentThreadId);
 }
 
 export function createEmbedReadyWatch(): EmbedReadyWatch {
   let before: ReadonlySet<Element> = new Set();
   let reported: string | null = null;
   let refused: string | null = null;
-  let waiting: { readonly threadId: string; readonly from: EmbedPaintSource } | null = null;
+  let waiting: {
+    readonly threadId: string;
+    readonly from: EmbedPaintSource;
+    readonly parentThreadId: string | undefined;
+  } | null = null;
   let grace: ReturnType<typeof setTimeout> | undefined;
   let graceOver = false;
   const fresh = (selector: string) => {
@@ -64,11 +71,11 @@ export function createEmbedReadyWatch(): EmbedReadyWatch {
   let draws: EmbedDraws = "nothing";
   const drawn = () => {
     if (draws === "nothing") return true;
-    if (graceOver) return document.querySelector(DRAWN) !== null;
+    if (graceOver) return document.querySelector(SHOWN) !== null;
     return fresh(draws === "rows" ? ROW : DRAWN);
   };
   const check = () => {
-    if (waiting !== null && drawn()) send(waiting.threadId, waiting.from);
+    if (waiting !== null && drawn()) send(waiting.threadId, waiting.from, waiting.parentThreadId);
   };
   const observer = new MutationObserver(check);
   const stop = () => {
@@ -76,9 +83,9 @@ export function createEmbedReadyWatch(): EmbedReadyWatch {
     waiting = null;
     clearTimeout(grace);
   };
-  const send = (threadId: string, from: EmbedPaintSource) => {
+  const send = (threadId: string, from: EmbedPaintSource, parentThreadId?: string) => {
     stop();
-    if (postReady(threadId, from)) reported = threadId;
+    if (postReady(threadId, from, parentThreadId)) reported = threadId;
   };
   return {
     navigating: () => {
@@ -88,12 +95,12 @@ export function createEmbedReadyWatch(): EmbedReadyWatch {
       refused = null;
       painted = null;
     },
-    report: (threadId, settled, next, from) => {
+    report: (threadId, settled, next, from, parentThreadId) => {
       stop();
       if (!settled || reported === threadId) return;
       draws = next;
       graceOver = false;
-      waiting = { threadId, from };
+      waiting = { threadId, from, parentThreadId };
       check();
       if (waiting === null) return;
       observer.observe(document.body, {

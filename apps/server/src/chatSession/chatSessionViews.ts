@@ -12,6 +12,12 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
+import {
+  MAX_SUBAGENT_HOPS,
+  subagentClosure,
+  subagentParentOf,
+  type LineageEntry,
+} from "./ChatSessionDescendants.ts";
 import type { ChatSession } from "./ChatThreadSets.ts";
 
 const PLACEHOLDER_PATH = "/";
@@ -32,13 +38,27 @@ export interface ChatShellFilter {
   ) => OrchestrationV2ShellStreamItem | undefined;
 }
 
+export const setHops = (threads: ReadonlySet<ThreadId>): ReadonlyMap<ThreadId, number> =>
+  new Map([...threads].map((threadId) => [threadId, 0] as const));
+
 export function makeChatShellFilter(
   threads: ReadonlySet<ThreadId>,
   seedProjectIds: ReadonlySet<ProjectId>,
+  seedEntries: Iterable<LineageEntry> = [],
 ): ChatShellFilter {
   const projectIds = new Set<ProjectId>(seedProjectIds);
+  let hops = subagentClosure(setHops(threads), seedEntries);
+  const descend = (thread: OrchestrationV2ThreadShell) => {
+    if (hops.has(thread.id)) return;
+    const parent = subagentParentOf(thread.lineage);
+    const parentHops = parent === null ? undefined : hops.get(parent);
+    if (parentHops !== undefined && parentHops < MAX_SUBAGENT_HOPS) {
+      hops.set(thread.id, parentHops + 1);
+    }
+  };
   const keep = (thread: OrchestrationV2ThreadShell) => {
-    if (!threads.has(thread.id)) return false;
+    descend(thread);
+    if (!hops.has(thread.id)) return false;
     projectIds.add(thread.projectId);
     return true;
   };
@@ -49,6 +69,10 @@ export function makeChatShellFilter(
         case "snapshot-required":
           return item;
         case "snapshot": {
+          hops = subagentClosure(hops, [
+            ...item.snapshot.threads,
+            ...item.snapshot.archivedThreads,
+          ]);
           const active = item.snapshot.threads.filter(keep);
           const archived = item.snapshot.archivedThreads.filter(keep);
           return {
@@ -76,7 +100,7 @@ export function makeChatShellFilter(
         case "thread.updated":
           return keep(item.thread) ? item : undefined;
         case "thread.removed":
-          return threads.has(item.threadId) ? item : undefined;
+          return hops.has(item.threadId) ? item : undefined;
       }
     },
   };

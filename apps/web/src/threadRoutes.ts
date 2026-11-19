@@ -4,6 +4,7 @@ import type { EnvironmentThreadState } from "@t3tools/client-runtime/state/threa
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import type { DraftId } from "./composerDraftStore";
+import { inEmbedPage } from "./embed/embedProtocol";
 
 export type ThreadRouteTarget =
   | {
@@ -63,6 +64,13 @@ export function buildThreadRouteParams(ref: ScopedThreadRef): {
     environmentId: ref.environmentId,
     threadId: ref.threadId,
   };
+}
+
+export function threadRouteLink(ref: ScopedThreadRef) {
+  const params = buildThreadRouteParams(ref);
+  return inEmbedPage()
+    ? ({ to: "/embed/$environmentId/$threadId", params, search: true } as const)
+    : ({ to: "/$environmentId/$threadId", params } as const);
 }
 
 /** The router keeps reserved characters encoded in location.pathname. */

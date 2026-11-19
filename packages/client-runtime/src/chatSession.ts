@@ -7,7 +7,7 @@ import {
   isChatSessionScopes,
 } from "@t3tools/contracts";
 
-export type ChatThreadControls = "full" | "owner" | "seat";
+export type ChatThreadControls = "full" | "owner" | "seat" | "answer";
 
 let active = false;
 let ownerThreadIds: ReadonlySet<string> = new Set();
@@ -48,7 +48,10 @@ export function chatSessionListsThread(threadId: string): boolean {
 
 export function chatThreadControls(threadId: string | null | undefined): ChatThreadControls {
   if (!active) return "full";
-  return threadId && ownerThreadIds.has(threadId) ? "owner" : "seat";
+  if (threadId && ownerThreadIds.has(threadId)) return "owner";
+  return threadId && sessionThreadIds.size > 0 && !sessionThreadIds.has(threadId)
+    ? "answer"
+    : "seat";
 }
 
 export function chatSessionActive(): boolean {

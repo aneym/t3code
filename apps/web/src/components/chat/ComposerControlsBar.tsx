@@ -30,7 +30,7 @@ import {
 } from "./ComposerModelEffort";
 import type { useComposerProviderModel } from "./useComposerProviderModel";
 import { resolveComposerControlsOwnership } from "./composerControlsOwnership";
-import { useChatThreadControls } from "../../chatSessionMode";
+import { ANSWER_ONLY_REASON, useChatThreadControls } from "../../chatSessionMode";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /**
@@ -138,7 +138,12 @@ export function ComposerControlsBar(props: {
   const threadControls = useChatThreadControls(
     routeKind === "server" ? routeThreadRef.threadId : null,
   );
-  const seatReason = threadControls === "seat" ? SEAT_CONTROLS_REASON : undefined;
+  const seatReason =
+    threadControls === "seat"
+      ? SEAT_CONTROLS_REASON
+      : threadControls === "answer"
+        ? ANSWER_ONLY_REASON
+        : undefined;
   const {
     accessDisplay,
     showModeBlock,
