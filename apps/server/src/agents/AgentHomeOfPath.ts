@@ -24,3 +24,14 @@ export const agentHomeOfPath = async (cwd: string | null): Promise<AgentHomeLoca
     return null;
   return { root, handle, home: NodePath.join(root, handle) };
 };
+
+export const AGENT_HOME_KEY_PREFIX = "agent-home:";
+
+export const agentHomeKeyOfRoot = async (workspaceRoot: string) => {
+  const location = await agentHomeOfPath(workspaceRoot);
+  if (location === null) return undefined;
+  const dir = await NodeFSP.realpath(workspaceRoot).catch(() => NodePath.resolve(workspaceRoot));
+  return NodePath.relative(location.root, dir) === location.handle
+    ? `${AGENT_HOME_KEY_PREFIX}${workspaceRoot}`
+    : undefined;
+};

@@ -309,7 +309,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             }),
           );
         const remoteChild = input.delegatedFrom !== undefined && linkOrigin !== undefined;
-        const result = yield* admitLaunch(remoteChild, projectId, launch);
+        const result = yield* admitLaunch(
+          remoteChild,
+          projectId,
+          launch,
+          input.startOrRefuse === true,
+        );
         const thread = result.projection.thread;
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
         return {

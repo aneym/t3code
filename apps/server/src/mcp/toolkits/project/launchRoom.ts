@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { SPILL_REFUSED } from "../../../orchestration-v2/DelegatedChildClaims.ts";
 import * as Gate from "../../../orchestration-v2/DelegatedChildStartGate.ts";
 import { localProject } from "../../../peer/PlacementRoom.ts";
 import * as Project from "../../../project/ProjectService.ts";
@@ -43,10 +44,17 @@ export const admitLaunch = Effect.fn("LaunchRoom.admitLaunch")(function* <A, E, 
   remoteChild: boolean,
   projectId: ProjectId,
   launch: (held: boolean) => Effect.Effect<A, E, R>,
+  startOrRefuse: boolean,
 ) {
   const gate = yield* Effect.serviceOption(Gate.DelegatedChildStartGate);
   if (!remoteChild || Option.isNone(gate)) return yield* launch(false);
-  return yield* gate.value.admit({ projectId }, launch);
+  return yield* gate.value.admit<A, E | OrchestratorMcpFailure, R>(
+    { projectId },
+    launch,
+    startOrRefuse
+      ? (reason) => new OrchestratorMcpFailure({ code: "busy", message: SPILL_REFUSED + reason })
+      : undefined,
+  );
 });
 
 export const launchHold = Effect.fn("LaunchRoom.launchHold")(function* (

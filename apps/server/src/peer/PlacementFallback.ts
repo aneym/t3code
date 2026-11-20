@@ -2,6 +2,7 @@ import type { AgentPlacementReceipt } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import type * as Invocation from "../mcp/McpInvocationContext.ts";
+import { SPILL_REFUSED } from "../orchestration-v2/DelegatedChildClaims.ts";
 import type * as PlacementDecisions from "./PlacementDecisions.ts";
 
 const NO_ANSWER = "The linked environment stopped answering.";
@@ -40,12 +41,16 @@ export const make =
           () => attempt,
         ),
         Effect.map((result) => ({ result, placement: selected.placement })),
-        Effect.catch((error) =>
-          deps
-            .fellBack(scope, selected, messageOf(error))
-            .pipe(
-              Effect.flatMap((placement) => Effect.map(here, (result) => ({ result, placement }))),
-            ),
+        Effect.catchIf(
+          (error) => !messageOf(error).startsWith(SPILL_REFUSED),
+          (error) =>
+            deps
+              .fellBack(scope, selected, messageOf(error))
+              .pipe(
+                Effect.flatMap((placement) =>
+                  Effect.map(here, (result) => ({ result, placement })),
+                ),
+              ),
         ),
       );
     }).pipe(Effect.withSpan("PlacementFallback.run"));

@@ -24,6 +24,9 @@ export const LinkedEnvironmentServerSettingsFields = {
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   agentPlacementMaxHoldMinutes: HoldMinutes.pipe(Schema.withDecodingDefault(Effect.succeed(60))),
+  agentPlacementSpillWhenFull: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
   linkedEnvironmentsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingIncludeLinkedEnvironments: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -38,6 +41,7 @@ export const LinkedEnvironmentServerSettingsPatchFields = {
   agentPlacementByRoom: Schema.optionalKey(Schema.Boolean),
   agentPlacementPaused: Schema.optionalKey(Schema.NullOr(Schema.String)),
   agentPlacementMaxHoldMinutes: Schema.optionalKey(HoldMinutes),
+  agentPlacementSpillWhenFull: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingIncludeLinkedEnvironments: Schema.optionalKey(Schema.Boolean),
 };
