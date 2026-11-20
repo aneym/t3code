@@ -1,3 +1,4 @@
+import { EMBED_KEY_MESSAGE } from "@t3tools/contracts";
 import { useEffect } from "react";
 
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
@@ -25,7 +26,7 @@ import { applyEmbedHostPress, applyEmbedPressResult } from "./embedPress";
 import { watchEmbedUploads } from "./embedUploads";
 import {
   EMBED_COMPOSER_FOCUS_MESSAGE,
-  EMBED_KEY_MESSAGE,
+  embedNumberKey,
   isEmbedPath,
   pressedHostChord,
   readEmbedAudienceMessage,
@@ -126,6 +127,13 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
         event.preventDefault();
         event.stopImmediatePropagation();
         if (!event.repeat) toggleEmbedControls();
+        return;
+      }
+      const numberKey = embedNumberKey(event);
+      if (numberKey !== null) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!event.repeat) postToEmbedHost(numberKey);
         return;
       }
       const key = reservedEmbedChord(event, mac);

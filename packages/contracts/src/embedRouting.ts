@@ -4,6 +4,7 @@ const EMBED_ROUTE_MESSAGE = "t3-embed/route";
 const EMBED_WARM_MESSAGE = "t3-embed/warm";
 export const EMBED_ROUTE_REFUSED_MESSAGE = "t3-embed/route-refused";
 export const EMBED_READY_MESSAGE = "t3-embed/ready";
+export const EMBED_KEY_MESSAGE = "t3-embed/key";
 
 export const EMBED_WARM_LIMIT = 8;
 
@@ -56,3 +57,13 @@ export const EmbedReadyMessage = Schema.Struct({
   parentThreadId: Schema.optionalKey(Schema.String),
 });
 export type EmbedReadyMessage = typeof EmbedReadyMessage.Type;
+
+export const EMBED_NUMBER_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
+
+export const EmbedNumberKeyMessage = Schema.Struct({
+  type: Schema.Literal(EMBED_KEY_MESSAGE),
+  key: Schema.Literals(EMBED_NUMBER_KEYS),
+  meta: Schema.Boolean,
+  ctrl: Schema.Boolean,
+});
+export type EmbedNumberKeyMessage = typeof EmbedNumberKeyMessage.Type;
