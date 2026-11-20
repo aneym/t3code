@@ -1,10 +1,20 @@
+import { readAgentMainThreads } from "../agents/AgentHomeFiles.ts";
+
 export const EVERY_CHILD = "*";
 
 export interface GroupLimit {
   readonly perGroup: number | undefined;
   readonly staggerMs: number | undefined;
   readonly except: ReadonlySet<string>;
+  readonly exceptParents: ReadonlySet<string>;
 }
+
+export interface ChildOrigin {
+  readonly provider?: string | null | undefined;
+  readonly parent?: string | null | undefined;
+}
+
+const NONE: ReadonlySet<string> = new Set();
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -12,9 +22,13 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 const positiveInt = (value: unknown, min: number) =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= min ? value : undefined;
 
-export const childStartLimits = (raw: unknown): ReadonlyMap<string, GroupLimit> => {
+export const childStartLimits = async (
+  raw: unknown,
+  mainThreads: () => Promise<ReadonlySet<string>> = readAgentMainThreads,
+): Promise<ReadonlyMap<string, GroupLimit>> => {
   const limits = new Map<string, GroupLimit>();
   if (!isRecord(raw)) return limits;
+  let mains: ReadonlySet<string> | undefined;
   for (const [group, entry] of Object.entries(raw)) {
     if (!isRecord(entry)) continue;
     const limit = {
@@ -25,6 +39,10 @@ export const childStartLimits = (raw: unknown): ReadonlyMap<string, GroupLimit> 
           ? entry.except.filter((name): name is string => typeof name === "string")
           : [],
       ),
+      exceptParents:
+        entry.exceptParents === "agent-main"
+          ? (mains ??= await mainThreads().catch(() => NONE))
+          : NONE,
     };
     if (limit.perGroup !== undefined || limit.staggerMs !== undefined) limits.set(group, limit);
   }
@@ -34,10 +52,14 @@ export const childStartLimits = (raw: unknown): ReadonlyMap<string, GroupLimit> 
 export const limitedGroups = (
   limits: ReadonlyMap<string, GroupLimit>,
   candidates: ReadonlyArray<string | null>,
-  provider: string | null | undefined,
+  child: ChildOrigin,
 ) =>
   candidates.filter((group): group is string => {
     if (group === null) return false;
     const limit = limits.get(group);
-    return limit !== undefined && (provider == null || !limit.except.has(provider));
+    return (
+      limit !== undefined &&
+      (child.provider == null || !limit.except.has(child.provider)) &&
+      (child.parent == null || !limit.exceptParents.has(child.parent))
+    );
   });

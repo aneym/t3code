@@ -31,6 +31,7 @@ import {
   makeClaims,
 } from "./DelegatedChildClaims.ts";
 import {
+  type ChildOrigin,
   childStartLimits,
   EVERY_CHILD,
   type GroupLimit,
@@ -49,13 +50,13 @@ interface ChildRow {
   readonly worktree: number;
   readonly root_project_id: string | null;
   readonly provider: string | null;
+  readonly parent: string | null;
   readonly requested_at: string;
 }
 
-interface ActiveChild {
+interface ActiveChild extends ChildOrigin {
   readonly child_thread_id: string;
   readonly root_project_id: string | null;
-  readonly provider: string | null;
 }
 
 type HeldRun = Pick<OrchestrationV2Run, "id" | "status" | "childStartHeld">;
@@ -99,13 +100,18 @@ const make = Effect.gen(function* () {
   let pending = true;
 
   const readConfig = settings.getSettings.pipe(
-    Effect.map((current) => ({
-      limits: childStartLimits(current.childStart),
-      byRoom: current.agentPlacementByRoom,
-      paused: current.agentPlacementPaused,
-      maxHoldMinutes: current.agentPlacementMaxHoldMinutes,
-      line: current.agentPlacementHealthLine,
-    })),
+    Effect.flatMap((current) =>
+      Effect.map(
+        Effect.promise(() => childStartLimits(current.childStart)),
+        (limits) => ({
+          limits,
+          byRoom: current.agentPlacementByRoom,
+          paused: current.agentPlacementPaused,
+          maxHoldMinutes: current.agentPlacementMaxHoldMinutes,
+          line: current.agentPlacementHealthLine,
+        }),
+      ),
+    ),
     Effect.orElseSucceed(() => ({
       limits: new Map<string, GroupLimit>() as ReadonlyMap<string, GroupLimit>,
       byRoom: false,
@@ -151,9 +157,9 @@ const make = Effect.gen(function* () {
   const groupsOf = Effect.fn("DelegatedChildStartGate.groupsOf")(function* (
     rootProjectId: string | null,
     limits: ReadonlyMap<string, GroupLimit>,
-    provider: string | null | undefined,
+    child: ChildOrigin,
   ) {
-    return limitedGroups(limits, [yield* homeOf(rootProjectId), EVERY_CHILD], provider);
+    return limitedGroups(limits, [yield* homeOf(rootProjectId), EVERY_CHILD], child);
   });
 
   const rootProjectOf = (threadId: ThreadId) =>
@@ -174,6 +180,7 @@ const make = Effect.gen(function* () {
       json_extract(r.payload_json, '$.workspacePreparation') IS NOT NULL AS worktree,
       root.project_id AS root_project_id,
       json_extract(t.payload_json, '$.providerInstanceId') AS provider,
+      json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent,
       r.requested_at
     FROM orchestration_v2_projection_runs r
     JOIN orchestration_v2_projection_threads t ON t.thread_id = r.thread_id
@@ -190,7 +197,8 @@ const make = Effect.gen(function* () {
 
   const readActiveChildren = sql<ActiveChild>`
     SELECT s.child_thread_id, root.project_id AS root_project_id,
-      json_extract(t.payload_json, '$.providerInstanceId') AS provider
+      json_extract(t.payload_json, '$.providerInstanceId') AS provider,
+      json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent
     FROM orchestration_v2_projection_nodes n
       INDEXED BY orchestration_v2_projection_nodes_live_idx
     JOIN orchestration_v2_projection_subagents s ON s.subagent_id = n.node_id
@@ -235,7 +243,7 @@ const make = Effect.gen(function* () {
     const heldThreads = new Set<string>();
     const activeThreads = new Map<string, ActiveChild>();
     for (const row of rows) {
-      const rowGroups = yield* groupsOf(row.root_project_id, limits, row.provider);
+      const rowGroups = yield* groupsOf(row.root_project_id, limits, row);
       groups.set(row.run_id, rowGroups);
       if (heldRow(row)) {
         heldThreads.add(row.thread_id);
@@ -249,7 +257,7 @@ const make = Effect.gen(function* () {
     }
     for (const [threadId, child] of activeThreads) {
       if (heldThreads.has(threadId)) continue;
-      for (const group of yield* groupsOf(child.root_project_id, limits, child.provider)) {
+      for (const group of yield* groupsOf(child.root_project_id, limits, child)) {
         running.set(group, (running.get(group) ?? 0) + 1);
       }
     }
@@ -350,7 +358,10 @@ const make = Effect.gen(function* () {
     const rootProject = remote
       ? owner.projectId
       : yield* rootProjectOf(owner.parentThreadId).pipe(Effect.orElseSucceed(() => null));
-    const groups = yield* groupsOf(rootProject, limits, owner.provider);
+    const groups = yield* groupsOf(rootProject, limits, {
+      provider: owner.provider,
+      parent: remote ? null : owner.parentThreadId,
+    });
     if (groups.length === 0 && !config.byRoom) return undefined;
     const rows = yield* readChildren(config.byRoom).pipe(Effect.orElseSucceed(() => []));
     const activeChildren = yield* readActiveChildren.pipe(Effect.orElseSucceed(() => []));
