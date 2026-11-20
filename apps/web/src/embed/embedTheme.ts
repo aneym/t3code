@@ -7,6 +7,7 @@ import {
   getThemeColorVariable,
   isThemeColor,
   THEME_COLOR_ROLES,
+  readableThemeColorOn,
   type ThemeColorRole,
   type ThemeColors,
 } from "../themePalette";
@@ -66,9 +67,13 @@ export function themeFromEmbedMessage(
       overrides[name] = value;
     }
   }
+  const colors = { ...getStandardThemeColors(message.scheme), ...roles };
   return {
     scheme: message.scheme,
-    colors: { ...getStandardThemeColors(message.scheme), ...roles },
+    colors: {
+      ...colors,
+      warningForeground: readableThemeColorOn(colors.warningForeground, colors.canvas, 4.6),
+    },
     overrides,
   };
 }

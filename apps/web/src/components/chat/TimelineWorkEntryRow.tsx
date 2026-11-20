@@ -267,12 +267,15 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         wrapLabel
         icon={
           <CircleAlertIcon
-            className={cn("size-4", warning ? "text-warning" : "text-destructive")}
+            className={cn("size-4", warning ? "text-warning-foreground" : "text-destructive")}
           />
         }
         label={
           <span
-            className={cn("text-sm font-medium", warning ? "text-warning" : "text-destructive")}
+            className={cn(
+              "text-sm font-medium",
+              warning ? "text-warning-foreground" : "text-destructive",
+            )}
           >
             {label}
           </span>
@@ -393,7 +396,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const iconWrapperClass = cn(
     "flex size-4 items-center justify-center",
     showWarningIndicator
-      ? "text-warning"
+      ? "text-warning-foreground"
       : showDestructiveRowStyle
         ? "text-destructive"
         : showFailedIndicator
@@ -403,7 +406,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             : iconConfig.className,
   );
   const headingClass = showWarningIndicator
-    ? "font-medium text-warning"
+    ? "font-medium text-warning-foreground"
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
       : workLogEntryIsToolLike(workEntry)

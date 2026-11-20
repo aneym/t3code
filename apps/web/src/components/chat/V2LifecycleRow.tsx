@@ -58,7 +58,7 @@ import {
 } from "../../providerInstances";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
-import { ProviderInstanceIcon, providerTextColor } from "./ProviderInstanceIcon";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { subagentResumedSince } from "./V2LifecycleRow.logic";
@@ -688,9 +688,6 @@ function HandoffEndpoint(props: {
       : model !== undefined && model.length > 0
         ? model
         : (entry?.displayName ?? props.instanceId);
-  const labelColor = providerTextColor(
-    entry?.driverKind ?? ProviderDriverKind.make(props.instanceId),
-  );
   return (
     <Tooltip>
       <TooltipTrigger
@@ -710,12 +707,7 @@ function HandoffEndpoint(props: {
               iconClassName={cn(showBadge && "opacity-60")}
               indicatorBackground="var(--background)"
             />
-            <span
-              className={cn("truncate font-medium", labelColor.className)}
-              style={labelColor.style}
-            >
-              {label}
-            </span>
+            <span className="truncate font-medium">{label}</span>
           </span>
         }
       />

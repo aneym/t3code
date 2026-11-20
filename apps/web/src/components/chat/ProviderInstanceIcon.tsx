@@ -37,16 +37,6 @@ const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
   [ProviderDriverKind.make("ollama")]: OllamaIcon,
 };
 
-const PROVIDER_TEXT_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
-  [ProviderDriverKind.make("codex")]: "text-black dark:text-white",
-  [ProviderDriverKind.make("claudeAgent")]: "text-[#d97757]",
-  [ProviderDriverKind.make("antigravity")]: "text-[#5b87bf]",
-  [ProviderDriverKind.make("openai")]: "text-black dark:text-white",
-  [ProviderDriverKind.make("anthropic")]: "text-black dark:text-white",
-  [ProviderDriverKind.make("openrouter")]: "text-black dark:text-white",
-  [ProviderDriverKind.make("ollama")]: "text-black dark:text-white",
-};
-
 const BUNDLED_LOGO_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [ProviderDriverKind.make("claudeAgent")]: "#d97757",
   [ProviderDriverKind.make("antigravity")]: "#5b87bf",
@@ -57,21 +47,6 @@ export function providerLogoColor(driverKind: ProviderDriverKind): string | null
   const fill = providerClients.get(driverKind)?.icon?.fill;
   if (fill) return fill.light === fill.dark ? fill.light : null;
   return BUNDLED_LOGO_COLOR_BY_PROVIDER[driverKind] ?? null;
-}
-
-export function providerTextColor(driverKind: ProviderDriverKind): {
-  readonly className?: string;
-  readonly style?: CSSProperties;
-} {
-  const icon = providerClients.get(driverKind)?.icon;
-  if (icon) {
-    return {
-      className: "text-(--icon-light) dark:text-(--icon-dark)",
-      style: { "--icon-light": icon.fill.light, "--icon-dark": icon.fill.dark } as CSSProperties,
-    };
-  }
-  const className = PROVIDER_TEXT_COLOR_BY_PROVIDER[driverKind];
-  return className ? { className } : {};
 }
 
 export function resolveProviderInstanceAcpRegistryIconUrl(input: {

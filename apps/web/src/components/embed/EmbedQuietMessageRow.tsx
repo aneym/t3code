@@ -59,11 +59,9 @@ export function EmbedQuietMessageRow({
         className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-muted-foreground text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
       >
         <span className="shrink-0">{label}</span>
-        {line.kind === "note" ? (
-          <span className="shrink-0 tabular-nums text-muted-foreground/70">{span}</span>
-        ) : null}
+        {line.kind === "note" ? <span className="shrink-0 tabular-nums">{span}</span> : null}
         {run === null && line.summary.length > 0 ? (
-          <span className="min-w-0 truncate text-muted-foreground/70">{line.summary}</span>
+          <span className="min-w-0 truncate">{line.summary}</span>
         ) : null}
         {expanded ? (
           <ChevronDownIcon className="size-3.5 shrink-0" />
@@ -82,9 +80,7 @@ export function EmbedQuietMessageRow({
             ? message.text
             : run.map((note) => (
                 <div key={note.id} className="flex gap-2 py-1" data-embed-note-run-item="">
-                  <span className="shrink-0 tabular-nums text-muted-foreground/70">
-                    {time(note)}
-                  </span>
+                  <span className="shrink-0 tabular-nums">{time(note)}</span>
                   <span className="min-w-0">{note.text}</span>
                 </div>
               ))}
