@@ -128,10 +128,9 @@ export function useEmbedPendingSendCount(thread: string | undefined): number {
   );
 }
 
-export function useEmbedShownRows<Row extends { readonly id: string }>(
-  thread: string,
-  rows: Row[],
-): Row[] {
+export function useEmbedShownRows<
+  Row extends { readonly id: string; readonly inputIntent?: string | undefined },
+>(thread: string, rows: Row[]): Row[] {
   const owned = useStore((state) =>
     [
       ...(state.local[thread] ?? EMPTY).map((send) => send.messageId),
@@ -139,9 +138,19 @@ export function useEmbedShownRows<Row extends { readonly id: string }>(
       ...(state.handed[thread] ?? EMPTY),
     ].join(","),
   );
+  const loud = useStore((state) =>
+    [...(state.local[thread] ?? EMPTY), ...(state.host[thread] ?? EMPTY)]
+      .flatMap((send) =>
+        send.state === "waiting" || send.state === "failed" ? (send.messageId ?? []) : [],
+      )
+      .join(","),
+  );
   if (owned === "" || rows.length === 0) return rows;
   const ids = new Set(owned.split(","));
-  const shown = rows.filter((row) => !ids.has(row.id));
+  const loudIds = new Set(loud.split(","));
+  const shown = rows.filter(
+    (row) => !ids.has(row.id) || (row.inputIntent === "queued_turn" && !loudIds.has(row.id)),
+  );
   return shown.length === rows.length ? rows : shown;
 }
 

@@ -3100,7 +3100,7 @@ export default function ChatView(props: ChatViewProps) {
         ) : null}
         {hasQueuedTurns ? queuedRunsControl : null}
         {hostSends > 0 && serverProjection ? (
-          <EmbedPendingSends projection={serverProjection} />
+          <EmbedPendingSends projection={serverProjection} rows={optimisticUserMessages} />
         ) : null}
         <HeldSendNotice
           threadKey={routeThreadKey}

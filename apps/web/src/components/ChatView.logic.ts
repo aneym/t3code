@@ -1335,7 +1335,7 @@ export function planComposerTurn(input: {
     shouldQueueBehindActiveRun:
       compactBeforeSend ||
       input.sendQueuesBehindSetup ||
-      (input.phase === "running" && dispatchMode === "queue"),
+      ((input.phase === "running" || input.phase === "connecting") && dispatchMode === "queue"),
   };
 }
 

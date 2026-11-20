@@ -160,11 +160,13 @@ function PendingSendRow(props: {
 
 export function EmbedPendingSends({
   projection,
+  rows,
 }: {
   readonly projection: {
     readonly thread: { readonly id: string };
     readonly messages: ReadonlyArray<CommittedMessage>;
   };
+  readonly rows: ReadonlyArray<{ readonly id: string; readonly inputIntent?: string | undefined }>;
 }) {
   const thread = projection.thread.id;
   const local = useEmbedLocalSends(thread);
@@ -175,8 +177,17 @@ export function EmbedPendingSends({
   useEffect(() => {
     if (deliveredKey !== "") dropLocalSends(thread, deliveredKey.split(","));
   }, [deliveredKey, thread]);
-  const shownLocal = local.filter((send) => !delivered.includes(send));
-  const shownHost = host.filter((send) => !heldIn(projection.messages, send));
+  const queuedChips = new Set(
+    rows.flatMap((row) => (row.inputIntent === "queued_turn" ? [row.id] : [])),
+  );
+  const shownLocal = local.filter(
+    (send) => !delivered.includes(send) && !queuedChips.has(send.messageId),
+  );
+  const shownHost = host.filter(
+    (send) =>
+      !heldIn(projection.messages, send) &&
+      (send.messageId === null || !queuedChips.has(send.messageId)),
+  );
   if (shownLocal.length === 0 && shownHost.length === 0) return null;
   return (
     <ol
