@@ -373,6 +373,8 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* EnvironmentAuthenticatedPrincipal;
+            if (ChatDictation.isChatPrincipal(session.scopes))
+              return yield* failEnvironmentScopeRequired(AuthOrchestrationOperateScope);
             yield* appendCredentialResponseHeaders;
             return yield* serverAuth.issueWebSocketTicket(session);
           },

@@ -24,7 +24,9 @@ import * as ChatThreadSets from "./ChatThreadSets.ts";
 
 const AUDIO_BYTES_PER_SECOND = 16_000 * Float32Array.BYTES_PER_ELEMENT;
 const CHAT_DICTATION_BUDGET_SECONDS = CHAT_DICTATION_BUDGET_MINUTES * 60;
-const BUDGET_WINDOW_MS = 24 * 60 * 60_000;
+const BUDGET_BYTES = CHAT_DICTATION_BUDGET_SECONDS * AUDIO_BYTES_PER_SECOND;
+const BUCKET_MS = 15 * 60_000;
+const BUDGET_BUCKETS = (24 * 60 * 60_000) / BUCKET_MS;
 const VOICE_TICKET_TTL_MS = 30_000;
 
 export class ChatDictationRefusedError extends Schema.TaggedError<ChatDictationRefusedError>()(
@@ -35,7 +37,7 @@ export class ChatDictationRefusedError extends Schema.TaggedError<ChatDictationR
   },
 ) {}
 
-const refuse = (reason: keyof typeof CHAT_DICTATION_REFUSALS) =>
+export const refuse = (reason: keyof typeof CHAT_DICTATION_REFUSALS) =>
   new ChatDictationRefusedError({ reason, message: CHAT_DICTATION_REFUSALS[reason] });
 
 export interface ChatDictationSession {
@@ -80,7 +82,8 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const random = yield* SecureRandom.SecureRandom;
   const inFlight = new Set<string>();
-  const usage = new Map<string, Array<{ readonly at: number; readonly bytes: number }>>();
+  const usage = new Map<string, { total: number; readonly buckets: Map<number, number> }>();
+  let sweptBucket = 0;
   const tickets = new Map<string, VoiceTicketSession & { readonly expiresAt: number }>();
 
   const qualifies = Effect.fn("ChatDictation.qualifies")(function* (session: ChatDictationSession) {
@@ -105,16 +108,24 @@ const make = Effect.gen(function* () {
     session: ChatDictationSession,
     audioBytes: number,
   ) {
-    const now = yield* Clock.currentTimeMillis;
-    const recent = (usage.get(session.subject) ?? []).filter(
-      (entry) => now - entry.at < BUDGET_WINDOW_MS,
-    );
-    const used = recent.reduce((total, entry) => total + entry.bytes, 0);
-    if (used + audioBytes > CHAT_DICTATION_BUDGET_SECONDS * AUDIO_BYTES_PER_SECOND) {
-      usage.set(session.subject, recent);
-      return yield* refuse("dictation_limit");
+    const bucket = Math.floor((yield* Clock.currentTimeMillis) / BUCKET_MS);
+    if (bucket !== sweptBucket) {
+      sweptBucket = bucket;
+      for (const [subject, ledger] of usage) {
+        for (const [start, bytes] of ledger.buckets) {
+          if (start > bucket - BUDGET_BUCKETS) continue;
+          ledger.buckets.delete(start);
+          ledger.total -= bytes;
+        }
+        if (ledger.buckets.size === 0) usage.delete(subject);
+      }
     }
-    usage.set(session.subject, [...recent, { at: now, bytes: audioBytes }]);
+    const ledger = usage.get(session.subject) ?? { total: 0, buckets: new Map<number, number>() };
+    if (ledger.total + audioBytes > BUDGET_BYTES) return yield* refuse("dictation_limit");
+    if (audioBytes === 0) return;
+    ledger.buckets.set(bucket, (ledger.buckets.get(bucket) ?? 0) + audioBytes);
+    ledger.total += audioBytes;
+    usage.set(session.subject, ledger);
   });
 
   const holdSlot = (session: ChatDictationSession) =>

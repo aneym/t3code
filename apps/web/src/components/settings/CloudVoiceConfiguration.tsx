@@ -11,8 +11,6 @@ import {
   setCloudSpeechKey,
 } from "@t3tools/client-runtime/voice-input";
 import {
-  AuthOrchestrationOperateScope,
-  AuthSettingsWriteScope,
   CloudSpeechApiKey,
   CloudSpeechModelId,
   CLOUD_SPEECH_LABELS,
@@ -31,6 +29,7 @@ import type { HttpClient } from "effect/http";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { useId, useState } from "react";
 import { isSecretsFeatureEnabled } from "../../env";
+import { useSpeechAccess } from "../../speech/speechAccess";
 import {
   inEnvironmentSpeechRuntime,
   runEnvironmentSpeech,
@@ -41,7 +40,7 @@ import {
   useAudioChoice,
 } from "../../speech/voiceConsent";
 import type { EnvironmentPresentation } from "../../state/environments";
-import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
+import { usePreparedConnection } from "../../state/session";
 import { Button } from "../ui/button";
 import {
   Combobox,
@@ -165,8 +164,7 @@ export function CloudVoiceConfiguration({
   const routed = provider === "openrouter";
   const formId = useId();
   const prepared = Option.getOrNull(usePreparedConnection(id));
-  const canUse = useEnvironmentScope(id, AuthOrchestrationOperateScope);
-  const canManage = useEnvironmentScope(id, AuthSettingsWriteScope);
+  const { dictate: canUse, manage: canManage } = useSpeechAccess(id);
   const [presence, refresh] = useCloudRead(canUse ? prepared : null, getCloudSpeechKeys);
   const [models, refreshModels] = useCloudRead(
     routed && canUse ? prepared : null,
