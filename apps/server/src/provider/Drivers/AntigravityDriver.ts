@@ -35,6 +35,7 @@ import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
   antigravityAuthConfigIssue,
+  antigravityAuthenticateMeta,
   antigravityAuthLabel,
   antigravityAuthUsesBrowser,
   buildAntigravityAcpSpawnInput,
@@ -146,8 +147,10 @@ export const AntigravityDriver: ProviderDriver<
       apiKey: settingsSecretLiteral(settings.apiKey),
       gcpProject: settings.gcpProject,
       gcpLocation: settings.gcpLocation,
+      gatewayUrl: settings.gatewayUrl,
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
+    const authenticateMeta = antigravityAuthenticateMeta(auth);
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
     const userHome = resolveAntigravityUserHome(
       yield* HostProcess.Platform,
@@ -271,6 +274,7 @@ export const AntigravityDriver: ProviderDriver<
         ...input,
         runtimeVersion: executable.version,
         authMethod: auth.authMethod,
+        ...(authenticateMeta === undefined ? {} : { authenticateMeta }),
         childProcessSpawner: spawner,
         spawn: buildAntigravityAcpSpawnInput({
           installation: executable,

@@ -35,6 +35,11 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./stderr.ts";
 import {
+  type AcpAuthenticateMeta,
+  loggableAuthenticateRequest,
+  makeAuthenticateRequest,
+} from "./authenticateRequest.ts";
+import {
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
   extractModelConfigId,
@@ -122,6 +127,7 @@ export interface AcpSessionRuntimeOptions {
     readonly version: string;
   };
   readonly authMethodId?: string;
+  readonly authenticateMeta?: AcpAuthenticateMeta;
   /** Authenticate before opening: Antigravity selects its credential source from the method. */
   readonly authenticateEagerly?: boolean;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
@@ -1691,6 +1697,18 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 
   const acp = yield* Effect.service(EffectAcpClient.AcpClient).pipe(Effect.provide(acpContext));
 
+  const runAuthenticate = (methodId: string) => {
+    const request = makeAuthenticateRequest(
+      methodId,
+      methodId === options.authMethodId ? options.authenticateMeta : undefined,
+    );
+    return runLoggedRequest(
+      "authenticate",
+      loggableAuthenticateRequest(request),
+      acp.agent.authenticate(request),
+    );
+  };
+
   // Counts applied `config_option_update`s; see setConfigOption.
   const configOptionUpdates = yield* Ref.make(0);
   const processSessionUpdate = (notification: EffectAcpSchema.SessionNotification) =>
@@ -2209,14 +2227,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           return yield* authRequiredError;
         }
 
-        const authenticatePayload = {
-          methodId: authMethodId,
-        } satisfies EffectAcpSchema.AuthenticateRequest;
-        yield* runLoggedRequest(
-          "authenticate",
-          authenticatePayload,
-          acp.agent.authenticate(authenticatePayload),
-        );
+        yield* runAuthenticate(authMethodId);
       },
     );
 
@@ -2279,14 +2290,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     if (options.authenticateEagerly === true) {
       // The configured method is authoritative here: Antigravity accepts
       // methods (API key, Vertex) it does not list in `initialize`.
-      const authenticatePayload = {
-        methodId: options.authMethodId ?? "",
-      } satisfies EffectAcpSchema.AuthenticateRequest;
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+      yield* runAuthenticate(options.authMethodId ?? "");
     }
     const { sessionId, sessionSetupResult } = yield* setupSession.pipe(
       Effect.catchIf(
@@ -2444,12 +2448,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     handleExtNotification: acp.handleExtNotification,
     initialize: () => initialize,
     authenticate: (methodId) =>
-      initialize.pipe(
-        Effect.andThen(
-          runLoggedRequest("authenticate", { methodId }, acp.agent.authenticate({ methodId })),
-        ),
-        Effect.asVoid,
-      ),
+      initialize.pipe(Effect.andThen(runAuthenticate(methodId)), Effect.asVoid),
     start: () => start,
     getEvents: () => Stream.fromQueue(eventQueue),
     drainEvents,
