@@ -1,9 +1,17 @@
+import { prefetchedEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import type { AtomRegistry } from "effect/reactivity";
 
 import type { AppRouter } from "../router";
 import { environmentThreads } from "../state/threads";
 import { resolveThreadRouteTarget } from "../threadRoutes";
+import { takeEarlyEmbedDescriptor } from "./embedEarlyDescriptor";
 import { isEmbedPath } from "./embedProtocol";
+
+function handOffEarlyDescriptor(): void {
+  const body = takeEarlyEmbedDescriptor();
+  if (body === null) return;
+  prefetchedEnvironmentDescriptor(new URL("/", window.location.origin).toString(), body);
+}
 
 let release: (() => void) | null = null;
 
@@ -13,6 +21,7 @@ export function startEmbedThreadPrefetch(
 ): void {
   const { location } = router.state;
   if (!isEmbedPath(location.pathname)) return;
+  handOffEarlyDescriptor();
   const target = resolveThreadRouteTarget(router.matchRoutes(location).at(-1)?.params ?? {});
   if (target?.kind !== "server") return;
   const { environmentId, threadId } = target.threadRef;

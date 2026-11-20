@@ -176,31 +176,46 @@ export const chatServerConfig = (config: ServerConfig, session: ChatSession): Se
   chatSession: { ownerThreadIds: [...session.ownerThreads], threadIds: [...session.threads] },
 });
 
-export function chatServerConfigEvent(
+const withoutCatalog = (provider: ServerProvider): ServerProvider =>
+  provider.slashCommands.length === 0 && provider.skills.length === 0
+    ? provider
+    : { ...provider, slashCommands: [], skills: [] };
+
+const chatSnapshotEvents = (config: ServerConfig): ReadonlyArray<ServerConfigStreamEvent> => {
+  const providers = config.providers.map(withoutCatalog);
+  const snapshot = { version: 1, type: "snapshot", config: { ...config, providers } } as const;
+  if (providers.every((provider, index) => provider === config.providers[index])) return [snapshot];
+  return [
+    snapshot,
+    { version: 1, type: "providerStatuses", payload: { providers: config.providers } },
+  ];
+};
+
+export function chatServerConfigEvents(
   event: ServerConfigStreamEvent,
   session: ChatSession,
-): ServerConfigStreamEvent | undefined {
+): ReadonlyArray<ServerConfigStreamEvent> {
   switch (event.type) {
     case "snapshot":
-      return {
-        version: event.version,
-        type: event.type,
-        config: chatServerConfig(event.config, session),
-      };
+      return chatSnapshotEvents(chatServerConfig(event.config, session));
     case "providerStatuses":
-      return {
-        version: event.version,
-        type: event.type,
-        payload: { providers: event.payload.providers.map(chatProvider(session)) },
-      };
+      return [
+        {
+          version: event.version,
+          type: event.type,
+          payload: { providers: event.payload.providers.map(chatProvider(session)) },
+        },
+      ];
     case "settingsUpdated":
-      return {
-        version: event.version,
-        type: event.type,
-        payload: { settings: chatSettings(event.payload.settings) },
-      };
+      return [
+        {
+          version: event.version,
+          type: event.type,
+          payload: { settings: chatSettings(event.payload.settings) },
+        },
+      ];
     default:
-      return undefined;
+      return [];
   }
 }
 

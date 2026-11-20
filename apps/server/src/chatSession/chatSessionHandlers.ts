@@ -17,7 +17,7 @@ import { subagentClosure, type LineageEntry } from "./ChatSessionDescendants.ts"
 import {
   chatLifecycleEvent,
   chatServerConfig,
-  chatServerConfigEvent,
+  chatServerConfigEvents,
   makeChatShellFilter,
   setHops,
 } from "./chatSessionViews.ts";
@@ -43,15 +43,18 @@ type ChatHandlers = Pick<Handlers, Overridden>;
 
 const unwrap = (result: object): unknown => (Rpc.isWrapper(result) ? result.value : result);
 
-const mapStream = <A>(result: object, f: (item: A) => A | undefined) => {
+const streamOf = <A>(result: object): Stream.Stream<A> => {
   const value = unwrap(result);
   return Stream.isStream(value)
-    ? (value as Stream.Stream<A>).pipe(
-        Stream.map(f),
-        Stream.filter((item): item is A => item !== undefined),
-      )
+    ? (value as Stream.Stream<A>)
     : Stream.die(new Error("A chat session stream handler returned no stream."));
 };
+
+const mapStream = <A>(result: object, f: (item: A) => A | undefined) =>
+  streamOf<A>(result).pipe(
+    Stream.map(f),
+    Stream.filter((item): item is A => item !== undefined),
+  );
 
 const mapEffect = <A, B>(result: object, f: (value: A) => Effect.Effect<B>) => {
   const value = unwrap(result);
@@ -141,8 +144,10 @@ export function chatSessionHandlers<H extends ChatHandlers>(
           Effect.succeed(chatServerConfig(config, access.session)),
       ),
     [W.subscribeServerConfig]: (_input, options) =>
-      mapStream(handlers[W.subscribeServerConfig]({}, options), (event: ServerConfigStreamEvent) =>
-        chatServerConfigEvent(event, access.session),
+      streamOf<ServerConfigStreamEvent>(handlers[W.subscribeServerConfig]({}, options)).pipe(
+        Stream.map((event) => chatServerConfigEvents(event, access.session)),
+        Stream.flattenIterable,
+        Stream.rechunk(1),
       ),
     [W.subscribeServerLifecycle]: (input, options) =>
       mapStream(handlers[W.subscribeServerLifecycle](input, options), chatLifecycleEvent),

@@ -1,7 +1,8 @@
-import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { FetchHttpClient } from "effect/http";
 
 import { chatSessionActive } from "../chatSession.ts";
@@ -15,6 +16,22 @@ const handedOff = new Map<
   string,
   { readonly at: number; readonly descriptor: ExecutionEnvironmentDescriptor }
 >();
+const prefetched = new Map<string, Promise<unknown>>();
+
+export function prefetchedEnvironmentDescriptor(httpBaseUrl: string, body: Promise<unknown>): void {
+  prefetched.set(httpBaseUrl, body);
+}
+
+const takePrefetchedDescriptor = (httpBaseUrl: string) => {
+  const body = prefetched.get(httpBaseUrl);
+  prefetched.delete(httpBaseUrl);
+  return body === undefined
+    ? Effect.succeedNone
+    : Effect.promise(() => body).pipe(
+        Effect.timeoutOption(DEFAULT_REMOTE_REQUEST_TIMEOUT_MS),
+        Effect.map(Option.flatMap(Schema.decodeUnknownOption(ExecutionEnvironmentDescriptor))),
+      );
+};
 
 export const fetchRemoteEnvironmentDescriptor = Effect.fn(
   "clientRuntime.environment.fetchRemoteEnvironmentDescriptor",
@@ -38,7 +55,10 @@ export const fetchRemoteEnvironmentDescriptor = Effect.fn(
 export const fetchSharedEnvironmentDescriptor = Effect.fn(
   "clientRuntime.environment.fetchSharedEnvironmentDescriptor",
 )(function* (input: { readonly httpBaseUrl: string; readonly timeoutMs?: number }) {
-  const descriptor = yield* fetchRemoteEnvironmentDescriptor(input);
+  const early = yield* takePrefetchedDescriptor(input.httpBaseUrl);
+  const descriptor = Option.isSome(early)
+    ? early.value
+    : yield* fetchRemoteEnvironmentDescriptor(input);
   handedOff.set(input.httpBaseUrl, { at: yield* Clock.currentTimeMillis, descriptor });
   return descriptor;
 });
