@@ -12,12 +12,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
-import {
-  MAX_SUBAGENT_HOPS,
-  subagentClosure,
-  subagentParentOf,
-  type LineageEntry,
-} from "./ChatSessionDescendants.ts";
+import { MAX_SUBAGENT_HOPS, subagentClosure, subagentParentOf } from "./ChatSessionDescendants.ts";
 import type { ChatSession } from "./ChatThreadSets.ts";
 
 const PLACEHOLDER_PATH = "/";
@@ -44,10 +39,9 @@ export const setHops = (threads: ReadonlySet<ThreadId>): ReadonlyMap<ThreadId, n
 export function makeChatShellFilter(
   threads: ReadonlySet<ThreadId>,
   seedProjectIds: ReadonlySet<ProjectId>,
-  seedEntries: Iterable<LineageEntry> = [],
 ): ChatShellFilter {
   const projectIds = new Set<ProjectId>(seedProjectIds);
-  let hops = subagentClosure(setHops(threads), seedEntries);
+  let hops = new Map(setHops(threads));
   const descend = (thread: OrchestrationV2ThreadShell) => {
     if (hops.has(thread.id)) return;
     const parent = subagentParentOf(thread.lineage);

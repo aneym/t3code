@@ -17,7 +17,7 @@ import {
 import { guestHostImageType, repliesShowImage } from "../guest/guestAttachments.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import { climbToSet, type LineageEntry } from "./ChatSessionDescendants.ts";
+import { climbToSet } from "./ChatSessionDescendants.ts";
 import * as ChatSessionGrants from "./ChatSessionGrants.ts";
 import * as ChatThreadSets from "./ChatThreadSets.ts";
 import type { ChatSession } from "./ChatThreadSets.ts";
@@ -161,7 +161,6 @@ const makeChatSessionAccess = (
 export interface ChatSessionContext {
   readonly access: ChatSessionAccess;
   readonly grants: ChatSessionGrants.ChatSessionGrants["Service"];
-  readonly lineageIndex: Effect.Effect<ReadonlyArray<LineageEntry>>;
 }
 
 export class ChatSessionResolver extends Context.Service<
@@ -188,9 +187,6 @@ export const layer = Layer.effect(
         return {
           access: makeChatSessionAccess(chat, projections, grants, registry.getProviders),
           grants,
-          lineageIndex: projections
-            .listActiveShellIndex({ liveness: false })
-            .pipe(Effect.orElseSucceed((): ReadonlyArray<LineageEntry> => [])),
         };
       }),
     });

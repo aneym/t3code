@@ -74,7 +74,7 @@ export function chatSessionHandlers<H extends ChatHandlers>(
   chat: ChatSessionContext | undefined,
 ): H {
   if (chat === undefined) return handlers;
-  const { access, grants, lineageIndex } = chat;
+  const { access, grants } = chat;
   const { setId, threads } = access.session;
   const overrides: {
     readonly [K in Overridden]: (
@@ -86,27 +86,16 @@ export function chatSessionHandlers<H extends ChatHandlers>(
       handlers[O.dispatchCommand](rebuildChatCommand(command), options),
     [O.subscribeShell]: (input, options) =>
       Stream.unwrap(
-        Effect.all(
-          [
-            access.projectIds,
-            input.afterSequence === undefined ? Effect.succeed([]) : lineageIndex,
-          ],
-          { concurrency: 2 },
-        ).pipe(
-          Effect.map(([projectIds, seedEntries]) =>
+        access.projectIds.pipe(
+          Effect.map((projectIds) =>
             mapStream(
               handlers[O.subscribeShell](
-                {
-                  ...(input.afterSequence === undefined
-                    ? {}
-                    : { afterSequence: input.afterSequence }),
-                  ...(input.requestCompletionMarker === undefined
-                    ? {}
-                    : { requestCompletionMarker: input.requestCompletionMarker }),
-                },
+                input.requestCompletionMarker === undefined
+                  ? {}
+                  : { requestCompletionMarker: input.requestCompletionMarker },
                 options,
               ),
-              makeChatShellFilter(threads, projectIds, seedEntries).apply,
+              makeChatShellFilter(threads, projectIds).apply,
             ).pipe(Stream.provideService(ShellThreadRoots, threads)),
           ),
         ),

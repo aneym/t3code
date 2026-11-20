@@ -180,16 +180,10 @@ describe("chat session admission of subagent descendants", () => {
     ).toEqual([grandchild, child, set]);
   });
 
-  it("keeps a child that arrives after its parent and a resumed grandchild", () => {
+  it("keeps a child that arrives after its parent", () => {
     expect(
       kept(makeChatShellFilter(new Set([set]), new Set()), [child, grandchild, fork, stray]),
     ).toEqual([child, grandchild]);
-    const seeded = makeChatShellFilter(
-      new Set([set]),
-      new Set(),
-      [...LINEAGE].map(([threadId, entry]) => ({ id: threadId, lineage: entry })),
-    );
-    expect(kept(seeded, [grandchild, fork, stray, other])).toEqual([grandchild]);
   });
 
   it.effect("refuses an unrelated thread's history at the RPC boundary and serves a child", () =>
