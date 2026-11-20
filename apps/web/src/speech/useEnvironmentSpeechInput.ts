@@ -12,7 +12,7 @@ import {
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import { AuthOrchestrationOperateScope, CLOUD_SPEECH_LABELS } from "@t3tools/contracts";
+import { CLOUD_SPEECH_LABELS } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   EnvironmentSpeechModel,
@@ -36,11 +36,12 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useEnvironment } from "../state/environments";
-import { useEnvironmentScope, usePreparedConnection } from "../state/session";
+import { usePreparedConnection } from "../state/session";
 import { chooseRecordingMicrophone } from "./browserMicrophones";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
+import { useSpeechAccess } from "./speechAccess";
 import { bindAudioGrant, readCleanupGrant, useAudioChoice } from "./voiceConsent";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
@@ -86,7 +87,6 @@ function cleanupContext({ text, selection }: DraftInput): DraftInput {
 }
 
 type HookInput = {
-  /** The draft's own environment. Optional transcript cleanup runs there, never on the audio destination. */
   readonly environmentId: EnvironmentId;
   /** The draft's project: its vocabulary on that environment and its name become recognition hints. */
   readonly projectId?: ProjectId | null | undefined;
@@ -107,11 +107,6 @@ type HookInput = {
   ) => void;
 };
 
-/**
- * Microphone audio leaves this device only for the environment the person chose in
- * Voice settings. Nothing is inferred from the primary or the draft's environment, and
- * the recording is abandoned the moment that choice changes or its connection drops.
- */
 export function useVoiceTranscriptionDestination() {
   const hydrated = useClientSettingsHydrated();
   const choice = useAudioChoice();
@@ -119,7 +114,7 @@ export function useVoiceTranscriptionDestination() {
   const environmentId = hydrated && grant ? grant.destination.environmentId : null;
   const environment = useEnvironment(environmentId);
   const connection = Option.getOrNull(usePreparedConnection(environmentId));
-  const canDictate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const access = useSpeechAccess(environmentId);
   const cloud = grant?.destination.kind === "cloud" ? grant.destination : undefined;
   const provider = cloud?.provider;
   const model = cloud?.provider === "openrouter" ? cloud.model : undefined;
@@ -137,7 +132,7 @@ export function useVoiceTranscriptionDestination() {
       provider && environment
         ? `${CLOUD_SPEECH_LABELS[provider]} via ${environment.label}`
         : (environment?.label ?? null),
-    prepared: supported && canDictate ? connection : null,
+    prepared: supported && access.dictate ? connection : null,
   };
 }
 
@@ -151,7 +146,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const draftCapabilities = useEnvironment(input.environmentId)?.serverConfig?.environment
     .capabilities;
   const originatingConnection = Option.getOrNull(usePreparedConnection(input.environmentId));
-  const canCleanUp = useEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope);
+  const canCleanUp = useSpeechAccess(input.environmentId).cleanUp;
+  const canManage = useSpeechAccess(destination.environmentId).manage;
   const cleanupPrepared =
     canCleanUp &&
     (draftCapabilities?.voiceTranscription || draftCapabilities?.cloudVoiceTranscription)
@@ -206,10 +202,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     submit: (text: string) => void;
     text?: string;
   } | null>(null);
-  const latestRef = useRef({ input, clientSettings, cleanupPrepared, projectWords });
+  const latestRef = useRef({ input, clientSettings, cleanupPrepared, canCleanUp, projectWords });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed props and settings to the asynchronous recording controller
   useEffect(() => {
-    latestRef.current = { input, clientSettings, cleanupPrepared, projectWords };
+    latestRef.current = { input, clientSettings, cleanupPrepared, canCleanUp, projectWords };
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the recording controller bound to the consented destination; it is disposed with the consent
   useEffect(() => {
@@ -241,7 +237,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
           projectWords: project,
           input: current,
         } = latestRef.current;
-        const cleanupGrant = current.cleanup === false ? null : readCleanupGrant();
+        const cleanupGrant =
+          current.cleanup === false || !latestRef.current.canCleanUp ? null : readCleanupGrant();
         const cleanupEnabled = cleanupGrant !== null;
         const cue =
           cleanupEnabled && latestRef.current.cleanupPrepared ? settings.speechCorrectionWord : "";
@@ -489,7 +486,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setStatus({ prepared, value: latestStatus });
     setQueuedStart(null);
     if (latestStatus.supported && latestStatus.state === "missing-model") {
-      return loadSetupCatalog(prepared, latestStatus.modelId, request);
+      if (canManage) return loadSetupCatalog(prepared, latestStatus.modelId, request);
+      toastManager.add({
+        type: "error",
+        title: "Voice input is not set up",
+        description: `An admin of ${destination.label ?? "this environment"} needs to download a speech model first.`,
+      });
+      return;
     }
     if (!latestStatus.supported) {
       toastManager.add({
@@ -513,7 +516,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         downloadEnvironmentSpeechModel(prepared, modelId),
       );
       if (request !== startRequestRef.current) return;
-      // A download cancelled from elsewhere still resolves, so select the model only once it landed.
       const installed = models.some(({ id, state }) => id === modelId && state === "installed");
       if (installed && modelId !== currentStatus.modelId) {
         try {

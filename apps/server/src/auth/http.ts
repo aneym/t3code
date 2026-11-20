@@ -1,6 +1,7 @@
 import {
   authScopeRequiredResponse,
   AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
   AuthStandardClientScopes,
   AuthGrantScope,
   EnvironmentAuthInvalidError,
@@ -39,6 +40,7 @@ import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { requestUrl } from "../requestUrl.ts";
 import { withChatThreads } from "../chatSession/chatSessionState.ts";
+import * as ChatDictation from "../chatSession/ChatDictation.ts";
 import {
   appendCredentialResponseHeaders,
   appendDpopChallengeHeader,
@@ -137,35 +139,6 @@ export function failEnvironmentNotFound(reason: EnvironmentResourceNotFoundReaso
   );
 }
 
-/**
- * `<img>` and WebSocket cannot set headers, so media routes (device hub, preview stream)
- * authenticate the way the `/ws` upgrade does: a cookie for browser sessions, or a short-lived
- * `wsTicket` minted over authenticated HTTP for bearer and DPoP clients.
- */
-export const authenticateMediaRequest =
-  /* Request instrumentation already owns the span; keep this helper in that context. */
-  Effect.fnUntraced(function* (requiredScope: AuthEnvironmentScope) {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const session = yield* serverAuth.authenticateWebSocketUpgrade(request, "media").pipe(
-      Effect.catch((error) =>
-        Effect.gen(function* () {
-          if (EnvironmentAuth.isServerAuthCredentialError(error)) {
-            return yield* failEnvironmentAuthInvalid(
-              EnvironmentAuth.serverAuthCredentialReason(error),
-              EnvironmentAuth.serverAuthDpopFailureReason(error),
-            );
-          }
-          return yield* failEnvironmentInternal("internal_error", error);
-        }),
-      ),
-    );
-    if (!session.scopes.includes(requiredScope)) {
-      return yield* failEnvironmentScopeRequired(requiredScope);
-    }
-    return session;
-  });
-
 export const failEnvironmentInternal =
   /* Request instrumentation already owns the span; keep this helper in that context. */
   Effect.fnUntraced(function* (reason: EnvironmentInternalErrorReason, error?: unknown) {
@@ -246,6 +219,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const dictation = yield* ChatDictation.ChatDictation;
 
     return handlers
       .handle(
@@ -399,6 +373,8 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* EnvironmentAuthenticatedPrincipal;
+            if (ChatDictation.isChatPrincipal(session.scopes))
+              return yield* failEnvironmentScopeRequired(AuthOrchestrationOperateScope);
             yield* appendCredentialResponseHeaders;
             return yield* serverAuth.issueWebSocketTicket(session);
           },
@@ -414,11 +390,17 @@ export const layer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* EnvironmentAuthenticatedPrincipal;
             yield* appendCredentialResponseHeaders;
-            return yield* serverAuth.issueWebSocketTicket(session, { use: args.params.use });
+            return yield* ChatDictation.isChatPrincipal(session.scopes)
+              ? dictation.issueVoiceTicket(session, args.params.use)
+              : serverAuth.issueWebSocketTicket(session, { use: args.params.use });
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("websocket_ticket_issuance_failed", error),
           ),
+          Effect.catchTags({
+            ChatDictationRefusedError: () =>
+              failEnvironmentScopeRequired(AuthOrchestrationOperateScope),
+          }),
         ),
       )
       .handle(

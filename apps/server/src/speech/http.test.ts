@@ -1,26 +1,33 @@
 import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off - real HTTP streaming boundary test.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { expect, vi } from "vite-plus/test";
 import {
+  AuthChatThreadsScope,
   AuthSessionId,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type AuthEnvironmentScope,
+  chatSessionSubject,
   CloudSpeechError,
   DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
   SPEECH_MAX_OPTIONS_BYTES,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  EnvironmentHttpApi,
   EnvironmentVoiceHttpApi,
+  ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpApi from "effect/http-api/HttpApi";
@@ -31,7 +38,19 @@ import * as CloudSpeech from "./CloudSpeech.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ChatThreadSets from "../chatSession/ChatThreadSets.ts";
+import * as ChatDictation from "../chatSession/ChatDictation.ts";
+import * as ChatSessionHttp from "../chatSession/chatSessionHttp.ts";
+import * as AuthHttp from "../auth/http.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { speechHttpApiLayer } from "./http.ts";
+import { speechStreamRouteLayer } from "./stream.ts";
 
 const decodeSessionId = Schema.decodeUnknownSync(AuthSessionId);
 
@@ -47,23 +66,26 @@ const principal = (...scopes: AuthEnvironmentScope[]) =>
     ),
   );
 
+const ownedThread = ThreadId.make("thread:owned");
+
+const layerConfig = ServerConfig.layerTest(process.cwd(), { prefix: "t3-speech-http-test-" });
+const layerEnvironmentAuth = Layer.mergeAll(EnvironmentAuth.layer, ChatThreadSets.layer).pipe(
+  Layer.provide(ManagedPolicy.layerTest()),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+  Layer.provideMerge(ServerSecretStore.layer),
+  Layer.provide(ServerEnvironment.layerIdentity),
+  Layer.provideMerge(layerConfig),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
+
 const dependencies = Layer.mergeAll(
+  Layer.mock(ChatDictation.ChatDictation)({}),
   Layer.mock(CloudSpeech.CloudSpeech)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
   Layer.mock(ServerSettings.ServerSettingsService)({
     getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
   }),
-  Layer.succeed(
-    TextGeneration.TextGeneration,
-    TextGeneration.TextGeneration.of({
-      generateCommitMessage: () => Effect.die("not used"),
-      generatePrContent: () => Effect.die("not used"),
-      generateBranchName: () => Effect.die("not used"),
-      generateThreadTitle: () => Effect.die("not used"),
-      generateReviewGuide: () => Effect.die("not used"),
-      generateTranscriptionPostProcessing: () => Effect.die("not used"),
-    }),
-  ),
+  Layer.mock(TextGeneration.TextGeneration)({}),
 );
 
 effectIt.live("rejects oversized chunked audio without invoking transcription", () =>
@@ -75,20 +97,9 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
       Layer.provide(speechHttpApiLayer),
       Layer.provide(principal(AuthOrchestrationOperateScope)),
       Layer.provide(
-        Layer.succeed(SpeechService.SpeechService, {
+        Layer.mock(SpeechService.SpeechService)({
           status: Effect.succeed({ supported: false as const, reason: "test" }),
-          prepareModel: Effect.void,
-          models: () => Effect.succeed({ models: [] }),
-          downloadModel: () => Effect.succeed({ models: [] }),
-          linkModels: () => Effect.succeed({ models: [] }),
-          selectModel: () => Effect.succeed({ models: [] }),
-          cancelDownload: () => Effect.succeed({ models: [] }),
-          updateAcceleration: () => Effect.succeed({ supported: false as const, reason: "test" }),
-          updateModelUnloadTimeout: () =>
-            Effect.succeed({ supported: false as const, reason: "test" }),
           transcribe,
-          startStream: () => Effect.die("not used"),
-          removeModel: () => Effect.succeed({ models: [] }),
         }),
       ),
     );
@@ -304,19 +315,9 @@ effectIt.effect.each([
     Effect.gen(function* () {
       // Only authentication and the native service are replaced; exercise the actual HTTP handlers and codecs.
       const transcribe = vi.fn(() => Effect.fail(error));
-      const service = Layer.succeed(SpeechService.SpeechService, {
+      const service = Layer.mock(SpeechService.SpeechService)({
         status: Effect.succeed({ supported: false as const, reason: "test" }),
-        prepareModel: Effect.void,
-        models: () => Effect.succeed({ models: [] }),
-        downloadModel: () => Effect.fail(error),
-        linkModels: () => Effect.fail(error),
-        selectModel: () => Effect.fail(error),
-        cancelDownload: () => Effect.fail(error),
-        updateAcceleration: () => Effect.fail(error),
-        updateModelUnloadTimeout: () => Effect.fail(error),
         transcribe,
-        startStream: () => Effect.fail(error),
-        removeModel: () => Effect.fail(error),
       });
       const api = HttpApi.make("environment").add(EnvironmentVoiceHttpApi);
       const { handler, dispose } = HttpRouter.toWebHandler(
@@ -362,4 +363,104 @@ effectIt.effect.each([
         reason,
       });
     }),
+);
+
+effectIt.live("a chat owner dictates through the assembled router; others are refused", () =>
+  Effect.gen(function* () {
+    const routes = Layer.mergeAll(
+      HttpApiBuilder.layer(
+        HttpApi.make("environment")
+          .add(EnvironmentHttpApi.groups.auth)
+          .add(EnvironmentVoiceHttpApi),
+      ).pipe(
+        Layer.provide([AuthHttp.layer, speechHttpApiLayer]),
+        Layer.provide(AuthHttp.layerAuthenticatedAuth),
+      ),
+      speechStreamRouteLayer,
+    ).pipe(
+      Layer.provide(ChatSessionHttp.layer),
+      Layer.provide(
+        Layer.mock(SpeechService.SpeechService)({
+          status: Effect.succeed({ supported: false as const, reason: "test" }),
+          transcribe: () => Effect.succeed("dictated"),
+          startStream: () => Effect.succeed({ feed: () => Effect.never, finish: Effect.never }),
+        }),
+      ),
+      Layer.provide(dependencies),
+    );
+    yield* Layer.build(HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }));
+    const sql = yield* SqlClient.SqlClient;
+    const sessions = yield* SessionStore.SessionStore;
+    const sets = yield* ChatThreadSets.ChatThreadSets;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    yield* sql`INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json) VALUES (${ownedThread}, 'p', 't', 'codex', 'full-access', 'default', ${now}, ${now}, '{}')`;
+    const chat = (owners: ReadonlyArray<ThreadId>) =>
+      sets
+        .create([ownedThread], owners)
+        .pipe(
+          Effect.flatMap((setId) =>
+            sessions.issue({ subject: chatSessionSubject(setId), scopes: [AuthChatThreadsScope] }),
+          ),
+        );
+    const media = "auth/websocket-ticket/media";
+    const [owner, seat] = [yield* chat([ownedThread]), yield* chat([])];
+    const origin = `127.0.0.1:${((yield* HttpServer.HttpServer).address as NetAddress.InetAddress).port}`;
+    const call = (token: string, path: string, body?: string | Uint8Array) =>
+      Effect.promise(() =>
+        fetch(`http://${origin}/api/${path}`, {
+          method: body === undefined ? "GET" : "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type":
+              typeof body === "string" ? "application/json" : "application/octet-stream",
+          },
+          ...(body === undefined ? {} : { body }),
+        }),
+      );
+    const status = (token: string, path: string, body?: string | Uint8Array) =>
+      call(token, path, body).pipe(Effect.map((response) => response.status));
+    const audio = () =>
+      encodeSpeechPcmRequest(new Uint8Array(4), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+    const connect = (ticket: string) =>
+      Effect.promise(() => {
+        const socket = new WebSocket(`ws://${origin}/ws/voice?wsTicket=${ticket}`);
+        const closed = new Promise((done) => socket.addEventListener("close", done));
+        return new Promise<{ socket: WebSocket; closed: Promise<unknown> } | null>((resolve) => {
+          socket.addEventListener("open", () => resolve({ socket, closed }));
+          socket.addEventListener("error", () => resolve(null));
+        });
+      });
+
+    expect(yield* status(owner.token, "voice/status")).toBe(200);
+    expect(yield* status(owner.token, "voice/transcribe", audio())).toBe(200);
+    expect(yield* status(owner.token, "voice/models/select", "{}")).toBe(403);
+    expect(yield* status(seat.token, "voice/status")).toBe(403);
+    expect(yield* status(seat.token, "voice/transcribe", audio())).toBe(403);
+    expect(yield* status(seat.token, media, "")).toBe(403);
+
+    const issued = yield* call(owner.token, media, "");
+    const { ticket } = (yield* Effect.promise(() => issued.json())) as { ticket: string };
+    const open = yield* connect(ticket);
+    open?.socket.send(
+      JSON.stringify({ type: "start", options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS }),
+    );
+    yield* Effect.promise(
+      () => new Promise((ready) => open?.socket.addEventListener("message", ready)),
+    );
+    const busy = yield* call(owner.token, "voice/transcribe", audio());
+    expect(yield* Effect.promise(() => busy.json())).toMatchObject({ reason: "dictation_busy" });
+    expect(yield* connect(ticket)).toBeNull();
+    yield* sessions.revoke(owner.sessionId);
+    yield* Effect.promise(() => open?.closed ?? Promise.reject(new Error("socket never opened")));
+    expect(yield* status(owner.token, "voice/status")).toBe(401);
+
+    const orphan = yield* chat([ownedThread]);
+    expect(yield* status(orphan.token, "voice/status")).toBe(200);
+    yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${now}`;
+    expect(yield* status(orphan.token, "voice/status")).toBe(403);
+    expect(yield* status(orphan.token, media, "")).toBe(403);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(Layer.mergeAll(NodeHttpServer.layerTest, layerEnvironmentAuth)),
+  ),
 );

@@ -2,7 +2,12 @@ import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { CloudSpeechError, SPEECH_STREAM_PATH } from "@t3tools/contracts";
+import {
+  CHAT_DICTATION_REFUSALS,
+  CloudSpeechError,
+  EnvironmentRequestInvalidError,
+  SPEECH_STREAM_PATH,
+} from "@t3tools/contracts";
 import type {
   CloudSpeechModelId,
   CloudSpeechProvider,
@@ -25,6 +30,25 @@ import { VoiceTranscriptionError } from "./transcription.ts";
 
 const INFERENCE_OR_DOWNLOAD_TIMEOUT_MS = 30 * 60_000;
 const isCloudSpeechError = Schema.is(CloudSpeechError);
+const isRequestInvalid = Schema.is(EnvironmentRequestInvalidError);
+
+const refusalMessage = (cause: unknown) => {
+  if (isCloudSpeechError(cause)) return cause.message;
+  if (!isRequestInvalid(cause)) return undefined;
+  return cause.reason === "dictation_busy" || cause.reason === "dictation_limit"
+    ? CHAT_DICTATION_REFUSALS[cause.reason]
+    : undefined;
+};
+
+const explainRefusal = <E extends { readonly _tag: string }>(error: E) => {
+  const message =
+    error._tag === "RemoteEnvironmentAuthFetchError" && "cause" in error
+      ? refusalMessage(error.cause)
+      : undefined;
+  return message === undefined
+    ? error
+    : new VoiceTranscriptionError({ code: "transcription-failed", message });
+};
 type EnvironmentApiClient<G extends "voice" | "auth"> = Effect.Success<
   ReturnType<typeof makeEnvironmentHttpApiGroupClient<G>>
 >;
@@ -147,16 +171,7 @@ export const transcribeCloudPcm = (
         query,
         payload: encodeSpeechPcmRequest(pcm, options),
       }),
-  }).pipe(
-    Effect.mapError((error) =>
-      error._tag === "RemoteEnvironmentAuthFetchError" && isCloudSpeechError(error.cause)
-        ? new VoiceTranscriptionError({
-            code: "transcription-failed",
-            message: error.cause.message,
-          })
-        : error,
-    ),
-  );
+  }).pipe(Effect.mapError(explainRefusal));
 };
 
 export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
@@ -243,7 +258,7 @@ export const transcribeEnvironmentPcm = (
         headers,
         payload: encodeSpeechPcmRequest(pcm, options),
       }),
-  });
+  }).pipe(Effect.mapError(explainRefusal));
 
 /** Sends the transcript and draft context to a provider on `prepared`; a separate opt-in. */
 export const postProcessEnvironmentTranscript = (
