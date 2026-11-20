@@ -6,6 +6,11 @@ export class ClaimedSlot extends Context.Service<ClaimedSlot, { readonly token: 
   "t3/orchestration-v2/DelegatedChildClaims/ClaimedSlot",
 ) {}
 
+export class ChildProvider extends Context.Service<
+  ChildProvider,
+  { readonly instanceId: string }
+>()("t3/orchestration-v2/DelegatedChildClaims/ChildProvider") {}
+
 export type ClaimResult = { readonly wouldHold?: string; readonly token?: number };
 
 export const SPILL_REFUSED = "Spill refused: ";
