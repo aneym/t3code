@@ -40,20 +40,20 @@ export function resolveThreadRouteRenderState(input: {
   if (input.draftThreadExists || (input.serverThreadExists && !input.serverThreadDeleted)) {
     return "ready";
   }
+  const projection = Option.getOrNull(input.unlistedThreadDetail.data);
+  const detailRemoved =
+    projection !== null &&
+    (projection.thread.deletedAt !== null || projection.thread.archivedAt !== null);
+  if (!input.serverThreadExists && projection !== null && !detailRemoved) {
+    return "ready";
+  }
   if (!input.bootstrapComplete) {
     return "loading";
   }
   if (input.serverThreadExists || input.unlistedThreadDetail.status === "deleted") {
     return "missing";
   }
-  // Shell membership can lag a new thread; its detail decides.
-  const projection = Option.getOrNull(input.unlistedThreadDetail.data);
-  if (projection === null) {
-    return "loading";
-  }
-  return projection.thread.deletedAt !== null || projection.thread.archivedAt !== null
-    ? "missing"
-    : "ready";
+  return projection === null ? "loading" : "missing";
 }
 
 export function buildThreadRouteParams(ref: ScopedThreadRef): {

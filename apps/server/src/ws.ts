@@ -23,6 +23,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { rpcInitialItems } from "./rpcInitialItems.ts";
+import { loadActiveSubscriberShell } from "./orchestration-v2/ActiveSubscriberShell.ts";
 import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
 import {
   AcpRegistryOperationError,
@@ -136,7 +137,6 @@ import {
   shellStreamItemFromEnrichmentRefresh,
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
-  loadSubscriberShellSnapshot,
   canResumeShellFrom,
   resumeIdentityRoots,
   shellStreamItemsFromResumeSnapshot,
@@ -1081,14 +1081,9 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       },
     );
     const loadSnapshot = Effect.fn("ws.orchestrationV2.loadShellSnapshot")(function* () {
-      const forSubscriber = yield* loadSubscriberShellSnapshot({
+      const forSubscriber = yield* loadActiveSubscriberShell({
         sql,
-        listShellIndex: threadManagement.listActiveShellIndex(),
-        readThreads: (threadIds) =>
-          threadManagement.readShellSnapshot({
-            location: "active",
-            ...(threadIds === undefined ? {} : { threadIds }),
-          }),
+        threadManagement,
         listProjects: projects.listShells(),
         latestSequence: applicationEvents.latestApplicationSequence,
         options: {

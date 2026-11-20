@@ -31,11 +31,8 @@ import {
 } from "./threadHistoryPaging.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import {
-  loadShellUnlessResumable,
-  loadSubscriberShellSnapshot,
-  projectIdentitiesDigest,
-} from "./ShellStream.ts";
+import { loadActiveSubscriberShell } from "./ActiveSubscriberShell.ts";
+import { loadShellUnlessResumable, projectIdentitiesDigest } from "./ShellStream.ts";
 import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
@@ -85,14 +82,9 @@ export const layer = HttpApiBuilder.group(
         readonly omitIdleSubagents: boolean;
         readonly omitOlderSettled: boolean;
       }) {
-        const { snapshot } = yield* loadSubscriberShellSnapshot({
+        const { snapshot } = yield* loadActiveSubscriberShell({
           sql,
-          listShellIndex: threadManagement.listActiveShellIndex(),
-          readThreads: (threadIds) =>
-            threadManagement.readShellSnapshot({
-              location: "active",
-              ...(threadIds === undefined ? {} : { threadIds }),
-            }),
+          threadManagement,
           listProjects: projectStore.listShells(),
           latestSequence: applicationEvents.latestApplicationSequence,
           options,

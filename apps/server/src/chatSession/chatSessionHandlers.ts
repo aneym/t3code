@@ -11,6 +11,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as Stream from "effect/Stream";
 
+import { ShellThreadRoots } from "../orchestration-v2/ActiveSubscriberShell.ts";
 import type { ChatSessionContext } from "./ChatSessionAccess.ts";
 import { rebuildChatCommand } from "./chatSessionCommands.ts";
 import { subagentClosure, type LineageEntry } from "./ChatSessionDescendants.ts";
@@ -85,10 +86,13 @@ export function chatSessionHandlers<H extends ChatHandlers>(
       handlers[O.dispatchCommand](rebuildChatCommand(command), options),
     [O.subscribeShell]: (input, options) =>
       Stream.unwrap(
-        Effect.all([
-          access.projectIds,
-          input.afterSequence === undefined ? Effect.succeed([]) : lineageIndex,
-        ]).pipe(
+        Effect.all(
+          [
+            access.projectIds,
+            input.afterSequence === undefined ? Effect.succeed([]) : lineageIndex,
+          ],
+          { concurrency: 2 },
+        ).pipe(
           Effect.map(([projectIds, seedEntries]) =>
             mapStream(
               handlers[O.subscribeShell](
@@ -103,7 +107,7 @@ export function chatSessionHandlers<H extends ChatHandlers>(
                 options,
               ),
               makeChatShellFilter(threads, projectIds, seedEntries).apply,
-            ),
+            ).pipe(Stream.provideService(ShellThreadRoots, threads)),
           ),
         ),
       ),
