@@ -42,11 +42,13 @@ Choose **Sign-in method** in the Antigravity provider settings:
 | Gemini Enterprise          | Browser sign-in, GCP project, and GCP location                                               |
 | Gemini API key             | API key; choose Connect without a browser                                                    |
 | Agent Platform / Vertex AI | API key, or GCP project and location with Application Default Credentials on the environment |
+| AI API gateway             | Gateway URL and API key, sent as a bearer token; choose Connect without a browser            |
 
 The environment stores the Antigravity API key outside its settings file, and
 clients only see whether one is saved. The agent uses the method and credentials selected for this instance;
 ambient `GEMINI_API_KEY` and Google credential variables do not override them.
-Changing the method stops the instance's sessions. Sign out before replacing an
+An AI API gateway lists the models it serves and receives every model request; its URL must use
+HTTPS unless it runs on the same machine. Changing the method stops the instance's sessions. Sign out before replacing an
 account.
 
 ## Runtime installation

@@ -145,6 +145,7 @@ describe("Antigravity process environment", () => {
       apiKey: "gemini-secret",
       gcpProject: "proj",
       gcpLocation: "us-central1",
+      gatewayUrl: "",
     });
     expect(geminiKey.GEMINI_API_KEY).toBe("gemini-secret");
     expect(geminiKey.GOOGLE_API_KEY).toBeUndefined();
@@ -155,6 +156,7 @@ describe("Antigravity process environment", () => {
       apiKey: "vertex-secret",
       gcpProject: "",
       gcpLocation: "",
+      gatewayUrl: "",
     });
     expect(vertexKey.GOOGLE_API_KEY).toBe("vertex-secret");
     expect(vertexKey.GEMINI_API_KEY).toBeUndefined();
@@ -164,6 +166,7 @@ describe("Antigravity process environment", () => {
       apiKey: "ignored",
       gcpProject: "proj",
       gcpLocation: "us-central1",
+      gatewayUrl: "",
     });
     expect(business.GEMINI_API_KEY).toBeUndefined();
     expect(business.GOOGLE_API_KEY).toBeUndefined();
@@ -667,6 +670,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
           apiKey: "vertex-secret",
           gcpProject: "proj",
           gcpLocation: "us-central1",
+          gatewayUrl: "",
         },
       });
       const settingsPath = path.join(profile.acpDirectory, "settings.json");

@@ -868,6 +868,7 @@ export const ANTIGRAVITY_AUTH_METHODS = [
   { value: "oauth-business", label: "Gemini Enterprise" },
   { value: "gemini-api-key", label: "Gemini API key" },
   { value: "agent-platform", label: "Agent Platform (Vertex AI)" },
+  { value: "gateway", label: "AI API gateway" },
 ] as const satisfies ReadonlyArray<ProviderSettingsFormOption>;
 export const AntigravityAuthMethod = Schema.Literals(
   ANTIGRAVITY_AUTH_METHODS.map((method) => method.value),
@@ -898,10 +899,21 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "API key",
-        description: "Gemini or Vertex AI express key. Stored separately on the host.",
+        description: "Gemini, Vertex AI express or gateway key. Stored separately on the host.",
         providerSettingsForm: {
           control: "password",
           placeholder: "Optional",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    gatewayUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Gateway URL",
+        description: "Base URL of the AI API gateway. Uses the API key as its bearer token.",
+        providerSettingsForm: {
+          placeholder: "https://gateway.example.com",
           clearWhenEmpty: "omit",
         },
       }),
@@ -936,7 +948,7 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
-  { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
+  { order: ["authMethod", "gatewayUrl", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
 

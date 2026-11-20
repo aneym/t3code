@@ -70,6 +70,7 @@ const removedEnvironmentKeys = new Set([
   "CLOUDSDK_CORE_PROJECT",
   "AGY_ACP_CCPA_PROJECT",
   "AGY_ACP_ENABLE_OAUTH",
+  "AGY_ACP_ENABLE_GATEWAY_AUTH",
   "GEMINI_HOME",
   "AGY_ACP_FORCE_FILE_STORAGE",
   "ANTIGRAVITY_HARNESS_PATH",
@@ -95,6 +96,7 @@ export interface AntigravityAuthConfig {
   readonly apiKey: string;
   readonly gcpProject: string;
   readonly gcpLocation: string;
+  readonly gatewayUrl: string;
 }
 
 const ANTIGRAVITY_PERSONAL_AUTH: AntigravityAuthConfig = {
@@ -102,6 +104,7 @@ const ANTIGRAVITY_PERSONAL_AUTH: AntigravityAuthConfig = {
   apiKey: "",
   gcpProject: "",
   gcpLocation: "",
+  gatewayUrl: "",
 };
 
 export function antigravityAuthUsesBrowser(authMethod: AntigravityAuthMethod): boolean {
@@ -118,6 +121,8 @@ export function antigravityAuthLabel(authMethod: AntigravityAuthMethod): string 
       return "Gemini API key";
     case "agent-platform":
       return "Agent Platform";
+    case "gateway":
+      return "AI API gateway";
   }
 }
 
@@ -135,7 +140,22 @@ export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string 
       return auth.apiKey || (auth.gcpProject && auth.gcpLocation)
         ? null
         : "Agent Platform needs an API key, or a GCP project and location, in the Antigravity provider settings.";
+    case "gateway":
+      return auth.gatewayUrl && auth.apiKey
+        ? null
+        : "AI API gateway needs a gateway URL and an API key in the Antigravity provider settings.";
   }
+}
+
+export function antigravityAuthenticateMeta(auth: AntigravityAuthConfig) {
+  return auth.authMethod === "gateway"
+    ? {
+        gateway: {
+          baseUrl: auth.gatewayUrl,
+          headers: { Authorization: `Bearer ${auth.apiKey}` },
+        },
+      }
+    : undefined;
 }
 
 /**
@@ -226,6 +246,7 @@ function antigravityEnvironment(
     BROWSER: profile.browserCommand,
     PYTHONUNBUFFERED: "1",
     ELECTRON_RUN_AS_NODE: "1",
+    ...(auth.authMethod === "gateway" ? { AGY_ACP_ENABLE_GATEWAY_AUTH: "1" } : {}),
     ...(profile.platform === "win32"
       ? { TEMP: tempDirectory, TMP: tempDirectory }
       : { TMPDIR: tempDirectory }),
