@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -31,11 +31,8 @@ export function useEmbedReadyReport(
     !held &&
     Option.isNone(thread.data) &&
     (Option.isSome(thread.error) || thread.status === "deleted");
-  const draws = Option.match(thread.data, {
-    onNone: () => "nothing" as const,
-    onSome: (data) =>
-      data.messages.length > 0 || data.turnItems.length > 0 ? ("rows" as const) : ("view" as const),
-  });
+  const key = threadRef !== null && Option.isSome(thread.data) ? scopedThreadKey(threadRef) : null;
+  const refused = held || unavailable;
   const shown = held ? null : embedPaintSource(thread);
   const [first, setFirst] = useState(() => ({ threadId, from: shown }));
   const stale =
@@ -66,24 +63,29 @@ export function useEmbedReadyReport(
   useLayoutEffect(() => {
     if (settled && !unavailable) markEmbedRouteStep(threadId, "mounted");
     if (!connected) return;
-    if (unavailable) {
+    if (refused) {
       watch.refuse(threadId);
+      return;
+    }
+    if (!settled) {
+      watch.stop();
       return;
     }
     const parentThreadId =
       refEnvironmentId === null || refThreadId === null
         ? undefined
         : embedParentThreadId(scopeThreadRef(refEnvironmentId, refThreadId));
-    watch.report(threadId, settled, draws, from, parentThreadId);
+    watch.report(threadId, key, from, parentThreadId);
   }, [
     watch,
     connected,
     threadId,
+    refused,
     unavailable,
     refEnvironmentId,
     refThreadId,
     settled,
-    draws,
+    key,
     from,
   ]);
   return unavailable;

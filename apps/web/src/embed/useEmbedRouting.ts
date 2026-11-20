@@ -1,4 +1,6 @@
 import { RegistryContext } from "@effect/atom-react";
+import { chatSessionActive } from "@t3tools/client-runtime/chat-session";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   EMBED_ROUTE_REFUSED_MESSAGE,
   EMBED_WARM_LIMIT,
@@ -15,7 +17,8 @@ import { environmentShell } from "../state/shell";
 import { environmentThreads } from "../state/threads";
 import { channelForSpot, fromEmbedHost, postToEmbedHost } from "./embedHost";
 import { readEmbedLocation } from "./embedLocation";
-import { repeatEmbedReady } from "./embedReadyWatch";
+import { embedSessionAdmitsThread } from "./embedParentThread";
+import { repeatEmbedAnswer } from "./embedReadyWatch";
 import { startEmbedRouteTimings } from "./embedRouteTimings";
 import {
   embedThreadVisibility,
@@ -24,6 +27,7 @@ import {
   readEmbedWarmMessage,
 } from "./embedRouting";
 import { createEmbedWarmSet } from "./embedWarmSet";
+import { liveConfigAtom } from "./useEmbedKeptView";
 
 export function useEmbedRouting(
   origin: string,
@@ -53,17 +57,24 @@ export function useEmbedRouting(
     const shellEnvironment = EnvironmentId.make(environmentId);
     const releaseShell = registry.mount(environmentShell.stateAtom(shellEnvironment));
     const channel = channelForSpot({ origin, framed });
-    const visibility = () =>
-      embedThreadVisibility(
-        registry.get(environmentShell.stateValueAtom(shellEnvironment)).snapshot,
+    const sessionVisibility = (thread: string) =>
+      embedSessionAdmitsThread(
+        scopeThreadRef(shellEnvironment, ThreadId.make(thread)),
+        registry.get(liveConfigAtom(shellEnvironment)),
       );
+    const visibility = () =>
+      chatSessionActive()
+        ? sessionVisibility
+        : embedThreadVisibility(
+            registry.get(environmentShell.stateValueAtom(shellEnvironment)).snapshot,
+          );
     const refuse = (thread: string, reason: EmbedRouteRefusal) =>
       postToEmbedHost({ type: EMBED_ROUTE_REFUSED_MESSAGE, thread, reason });
     const route = (thread: string) => {
       const current = readEmbedLocation(router.state.location.pathname)?.threadId ?? null;
       const plan = planEmbedRoute(thread, current, visibility());
       if (plan.kind === "refused") return refuse(thread, plan.reason);
-      if (plan.kind === "same") return repeatEmbedReady(thread);
+      if (plan.kind === "same") return repeatEmbedAnswer(thread);
       startEmbedRouteTimings(thread);
       warmSet.show(thread);
       void router.navigate({
