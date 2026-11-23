@@ -251,7 +251,7 @@ export function mapRemoteEnvironmentError(
         via,
       });
     case "RemoteEnvironmentAuthUndeclaredStatusError":
-      if (error.status === 403) {
+      if (isChatSessionTicketRefusal(error)) {
         return new ConnectionBlockedError({
           reason: "permission",
           detail: "The environment credential does not grant the required access.",
@@ -266,6 +266,19 @@ export function mapRemoteEnvironmentError(
         via,
         httpStatus: error.status,
       });
+  }
+}
+
+function isChatSessionTicketRefusal(error: {
+  readonly status: number;
+  readonly requestUrl: string;
+  readonly code?: string | undefined;
+}): boolean {
+  if (error.status !== 403 || error.code !== "chat_session_forbidden") return false;
+  try {
+    return new URL(error.requestUrl).pathname.includes("/api/auth/websocket-ticket");
+  } catch {
+    return false;
   }
 }
 

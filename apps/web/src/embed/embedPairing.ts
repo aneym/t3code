@@ -21,6 +21,9 @@ function failureText(error: unknown): string {
     : "Pairing failed.";
 }
 
+const RECORDED_PAIRS = 16;
+const recordedPairs = new Map<string, Promise<EmbedPairResult>>();
+
 async function pairThroughEmbedHost(pair: EmbedPair): Promise<EmbedPairResult> {
   const expectedEnvironmentId = pair.environmentId as EnvironmentId;
   const result = await connectPairing.run(appAtomRegistry, {
@@ -30,24 +33,42 @@ async function pairThroughEmbedHost(pair: EmbedPair): Promise<EmbedPairResult> {
   });
   if (result._tag === "Failure") {
     return {
+      requestId: pair.requestId,
       environmentId: pair.environmentId,
       ok: false,
       error: failureText(squashAtomCommandFailure(result)),
     };
   }
   return {
+    requestId: pair.requestId,
     environmentId: pair.environmentId,
     ok: true,
     routes: savedRoutes(expectedEnvironmentId),
   };
 }
 
-export function applyEmbedPair(pair: EmbedPair): void {
-  void pairThroughEmbedHost(pair)
-    .catch((error: unknown) => ({
+function recordedPair(pair: EmbedPair): Promise<EmbedPairResult> {
+  const run = () =>
+    pairThroughEmbedHost(pair).catch((error: unknown): EmbedPairResult => ({
+      requestId: pair.requestId,
       environmentId: pair.environmentId,
       ok: false,
       error: failureText(error),
-    }))
-    .then((result) => postToEmbedHost({ type: EMBED_PAIR_RESULT_MESSAGE, ...result }));
+    }));
+  if (pair.requestId === null) return run();
+  const recorded = recordedPairs.get(pair.requestId);
+  if (recorded !== undefined) return recorded;
+  const result = run();
+  recordedPairs.set(pair.requestId, result);
+  for (const key of recordedPairs.keys()) {
+    if (recordedPairs.size <= RECORDED_PAIRS) break;
+    recordedPairs.delete(key);
+  }
+  return result;
+}
+
+export function applyEmbedPair(pair: EmbedPair): void {
+  void recordedPair(pair).then((result) =>
+    postToEmbedHost({ type: EMBED_PAIR_RESULT_MESSAGE, ...result }),
+  );
 }

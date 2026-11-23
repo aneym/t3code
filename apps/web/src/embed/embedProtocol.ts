@@ -79,12 +79,14 @@ export type EmbedPress = {
 };
 
 export type EmbedPair = {
+  readonly requestId: string | null;
   readonly environmentId: string;
   readonly pairingUrl: string;
   readonly alsoAt: ReadonlyArray<string>;
 };
 
 export type EmbedPairResult = {
+  readonly requestId: string | null;
   readonly environmentId: string;
   readonly ok: boolean;
   readonly error?: string;
@@ -414,5 +416,9 @@ export function readEmbedPairMessage(data: unknown): EmbedPair | null {
   const alsoAt = Array.isArray(message.alsoAt)
     ? message.alsoAt.slice(0, MAX_PAIR_ADDRESSES).flatMap((entry) => readWebUrl(entry) ?? [])
     : [];
-  return { environmentId, pairingUrl, alsoAt };
+  const requestId =
+    typeof message.requestId === "string" && CLEAR_THREAD.test(message.requestId)
+      ? message.requestId
+      : null;
+  return { requestId, environmentId, pairingUrl, alsoAt };
 }

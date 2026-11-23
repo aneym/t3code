@@ -12,7 +12,11 @@ import { useEmbedConnectionReport } from "../../embed/useEmbedConnectionReport";
 import { useEmbedHostBridge } from "../../embed/useEmbedHostBridge";
 import { useEmbedNavigationPrefetch } from "../../embed/useEmbedNavigationPrefetch";
 import { useEmbedDocumentTitle } from "../../embed/useEmbedDocumentTitle";
-import { useEmbedKeptView, useEmbedKeptViewUpkeep } from "../../embed/useEmbedKeptView";
+import {
+  useEmbedKeptView,
+  useEmbedKeptViewUpkeep,
+  useEmbedSavedRefused,
+} from "../../embed/useEmbedKeptView";
 import { useEmbedReadyReport } from "../../embed/useEmbedReadyReport";
 import { useEmbedRouting } from "../../embed/useEmbedRouting";
 import { releaseEmbedThreadPrefetch } from "../../embed/embedThreadPrefetch";
@@ -91,7 +95,9 @@ export function EmbeddedThread({
   const target = resolveThreadRouteTarget({ environmentId, threadId });
   const threadRef = target?.kind === "server" ? target.threadRef : null;
   const view = useEmbedKeptView(threadRef);
+  const refused = useEmbedSavedRefused(threadRef?.environmentId ?? null);
   const unavailable = useEmbedReadyReport(threadRef, threadId, view === "hold");
+  if (refused) return null;
   if (unavailable) return <EmbedNotice text="This chat isn't available here." />;
   if (target === null || view === "hold") return null;
   return (
@@ -118,14 +124,13 @@ export function EmbedPage({
   const settings = useAtomValue(primaryServerConfigAtom)?.settings ?? null;
   const target = threadId === null ? null : resolveThreadRouteTarget({ environmentId, threadId });
   useEmbedDocumentTitle(authenticated && target?.kind === "server" ? target.threadRef : null);
-  const signedIn = useEmbedKeptViewUpkeep(
-    authenticated,
-    target?.kind === "server" ? target.threadRef.environmentId : null,
-  );
+  const threadRef = target?.kind === "server" ? target.threadRef : null;
+  const signedIn = useEmbedKeptViewUpkeep(authenticated, threadRef);
+  const refused = useEmbedSavedRefused(threadRef?.environmentId ?? null);
   if (!signedIn) return <EmbedNotice text="Sign in to continue." />;
   return (
     <>
-      {target?.kind === "server" ? <EmbedPrefetch threadRef={target.threadRef} /> : null}
+      {threadRef !== null && !refused ? <EmbedPrefetch threadRef={threadRef} /> : null}
       {target?.kind === "server" ? (
         <EmbedConnectionNotice environmentId={target.threadRef.environmentId} />
       ) : null}

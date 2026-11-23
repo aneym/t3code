@@ -1,4 +1,5 @@
 import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -153,19 +154,40 @@ export const preparePairingRegistration = Effect.fn(
   });
 });
 
-const addPairedRoute = Effect.fn("clientRuntime.connection.onboarding.addPairedRoute")(function* (
+function alternateBaseUrl(address: string): string | null {
+  try {
+    const url = new URL(address);
+    if (
+      url.protocol === "https:" ||
+      (url.protocol === "http:" && isLocalLoopbackHost(url.hostname))
+    ) {
+      return `${url.origin}/`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function alternateOrigins(
   registration: BearerConnectionRegistration,
-  address: string,
-) {
-  const environmentId = registration.target.environmentId;
-  const httpBaseUrl = yield* Effect.try({
-    try: () => normalizeHttpBaseUrl(address),
-    catch: () =>
-      new ConnectionBlockedError({
-        reason: "configuration",
-        detail: `${address} is not a valid address.`,
-      }),
+  addresses: ReadonlyArray<string>,
+): ReadonlyArray<string | null> {
+  const seen = new Set([new URL(registration.profile.httpBaseUrl).origin]);
+  return addresses.flatMap((address) => {
+    const httpBaseUrl = alternateBaseUrl(address);
+    if (httpBaseUrl === null) return [null];
+    const origin = new URL(httpBaseUrl).origin;
+    if (seen.has(origin)) return [];
+    seen.add(origin);
+    return [httpBaseUrl];
   });
+}
+
+const prepareAlternateRoute = Effect.fn(
+  "clientRuntime.connection.onboarding.prepareAlternateRoute",
+)(function* (registration: BearerConnectionRegistration, httpBaseUrl: string) {
+  const environmentId = registration.target.environmentId;
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
     Effect.mapError(mapRemoteEnvironmentError),
   );
@@ -174,40 +196,53 @@ const addPairedRoute = Effect.fn("clientRuntime.connection.onboarding.addPairedR
   }
   const connectionId = bearerConnectionId(environmentId, httpBaseUrl);
   const label = registration.target.label;
-  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  yield* registry.register(
-    new BearerConnectionRegistration({
-      target: new BearerConnectionTarget({ environmentId, label, connectionId }),
-      profile: new BearerConnectionProfile({
-        connectionId,
-        environmentId,
-        label,
-        httpBaseUrl,
-        wsBaseUrl: deriveWsBaseUrl(httpBaseUrl),
-      }),
-      credential: registration.credential,
+  return new BearerConnectionRegistration({
+    target: new BearerConnectionTarget({ environmentId, label, connectionId }),
+    profile: new BearerConnectionProfile({
+      connectionId,
+      environmentId,
+      label,
+      httpBaseUrl,
+      wsBaseUrl: deriveWsBaseUrl(httpBaseUrl),
     }),
+    credential: registration.credential,
+  });
+});
+
+const prepareAlternateRoutes = Effect.fn(
+  "clientRuntime.connection.onboarding.prepareAlternateRoutes",
+)(function* (registration: BearerConnectionRegistration, addresses: ReadonlyArray<string>) {
+  const prepared = yield* Effect.forEach(
+    alternateOrigins(registration, addresses),
+    (httpBaseUrl) =>
+      httpBaseUrl === null
+        ? Effect.logWarning("Skipped a paired environment's other address.", {
+            reason: "insecure-or-invalid",
+          }).pipe(Effect.as([]))
+        : prepareAlternateRoute(registration, httpBaseUrl).pipe(
+            Effect.map((route) => [route]),
+            Effect.catch((error) =>
+              Effect.logWarning("Could not add a paired environment's other address.", {
+                origin: new URL(httpBaseUrl).origin,
+                error: error._tag,
+                reason: "reason" in error ? error.reason : null,
+              }).pipe(Effect.as([])),
+            ),
+          ),
+    { concurrency: "unbounded" },
   );
+  return prepared.flat();
 });
 
 const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
 )(function* (input: PairingConnectionInput) {
   const registration = yield* preparePairingRegistration(input);
+  const alongside = yield* prepareAlternateRoutes(registration, input.alsoAt ?? []);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const knownAddressOnly = input.expectedEnvironmentId === undefined;
-  if (!(yield* registry.register(registration, { knownAddressOnly }))) {
+  if (!(yield* registry.register(registration, { knownAddressOnly, alongside }))) {
     return registration.target.environmentId;
-  }
-  for (const address of input.alsoAt ?? []) {
-    yield* addPairedRoute(registration, address).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Could not add a paired environment's other address.", {
-          address,
-          error,
-        }),
-      ),
-    );
   }
   yield* registry.setCompatibility(registration.target.environmentId, null);
   yield* registry

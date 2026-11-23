@@ -8,7 +8,7 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { environmentSession } from "../state/session";
@@ -37,31 +37,60 @@ const connectionReportAtom = Atom.family((environmentId: EnvironmentId) =>
     const prepared = Option.getOrNull(
       get(environmentSession.preparedConnectionValueAtom(environmentId)),
     );
+    const routes = connectionRoutes(entry);
+    const failure = state.phase === "connected" ? null : state.lastFailure;
     const route =
       prepared === null
-        ? undefined
-        : connectionRoutes(entry).find(
+        ? failure === null
+          ? undefined
+          : routes[0]
+        : routes.find(
             (candidate) =>
               connectionRouteId(candidate.target) === connectionRouteId(prepared.target),
           );
-    const failure = state.phase === "connected" ? null : state.lastFailure;
     return report({
       phase: embedConnectionRefused(state) ? "refused" : state.phase,
       reason: failure?.reason ?? null,
-      routeKind: route === undefined ? null : connectionRouteKind(route),
+      routeKind:
+        failure?.via === "relay"
+          ? "relay"
+          : route === undefined
+            ? null
+            : connectionRouteKind(route),
       hop: failure?.hop ?? null,
       detail: failure?.detail ?? null,
     });
   }).pipe(Atom.withLabel(`web-embed-connection-report:${environmentId}`)),
 );
 
+const TRANSITION_GAP_MS = 2000;
+
 export function useEmbedConnectionReport(environmentId: EnvironmentId): void {
   const report = useAtomValue(connectionReportAtom(environmentId));
   const hostConnected = useEmbedHostConnected();
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the embedding host each time this chat's connection changes
+  const lastRoute = useRef<{ environmentId: EnvironmentId; kind: string } | null>(null);
+  const lastSentAt = useRef(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the embedding host when this chat's connection changes, at most one connecting or backoff report per two seconds
   useEffect(() => {
     if (report === null || !hostConnected) return;
     const fields = JSON.parse(report) as EmbedConnectionReport;
-    postToEmbedHost({ type: EMBED_CONNECTION_MESSAGE, ...fields });
-  }, [report, hostConnected]);
+    if (fields.routeKind !== null) lastRoute.current = { environmentId, kind: fields.routeKind };
+    const attempted =
+      lastRoute.current?.environmentId === environmentId ? lastRoute.current.kind : null;
+    const post = () => {
+      lastSentAt.current = Date.now();
+      postToEmbedHost({
+        type: EMBED_CONNECTION_MESSAGE,
+        ...fields,
+        routeKind: fields.routeKind ?? (fields.phase === "unknown" ? null : attempted),
+      });
+    };
+    const wait =
+      fields.phase === "connecting" || fields.phase === "backoff"
+        ? lastSentAt.current + TRANSITION_GAP_MS - Date.now()
+        : 0;
+    if (wait <= 0) return post();
+    const timer = setTimeout(post, wait);
+    return () => clearTimeout(timer);
+  }, [environmentId, report, hostConnected]);
 }

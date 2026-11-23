@@ -106,7 +106,10 @@ export class EnvironmentRegistry extends Context.Service<
      */
     readonly register: (
       registration: ConnectionRegistration,
-      options?: { readonly knownAddressOnly?: boolean },
+      options?: {
+        readonly knownAddressOnly?: boolean;
+        readonly alongside?: ReadonlyArray<ConnectionRegistration>;
+      },
     ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError | ConnectionBlockedError>;
     /**
      * Fails when the route would add a new address to a saved user environment. Pairing that does
@@ -560,7 +563,10 @@ export const make = Effect.gen(function* () {
 
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
-    options?: { readonly knownAddressOnly?: boolean },
+    options?: {
+      readonly knownAddressOnly?: boolean;
+      readonly alongside?: ReadonlyArray<ConnectionRegistration>;
+    },
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
@@ -574,23 +580,13 @@ export const make = Effect.gen(function* () {
         if (options?.knownAddressOnly === true) {
           yield* assertKnownAddress(route);
         }
-        const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
-        let entry = registered;
-        if (previous !== undefined) {
-          const existing = connectionRoutes(previous);
-          const sameAddress = findRouteToSameAddress(existing, route);
-          const routes = existing.filter(
-            (existing) =>
-              existing !== sameAddress ||
-              connectionRouteId(existing.target) === connectionRouteId(route.target),
-          );
-          const next = withRoutes(previous, upsertRoute(routes, route));
-          if (next.addressesChanged) {
-            yield* forgetRoutingTrust(environmentId, "register-connection");
-          }
-          entry = next.entry;
+        let entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
+        for (const each of [registration, ...(options?.alongside ?? [])]) {
+          const next = connectionRegistrationCatalogEntry(each);
+          if (next.target.environmentId !== environmentId) continue;
+          entry = yield* mergeRegistrationLocked(entry, each, next);
         }
-        yield* registrations.register(registration, persistedRoutes(entry));
+        if (entry === undefined) return false;
         yield* Ref.update(persistedEnvironmentIds, (current) =>
           new Set(current).add(environmentId),
         );
@@ -599,6 +595,33 @@ export const make = Effect.gen(function* () {
       }),
     );
   });
+
+  const mergeRegistrationLocked = Effect.fn("EnvironmentRegistry.mergeRegistrationLocked")(
+    function* (
+      previous: ConnectionCatalogEntry | undefined,
+      registration: ConnectionRegistration,
+      registered: ConnectionCatalogEntry,
+    ) {
+      const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
+      let entry = registered;
+      if (previous !== undefined) {
+        const existing = connectionRoutes(previous);
+        const sameAddress = findRouteToSameAddress(existing, route);
+        const routes = existing.filter(
+          (existing) =>
+            existing !== sameAddress ||
+            connectionRouteId(existing.target) === connectionRouteId(route.target),
+        );
+        const next = withRoutes(previous, upsertRoute(routes, route));
+        if (next.addressesChanged) {
+          yield* forgetRoutingTrust(registered.target.environmentId, "register-connection");
+        }
+        entry = next.entry;
+      }
+      yield* registrations.register(registration, persistedRoutes(entry));
+      return entry;
+    },
+  );
 
   const replaceRoutesLocked = Effect.fn("EnvironmentRegistry.replaceRoutesLocked")(function* (
     previous: ConnectionCatalogEntry,

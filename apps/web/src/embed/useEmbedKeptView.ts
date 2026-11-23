@@ -8,15 +8,16 @@ import { useEffect, useRef, useState } from "react";
 import { useChatSession, useChatSessionListsThread } from "../chatSessionMode";
 import { environmentCatalog } from "../connection/catalog";
 import { fetchSessionState } from "../environments/primary/auth";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useThreadShell } from "../state/entities";
 import { serverEnvironment } from "../state/server";
-import { useEnvironmentThread } from "../state/threads";
+import { environmentThreads, useEnvironmentThread } from "../state/threads";
 import { embedConnectionRefused, embedKeptView, type EmbedKeptView } from "./embedKeptViewGate";
 import {
-  clearKeptViewsFor,
   noteKeptViewShown,
   reopenKeptViews,
   retainKeptViewsOf,
+  sealKeptViewsFor,
   wipeKeptViews,
 } from "./embedKeptViews";
 import { embedSessionAdmitsThread } from "./embedParentThread";
@@ -97,10 +98,27 @@ const NO_KEPT_ENVIRONMENTS_ATOM = Atom.make(() => ({ saved: false, keep: null })
   Atom.withLabel("web-embed-kept-environments:none"),
 );
 
+const savedRefusedAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) =>
+      get(keptEnvironmentsAtom(environmentId)).saved &&
+      embedConnectionRefused(get(connectionAtom(environmentId))),
+  ).pipe(Atom.withLabel(`web-embed-saved-refused:${environmentId}`)),
+);
+const NOT_REFUSED_ATOM = Atom.make(() => false).pipe(
+  Atom.withLabel("web-embed-saved-refused:none"),
+);
+
+export function useEmbedSavedRefused(environmentId: EnvironmentId | null): boolean {
+  return useAtomValue(environmentId === null ? NOT_REFUSED_ATOM : savedRefusedAtom(environmentId));
+}
+
 export function useEmbedKeptViewUpkeep(
   authenticated: boolean,
-  environmentId: EnvironmentId | null,
+  threadRef: ScopedThreadRef | null,
 ): boolean {
+  const environmentId = threadRef?.environmentId ?? null;
+  const threadId = threadRef?.threadId ?? null;
   const liveEnvironmentId = useLiveConfig(authenticated ? environmentId : null)?.environment
     .environmentId;
   const connection = useAtomValue(
@@ -120,11 +138,15 @@ export function useEmbedKeptViewUpkeep(
     if (!authenticated || environmentId === null) return;
     if (connected) {
       wasConnected.current = true;
-      reopenKeptViews();
+      reopenKeptViews(environmentId);
       return;
     }
     if (saved) {
-      if (refused) void clearKeptViewsFor(environmentId).catch(() => undefined);
+      if (!refused) return;
+      void sealKeptViewsFor(environmentId).catch(() => undefined);
+      if (threadId !== null) {
+        appAtomRegistry.refresh(environmentThreads.resumeAtom(environmentId, threadId));
+      }
       return;
     }
     if (!wasConnected.current && !refused) return;
@@ -139,7 +161,7 @@ export function useEmbedKeptViewUpkeep(
     return () => {
       current = false;
     };
-  }, [authenticated, connected, refused, saved, environmentId]);
+  }, [authenticated, connected, refused, saved, environmentId, threadId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops every kept view in IndexedDB once the server says this frame is signed out or its pairing is gone
   useEffect(() => {
     if (!authenticated) void wipeKeptViews().catch(() => undefined);

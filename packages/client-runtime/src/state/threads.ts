@@ -1194,6 +1194,8 @@ export function createEnvironmentThreadStateAtoms<R, E>(
   return {
     stateAtom: (environmentId: EnvironmentIdType, threadId: ThreadIdType) =>
       family(threadKey({ environmentId, threadId })),
+    resumeAtom: (environmentId: EnvironmentIdType, threadId: ThreadIdType) =>
+      resumeFamily(threadKey({ environmentId, threadId })),
   };
 }
 

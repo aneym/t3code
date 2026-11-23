@@ -33,6 +33,7 @@ const environmentRange = (environmentId: string) =>
 
 let opening: Promise<IDBDatabase> | null = null;
 let sealed = false;
+const sealedEnvironments = new Set<string>();
 
 function openDatabase(): Promise<IDBDatabase> {
   opening ??= new Promise<IDBDatabase>((resolve, reject) => {
@@ -107,7 +108,7 @@ export function saveKeptView(
     const key = keyOf(environmentId, threadId);
     const existing = meta.get(key);
     existing.addEventListener("success", () => {
-      if (sealed) return;
+      if (sealed || sealedEnvironments.has(environmentId)) return;
       const previous = existing.result as KeptViewMeta | undefined;
       view.put(payload, key);
       meta.put(
@@ -167,8 +168,14 @@ export function wipeKeptViews(): Promise<void> {
   return forgetKeptViews();
 }
 
-export function reopenKeptViews(): void {
+export function sealKeptViewsFor(environmentId: string): Promise<void> {
+  sealedEnvironments.add(environmentId);
+  return clearKeptViewsFor(environmentId);
+}
+
+export function reopenKeptViews(environmentId: string): void {
   sealed = false;
+  sealedEnvironments.delete(environmentId);
 }
 
 export function markKeptViewShown(
