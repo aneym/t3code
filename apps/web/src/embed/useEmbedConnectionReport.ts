@@ -79,5 +79,5 @@ export function useEmbedConnectionReport(environmentId: EnvironmentId): void {
     if (wait <= 0) return post();
     const timer = setTimeout(post, wait);
     return () => clearTimeout(timer);
-  }, [environmentId, report, hostConnected]);
+  }, [report, hostConnected]);
 }
