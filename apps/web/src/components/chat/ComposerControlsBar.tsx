@@ -41,6 +41,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 // Model and effort share one trigger; it stays filled while its popup is open.
 const MODEL_TRIGGER_STATES = "data-popup-open:bg-accent data-popup-open:text-foreground";
 const SEAT_CONTROLS_REASON = "Set by this agent's owner";
+const UNAVAILABLE_CONTROLS_REASON = "Controls unavailable";
 
 export function ComposerControlsBar(props: {
   environmentId: EnvironmentId;
@@ -141,9 +142,11 @@ export function ComposerControlsBar(props: {
   const seatReason =
     threadControls === "seat"
       ? SEAT_CONTROLS_REASON
-      : threadControls === "answer"
-        ? ANSWER_ONLY_REASON
-        : undefined;
+      : threadControls === "unavailable"
+        ? UNAVAILABLE_CONTROLS_REASON
+        : threadControls === "answer"
+          ? ANSWER_ONLY_REASON
+          : undefined;
   const {
     accessDisplay,
     showModeBlock,
@@ -279,8 +282,15 @@ export function ComposerControlsBar(props: {
         composerModelPicker
       ) : (
         <Tooltip>
-          <TooltipTrigger render={<span className="inline-flex min-w-0 shrink" />}>
+          <TooltipTrigger
+            render={<span className="inline-flex min-w-0 shrink items-center gap-1.5" />}
+          >
             {composerModelPicker}
+            {threadControls === "answer" ? null : (
+              <span data-composer-lock-reason className="truncate text-muted-foreground text-xs">
+                {seatReason}
+              </span>
+            )}
           </TooltipTrigger>
           <TooltipPopup side="top">{seatReason}</TooltipPopup>
         </Tooltip>

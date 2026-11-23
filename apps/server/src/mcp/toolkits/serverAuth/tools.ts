@@ -51,7 +51,7 @@ const SessionRevokeTool = Tool.make("t3_auth_session_revoke", {
 const PairingCreateTool = Tool.make("t3_auth_pairing_create", {
   ...shared,
   description:
-    "Owner CLI only. Create a one-time pairing link on this server; chatThreadIds makes it chat-only; chatOwnerThreadIds also lets it set model, effort and access on those threads.",
+    "Owner CLI only. Create a one-time pairing link on this server; chatThreadIds makes it chat-only; chatOwnerThreadIds also lets it set model, effort and access on those threads, and an empty chatOwnerThreadIds says the owner locked them on every thread.",
   parameters: ServerAuthPairingCreateInput,
   success: ServerAuthPairingLink,
 }).annotate(Tool.Destructive, false);

@@ -173,7 +173,11 @@ export const chatServerConfig = (config: ServerConfig, session: ChatSession): Se
     otlpLogsEnabled: false,
   },
   settings: chatSettings(config.settings),
-  chatSession: { ownerThreadIds: [...session.ownerThreads], threadIds: [...session.threads] },
+  chatSession: {
+    ownerThreadIds: [...session.ownerThreads],
+    ownerPolicy: session.ownerPolicy,
+    threadIds: [...session.threads],
+  },
 });
 
 const withoutCatalog = (provider: ServerProvider): ServerProvider =>

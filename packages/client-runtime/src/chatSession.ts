@@ -7,10 +7,11 @@ import {
   isChatSessionScopes,
 } from "@t3tools/contracts";
 
-export type ChatThreadControls = "full" | "owner" | "seat" | "answer";
+export type ChatThreadControls = "full" | "owner" | "seat" | "unavailable" | "answer";
 
 let active = false;
 let ownerThreadIds: ReadonlySet<string> = new Set();
+let ownerPolicy = false;
 let sessionThreadIds: ReadonlySet<string> = new Set();
 const listeners = new Set<() => void>();
 
@@ -28,10 +29,16 @@ export function noteChatSessionScopes(scopes: ReadonlyArray<string> | undefined)
 const sameIds = (a: ReadonlySet<string>, b: ReadonlySet<string>) =>
   a.size === b.size && [...a].every((id) => b.has(id));
 
-export function noteChatSessionOwners(ids: ReadonlyArray<ThreadId> | undefined): void {
-  const next = new Set<string>(ids ?? []);
-  if (sameIds(next, ownerThreadIds)) return;
+export function noteChatSessionOwners(
+  view:
+    | { readonly ownerThreadIds: ReadonlyArray<ThreadId>; readonly ownerPolicy?: boolean }
+    | undefined,
+): void {
+  const next = new Set<string>(view?.ownerThreadIds ?? []);
+  const nextPolicy = view?.ownerPolicy === true || next.size > 0;
+  if (sameIds(next, ownerThreadIds) && nextPolicy === ownerPolicy) return;
   ownerThreadIds = next;
+  ownerPolicy = nextPolicy;
   notify();
 }
 
@@ -49,9 +56,8 @@ export function chatSessionListsThread(threadId: string): boolean {
 export function chatThreadControls(threadId: string | null | undefined): ChatThreadControls {
   if (!active) return "full";
   if (threadId && ownerThreadIds.has(threadId)) return "owner";
-  return threadId && sessionThreadIds.size > 0 && !sessionThreadIds.has(threadId)
-    ? "answer"
-    : "seat";
+  if (threadId && sessionThreadIds.size > 0 && !sessionThreadIds.has(threadId)) return "answer";
+  return ownerPolicy ? "seat" : "unavailable";
 }
 
 export function chatSessionActive(): boolean {

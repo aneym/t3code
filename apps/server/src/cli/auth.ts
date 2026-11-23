@@ -79,6 +79,13 @@ const chatOwnerThreadFlag = Flag.String("chat-owner-thread").pipe(
   Flag.atLeast(0),
 );
 
+const chatSeatFlag = Flag.Boolean("chat-seat").pipe(
+  Flag.withDescription(
+    "The owner keeps model, effort and access on every thread not named by --chat-owner-thread.",
+  ),
+  Flag.withDefault(false),
+);
+
 const tokenOnlyFlag = Flag.Boolean("token-only").pipe(
   Flag.withDescription("Print only the issued bearer token."),
   Flag.withDefault(false),
@@ -104,6 +111,7 @@ const pairingCreateCommand = Command.make("create", {
   scopes: authScopesFlag(AuthStandardClientScopes),
   chatThreads: chatThreadFlag,
   chatOwnerThreads: chatOwnerThreadFlag,
+  chatSeat: chatSeatFlag,
   ttl: ttlFlag,
   label: labelFlag,
   baseUrl: baseUrlFlag,
@@ -122,7 +130,7 @@ const pairingCreateCommand = Command.make("create", {
             ...(flags.chatThreads.length + flags.chatOwnerThreads.length > 0
               ? { chatThreadIds: [...new Set([...flags.chatThreads, ...flags.chatOwnerThreads])] }
               : {}),
-            ...(flags.chatOwnerThreads.length > 0
+            ...(flags.chatSeat || flags.chatOwnerThreads.length > 0
               ? { chatOwnerThreadIds: flags.chatOwnerThreads }
               : {}),
             ...ttlArgument(flags.ttl),

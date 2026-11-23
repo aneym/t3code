@@ -54,7 +54,7 @@ const makeAccess = (): ChatSessionAccess => {
   const hops = new Map<ThreadId, number>();
   const hopsOf = (threadId: ThreadId) => (inSet(threadId) ? 0 : hops.get(threadId));
   return {
-    session: { setId: "set", threads, ownerThreads: new Set([set]) },
+    session: { setId: "set", threads, ownerThreads: new Set([set]), ownerPolicy: true },
     inSet,
     ownsThread: inSet,
     admits: (threadId) =>

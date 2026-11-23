@@ -573,7 +573,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
           }
           yield* Ref.set(pendingPersistence, Option.some(next.value.config));
           yield* SubscriptionRef.set(state, next);
-          noteChatSessionOwners(next.value.config.chatSession?.ownerThreadIds);
+          noteChatSessionOwners(next.value.config.chatSession);
           yield* Queue.offer(persistence, next.value.config);
         }),
       ),

@@ -22,6 +22,7 @@ export interface ChatSession {
   readonly setId: string;
   readonly threads: ReadonlySet<ThreadId>;
   readonly ownerThreads: ReadonlySet<ThreadId>;
+  readonly ownerPolicy: boolean;
 }
 
 const SET_RETENTION = Duration.days(2);
@@ -37,7 +38,7 @@ export class ChatThreadSets extends Context.Service<
   {
     readonly create: (
       threadIds: ChatSessionThreadIds,
-      ownerThreadIds: ChatSessionOwnerThreadIds,
+      ownerThreadIds: ChatSessionOwnerThreadIds | undefined,
     ) => Effect.Effect<string, PersistenceSqlError>;
     readonly forSession: (session: {
       readonly subject: string;
@@ -54,20 +55,19 @@ const make = Effect.gen(function* () {
 
   const create = Effect.fn("ChatThreadSets.create")(function* (
     threadIds: ChatSessionThreadIds,
-    ownerThreadIds: ChatSessionOwnerThreadIds,
+    ownerThreadIds: ChatSessionOwnerThreadIds | undefined,
   ) {
     const setId = yield* random.uuidV4().pipe(Effect.mapError(sqlError("ChatThreadSets.id")));
     const members = new Set(threadIds);
     const threadIdsJson = yield* encodeThreadIds([...members]).pipe(
       Effect.mapError(sqlError("ChatThreadSets.encode")),
     );
-    const owners = [...new Set(ownerThreadIds)].filter((threadId) => members.has(threadId));
     const ownerThreadIdsJson =
-      owners.length === 0
+      ownerThreadIds === undefined
         ? null
-        : yield* encodeOwnerThreadIds(owners).pipe(
-            Effect.mapError(sqlError("ChatThreadSets.encode")),
-          );
+        : yield* encodeOwnerThreadIds(
+            [...new Set(ownerThreadIds)].filter((threadId) => members.has(threadId)),
+          ).pipe(Effect.mapError(sqlError("ChatThreadSets.encode")));
     const now = yield* DateTime.now;
     const cutoff = DateTime.subtract(now, { milliseconds: Duration.toMillis(SET_RETENTION) });
     yield* sql`DELETE FROM auth_chat_thread_sets WHERE created_at < ${DateTime.formatIso(cutoff)}`.pipe(
@@ -112,6 +112,7 @@ const make = Effect.gen(function* () {
       setId,
       threads,
       ownerThreads: new Set(ownerThreadIds.filter((threadId) => threads.has(threadId))),
+      ownerPolicy: Option.exists(row, (found) => found.ownerThreadIdsJson !== null),
     } satisfies ChatSession;
   });
 
