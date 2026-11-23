@@ -34,6 +34,8 @@ import {
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { readProjectMcpServers } from "../../provider/acp/projectMcpServers.ts";
+import { AgentScopeThreadId } from "@t3tools/shared/AgentScope";
+import { currentEnvironmentId, withT3ThreadEnvironment } from "./T3ThreadEnvironment.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
@@ -130,6 +132,7 @@ interface AntigravityFlavorServices {
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly host: ProviderHost.ProviderHost["Service"];
+  readonly environmentId?: string | undefined;
 }
 
 export function makeAntigravityAcpAdapterFlavor(
@@ -141,12 +144,19 @@ export function makeAntigravityAcpAdapterFlavor(
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
+      const threadId = yield* AgentScopeThreadId;
+      const thread =
+        threadId === undefined ? {} : withT3ThreadEnvironment({}, threadId, options.environmentId);
+      const threadVars = Object.entries(thread).flatMap(([name, value]) =>
+        value === undefined ? [] : [{ name, value }],
+      );
       const projectMcpServers = yield* readProjectMcpServers({
         fileSystem: options.fileSystem,
         path: options.path,
         cwd: input.cwd,
-        env: process.env,
+        env: { ...process.env, ...thread },
         self: options.selfInvocation,
+        threadVars,
       });
       const runtime = yield* options
         .withProcess(
@@ -307,6 +317,7 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
     fileSystem: yield* FileSystem.FileSystem,
     path: yield* Path.Path,
     host: yield* ProviderHost.ProviderHost,
+    environmentId: yield* currentEnvironmentId,
   };
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
