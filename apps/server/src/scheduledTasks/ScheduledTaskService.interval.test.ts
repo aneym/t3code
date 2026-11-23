@@ -25,6 +25,7 @@ const dependencies = Layer.mergeAll(
   Scheduler.layer,
   ManagedPolicy.layerTest(),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+    checkWorktreeBase: () => Effect.void,
     launch: () => Effect.die("synthetic dispatch failure"),
   }),
   Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
@@ -139,6 +140,7 @@ const slowLaunchLayer = ScheduledTaskService.layer.pipe(
     Layer.merge(
       dependencies,
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        checkWorktreeBase: () => Effect.void,
         launch: () => TestClock.adjust("2 minutes").pipe(Effect.andThen(Effect.die("synthetic"))),
       }),
     ),
@@ -291,6 +293,7 @@ it.effect("reports the stored task when the row was replaced during the run", ()
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         return Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          checkWorktreeBase: () => Effect.void,
           launch: () =>
             sql`UPDATE scheduled_tasks SET last_run_status = 'never', last_run_at = NULL, run_count = 0`.pipe(
               Effect.orDie,

@@ -57,8 +57,8 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
-import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
 import { makeMarkScheduledTaskRunning } from "./scheduledTaskRunState.ts";
+import { makeRecordScheduledRunFailure } from "./scheduledTaskRunOutcome.ts";
 import type { ScheduledTaskRow, WebhookDeliveryRow } from "./scheduledTaskRows.ts";
 import {
   isMissedFixedTimeRun,
@@ -270,13 +270,6 @@ function iso(value: DateTime.DateTime): string {
   return DateTime.formatIso(DateTime.toUtc(value));
 }
 
-const RUN_OUTCOME_WAIT_MS = 24 * 60 * 60 * 1_000;
-const UNSUCCESSFUL_RUN_ERRORS = {
-  failed: "The run failed.",
-  interrupted: "The run was stopped.",
-  cancelled: "The run was cancelled.",
-  rolled_back: "The run was rolled back.",
-} as const;
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
 function nextRunAt(
@@ -824,51 +817,7 @@ export const layer = Layer.effect(
       ),
     );
 
-    // A dispatch is recorded once the message is accepted; the provider can still
-    // reject the turn after that, so follow the run and record its failure.
-    const recordRunFailure = Effect.fn("ScheduledTaskService.recordRunFailure")(function* (
-      taskId: ScheduledTaskId,
-      startedAtIso: string,
-      threadId: ThreadId,
-      messageId: MessageId,
-    ) {
-      const shell = yield* threadManagement.getThreadShell(threadId);
-      if (shell === null) return;
-      const thread = { projectId: shell.projectId, threadId };
-      const { runs } = yield* threadManagement.getProjectThreadRecords(thread, ["runs"]);
-      const dispatched = runs.find((run) => run.userMessageId === messageId);
-      if (dispatched === undefined) return;
-      const { run } = yield* threadManagement.waitForThread({
-        ...thread,
-        runId: dispatched.id,
-        timeoutMs: RUN_OUTCOME_WAIT_MS,
-      });
-      if (
-        run === null ||
-        run.status === "completed" ||
-        !ThreadManagementService.isTerminalRunStatus(run.status)
-      )
-        return;
-      const { turnItems, messages } = yield* threadManagement.getProjectThreadRecords(thread, [
-        "turnItems",
-        "messages",
-      ]);
-      // A queued message promoted to a steer cancels its run and joins the active one.
-      if (
-        run.status === "cancelled" &&
-        messages.find((message) => message.id === messageId)?.runId !== run.id
-      )
-        return;
-      const error =
-        latestRootProviderFailure(run, turnItems)?.message ?? UNSUCCESSFUL_RUN_ERRORS[run.status];
-      const updated = yield* sql`
-        UPDATE scheduled_tasks
-        SET last_run_status = 'failed', last_run_error = ${error}
-        WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso} AND last_run_status = 'succeeded'
-        RETURNING task_id
-      `;
-      if (updated.length > 0) yield* notifyChanged;
-    });
+    const recordRunFailure = makeRecordScheduledRunFailure(sql, threadManagement, notifyChanged);
 
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
@@ -1014,27 +963,39 @@ export const layer = Layer.effect(
           active.threadId === null
             ? yield* Effect.exit(
                 threadLaunch
-                  .launch({
+                  .checkWorktreeBase({
                     commandId,
                     projectId: active.projectId,
-                    title: active.title,
-                    modelSelection: active.modelSelection,
-                    runtimeMode: active.runtimeMode,
-                    interactionMode: active.interactionMode,
                     workspaceStrategy: active.workspaceStrategy,
-                    initialMessage: {
-                      messageId,
-                      scheduledTaskId: active.id,
-                      text: prompt,
-                      attachments: [],
-                    },
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
                   })
                   .pipe(
-                    Effect.map((launched) => launched.threadId),
-                    Effect.tap((threadId) =>
-                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
+                    Effect.andThen(
+                      threadLaunch
+                        .launch({
+                          commandId,
+                          projectId: active.projectId,
+                          title: active.title,
+                          modelSelection: active.modelSelection,
+                          runtimeMode: active.runtimeMode,
+                          interactionMode: active.interactionMode,
+                          workspaceStrategy: active.workspaceStrategy,
+                          initialMessage: {
+                            messageId,
+                            scheduledTaskId: active.id,
+                            text: prompt,
+                            attachments: [],
+                          },
+                          createdBy: active.createdBy,
+                          creationSource: active.creationSource,
+                        })
+                        .pipe(
+                          Effect.map((launched) => launched.threadId),
+                          Effect.tap((threadId) =>
+                            threadMode === "new_thread"
+                              ? Effect.void
+                              : bindThread(active, threadId),
+                          ),
+                        ),
                     ),
                   ),
               )
@@ -1117,7 +1078,13 @@ export const layer = Layer.effect(
           );
         if (written) yield* notifyChanged;
         if (written && threadId !== null) {
-          yield* recordRunFailure(active.id, startedAtIso, threadId, messageId).pipe(
+          yield* recordRunFailure(
+            active.id,
+            startedAtIso,
+            threadId,
+            messageId,
+            active.threadId === null,
+          ).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not record scheduled run outcome", {
                 taskId: active.id,
@@ -1468,6 +1435,22 @@ export const layer = Layer.effect(
         (yield* managedFolders.isScratchProject(input.projectId))
           ? { type: "root" }
           : input.workspaceStrategy;
+      if (threadId === null)
+        yield* threadLaunch
+          .checkWorktreeBase({ projectId: input.projectId, workspaceStrategy })
+          .pipe(
+            Effect.catchTags({
+              ThreadLaunchNotRepositoryError: (error) =>
+                Effect.fail(
+                  taskError(
+                    `${error.message} An unbound schedule starts each run in a new worktree: bind it to a thread with threadId, or use a git project.`,
+                    { taskId: id },
+                  ),
+                ),
+              ThreadLaunchBaseRefError: () => Effect.void,
+              ThreadLaunchBranchConflictError: () => Effect.void,
+            }),
+          );
       const enabled = input.enabled || isOnceScheduleRearmed(existingTask, schedule);
       const scheduleUnchanged =
         existingTask !== null &&

@@ -215,6 +215,7 @@ const withService = <A, E>(
               }),
           }),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        checkWorktreeBase: () => Effect.void,
         launch: (input) =>
           Effect.suspend(() => {
             if (options.completedLaunches?.has(input.commandId))

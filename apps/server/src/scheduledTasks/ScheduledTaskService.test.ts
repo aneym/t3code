@@ -201,6 +201,7 @@ it.effect(
               Layer.mergeAll(
                 ManagedPolicy.layerTest(),
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                  checkWorktreeBase: () => Effect.void,
                   launch: () =>
                     Ref.updateAndGet(dispatched, (n) => n + 1).pipe(
                       Effect.andThen((n) =>
@@ -295,6 +296,7 @@ it.effect(
               Layer.mergeAll(
                 ManagedPolicy.layerTest(),
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                  checkWorktreeBase: () => Effect.void,
                   launch: () =>
                     Ref.updateAndGet(dispatched, (n) => n + 1).pipe(
                       Effect.andThen((n) =>
@@ -359,7 +361,9 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
       Layer.provide(
         Layer.mergeAll(
           ManagedPolicy.layerTest(),
-          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            checkWorktreeBase: () => Effect.void,
+          }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             sendToThread: () =>
               Deferred.succeed(started, undefined).pipe(
@@ -433,7 +437,9 @@ it.effect.each([
       Layer.provide(
         Layer.mergeAll(
           ManagedPolicy.layerTest(),
-          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            checkWorktreeBase: () => Effect.void,
+          }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             sendToThread: (input) => Ref.set(sent, input.messageId).pipe(Effect.as({} as never)),
             getThreadShell: () => Effect.succeed(threadShell(projectId)),
@@ -519,7 +525,9 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
       Layer.provide(
         Layer.mergeAll(
           ManagedPolicy.layerTest(),
-          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            checkWorktreeBase: () => Effect.void,
+          }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             sendToThread: (input) =>
               Ref.updateAndGet(sends, (all) => [
@@ -590,6 +598,7 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
         Layer.mergeAll(
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            checkWorktreeBase: () => Effect.void,
             launch: () =>
               Ref.update(launches, (n) => n + 1).pipe(
                 Effect.as({ threadId: launched, resumed: false } as never),
@@ -670,6 +679,7 @@ it.effect("a first run whose thread was deleted before it bound removes the task
         Layer.mergeAll(
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            checkWorktreeBase: () => Effect.void,
             launch: () =>
               Effect.succeed({
                 threadId: ThreadId.make("thread:deleted"),
@@ -723,6 +733,7 @@ it.effect.each(["recreated under the same id", "moved to another project"] as co
           Layer.mergeAll(
             ManagedPolicy.layerTest(),
             Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+              checkWorktreeBase: () => Effect.void,
               launch: () =>
                 Deferred.succeed(launching, undefined).pipe(
                   Effect.andThen(Deferred.await(proceed)),
@@ -787,7 +798,9 @@ it.effect("refuses saving an enabled task above the policy ceiling", () =>
             organization: "Example Corp",
             limits: { maxRuntimeMode: "auto-accept-edits" },
           }),
-          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            checkWorktreeBase: () => Effect.void,
+          }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadShell: () => Effect.succeed(threadShell(ProjectId.make("project:test"))),
           }),
@@ -866,7 +879,9 @@ it.effect("checks a task's destination thread only when the destination changes"
       Layer.provide(
         Layer.mergeAll(
           ManagedPolicy.layerTest(),
-          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            checkWorktreeBase: () => Effect.void,
+          }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadShell: (threadId) =>
               Ref.get(shells).pipe(Effect.map((all) => all.get(threadId) ?? null)),
@@ -945,6 +960,7 @@ it.effect("a run interrupted right after it reserves the task does not block the
         Layer.mergeAll(
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            checkWorktreeBase: () => Effect.void,
             launch: () =>
               Ref.update(launches, (n) => n + 1).pipe(
                 Effect.as({ threadId: ThreadId.make("thread:launched"), resumed: false } as never),

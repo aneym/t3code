@@ -26,7 +26,7 @@ it.effect("rejects a stale form save after deletion while preserving explicit-id
       NodeCrypto.layer,
       Scheduler.layer,
       ManagedPolicy.layerTest(),
-      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({ checkWorktreeBase: () => Effect.void }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
@@ -74,7 +74,7 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
       NodeCrypto.layer,
       Scheduler.layer,
       ManagedPolicy.layerTest(),
-      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({ checkWorktreeBase: () => Effect.void }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
@@ -129,7 +129,7 @@ it.effect("keeps the task list order when a toggle or edit rewrites updated_at",
       NodeCrypto.layer,
       Scheduler.layer,
       ManagedPolicy.layerTest(),
-      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({ checkWorktreeBase: () => Effect.void }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
@@ -185,6 +185,7 @@ it.effect(
         Scheduler.layer,
         ManagedPolicy.layerTest(),
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          checkWorktreeBase: () => Effect.void,
           launch: (input) =>
             Deferred.succeed(launched, input.title).pipe(
               Effect.as({ threadId: "thread-idle-poll", resumed: false } as never),
@@ -250,6 +251,7 @@ it.effect("a fixed-time slot missed while the server was off shows on the task",
       Scheduler.layer,
       ManagedPolicy.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        checkWorktreeBase: () => Effect.void,
         launch: () =>
           Ref.update(launches, (count) => count + 1).pipe(
             Effect.as({ threadId: "thread-missed-slot", resumed: false } as never),
@@ -327,6 +329,7 @@ it.effect(
         Scheduler.layer,
         ManagedPolicy.layerTest(),
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          checkWorktreeBase: () => Effect.void,
           launch: (input) =>
             (input.title === "Slow"
               ? Deferred.succeed(slowStarted, undefined).pipe(
