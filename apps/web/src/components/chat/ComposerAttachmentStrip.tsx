@@ -296,7 +296,7 @@ export function ComposerAttachmentMediaRow({
                   disabled={!canOperateThread}
                   onRetry={() => retry(ready)}
                   variant="overlay"
-                  className="absolute inset-x-0 bottom-0 h-5 rounded-none text-3xs text-white sm:h-5 sm:text-3xs"
+                  className="absolute bottom-1 left-1/2 -translate-x-1/2"
                   label="Failed"
                 />
               )}

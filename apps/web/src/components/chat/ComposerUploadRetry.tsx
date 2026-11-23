@@ -17,7 +17,7 @@ export function ComposerUploadRetry(props: {
         render={
           <Button
             variant={props.variant}
-            size={props.label ? "xs" : "icon-xs"}
+            size={props.label ? "micro" : "icon-xs"}
             className={props.className}
             onClick={props.onRetry}
             disabled={props.disabled}
