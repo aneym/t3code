@@ -89,13 +89,23 @@ export function resolveInteractionMode(
 }
 
 /** The task as its child receives it, with the role the caller asked for. */
-export function taskPrompt(input: OrchestratorMcpDelegateTaskInput, reportOutcome = true): string {
+export function taskPrompt(
+  input: OrchestratorMcpDelegateTaskInput,
+  reportOutcome: boolean,
+  depth: number,
+): string {
   const task =
     input.role === undefined || input.role === "general"
       ? input.task
       : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
-  return reportOutcome ? `${task}\n\n${OUTCOME_LINE}` : task;
+  const briefed = `${depth > 1 ? LEAF_LINE : FAN_OUT_LINE}\n\n${task}`;
+  return reportOutcome ? `${briefed}\n\n${OUTCOME_LINE}` : briefed;
 }
+
+const FAN_OUT_LINE =
+  "You are a depth-1 delegated child: split independent parts into parallel subagents by default, within the host's child caps and one writer per file or seam; do a single or dependent part yourself.";
+
+const LEAF_LINE = "You are a leaf: do the work yourself and start no subagents.";
 
 const OUTCOME_LINE =
   "Before your final reply, call the T3 tool task_outcome: clean if you did everything the task asked and verified it, gaps if anything is left undone, unverified, blocked or needs your lead's decision.";

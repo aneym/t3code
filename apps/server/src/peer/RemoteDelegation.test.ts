@@ -1385,7 +1385,7 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       const { taskId } = result.structuredContent as { taskId: NodeId };
       // The role reaches the thread there, as it does a child here.
       expect(yield* Ref.get(thread.message)).toBe(
-        "Act as the review sub-agent for this task.\n\nReview the diff.\n\nBefore your final reply, call the T3 tool task_outcome: clean if you did everything the task asked and verified it, gaps if anything is left undone, unverified, blocked or needs your lead's decision.",
+        "You are a depth-1 delegated child: split independent parts into parallel subagents by default, within the host's child caps and one writer per file or seam; do a single or dependent part yourself.\n\nAct as the review sub-agent for this task.\n\nReview the diff.\n\nBefore your final reply, call the T3 tool task_outcome: clean if you did everything the task asked and verified it, gaps if anything is left undone, unverified, blocked or needs your lead's decision.",
       );
 
       // A reply longer than one read, then a later run's reply on the same thread.

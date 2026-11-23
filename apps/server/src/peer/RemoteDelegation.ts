@@ -45,6 +45,7 @@ import {
 } from "../mcp/delegatedTaskModes.ts";
 import { followUpOwnerRun } from "../orchestration-v2/CommandPolicy.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import { delegationDepth } from "../mcp/delegationDepth.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { delegatedChildDefaultModel, remoteChildOptions } from "../mcp/delegatedChildModel.ts";
@@ -314,7 +315,11 @@ const make = Effect.gen(function* () {
         target.repository,
       );
       const key = input.clientRequestId ?? (yield* random.uuidV4());
-      const task = taskPrompt(input, childCompletionNotes);
+      const task = taskPrompt(
+        input,
+        childCompletionNotes,
+        (yield* delegationDepth(threads, parent.thread)) + 1,
+      );
       const title = input.title ?? parent.thread.title;
       const commandId = CommandId.make(
         `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,

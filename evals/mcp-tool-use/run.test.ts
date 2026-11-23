@@ -659,7 +659,10 @@ it("rebuilds the template from this checkout and sends a child T3's task prompt"
   assert.notInclude(reminders?.join(), "Codebase and user instructions");
 
   const prompt = buildMessages(makeSample(childCase, base)).at(-1)?.content.at(-1);
-  assert.equal(prompt?.text, taskPrompt({ task: childCase.prompt, role: "implementation" }));
+  assert.equal(
+    prompt?.text,
+    taskPrompt({ task: childCase.prompt, role: "implementation" }, true, 1),
+  );
   assert.notEqual(prompt?.text, childCase.prompt);
 });
 

@@ -309,6 +309,7 @@ export const McpToolUseCase = Schema.Struct({
     linkedEnvironments: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
+    delegationDepth: Schema.optional(Schema.Number),
     context: Schema.optional(Schema.String),
     priorTurns: Schema.optional(
       Schema.Array(
@@ -1028,7 +1029,7 @@ export const buildMessages = (sample: Sample) => {
     if (last?.role !== role) messages.push({ role, content: blocks });
     else messages[messages.length - 1] = { role, content: [...last.content, ...blocks] };
   };
-  const { role, context, delegateRole, priorTurns = [] } = testCase.setup;
+  const { role, context, delegateRole, delegationDepth = 1, priorTurns = [] } = testCase.setup;
   const sideChat = testCase.setup.sideChat;
   if (testCase.prompt === "" && (role !== "top" || sideChat !== undefined)) {
     throw new Error(
@@ -1096,7 +1097,7 @@ export const buildMessages = (sample: Sample) => {
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
   const prompt =
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
-  const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
+  const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole }, true, delegationDepth);
   if (testCase.prompt !== "")
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
@@ -1207,7 +1208,10 @@ export const t3Default = (
       };
     case "orchestrator_capabilities":
       return {
-        delegationDepth: sample.testCase.setup.role === "delegated-child" ? 1 : 0,
+        delegationDepth:
+          sample.testCase.setup.role === "delegated-child"
+            ? (sample.testCase.setup.delegationDepth ?? 1)
+            : 0,
         inheritedProviderInstanceId: "claudeAgent",
         inheritedModel: sample.base.model,
         providers: PROVIDERS,
