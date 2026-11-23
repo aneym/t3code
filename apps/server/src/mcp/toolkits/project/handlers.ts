@@ -27,6 +27,7 @@ import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { railsMessageContext } from "@t3tools/shared/composerContextReferences";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -257,6 +258,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             )?.supportedRuntimeModes,
           });
         }
+        const railsContext = railsMessageContext(input.context);
         const launch = (held: boolean) =>
           ThreadMessageIntake.launchThread({
             commandId,
@@ -274,6 +276,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                     messageId,
                     ...(caller === undefined ? {} : { senderThreadId: caller.id }),
                     text: input.message ?? "",
+                    ...(railsContext === undefined ? {} : { context: railsContext }),
                     attachments,
                   },
                 }),

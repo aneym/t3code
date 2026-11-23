@@ -9,10 +9,18 @@ import {
   OrchestratorMcpPrompt,
 } from "./orchestratorMcp.ts";
 
+export const OrchestratorMcpMessageContext = Schema.String.check(
+  Schema.isMaxLength(16_000),
+).annotate({
+  description:
+    "Agent-only background for `message`, kept out of the chat bubble, like a Rails desk block.",
+});
+
 export const OrchestratorMcpThreadSendInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
   message: OrchestratorMcpPrompt,
+  context: Schema.optional(OrchestratorMcpMessageContext),
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart", "note"])),
   freshContext: Schema.optional(
     Schema.Boolean.annotate({

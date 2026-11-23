@@ -11,6 +11,8 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 
+import { railsMessageContext } from "@t3tools/shared/composerContextReferences";
+
 import { mcpMessageSender } from "./messageSender.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
@@ -89,6 +91,7 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
         `Sender thread ${ownerCliSender.threadId} was not found in this environment.`,
       );
   }
+  const context = railsMessageContext(request.context);
   const send = {
     projectId: target.thread.projectId,
     commandId,
@@ -99,6 +102,7 @@ export const sendToThread = Effect.fn("OrchestratorMcpService.sendToThread")(fun
       : {}),
     messageId,
     text: request.message,
+    ...(context === undefined ? {} : { context }),
     attachments: [],
     createdBy: "agent",
     creationSource: "mcp",

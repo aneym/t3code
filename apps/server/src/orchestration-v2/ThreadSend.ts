@@ -5,6 +5,7 @@ import {
   CommandId,
   MessageId,
   type ModelSelection,
+  type OrchestrationMessageContext,
   type OrchestrationV2Actor,
   type OrchestrationV2Command,
   type OrchestrationV2ConversationMessage,
@@ -44,6 +45,7 @@ export interface ThreadSendInput extends MessageSender {
   readonly messageId: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly text: string;
+  readonly context?: OrchestrationMessageContext;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
   readonly mode: ThreadSendMode;
@@ -297,6 +299,7 @@ export const makeSendToThread = <LoadError, DispatchError>(
       ...messageSender(input),
       ...(input.linkedSender === undefined ? {} : { linkedSender: input.linkedSender }),
       text: input.text,
+      ...(input.context === undefined ? {} : { context: input.context }),
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.freshContext ? { freshContext: true } : {}),
@@ -409,6 +412,7 @@ export const makeNoteToThread = <LoadError, DispatchError, SendError>(
       messageId: input.messageId,
       ...messageSender(input),
       text: input.text,
+      ...(input.context === undefined ? {} : { context: input.context }),
       attachments: input.attachments,
       dispatchMode: { type: "note" },
       createdBy: input.createdBy,

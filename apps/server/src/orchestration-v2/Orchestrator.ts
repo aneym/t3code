@@ -123,6 +123,7 @@ import {
   isCompactionCommandMessage,
   messageSender,
 } from "@t3tools/contracts";
+import { keepRailsContext } from "@t3tools/shared/composerContextReferences";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
@@ -11065,6 +11066,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const emitEvent = emit(events, command);
     const editedAttachments =
       command.attachments === undefined ? {} : { attachments: command.attachments };
+    const editedContext = keepRailsContext(command.context, queuedMessage.context);
     yield* emitEvent({
       type: "message.updated",
       threadId: command.threadId,
@@ -11076,7 +11078,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...queuedMessage,
         text: command.text,
         ...editedAttachments,
-        ...(command.context ? { context: command.context } : {}),
+        ...(editedContext ? { context: editedContext } : {}),
         updatedAt: now,
       }),
     });
@@ -11092,7 +11094,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...queuedTurnItem,
           text: command.text,
           ...editedAttachments,
-          ...(command.context ? { context: command.context } : {}),
+          ...(editedContext ? { context: editedContext } : {}),
           updatedAt: now,
         }),
       });

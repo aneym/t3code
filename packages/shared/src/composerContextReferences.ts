@@ -6,6 +6,7 @@ import {
   type ElementContextDetails,
   type EnvironmentId,
   type KnownComposerContextRecord,
+  type OrchestrationMessageContext,
   type ScopedThreadRef,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
@@ -386,9 +387,50 @@ function formatEnvelopeEntry(
   if (!record) return `${open} unavailable="true"/>`;
   const body =
     "payload" in record
-      ? JSON.stringify(record.payload)
+      ? typeof record.payload === "string"
+        ? record.payload
+        : JSON.stringify(record.payload)
       : formatComposerContextProviderPayload(record);
   return `${open}>\n${escapeComposerContextPayloadText(body)}\n</${CONTEXT_ENTRY_TAG}>`;
+}
+
+const RAILS_CONTEXT_KIND = "rails-context";
+
+export function railsMessageContext(
+  text: string | undefined,
+): OrchestrationMessageContext | undefined {
+  const payload = text?.trim();
+  if (!payload) return undefined;
+  return {
+    version: 1,
+    records: [
+      {
+        version: 1,
+        kind: RAILS_CONTEXT_KIND,
+        contextId: RAILS_CONTEXT_KIND as ComposerContextId,
+        label: "Rails context",
+        payload,
+      },
+    ],
+  };
+}
+
+function isRailsContextRecord(record: ComposerContextRecord): boolean {
+  return record.kind === RAILS_CONTEXT_KIND && "payload" in record;
+}
+
+/** Keeps a message's Rails context when an edit replaces its other records. */
+export function keepRailsContext(
+  next: OrchestrationMessageContext | undefined,
+  previous: OrchestrationMessageContext | undefined,
+): OrchestrationMessageContext | undefined {
+  const kept = previous?.records.filter(isRailsContextRecord) ?? [];
+  if (next === undefined || kept.length === 0) return next;
+  const ids = new Set(next.records.map((record) => record.contextId));
+  return {
+    ...next,
+    records: [...next.records, ...kept.filter((record) => !ids.has(record.contextId))],
+  };
 }
 
 export function projectComposerContextForProvider(input: {
@@ -396,7 +438,14 @@ export function projectComposerContextForProvider(input: {
   records: ReadonlyArray<ComposerContextRecord>;
 }): string {
   const occurrences = collectComposerContextReferences(input.text);
-  if (occurrences.length === 0) return expandAssistantCitationsForProvider(input.text);
+  const unreferenced = input.records.filter(
+    (record) =>
+      isRailsContextRecord(record) &&
+      !occurrences.some((occurrence) => occurrence.contextId === record.contextId),
+  );
+  if (occurrences.length === 0 && unreferenced.length === 0) {
+    return expandAssistantCitationsForProvider(input.text);
+  }
   const recordsById = new Map<ComposerContextId, ComposerContextRecord | undefined>();
   for (const record of input.records) {
     recordsById.set(record.contextId, recordsById.has(record.contextId) ? undefined : record);
@@ -422,6 +471,9 @@ export function projectComposerContextForProvider(input: {
       record,
     );
     entries.push(entry);
+  }
+  for (const record of unreferenced) {
+    entries.push(formatEnvelopeEntry(record.kind, record.contextId, record));
   }
   if (entries.length === 0) return body;
   return `${body}\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
