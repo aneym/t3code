@@ -1,8 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 
-const threadSnapshots = Semaphore.makeUnsafe(3);
-const shellSnapshots = Semaphore.makeUnsafe(2);
+const snapshots = Semaphore.makeUnsafe(2);
 const assets = Semaphore.makeUnsafe(2);
 const PER_SESSION = 2;
 const sessions = new Map<string, { readonly permits: Semaphore.Semaphore; users: number }>();
@@ -18,7 +17,7 @@ export const catchUp = <A, E, R>(
     };
     sessions.set(sessionId, entry);
     entry.users++;
-    return entry.permits.withPermit(threadSnapshots.withPermit(effect)).pipe(
+    return entry.permits.withPermit(snapshots.withPermit(effect)).pipe(
       Effect.ensuring(
         Effect.sync(() => {
           entry.users--;
@@ -29,7 +28,7 @@ export const catchUp = <A, E, R>(
   });
 
 export const shellRead = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-  shellSnapshots.withPermit(effect);
+  snapshots.withPermit(effect);
 
 export const assetLookup = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   assets.withPermit(effect);
