@@ -395,6 +395,7 @@ export const make = Effect.gen(function* () {
   const getById: AuthSessionRepository["Service"]["getById"] = (input) =>
     getSessionRowById(input).pipe(
       NodeSqliteClient.readOnly,
+      NodeSqliteClient.prioritized,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.getById:query",
