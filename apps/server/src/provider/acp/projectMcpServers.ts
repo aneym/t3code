@@ -75,6 +75,7 @@ function toAcpServer(
 function behindLazyProxy(
   server: EffectAcpSchema.McpServer,
   self: SelfInvocation,
+  threadVars: ReadonlyArray<{ readonly name: string; readonly value: string }>,
 ): EffectAcpSchema.McpServer {
   if ("type" in server || !("command" in server)) return server;
   return {
@@ -84,7 +85,7 @@ function behindLazyProxy(
       ...selfInvocationArgs(self, ["acp-mcp-lazy", server.name, "--", server.command]),
       ...(server.args ?? []),
     ],
-    env: [...(server.env ?? []), { name: "ELECTRON_RUN_AS_NODE", value: "1" }],
+    env: [...(server.env ?? []), ...threadVars, { name: "ELECTRON_RUN_AS_NODE", value: "1" }],
   };
 }
 
@@ -94,8 +95,9 @@ export const readProjectMcpServers = Effect.fn("readProjectMcpServers")(function
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
   readonly self: SelfInvocation;
+  readonly threadVars?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
 }) {
-  const { fileSystem, path, cwd, env, self } = input;
+  const { fileSystem, path, cwd, env, self, threadVars = [] } = input;
   const project = yield* readJsonObject(fileSystem, path.join(cwd, ".mcp.json"));
   const declared = project?.mcpServers;
   if (!isJsonObject(declared)) return [];
@@ -110,6 +112,6 @@ export const readProjectMcpServers = Effect.fn("readProjectMcpServers")(function
     if (name === T3_SERVER_NAME || disabled.has(name) || !(enableAll || enabled.has(name)))
       return [];
     const server = isJsonObject(entry) ? toAcpServer(name, entry, env) : undefined;
-    return server === undefined ? [] : [behindLazyProxy(server, self)];
+    return server === undefined ? [] : [behindLazyProxy(server, self, threadVars)];
   });
 });
