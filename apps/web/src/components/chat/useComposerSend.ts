@@ -138,6 +138,7 @@ import {
   composerSendGateRefusal,
   holdComposerAnnotation,
   refuseComposerSend,
+  refuseStrandedAttachmentSend,
   THREAD_NOT_LOADED,
 } from "./composerSendRefusal";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -617,8 +618,6 @@ export function useComposerSend(input: ComposerSendInput) {
       : promptRef.current;
     const replyTo =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null;
-    // The reply leads the message, so its card sits above the text it is about. Text that
-    // already points at that response, from a pasted card, keeps its one reference.
     const promptForSend =
       replyTo && !collectInlineContextIds(draftPrompt).includes(replyTo.contextId)
         ? `${formatInlineContextReference(responseContextReference(replyTo))} ${draftPrompt}`
@@ -640,9 +639,10 @@ export function useComposerSend(input: ComposerSendInput) {
       ]);
       return;
     }
+    const fail = (message: string) => setThreadError(activeThread.id, message);
+    const strandedInput = { prompt: promptForSend, images: composerImages, files: composerFiles };
+    if (refuseStrandedAttachmentSend({ ...strandedInput, fail })) return;
     if (queuedRunEdit.isEditing) {
-      // Edit mode repurposes the composer: sending saves the queued message
-      // in place instead of dispatching a new turn.
       await queuedRunEdit.saveEdit(
         {
           prompt: promptForSend,
@@ -859,9 +859,6 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       return;
     }
-    // Records bind attachments by the id each side knows: the local id for the optimistic
-    // row, the upload id (or local id on the data-URL path) on the wire; the server
-    // rebinds them to the persisted id.
     const buildOutgoingMessageContext = (attachmentIds: ReadonlyArray<string>) =>
       buildMessageContext({
         terminalContexts: composerTerminalContextsSnapshot,
@@ -1400,7 +1397,6 @@ export function useComposerSend(input: ComposerSendInput) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }
         acknowledgeActiveThreadWoke();
-        // A draft still on screen finalizes once its thread route takes over.
         if (sentDraftThreadRef) {
           if (backgroundDraftOpened || currentRouteThreadKeyRef.current !== routeThreadKey) {
             finalizePromotedDraftThreadByRef(sentDraftThreadRef);

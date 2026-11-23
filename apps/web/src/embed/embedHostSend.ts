@@ -1,3 +1,5 @@
+import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+
 import { stripInlineContextReferences } from "../lib/composerContextReferences";
 import { randomUUID } from "../lib/utils";
 import { postToEmbedHost } from "./embedHost";
@@ -88,7 +90,9 @@ export function embedSendShape(input: SendShapeInput): "text" | "files" | null {
     input.environmentContexts,
   ];
   if (contexts.some((list) => list.length > 0)) return null;
-  return input.attachments.length + input.files.length === 0 ? "text" : "files";
+  if (input.attachments.length + input.files.length > 0) return "files";
+  const references = collectComposerContextReferences(input.messageText);
+  return references.some(({ kind }) => kind === "image" || kind === "file") ? null : "text";
 }
 
 export function postDirectToEmbedHost(input: {

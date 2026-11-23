@@ -27,13 +27,13 @@ import {
 } from "../../lib/snapShotAnimation";
 import { cn } from "~/lib/utils";
 import { getRestingComposerImagePreviewCounts } from "../composerFooterLayout";
-import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { AttachmentImage } from "../media/AttachmentImage";
 import { Button } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
+import { ComposerUploadRetry } from "./ComposerUploadRetry";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import type { PreparingComposerImage } from "./preparingComposerImages";
 import {
@@ -173,6 +173,8 @@ export function ComposerAttachmentMediaRow({
   readonly onRemoveFile: (fileId: string) => void;
 }) {
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
+  const retry = (image: ComposerImageAttachment | ComposerFileAttachment) =>
+    retryAttachmentUpload({ environmentId, image, draftTarget: attachmentDraftTarget });
   const pendingSnapShotIdSet = new Set(pendingSnapShotIds);
   const nonPersistedImageIdSet = new Set(nonPersistedImageIds);
   return (
@@ -288,29 +290,15 @@ export function ComposerAttachmentMediaRow({
                 </span>
               )}
               {ready && upload?.status === "failed" && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="overlay"
-                        size="icon-xs"
-                        className="absolute bottom-1 left-1"
-                        onClick={() =>
-                          retryAttachmentUpload({
-                            environmentId,
-                            image: ready,
-                            draftTarget: attachmentDraftTarget,
-                          })
-                        }
-                        disabled={!canOperateThread}
-                        aria-label={`Retry upload for ${image.name}`}
-                      />
-                    }
-                  >
-                    <RefreshIcon />
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">{upload.reason}</TooltipPopup>
-                </Tooltip>
+                <ComposerUploadRetry
+                  name={image.name}
+                  reason={upload.reason}
+                  disabled={!canOperateThread}
+                  onRetry={() => retry(ready)}
+                  variant="overlay"
+                  className="absolute inset-x-0 bottom-0 h-5 rounded-none text-3xs text-white sm:h-5 sm:text-3xs"
+                  label="Failed"
+                />
               )}
               <span
                 className={cn(
@@ -386,29 +374,14 @@ export function ComposerAttachmentMediaRow({
               </span>
             )}
             {upload?.status === "failed" && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="overlay"
-                      size="icon-xs"
-                      className="absolute bottom-1 left-1"
-                      onClick={() =>
-                        retryAttachmentUpload({
-                          environmentId,
-                          image: file,
-                          draftTarget: attachmentDraftTarget,
-                        })
-                      }
-                      disabled={!canOperateThread}
-                      aria-label={`Retry upload for ${file.name}`}
-                    />
-                  }
-                >
-                  <RefreshIcon />
-                </TooltipTrigger>
-                <TooltipPopup side="top">{upload.reason}</TooltipPopup>
-              </Tooltip>
+              <ComposerUploadRetry
+                name={file.name}
+                reason={upload.reason}
+                disabled={!canOperateThread}
+                onRetry={() => retry(file)}
+                variant="overlay"
+                className="absolute bottom-1 left-1"
+              />
             )}
             <Button
               variant="media-close"
@@ -451,6 +424,8 @@ export function ComposerAttachmentFileList({
   readonly onRemoveFile: (fileId: string) => void;
 }) {
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
+  const retry = (image: ComposerImageAttachment | ComposerFileAttachment) =>
+    retryAttachmentUpload({ environmentId, image, draftTarget: attachmentDraftTarget });
   return (
     <div className="mb-3 flex flex-col gap-1">
       {files.map((file) => {
@@ -493,28 +468,14 @@ export function ComposerAttachmentFileList({
               )}
             </span>
             {!needsReattach && upload?.status === "failed" ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() =>
-                        retryAttachmentUpload({
-                          environmentId,
-                          image: file,
-                          draftTarget: attachmentDraftTarget,
-                        })
-                      }
-                      disabled={!canOperateThread}
-                      aria-label={`Retry upload for ${file.name}`}
-                    />
-                  }
-                >
-                  <RefreshIcon />
-                </TooltipTrigger>
-                <TooltipPopup side="top">{upload.reason}</TooltipPopup>
-              </Tooltip>
+              <ComposerUploadRetry
+                name={file.name}
+                reason={upload.reason}
+                disabled={!canOperateThread}
+                onRetry={() => retry(file)}
+                variant="ghost"
+                label="Upload failed"
+              />
             ) : null}
             <Button
               variant="ghost"

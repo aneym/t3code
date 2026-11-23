@@ -1,4 +1,8 @@
+import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+
+import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import { refuseEmbedSend } from "../../embed/embedSendMarks";
+import { fileContextReference, imageContextReference } from "../../lib/composerContextRecords";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
 export interface ComposerSendGate {
@@ -82,4 +86,28 @@ export function refuseComposerSend(refusal: ComposerSendRefusal, annotation = fa
   console.warn(`[composer-send] not sent: ${condition}`);
   refuseEmbedSend();
   toastManager.add(stackedThreadToast({ type, title, description }));
+}
+
+const STRANDED_ATTACHMENT_ERROR =
+  "This image didn't upload, so nothing was sent. Paste it again, or delete its placeholder to send without it.";
+
+export function refuseStrandedAttachmentSend(input: {
+  readonly prompt: string;
+  readonly images: ReadonlyArray<ComposerImageAttachment>;
+  readonly files: ReadonlyArray<ComposerFileAttachment>;
+  readonly fail: (message: string) => void;
+}): boolean {
+  const live = new Set([
+    ...input.images.map((image) => imageContextReference(image).contextId),
+    ...input.files.map((file) => fileContextReference(file).contextId),
+  ]);
+  const stranded = collectComposerContextReferences(input.prompt).some(
+    (reference) =>
+      (reference.kind === "image" || reference.kind === "file") && !live.has(reference.contextId),
+  );
+  if (!stranded) return false;
+  console.warn("[composer-send] not sent: stranded-attachment");
+  refuseEmbedSend();
+  input.fail(STRANDED_ATTACHMENT_ERROR);
+  return true;
 }

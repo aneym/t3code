@@ -651,7 +651,7 @@ describe("attachmentUploadQueue", () => {
     startAttachmentUpload({ environmentId: secondEnvironment, image });
     await Promise.resolve();
     settled = awaitAttachmentUploads([image.id]);
-    TestXmlHttpRequest.requests[1]!.complete(500);
+    TestXmlHttpRequest.requests[1]!.complete(400);
     await settled;
 
     startAttachmentUpload({ environmentId: firstEnvironment, image });

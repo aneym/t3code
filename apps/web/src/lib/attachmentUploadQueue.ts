@@ -28,10 +28,10 @@ import { environmentCatalog } from "../connection/catalog";
 import { assetEnvironment } from "../state/assets";
 import { attachmentEnvironment } from "../state/attachments";
 import { readEnvironmentScope, readPreparedConnection } from "../state/session";
+import { uploadAttachmentBytes } from "./attachmentByteUpload";
 import type { AttachmentUploadState, ReadyAttachmentUpload } from "./attachmentUploadState";
 
 const MAX_UPLOADS_PER_ENVIRONMENT = 3;
-const UPLOAD_TIMEOUT_MS = 5 * 60_000;
 
 interface AttachmentUploadStore {
   readonly uploadsByImageId: Readonly<Record<string, AttachmentUploadState>>;
@@ -132,38 +132,6 @@ function deletePendingUpload(environmentId: EnvironmentId, attachmentId: string)
   });
 }
 
-function uploadBytes(input: {
-  readonly url: string;
-  readonly file: File;
-  readonly mimeType: string;
-  readonly onProgress: (progress: number) => void;
-}): { readonly done: Promise<void>; readonly abort: () => void } {
-  const xhr = new XMLHttpRequest();
-  const done = new Promise<void>((resolve, reject) => {
-    xhr.open("POST", input.url, true);
-    xhr.timeout = UPLOAD_TIMEOUT_MS;
-    xhr.setRequestHeader("Content-Type", input.mimeType);
-    xhr.upload.addEventListener("progress", (event) => {
-      if (event.lengthComputable && event.total > 0) {
-        input.onProgress(event.loaded / event.total);
-      }
-    });
-    xhr.addEventListener("load", () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve();
-      } else {
-        reject(new Error(`Upload rejected (${xhr.status})`));
-      }
-    });
-    xhr.addEventListener("error", () => reject(new Error("Upload failed")));
-    xhr.addEventListener("timeout", () => reject(new Error("Upload timed out")));
-    xhr.addEventListener("abort", () => reject(new Error("Upload cancelled")));
-    xhr.send(input.file);
-  });
-
-  return { done, abort: () => xhr.abort() };
-}
-
 async function runUpload(job: UploadJob): Promise<void> {
   if (!readEnvironmentScope(job.environmentId, AuthOrchestrationOperateScope)) {
     setUploadState(job.image.id, {
@@ -211,7 +179,6 @@ async function runUpload(job: UploadJob): Promise<void> {
       }
     }
     if (verification.status === "failed" || !job.image.file) {
-      // Failed-state ids get deleted on retry/release; exclude persisted ids after transient verification failure.
       setUploadState(job.image.id, {
         status: "failed",
         environmentId: job.environmentId,
@@ -283,7 +250,7 @@ async function runUpload(job: UploadJob): Promise<void> {
       return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
     },
     transport: (url) =>
-      uploadBytes({
+      uploadAttachmentBytes({
         url,
         file,
         mimeType,
@@ -404,8 +371,6 @@ export function startAttachmentUpload(input: {
 
   const existing = readAttachmentUpload(input.image.id);
   if (existing?.status === "ready" && existing.environmentId === input.environmentId) {
-    // A file restored into a draft after its upload finished (stash, failed send) missed the
-    // completion stamp; stamping here keeps it from re-uploading after a reload.
     stampDraftFileUpload(input, existing.attachmentId);
     return;
   }
@@ -464,7 +429,6 @@ export function startAttachmentUpload(input: {
     const reconnected = connected && !wasConnected;
     wasConnected = connected;
     if (!reconnected) return;
-    // HTTP failures can follow reconnection; await the attempt and retry only if this job still owns the file.
     void job.settled.then(() => {
       if (
         jobsByImageId.get(job.image.id) === job &&
