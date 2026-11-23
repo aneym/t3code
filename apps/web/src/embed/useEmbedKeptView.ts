@@ -13,6 +13,7 @@ import { serverEnvironment } from "../state/server";
 import { useEnvironmentThread } from "../state/threads";
 import { embedConnectionRefused, embedKeptView, type EmbedKeptView } from "./embedKeptViewGate";
 import {
+  clearKeptViewsFor,
   noteKeptViewShown,
   reopenKeptViews,
   retainKeptViewsOf,
@@ -79,6 +80,23 @@ export function useEmbedKeptView(threadRef: ScopedThreadRef | null): EmbedKeptVi
   });
 }
 
+const keptEnvironmentsAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const entries = get(environmentCatalog.catalogValueAtom).entries;
+    const entry = entries.get(environmentId);
+    const hasPrimary = [...entries.values()].some(
+      (candidate) => candidate.target._tag === "PrimaryConnectionTarget",
+    );
+    return {
+      saved: entry !== undefined && entry.target._tag !== "PrimaryConnectionTarget",
+      keep: hasPrimary ? [...entries.keys()].toSorted().join("\n") : null,
+    };
+  }).pipe(Atom.withLabel(`web-embed-kept-environments:${environmentId}`)),
+);
+const NO_KEPT_ENVIRONMENTS_ATOM = Atom.make(() => ({ saved: false, keep: null })).pipe(
+  Atom.withLabel("web-embed-kept-environments:none"),
+);
+
 export function useEmbedKeptViewUpkeep(
   authenticated: boolean,
   environmentId: EnvironmentId | null,
@@ -88,17 +106,25 @@ export function useEmbedKeptViewUpkeep(
   const connection = useAtomValue(
     environmentId === null ? NO_CONNECTION_ATOM : connectionAtom(environmentId),
   );
+  const kept = useAtomValue(
+    environmentId === null ? NO_KEPT_ENVIRONMENTS_ATOM : keptEnvironmentsAtom(environmentId),
+  );
+  const saved = kept.saved;
   const [refusedSession, setRefusedSession] = useState(false);
   const connected = connection.phase === "connected";
-  const signedOut = refusedSession && !connected;
+  const signedOut = refusedSession && !connected && !saved;
   const refused = embedConnectionRefused(connection);
   const wasConnected = useRef(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the server whether this frame is still signed in when its socket drops or is refused, and wipes the kept views in IndexedDB when it is not
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the thread's own server whether this page is still signed in when its socket drops or is refused, and wipes its kept views in IndexedDB when it is not
   useEffect(() => {
-    if (!authenticated) return;
+    if (!authenticated || environmentId === null) return;
     if (connected) {
       wasConnected.current = true;
       reopenKeptViews();
+      return;
+    }
+    if (saved) {
+      if (refused) void clearKeptViewsFor(environmentId).catch(() => undefined);
       return;
     }
     if (!wasConnected.current && !refused) return;
@@ -113,16 +139,18 @@ export function useEmbedKeptViewUpkeep(
     return () => {
       current = false;
     };
-  }, [authenticated, connected, refused]);
+  }, [authenticated, connected, refused, saved, environmentId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops every kept view in IndexedDB once the server says this frame is signed out or its pairing is gone
   useEffect(() => {
     if (!authenticated) void wipeKeptViews().catch(() => undefined);
   }, [authenticated]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops kept views of any other environment once the live server names its own
+  const keep =
+    liveEnvironmentId === undefined || kept.keep === null
+      ? null
+      : `${kept.keep}\n${liveEnvironmentId}`;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops kept views of environments this page no longer saves once the live server names its own
   useEffect(() => {
-    if (liveEnvironmentId !== undefined) {
-      void retainKeptViewsOf(liveEnvironmentId).catch(() => undefined);
-    }
-  }, [liveEnvironmentId]);
+    if (keep !== null) void retainKeptViewsOf(new Set(keep.split("\n"))).catch(() => undefined);
+  }, [keep]);
   return authenticated && !signedOut;
 }

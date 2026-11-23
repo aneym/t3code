@@ -22,6 +22,7 @@ import { revealEmbedRow } from "./embedReveal";
 import { applyEmbedComposerMessage, embedControlsKey, toggleEmbedControls } from "./embedComposer";
 import { applyEmbedSendResult, setEmbedHostSend } from "./embedHostSend";
 import { applyEmbedPendingSendsMessage } from "./embedPendingSends";
+import { applyEmbedPair } from "./embedPairing";
 import { applyEmbedHostPress, applyEmbedPressResult } from "./embedPress";
 import { watchEmbedUploads } from "./embedUploads";
 import {
@@ -35,6 +36,7 @@ import {
   readEmbedHostPressMessage,
   readEmbedHostSendMessage,
   readEmbedKeysMessage,
+  readEmbedPairMessage,
   readEmbedPressResultMessage,
   readEmbedRevealMessage,
   readEmbedSendResultMessage,
@@ -116,6 +118,8 @@ export function useEmbedHostBridge(origin: string, framed: boolean, threadId: st
       const pressResult = readEmbedPressResultMessage(event.data);
       if (pressResult !== null) applyEmbedPressResult(pressResult.requestId, pressResult.witnessed);
       if (readEmbedHostPressMessage(event.data)) applyEmbedHostPress();
+      const pair = readEmbedPairMessage(event.data);
+      if (pair !== null) applyEmbedPair(pair);
       applyEmbedLinksMessage(event.data);
       applyEmbedPendingSendsMessage(event.data);
     };

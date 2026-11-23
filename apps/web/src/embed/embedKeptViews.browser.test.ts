@@ -65,7 +65,7 @@ describe("kept views in IndexedDB", () => {
     await clearKeptViewsFor("env-c");
     expect(await keptThreads("env-c", 1)).toEqual([]);
     expect(await keptThreads("env-a", 1)).toEqual([0]);
-    await retainKeptViewsOf("env-b");
+    await retainKeptViewsOf(new Set(["env-b"]));
     expect(await keptThreads("env-a", 1)).toEqual([]);
     expect(await keptThreads("env-b", 1)).toEqual([0]);
     await forgetKeptViews();

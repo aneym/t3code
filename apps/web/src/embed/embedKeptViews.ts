@@ -140,14 +140,14 @@ export function clearKeptViewsFor(environmentId: string): Promise<void> {
   });
 }
 
-export function retainKeptViewsOf(environmentId: string): Promise<void> {
+export function retainKeptViewsOf(environmentIds: ReadonlySet<string>): Promise<void> {
   return transact("readwrite", (view, meta) => {
     const all = meta.getAll();
     all.addEventListener("success", () =>
       deleteEntries(
         view,
         meta,
-        (all.result as KeptViewMeta[]).filter((entry) => entry.environmentId !== environmentId),
+        (all.result as KeptViewMeta[]).filter((entry) => !environmentIds.has(entry.environmentId)),
       ),
     );
     return () => undefined;

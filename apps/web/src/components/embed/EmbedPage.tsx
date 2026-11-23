@@ -1,5 +1,5 @@
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
-import type { ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
 import { useBlocker } from "@tanstack/react-router";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
@@ -8,6 +8,7 @@ import { startEmbedControls } from "../../embed/embedComposer";
 import { placeEmbedHost, type EmbedHostSpot } from "../../embed/embedHost";
 import { isEmbedPath, normalizeEmbedOrigins, readEmbedScheme } from "../../embed/embedProtocol";
 import { applyEmbedTheme, themeFromEmbedMessage } from "../../embed/embedTheme";
+import { useEmbedConnectionReport } from "../../embed/useEmbedConnectionReport";
 import { useEmbedHostBridge } from "../../embed/useEmbedHostBridge";
 import { useEmbedNavigationPrefetch } from "../../embed/useEmbedNavigationPrefetch";
 import { useEmbedDocumentTitle } from "../../embed/useEmbedDocumentTitle";
@@ -49,6 +50,11 @@ function EmbedPrefetch({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   return null;
 }
 
+function EmbedConnectionReport({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  useEmbedConnectionReport(environmentId);
+  return null;
+}
+
 function EmbedFrame({
   spot,
   environmentId,
@@ -68,6 +74,7 @@ function EmbedFrame({
   });
   return (
     <SidebarProvider className="h-dvh! min-h-0!" defaultOpen={false} style={BARE_LAYOUT_STYLE}>
+      <EmbedConnectionReport environmentId={environmentId as EnvironmentId} />
       {children}
       <ConfirmDialogHost />
     </SidebarProvider>

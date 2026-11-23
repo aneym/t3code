@@ -39,6 +39,7 @@ export interface PairingConnectionInput {
   readonly host?: string;
   readonly pairingCode?: string;
   readonly expectedEnvironmentId?: EnvironmentId;
+  readonly alsoAt?: ReadonlyArray<string>;
 }
 
 export interface SshConnectionInput {
@@ -152,6 +153,43 @@ export const preparePairingRegistration = Effect.fn(
   });
 });
 
+const addPairedRoute = Effect.fn("clientRuntime.connection.onboarding.addPairedRoute")(function* (
+  registration: BearerConnectionRegistration,
+  address: string,
+) {
+  const environmentId = registration.target.environmentId;
+  const httpBaseUrl = yield* Effect.try({
+    try: () => normalizeHttpBaseUrl(address),
+    catch: () =>
+      new ConnectionBlockedError({
+        reason: "configuration",
+        detail: `${address} is not a valid address.`,
+      }),
+  });
+  const descriptor = yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
+    Effect.mapError(mapRemoteEnvironmentError),
+  );
+  if (descriptor.environmentId !== environmentId) {
+    return yield* differentMachineError(descriptor.label);
+  }
+  const connectionId = bearerConnectionId(environmentId, httpBaseUrl);
+  const label = registration.target.label;
+  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  yield* registry.register(
+    new BearerConnectionRegistration({
+      target: new BearerConnectionTarget({ environmentId, label, connectionId }),
+      profile: new BearerConnectionProfile({
+        connectionId,
+        environmentId,
+        label,
+        httpBaseUrl,
+        wsBaseUrl: deriveWsBaseUrl(httpBaseUrl),
+      }),
+      credential: registration.credential,
+    }),
+  );
+});
+
 const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
 )(function* (input: PairingConnectionInput) {
@@ -160,6 +198,16 @@ const registerPairingConnection = Effect.fn(
   const knownAddressOnly = input.expectedEnvironmentId === undefined;
   if (!(yield* registry.register(registration, { knownAddressOnly }))) {
     return registration.target.environmentId;
+  }
+  for (const address of input.alsoAt ?? []) {
+    yield* addPairedRoute(registration, address).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not add a paired environment's other address.", {
+          address,
+          error,
+        }),
+      ),
+    );
   }
   yield* registry.setCompatibility(registration.target.environmentId, null);
   yield* registry

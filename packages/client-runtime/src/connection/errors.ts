@@ -251,6 +251,14 @@ export function mapRemoteEnvironmentError(
         via,
       });
     case "RemoteEnvironmentAuthUndeclaredStatusError":
+      if (error.status === 403) {
+        return new ConnectionBlockedError({
+          reason: "permission",
+          detail: "The environment credential does not grant the required access.",
+          hop: "server",
+          via,
+        });
+      }
       return new ConnectionTransientError({
         reason: "remote-unavailable",
         detail: error.message,
