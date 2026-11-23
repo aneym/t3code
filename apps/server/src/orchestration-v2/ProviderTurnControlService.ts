@@ -351,7 +351,7 @@ export const layer: Layer.Layer<
             providerTurnId: loaded.providerTurn.id,
           });
 
-          for (let remaining = 1_000; remaining > 0; remaining -= 1) {
+          for (let polls = 0; polls < 1_100; polls += 1) {
             const { providerTurn, attempt } = yield* projections.getProviderControlContext(
               input.threadId,
               {
@@ -368,14 +368,11 @@ export const layer: Layer.Layer<
             ) {
               return;
             }
-            // Yield through Node's event loop; detached ingestion cannot advance a deterministic Effect clock.
-            yield* yieldToRuntime;
+            yield* polls < 1_000 ? yieldToRuntime : Effect.sleep("100 millis");
           }
-          return yield* new ProviderTurnControlError({
+          yield* Effect.logWarning("orchestration-v2.restart.terminal-wait-elapsed", {
             threadId: input.threadId,
-            operation: "restart",
             providerTurnId: input.providerTurnId,
-            cause: `Provider turn ${input.providerTurnId} did not terminalize before restart.`,
           });
         },
         (effect, input) =>

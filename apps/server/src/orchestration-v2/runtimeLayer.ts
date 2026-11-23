@@ -59,6 +59,7 @@ import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as SealedAgentHomePolicy from "./SealedAgentHomePolicy.ts";
+import * as StartingRunSupervisor from "./StartingRunSupervisor.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
@@ -450,6 +451,9 @@ export const layerProduction = Layer.mergeAll(
         layerEventSink,
       ),
     ),
+  ),
+  StartingRunSupervisor.layer.pipe(
+    Layer.provide(Layer.merge(layerThreadManagementProvided, layerEventSink)),
   ),
   AskOnlyForkArchiver.layer.pipe(
     Layer.provide(
