@@ -232,7 +232,7 @@ import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import { mutateProjectWithClone } from "./project/ProjectMutation.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
-import { assetLookup, catchUpRead } from "./CatchUpReads.ts";
+import { assetLookup, catchUp, shellRead } from "./CatchUpReads.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -1100,7 +1100,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         } as OrchestrationV2ShellSnapshot,
         resolvedRepositoryIdentityRoots: enriched.resolvedRepositoryIdentityRoots,
       };
-    }, catchUpRead);
+    }, shellRead);
     const projectItem = Effect.fn("ws.orchestrationV2.projectShellItem")(function* (
       stored: Extract<ShellApplicationEvent, { readonly aggregateKind: "project" }>,
     ) {
@@ -2178,7 +2178,7 @@ export const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
           Stream.unwrap(
             Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
-              Effect.andThen(catchUpRead(subscribeOrchestrationV2Thread(input))),
+              Effect.andThen(catchUp(currentSessionId, subscribeOrchestrationV2Thread(input))),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (input) =>
