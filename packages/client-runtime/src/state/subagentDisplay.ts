@@ -17,7 +17,7 @@ export function subagentGroupSummary(
     ({ status }) => status === "pending" || status === "running" || status === "waiting",
   );
   return {
-    label: `${active ? "Kicked off" : "Ran"} ${members.length} ${members.length === 1 ? "subagent" : "subagents"}`,
+    label: `${active ? "Kicked off" : "Ran"} ${members.length} ${members.length === 1 ? "helper" : "helpers"}`,
     active,
     failed: members.some(({ status }) => status === "failed"),
   };
