@@ -14,6 +14,16 @@ export function startEmbedRouteTimings(thread: string): void {
   route = { thread, at: performance.now(), marks: {} };
 }
 
+let loadStarted = false;
+
+export function startEmbedLoadTimings(thread: string): void {
+  if (loadStarted) return;
+  loadStarted = true;
+  if (route !== null) return;
+  route = { thread, at: 0, marks: {} };
+  markEmbedRouteStep(thread, "navigate");
+}
+
 export function markEmbedRouteStep(thread: string, step: Step): void {
   if (route === null || route.thread !== thread || route.marks[step] !== undefined) return;
   route.marks[step] = since(route.at);

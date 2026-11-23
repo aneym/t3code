@@ -7,7 +7,11 @@ import {
 } from "@t3tools/contracts";
 
 import { postToEmbedHost } from "./embedHost";
-import { markEmbedRouteStep, takeEmbedRouteTimings } from "./embedRouteTimings";
+import {
+  markEmbedRouteStep,
+  startEmbedRouteTimings,
+  takeEmbedRouteTimings,
+} from "./embedRouteTimings";
 
 const DRAWN_ATTRIBUTE = "data-timeline-thread";
 
@@ -51,7 +55,10 @@ function postRefusal(threadId: string): boolean {
 }
 
 export function repeatEmbedAnswer(threadId: string): boolean {
-  if (painted?.threadId === threadId) return postReady(threadId, "memory", painted.parentThreadId);
+  if (painted?.threadId === threadId) {
+    startEmbedRouteTimings(threadId);
+    return postReady(threadId, "memory", painted.parentThreadId);
+  }
   if (refusedThread === threadId) return postRefusal(threadId);
   return false;
 }

@@ -10,7 +10,7 @@ import { readEmbedLocation } from "./embedLocation";
 import { embedPaintSource } from "./embedPaintSource";
 import { embedParentThreadId } from "./embedParentThread";
 import { createEmbedReadyWatch } from "./embedReadyWatch";
-import { markEmbedRouteStep } from "./embedRouteTimings";
+import { markEmbedRouteStep, startEmbedLoadTimings } from "./embedRouteTimings";
 
 export function useEmbedReadyReport(
   threadRef: ScopedThreadRef | null,
@@ -43,7 +43,10 @@ export function useEmbedReadyReport(
   const from = (stale ? shown : first.from) ?? "live";
   const connected = useEmbedHostConnected();
   const router = useRouter();
-  const [watch] = useState(createEmbedReadyWatch);
+  const [watch] = useState(() => {
+    startEmbedLoadTimings(threadId);
+    return createEmbedReadyWatch();
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- notes the rows on screen before each navigation, so ready waits for the next thread's own rows
   useEffect(() => {
     const unsubscribe = router.subscribe("onBeforeNavigate", (event) => {
