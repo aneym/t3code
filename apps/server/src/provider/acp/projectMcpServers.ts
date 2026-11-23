@@ -1,3 +1,4 @@
+import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -71,13 +72,30 @@ function toAcpServer(
   return { name, command, args: args.filter(Predicate.isString), env: vars };
 }
 
+function behindLazyProxy(
+  server: EffectAcpSchema.McpServer,
+  self: SelfInvocation,
+): EffectAcpSchema.McpServer {
+  if ("type" in server || !("command" in server)) return server;
+  return {
+    name: server.name,
+    command: self.command,
+    args: [
+      ...selfInvocationArgs(self, ["acp-mcp-lazy", server.name, "--", server.command]),
+      ...(server.args ?? []),
+    ],
+    env: [...(server.env ?? []), { name: "ELECTRON_RUN_AS_NODE", value: "1" }],
+  };
+}
+
 export const readProjectMcpServers = Effect.fn("readProjectMcpServers")(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
+  readonly self: SelfInvocation;
 }) {
-  const { fileSystem, path, cwd, env } = input;
+  const { fileSystem, path, cwd, env, self } = input;
   const project = yield* readJsonObject(fileSystem, path.join(cwd, ".mcp.json"));
   const declared = project?.mcpServers;
   if (!isJsonObject(declared)) return [];
@@ -92,6 +110,6 @@ export const readProjectMcpServers = Effect.fn("readProjectMcpServers")(function
     if (name === T3_SERVER_NAME || disabled.has(name) || !(enableAll || enabled.has(name)))
       return [];
     const server = isJsonObject(entry) ? toAcpServer(name, entry, env) : undefined;
-    return server === undefined ? [] : [server];
+    return server === undefined ? [] : [behindLazyProxy(server, self)];
   });
 });

@@ -146,6 +146,7 @@ export function makeAntigravityAcpAdapterFlavor(
         path: options.path,
         cwd: input.cwd,
         env: process.env,
+        self: options.selfInvocation,
       });
       const runtime = yield* options
         .withProcess(
