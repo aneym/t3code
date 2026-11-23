@@ -14,7 +14,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient, HttpClientError, type HttpClientResponse } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
@@ -126,18 +125,12 @@ export const isWebSocketTicketUrl = (requestUrl: string): boolean => {
   }
 };
 
-const boundedText = (response: HttpClientResponse.HttpClientResponse) =>
-  Effect.suspend(() => {
-    let seen = 0;
-    return response.stream.pipe(
-      Stream.takeWhile((bytes) => {
-        seen += bytes.byteLength;
-        return seen <= REFUSAL_BODY_LIMIT_BYTES;
-      }),
-      Stream.decodeText(),
-      Stream.mkString,
-    );
-  });
+const boundedText = (response: HttpClientResponse.HttpClientResponse) => {
+  const length = Number(response.headers["content-length"]);
+  return Number.isInteger(length) && length >= 0 && length <= REFUSAL_BODY_LIMIT_BYTES
+    ? response.text
+    : Effect.succeed("");
+};
 
 const refusalCode = (
   requestUrl: string,

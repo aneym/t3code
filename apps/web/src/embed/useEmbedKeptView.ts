@@ -187,15 +187,8 @@ export function useEmbedKeptViewUpkeep(
     }
     if (saved) {
       if (!refused) return;
+      void refuseKeptViews(environmentId).catch(() => undefined);
       forgetEnvironmentThreads(environmentId);
-      const generation = appAtomRegistry.get(keptViewAccessAtom(environmentId))?.generation;
-      void (
-        generation === undefined
-          ? loadKeptViewAccess(environmentId).then((access) =>
-              refuseKeptViews(environmentId, access.generation),
-            )
-          : refuseKeptViews(environmentId, generation)
-      ).catch(() => undefined);
       return;
     }
     if (!wasConnected.current && !refused) return;

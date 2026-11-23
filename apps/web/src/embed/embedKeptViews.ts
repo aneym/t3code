@@ -41,12 +41,15 @@ export interface KeptViewAccess {
 interface StoredAccess {
   readonly generation: number;
   readonly refusedGeneration: number | null;
+  readonly refusedAt: number | null;
 }
 
-const OPEN_ACCESS: StoredAccess = { generation: 0, refusedGeneration: null };
+const OPEN_ACCESS: StoredAccess = { generation: 0, refusedGeneration: null, refusedAt: null };
 
 let opening: Promise<IDBDatabase> | null = null;
 let sealed = false;
+const frameGenerations = new Map<string, number>();
+const pendingGrants = new Map<string, Promise<void>>();
 
 function openDatabase(): Promise<IDBDatabase> {
   opening ??= new Promise<IDBDatabase>((resolve, reject) => {
@@ -127,21 +130,29 @@ export function onKeptViewAccessChange(listener: (environmentId: string) => void
   return () => channel.close();
 }
 
-export function loadKeptViewAccess(environmentId: string): Promise<KeptViewAccess> {
-  return transact("readonly", (_view, _meta, access) => {
-    let result: KeptViewAccess = { generation: 0, refused: false };
+export async function loadKeptViewAccess(environmentId: string): Promise<KeptViewAccess> {
+  const result = await transact("readonly", (_view, _meta, access) => {
+    let read: KeptViewAccess = { generation: 0, refused: false };
     readAccess(access, environmentId, (stored) => {
-      result = { generation: stored.generation, refused: isRefused(stored) };
+      read = { generation: stored.generation, refused: isRefused(stored) };
     });
-    return () => result;
+    return () => read;
   });
+  if (!frameGenerations.has(environmentId)) frameGenerations.set(environmentId, result.generation);
+  return result;
 }
 
-export async function refuseKeptViews(environmentId: string, generation: number): Promise<void> {
+export async function refuseKeptViews(environmentId: string): Promise<void> {
+  await pendingGrants.get(environmentId)?.catch(() => undefined);
+  const known = frameGenerations.get(environmentId);
   await transact("readwrite", (view, meta, access) => {
     readAccess(access, environmentId, (stored) => {
+      const generation = known ?? stored.generation;
       if (stored.generation !== generation) return;
-      access.put({ ...stored, refusedGeneration: generation }, environmentId);
+      access.put(
+        { ...stored, refusedGeneration: generation, refusedAt: Date.now() },
+        environmentId,
+      );
       view.delete(environmentRange(environmentId));
       meta.delete(environmentRange(environmentId));
     });
@@ -150,14 +161,29 @@ export async function refuseKeptViews(environmentId: string, generation: number)
   announceAccess(environmentId);
 }
 
-export async function grantKeptViews(environmentId: string): Promise<void> {
-  await transact("readwrite", (_view, _meta, access) => {
-    readAccess(access, environmentId, (stored) =>
-      access.put({ generation: stored.generation + 1, refusedGeneration: null }, environmentId),
-    );
-    return () => undefined;
+export function grantKeptViews(environmentId: string, pairedSince: number): Promise<void> {
+  const grant = transact("readwrite", (_view, _meta, access) => {
+    let next = 0;
+    readAccess(access, environmentId, (stored) => {
+      next = stored.generation + 1;
+      const refusedDuringPairing =
+        isRefused(stored) && stored.refusedAt !== null && stored.refusedAt >= pairedSince;
+      access.put(
+        refusedDuringPairing
+          ? { generation: next, refusedGeneration: next, refusedAt: stored.refusedAt }
+          : { generation: next, refusedGeneration: null, refusedAt: null },
+        environmentId,
+      );
+    });
+    return () => next;
+  }).then((generation) => {
+    frameGenerations.set(environmentId, generation);
+    announceAccess(environmentId);
   });
-  announceAccess(environmentId);
+  pendingGrants.set(environmentId, grant);
+  return grant.finally(() => {
+    if (pendingGrants.get(environmentId) === grant) pendingGrants.delete(environmentId);
+  });
 }
 
 function deleteEntries(view: IDBObjectStore, meta: IDBObjectStore, metas: Iterable<KeptViewMeta>) {

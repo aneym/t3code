@@ -34,13 +34,14 @@ const completedPairs = new Map<string, EmbedPairResult>();
 
 async function pairThroughEmbedHost(pair: EmbedPair): Promise<EmbedPairResult> {
   const expectedEnvironmentId = pair.environmentId as EnvironmentId;
+  const pairedSince = Date.now();
   const result = await connectPairing.run(appAtomRegistry, {
     pairingUrl: pair.pairingUrl,
     expectedEnvironmentId,
     alsoAt: pair.alsoAt,
   });
   if (result._tag === "Failure") return failed(pair, squashAtomCommandFailure(result));
-  await grantKeptViews(expectedEnvironmentId).catch(() => undefined);
+  await grantKeptViews(expectedEnvironmentId, pairedSince).catch(() => undefined);
   return {
     requestId: pair.requestId,
     environmentId: pair.environmentId,
