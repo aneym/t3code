@@ -1,6 +1,6 @@
 import * as FairMutex from "@t3tools/shared/FairMutex";
 import * as FairRwLock from "@t3tools/shared/FairRwLock";
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as NodeSqliteLanes from "@t3tools/shared/nodeSqliteLanes";
 import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 
@@ -33,8 +33,7 @@ export const makeDispatchGate = Effect.gen(function* () {
   ) =>
     recorder.record(
       label,
-      (held: Effect.Effect<A, E, R>) =>
-        admission.withLock(mode, NodeSqliteClient.prioritized(held)),
+      (held: Effect.Effect<A, E, R>) => admission.withLock(mode, NodeSqliteLanes.prioritized(held)),
       effect,
     );
   const admitWithin = <A, E, R>(
@@ -46,7 +45,7 @@ export const makeDispatchGate = Effect.gen(function* () {
     recorder.record(
       label,
       (held: Effect.Effect<A, E, R>) =>
-        admission.withLockWithin(mode, withinMs, NodeSqliteClient.prioritized(held)),
+        admission.withLockWithin(mode, withinMs, NodeSqliteLanes.prioritized(held)),
       effect,
     );
   const withCommit = <A, E, R>(effect: Effect.Effect<A, E, R>) =>

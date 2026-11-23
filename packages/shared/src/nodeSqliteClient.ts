@@ -27,6 +27,8 @@ import type { Borrower, Connection } from "effect/sql/SqlConnection";
 import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
 
+import { pickReader, ReadLaneRef, RESERVED_READERS } from "./nodeSqliteLanes.ts";
+
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 
 export interface SqliteClientConfig {
@@ -44,13 +46,6 @@ const ReadOnly = Context.Reference<typeof Effect.interruptible | undefined>(
   "@t3tools/shared/nodeSqliteClient/ReadOnly",
   { defaultValue: () => undefined },
 );
-
-const Priority = Context.Reference<boolean>("@t3tools/shared/nodeSqliteClient/Priority", {
-  defaultValue: () => false,
-});
-
-export const prioritized = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-  Effect.provideService(effect, Priority, true);
 
 /** Wrap the whole transaction; existing write transactions retain the writer, and writes on the reader fail as readonly. */
 export const readOnly = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
@@ -820,7 +815,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const readerPool = { unavailable: false };
   const readers =
     options.readerWorker && isFileDatabase
-      ? yield* Effect.forEach(Array.from({ length: READER_POOL_SIZE + 1 }), () =>
+      ? yield* Effect.forEach(Array.from({ length: READER_POOL_SIZE + RESERVED_READERS }), () =>
           Effect.map(
             Effect.all([makeReader(options.filename, readerPool), Semaphore.make(1)]),
             ([acquire, lock]) => ({
@@ -850,11 +845,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
         return writer;
       }
       // Least claimed wins and ties go to the lowest slot, so idle slots never start a worker.
-      const reserved = readers.at(-1)!;
-      let slot = Context.get(fiber.context, Priority) ? reserved : readers[0]!;
-      if (slot !== reserved)
-        for (const candidate of readers)
-          if (candidate !== reserved && candidate.claims < slot.claims) slot = candidate;
+      const slot = pickReader(readers, Context.get(fiber.context, ReadLaneRef));
       slot.claims++;
       const reader = slot;
       return Effect.andThen(

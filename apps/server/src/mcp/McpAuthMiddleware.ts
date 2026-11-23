@@ -1,3 +1,4 @@
+import * as NodeSqliteLanes from "@t3tools/shared/nodeSqliteLanes";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -154,7 +155,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       Effect.provideService(McpInvocationContext.McpInvocationContext, admitted),
       Effect.map(normalizeMcpHttpResponse),
     );
-  }) satisfies McpAuthMiddleware;
+  }, NodeSqliteLanes.interactive) satisfies McpAuthMiddleware;
 }).pipe(Effect.withSpan("McpHttpServer.makeAuthMiddleware"));
 
 export const layerMcpAuthMiddleware = HttpRouter.middleware<{

@@ -443,6 +443,10 @@
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"
     },
+    "./nodeSqliteLanes": {
+      "types": "./src/nodeSqliteLanes.ts",
+      "import": "./src/nodeSqliteLanes.ts"
+    },
     "./orchestrationV2BoundedSnapshot": {
       "types": "./src/orchestrationV2BoundedSnapshot.ts",
       "import": "./src/orchestrationV2BoundedSnapshot.ts"
