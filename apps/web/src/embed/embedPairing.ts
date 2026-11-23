@@ -21,7 +21,7 @@ function failureText(error: unknown): string {
     : "Pairing failed.";
 }
 
-export async function pairThroughEmbedHost(pair: EmbedPair): Promise<EmbedPairResult> {
+async function pairThroughEmbedHost(pair: EmbedPair): Promise<EmbedPairResult> {
   const expectedEnvironmentId = pair.environmentId as EnvironmentId;
   const result = await connectPairing.run(appAtomRegistry, {
     pairingUrl: pair.pairingUrl,
