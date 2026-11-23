@@ -15,7 +15,7 @@ import { useEmbedDocumentTitle } from "../../embed/useEmbedDocumentTitle";
 import {
   useEmbedKeptView,
   useEmbedKeptViewUpkeep,
-  useEmbedSavedRefused,
+  useEmbedSavedHidden,
 } from "../../embed/useEmbedKeptView";
 import { useEmbedReadyReport } from "../../embed/useEmbedReadyReport";
 import { useEmbedRouting } from "../../embed/useEmbedRouting";
@@ -95,9 +95,9 @@ export function EmbeddedThread({
   const target = resolveThreadRouteTarget({ environmentId, threadId });
   const threadRef = target?.kind === "server" ? target.threadRef : null;
   const view = useEmbedKeptView(threadRef);
-  const refused = useEmbedSavedRefused(threadRef?.environmentId ?? null);
+  const hidden = useEmbedSavedHidden(threadRef?.environmentId ?? null);
   const unavailable = useEmbedReadyReport(threadRef, threadId, view === "hold");
-  if (refused) return null;
+  if (hidden) return null;
   if (unavailable) return <EmbedNotice text="This chat isn't available here." />;
   if (target === null || view === "hold") return null;
   return (
@@ -126,11 +126,11 @@ export function EmbedPage({
   useEmbedDocumentTitle(authenticated && target?.kind === "server" ? target.threadRef : null);
   const threadRef = target?.kind === "server" ? target.threadRef : null;
   const signedIn = useEmbedKeptViewUpkeep(authenticated, threadRef);
-  const refused = useEmbedSavedRefused(threadRef?.environmentId ?? null);
+  const hidden = useEmbedSavedHidden(threadRef?.environmentId ?? null);
   if (!signedIn) return <EmbedNotice text="Sign in to continue." />;
   return (
     <>
-      {threadRef !== null && !refused ? <EmbedPrefetch threadRef={threadRef} /> : null}
+      {threadRef !== null && !hidden ? <EmbedPrefetch threadRef={threadRef} /> : null}
       {target?.kind === "server" ? (
         <EmbedConnectionNotice environmentId={target.threadRef.environmentId} />
       ) : null}

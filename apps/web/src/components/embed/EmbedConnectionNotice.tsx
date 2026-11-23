@@ -8,6 +8,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useEffect } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
+import { embedFailureCodes } from "../../embed/embedFailureCodes";
 import { embedConnectionRefused } from "../../embed/embedKeptViewGate";
 import { useConnectionOutage } from "../../hooks/useConnectionOutage";
 
@@ -26,11 +27,12 @@ export function EmbedConnectionNotice({
   const failing = blocked || outage.loud;
   const detail = state.lastFailure?.message ?? null;
   const attempt = state.attempt;
+  const codes = JSON.stringify(embedFailureCodes(state.lastFailure));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- names each failed attempt in the console once
   useEffect(() => {
     if (!failing) return;
-    console.warn(`[embed-connection] problem, attempt ${attempt}: ${detail ?? "socket dropped"}`);
-  }, [failing, attempt, detail]);
+    console.warn(`[embed-connection] problem, attempt ${attempt}: ${codes}`);
+  }, [failing, attempt, codes]);
   if (!failing) return null;
   return (
     <div

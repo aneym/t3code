@@ -1,12 +1,13 @@
 import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
-import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 
 import { bootstrapRemoteBearerSession } from "../authorization/remote.ts";
@@ -157,13 +158,7 @@ export const preparePairingRegistration = Effect.fn(
 function alternateBaseUrl(address: string): string | null {
   try {
     const url = new URL(address);
-    if (
-      url.protocol === "https:" ||
-      (url.protocol === "http:" && isLocalLoopbackHost(url.hostname))
-    ) {
-      return `${url.origin}/`;
-    }
-    return null;
+    return url.protocol === "https:" ? `${url.origin}/` : null;
   } catch {
     return null;
   }
@@ -188,7 +183,13 @@ const prepareAlternateRoute = Effect.fn(
   "clientRuntime.connection.onboarding.prepareAlternateRoute",
 )(function* (registration: BearerConnectionRegistration, httpBaseUrl: string) {
   const environmentId = registration.target.environmentId;
+  const requestInit = yield* Effect.serviceOption(FetchHttpClient.RequestInit);
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
+    Effect.provideService(FetchHttpClient.RequestInit, {
+      ...Option.getOrUndefined(requestInit),
+      redirect: "error",
+      cache: "no-store",
+    }),
     Effect.mapError(mapRemoteEnvironmentError),
   );
   if (descriptor.environmentId !== environmentId) {
@@ -217,7 +218,7 @@ const prepareAlternateRoutes = Effect.fn(
     (httpBaseUrl) =>
       httpBaseUrl === null
         ? Effect.logWarning("Skipped a paired environment's other address.", {
-            reason: "insecure-or-invalid",
+            reason: "not-https",
           }).pipe(Effect.as([]))
         : prepareAlternateRoute(registration, httpBaseUrl).pipe(
             Effect.map((route) => [route]),
@@ -237,11 +238,14 @@ const prepareAlternateRoutes = Effect.fn(
 const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
 )(function* (input: PairingConnectionInput) {
+  const unlessRemovedSince = yield* Clock.currentTimeNanos;
   const registration = yield* preparePairingRegistration(input);
   const alongside = yield* prepareAlternateRoutes(registration, input.alsoAt ?? []);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const knownAddressOnly = input.expectedEnvironmentId === undefined;
-  if (!(yield* registry.register(registration, { knownAddressOnly, alongside }))) {
+  if (
+    !(yield* registry.register(registration, { knownAddressOnly, alongside, unlessRemovedSince }))
+  ) {
     return registration.target.environmentId;
   }
   yield* registry.setCompatibility(registration.target.environmentId, null);

@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -109,6 +110,7 @@ export class EnvironmentRegistry extends Context.Service<
       options?: {
         readonly knownAddressOnly?: boolean;
         readonly alongside?: ReadonlyArray<ConnectionRegistration>;
+        readonly unlessRemovedSince?: bigint;
       },
     ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError | ConnectionBlockedError>;
     /**
@@ -276,6 +278,7 @@ export const make = Effect.gen(function* () {
     ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
   >(new Map());
   const platformEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
+  const removedAt = yield* Ref.make<ReadonlyMap<EnvironmentId, bigint>>(new Map());
   const persistedEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(
     new Set(persistedRoutesByEnvironment.keys()),
   );
@@ -566,6 +569,7 @@ export const make = Effect.gen(function* () {
     options?: {
       readonly knownAddressOnly?: boolean;
       readonly alongside?: ReadonlyArray<ConnectionRegistration>;
+      readonly unlessRemovedSince?: bigint;
     },
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
@@ -577,16 +581,25 @@ export const make = Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           return false;
         }
+        const since = options?.unlessRemovedSince;
+        const removed = (yield* Ref.get(removedAt)).get(environmentId);
+        if (since !== undefined && removed !== undefined && removed >= since) {
+          return false;
+        }
         if (options?.knownAddressOnly === true) {
           yield* assertKnownAddress(route);
         }
-        let entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
-        for (const each of [registration, ...(options?.alongside ?? [])]) {
-          const next = connectionRegistrationCatalogEntry(each);
-          if (next.target.environmentId !== environmentId) continue;
-          entry = yield* mergeRegistrationLocked(entry, each, next);
+        const alongside = (options?.alongside ?? []).filter(
+          (each) => connectionRegistrationCatalogEntry(each).target.environmentId === environmentId,
+        );
+        let entry = yield* mergeRegistration(
+          (yield* SubscriptionRef.get(entries)).get(environmentId),
+          registered,
+        );
+        for (const each of alongside) {
+          entry = yield* mergeRegistration(entry, connectionRegistrationCatalogEntry(each));
         }
-        if (entry === undefined) return false;
+        yield* registrations.register(registration, persistedRoutes(entry), alongside);
         yield* Ref.update(persistedEnvironmentIds, (current) =>
           new Set(current).add(environmentId),
         );
@@ -596,32 +609,25 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const mergeRegistrationLocked = Effect.fn("EnvironmentRegistry.mergeRegistrationLocked")(
-    function* (
-      previous: ConnectionCatalogEntry | undefined,
-      registration: ConnectionRegistration,
-      registered: ConnectionCatalogEntry,
-    ) {
-      const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
-      let entry = registered;
-      if (previous !== undefined) {
-        const existing = connectionRoutes(previous);
-        const sameAddress = findRouteToSameAddress(existing, route);
-        const routes = existing.filter(
-          (existing) =>
-            existing !== sameAddress ||
-            connectionRouteId(existing.target) === connectionRouteId(route.target),
-        );
-        const next = withRoutes(previous, upsertRoute(routes, route));
-        if (next.addressesChanged) {
-          yield* forgetRoutingTrust(registered.target.environmentId, "register-connection");
-        }
-        entry = next.entry;
-      }
-      yield* registrations.register(registration, persistedRoutes(entry));
-      return entry;
-    },
-  );
+  const mergeRegistration = Effect.fn("EnvironmentRegistry.mergeRegistration")(function* (
+    previous: ConnectionCatalogEntry | undefined,
+    registered: ConnectionCatalogEntry,
+  ) {
+    if (previous === undefined) return registered;
+    const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
+    const existing = connectionRoutes(previous);
+    const sameAddress = findRouteToSameAddress(existing, route);
+    const routes = existing.filter(
+      (existing) =>
+        existing !== sameAddress ||
+        connectionRouteId(existing.target) === connectionRouteId(route.target),
+    );
+    const next = withRoutes(previous, upsertRoute(routes, route));
+    if (next.addressesChanged) {
+      yield* forgetRoutingTrust(registered.target.environmentId, "register-connection");
+    }
+    return next.entry;
+  });
 
   const replaceRoutesLocked = Effect.fn("EnvironmentRegistry.replaceRoutesLocked")(function* (
     previous: ConnectionCatalogEntry,
@@ -882,6 +888,8 @@ export const make = Effect.gen(function* () {
       });
     }
     const entry = yield* getEntry(environmentId);
+    const now = yield* Clock.currentTimeNanos;
+    yield* Ref.update(removedAt, (current) => new Map(current).set(environmentId, now));
 
     yield* pullRequestRoutingPermissions.forget(environmentId);
     yield* registrations.remove(environmentId);

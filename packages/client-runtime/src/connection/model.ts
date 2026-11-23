@@ -87,6 +87,7 @@ export const ConnectionFailureCause = Schema.Literals([
   "relay_error",
   "tunnel_pending",
   "tunnel_not_enabled",
+  "chat_session_forbidden",
 ]);
 export type ConnectionFailureCause = typeof ConnectionFailureCause.Type;
 
@@ -95,11 +96,22 @@ export type ConnectionFailureCause = typeof ConnectionFailureCause.Type;
  * `presentConnectionDiagnosis`. `via` names the route when the hop alone does
  * not: T3 Code on the host can fail behind the tunnel or on a direct route.
  */
+export const ConnectionFailureRouteKind = Schema.Literals([
+  "relay",
+  "loopback",
+  "lan",
+  "tailnet",
+  "vpn",
+  "public",
+  "ssh",
+]);
+
 const ConnectionFailureFields = {
   hop: Schema.optionalKey(ConnectionHop),
   via: Schema.optionalKey(Schema.Literals(["relay", "direct"])),
   failureCause: Schema.optionalKey(ConnectionFailureCause),
   httpStatus: Schema.optionalKey(Schema.Number),
+  routeKind: Schema.optionalKey(ConnectionFailureRouteKind),
 };
 
 export class ConnectionTransientError extends Schema.TaggedError<ConnectionTransientError>()(

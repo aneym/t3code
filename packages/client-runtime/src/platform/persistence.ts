@@ -66,6 +66,7 @@ export class ConnectionRegistrationStore extends Context.Service<
     readonly register: (
       registration: ConnectionRegistration,
       routes: ReadonlyArray<PersistedConnectionTarget>,
+      alongside?: ReadonlyArray<ConnectionRegistration>,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     /**
      * `routes` must not be empty.

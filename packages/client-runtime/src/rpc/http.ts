@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient, HttpClientError, type HttpClientResponse } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
@@ -114,19 +115,45 @@ export const makeEnvironmentHttpApiUrlBuilder = (httpBaseUrl: string) =>
     baseUrl: remoteApiBaseUrl(httpBaseUrl),
   });
 
+const REFUSAL_BODY_LIMIT_BYTES = 4096;
+const WEBSOCKET_TICKET_PATH = /\/api\/auth\/websocket-ticket(?:\/[^/]+)?$/;
+
+export const isWebSocketTicketUrl = (requestUrl: string): boolean => {
+  try {
+    return WEBSOCKET_TICKET_PATH.test(new URL(requestUrl).pathname);
+  } catch {
+    return false;
+  }
+};
+
+const boundedText = (response: HttpClientResponse.HttpClientResponse) =>
+  Effect.suspend(() => {
+    let seen = 0;
+    return response.stream.pipe(
+      Stream.takeWhile((bytes) => {
+        seen += bytes.byteLength;
+        return seen <= REFUSAL_BODY_LIMIT_BYTES;
+      }),
+      Stream.decodeText(),
+      Stream.mkString,
+    );
+  });
+
 const refusalCode = (
+  requestUrl: string,
   response: HttpClientResponse.HttpClientResponse,
 ): Effect.Effect<string | undefined> =>
-  response.status === 403
-    ? response.json.pipe(
-        Effect.map((body) =>
-          typeof body === "object" &&
-          body !== null &&
-          "code" in body &&
-          typeof body.code === "string"
+  response.status === 403 && isWebSocketTicketUrl(requestUrl)
+    ? boundedText(response).pipe(
+        Effect.map((text) => {
+          const body: unknown = JSON.parse(text);
+          return typeof body === "object" &&
+            body !== null &&
+            "code" in body &&
+            typeof body.code === "string"
             ? body.code
-            : undefined,
-        ),
+            : undefined;
+        }),
         Effect.orElseSucceed(() => undefined),
       )
     : Effect.undefined;
@@ -152,7 +179,7 @@ const failRemoteRequest = (
   if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
     const response = cause.response;
     if (response.status < 200 || response.status >= 300) {
-      return refusalCode(response).pipe(
+      return refusalCode(requestUrl, response).pipe(
         Effect.flatMap((code) =>
           Effect.fail(
             new RemoteEnvironmentAuthUndeclaredStatusError({
@@ -185,6 +212,7 @@ export const executeEnvironmentHttpRequest = <A, E, R>(
   request: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, RemoteEnvironmentRequestError, R> =>
   request.pipe(
+    Effect.catch((cause) => failRemoteRequest(requestUrl, cause)),
     Effect.timeoutOption(Duration.millis(timeoutMs)),
     Effect.flatMap(
       Option.match({
@@ -192,5 +220,4 @@ export const executeEnvironmentHttpRequest = <A, E, R>(
         onSome: Effect.succeed,
       }),
     ),
-    Effect.catch((cause) => failRemoteRequest(requestUrl, cause)),
   );

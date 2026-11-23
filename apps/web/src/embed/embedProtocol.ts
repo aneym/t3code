@@ -90,6 +90,7 @@ export type EmbedPairResult = {
   readonly environmentId: string;
   readonly ok: boolean;
   readonly error?: string;
+  readonly failureCause?: string;
   readonly routes?: ReadonlyArray<string>;
 };
 
@@ -109,7 +110,8 @@ export type EmbedConnectionReport = {
   readonly reason: string | null;
   readonly routeKind: string | null;
   readonly hop: string | null;
-  readonly detail: string | null;
+  readonly failureCause: string | null;
+  readonly httpStatus: number | null;
 };
 
 export type EmbedOutboundMessage =

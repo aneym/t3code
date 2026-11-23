@@ -82,7 +82,7 @@ describe("kept views in IndexedDB", () => {
     await saveKeptView("env-a", "thread-2", "after", 4);
     expect(await keptThreads("env-a", 3)).toEqual([]);
     expect(await keptThreads("env-b", 1)).toEqual([]);
-    reopenKeptViews("env-a");
+    reopenKeptViews();
     await saveKeptView("env-a", "thread-2", "back", 5);
     expect(await keptThreads("env-a", 3)).toEqual([2]);
   });

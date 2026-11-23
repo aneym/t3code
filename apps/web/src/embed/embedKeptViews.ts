@@ -1,7 +1,9 @@
 const DATABASE_NAME = "t3code:embed-kept-views";
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const VIEW_STORE = "view";
 const META_STORE = "meta";
+const ACCESS_STORE = "access";
+const ACCESS_CHANNEL = "t3code:embed-kept-view-access";
 const SHOWN_FLUSH_MS = 1000;
 
 export const KEPT_VIEW_LIMITS = {
@@ -31,15 +33,26 @@ const keyOf = (environmentId: string, threadId: string): IDBValidKey => [environ
 const environmentRange = (environmentId: string) =>
   IDBKeyRange.bound([environmentId], [environmentId, []]);
 
+export interface KeptViewAccess {
+  readonly generation: number;
+  readonly refused: boolean;
+}
+
+interface StoredAccess {
+  readonly generation: number;
+  readonly refusedGeneration: number | null;
+}
+
+const OPEN_ACCESS: StoredAccess = { generation: 0, refusedGeneration: null };
+
 let opening: Promise<IDBDatabase> | null = null;
 let sealed = false;
-const sealedEnvironments = new Set<string>();
 
 function openDatabase(): Promise<IDBDatabase> {
   opening ??= new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
     request.addEventListener("upgradeneeded", () => {
-      for (const name of [VIEW_STORE, META_STORE]) {
+      for (const name of [VIEW_STORE, META_STORE, ACCESS_STORE]) {
         if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name);
       }
     });
@@ -63,11 +76,11 @@ function openDatabase(): Promise<IDBDatabase> {
 
 async function transact<A>(
   mode: IDBTransactionMode,
-  body: (view: IDBObjectStore, meta: IDBObjectStore) => () => A,
+  body: (view: IDBObjectStore, meta: IDBObjectStore, access: IDBObjectStore) => () => A,
 ): Promise<A> {
   const begin = async () => {
     const database = await openDatabase();
-    return database.transaction([VIEW_STORE, META_STORE], mode);
+    return database.transaction([VIEW_STORE, META_STORE, ACCESS_STORE], mode);
   };
   const transaction = await begin().catch((error: unknown) => {
     if (!(error instanceof DOMException && error.name === "InvalidStateError")) throw error;
@@ -75,12 +88,76 @@ async function transact<A>(
     return begin();
   });
   return new Promise<A>((resolve, reject) => {
-    const result = body(transaction.objectStore(VIEW_STORE), transaction.objectStore(META_STORE));
+    const result = body(
+      transaction.objectStore(VIEW_STORE),
+      transaction.objectStore(META_STORE),
+      transaction.objectStore(ACCESS_STORE),
+    );
     transaction.addEventListener("complete", () => resolve(result()));
     transaction.addEventListener("abort", () =>
       reject(transaction.error ?? new Error("A kept view write was aborted.")),
     );
   });
+}
+
+function readAccess(
+  access: IDBObjectStore,
+  environmentId: string,
+  then: (stored: StoredAccess) => void,
+): void {
+  const request = access.get(environmentId);
+  request.addEventListener("success", () =>
+    then((request.result as StoredAccess | undefined) ?? OPEN_ACCESS),
+  );
+}
+
+const isRefused = (stored: StoredAccess) => stored.refusedGeneration === stored.generation;
+
+function announceAccess(environmentId: string): void {
+  const channel = new BroadcastChannel(ACCESS_CHANNEL);
+  channel.postMessage(environmentId);
+  channel.close();
+}
+
+export function onKeptViewAccessChange(listener: (environmentId: string) => void): () => void {
+  const channel = new BroadcastChannel(ACCESS_CHANNEL);
+  channel.addEventListener("message", (event: MessageEvent<unknown>) => {
+    if (typeof event.data === "string") listener(event.data);
+  });
+  return () => channel.close();
+}
+
+export function loadKeptViewAccess(environmentId: string): Promise<KeptViewAccess> {
+  return transact("readonly", (_view, _meta, access) => {
+    let result: KeptViewAccess = { generation: 0, refused: false };
+    readAccess(access, environmentId, (stored) => {
+      result = { generation: stored.generation, refused: isRefused(stored) };
+    });
+    return () => result;
+  });
+}
+
+export async function refuseKeptViews(environmentId: string, generation: number): Promise<void> {
+  await transact("readwrite", (view, meta, access) => {
+    readAccess(access, environmentId, (stored) => {
+      if (stored.generation !== generation) return;
+      access.put({ ...stored, refusedGeneration: generation }, environmentId);
+      view.delete(environmentRange(environmentId));
+      meta.delete(environmentRange(environmentId));
+    });
+    return () => undefined;
+  });
+  announceAccess(environmentId);
+}
+
+export async function grantKeptViews(environmentId: string): Promise<void> {
+  await transact("readwrite", (_view, _meta, access) => {
+    readAccess(access, environmentId, (stored) =>
+      access.put({ generation: stored.generation + 1, refusedGeneration: null }, environmentId),
+    );
+    return () => undefined;
+  });
+  announceAccess(environmentId);
 }
 
 function deleteEntries(view: IDBObjectStore, meta: IDBObjectStore, metas: Iterable<KeptViewMeta>) {
@@ -92,9 +169,16 @@ function deleteEntries(view: IDBObjectStore, meta: IDBObjectStore, metas: Iterab
 }
 
 export function loadKeptView(environmentId: string, threadId: string): Promise<string | undefined> {
-  return transact("readonly", (view) => {
-    const request = view.get(keyOf(environmentId, threadId));
-    return () => (typeof request.result === "string" ? request.result : undefined);
+  return transact("readonly", (view, _meta, access) => {
+    let result: string | undefined;
+    readAccess(access, environmentId, (stored) => {
+      if (isRefused(stored)) return;
+      const request = view.get(keyOf(environmentId, threadId));
+      request.addEventListener("success", () => {
+        if (typeof request.result === "string") result = request.result;
+      });
+    });
+    return () => result;
   });
 }
 
@@ -104,11 +188,15 @@ export function saveKeptView(
   payload: string,
   now = Date.now(),
 ): Promise<void> {
-  return transact("readwrite", (view, meta) => {
+  return transact("readwrite", (view, meta, access) => {
+    let refused = false;
+    readAccess(access, environmentId, (stored) => {
+      refused = isRefused(stored);
+    });
     const key = keyOf(environmentId, threadId);
     const existing = meta.get(key);
     existing.addEventListener("success", () => {
-      if (sealed || sealedEnvironments.has(environmentId)) return;
+      if (sealed || refused) return;
       const previous = existing.result as KeptViewMeta | undefined;
       view.put(payload, key);
       meta.put(
@@ -168,14 +256,8 @@ export function wipeKeptViews(): Promise<void> {
   return forgetKeptViews();
 }
 
-export function sealKeptViewsFor(environmentId: string): Promise<void> {
-  sealedEnvironments.add(environmentId);
-  return clearKeptViewsFor(environmentId);
-}
-
-export function reopenKeptViews(environmentId: string): void {
+export function reopenKeptViews(): void {
   sealed = false;
-  sealedEnvironments.delete(environmentId);
 }
 
 export function markKeptViewShown(
