@@ -1,12 +1,12 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { create } from "zustand";
 import {
   localSnoozeDate,
   localSnoozeTime,
   resolveCustomSnooze,
   type CustomSnoozeInput,
 } from "@t3tools/client-runtime/state/thread-settled";
+import { finishCustomSnooze } from "./customSnooze";
 import { Button } from "./ui/button";
 import { CalendarIcon, Settings2Icon } from "lucide-react";
 import { Calendar } from "./ui/calendar";
@@ -34,35 +34,13 @@ import {
   DialogFooter,
 } from "./ui/dialog";
 
-type SnoozeChoice = { readonly snoozedUntil: string };
-type Request = { readonly resolve: (choice: SnoozeChoice | null) => void };
-const useRequest = create<{ request: Request | null }>(() => ({ request: null }));
-
-export function requestCustomSnooze(): Promise<SnoozeChoice | null> {
-  useRequest.getState().request?.resolve(null);
-  return new Promise((resolve) => useRequest.setState({ request: { resolve } }));
-}
-
-function finish(choice: SnoozeChoice | null) {
-  const request = useRequest.getState().request;
-  useRequest.setState({ request: null });
-  request?.resolve(choice);
-}
-
 function startOfLocalDay(ms: number) {
   const day = new Date(ms);
   day.setHours(0, 0, 0, 0);
   return day;
 }
 
-export function CustomSnoozeDialogHost() {
-  const request = useRequest((state) => state.request);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resolves any pending snooze request promise with null when the dialog host unmounts
-  useEffect(() => () => finish(null), []);
-  return request ? <CustomSnoozeDialog /> : null;
-}
-
-function CustomSnoozeDialog() {
+export function CustomSnoozeDialog() {
   const id = useId();
   const navigate = useNavigate();
   const [initial] = useState(() => new Date(Date.now() + 3_600_000));
@@ -82,7 +60,7 @@ function CustomSnoozeDialog() {
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) finish(null);
+        if (!open) finishCustomSnooze(null);
       }}
     >
       <DialogPopup className="sm:max-w-md">
@@ -99,7 +77,7 @@ function CustomSnoozeDialog() {
               );
               return;
             }
-            finish({ snoozedUntil });
+            finishCustomSnooze({ snoozedUntil });
           }}
         >
           <DialogHeader>
@@ -232,7 +210,7 @@ function CustomSnoozeDialog() {
               variant="ghost-muted"
               className="sm:mr-auto"
               onClick={() => {
-                finish(null);
+                finishCustomSnooze(null);
                 void navigate({
                   to: "/settings/threads",
                   hash: "snooze-options",
@@ -242,7 +220,7 @@ function CustomSnoozeDialog() {
               <Settings2Icon />
               Edit snooze options
             </Button>
-            <Button type="button" variant="outline" onClick={() => finish(null)}>
+            <Button type="button" variant="outline" onClick={() => finishCustomSnooze(null)}>
               Cancel
             </Button>
             <Button type="submit">Snooze</Button>

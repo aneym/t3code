@@ -1,6 +1,5 @@
-/* oxlint-disable eslint/no-restricted-imports -- Resolves saved project icons by name, so it needs the whole set. */
 // Import lazily: one chunk avoids lucide-react/dynamic emitting about 1,900 icon chunks.
-import * as Lucide from "lucide-react";
+import * as Lucide from "lucide-react/dist/cjs/lucide-react.js";
 import type { LucideIcon } from "lucide-react";
 
 const iconComponents = new Set<unknown>(Object.values(Lucide.icons));

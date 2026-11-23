@@ -442,7 +442,7 @@ export default defineConfig(() => {
               },
               {
                 name: "ui",
-                test: /[\\/]node_modules[\\/](@base-ui[\\/][^\\/]+|@floating-ui[\\/][^\\/]+|lucide-react|@legendapp[\\/][^\\/]+)[\\/]/,
+                test: /[\\/]node_modules[\\/](@base-ui[\\/][^\\/]+|@floating-ui[\\/][^\\/]+|@legendapp[\\/][^\\/]+)[\\/]/,
                 priority: 7,
               },
               {
@@ -453,7 +453,7 @@ export default defineConfig(() => {
               { name: "main", test: /[\\/]apps[\\/]web[\\/]src[\\/]main\.tsx$/, priority: 5 },
               {
                 name: "editor",
-                test: /[\\/]node_modules[\\/](@pierre[\\/]diffs|@tiptap[\\/][^\\/]+|prosemirror-[^\\/]+|parse5|unbash)[\\/]/,
+                test: /[\\/]node_modules[\\/](@tiptap[\\/][^\\/]+|prosemirror-[^\\/]+|parse5|unbash)[\\/]/,
                 priority: 4,
               },
               {

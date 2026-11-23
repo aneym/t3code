@@ -7,7 +7,7 @@ import {
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
-import { requestCustomSnooze } from "./CustomSnoozeDialog";
+import { requestCustomSnooze } from "./customSnooze";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
