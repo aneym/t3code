@@ -150,9 +150,12 @@ export async function runLazyMcpProxy(args: ReadonlyArray<string>): Promise<void
         toAgent(textResult(envelope.id, `${CALL_TOOL} needs \`tool\`, an exact name.`, true));
         return;
       }
+      const { name: _name, arguments: _arguments, ...rest } = envelope.params;
       toInner({
-        ...envelope,
-        params: { ...envelope.params, name: callArgs.tool, arguments: callArgs.arguments ?? {} },
+        jsonrpc: "2.0",
+        id: envelope.id,
+        method: envelope.method,
+        params: { name: callArgs.tool, arguments: callArgs.arguments ?? {}, ...rest },
       });
       return;
     }
