@@ -356,6 +356,9 @@ export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCa
 
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   parentThreadId: Schema.NullOr(ThreadId),
+  delegationDepth: Schema.Number.annotate({
+    description: "0 top-level thread, 1 its delegated child, 2 a child's child.",
+  }),
   inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   inheritedModel: Schema.NullOr(Schema.String),
   inheritedOptions: Schema.optional(Schema.Array(ProviderOptionSelection)),

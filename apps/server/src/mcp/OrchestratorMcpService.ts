@@ -60,6 +60,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   ThreadId,
+  isDelegatedAppThread,
   isOrchestrationV2WorkActive,
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
@@ -117,6 +118,7 @@ import { isSnoozed } from "../orchestration-v2/AutoSettlementPolicy.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Metrics from "../observability/Metrics.ts";
+import { MAX_REPORTED_DEPTH } from "../telemetry/ProviderDimensions.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { scheduledTaskSummary } from "./scheduledTaskSummary.ts";
@@ -1059,6 +1061,23 @@ const make = Effect.gen(function* () {
         interactionMode: parent.thread.interactionMode,
       },
     } as const;
+  });
+
+  const delegationDepthOf = Effect.fn("OrchestratorMcpService.delegationDepthOf")(function* (
+    thread: Pick<OrchestrationV2ThreadShell, "lineage" | "delegatedFrom">,
+  ) {
+    let depth = 0;
+    let current: typeof thread | null = thread;
+    while (current !== null && isDelegatedAppThread(current) && depth < MAX_REPORTED_DEPTH) {
+      depth += 1;
+      const parentId: ThreadId | null =
+        current.lineage.relationshipToParent === "subagent" ? current.lineage.parentThreadId : null;
+      current =
+        parentId === null
+          ? null
+          : yield* threadManagement.getThreadShell(parentId).pipe(Effect.orElseSucceed(() => null));
+    }
+    return depth;
   });
 
   const loadThreadCaller = Effect.fn("OrchestratorMcpService.loadThreadCaller")(function* (
@@ -2209,6 +2228,7 @@ const make = Effect.gen(function* () {
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
       return {
         parentThreadId: parent?.thread.id ?? null,
+        delegationDepth: parent === undefined ? 0 : yield* delegationDepthOf(parent.thread),
         inheritedProviderInstanceId: inherited?.instanceId ?? null,
         inheritedModel: inherited?.model ?? null,
         inheritedOptions:

@@ -1243,6 +1243,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         modelSelection,
         runtimeMode: "full-access",
         interactionMode: "default",
+        lineage: { rootThreadId: parentThreadId, parentThreadId: null, relationshipToParent: null },
       },
       runs: [
         {

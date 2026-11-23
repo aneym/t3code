@@ -1207,6 +1207,7 @@ export const t3Default = (
       };
     case "orchestrator_capabilities":
       return {
+        delegationDepth: sample.testCase.setup.role === "delegated-child" ? 1 : 0,
         inheritedProviderInstanceId: "claudeAgent",
         inheritedModel: sample.base.model,
         providers: PROVIDERS,
