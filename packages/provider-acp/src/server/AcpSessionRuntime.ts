@@ -150,6 +150,7 @@ export interface AcpSessionRuntimeOptions {
   ) => Effect.Effect<void, never>;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly httpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly projectMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -2169,14 +2170,23 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   ): ReadonlyArray<EffectAcpSchema.McpServer> => {
     const mcpCapabilities = initializeResult.agentCapabilities?.mcpCapabilities;
     const acpServers = activationOptions?.acpMcpServers ?? options.acpMcpServers ?? [];
-    if (mcpCapabilities?.acp === true && acpServers.length > 0) {
-      return acpServers;
-    }
     const httpServers = activationOptions?.httpMcpServers ?? options.httpMcpServers ?? [];
-    if (mcpCapabilities?.http === true && httpServers.length > 0) {
-      return httpServers;
-    }
-    return activationOptions?.mcpServers ?? options.mcpServers ?? [];
+    const servers =
+      mcpCapabilities?.acp === true && acpServers.length > 0
+        ? acpServers
+        : mcpCapabilities?.http === true && httpServers.length > 0
+          ? httpServers
+          : (activationOptions?.mcpServers ?? options.mcpServers ?? []);
+    const taken = new Set(servers.map((server) => server.name));
+    const project = (options.projectMcpServers ?? []).filter(
+      (server) =>
+        !taken.has(server.name) &&
+        (!("type" in server) ||
+          server.type === "stdio" ||
+          (server.type === "http" && mcpCapabilities?.http === true) ||
+          (server.type === "sse" && mcpCapabilities?.sse === true)),
+    );
+    return project.length === 0 ? servers : [...servers, ...project];
   };
 
   const sessionSetupFields = (initializeResult: EffectAcpSchema.InitializeResponse) => {
