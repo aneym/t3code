@@ -75,6 +75,9 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   waitTimedOut: Schema.Boolean.annotate({
     description: "True only on the timed-out wait call. The child keeps running.",
   }),
+  waitSkipped: Schema.optional(Schema.Literal(true)).annotate({
+    description: "Wait call returned at once: the child is held in the start line.",
+  }),
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
