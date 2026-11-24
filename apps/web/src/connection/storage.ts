@@ -86,6 +86,8 @@ const isQueryBatch = Schema.is(Schema.Struct({ rows: Schema.Number, bytes: Schem
 const ConnectionCatalogDocumentJson = Schema.fromJsonString(ConnectionCatalogDocument);
 const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCatalogDocumentJson);
 const encodeConnectionCatalogDocument = Schema.encodeEffect(ConnectionCatalogDocumentJson);
+const decodeConnectionCatalogDocumentSync = Schema.decodeUnknownSync(ConnectionCatalogDocumentJson);
+const encodeConnectionCatalogDocumentSync = Schema.encodeSync(ConnectionCatalogDocumentJson);
 const decodeStoredShellSnapshot = Schema.decodeUnknownEffect(StoredShellSnapshotJson);
 const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(StoredThreadSnapshotJson);
 const decodeStoredServerConfig = Schema.decodeUnknownEffect(StoredServerConfigJson);
@@ -468,42 +470,65 @@ const catalogRemovalKey = (environmentId: EnvironmentId) =>
 const parseRemovedAt = (value: unknown): bigint | null =>
   typeof value === "string" && /^\d+$/.test(value) ? BigInt(value) : null;
 
-function writeGuardedCatalogOnConnection(
+function updateCatalogOnConnection(
   database: IDBDatabase,
-  raw: string,
-  guard: CatalogWriteGuard,
+  transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
+  guard: CatalogWriteGuard | null,
 ) {
-  return Effect.callback<boolean, ConnectionTransientError>((resume) => {
-    try {
-      const transaction = database.transaction(CATALOG_STORE_NAME, "readwrite");
-      const store = transaction.objectStore(CATALOG_STORE_NAME);
-      const removalKey = catalogRemovalKey(guard.environmentId);
-      let written = false;
-      transaction.addEventListener("abort", () => {
-        resume(
-          Effect.fail(catalogError("write", transaction.error ?? "Unknown IndexedDB write error")),
-        );
-      });
-      transaction.addEventListener("complete", () => {
-        resume(Effect.succeed(written));
-      });
-      if (guard._tag === "Remove") {
-        store.put(raw, CATALOG_KEY);
-        store.put(String(guard.at), removalKey);
-        written = true;
-        return;
+  return Effect.callback<Option.Option<ConnectionCatalogDocumentType>, ConnectionTransientError>(
+    (resume) => {
+      try {
+        const transaction = database.transaction(CATALOG_STORE_NAME, "readwrite");
+        const store = transaction.objectStore(CATALOG_STORE_NAME);
+        let written = Option.none<ConnectionCatalogDocumentType>();
+        let failed = false;
+        transaction.addEventListener("abort", () => {
+          resume(
+            Effect.fail(
+              catalogError(
+                "write",
+                failed
+                  ? "the stored catalog could not be updated"
+                  : (transaction.error ?? "Unknown IndexedDB write error"),
+              ),
+            ),
+          );
+        });
+        transaction.addEventListener("complete", () => {
+          resume(Effect.succeed(written));
+        });
+        const write = () => {
+          const current = store.get(CATALOG_KEY);
+          current.addEventListener("success", () => {
+            try {
+              const raw: unknown = current.result;
+              const next = transform(
+                typeof raw === "string" && raw.trim() !== ""
+                  ? decodeConnectionCatalogDocumentSync(raw)
+                  : EMPTY_CONNECTION_CATALOG_DOCUMENT,
+              );
+              store.put(encodeConnectionCatalogDocumentSync(next), CATALOG_KEY);
+              if (guard?._tag === "Remove") {
+                store.put(String(guard.at), catalogRemovalKey(guard.environmentId));
+              }
+              written = Option.some(next);
+            } catch {
+              failed = true;
+              transaction.abort();
+            }
+          });
+        };
+        if (guard?._tag !== "Register") return write();
+        const removal = store.get(catalogRemovalKey(guard.environmentId));
+        removal.addEventListener("success", () => {
+          const removedAt = parseRemovedAt(removal.result);
+          if (removedAt === null || removedAt < guard.since) write();
+        });
+      } catch (cause) {
+        resume(Effect.fail(catalogError("write", cause)));
       }
-      const removal = store.get(removalKey);
-      removal.addEventListener("success", () => {
-        const removedAt = parseRemovedAt(removal.result);
-        if (removedAt !== null && removedAt >= guard.since) return;
-        store.put(raw, CATALOG_KEY);
-        written = true;
-      });
-    } catch (cause) {
-      resume(Effect.fail(catalogError("write", cause)));
-    }
-  }).pipe(Effect.withSpan("web.connectionStorage.writeGuardedCatalog"));
+    },
+  ).pipe(Effect.withSpan("web.connectionStorage.updateCatalogInTransaction"));
 }
 
 function threadCacheKey(environmentId: EnvironmentId, threadId: ThreadId) {
@@ -539,10 +564,10 @@ const encodeCatalog = Effect.fn("web.connectionStorage.encodeCatalog")(function*
 export interface CatalogBackend {
   readonly read: Effect.Effect<string | null, ConnectionTransientError>;
   readonly write: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
-  readonly writeGuarded?: (
-    raw: string,
-    guard: CatalogWriteGuard,
-  ) => Effect.Effect<boolean, ConnectionTransientError>;
+  readonly update?: (
+    transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
+    guard: CatalogWriteGuard | null,
+  ) => Effect.Effect<Option.Option<ConnectionCatalogDocumentType>, ConnectionTransientError>;
   readonly quarantine?: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
 }
 
@@ -578,8 +603,8 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
       Effect.map((value) => (typeof value === "string" ? value : null)),
     ),
     write: (raw) => writeDatabaseValue(database, CATALOG_STORE_NAME, CATALOG_KEY, raw),
-    writeGuarded: (raw, guard) =>
-      withDatabase(database, (opened) => writeGuardedCatalogOnConnection(opened, raw, guard)),
+    update: (transform, guard) =>
+      withDatabase(database, (opened) => updateCatalogOnConnection(opened, transform, guard)),
     quarantine: (raw) =>
       writeDatabaseValue(database, CATALOG_STORE_NAME, `${CATALOG_KEY}:corrupt:${Date.now()}`, raw),
   };
@@ -643,33 +668,34 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   });
 
   const read = lock.withPermits(1)(loadUnlocked());
+  const updateInBackend = (
+    transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
+    guard: CatalogWriteGuard | null,
+  ) =>
+    lock.withPermits(1)(
+      Effect.gen(function* () {
+        if (backend.update !== undefined) {
+          const written = yield* backend.update(transform, guard);
+          if (Option.isSome(written)) yield* Ref.set(state, written);
+          return Option.isSome(written);
+        }
+        const next = transform(yield* loadUnlocked());
+        yield* backend.write(yield* encodeCatalog(next));
+        yield* Ref.set(state, Option.some(next));
+        return true;
+      }),
+    );
+
   const update: CatalogStore["update"] = Effect.fn("web.connectionStorage.updateCatalog")(
     function* (transform) {
-      yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          const next = transform(yield* loadUnlocked());
-          yield* backend.write(yield* encodeCatalog(next));
-          yield* Ref.set(state, Option.some(next));
-        }),
-      );
+      yield* updateInBackend(transform, null);
     },
   );
 
   const updateGuarded: CatalogStore["updateGuarded"] = Effect.fn(
     "web.connectionStorage.updateCatalogGuarded",
   )(function* (transform, guard) {
-    return yield* lock.withPermits(1)(
-      Effect.gen(function* () {
-        const next = transform(yield* loadUnlocked());
-        const encoded = yield* encodeCatalog(next);
-        const written =
-          backend.writeGuarded === undefined
-            ? yield* backend.write(encoded).pipe(Effect.as(true))
-            : yield* backend.writeGuarded(encoded, guard);
-        if (written) yield* Ref.set(state, Option.some(next));
-        return written;
-      }),
-    );
+    return yield* updateInBackend(transform, guard);
   });
 
   return { read, update, updateGuarded } satisfies CatalogStore;

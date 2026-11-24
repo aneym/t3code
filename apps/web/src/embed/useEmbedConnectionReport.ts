@@ -77,9 +77,10 @@ const TRANSITION_GAP_MS = 2000;
 
 export function useEmbedConnectionReport(environmentId: EnvironmentId): void {
   const report = useAtomValue(connectionReportAtom(environmentId));
+  const gateClosed = useAtomValue(savedAccessAtom(environmentId)) !== "open";
   const hostConnected = useEmbedHostConnected();
   const lastSentAt = useRef(0);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the embedding host when this chat's connection changes, at most one connecting or backoff report per two seconds
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the embedding host when this chat's connection changes, at most one connecting or backoff report per two seconds unless the saved environment's gate just closed
   useEffect(() => {
     if (report === null || !hostConnected) return;
     const fields = JSON.parse(report) as EmbedConnectionReport;
@@ -88,11 +89,11 @@ export function useEmbedConnectionReport(environmentId: EnvironmentId): void {
       postToEmbedHost({ type: EMBED_CONNECTION_MESSAGE, ...fields });
     };
     const wait =
-      fields.phase === "connecting" || fields.phase === "backoff"
+      !gateClosed && (fields.phase === "connecting" || fields.phase === "backoff")
         ? lastSentAt.current + TRANSITION_GAP_MS - Date.now()
         : 0;
     if (wait <= 0) return post();
     const timer = setTimeout(post, wait);
     return () => clearTimeout(timer);
-  }, [report, hostConnected]);
+  }, [report, hostConnected, gateClosed]);
 }

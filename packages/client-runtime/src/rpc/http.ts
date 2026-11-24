@@ -15,8 +15,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
+
+import { environmentEndpointUrl } from "../environment/endpoint.ts";
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
@@ -83,12 +86,14 @@ export const layerRemoteHttpClient = (
     HttpObservability.layer,
   );
 
-const remoteApiBaseUrl = (httpBaseUrl: string): string => {
-  const url = new URL(httpBaseUrl);
-  url.pathname = "/";
-  url.search = "";
-  url.hash = "";
-  return url.toString();
+const remoteApiBaseUrl = (httpBaseUrl: string): string => environmentEndpointUrl(httpBaseUrl, "/");
+
+const reportedRequestUrl = (requestUrl: string): string => {
+  try {
+    return environmentEndpointUrl(requestUrl, new URL(requestUrl).pathname);
+  } catch {
+    return "(invalid environment endpoint)";
+  }
 };
 
 const FORBIDDEN_BODY_LIMIT_BYTES = 4096;
@@ -146,32 +151,62 @@ const readCappedStream = (
     });
   });
 
-const readCappedText = <E>(
-  declaredLength: string | null | undefined,
-  read: Effect.Effect<string, E>,
+const capText = (text: string): Uint8Array<ArrayBuffer> => {
+  if (text.length > FORBIDDEN_BODY_LIMIT_BYTES) return EMPTY_BODY;
+  const body = new TextEncoder().encode(text);
+  return body.byteLength > FORBIDDEN_BODY_LIMIT_BYTES ? EMPTY_BODY : body;
+};
+
+const declaresOversizeBody = (declaredLength: string | null | undefined): boolean =>
+  Number(declaredLength ?? 0) > FORBIDDEN_BODY_LIMIT_BYTES;
+
+const readCappedResponseStream = (
+  response: HttpClientResponse.HttpClientResponse,
 ): Effect.Effect<Uint8Array<ArrayBuffer>> =>
-  Number(declaredLength ?? 0) > FORBIDDEN_BODY_LIMIT_BYTES
-    ? Effect.succeed(EMPTY_BODY)
-    : read.pipe(
-        Effect.map((text) => {
-          const body = new TextEncoder().encode(text);
-          return body.byteLength > FORBIDDEN_BODY_LIMIT_BYTES ? EMPTY_BODY : body;
+  Effect.suspend(() => {
+    const chunks: Array<Uint8Array> = [];
+    let size = 0;
+    return response.stream.pipe(
+      Stream.runForEachWhile((chunk) =>
+        Effect.sync(() => {
+          size += chunk.byteLength;
+          if (size > FORBIDDEN_BODY_LIMIT_BYTES) return false;
+          chunks.push(chunk);
+          return true;
         }),
-        Effect.orElseSucceed(() => EMPTY_BODY),
-      );
+      ),
+      Effect.map(() => (size > FORBIDDEN_BODY_LIMIT_BYTES ? EMPTY_BODY : joinChunks(chunks, size))),
+      Effect.orElseSucceed(() => EMPTY_BODY),
+    );
+  });
+
+const readCappedBlob = (source: Response): Effect.Effect<Uint8Array<ArrayBuffer>> =>
+  Effect.promise(() =>
+    source
+      .blob()
+      .then((blob) =>
+        blob.size > FORBIDDEN_BODY_LIMIT_BYTES
+          ? EMPTY_BODY
+          : new Response(blob).text().then(capText),
+      )
+      .catch(() => EMPTY_BODY),
+  );
 
 const readForbiddenBody = (
   response: HttpClientResponse.HttpClientResponse,
 ): Effect.Effect<Uint8Array<ArrayBuffer>> =>
   Option.match(HttpClientResponse.toWeb(response), {
-    onNone: () => readCappedText(response.headers["content-length"], response.text),
+    onNone: () =>
+      declaresOversizeBody(response.headers["content-length"])
+        ? Effect.succeed(EMPTY_BODY)
+        : readCappedResponseStream(response),
     onSome: (source) =>
       typeof source.body?.getReader === "function"
         ? readCappedStream(source.body)
-        : readCappedText(
-            source.headers.get("content-length"),
-            Effect.promise(() => source.text().catch(() => "")),
-          ),
+        : typeof source.blob === "function" &&
+            !declaresOversizeBody(source.headers.get("content-length"))
+          ? readCappedBlob(source)
+          : Effect.succeed(EMPTY_BODY),
   });
 
 const capForbiddenBody = (
@@ -311,6 +346,7 @@ export const executeEnvironmentHttpRequest = <A, E, R>(
   request: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, RemoteEnvironmentRequestError, R> =>
   Effect.suspend(() => {
+    const reportedUrl = reportedRequestUrl(requestUrl);
     let forbidden = false;
     return request.pipe(
       Effect.provideService(ForbiddenStatusSeen, {
@@ -318,15 +354,18 @@ export const executeEnvironmentHttpRequest = <A, E, R>(
           forbidden = true;
         },
       }),
-      Effect.catch((cause) => failRemoteRequest(requestUrl, cause)),
+      Effect.catch((cause) => failRemoteRequest(reportedUrl, cause)),
       Effect.timeoutOption(Duration.millis(timeoutMs)),
       Effect.flatMap(
         Option.match({
           onNone: () =>
             Effect.fail(
               forbidden
-                ? new RemoteEnvironmentAuthUndeclaredStatusError({ requestUrl, status: 403 })
-                : new RemoteEnvironmentAuthTimeoutError({ requestUrl, timeoutMs }),
+                ? new RemoteEnvironmentAuthUndeclaredStatusError({
+                    requestUrl: reportedUrl,
+                    status: 403,
+                  })
+                : new RemoteEnvironmentAuthTimeoutError({ requestUrl: reportedUrl, timeoutMs }),
             ),
           onSome: Effect.succeed,
         }),

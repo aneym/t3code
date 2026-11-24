@@ -64,7 +64,7 @@ function storedAccess(value: unknown): StoredAccess {
     refused:
       typeof record.refused === "boolean"
         ? record.refused
-        : record.refusedGeneration === generation,
+        : typeof record.refusedGeneration === "number",
     refusedCredentials: Array.isArray(record.refusedCredentials)
       ? record.refusedCredentials.filter((each): each is string => typeof each === "string")
       : [],
@@ -230,6 +230,25 @@ function deleteEntries(view: IDBObjectStore, meta: IDBObjectStore, metas: Iterab
   }
 }
 
+function evictOwned(
+  view: IDBObjectStore,
+  meta: IDBObjectStore,
+  access: IDBObjectStore,
+  evictions: ReadonlyArray<KeptViewMeta>,
+): void {
+  for (const environmentId of new Set(evictions.map((entry) => entry.environmentId))) {
+    const known = frameGenerations.get(environmentId);
+    readAccess(access, environmentId, (stored) => {
+      if (known !== undefined && stored.generation !== known) return;
+      deleteEntries(
+        view,
+        meta,
+        evictions.filter((entry) => entry.environmentId === environmentId),
+      );
+    });
+  }
+}
+
 interface StoredView {
   readonly generation: number;
   readonly payload: string;
@@ -310,7 +329,7 @@ export function saveKeptView(
         );
         const all = meta.getAll();
         all.addEventListener("success", () =>
-          deleteEntries(view, meta, pickKeptViewEvictions(all.result as KeptViewMeta[])),
+          evictOwned(view, meta, access, pickKeptViewEvictions(all.result as KeptViewMeta[])),
         );
       });
     });

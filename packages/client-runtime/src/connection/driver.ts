@@ -34,6 +34,7 @@ import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 export type ConnectionDriverProgress =
   | {
       readonly stage: "preparing";
+      readonly route?: ConnectionRoute;
     }
   | {
       readonly stage: Exclude<ConnectionAttemptStage, "preparing">;
@@ -119,12 +120,12 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     );
     if (result._tag === "Failure") {
       const failure = withRouteKind(result.failure, route);
-      if (failure._tag === "ConnectionTransientError") transient ??= failure;
-      else if (failure.failureCause !== "chat_session_forbidden") blocked ??= failure;
-      else if (refused === undefined) {
-        refused = failure;
+      if (failure._tag === "ConnectionBlockedError" && failure.credentialRevision !== undefined) {
         yield* reportRefusal(failure);
       }
+      if (failure._tag === "ConnectionTransientError") transient ??= failure;
+      else if (failure.failureCause !== "chat_session_forbidden") blocked ??= failure;
+      else refused ??= failure;
       return Result.fail(failure);
     }
     return result;
@@ -239,7 +240,7 @@ export const make = Effect.gen(function* () {
       entry,
       (route) => checkRoute(entry, route),
       Effect.fnUntraced(function* (route) {
-        yield* reportProgress({ stage: "preparing" });
+        yield* reportProgress({ stage: "preparing", route });
         const prepared = yield* resolver.prepare(routeEntry(entry, route));
         yield* reportProgress({ stage: "opening", prepared });
         const session = yield* sessions
