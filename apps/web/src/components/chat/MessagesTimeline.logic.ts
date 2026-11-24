@@ -75,6 +75,7 @@ import {
 } from "@t3tools/shared/toolActivity";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import * as Opening from "./openingReply";
+import * as Terminal from "./terminalReply";
 
 export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
@@ -694,32 +695,6 @@ export function resolveAssistantMessageCopyState({
     text: hasText ? (visible ? renderCodexDirectivesForCopy(text) : text) : null,
     visible,
   };
-}
-
-function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
-  const lastAssistantMessageIdByResponseKey = new Map<string, string>();
-  let nullTurnResponseIndex = 0;
-
-  for (const timelineEntry of timelineEntries) {
-    if (timelineEntry.kind !== "message") {
-      continue;
-    }
-    const { message } = timelineEntry;
-    if (message.role === "user") {
-      nullTurnResponseIndex += 1;
-      continue;
-    }
-    if (message.role !== "assistant") {
-      continue;
-    }
-
-    const responseKey = message.runId
-      ? `turn:${message.runId}`
-      : `unkeyed:${nullTurnResponseIndex}`;
-    lastAssistantMessageIdByResponseKey.set(responseKey, message.id);
-  }
-
-  return new Set(lastAssistantMessageIdByResponseKey.values());
 }
 
 interface TurnFold {
@@ -1449,7 +1424,10 @@ function timelineRowEntries(
       ? deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null)
       : null;
     const answeringFrom = answering ? lastResponseBoundaryIndex(entries) + 1 : entries.length;
-    const terminalIds = deriveTerminalAssistantMessageIds(entries);
+    const terminalIds = Terminal.terminalAssistantMessageIds(
+      entries,
+      Terminal.blankReplyTargets(entries, input.keepOpeningReplyVisible),
+    );
     const steerAnswerIds = deriveInFlightSteerAnswerIds(entries);
     const retainedReplyIds = retainedAssistantReplyEntryIds(entries);
     const openingIds = Opening.replyIds(entries, input.keepOpeningReplyVisible);
@@ -1501,7 +1479,7 @@ function deriveTimelineTurnFolds(
   });
   return deriveTurnFolds({
     timelineEntries,
-    terminalAssistantMessageIds: deriveTerminalAssistantMessageIds(timelineEntries),
+    terminalAssistantMessageIds: Terminal.terminalAssistantMessageIds(timelineEntries),
     latestRun: input.latestRun ?? null,
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
@@ -1546,10 +1524,13 @@ export function deriveMessagesTimelineRows(input: {
     );
   };
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
+  const blankReplyTargets = Terminal.blankReplyTargets(
+    input.timelineEntries,
+    input.keepOpeningReplyVisible,
+  );
   for (const summary of input.turnDiffSummaries) {
-    if (summary.assistantMessageId) {
-      turnDiffSummaryByAssistantMessageId.set(summary.assistantMessageId, summary);
-    }
+    const id = summary.assistantMessageId;
+    if (id) turnDiffSummaryByAssistantMessageId.set(blankReplyTargets.get(id) ?? id, summary);
   }
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const revertTurnCountByUserMessageId = input.supportsConversationRollback
@@ -1562,7 +1543,10 @@ export function deriveMessagesTimelineRows(input: {
       })
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
-  const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
+  const terminalAssistantMessageIds = Terminal.terminalAssistantMessageIds(
+    timelineEntries,
+    blankReplyTargets,
+  );
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const itemizedRunIds = itemizedFailedRunIds(timelineEntries, failedRunIds);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
@@ -1615,6 +1599,7 @@ export function deriveMessagesTimelineRows(input: {
       }
     }
   }
+  for (const id of blankReplyTargets.keys()) collapsedEntryIds.add(id);
   const collapsedSupersededEntryIds = new Set<string>();
   for (const fold of supersededFoldsByAnchorEntryId.values()) {
     if (!input.expandedAttemptIds?.has(fold.attemptId)) {

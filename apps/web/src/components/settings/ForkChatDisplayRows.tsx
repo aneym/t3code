@@ -15,7 +15,7 @@ export function changedForkChatDisplaySettings(settings: UnifiedSettings): Reado
       ? "Hide stage lines"
       : null,
     settings.keepOpeningReplyVisible !== DEFAULT_UNIFIED_SETTINGS.keepOpeningReplyVisible
-      ? "Keep the opening reply visible"
+      ? "Keep replies visible"
       : null,
   ].filter((label) => label !== null);
 }
@@ -50,11 +50,11 @@ export function ForkChatDisplayRows() {
       />
       <SettingsRow
         {...searchableSetting("keep-opening-reply-visible")}
-        description="Keep what an agent says before its first tool call in the chat instead of folding it into Worked for or a superseded attempt."
+        description="Keep what an agent says before its first tool call, and its last line when a turn ends on a tool call, in the chat instead of folding it into Worked for or a superseded attempt."
         resetAction={
           settings.keepOpeningReplyVisible !== DEFAULT_UNIFIED_SETTINGS.keepOpeningReplyVisible ? (
             <SettingResetButton
-              label="keep the opening reply visible"
+              label="keep replies visible"
               onClick={() =>
                 updateSettings({
                   keepOpeningReplyVisible: DEFAULT_UNIFIED_SETTINGS.keepOpeningReplyVisible,
@@ -67,7 +67,7 @@ export function ForkChatDisplayRows() {
           <Switch
             checked={settings.keepOpeningReplyVisible}
             onCheckedChange={(checked) => updateSettings({ keepOpeningReplyVisible: checked })}
-            aria-label="Keep the opening reply visible"
+            aria-label="Keep replies visible"
           />
         }
       />
