@@ -9,12 +9,12 @@ import {
   type EnvironmentScopeRequiredError,
 } from "@t3tools/contracts";
 import * as HttpObservability from "@t3tools/shared/httpObservability";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
@@ -92,31 +92,86 @@ const remoteApiBaseUrl = (httpBaseUrl: string): string => {
 };
 
 const FORBIDDEN_BODY_LIMIT_BYTES = 4096;
+const EMPTY_BODY = new Uint8Array(0);
 
-const readCappedBody = (response: HttpClientResponse.HttpClientResponse) =>
-  Effect.suspend(() => {
+class ForbiddenStatusSeen extends Context.Reference<{ readonly mark: () => void }>(
+  "@t3tools/client-runtime/rpc/http/ForbiddenStatusSeen",
+  { defaultValue: () => ({ mark: () => undefined }) },
+) {}
+
+const joinChunks = (chunks: ReadonlyArray<Uint8Array>, size: number): Uint8Array<ArrayBuffer> => {
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+};
+
+const readCappedStream = (
+  stream: ReadableStream<Uint8Array>,
+): Effect.Effect<Uint8Array<ArrayBuffer>> =>
+  Effect.callback<Uint8Array<ArrayBuffer>>((resume) => {
+    const reader = stream.getReader();
     const chunks: Array<Uint8Array> = [];
     let size = 0;
-    return response.stream.pipe(
-      Stream.runForEachWhile((chunk) =>
-        Effect.sync(() => {
-          size += chunk.byteLength;
-          if (size <= FORBIDDEN_BODY_LIMIT_BYTES) chunks.push(chunk);
-          return size <= FORBIDDEN_BODY_LIMIT_BYTES;
+    let settled = false;
+    const cancel = () => void reader.cancel().catch(() => undefined);
+    const finish = (body: Uint8Array<ArrayBuffer>) => {
+      if (settled) return;
+      settled = true;
+      resume(Effect.succeed(body));
+    };
+    const pump = (): void => {
+      reader.read().then(
+        (next) => {
+          if (settled) return;
+          if (next.done) return finish(joinChunks(chunks, size));
+          size += next.value.byteLength;
+          if (size > FORBIDDEN_BODY_LIMIT_BYTES) {
+            cancel();
+            return finish(EMPTY_BODY);
+          }
+          chunks.push(next.value);
+          pump();
+        },
+        () => finish(EMPTY_BODY),
+      );
+    };
+    pump();
+    return Effect.sync(() => {
+      settled = true;
+      cancel();
+    });
+  });
+
+const readCappedText = <E>(
+  declaredLength: string | null | undefined,
+  read: Effect.Effect<string, E>,
+): Effect.Effect<Uint8Array<ArrayBuffer>> =>
+  Number(declaredLength ?? 0) > FORBIDDEN_BODY_LIMIT_BYTES
+    ? Effect.succeed(EMPTY_BODY)
+    : read.pipe(
+        Effect.map((text) => {
+          const body = new TextEncoder().encode(text);
+          return body.byteLength > FORBIDDEN_BODY_LIMIT_BYTES ? EMPTY_BODY : body;
         }),
-      ),
-      Effect.map(() => {
-        const body = new Uint8Array(size <= FORBIDDEN_BODY_LIMIT_BYTES ? size : 0);
-        if (size > FORBIDDEN_BODY_LIMIT_BYTES) return body;
-        let offset = 0;
-        for (const chunk of chunks) {
-          body.set(chunk, offset);
-          offset += chunk.byteLength;
-        }
-        return body;
-      }),
-      Effect.orElseSucceed(() => new Uint8Array(0)),
-    );
+        Effect.orElseSucceed(() => EMPTY_BODY),
+      );
+
+const readForbiddenBody = (
+  response: HttpClientResponse.HttpClientResponse,
+): Effect.Effect<Uint8Array<ArrayBuffer>> =>
+  Option.match(HttpClientResponse.toWeb(response), {
+    onNone: () => readCappedText(response.headers["content-length"], response.text),
+    onSome: (source) =>
+      typeof source.body?.getReader === "function"
+        ? readCappedStream(source.body)
+        : readCappedText(
+            source.headers.get("content-length"),
+            Effect.promise(() => source.text().catch(() => "")),
+          ),
   });
 
 const capForbiddenBody = (
@@ -124,15 +179,19 @@ const capForbiddenBody = (
 ): Effect.Effect<HttpClientResponse.HttpClientResponse> =>
   response.status !== 403
     ? Effect.succeed(response)
-    : Effect.map(readCappedBody(response), (body) => {
-        const headers = new Headers(Object.entries(response.headers));
-        headers.delete("content-encoding");
-        headers.set("content-length", String(body.byteLength));
-        return HttpClientResponse.fromWeb(
-          response.request,
-          new Response(body.byteLength === 0 ? null : body, { status: 403, headers }),
-        );
-      });
+    : ForbiddenStatusSeen.pipe(
+        Effect.tap((seen) => Effect.sync(seen.mark)),
+        Effect.andThen(readForbiddenBody(response)),
+        Effect.map((body) => {
+          const headers = new Headers(Object.entries(response.headers));
+          headers.delete("content-encoding");
+          headers.set("content-length", String(body.byteLength));
+          return HttpClientResponse.fromWeb(
+            response.request,
+            new Response(body.byteLength === 0 ? null : body, { status: 403, headers }),
+          );
+        }),
+      );
 
 const withCappedForbiddenBodies = <E, R>(client: HttpClient.HttpClient.With<E, R>) =>
   HttpClient.transformResponse(client, Effect.flatMap(capForbiddenBody));
@@ -251,13 +310,26 @@ export const executeEnvironmentHttpRequest = <A, E, R>(
   timeoutMs: number,
   request: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, RemoteEnvironmentRequestError, R> =>
-  request.pipe(
-    Effect.catch((cause) => failRemoteRequest(requestUrl, cause)),
-    Effect.timeoutOption(Duration.millis(timeoutMs)),
-    Effect.flatMap(
-      Option.match({
-        onNone: () => Effect.fail(new RemoteEnvironmentAuthTimeoutError({ requestUrl, timeoutMs })),
-        onSome: Effect.succeed,
+  Effect.suspend(() => {
+    let forbidden = false;
+    return request.pipe(
+      Effect.provideService(ForbiddenStatusSeen, {
+        mark: () => {
+          forbidden = true;
+        },
       }),
-    ),
-  );
+      Effect.catch((cause) => failRemoteRequest(requestUrl, cause)),
+      Effect.timeoutOption(Duration.millis(timeoutMs)),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              forbidden
+                ? new RemoteEnvironmentAuthUndeclaredStatusError({ requestUrl, status: 403 })
+                : new RemoteEnvironmentAuthTimeoutError({ requestUrl, timeoutMs }),
+            ),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+  });
