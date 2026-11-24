@@ -122,7 +122,9 @@ const QueueTool = Tool.make("t3_queue", {
     queueEntry,
     OrchestrationV2DispatchCommandResult,
   ]),
-}).annotate(Tool.Destructive, true);
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 const question = Schema.Struct({
   id: Schema.String,

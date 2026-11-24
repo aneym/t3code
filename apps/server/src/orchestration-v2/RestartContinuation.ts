@@ -17,6 +17,7 @@ import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
+import * as LongRunSurvivors from "./LongRunSurvivors.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import {
   awaitingProviderThreadId,
@@ -30,6 +31,7 @@ import {
   neverStarted,
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
+  survivingLongRunsNote,
 } from "./RestartBackgroundNote.ts";
 
 const CONTINUE_PROMPT =
@@ -317,14 +319,15 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       projection.providerTurns,
       projection.attempts,
     );
-    const noteText =
-      note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
-    const text =
-      noteText === undefined
-        ? CONTINUE_PROMPT
-        : note.settled
-          ? noteText
-          : `${noteText}\n\n${CONTINUE_PROMPT}`;
+    const noteText = note.work.length === 0 ? "" : restartCancelledBackgroundWorkNote(note.work);
+    const longRuns = yield* LongRunSurvivors.LongRunSurvivors;
+    const text = [
+      noteText,
+      survivingLongRunsNote(yield* longRuns.forThread(input.threadId)),
+      noteText !== "" && note.settled ? "" : CONTINUE_PROMPT,
+    ]
+      .filter((part) => part !== "")
+      .join("\n\n");
     yield* threads
       .dispatch({
         type: "message.dispatch",

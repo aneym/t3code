@@ -639,7 +639,8 @@ it("rebuilds the template from this checkout and sends a child T3's task prompt"
   assert.equal(base.environment.cwd, "/home/user/app");
   assert.include(system[2], "model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5.");
   const deferred = system[2]?.split("Load them first:\n")[1]?.split("\n\n")[0]?.split("\n") ?? [];
-  assert.includeMembers(deferred, ["Monitor", "mcp__t3-code__delegate_task"]);
+  assert.includeMembers(deferred, ["Monitor", "mcp__t3-code__task_status"]);
+  assert.notInclude(deferred, "mcp__t3-code__delegate_task");
   assert.notInclude(deferred, "mcp__t3-code__retired_tool");
   // A delegated child is never offered the tools T3 hides from subagents.
   assert.include(deferred, "mcp__t3-code__watch_pull_request");

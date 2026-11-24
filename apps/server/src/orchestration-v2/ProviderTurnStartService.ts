@@ -67,10 +67,12 @@ import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { makeThreadSessionPreparation } from "./ThreadSessionTransitions.ts";
 import { ThreadNoteContext, previousPromptStart } from "./ThreadNoteContext.ts";
+import * as LongRunSurvivors from "./LongRunSurvivors.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
   restartCancelledBackgroundWorkNote,
+  survivingLongRunsNote,
 } from "./RestartBackgroundNote.ts";
 import {
   batchedProviderPrompt,
@@ -183,6 +185,7 @@ export const layer: Layer.Layer<
     const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const { quietNotes: quietNoteContext } = yield* ThreadNoteContext;
+    const longRuns = yield* LongRunSurvivors.LongRunSurvivors;
 
     const makeRunControls = (input: {
       readonly threadId: ThreadId;
@@ -814,7 +817,12 @@ export const layer: Layer.Layer<
       const restartNote =
         restartCancelledWork.length === 0
           ? ""
-          : restartCancelledBackgroundWorkNote(restartCancelledWork);
+          : [
+              restartCancelledBackgroundWorkNote(restartCancelledWork),
+              survivingLongRunsNote(yield* longRuns.forThread(input.threadId)),
+            ]
+              .filter((part) => part !== "")
+              .join("\n\n");
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );

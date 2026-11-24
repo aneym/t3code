@@ -104,7 +104,8 @@ const DelegateTaskTool = Tool.make("delegate_task", {
 })
   .annotate(Tool.Title, "Delegate a child task")
   .annotate(Tool.Destructive, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 const TaskStatusTool = Tool.make("task_status", {
   description:
@@ -130,7 +131,8 @@ const TaskCancelTool = Tool.make("task_cancel", {
   dependencies,
 })
   .annotate(Tool.Title, "Cancel delegated task")
-  .annotate(Tool.Destructive, true);
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 const TaskOutcomeTool = Tool.make("task_outcome", {
   description:
@@ -280,7 +282,8 @@ const ThreadReadTool = Tool.make("t3_thread_read", {
   .annotate(Tool.Strict, true)
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 const ThreadUpdateTool = Tool.make("t3_thread_update", {
   description:
@@ -311,7 +314,8 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
   .annotate(Tool.Title, "Send to a T3 thread")
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true)
-  .annotate(Unadvertised, ["composerIds"]);
+  .annotate(Unadvertised, ["composerIds"])
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 const ThreadWaitTool = Tool.make("t3_thread_wait", {
   description:
