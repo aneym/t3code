@@ -25,7 +25,7 @@ import { WAL_SIZE_LIMIT_BYTES } from "../persistence/Sqlite.ts";
 import { stopRequested } from "../serverDrain/stopSignal.ts";
 import { DATABASE_WORKER_SOURCE } from "./databaseWorkerSource.ts";
 
-const OPEN_RUN_STATUSES = ["queued", "preparing", "starting", "running", "waiting"];
+const OPEN_RUN_STATUSES = "('queued', 'preparing', 'starting', 'running', 'waiting')";
 const IDENTITY_KEYS = [
   ["orchestration_v2_projection_threads", "thread_id"],
   ["orchestration_v2_projection_messages", "message_id"],
@@ -191,7 +191,7 @@ export const layer = Layer.effect(
       }
       const filter =
         input.open === true
-          ? sql`r.status IN ${sql.in(OPEN_RUN_STATUSES)}`
+          ? sql`r.status IN ${sql.literal(OPEN_RUN_STATUSES)}`
           : input.runIds !== undefined
             ? sql`r.run_id IN ${sql.in(input.runIds)}`
             : sql`r.thread_id = ${input.threadId ?? ""}`;
