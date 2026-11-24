@@ -28,6 +28,16 @@ import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
 
 import { pickReader, ReadLaneRef, RESERVED_READERS } from "./nodeSqliteLanes.ts";
+import {
+  connectionOwner,
+  type ConnectionOwner,
+  HoldRef,
+  newHold,
+  noteHold,
+  noteStatement,
+  noteWait,
+} from "./nodeSqliteReadTiming.ts";
+import { workerSource } from "./nodeSqliteWorkerSource.ts";
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 
@@ -57,25 +67,6 @@ interface Acquired {
   readonly connection: "writer" | "reader";
   readonly lockWaitMs: number;
 }
-
-interface ConnectionOwner {
-  readonly fiberId: number;
-  readonly name: string;
-  readonly traceId?: string;
-  readonly spanId?: string;
-}
-
-const connectionOwner = (fiber: Fiber.Fiber<unknown, unknown>): ConnectionOwner => {
-  const current = Context.getOrUndefined(fiber.context, Tracer.ParentSpan);
-  if (current?._tag !== "Span") return { fiberId: fiber.id, name: "untraced" };
-  let span: Tracer.Span = current;
-  while (span.name === "sqlite" || span.name === "sql.transaction") {
-    const parent: Tracer.AnySpan | undefined = Option.getOrUndefined(span.parent);
-    if (parent?._tag !== "Span") break;
-    span = parent;
-  }
-  return { fiberId: fiber.id, name: span.name, traceId: span.traceId, spanId: span.spanId };
-};
 
 const annotateAcquired = (
   fiber: Fiber.Fiber<unknown, unknown>,
@@ -195,76 +186,6 @@ const hasLargeBinding = (params: ReadonlyArray<unknown>): boolean => {
   }
 };
 
-// Inline worker source also runs in bundles and single-executable builds without module files.
-const workerSource = `
-const { parentPort, workerData } = require("node:worker_threads");
-const { DatabaseSync } = require("node:sqlite");
-const describe = (error) => ({
-  message: String(error && error.message ? error.message : error),
-  code: error && error.code,
-  errcode: error && error.errcode,
-  errstr: error && error.errstr,
-});
-let db;
-try {
-  // A read-only open cannot be undone by SQL, unlike PRAGMA query_only.
-  const next = new DatabaseSync(workerData.filename, {
-    readOnly: workerData.readOnly,
-    allowExtension: workerData.allowExtension,
-  });
-  next.exec("PRAGMA busy_timeout = 5000;");
-  // Reads the header, so a file that is not a database fails here rather than on first use.
-  const mode = String(next.prepare("PRAGMA journal_mode").get().journal_mode).toLowerCase();
-  // Without WAL a reader's shared lock blocks the writer's commits, so refuse.
-  if (workerData.requireWal && mode !== "wal") throw new Error("database uses journal_mode " + mode + ", not wal");
-  db = next;
-  parentPort.postMessage({ type: "ready" });
-} catch (error) {
-  parentPort.postMessage({ type: "unavailable", ...describe(error) });
-}
-const statements = new Map();
-const prepare = (sql, cached) => {
-  if (!cached) return db.prepare(sql);
-  let statement = statements.get(sql);
-  if (statement === undefined) {
-    statement = db.prepare(sql);
-    if (statements.size >= workerData.prepareCacheSize) statements.delete(statements.keys().next().value);
-  } else {
-    statements.delete(sql);
-  }
-  statements.set(sql, statement);
-  return statement;
-};
-parentPort.on("message", (request) => {
-  if (request.type === "close") {
-    // Closing lets SQLite checkpoint and remove the WAL, which terminating would skip.
-    try {
-      if (db !== undefined) db.close();
-    } catch {}
-    parentPort.close();
-    return;
-  }
-  const { id, sql, params, cached, values, raw, safeIntegers } = request;
-  let operation = "open";
-  try {
-    if (db === undefined) throw new Error("database connection is unavailable");
-    operation = "prepare";
-    const statement = prepare(sql, cached);
-    operation = "execute";
-    statement.setReadBigInts(safeIntegers);
-    if (statement.columns().length > 0) {
-      statement.setReturnArrays(values);
-      parentPort.postMessage({ id, rows: statement.all(...params) });
-    } else {
-      const result = statement.run(...params);
-      parentPort.postMessage({ id, rows: raw ? result : [] });
-    }
-  } catch (error) {
-    parentPort.postMessage({ id, error: { operation, ...describe(error) } });
-  }
-});
-`;
-
 interface WorkerRequest {
   readonly sql: string;
   readonly params: ReadonlyArray<unknown>;
@@ -285,7 +206,7 @@ type WorkerStartup =
   | ({ readonly type: "unavailable" } & WorkerFailure);
 
 type WorkerReply =
-  | { readonly id: number; readonly rows: ReadonlyArray<any> }
+  | { readonly id: number; readonly rows: ReadonlyArray<any>; readonly ms?: number }
   | {
       readonly id: number;
       readonly error: WorkerFailure & { readonly operation: "open" | "prepare" | "execute" };
@@ -401,14 +322,21 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         const safeIntegers = Boolean(Context.get(fiber.context, Client.SafeIntegers));
         const reply = Effect.callback<ReadonlyArray<any>, SqlError>((resume) => {
           const id = nextRequestId++;
+          const posted = performance.now();
           pending.set(id, {
             endsTransaction,
-            resume: (reply) =>
+            resume: (reply) => {
+              if ("rows" in reply && reply.ms !== undefined) {
+                const rows = Array.isArray(reply.rows) ? reply.rows.length : 0;
+                const queued = performance.now() - posted - reply.ms;
+                noteStatement(fiber, options.role, input.sql, rows, reply.ms, queued);
+              }
               resume(
                 "rows" in reply
                   ? Effect.succeed(reply.rows)
                   : Effect.fail(failedWith(reply.error, reply.error.operation)),
-              ),
+              );
+            },
           });
           if (pending.size === 1) worker.ref();
           const cached = input.cached && !hasLargeBinding(input.params);
@@ -897,13 +825,22 @@ const make = Effect.fn("makeWithDatabase")(function* (
       const owner = target.name === "writer" ? connectionOwner(fiber) : undefined;
       const useConnection = Effect.suspend(() => {
         if (target.name === "writer") activeWriter = owner;
+        const got = acquired(target, clock, start);
+        noteWait(fiber, target.name, got.lockWaitMs);
         if (
           fiber.getRef(References.TracerEnabled) &&
           fiber.getRef(Statement.SpanPropagationEnabled)
         ) {
-          annotateAcquired(fiber, acquired(target, clock, start), ownerAtWaitStart);
+          annotateAcquired(fiber, got, ownerAtWaitStart);
         }
-        return use(target.connection);
+        const hold = newHold();
+        const held = performance.now();
+        return use(target.connection).pipe(
+          Effect.provideService(HoldRef, hold),
+          Effect.ensuring(
+            Effect.sync(() => noteHold(fiber, target.name, performance.now() - held, hold)),
+          ),
+        );
       });
       const useOwnedConnection =
         target.name === "writer"
@@ -931,14 +868,19 @@ const make = Effect.fn("makeWithDatabase")(function* (
         const owner = target.name === "writer" ? connectionOwner(fiber) : undefined;
         const acquire = Effect.tap((pending?.restore ?? restore)(target.lock.take(1)), () => {
           if (target.name === "writer") activeWriter = owner;
+          const got = acquired(target, clock, start);
+          noteWait(fiber, target.name, got.lockWaitMs);
           if (pending !== undefined) {
-            pending.acquired = acquired(target, clock, start);
+            pending.acquired = got;
             pending.ownerAtWaitStart = ownerAtWaitStart;
           }
+          const hold = fiber.getRef(HoldRef);
+          const held = performance.now();
           return Scope.addFinalizer(
             scope,
             Effect.sync(() => {
               if (target.name === "writer" && activeWriter === owner) activeWriter = undefined;
+              if (hold !== undefined) noteHold(fiber, target.name, performance.now() - held, hold);
             }).pipe(Effect.andThen(target.lock.release(1))),
           );
         });
@@ -983,7 +925,10 @@ const make = Effect.fn("makeWithDatabase")(function* (
           return effect;
         });
         return restore(
-          withTransaction(body).pipe(Effect.provideService(TransactionAcquire, pending)),
+          withTransaction(body).pipe(
+            Effect.provideService(TransactionAcquire, pending),
+            Effect.updateService(HoldRef, (hold) => hold ?? newHold()),
+          ),
         );
       }),
   });

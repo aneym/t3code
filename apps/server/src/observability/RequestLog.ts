@@ -7,6 +7,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest } from "effect/http";
+import { onSlowRead, ReadTallyRef } from "@t3tools/shared/nodeSqliteReadTiming";
 
 import * as ServerConfig from "../config.ts";
 import { makeNdjsonLogWriter } from "./NdjsonLogWriter.ts";
@@ -59,6 +60,18 @@ const surfaceOf = (url: string) => {
   return surface !== null && /^[a-z-]{1,16}$/.test(surface) ? surface : undefined;
 };
 
+const newTally = () => ({ reads: 0, execMs: 0, waitMs: 0, rows: 0 });
+
+const tallyFields = (tally: ReturnType<typeof newTally>): Fields =>
+  tally.reads === 0 && tally.waitMs === 0
+    ? {}
+    : {
+        dr: tally.reads,
+        dms: Math.round(tally.execMs),
+        dw: Math.round(tally.waitMs),
+        drows: tally.rows,
+      };
+
 const statusOf = (exit: Exit.Exit<{ readonly status: number }, unknown>) =>
   Exit.isSuccess(exit) ? exit.value.status : Cause.hasInterruptsOnly(exit.cause) ? 499 : 500;
 
@@ -76,8 +89,10 @@ export const logRpc = <A, E, R>(method: string, effect: Effect.Effect<A, E, R>) 
       ? effect
       : Effect.flatMap(Clock.currentTimeMillis, (startedAt) => {
           const rpcEntry = { fields: { ...entry.fields }, write: entry.write };
+          const tally = newTally();
           return effect.pipe(
             Effect.provideService(CurrentRpc, rpcEntry),
+            Effect.provideService(ReadTallyRef, tally),
             Effect.onExit((exit) =>
               Effect.map(Clock.currentTimeMillis, (endedAt) =>
                 entry.write({
@@ -90,6 +105,7 @@ export const logRpc = <A, E, R>(method: string, effect: Effect.Effect<A, E, R>) 
                       ? "closed"
                       : "err",
                   ms: endedAt - startedAt,
+                  ...tallyFields(tally),
                 }),
               ),
             ),
@@ -119,6 +135,7 @@ export const layer = Layer.unwrap(
       ? yield* makeWriter.pipe(Effect.orElseSucceed(() => undefined))
       : undefined;
     if (write === undefined) return Layer.empty;
+    onSlowRead(write);
     return HttpRouter.middleware(
       (httpEffect) =>
         Effect.gen(function* () {
@@ -132,11 +149,18 @@ export const layer = Layer.unwrap(
             ...(surface === undefined ? {} : { surface }),
           };
           const startedAt = yield* Clock.currentTimeMillis;
+          const tally = newTally();
           return yield* httpEffect.pipe(
             Effect.provideService(CurrentRequest, { fields, write }),
+            Effect.provideService(ReadTallyRef, tally),
             Effect.onExit((exit) =>
               Effect.map(Clock.currentTimeMillis, (endedAt) =>
-                write({ ...fields, s: statusOf(exit), ms: endedAt - startedAt }),
+                write({
+                  ...fields,
+                  s: statusOf(exit),
+                  ms: endedAt - startedAt,
+                  ...tallyFields(tally),
+                }),
               ),
             ),
           );

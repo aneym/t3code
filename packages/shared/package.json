@@ -447,6 +447,10 @@
       "types": "./src/nodeSqliteLanes.ts",
       "import": "./src/nodeSqliteLanes.ts"
     },
+    "./nodeSqliteReadTiming": {
+      "types": "./src/nodeSqliteReadTiming.ts",
+      "import": "./src/nodeSqliteReadTiming.ts"
+    },
     "./orchestrationV2BoundedSnapshot": {
       "types": "./src/orchestrationV2BoundedSnapshot.ts",
       "import": "./src/orchestrationV2BoundedSnapshot.ts"
